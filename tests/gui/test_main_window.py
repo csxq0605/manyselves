@@ -24,6 +24,11 @@ class FakeApplication:
         )
 
 
+class FailingApplication:
+    async def run_message(self, project_root: Path, message: str) -> ApplicationReply:
+        raise RuntimeError("配置包含 unknown-agent")
+
+
 @pytest.fixture
 def project_root() -> Path:
     if PROJECT_ROOT.exists():
@@ -54,6 +59,18 @@ def test_open_text_file_renders_content(qtbot, project_root: Path) -> None:
     assert "主进线柜温度为 80°C" in window.preview.toPlainText()
 
 
+def test_switch_project_root_creates_customer_layout(qtbot, project_root: Path) -> None:
+    window = MainWindow(project_root, FakeApplication())
+    qtbot.addWidget(window)
+    another = project_root.parent / "another-customer"
+
+    window.set_project_root(another)
+
+    assert window.project_root == another.resolve()
+    assert (another / "Inputs").is_dir()
+    assert (another / "Outputs" / "Reviews").is_dir()
+
+
 def test_send_message_runs_flow_and_refreshes_outputs(qtbot, project_root: Path) -> None:
     window = MainWindow(project_root, FakeApplication())
     qtbot.addWidget(window)
@@ -68,4 +85,19 @@ def test_send_message_runs_flow_and_refreshes_outputs(qtbot, project_root: Path)
     assert "主 Agent: 已处理：write report 2.4" in messages
     output = project_root / "Outputs" / "Modules" / "2.4.json"
     qtbot.waitUntil(lambda: window.file_model.index(str(output)).isValid(), timeout=3000)
+    window.open_file(output)
+    assert '"module_id":"2.4"' in window.preview.toPlainText()
     assert window.send_button.isEnabled()
+
+
+def test_flow_error_is_reported_in_main_agent_conversation(qtbot, project_root: Path) -> None:
+    window = MainWindow(project_root, FailingApplication())
+    qtbot.addWidget(window)
+    window.show()
+    window.chat_input.setText("write report")
+
+    with qtbot.waitSignal(window.flow_finished, timeout=3000):
+        qtbot.mouseClick(window.send_button, Qt.MouseButton.LeftButton)
+
+    messages = [window.conversation.item(i).text() for i in range(window.conversation.count())]
+    assert "主 Agent: 流程失败：配置包含 unknown-agent" in messages

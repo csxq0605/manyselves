@@ -311,9 +311,22 @@ class ProjectDeliveryAgent:
             )
         )
         summary_relative = Path("Outputs/Reports") / f"{context.run_id}-summary.json"
+        pending_modules = [
+            draft.module_id
+            for draft in drafts
+            if isinstance(draft, ModuleDraft)
+            and (
+                draft.pending_verifications
+                or any(claim.pending_verification for claim in draft.claims)
+            )
+        ]
+        message = f"流程完成：模块 {', '.join(module_ids)} 草稿和审校记录已写入项目。"
+        if pending_modules:
+            message += f" 待核实模块：{', '.join(pending_modules)}；请补充客户证据后重试。"
         summary = {
-            "message": f"流程完成：模块 {', '.join(module_ids)} 草稿和审校记录已写入项目。",
+            "message": message,
             "modules": module_ids,
+            "pending_modules": pending_modules,
             "blocking_issue_count": sum(
                 1 for issue in issues if isinstance(issue, ReviewIssue) and issue.blocking
             ),

@@ -92,6 +92,7 @@ async def test_no_evidence_is_blocked_without_pending_permission() -> None:
     assert coverage["entries"][0]["status"] == "blocked"
     assert module["claims"][0]["pending_verification"] is True
     assert reply.status is RunStatus.COMPLETED
+    assert "待核实" in reply.message
 
 
 @pytest.mark.asyncio
