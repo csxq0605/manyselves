@@ -1,0 +1,40 @@
+[project]
+name = "pds-report"
+version = "0.1.0"
+description = "Local multi-agent power distribution report workflow"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.12,<3",
+    "PyYAML>=6,<7",
+    "PyQt6>=6.8,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "editables>=0.5,<1",
+    "pytest>=9,<10",
+    "pytest-asyncio>=1.3,<2",
+    "pytest-qt>=4.5,<5",
+    "ruff>=0.15,<1",
+]
+
+[project.scripts]
+pds-report = "pds_report.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pds_report"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
