@@ -1,0 +1,14 @@
+id: phase-a-flow
+phases:
+  - id: intake
+    mode: pipeline
+    agents: [manifest-builder, artifact-parser, evidence-normalizer]
+  - id: coverage
+    mode: pipeline
+    agents: [coverage-evaluator, report-planner]
+  - id: module
+    mode: parallel
+    agents: [module-worker]
+  - id: quality
+    mode: pipeline
+    agents: [evidence-auditor, revision-router, project-delivery]

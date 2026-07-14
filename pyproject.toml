@@ -31,6 +31,7 @@ packages = ["src/pds_report"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--basetemp=.test-projects/pytest"
 
 [tool.ruff]
 line-length = 100
