@@ -1,0 +1,2 @@
+"""PyQt project workspace."""
+
