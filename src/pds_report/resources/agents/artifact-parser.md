@@ -2,7 +2,7 @@
 id: artifact-parser
 role: intake
 reads: [project_manifest]
-writes: [parsed_artifacts]
+writes: [project_manifest, parsed_artifacts]
 tools: [parse_supported_files]
 ---
 

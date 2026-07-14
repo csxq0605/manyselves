@@ -1,7 +1,7 @@
 ---
 id: revision-router
 role: quality
-reads: [module_drafts, review_issues]
+reads: [report_request, module_drafts, review_issues]
 writes: [module_drafts]
 tools: [route_revision]
 ---
