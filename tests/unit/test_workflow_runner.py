@@ -94,16 +94,17 @@ async def test_parallel_agents_really_overlap() -> None:
     started: list[str] = []
 
     class CoordinatedAgent:
-        def __init__(self, agent_id: str, output_key: str) -> None:
+        def __init__(self, agent_id: str, output_key: str, output: object) -> None:
             self.agent_id = agent_id
             self.output_key = output_key
+            self.output = output
 
         async def run(self, context: AgentContext) -> Mapping[str, object]:
             started.append(self.agent_id)
             if len(started) == 2:
                 both_started.set()
             await asyncio.wait_for(both_started.wait(), timeout=1)
-            return {self.output_key: self.agent_id}
+            return {self.output_key: self.output}
 
     definitions = {
         "one": definition("one", writes=["run_summary"]),
@@ -118,8 +119,8 @@ async def test_parallel_agents_really_overlap() -> None:
         workflow,
         definitions,
         {
-            "one": CoordinatedAgent("one", "run_summary"),
-            "two": CoordinatedAgent("two", "output_artifacts"),
+            "one": CoordinatedAgent("one", "run_summary", {"agent": "one"}),
+            "two": CoordinatedAgent("two", "output_artifacts", []),
         },
         context(),
     )
@@ -144,8 +145,8 @@ async def test_parallel_write_conflict_fails_run() -> None:
         workflow,
         definitions,
         {
-            "one": StaticAgent({"run_summary": "one"}),
-            "two": StaticAgent({"run_summary": "two"}),
+            "one": StaticAgent({"run_summary": {"agent": "one"}}),
+            "two": StaticAgent({"run_summary": {"agent": "two"}}),
         },
         run_context,
     )
@@ -208,3 +209,22 @@ async def test_agent_cannot_write_undeclared_carrier() -> None:
 
     assert result.status is RunStatus.FAILED
     assert "undeclared carriers" in result.errors[0]
+
+
+@pytest.mark.asyncio
+async def test_agent_output_must_match_carrier_python_type() -> None:
+    definitions = {"bad": definition("bad", writes=["project_manifest"])}
+    workflow = WorkflowDefinition(
+        id="type-contract-flow",
+        phases=[PhaseDefinition(id="phase", mode="pipeline", agents=["bad"])],
+    )
+
+    result = await WorkflowRunner().run(
+        workflow,
+        definitions,
+        {"bad": StaticAgent({"project_manifest": "not a manifest"})},
+        context(),
+    )
+
+    assert result.status is RunStatus.FAILED
+    assert "project_manifest has incompatible type" in result.errors[0]

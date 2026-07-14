@@ -1,23 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
+from importlib.resources.abc import Traversable
 from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-ALLOWED_CARRIERS = {
-    "report_request",
-    "project_manifest",
-    "parsed_artifacts",
-    "evidence_items",
-    "coverage_matrix",
-    "module_tasks",
-    "module_drafts",
-    "review_issues",
-    "output_artifacts",
-    "run_summary",
-}
+from pds_report.domain.contracts import CARRIER_CONTRACTS
+
+ALLOWED_CARRIERS = frozenset(CARRIER_CONTRACTS)
 
 
 class ConfigurationError(ValueError):
@@ -49,13 +40,13 @@ class WorkflowDefinition(ConfigModel):
     phases: list[PhaseDefinition] = Field(min_length=1)
 
 
-def _as_mapping(value: object, path: Path) -> dict[str, object]:
+def _as_mapping(value: object, path: Traversable) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ConfigurationError(f"{path}: configuration root must be a mapping")
     return value
 
 
-def load_agent_definition(path: Path) -> AgentDefinition:
+def load_agent_definition(path: Traversable) -> AgentDefinition:
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -86,9 +77,13 @@ def load_agent_definition(path: Path) -> AgentDefinition:
     return agent
 
 
-def load_agent_definitions(directory: Path) -> dict[str, AgentDefinition]:
+def load_agent_definitions(directory: Traversable) -> dict[str, AgentDefinition]:
     agents: dict[str, AgentDefinition] = {}
-    for path in sorted(directory.glob("*.md")):
+    paths = sorted(
+        (path for path in directory.iterdir() if path.name.endswith(".md")),
+        key=lambda path: path.name,
+    )
+    for path in paths:
         agent = load_agent_definition(path)
         if agent.id in agents:
             raise ConfigurationError(f"duplicate agent id: {agent.id}")
@@ -119,7 +114,7 @@ def _assert_acyclic(phases: list[PhaseDefinition]) -> None:
 
 
 def load_workflow(
-    path: Path,
+    path: Traversable,
     agents: dict[str, AgentDefinition],
 ) -> WorkflowDefinition:
     try:

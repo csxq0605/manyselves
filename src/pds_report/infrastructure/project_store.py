@@ -61,9 +61,25 @@ class ProjectStore:
         return target
 
     def save_run(self, run_id: str, value: object) -> Path:
+        return self.write_json(self._run_relative_path(run_id), value)
+
+    def load_run(self, run_id: str) -> dict[str, object]:
+        path = self._safe_path(self._run_relative_path(run_id))
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise ProjectStoreError(f"cannot read run snapshot {run_id}: {exc}") from exc
+        except json.JSONDecodeError as exc:
+            raise ProjectStoreError(f"run snapshot {run_id} is invalid JSON: {exc}") from exc
+        if not isinstance(value, dict):
+            raise ProjectStoreError(f"run snapshot {run_id} must contain an object")
+        return value
+
+    @staticmethod
+    def _run_relative_path(run_id: str) -> Path:
         if not run_id or "/" in run_id or "\\" in run_id:
             raise ProjectStoreError("run_id must be a non-empty filename component")
-        return self.write_json(Path("Work/runs") / f"{run_id}.json", value)
+        return Path("Work/runs") / f"{run_id}.json"
 
     def _safe_path(self, relative_path: Path) -> Path:
         if relative_path.is_absolute() or ".." in relative_path.parts:
@@ -84,4 +100,3 @@ class ProjectStore:
         if isinstance(value, (date, datetime)):
             return value.isoformat()
         raise TypeError(f"cannot serialize {type(value).__name__}")
-

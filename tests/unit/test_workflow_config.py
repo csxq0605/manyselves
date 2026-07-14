@@ -1,4 +1,6 @@
 from pathlib import Path
+from zipfile import Path as ZipPath
+from zipfile import ZipFile
 
 import pytest
 
@@ -151,3 +153,15 @@ phases:
 
     assert workflow.phases[0].needs == []
     assert workflow.phases[1].needs == ["intake"]
+
+
+def test_agent_definitions_load_directly_from_zip_resource() -> None:
+    archive_path = TEST_ROOT / "resources.zip"
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with ZipFile(archive_path, "w") as archive:
+        archive.writestr("agents/manifest-builder.md", agent_markdown())
+
+    with ZipFile(archive_path) as archive:
+        agents = load_agent_definitions(ZipPath(archive, "agents/"))
+
+    assert list(agents) == ["manifest-builder"]

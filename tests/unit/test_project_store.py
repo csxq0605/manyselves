@@ -73,3 +73,14 @@ def test_save_run_writes_snapshot_below_work_runs() -> None:
     output = store.save_run("run-123", {"status": "completed"})
 
     assert output == project_root / "Work" / "runs" / "run-123.json"
+
+
+def test_new_store_instance_can_restore_saved_run() -> None:
+    project_root = fresh_root("restore")
+    first = ProjectStore(project_root)
+    first.create()
+    first.save_run("run-123", {"status": "failed", "tasks": [{"id": "task-1"}]})
+
+    restored = ProjectStore(project_root).load_run("run-123")
+
+    assert restored == {"status": "failed", "tasks": [{"id": "task-1"}]}

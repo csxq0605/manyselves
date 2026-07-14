@@ -1,6 +1,8 @@
 import json
 import shutil
 from pathlib import Path
+from zipfile import Path as ZipPath
+from zipfile import ZipFile
 
 import pytest
 
@@ -89,4 +91,25 @@ async def test_no_evidence_is_blocked_without_pending_permission() -> None:
     )
     assert coverage["entries"][0]["status"] == "blocked"
     assert module["claims"][0]["pending_verification"] is True
+    assert reply.status is RunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_application_loads_declarative_resources_from_zip(monkeypatch) -> None:
+    project_root = fresh_project()
+    archive_path = project_root / "resources.zip"
+    source_root = Path("src/pds_report/resources")
+    with ZipFile(archive_path, "w") as archive:
+        for path in source_root.rglob("*"):
+            if path.is_file():
+                archive.write(path, f"pds_report/resources/{path.relative_to(source_root)}")
+
+    with ZipFile(archive_path) as archive:
+        resource_root = ZipPath(archive, "pds_report/resources/")
+        monkeypatch.setattr("pds_report.app.service.resources.files", lambda package: resource_root)
+        reply = await ReportApplication().run_message(
+            project_root,
+            "生成配电报告，先做2.4",
+        )
+
     assert reply.status is RunStatus.COMPLETED

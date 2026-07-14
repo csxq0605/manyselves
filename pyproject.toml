@@ -2,6 +2,7 @@
 name = "pds-report"
 version = "0.1.0"
 description = "Local multi-agent power distribution report workflow"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.12,<3",
@@ -27,6 +28,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pds_report"]
+
+[tool.hatch.build]
+include = ["/src/pds_report"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

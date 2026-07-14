@@ -46,7 +46,7 @@ class ReportApplication:
             task_board=task_board,
         )
 
-        resource_root = Path(str(resources.files("pds_report.resources")))
+        resource_root = resources.files("pds_report.resources")
         definitions = load_agent_definitions(resource_root / "agents")
         workflow = load_workflow(resource_root / "workflows" / "phase-a.yml", definitions)
         result = await self.runner.run(

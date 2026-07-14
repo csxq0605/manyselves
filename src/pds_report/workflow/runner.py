@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from pds_report.agents.base import AgentContext, AgentPort
+from pds_report.domain.contracts import CARRIER_CONTRACTS
 from pds_report.domain.models import RunStatus
 from pds_report.workflow.config import (
     AgentDefinition,
@@ -241,6 +242,14 @@ class WorkflowRunner:
             if undeclared:
                 names = ", ".join(sorted(undeclared))
                 raise WorkflowExecutionError(f"{agent_id} wrote undeclared carriers: {names}")
+            incompatible = [
+                name
+                for name, value in output.items()
+                if not CARRIER_CONTRACTS[name].accepts(value)
+            ]
+            if incompatible:
+                names = ", ".join(sorted(incompatible))
+                raise WorkflowExecutionError(f"{names} has incompatible type")
         except Exception as exc:
             context.task_board.fail(task_id, str(exc) or type(exc).__name__)
             await context.bus.publish(
