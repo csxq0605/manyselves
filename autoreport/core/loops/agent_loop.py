@@ -7,7 +7,6 @@ import inspect
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +21,7 @@ from ...core.providers.base import LLMProvider
 from ...core.providers.base import Message as LLMMessage
 from ...interfaces.types import (
     AgentResponse,
+    AgentId,
     AgentStatus,
     AgentType,
     ApiDebugMessage,
@@ -35,6 +35,7 @@ from ...interfaces.types import (
     TaskUpdateMessage,
     ToolCallMessage,
     UserMessage,
+    normalize_agent_id,
 )
 from ...interfaces.types import (
     ToolResult as ToolResultMsg,
@@ -186,7 +187,7 @@ class AgentLoop:
 
     def __init__(
         self,
-        agent_type: AgentType,
+        agent_type: AgentId | AgentType,
         workspace: Path,
         tools: ToolRegistry,
         bus: MessageBus,
@@ -211,7 +212,9 @@ class AgentLoop:
             loop_manager: Optional LoopManager reference for coordination.
             skill_loader: Optional SkillLoader for skill injection.
         """
-        self.agent_type = agent_type
+        self.agent_id = normalize_agent_id(agent_type)
+        # Backward-compatible attribute name; runtime identity is always a string.
+        self.agent_type = self.agent_id
         self.workspace = Path(workspace).resolve()
         self.tools = tools
         self.bus = bus
@@ -259,7 +262,7 @@ class AgentLoop:
         # All agents track their own report emissions (turn-reported flag).
         self.bus.subscribe(ReportMessage, self._handle_report_message)
         # Manifest tool is only for sub-agents
-        if self.agent_type != AgentType.MAIN and self._manifest_manager is not None:
+        if self.agent_id != "main" and self._manifest_manager is not None:
             self.tools.register(ManifestTool(self._manifest_manager, self._get_agent_type_str()))
 
     @property
@@ -357,25 +360,14 @@ class AgentLoop:
         if not isinstance(message, TaskUpdateMessage):
             return
 
-        # use_enum_values=True may store enums as strings
-        src_val = (
-            message.source_agent.value
-            if isinstance(message.source_agent, Enum)
-            else str(message.source_agent)
-        )
-        tgt_val = (
-            message.target_agent.value
-            if isinstance(message.target_agent, Enum)
-            else str(message.target_agent)
-        )
-        src_enum = AgentType(src_val) if src_val in [e.value for e in AgentType] else None
-        tgt_enum = AgentType(tgt_val) if tgt_val in [e.value for e in AgentType] else None
+        src_val = normalize_agent_id(message.source_agent)
+        tgt_val = normalize_agent_id(message.target_agent)
 
         # Only process if relevant to this agent
-        if self.agent_type not in (src_enum, tgt_enum):
+        if self.agent_id not in (src_val, tgt_val):
             return
 
-        is_local = src_enum == tgt_enum
+        is_local = src_val == tgt_val
 
         if is_local:
             logger.debug(
@@ -402,22 +394,18 @@ class AgentLoop:
         """
         if not isinstance(message, ReportMessage):
             return
-        report_agent = (
-            message.agent_type.value
-            if isinstance(message.agent_type, Enum)
-            else str(message.agent_type)
-        )
-        if self.agent_type == AgentType.MAIN and self._task_board is not None:
+        report_agent = normalize_agent_id(message.agent_type)
+        if self.agent_id == "main" and self._task_board is not None:
             task = self._task_board.get_task(
                 message.task_id,
-                target_agent=AgentType(report_agent),
-                source_agent=AgentType.MAIN,
+                target_agent=report_agent,
+                source_agent="main",
                 active_only=False,
                 session_id=self._current_session_id,
             ) or self._task_board.get_task(
                 message.task_id,
-                target_agent=AgentType(report_agent),
-                source_agent=AgentType.MAIN,
+                target_agent=report_agent,
+                source_agent="main",
                 active_only=False,
             )
             if task is not None and not bool(getattr(task, "blocking", True)):
@@ -425,7 +413,7 @@ class AgentLoop:
                     UserMessage(
                         content=str(message.content or ""),
                         summary=str(message.summary or ""),
-                        agent_type=AgentType.MAIN,
+                        agent_type="main",
                         source=report_agent,
                     )
                 )
@@ -498,7 +486,7 @@ class AgentLoop:
         Re-prompts up to _REPORT_GUARD_MAX_RETRIES times; if the agent still
         has not reported, marks the task BLOCKED so Main learns it needs action.
         """
-        if self.agent_type == AgentType.MAIN:
+        if self.agent_id == "main":
             return False
         if getattr(message, "source", None) != "main_agent":
             return False
@@ -545,7 +533,7 @@ class AgentLoop:
             scoped = self._task_board.get_task(
                 task_id,
                 target_agent=self.agent_type,
-                source_agent=AgentType.MAIN,
+                source_agent="main",
                 active_only=True,
                 session_id=session_id,
             )
@@ -554,7 +542,7 @@ class AgentLoop:
             unscoped = self._task_board.get_task(
                 task_id,
                 target_agent=self.agent_type,
-                source_agent=AgentType.MAIN,
+                source_agent="main",
                 active_only=True,
             )
             return unscoped is not None
@@ -563,7 +551,7 @@ class AgentLoop:
         if not todos:
             todos = self._task_board.get_todolist(self.agent_type)
         return any(
-            t.source_agent == AgentType.MAIN
+            t.source_agent == "main"
             and t.status in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS)
             for t in todos
         )
@@ -583,7 +571,7 @@ class AgentLoop:
         todos = self._task_board.get_todolist(self.agent_type, session_id=self._current_session_id)
         if not todos:
             todos = self._task_board.get_todolist(self.agent_type)
-        task = next((t for t in todos if t.source_agent == AgentType.MAIN), None)
+        task = next((t for t in todos if t.source_agent == "main"), None)
         if task is None:
             return
         try:
@@ -606,7 +594,7 @@ class AgentLoop:
         _REPORT_GUARD_MAX_RETRIES times; after that, allows IDLE and surfaces
         the unresolved blocks to the user via a SystemNotice.
         """
-        if self.agent_type != AgentType.MAIN or self._task_board is None:
+        if self.agent_id != "main" or self._task_board is None:
             return False
 
         reminder = (
@@ -615,17 +603,17 @@ class AgentLoop:
         )
         while True:
             blocked = self._task_board.get_blocked_waitlist(
-                AgentType.MAIN, session_id=self._current_session_id
+                "main", session_id=self._current_session_id
             )
             if not blocked:
                 self._main_block_retries = 0
                 return False
             self._main_block_retries += 1
-            names = ", ".join(f"{t.target_agent.value}:{t.brief}" for t in blocked)
+            names = ", ".join(f"{t.target_agent}:{t.brief}" for t in blocked)
             if self._main_block_retries > self._REPORT_GUARD_MAX_RETRIES:
                 await self.bus.publish(
                     SystemNotice(
-                        agent_type=AgentType.MAIN,
+                        agent_type="main",
                         content=f"Main 多次未解决被阻塞任务，暂停以便用户介入：{names}",
                     )
                 )
@@ -633,7 +621,7 @@ class AgentLoop:
                 return False  # allow IDLE so the user can act
             await self.bus.publish(
                 SystemNotice(
-                    agent_type=AgentType.MAIN,
+                    agent_type="main",
                     content=f"Main 还有被阻塞的任务：{names}，"
                     f"请先解决 ({self._main_block_retries}/{self._REPORT_GUARD_MAX_RETRIES})。",
                 )
@@ -949,7 +937,7 @@ class AgentLoop:
         notes section needs updating — no extra LLM round required; the
         hint is prepended to the next turn's system prompt.
         """
-        if self.agent_type == AgentType.MAIN or self._manifest_manager is None:
+        if self.agent_id == "main" or self._manifest_manager is None:
             self._manifest_dirty = False
             return
 
@@ -1396,13 +1384,13 @@ class AgentLoop:
         logger.debug("Loading system prompt for agent: {}", self.agent_type)
         prompt_signature = self._prompt_loader.get_signature(agent_type_str)
         skills_summary = None
-        if self.agent_type == AgentType.REPORT and self._skill_loader:
+        if self.agent_id == "report" and self._skill_loader:
             skills_summary = self._skill_loader.build_skills_summary()
         current_signature = (
             agent_type_str,
             prompt_signature,
             skills_summary,
-            bool(self._manifest_manager and self.agent_type != AgentType.MAIN),
+            bool(self._manifest_manager and self.agent_id != "main"),
         )
 
         if (
@@ -1427,7 +1415,7 @@ class AgentLoop:
             logger.debug("Injected skills summary for report agent")
 
         # Manifest hint — sub-agents only
-        if self._manifest_manager and self.agent_type != AgentType.MAIN:
+        if self._manifest_manager and self.agent_id != "main":
             parts.append(
                 "\n\n[Manifest]\n"
                 "你可以在需要时使用 manifest 了解当前本地提供了哪些文件。"
@@ -1528,11 +1516,7 @@ class AgentLoop:
             # Show all incomplete tasks first
             for t in incomplete:
                 if is_waitlist:
-                    tgt = (
-                        t.target_agent.value
-                        if hasattr(t.target_agent, "value")
-                        else str(t.target_agent)
-                    )
+                    tgt = t.target_agent
                     result.append(f"  - task_id={t.task_id} 等待{tgt} {t.brief}")
                 else:
                     status_map = {
@@ -1553,11 +1537,7 @@ class AgentLoop:
 
                 for t in completed_sorted:
                     if is_waitlist:
-                        tgt = (
-                            t.target_agent.value
-                            if hasattr(t.target_agent, "value")
-                            else str(t.target_agent)
-                        )
+                        tgt = t.target_agent
                         result.append(f"  - task_id={t.task_id} 等待{tgt} {t.brief} (已完成)")
                     else:
                         result.append(f"  - task_id={t.task_id} 已完成 {t.brief}")
@@ -1575,16 +1555,9 @@ class AgentLoop:
         return "\n".join(lines)
 
     def _get_agent_type_str(self) -> str:
-        """Convert AgentType to string for prompt loading.
+        """Return this loop's registry identifier for prompt loading.
 
         Returns:
             Agent type string identifier.
         """
-        type_mapping = {
-            AgentType.MAIN: "main",
-            AgentType.DATA_ANALYSIS: "data_analysis",
-            AgentType.PLOTTING: "plotting",
-            AgentType.THEORY: "theory",
-            AgentType.REPORT: "report",
-        }
-        return type_mapping.get(self.agent_type, str(self.agent_type).lower())
+        return self.agent_id

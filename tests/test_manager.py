@@ -57,6 +57,14 @@ def test_init(manager):
     assert not manager.is_running
 
 
+def test_manager_loop_lookup_uses_string_id(manager):
+    manager._loops["module-2.4-specialist"] = object()
+
+    assert manager.get_loop("module-2.4-specialist") is manager._loops[
+        "module-2.4-specialist"
+    ]
+
+
 def test_subscribes_to_restart(manager):
     assert manager.is_running is False
     # Verify bus subscription

@@ -3,6 +3,7 @@
 from .protocol import GUIAPI, BackendAPI, MessageChannel
 from .types import (
     AgentResponse,
+    AgentId,
     AgentStatus,
     AgentType,
     Checkpoint,
@@ -15,11 +16,14 @@ from .types import (
     ToolCallMessage,
     ToolResult,
     UserMessage,
+    normalize_agent_id,
 )
 
 __all__ = [
     "MessageType",
     "AgentType",
+    "AgentId",
+    "normalize_agent_id",
     "AgentStatus",
     "Message",
     "UserMessage",

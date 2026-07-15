@@ -12,6 +12,7 @@ from loguru import logger
 
 from ...interfaces.types import (
     AgentResponse,
+    AgentId,
     AgentStatus,
     AgentType,
     ReportMessage,
@@ -19,6 +20,7 @@ from ...interfaces.types import (
     TaskStatus,
     TaskUpdateMessage,
     UserMessage,
+    normalize_agent_id,
 )
 from ..loops.bus import MessageBus
 from .registry import Tool
@@ -51,11 +53,19 @@ class SendToAgentTool(Tool):
         "previously blocked task (resets it to in_progress)."
     )
 
-    def __init__(self, bus: MessageBus, task_board=None, timeout: int = 120, session_id_resolver=None):
+    def __init__(
+        self,
+        bus: MessageBus,
+        task_board=None,
+        timeout: int = 120,
+        session_id_resolver=None,
+        agent_ids_resolver=None,
+    ):
         self._bus = bus
         self._task_board = task_board
         self._timeout = timeout  # wall-clock fallback cap for the liveness wait
         self._session_id_resolver = session_id_resolver
+        self._agent_ids_resolver = agent_ids_resolver
 
     def _session_id(self) -> str | None:
         return resolve_session_id(self._session_id_resolver)
@@ -143,10 +153,15 @@ class SendToAgentTool(Tool):
         if not agent_type:
             return {"status": "error", "error": "agent_type cannot be empty."}
 
-        try:
-            target = AgentType(agent_type)
-        except ValueError:
-            valid = ", ".join(t.value for t in AgentType if t != AgentType.MAIN)
+        target = normalize_agent_id(agent_type).strip()
+        available = (
+            {normalize_agent_id(agent_id) for agent_id in self._agent_ids_resolver()}
+            if self._agent_ids_resolver is not None
+            else {"data_analysis", "plotting", "theory", "report"}
+        )
+        available.discard("main")
+        if target not in available:
+            valid = ", ".join(sorted(available))
             return {
                 "status": "error",
                 "error": f"Unknown agent type '{agent_type}'. Valid: {valid}",
@@ -164,7 +179,7 @@ class SendToAgentTool(Tool):
             if existing is None:
                 return {
                     "status": "error",
-                    "error": f"task_id {task_id} not found for {target.value}",
+                    "error": f"task_id {task_id} not found for {target}",
                 }
             # Re-dispatch: reset the whole chain (target + sources) back to in_progress.
             for t in self._task_board.get_tasks_by_id(task_id):
@@ -185,7 +200,7 @@ class SendToAgentTool(Tool):
                 or summary[:30]
             )
             new_task = self._task_board.create_task(
-                source=AgentType.MAIN,
+                source="main",
                 target=target,
                 brief=brief,
                 blocking=blocking,
@@ -219,13 +234,13 @@ class SendToAgentTool(Tool):
             logger.info("Main Agent dispatched non-blocking task {} to {}", task_id, target)
             result: dict[str, Any] = {
                 "status": "delegated",
-                "agent_type": target.value,
+                "agent_type": target,
                 "blocking": False,
                 "task_id": task_id,
                 "summary": summary,
                 "content": content,
                 "request_summary": request_summary,
-                "message": f"Task sent to {target.value} (non-blocking). "
+                "message": f"Task sent to {target} (non-blocking). "
                            "Agent will be notified on completion.",
             }
             return result
@@ -270,7 +285,7 @@ class SendToAgentTool(Tool):
                 )
             return {
                 "status": "timeout",
-                "agent_type": target.value,
+                "agent_type": target,
                 "task_id": task_id,
                 "summary": summary,
                 "content": content,
@@ -284,7 +299,7 @@ class SendToAgentTool(Tool):
         if report.report_type == "reply":
             return {
                 "status": "success",
-                "agent_type": target.value,
+                "agent_type": target,
                 "task_id": task_id,
                 "blocking": True,
                 "summary": summary,
@@ -295,7 +310,7 @@ class SendToAgentTool(Tool):
             }
         return {
             "status": "blocked",
-            "agent_type": target.value,
+            "agent_type": target,
             "task_id": task_id,
             "blocking": True,
             "block_type": report.report_type,
@@ -383,9 +398,15 @@ class RespondTool(Tool):
 
     _VALID_TYPES = ("reply", "missing_data", "quality")
 
-    def __init__(self, bus: MessageBus, agent_type: AgentType, task_board=None, session_id_resolver=None):
+    def __init__(
+        self,
+        bus: MessageBus,
+        agent_type: AgentId | AgentType,
+        task_board=None,
+        session_id_resolver=None,
+    ):
         self._bus = bus
-        self._agent_type = agent_type
+        self._agent_type = normalize_agent_id(agent_type)
         self._task_board = task_board
         self._session_id_resolver = session_id_resolver
 

@@ -9,11 +9,13 @@ from loguru import logger
 from ...config import ConfigManager
 from ...core.providers import ProviderFactory, ProviderManager
 from ...interfaces.types import (
+    AgentId,
     AgentType,
     FileRollbackRequest,
     Message,
     RestartRequest,
     RollbackStatus,
+    normalize_agent_id,
 )
 from ..checkpoints import CheckpointManager
 from ..tools import (
@@ -36,6 +38,8 @@ from ..tools.registry import ToolRegistry
 from .agent_loop import AgentLoop
 from .bus import MessageBus
 
+_LEGACY_AGENT_IDS = ("main", "data_analysis", "plotting", "theory", "report")
+
 
 class LoopManager:
     """Manager for all agent loops."""
@@ -57,14 +61,14 @@ class LoopManager:
         self.config_manager = config_manager
         self.bus = bus
 
-        self._loops: dict[AgentType, AgentLoop] = {}
+        self._loops: dict[str, AgentLoop] = {}
         self._running = False
         self._provider_manager = ProviderManager()
         self.checkpoint_manager = CheckpointManager(self.workspace)
         self.skill_loader = SkillLoader()
         self._task_board = TaskBoard()
         self.manifest_manager = ManifestManager(self.workspace)
-        self._file_state_managers: dict[AgentType, FileStateManager] = {}
+        self._file_state_managers: dict[str, FileStateManager] = {}
 
         # Subscribe to restart requests and file rollback requests
         self.bus.subscribe(RestartRequest, self._handle_restart_request)
@@ -151,34 +155,21 @@ class LoopManager:
         Args:
             agent_type: Agent type string (e.g. "main", "data_analysis").
         """
-        from autoreport.interfaces.types import AgentType
-
-        agent_map = {
-            "main": AgentType.MAIN,
-            "data_analysis": AgentType.DATA_ANALYSIS,
-            "plotting": AgentType.PLOTTING,
-            "theory": AgentType.THEORY,
-            "report": AgentType.REPORT,
-        }
-        agent_enum = agent_map.get(agent_type)
-        if agent_enum is None:
-            logger.warning("Unknown agent type for cancel: {}", agent_type)
-            return
-
-        loop = self._loops.get(agent_enum)
+        agent_id = normalize_agent_id(agent_type)
+        loop = self._loops.get(agent_id)
         if loop is None:
             logger.warning("No loop found for agent: {}", agent_type)
             return
 
         loop.cancel_current()
-        for delegated in self._task_board.get_waitlist(agent_enum):
+        for delegated in self._task_board.get_waitlist(agent_id):
             target_loop = self._loops.get(delegated.target_agent)
             if target_loop is None or target_loop is loop:
                 continue
             target_loop.cancel_current()
             logger.info(
                 "Cancelled delegated operation for agent: {} (task {})",
-                delegated.target_agent.value,
+                delegated.target_agent,
                 delegated.task_id,
             )
         logger.info("Cancelled current operation for agent: {}", agent_type)
@@ -197,16 +188,15 @@ class LoopManager:
         await self.start()
 
     async def _create_loops(self) -> None:
-        """Create agent loops for all agent types."""
+        """Create loops for the currently configured compatibility agents."""
         config = self.config_manager.config.agents.defaults
         llm_provider = self._provider_manager.get_active_provider()
 
-        # Create tools for each agent type
-        for agent_type in AgentType:
-            tools = self._create_tools_for_agent(agent_type)
+        for agent_id in _LEGACY_AGENT_IDS:
+            tools = self._create_tools_for_agent(agent_id)
 
             loop = AgentLoop(
-                agent_type=agent_type,
+                agent_type=agent_id,
                 workspace=self.workspace,
                 tools=tools,
                 bus=self.bus,
@@ -217,26 +207,26 @@ class LoopManager:
                 manifest_manager=self.manifest_manager,
                 task_board=self._task_board,
             )
-            self._loops[agent_type] = loop
+            self._loops[agent_id] = loop
 
-    def get_loop(self, agent_type: AgentType) -> "AgentLoop | None":
-        """Get agent loop by type.
+    def get_loop(self, agent_id: AgentId | AgentType) -> "AgentLoop | None":
+        """Get an agent loop by registry identifier.
 
         Args:
-            agent_type: Agent type to retrieve.
+            agent_id: Agent identifier to retrieve.
 
         Returns:
             AgentLoop instance or None if not found.
         """
-        return self._loops.get(agent_type)
+        return self._loops.get(normalize_agent_id(agent_id))
 
-    def get_agent_session_id(self, agent_type: AgentType) -> str | None:
-        loop = self._loops.get(agent_type)
+    def get_agent_session_id(self, agent_id: AgentId | AgentType) -> str | None:
+        loop = self.get_loop(agent_id)
         if loop is None:
             return None
         return getattr(loop, "_current_session_id", None)
 
-    def _create_tools_for_agent(self, agent_type: AgentType) -> ToolRegistry:
+    def _create_tools_for_agent(self, agent_type: AgentId | AgentType) -> ToolRegistry:
         """Create tool registry for an agent type.
 
         Args:
@@ -245,8 +235,9 @@ class LoopManager:
         Returns:
             Tool registry with appropriate tools.
         """
+        agent_id = normalize_agent_id(agent_type)
         registry = ToolRegistry()
-        file_state_manager = self._get_file_state_manager(agent_type)
+        file_state_manager = self._get_file_state_manager(agent_id)
 
         # Common tools for all agents
         registry.register(ReadTool(
@@ -256,25 +247,25 @@ class LoopManager:
 
         # Determine write allowed directory based on agent type
         write_dirs = {
-            AgentType.DATA_ANALYSIS: self.workspace / "Data",
-            AgentType.PLOTTING: self.workspace / "Plots",
-            AgentType.THEORY: self.workspace / "Theory",
-            AgentType.REPORT: self.workspace / "Tex",
-            AgentType.MAIN: self.workspace / "Outline",  # MAIN only writes Outline/report_outline.md
+            "data_analysis": self.workspace / "Data",
+            "plotting": self.workspace / "Plots",
+            "theory": self.workspace / "Theory",
+            "report": self.workspace / "Tex",
+            "main": self.workspace / "Outline",  # MAIN only writes Outline/report_outline.md
         }
 
-        write_dir = write_dirs.get(agent_type, self.workspace)
+        write_dir = write_dirs.get(agent_id, self.workspace)
 
         # Register write tools
         write_tool_kwargs = dict(
             workspace=self.workspace,
             write_allowed_dir=write_dir,
             manifest_manager=self.manifest_manager,
-            agent_type=agent_type.value,
+            agent_type=agent_id,
             file_state_manager=file_state_manager,
             checkpoint_manager=self.checkpoint_manager,
         )
-        if agent_type == AgentType.PLOTTING:
+        if agent_id == "plotting":
             from ..tools.file_tools import _validate_plotting_script
             write_tool_kwargs["content_validator"] = _validate_plotting_script
 
@@ -283,25 +274,20 @@ class LoopManager:
             workspace=self.workspace,
             write_allowed_dir=write_dir,
             manifest_manager=self.manifest_manager,
-            agent_type=agent_type.value,
+            agent_type=agent_id,
             file_state_manager=file_state_manager,
             checkpoint_manager=self.checkpoint_manager,
         ))
 
         # Execution tool (for data analysis, plotting, report agents only — MAIN delegates, does not execute)
-        if agent_type in (AgentType.DATA_ANALYSIS, AgentType.PLOTTING, AgentType.REPORT):
+        if agent_id in ("data_analysis", "plotting", "report"):
             registry.register(ExecTool(
                 working_dir=self.workspace,
                 timeout=120,
             ))
 
         # PDF parsing (all agents that may need to read reference materials)
-        if agent_type in (
-            AgentType.MAIN,
-            AgentType.THEORY,
-            AgentType.DATA_ANALYSIS,
-            AgentType.REPORT,
-        ):
+        if agent_id in ("main", "theory", "data_analysis", "report"):
             mineru_timeout = (
                 self.config_manager.config.mineru_api.timeout
                 if hasattr(self.config_manager.config, "mineru_api")
@@ -316,7 +302,7 @@ class LoopManager:
         registry.register(LoadSkillTool(skill_loader=self.skill_loader))
 
         # Inter-agent communication tools
-        if agent_type == AgentType.MAIN:
+        if agent_id == "main":
             registry.register(
                 RunReportingWorkflowTool(
                     workspace=self.workspace,
@@ -328,34 +314,36 @@ class LoopManager:
                 SendToAgentTool(
                     bus=self.bus,
                     task_board=self._task_board,
-                    session_id_resolver=lambda a=agent_type: self.get_agent_session_id(a),
+                    session_id_resolver=lambda a=agent_id: self.get_agent_session_id(a),
+                    agent_ids_resolver=lambda: set(self._loops),
                 )
             )
         else:
             registry.register(
                 RespondTool(
                     bus=self.bus,
-                    agent_type=agent_type,
+                    agent_type=agent_id,
                     task_board=self._task_board,
-                    session_id_resolver=lambda a=agent_type: self.get_agent_session_id(a),
+                    session_id_resolver=lambda a=agent_id: self.get_agent_session_id(a),
                 )
             )
 
         # Task management — all agents can manage their own tasks
         registry.register(ManageTasksTool(
             task_board=self._task_board,
-            agent_type=agent_type,
+            agent_type=agent_id,
             bus=self.bus,
-            session_id_resolver=lambda a=agent_type: self.get_agent_session_id(a),
+            session_id_resolver=lambda a=agent_id: self.get_agent_session_id(a),
         ))
 
         return registry
 
-    def _get_file_state_manager(self, agent_type: AgentType) -> FileStateManager:
-        manager = self._file_state_managers.get(agent_type)
+    def _get_file_state_manager(self, agent_type: AgentId | AgentType) -> FileStateManager:
+        agent_id = normalize_agent_id(agent_type)
+        manager = self._file_state_managers.get(agent_id)
         if manager is None:
             manager = FileStateManager(workspace=self.workspace)
-            self._file_state_managers[agent_type] = manager
+            self._file_state_managers[agent_id] = manager
         return manager
 
     async def create_checkpoint(
@@ -510,11 +498,9 @@ class LoopManager:
             agent_type: Agent type (data_analysis, plotting, theory, report).
             enabled: Whether debug mode is enabled.
         """
-        # Convert string to AgentType
-        agent_enum = AgentType(agent_type)
-
-        if agent_enum in self._loops:
-            self._loops[agent_enum].set_debug_mode(enabled)
+        agent_id = normalize_agent_id(agent_type)
+        if agent_id in self._loops:
+            self._loops[agent_id].set_debug_mode(enabled)
             logger.info(
                 "Debug mode {} for agent: {}",
                 "enabled" if enabled else "disabled",
@@ -530,10 +516,9 @@ class LoopManager:
         Returns:
             True if debug mode is enabled.
         """
-        agent_enum = AgentType(agent_type)
-
-        if agent_enum in self._loops:
-            return self._loops[agent_enum].debug_mode
+        agent_id = normalize_agent_id(agent_type)
+        if agent_id in self._loops:
+            return self._loops[agent_id].debug_mode
 
         return False
 
@@ -547,10 +532,9 @@ class LoopManager:
             Agent status string ("idle", "thinking", "running_tool", "error",
             "debug_mode"), or None if agent not found.
         """
-        agent_enum = AgentType(agent_type)
-
-        if agent_enum in self._loops:
-            return self._loops[agent_enum].status.value
+        agent_id = normalize_agent_id(agent_type)
+        if agent_id in self._loops:
+            return self._loops[agent_id].status.value
 
         return None
 
@@ -561,6 +545,6 @@ class LoopManager:
             Dict mapping agent type string to status string.
         """
         return {
-            agent_type.value: loop.status.value
-            for agent_type, loop in self._loops.items()
+            agent_id: loop.status.value
+            for agent_id, loop in self._loops.items()
         }

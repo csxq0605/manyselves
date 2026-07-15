@@ -93,6 +93,27 @@ def agent_loop(workspace, config, mock_gui, mock_provider, mock_prompt_loader):
     return loop
 
 
+def test_agent_loop_keeps_dynamic_agent_id(
+    workspace, config, mock_provider, mock_prompt_loader
+):
+    bus = MessageBus()
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+
+    loop = AgentLoop(
+        agent_type="evidence-auditor",
+        workspace=workspace,
+        tools=tools,
+        bus=bus,
+        config=config,
+        llm_provider=mock_provider,
+        prompt_loader=mock_prompt_loader,
+    )
+
+    assert loop.agent_id == "evidence-auditor"
+    assert loop.agent_type == "evidence-auditor"
+
+
 def test_init_subscribes_to_bus(agent_loop):
     """AgentLoop subscribes to UserMessage on init."""
     assert UserMessage in agent_loop.bus._subscribers

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -40,6 +40,18 @@ class AgentType(str, Enum):
     PLOTTING = "plotting"
     THEORY = "theory"
     REPORT = "report"
+
+
+AgentId: TypeAlias = str
+
+
+def normalize_agent_id(value: str | AgentType) -> str:
+    """Return the string identifier used by the runtime.
+
+    ``AgentType`` remains accepted at compatibility boundaries while registry
+    agent identifiers flow through unchanged.
+    """
+    return value.value if isinstance(value, AgentType) else str(value)
 
 
 class AgentStatus(str, Enum):
@@ -85,7 +97,7 @@ class UserMessage(Message):
     # Short visible summary for inter-agent coordination. Tools enforce this
     # for new coordination messages; default keeps older stored messages valid.
     summary: str = ""
-    agent_type: AgentType = AgentType.MAIN
+    agent_type: AgentId = AgentType.MAIN.value
     message_id: str | None = None
     source: str = "user"  # "user" | "system" | "main_agent" | "<agent_type>"
 
@@ -94,7 +106,7 @@ class AgentResponse(Message):
     """Agent response to user."""
 
     type: MessageType = MessageType.AGENT_RESPONSE
-    agent_type: AgentType
+    agent_type: AgentId
     content: str
     message_id: str | None = None
     streaming: bool = False  # True for stream chunks, False for final completion
@@ -105,7 +117,7 @@ class ToolCallMessage(Message):
     """Tool being executed by agent."""
 
     type: MessageType = MessageType.TOOL_CALL
-    agent_type: AgentType
+    agent_type: AgentId
     tool_name: str
     arguments: dict[str, Any]
 
@@ -114,7 +126,7 @@ class ToolResult(Message):
     """Result of tool execution."""
 
     type: MessageType = MessageType.TOOL_RESULT
-    agent_type: AgentType
+    agent_type: AgentId
     tool_name: str
     result: Any
     error: str | None = None
@@ -124,7 +136,7 @@ class StatusChange(Message):
     """Agent status change."""
 
     type: MessageType = MessageType.STATUS_CHANGE
-    agent_type: AgentType
+    agent_type: AgentId
     status: AgentStatus
     extra: dict[str, Any] = Field(default_factory=dict)
 
@@ -196,8 +208,8 @@ class TaskItem(BaseModel):
 
     task_id: str
     brief: str
-    source_agent: AgentType
-    target_agent: AgentType
+    source_agent: AgentId
+    target_agent: AgentId
     status: TaskStatus = TaskStatus.PENDING
     created_at: datetime = Field(default_factory=datetime.now)
     completed_at: datetime | None = None
@@ -211,8 +223,8 @@ class TaskUpdateMessage(Message):
     type: MessageType = MessageType.TASK_UPDATE
     task_id: str
     action: str  # "created" | "started" | "completed" | "failed" | "cancelled"
-    source_agent: AgentType
-    target_agent: AgentType
+    source_agent: AgentId
+    target_agent: AgentId
     brief: str = ""
     previous_status: str | None = None
 
@@ -221,7 +233,7 @@ class QueueUpdateMessage(Message):
     """Queued follow-up messages waiting for the next agent turn."""
 
     type: MessageType = MessageType.QUEUE_UPDATE
-    agent_type: AgentType
+    agent_type: AgentId
     queued_messages: list[str] = Field(default_factory=list)
 
 
@@ -251,7 +263,7 @@ class ReportMessage(Message):
     """
 
     type: MessageType = MessageType.REPORT
-    agent_type: AgentType
+    agent_type: AgentId
     task_id: str
     report_type: str  # "reply" | "missing_data" | "quality"
     # Short visible summary shown in coordination bubbles.
@@ -269,7 +281,7 @@ class SystemNotice(Message):
     """
 
     type: MessageType = MessageType.SYSTEM_NOTICE
-    agent_type: AgentType
+    agent_type: AgentId
     content: str
     # "notice" (default) renders as a normal system bubble.
     # "interrupt" renders as a muted italic "Interrupted" marker — emitted when

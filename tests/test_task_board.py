@@ -6,6 +6,21 @@ from autoreport.core.tools.task_board import TaskBoard
 from autoreport.interfaces.types import AgentType, TaskStatus
 
 
+def test_task_board_accepts_registry_agent_ids():
+    board = TaskBoard()
+    task = board.create_task(
+        source="report-planner",
+        target="module-2.4-specialist",
+        brief="完成 2.4",
+    )
+
+    assert board.get_todolist("module-2.4-specialist") == [task]
+    assert set(board.get_all_tasks()) == {
+        "report-planner",
+        "module-2.4-specialist",
+    }
+
+
 class TestTaskBoard:
     def test_create_task_dual_view(self):
         board = TaskBoard()

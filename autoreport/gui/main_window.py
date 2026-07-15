@@ -25,7 +25,6 @@ from ..core.conversations import ConversationStore
 from ..interfaces.protocol import BackendAPI
 from ..interfaces.types import (
     AgentResponse,
-    AgentType,
     Checkpoint,
     Error,
     Message,
@@ -36,6 +35,7 @@ from ..interfaces.types import (
     ToolCallMessage,
     ToolResult,
     UserMessage,
+    normalize_agent_id,
 )
 from ..utils.agent_labels import get_agent_badge, get_agent_title
 from ..utils.editor_context import build_editor_context_message, build_editor_context_prompt
@@ -1865,10 +1865,7 @@ class MainWindow(QMainWindow):
         )
         if task_board is None:
             return result
-        try:
-            agent_type = AgentType(agent_str)
-        except ValueError:
-            return result
+        agent_type = normalize_agent_id(agent_str)
         session_id = self._conv_store.get_current_session_id(agent_str)
         todolist = task_board.get_todolist(agent_type, session_id=session_id)
         waitlist = task_board.get_waitlist(agent_type, session_id=session_id)
@@ -1878,7 +1875,7 @@ class MainWindow(QMainWindow):
                 "task_id": t.task_id,
                 "brief": t.brief,
                 "status": t.status.value,
-                "source_agent": t.source_agent.value,
+                "source_agent": t.source_agent,
             }
             for t in todolist
         ]
@@ -1887,7 +1884,7 @@ class MainWindow(QMainWindow):
                 "task_id": t.task_id,
                 "brief": t.brief,
                 "status": t.status.value,
-                "target_agent": t.target_agent.value,
+                "target_agent": t.target_agent,
             }
             for t in waitlist
         ]
@@ -2033,13 +2030,7 @@ class MainWindow(QMainWindow):
 
     def _handle_report_message(self, message: ReportMessage) -> None:
         """Handle ReportMessage and show sub-agent reports in main panel."""
-        from enum import Enum
-
-        agent_str = (
-            message.agent_type.value
-            if isinstance(message.agent_type, Enum)
-            else str(message.agent_type)
-        )
+        agent_str = normalize_agent_id(message.agent_type)
         summary = str(getattr(message, "summary", "") or "").strip()
         bubble_title = summary or MainWindow._respond_summary(self, agent_str, message.content)
         if self._is_visible_agent("main"):
@@ -2067,13 +2058,7 @@ class MainWindow(QMainWindow):
 
     def _handle_system_notice(self, message: SystemNotice) -> None:
         """Handle SystemNotice and render in target agent panel."""
-        from enum import Enum
-
-        agent_str = (
-            message.agent_type.value
-            if isinstance(message.agent_type, Enum)
-            else str(message.agent_type)
-        )
+        agent_str = normalize_agent_id(message.agent_type)
         bubble_title = None
         is_interrupt = getattr(message, "kind", "notice") == "interrupt"
         display_mode = "inline_notice" if is_interrupt else "bubble"
@@ -2117,12 +2102,8 @@ class MainWindow(QMainWindow):
 
     def _handle_task_update_msg(self, message) -> None:
         """Handle TaskUpdateMessage — display task notification in relevant panels."""
-        from enum import Enum
-
-        src = message.source_agent
-        src_str = src.value if isinstance(src, Enum) else str(src)
-        tgt = message.target_agent
-        tgt_str = tgt.value if isinstance(tgt, Enum) else str(tgt)
+        src_str = normalize_agent_id(message.source_agent)
+        tgt_str = normalize_agent_id(message.target_agent)
 
         agents_to_sync = {src_str, tgt_str}
         if "main" in agents_to_sync:
@@ -2157,13 +2138,9 @@ class MainWindow(QMainWindow):
         )
         if task_board is None:
             return
-        try:
-            agent_enum = AgentType(agent_type)
-        except ValueError:
-            return
         session_id = self._conv_store.get_current_session_id(agent_type)
-        todolist = task_board.get_todolist(agent_enum, session_id=session_id)
-        waitlist = task_board.get_waitlist(agent_enum, session_id=session_id)
+        todolist = task_board.get_todolist(agent_type, session_id=session_id)
+        waitlist = task_board.get_waitlist(agent_type, session_id=session_id)
         if not todolist and not waitlist:
             return
         todo_rows = [{"brief": t.brief, "status": t.status.value} for t in todolist]

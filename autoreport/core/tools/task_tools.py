@@ -4,7 +4,13 @@ from typing import Any
 
 from loguru import logger
 
-from ...interfaces.types import AgentType, ReportMessage, TaskUpdateMessage
+from ...interfaces.types import (
+    AgentId,
+    AgentType,
+    ReportMessage,
+    TaskUpdateMessage,
+    normalize_agent_id,
+)
 from .registry import Tool
 from .session_utils import resolve_session_id
 
@@ -29,9 +35,15 @@ class ManageTasksTool(Tool):
         "- 'fail': Mark failed. Use 'task_ids' for batch."
     )
 
-    def __init__(self, task_board, agent_type: AgentType, bus, session_id_resolver=None):
+    def __init__(
+        self,
+        task_board,
+        agent_type: AgentId | AgentType,
+        bus,
+        session_id_resolver=None,
+    ):
         self._task_board = task_board
-        self._agent_type = agent_type
+        self._agent_type = normalize_agent_id(agent_type)
         self._bus = bus
         self._session_id_resolver = session_id_resolver
 
@@ -154,13 +166,13 @@ class ManageTasksTool(Tool):
         waitlist = self._task_board.get_waitlist(self._agent_type, session_id=sid)
         return {
             "status": "ok",
-            "agent_type": self._agent_type.value,
+            "agent_type": self._agent_type,
             "todolist": [
                 {
                     "task_id": t.task_id,
                     "brief": t.brief,
                     "status": t.status.value,
-                    "source_agent": t.source_agent.value,
+                    "source_agent": t.source_agent,
                 }
                 for t in todolist
             ],
@@ -169,7 +181,7 @@ class ManageTasksTool(Tool):
                     "task_id": t.task_id,
                     "brief": t.brief,
                     "status": t.status.value,
-                    "target_agent": t.target_agent.value,
+                    "target_agent": t.target_agent,
                 }
                 for t in waitlist
             ],
@@ -331,7 +343,7 @@ class ManageTasksTool(Tool):
                     {
                         "task_id": tid,
                         "status": "error",
-                        "error": f"Task {tid} is delegated from {task.source_agent.value}; reply_content is required",
+                        "error": f"Task {tid} is delegated from {task.source_agent}; reply_content is required",
                     }
                 )
                 continue

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from loguru import logger
 
-from ...interfaces.types import AgentType, TaskItem, TaskStatus
+from ...interfaces.types import AgentId, AgentType, TaskItem, TaskStatus, normalize_agent_id
 
 
 class TaskBoard:
@@ -31,8 +31,8 @@ class TaskBoard:
 
     def create_task(
         self,
-        source: AgentType,
-        target: AgentType,
+        source: AgentId | AgentType,
+        target: AgentId | AgentType,
         brief: str,
         blocking: bool = False,
         task_id: str | None = None,
@@ -43,8 +43,8 @@ class TaskBoard:
         task = TaskItem(
             task_id=task_id or self._next_id(),
             brief=text or "task",
-            source_agent=source,
-            target_agent=target,
+            source_agent=normalize_agent_id(source),
+            target_agent=normalize_agent_id(target),
             status=TaskStatus.PENDING,
             created_at=datetime.now(timezone.utc),
             blocking=blocking,
@@ -58,17 +58,19 @@ class TaskBoard:
         self,
         task_id: str,
         *,
-        target_agent: AgentType | None = None,
-        source_agent: AgentType | None = None,
+        target_agent: AgentId | AgentType | None = None,
+        source_agent: AgentId | AgentType | None = None,
         active_only: bool = False,
         session_id: str | None = None,
     ) -> TaskItem | None:
+        target_id = normalize_agent_id(target_agent) if target_agent is not None else None
+        source_id = normalize_agent_id(source_agent) if source_agent is not None else None
         for task in self._tasks:
             if task.task_id != task_id:
                 continue
-            if target_agent is not None and task.target_agent != target_agent:
+            if target_id is not None and task.target_agent != target_id:
                 continue
-            if source_agent is not None and task.source_agent != source_agent:
+            if source_id is not None and task.source_agent != source_id:
                 continue
             if active_only and task.status not in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS):
                 continue
@@ -84,16 +86,17 @@ class TaskBoard:
         self,
         task_id: str,
         *,
-        target_agent: AgentType | None = None,
+        target_agent: AgentId | AgentType | None = None,
         session_id: str | None = None,
     ) -> list[TaskItem]:
+        target_id = normalize_agent_id(target_agent) if target_agent is not None else None
         removed: list[TaskItem] = []
         kept: list[TaskItem] = []
         for task in self._tasks:
             if task.task_id != task_id:
                 kept.append(task)
                 continue
-            if target_agent is not None and task.target_agent != target_agent:
+            if target_id is not None and task.target_agent != target_id:
                 kept.append(task)
                 continue
             if session_id is not None and task.session_id != session_id:
@@ -106,7 +109,7 @@ class TaskBoard:
     def start_task(
         self,
         task_id: str,
-        target_agent: AgentType | None = None,
+        target_agent: AgentId | AgentType | None = None,
         session_id: str | None = None,
     ) -> TaskItem:
         task = self._require_task(task_id, target_agent=target_agent, active_only=False, session_id=session_id)
@@ -119,7 +122,7 @@ class TaskBoard:
     def complete_task(
         self,
         task_id: str,
-        target_agent: AgentType | None = None,
+        target_agent: AgentId | AgentType | None = None,
         session_id: str | None = None,
     ) -> list[TaskItem]:
         return self._update_chain(task_id, TaskStatus.COMPLETED, target_agent=target_agent, session_id=session_id)
@@ -127,7 +130,7 @@ class TaskBoard:
     def fail_task(
         self,
         task_id: str,
-        target_agent: AgentType | None = None,
+        target_agent: AgentId | AgentType | None = None,
         session_id: str | None = None,
     ) -> list[TaskItem]:
         return self._update_chain(task_id, TaskStatus.FAILED, target_agent=target_agent, session_id=session_id)
@@ -135,7 +138,7 @@ class TaskBoard:
     def cancel_task(
         self,
         task_id: str,
-        target_agent: AgentType | None = None,
+        target_agent: AgentId | AgentType | None = None,
         session_id: str | None = None,
     ) -> list[TaskItem]:
         return self._update_chain(task_id, TaskStatus.CANCELLED, target_agent=target_agent, session_id=session_id)
@@ -143,7 +146,7 @@ class TaskBoard:
     def block_task(
         self,
         task_id: str,
-        target_agent: AgentType | None = None,
+        target_agent: AgentId | AgentType | None = None,
         session_id: str | None = None,
     ) -> list[TaskItem]:
         """Mark a delegated task BLOCKED and propagate up the chain to the dispatcher.
@@ -161,7 +164,7 @@ class TaskBoard:
         task_id: str,
         new_status: TaskStatus,
         *,
-        target_agent: AgentType | None = None,
+        target_agent: AgentId | AgentType | None = None,
         session_id: str | None = None,
     ) -> list[TaskItem]:
         task = self._require_task(task_id, target_agent=target_agent, active_only=False, session_id=session_id)
@@ -193,8 +196,8 @@ class TaskBoard:
         task.completed_at = datetime.now(timezone.utc)
 
     @staticmethod
-    def _agent_label(agent_type: AgentType) -> str:
-        return agent_type.value.replace("_", " ").title()
+    def _agent_label(agent_type: str) -> str:
+        return agent_type.replace("_", " ").replace("-", " ").title()
 
     def _source_followup_view(self, task: TaskItem) -> TaskItem:
         if task.status == TaskStatus.COMPLETED:
@@ -207,25 +210,28 @@ class TaskBoard:
             brief = task.brief
         return task.model_copy(update={"brief": brief, "status": TaskStatus.PENDING})
 
-    def get_todolist(self, agent_type: AgentType, session_id: str | None = None) -> list[TaskItem]:
+    def get_todolist(
+        self, agent_type: AgentId | AgentType, session_id: str | None = None
+    ) -> list[TaskItem]:
+        agent_id = normalize_agent_id(agent_type)
         active_assigned = [
             t for t in self._tasks
-            if t.target_agent == agent_type
+            if t.target_agent == agent_id
             and t.status in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED)
             and (session_id is None or t.session_id == session_id)
         ]
         local_resolved = [
             t for t in self._tasks
-            if t.source_agent == agent_type
-            and t.target_agent == agent_type
+            if t.source_agent == agent_id
+            and t.target_agent == agent_id
             and t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
             and (session_id is None or t.session_id == session_id)
         ]
         resolved_followups = [
             self._source_followup_view(t)
             for t in self._tasks
-            if t.source_agent == agent_type
-            and t.target_agent != agent_type
+            if t.source_agent == agent_id
+            and t.target_agent != agent_id
             and t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
             and (session_id is None or t.session_id == session_id)
         ]
@@ -239,15 +245,18 @@ class TaskBoard:
             merged.append(t)
         return merged
 
-    def get_waitlist(self, agent_type: AgentType, session_id: str | None = None) -> list[TaskItem]:
+    def get_waitlist(
+        self, agent_type: AgentId | AgentType, session_id: str | None = None
+    ) -> list[TaskItem]:
+        agent_id = normalize_agent_id(agent_type)
         # Waitlist = tasks this agent delegated to *another* agent. Keep
         # resolved delegated tasks visible as completed/failed/cancelled wait
         # entries so the source agent retains the "what I was waiting on"
         # history while also seeing the resolved follow-up in todolist.
         return [
             t for t in self._tasks
-            if t.source_agent == agent_type
-            and t.target_agent != agent_type
+            if t.source_agent == agent_id
+            and t.target_agent != agent_id
             and t.status in (
                 TaskStatus.PENDING,
                 TaskStatus.IN_PROGRESS,
@@ -258,31 +267,38 @@ class TaskBoard:
             and (session_id is None or t.session_id == session_id)
         ]
 
-    def get_blocked_waitlist(self, agent_type: AgentType, session_id: str | None = None) -> list[TaskItem]:
+    def get_blocked_waitlist(
+        self, agent_type: AgentId | AgentType, session_id: str | None = None
+    ) -> list[TaskItem]:
         """Tasks this agent dispatched that are currently BLOCKED (need its action)."""
+        agent_id = normalize_agent_id(agent_type)
         return [
             t for t in self._tasks
-            if t.source_agent == agent_type
-            and t.target_agent != agent_type
+            if t.source_agent == agent_id
+            and t.target_agent != agent_id
             and t.status == TaskStatus.BLOCKED
             and (session_id is None or t.session_id == session_id)
         ]
 
     def get_all_tasks(self) -> dict[str, dict[str, list[TaskItem]]]:
-        result: dict[str, dict[str, list[TaskItem]]] = {}
-        for agent in AgentType:
-            result[agent.value] = {
-                "todolist": self.get_todolist(agent),
-                "waitlist": self.get_waitlist(agent),
+        agent_ids = sorted(
+            {task.source_agent for task in self._tasks}
+            | {task.target_agent for task in self._tasks}
+        )
+        return {
+            agent_id: {
+                "todolist": self.get_todolist(agent_id),
+                "waitlist": self.get_waitlist(agent_id),
             }
-        return result
+            for agent_id in agent_ids
+        }
 
     def _require_task(
         self,
         task_id: str,
         *,
-        target_agent: AgentType | None = None,
-        source_agent: AgentType | None = None,
+        target_agent: AgentId | AgentType | None = None,
+        source_agent: AgentId | AgentType | None = None,
         active_only: bool = False,
         session_id: str | None = None,
     ) -> TaskItem:
