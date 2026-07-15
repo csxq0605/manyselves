@@ -24,6 +24,12 @@ def test_ensure_project_structure_creates_canonical_case_only(tmp_path: Path) ->
     ensure_project_structure(tmp_path)
 
     for rel in (
+        "Inputs",
+        "Knowledge",
+        "Work/runs",
+        "Outputs/Modules",
+        "Outputs/Reviews",
+        "Outputs/Reports",
         "Data",
         "Data/Processed",
         "References",

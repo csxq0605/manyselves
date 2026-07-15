@@ -210,7 +210,8 @@ class TaskBoard:
     def get_todolist(self, agent_type: AgentType, session_id: str | None = None) -> list[TaskItem]:
         active_assigned = [
             t for t in self._tasks
-            if t.target_agent == agent_type and t.status in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS)
+            if t.target_agent == agent_type
+            and t.status in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED)
             and (session_id is None or t.session_id == session_id)
         ]
         local_resolved = [

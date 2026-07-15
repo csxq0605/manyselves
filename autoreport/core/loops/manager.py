@@ -27,6 +27,7 @@ from ..tools import (
     PDFParseTool,
     ReadTool,
     RespondTool,
+    RunReportingWorkflowTool,
     SendToAgentTool,
     SkillLoader,
     TaskBoard,
@@ -316,6 +317,13 @@ class LoopManager:
 
         # Inter-agent communication tools
         if agent_type == AgentType.MAIN:
+            registry.register(
+                RunReportingWorkflowTool(
+                    workspace=self.workspace,
+                    bus=self.bus,
+                    task_board=self._task_board,
+                )
+            )
             registry.register(
                 SendToAgentTool(
                     bus=self.bus,

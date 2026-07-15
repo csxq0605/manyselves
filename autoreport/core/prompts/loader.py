@@ -105,7 +105,7 @@ class PromptLoader:
 
     def _get_fallback_prompt(self, agent_type: str) -> str:
         fallbacks = {
-            "main": "You are the Main Agent for an automated physics experiment report writing system. Coordinate sub-agents and communicate with users.",
+            "main": "你是本地配电报告 Main Agent。使用 run_reporting_workflow 协调配电报告任务。",
             "data_analysis": "You are the Data Analysis Agent. Read experimental data, process it, and generate analysis results.",
             "plotting": "You are the Plotting Agent. Create data visualizations using matplotlib.",
             "theory": "You are the Theory Agent. Analyze reference materials and provide theoretical derivations.",

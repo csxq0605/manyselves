@@ -8,8 +8,15 @@ from pathlib import Path
 
 from loguru import logger
 
-
 PROJECT_DIRECTORIES = (
+    "Inputs",
+    "Knowledge",
+    "Work",
+    "Work/runs",
+    "Outputs",
+    "Outputs/Modules",
+    "Outputs/Reviews",
+    "Outputs/Reports",
     "Data",
     "Data/Processed",
     "References",
@@ -22,7 +29,18 @@ PROJECT_DIRECTORIES = (
     "Tex",
 )
 
-TOP_LEVEL_PROJECT_DIRECTORIES = ("Data", "References", "Theory", "Plots", "Outline", "Tex")
+TOP_LEVEL_PROJECT_DIRECTORIES = (
+    "Inputs",
+    "Knowledge",
+    "Work",
+    "Outputs",
+    "Data",
+    "References",
+    "Theory",
+    "Plots",
+    "Outline",
+    "Tex",
+)
 
 _LEGACY_PROJECT_MARKERS = ("data", "references", "theory", "plots", "tex")
 
@@ -38,6 +56,15 @@ def ensure_project_structure(workspace: Path) -> None:
     """Create the canonical project layout and migrate old directory casing."""
     workspace = Path(workspace)
     workspace.mkdir(parents=True, exist_ok=True)
+
+    _ensure_child_case(workspace, "Inputs")
+    _ensure_child_case(workspace, "Knowledge")
+    work_dir = _ensure_child_case(workspace, "Work")
+    _ensure_child_case(work_dir, "runs")
+    outputs_dir = _ensure_child_case(workspace, "Outputs")
+    _ensure_child_case(outputs_dir, "Modules")
+    _ensure_child_case(outputs_dir, "Reviews")
+    _ensure_child_case(outputs_dir, "Reports")
 
     data_dir = _ensure_child_case(workspace, "Data")
     _ensure_child_case(data_dir, "Processed")

@@ -109,3 +109,11 @@ def test_get_filename_unknown_type(agents_dir):
 def test_get_filename_normalizes_hyphens(agents_dir):
     loader = PromptLoader(agents_dir=agents_dir)
     assert loader._get_filename("data-analysis") == "data_analysis_agent.md"
+
+
+def test_packaged_main_prompt_routes_distribution_reports_through_workflow_tool():
+    prompt = PromptLoader().load_prompt("main")
+
+    assert "run_reporting_workflow" in prompt
+    assert "配电报告" in prompt
+    assert "automated physics experiment" not in prompt.lower()

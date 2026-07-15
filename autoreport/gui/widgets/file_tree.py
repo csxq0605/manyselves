@@ -51,7 +51,18 @@ def warning_box(*args, **kwargs):
     return _warning_box(*args, **kwargs)
 
 # Fixed directory structure
-FIXED_DIRECTORIES = ["Data", "References", "Theory", "Plots", "Outline", "Tex"]
+FIXED_DIRECTORIES = [
+    "Data",
+    "References",
+    "Theory",
+    "Plots",
+    "Outline",
+    "Tex",
+    "Inputs",
+    "Knowledge",
+    "Work",
+    "Outputs",
+]
 FILE_TREE_CONTENT_LEFT_INSET = 16
 _FILE_TEXT_ICON_GAP_ADJUST = 28
 _FILE_EDITOR_LEFT_ADJUST = -26
@@ -163,6 +174,10 @@ class _FileTreeDelegate(QStyledItemDelegate):
 
 # Directory display labels (VSCode style: concise, title case)
 DIR_LABELS = {
+    "Inputs": "Inputs",
+    "Knowledge": "Knowledge",
+    "Work": "Work",
+    "Outputs": "Outputs",
     "Data": "Data",
     "References": "References",
     "Theory": "Theory",

@@ -73,6 +73,7 @@ def test_create_tools_for_main(manager):
     assert "exec" not in tool_names
     # MAIN is the only agent that can dispatch to sub-agents.
     assert "send_to_agent" in tool_names
+    assert "run_reporting_workflow" in tool_names
     assert "respond" not in tool_names
 
 

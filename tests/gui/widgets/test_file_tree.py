@@ -32,7 +32,18 @@ from autoreport.gui.widgets.file_tree import (
 def test_fixed_directories_constant() -> None:
     """Test that fixed directories are correctly defined."""
     assert isinstance(FIXED_DIRECTORIES, list)
-    assert set(FIXED_DIRECTORIES) == {"Data", "References", "Theory", "Plots", "Outline", "Tex"}
+    assert set(FIXED_DIRECTORIES) == {
+        "Inputs",
+        "Knowledge",
+        "Work",
+        "Outputs",
+        "Data",
+        "References",
+        "Theory",
+        "Plots",
+        "Outline",
+        "Tex",
+    }
 
 
 def test_file_tree_class_has_required_methods() -> None:
