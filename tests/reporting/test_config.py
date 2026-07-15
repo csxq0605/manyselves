@@ -40,6 +40,46 @@ def test_loads_agent_frontmatter_and_instruction_body(tmp_path: Path) -> None:
     assert "可追溯证据" in agent.instructions
 
 
+def test_load_nexgent_style_agent_definition(tmp_path: Path) -> None:
+    path = tmp_path / "agent.md"
+    path.write_text(
+        """---
+name: module-2.4-specialist
+description: 配电设备与元件风险诊断专家
+model: inherit
+tools: [search_project_evidence, search_reference_library, submit_result]
+disallowedTools: [exec]
+maxTurns: 12
+effort: high
+memory: task
+background: true
+reads: [evidence_items]
+writes: [module_drafts]
+---
+<role_and_perspective>从设备机理与运行条件综合判断。</role_and_perspective>
+""",
+        encoding="utf-8",
+    )
+
+    definition = load_agent_definition(path)
+
+    assert definition.name == "module-2.4-specialist"
+    assert definition.disallowed_tools == ["exec"]
+    assert definition.max_turns == 12
+
+
+def test_agent_definition_rejects_tools_that_are_also_disallowed(tmp_path: Path) -> None:
+    path = tmp_path / "agent.md"
+    path.write_text(
+        "---\nname: auditor\ndescription: 审计员\ntools: [exec]\n"
+        "disallowedTools: [exec]\n---\n独立核验。",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="tools also listed in disallowedTools"):
+        load_agent_definition(path)
+
+
 def test_workflow_rejects_unknown_agent(tmp_path: Path) -> None:
     agent = load_agent_definition(_write_agent(tmp_path / "known.md", "known"))
     workflow = tmp_path / "workflow.yml"

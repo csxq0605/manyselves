@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 KNOWN_CARRIERS = {
     "report_request",
@@ -24,15 +24,32 @@ class ConfigurationError(ValueError):
 
 
 class AgentDefinition(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    id: str = Field(min_length=1)
-    role: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    model: str = "inherit"
+    tools: list[str] = Field(default_factory=list)
+    disallowed_tools: list[str] = Field(default_factory=list, alias="disallowedTools")
+    max_turns: int = Field(default=8, ge=1, le=40, alias="maxTurns")
+    effort: Literal["low", "medium", "high"] = "medium"
+    memory: Literal["task", "session"] = "task"
+    background: bool = True
     reads: list[str] = Field(default_factory=list)
     writes: list[str] = Field(default_factory=list)
-    tools: list[str] = Field(default_factory=list)
     instructions: str = Field(min_length=1)
     source_path: Path
+
+    @property
+    def id(self) -> str:
+        return self.name
+
+    @model_validator(mode="after")
+    def tool_sets_do_not_overlap(self) -> "AgentDefinition":
+        overlap = sorted(set(self.tools) & set(self.disallowed_tools))
+        if overlap:
+            raise ValueError(f"tools also listed in disallowedTools: {overlap}")
+        return self
 
 
 class PhaseDefinition(BaseModel):
@@ -72,6 +89,10 @@ def load_agent_definition(path: Path) -> AgentDefinition:
 
     path = Path(path)
     data, instructions = _frontmatter(path.read_text(encoding="utf-8"), path)
+    if "name" not in data and "id" in data:
+        data["name"] = data.pop("id")
+    if "description" not in data and "role" in data:
+        data["description"] = data.pop("role")
     try:
         definition = AgentDefinition(
             **data,
@@ -87,14 +108,14 @@ def load_agent_definition(path: Path) -> AgentDefinition:
 
 
 def load_agent_definitions(directory: Path) -> dict[str, AgentDefinition]:
-    """Load all Agent definitions in a directory and reject duplicate IDs."""
+    """Load all Agent definitions in a directory and reject duplicate names."""
 
     agents: dict[str, AgentDefinition] = {}
     for path in sorted(Path(directory).glob("*.md")):
         definition = load_agent_definition(path)
-        if definition.id in agents:
-            raise ConfigurationError(f"duplicate agent id: {definition.id}")
-        agents[definition.id] = definition
+        if definition.name in agents:
+            raise ConfigurationError(f"duplicate agent name: {definition.name}")
+        agents[definition.name] = definition
     return agents
 
 
