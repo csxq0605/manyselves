@@ -63,12 +63,15 @@ Install from source:
 git clone https://github.com/csxq0605/autoreport-power-distribution.git
 cd autoreport-power-distribution
 uv sync
+uv run autoreport
 ```
 
-Run:
+Without `uv`, use a Python 3.12 virtual environment inside the repository:
 
 ```bash
-uv run autoreport
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e .
+.venv/bin/autoreport
 ```
 
 The start window lets users open an existing project folder, create a new project, configure API providers, or resume a recent project.

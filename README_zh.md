@@ -61,12 +61,15 @@ AutoReport 源码已经直接迁入本仓库，不是运行时依赖；Nexgent �
 git clone https://github.com/csxq0605/autoreport-power-distribution.git
 cd autoreport-power-distribution
 uv sync
+uv run autoreport
 ```
 
-运行：
+如果本机没有 `uv`，使用仓库内部的 Python 3.12 虚拟环境：
 
 ```bash
-uv run autoreport
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e .
+.venv/bin/autoreport
 ```
 
 启动窗口用于打开已有项目文件夹、新建项目、配置 API Provider，或从最近项目列表恢复工作。
