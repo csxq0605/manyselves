@@ -445,7 +445,7 @@ class ReportingService:
         )
 
         report_state = build_report_state(
-            title="配电安全评估报告",
+            title="配电安全专家咨询报告",
             request=state["request"],
             manifest=state["project_manifest"],
             coverage=state["coverage_matrix"],
@@ -461,7 +461,7 @@ class ReportingService:
         expected_template_hash = self.report_template_hash_path.read_text(encoding="utf-8").split()[
             0
         ]
-        report_relative = Path("Outputs") / "Reports" / "配电安全评估报告.docx"
+        report_relative = Path("Outputs") / "Reports" / "配电安全专家咨询报告.docx"
         render_result = DocxRenderer(
             self.report_template_path,
             asset_root=self.workspace,

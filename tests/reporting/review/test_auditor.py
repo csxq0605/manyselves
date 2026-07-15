@@ -113,3 +113,32 @@ def test_auditor_records_ng_without_photo_as_warning() -> None:
 
     assert any(issue.kind == "missing_photo" and issue.severity == "warning" for issue in issues)
     assert not any(issue.severity == "blocking" for issue in issues)
+
+
+def test_auditor_deduplicates_missing_photo_by_evidence() -> None:
+    evidence = _evidence(
+        submodule_id="2.4.2.5",
+        fact="电缆状态=NG",
+        value=None,
+        unit=None,
+        needs_confirmation=True,
+    )
+    claims = [
+        _claim(
+            claim_id=f"claim-{index}",
+            submodule_id="2.4.2.5",
+            text="该异常缺少配套照片，需复核。",
+            skill_id="pds.module24.installation@1.0.0",
+        )
+        for index in range(2)
+    ]
+    draft = ModuleDraft(
+        module_id="2.4",
+        markdown="draft",
+        evidence_ids=["ev-1"],
+        claims=claims,
+    )
+
+    issues = audit_draft(draft, [evidence], SkillResolver.packaged())
+
+    assert len([issue for issue in issues if issue.kind == "missing_photo"]) == 1

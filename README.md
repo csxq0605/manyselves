@@ -15,7 +15,7 @@ English | [中文](README_zh.md)
 
 ## Overview
 
-This repository is the independent power-distribution report product based directly on the AutoReport desktop codebase. The current migration keeps AutoReport's complete PyQt workspace, project/file management, preview, chat, provider configuration, MessageBus, TaskBoard, tools, and agent runtime while the physics-specific workflow is replaced incrementally by the approved power-distribution Phase A flow.
+This repository is the independent power-distribution report product based directly on the AutoReport desktop codebase. The Phase A module 2.4 vertical slice is now implemented locally: the three core workbooks, WPS `DISPIMG` media, submodule coverage, versioned skills, auditable claims, local revision, ReportState, and template-backed DOCX delivery all run inside the existing AutoReport runtime.
 
 The upstream AutoReport source is preserved as the implementation base, not used as a runtime dependency. Nexgent is only a design reference for declarative agent definitions and phase/pipeline/parallel orchestration.
 
@@ -86,6 +86,24 @@ export OPENAI_API_KEY="sk-..."
 export DEEPSEEK_API_KEY="sk-..."
 autoreport
 ```
+
+## Power-distribution Phase A workflow
+
+Customer inputs belong under the project `Inputs/` directory. Dedicated adapters currently recognize `S2-1收资表.xlsx`, `S4-4诊断工作用表.xlsx`, and `S4-6评估总表.xlsx`. The Main Agent tool builds the manifest and evidence store, evaluates exact submodule coverage, generates evidence-bound module 2.4 claims, audits them, and writes:
+
+```text
+Work/manifest.json
+Work/evidence.jsonl
+Work/coverage.json
+Work/photo-manifest.json
+Work/report-state.json
+Outputs/Modules/2.4.md
+Outputs/Reviews/phase-a.json
+Outputs/Reports/配电安全专家咨询报告.docx
+Outputs/Reports/render-log.json
+```
+
+`missing_evidence_policy` supports `ask`, `block`, `skip`, and `draft`. Arbitrary spreadsheet rows cannot make a submodule ready. A hard regression gate prevents the measured 96.99% load rate from being described as an existing overload; quantitative and material claims preserve Evidence IDs and Skill versions, while an NG row without its paired photo produces a supplementation warning.
 
 ## MinerU Integration
 

@@ -4,7 +4,9 @@ import hashlib
 from pathlib import Path
 
 from docx import Document
+from docx.enum.style import WD_STYLE_TYPE
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
 
 from ..models import ClaimKind, ReportingModel
@@ -38,6 +40,7 @@ class DocxRenderer:
             raise FileNotFoundError(f"DOCX template not found: {self.template_path}")
         document = Document(self.template_path)
         self._clear_template_body(document)
+        self._set_document_fonts(document)
         self._add_title(document, state.title)
 
         evidence_by_id = {item.id: item for item in state.evidence_items}
@@ -130,6 +133,17 @@ class DocxRenderer:
         run.bold = True
         run.font.size = Pt(24)
         document.add_paragraph("基于已审计客户证据生成")
+
+    @staticmethod
+    def _set_document_fonts(document: Document) -> None:
+        for style in document.styles:
+            if style.type != WD_STYLE_TYPE.PARAGRAPH:
+                continue
+            properties = style.element.get_or_add_rPr()
+            fonts = properties.get_or_add_rFonts()
+            fonts.set(qn("w:eastAsia"), "Hiragino Sans GB")
+            fonts.set(qn("w:ascii"), "Arial")
+            fonts.set(qn("w:hAnsi"), "Arial")
 
     @staticmethod
     def _set_optional_style(paragraph, document: Document, *names: str) -> None:

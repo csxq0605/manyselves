@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from docx import Document
+from docx.oxml.ns import qn
 
 from autoreport.core.reporting.coverage import evaluate_coverage
 from autoreport.core.reporting.models import (
@@ -94,3 +95,6 @@ def test_docx_renderer_writes_headings_issue_table_and_image_fallback(
     assert any("图片缺失：ID_MISSING" in text for text in texts)
     assert rendered.tables
     assert rendered.tables[-1].cell(0, 0).text == "子模块"
+    for style_name in ("Normal", "Heading 1", "Heading 2"):
+        style = rendered.styles[style_name]
+        assert style.element.rPr.rFonts.get(qn("w:eastAsia")) == "Hiragino Sans GB"

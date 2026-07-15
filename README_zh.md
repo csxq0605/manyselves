@@ -13,7 +13,7 @@
 
 </div>
 
-本仓库是在 AutoReport 完整桌面代码底座上改造的独立配电报告产品。当前迁移保留 AutoReport 原有的 PyQt 工作区、项目与文件管理、文件预览、主 Agent 对话、模型配置、MessageBus、TaskBoard、工具和 Agent 运行时，并在同一套运行时内逐步用已确认的配电报告 Phase A 流程替换物理实验业务。
+本仓库是在 AutoReport 完整桌面代码底座上改造的独立配电报告产品。当前已完成配电报告 Phase A 的 2.4 纵向迁移：三张核心工作簿、WPS `DISPIMG` 图片、子模块覆盖判断、版本化 Skill、可审计 Claim、局部返工、ReportState 与模板化 DOCX 均运行在同一套 AutoReport runtime 内。
 
 AutoReport 源码已经直接迁入本仓库，不是运行时依赖；Nexgent 只用于借鉴声明式 Agent 定义和 phase/pipeline/parallel 编排思想。
 
@@ -84,6 +84,30 @@ export OPENAI_API_KEY="sk-..."
 export DEEPSEEK_API_KEY="sk-..."
 autoreport
 ```
+
+## 配电报告 Phase A 工作流
+
+客户项目必须把输入文件放在 `Inputs/`。当前专用适配器识别：
+
+- `S2-1收资表.xlsx`：资料具备情况、有效性与缺口；
+- `S4-4诊断工作用表.xlsx`：现场明细、测量值、同排状态与 WPS 图片；
+- `S4-6评估总表.xlsx`：既有汇总结论与建议，统一标记为待原始证据复核。
+
+Main Agent 调用 `run_reporting_workflow` 后依次生成 Manifest、Evidence、子模块 Coverage、2.4 Claim、审校结果和 DOCX。`missing_evidence_policy` 支持 `ask`、`block`、`skip`、`draft`；任意 Excel 行不能替代精确子模块证据。运行产物只写项目内：
+
+```text
+Work/manifest.json
+Work/evidence.jsonl
+Work/coverage.json
+Work/photo-manifest.json
+Work/report-state.json
+Outputs/Modules/2.4.md
+Outputs/Reviews/phase-a.json
+Outputs/Reports/配电安全专家咨询报告.docx
+Outputs/Reports/render-log.json
+```
+
+Phase A 对 96.99% 负荷率有硬门禁：它低于 100%，不得写成当前已过载；只允许提示容量余量和负荷继续增长风险。所有定量/重要判断保存 Evidence ID 与 Skill 版本，NG 缺同排照片时生成补证警告。
 
 ## MinerU 集成
 

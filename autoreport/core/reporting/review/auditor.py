@@ -92,7 +92,7 @@ def audit_draft(
                     ReviewIssue(
                         module_id=draft.module_id,
                         submodule_id=claim.submodule_id,
-                        claim_id=claim.id,
+                        claim_id=None,
                         kind="missing_photo",
                         message=f"证据 {evidence_id} 为 NG，但缺少同一行照片",
                         severity="warning",

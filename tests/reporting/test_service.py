@@ -54,7 +54,7 @@ async def test_phase_a_writes_traceable_module_output_from_core_workbook(tmp_pat
     assert result.phases == ["intake", "coverage", "module", "quality"]
     module_path = tmp_path / "Outputs" / "Modules" / "2.4.md"
     assert module_path in result.output_paths
-    report_path = tmp_path / "Outputs" / "Reports" / "配电安全评估报告.docx"
+    report_path = tmp_path / "Outputs" / "Reports" / "配电安全专家咨询报告.docx"
     assert report_path in result.output_paths
     assert report_path.exists()
     module_text = module_path.read_text(encoding="utf-8")
