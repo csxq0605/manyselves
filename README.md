@@ -1,21 +1,23 @@
 <div align="center">
 
-![title](https://raw.githubusercontent.com/xjsongphy/AutoReport/master/assets/screenshots/title.png)
+![title](assets/screenshots/title.png)
 
-### A Multi-Agent Collaborative System for Automated Physics Experiment Report Writing
+### Local Multi-Agent Workspace for Power-Distribution Reports
 
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#)
 [![Python](https://img.shields.io/badge/python-%E2%89%A5%203.12-blue.svg)](https://www.python.org/)
 [![Built with PyQt6](https://img.shields.io/badge/built%20with-PyQt6-green.svg)](https://www.riverbankcomputing.com/software/pyqt/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/xjsongphy/AutoReport/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-English | [中文](https://github.com/xjsongphy/AutoReport/blob/master/README_zh.md)
+English | [中文](README_zh.md)
 
 </div>
 
 ## Overview
 
-A multi-agent collaborative automated physics experiment report writing system. Users provide experimental data and reference materials, then agents collaboratively generate LaTeX reports through theoretical derivation, data analysis, visualization, and typesetting.
+This repository is the independent power-distribution report product based directly on the AutoReport desktop codebase. The current migration keeps AutoReport's complete PyQt workspace, project/file management, preview, chat, provider configuration, MessageBus, TaskBoard, tools, and agent runtime while the physics-specific workflow is replaced incrementally by the approved power-distribution Phase A flow.
+
+The upstream AutoReport source is preserved as the implementation base, not used as a runtime dependency. Nexgent is only a design reference for declarative agent definitions and phase/pipeline/parallel orchestration.
 
 ## Features
 
@@ -55,36 +57,23 @@ The main workspace combines the project file tree, document preview, and agent c
 
 **Prerequisites:** Python >= 3.12, [uv](https://docs.astral.sh/uv/) package manager, TeX distribution, at least one LLM Provider API key.
 
-Install from PyPI:
-
-```bash
-pip install autoreport-gui
-autoreport
-```
-
-Or with `uv`:
-
-```bash
-uv pip install autoreport-gui
-autoreport
-```
-
 Install from source:
 
 ```bash
-git clone https://github.com/xjsongphy/AutoReport && cd AutoReport
+git clone https://github.com/csxq0605/autoreport-power-distribution.git
+cd autoreport-power-distribution
 uv sync
 ```
 
 Run:
 
 ```bash
-autoreport
+uv run autoreport
 ```
 
-The start window lets users open an existing experiment folder, create a new project, configure API providers, or resume a recent project.
+The start window lets users open an existing project folder, create a new project, configure API providers, or resume a recent project.
 
-![AutoReport start window](https://raw.githubusercontent.com/xjsongphy/AutoReport/master/assets/screenshots/start-window.png)
+![AutoReport start window](assets/screenshots/start-window.png)
 
 First launch prompts for API configuration. Pre-configure via environment variables:
 

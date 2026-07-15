@@ -1,14 +1,14 @@
 [project]
-name = "autoreport-gui"
+name = "autoreport-power-distribution"
 version = "1.2"
-description = "Agent-based automated physics experiment report writing system"
+description = "Local multi-agent power-distribution report workspace based on AutoReport"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [
     { name = "xjsongphy" },
 ]
-keywords = ["agents", "physics", "latex", "report", "pyqt6"]
+keywords = ["agents", "power-distribution", "report", "pyqt6"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: X11 Applications :: Qt",
@@ -19,7 +19,7 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
-    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering",
 ]
 dependencies = [
     "pydantic>=2.12.0,<3.0.0",
@@ -53,9 +53,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project.urls]
-Homepage = "https://github.com/xjsongphy/AutoReport"
-Repository = "https://github.com/xjsongphy/AutoReport"
-Issues = "https://github.com/xjsongphy/AutoReport/issues"
+Homepage = "https://github.com/csxq0605/autoreport-power-distribution"
+Repository = "https://github.com/csxq0605/autoreport-power-distribution"
+Issues = "https://github.com/csxq0605/autoreport-power-distribution/issues"
 
 [tool.hatch.build]
 exclude = [

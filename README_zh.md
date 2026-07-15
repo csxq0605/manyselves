@@ -1,19 +1,21 @@
 <div align="center">
 
-![title](https://raw.githubusercontent.com/xjsongphy/AutoReport/master/assets/screenshots/title.png)
+![title](assets/screenshots/title.png)
 
-### 基于多 Agent 协作的自动化物理实验报告撰写系统
+### 本地 GUI 配电报告多 Agent 工作区
 
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#)
 [![Python](https://img.shields.io/badge/python-%E2%89%A5%203.12-blue.svg)](https://www.python.org/)
 [![Built with PyQt6](https://img.shields.io/badge/built%20with-PyQt6-green.svg)](https://www.riverbankcomputing.com/software/pyqt/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/xjsongphy/AutoReport/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-[English](https://github.com/xjsongphy/AutoReport/blob/master/README.md) | 中文
+[English](README.md) | 中文
 
 </div>
 
-基于多 Agent 协作的自动化物理实验报告撰写系统。用户提供实验数据和参考资料，Agent 团队通过理论推导、数据分析、可视化绘图和 LaTeX 排版，自动生成完整的实验报告。
+本仓库是在 AutoReport 完整桌面代码底座上改造的独立配电报告产品。当前迁移保留 AutoReport 原有的 PyQt 工作区、项目与文件管理、文件预览、主 Agent 对话、模型配置、MessageBus、TaskBoard、工具和 Agent 运行时，并在同一套运行时内逐步用已确认的配电报告 Phase A 流程替换物理实验业务。
+
+AutoReport 源码已经直接迁入本仓库，不是运行时依赖；Nexgent 只用于借鉴声明式 Agent 定义和 phase/pipeline/parallel 编排思想。
 
 ## 功能特性
 
@@ -53,36 +55,23 @@
 
 **前置依赖：** Python >= 3.12、[uv](https://docs.astral.sh/uv/) 包管理器、TeX 发行版、至少一个 LLM Provider 的 API Key。
 
-从 PyPI 安装：
-
-```bash
-pip install autoreport-gui
-autoreport
-```
-
-或使用 `uv`：
-
-```bash
-uv pip install autoreport-gui
-autoreport
-```
-
 从源码安装：
 
 ```bash
-git clone https://github.com/xjsongphy/AutoReport && cd AutoReport
+git clone https://github.com/csxq0605/autoreport-power-distribution.git
+cd autoreport-power-distribution
 uv sync
 ```
 
 运行：
 
 ```bash
-autoreport
+uv run autoreport
 ```
 
-启动窗口用于打开已有实验文件夹、新建项目、配置 API Provider，或从最近项目列表恢复工作。
+启动窗口用于打开已有项目文件夹、新建项目、配置 API Provider，或从最近项目列表恢复工作。
 
-![AutoReport 启动窗口](https://raw.githubusercontent.com/xjsongphy/AutoReport/master/assets/screenshots/start-window.png)
+![AutoReport 启动窗口](assets/screenshots/start-window.png)
 
 首次启动会提示配置 API。也可通过环境变量预配置：
 
