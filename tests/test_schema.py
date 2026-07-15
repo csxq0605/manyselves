@@ -72,6 +72,18 @@ def test_settings_load_default():
         config_file.unlink(missing_ok=True)
 
 
+def test_settings_default_config_path_is_independent_of_cwd(monkeypatch, tmp_path):
+    import autoreport.config.schema as schema
+
+    expected = Path(schema.__file__).resolve().parents[2] / "autoreport.config.yaml"
+    monkeypatch.chdir(tmp_path)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.config_path == expected
+    assert settings.config_path.is_absolute()
+
+
 def test_settings_load_from_yaml():
     import yaml
 

@@ -110,7 +110,9 @@ Supports batch processing (max 200MB / 600 pages per file), text/image/table/for
 
 ## Configuration
 
-Configuration file: `autoreport.config.yaml`
+Configuration file: repository-root `autoreport.config.yaml`. AutoReport uses
+this same file regardless of the directory from which `uv run autoreport` is
+launched.
 
 The API configuration dialog manages provider presets, active provider selection, API keys, base URLs, and default models.
 

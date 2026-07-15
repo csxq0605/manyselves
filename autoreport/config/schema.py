@@ -6,6 +6,9 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_CONFIG_PATH = REPOSITORY_ROOT / "autoreport.config.yaml"
+
 
 class Base(BaseModel):
     """Base model with camelCase alias support."""
@@ -96,7 +99,7 @@ class Settings(BaseSettings):
     openrouter_api_key: str | None = Field(default=None, alias="OPENROUTER_API_KEY")
     groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")
 
-    config_path: Path = Field(default=Path("autoreport.config.yaml"))
+    config_path: Path = Field(default_factory=lambda: DEFAULT_CONFIG_PATH)
 
     def load_config(self) -> AppConfig:
         """Load configuration from YAML, migrating old format if needed."""
