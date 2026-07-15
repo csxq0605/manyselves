@@ -1,7 +1,6 @@
 """Phase A reporting service executed inside the AutoReport runtime."""
 
 import asyncio
-import hashlib
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -13,13 +12,13 @@ from ...interfaces.types import AgentType, SystemNotice
 from ..loops.bus import MessageBus
 from ..tools.task_board import TaskBoard
 from .config import AgentDefinition, load_packaged_workflow
+from .intake.manifest import build_manifest
 from .models import (
     REPORT_MODULE_IDS,
     CoverageEntry,
     CoverageMatrix,
     CoverageStatus,
     EvidenceItem,
-    ManifestFile,
     ModuleDraft,
     ModuleTask,
     OutputArtifact,
@@ -154,26 +153,7 @@ class ReportingService:
         )
 
     async def _build_manifest(self, state: dict) -> None:
-        files: list[ManifestFile] = []
-        ignored = {".git", ".autoreport", "Work", "Outputs", ".venv"}
-        candidates = sorted(
-            path
-            for path in self.workspace.rglob("*")
-            if path.is_file()
-            and path.suffix.lower() in {".xlsx", ".xlsm"}
-            and not (set(path.relative_to(self.workspace).parts) & ignored)
-        )
-        for index, path in enumerate(candidates, start=1):
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            files.append(
-                ManifestFile(
-                    id=f"file-{index:04d}",
-                    path=path.relative_to(self.workspace),
-                    sha256=digest,
-                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-            )
-        manifest = ProjectManifest(files=files)
+        manifest = build_manifest(self.workspace)
         state["project_manifest"] = manifest
         self.store.write_json("Work/manifest.json", manifest.model_dump(mode="json"))
 
