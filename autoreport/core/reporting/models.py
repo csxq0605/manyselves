@@ -39,7 +39,7 @@ class ReportRequest(ReportingModel):
     instruction: str = Field(min_length=1)
     target_modules: list[str] = Field(default_factory=lambda: list(REPORT_MODULE_IDS))
     execution_requirements: list[str] = Field(default_factory=list)
-    missing_evidence_policy: Literal["ask", "block"] = "ask"
+    missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "ask"
 
     @field_validator("target_modules")
     @classmethod
@@ -144,11 +144,37 @@ class CoverageStatus(StrEnum):
     BLOCKED = "blocked"
 
 
+class SubmoduleCoverageEntry(ReportingModel):
+    submodule_id: str
+    status: CoverageStatus
+    evidence_ids: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def submodule_is_fixed(self) -> "SubmoduleCoverageEntry":
+        resolve_submodule(self.submodule_id)
+        return self
+
+
 class CoverageEntry(ReportingModel):
     module_id: str
     status: CoverageStatus
     evidence_ids: list[str] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
+    submodules: dict[str, SubmoduleCoverageEntry] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def submodules_belong_to_module(self) -> "CoverageEntry":
+        mismatched = []
+        for key, entry in self.submodules.items():
+            definition = resolve_submodule(key)
+            if entry.submodule_id != key or definition.module_id != self.module_id:
+                mismatched.append(key)
+        if mismatched:
+            raise ValueError(
+                f"coverage submodules do not belong to module {self.module_id}: {mismatched}"
+            )
+        return self
 
 
 class CoverageMatrix(ReportingModel):
@@ -169,7 +195,11 @@ class CoverageMatrix(ReportingModel):
 class ModuleTask(ReportingModel):
     id: str = Field(min_length=1)
     module_id: str
-    evidence_ids: list[str]
+    evidence_ids: list[str] = Field(default_factory=list)
+    submodule_evidence: dict[str, list[str]] = Field(default_factory=dict)
+    missing_submodules: list[str] = Field(default_factory=list)
+    skipped_submodules: list[str] = Field(default_factory=list)
+    allow_unverified: bool = False
     revision: int = Field(default=0, ge=0)
 
 

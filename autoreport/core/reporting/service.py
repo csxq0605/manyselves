@@ -12,22 +12,22 @@ from ...interfaces.types import AgentType, SystemNotice
 from ..loops.bus import MessageBus
 from ..tools.task_board import TaskBoard
 from .config import AgentDefinition, load_packaged_workflow
+from .coverage import evaluate_coverage
 from .intake.manifest import build_manifest
+from .intake.wps_images import extract_wps_images
+from .mappers import map_s2_1, map_s4_4, map_s4_6
 from .models import (
-    REPORT_MODULE_IDS,
-    CoverageEntry,
-    CoverageMatrix,
-    CoverageStatus,
     EvidenceItem,
     ModuleDraft,
-    ModuleTask,
     OutputArtifact,
     ParsedArtifact,
+    PhotoAsset,
     ProjectManifest,
     ReportRequest,
     ReviewIssue,
     SourceLocation,
 )
+from .planner import CoveragePlanningError, plan_modules
 from .store import ReportingStore
 
 
@@ -87,7 +87,10 @@ class ReportingService:
                         await self._run_agent(self.agents[agent_id], state)
                 else:
                     await asyncio.gather(
-                        *(self._run_agent(self.agents[agent_id], state) for agent_id in phase.agents)
+                        *(
+                            self._run_agent(self.agents[agent_id], state)
+                            for agent_id in phase.agents
+                        )
                     )
         except MissingEvidenceError as exc:
             result = ReportingRunResult(
@@ -97,9 +100,7 @@ class ReportingService:
                 missing_evidence=exc.module_ids,
             )
             self._save_run(result)
-            await self._notice(
-                f"配电报告流程因缺少模块 {', '.join(exc.module_ids)} 的证据而阻塞。"
-            )
+            await self._notice(f"配电报告流程因缺少模块 {', '.join(exc.module_ids)} 的证据而阻塞。")
             return result
         except Exception as exc:
             result = ReportingRunResult(
@@ -161,6 +162,8 @@ class ReportingService:
         manifest: ProjectManifest = state["project_manifest"]
         artifacts: list[ParsedArtifact] = []
         for manifest_file in manifest.files:
+            if manifest_file.purpose in {"s2-1", "s4-4", "s4-6"}:
+                continue
             try:
                 workbook = load_workbook(
                     self.workspace / manifest_file.path,
@@ -171,7 +174,9 @@ class ReportingService:
                     rows = list(sheet.iter_rows(values_only=True))
                     if not rows:
                         continue
-                    headers = [str(value or f"column_{index + 1}") for index, value in enumerate(rows[0])]
+                    headers = [
+                        str(value or f"column_{index + 1}") for index, value in enumerate(rows[0])
+                    ]
                     for row_index, row in enumerate(rows[1:], start=2):
                         if not any(value not in (None, "") for value in row):
                             continue
@@ -198,6 +203,50 @@ class ReportingService:
 
     async def _normalize_evidence(self, state: dict) -> None:
         evidence: list[EvidenceItem] = []
+        manifest: ProjectManifest = state["project_manifest"]
+        photo_assets: list[PhotoAsset] = []
+        mapping_gaps: list[dict] = []
+        mappers = {
+            "s2-1": map_s2_1,
+            "s4-4": map_s4_4,
+            "s4-6": map_s4_6,
+        }
+        for manifest_file in manifest.files:
+            mapper = mappers.get(manifest_file.purpose or "")
+            if mapper is None:
+                continue
+            input_path = self.workspace / manifest_file.path
+            try:
+                if manifest_file.purpose == "s4-4":
+                    extracted = extract_wps_images(
+                        input_path,
+                        output_dir=self.workspace / "Work" / "assets" / manifest_file.id,
+                    )
+                    photo_assets.extend(
+                        asset.model_copy(update={"path": asset.path.relative_to(self.workspace)})
+                        for asset in extracted.values()
+                    )
+                mapped = mapper(input_path, file_id=manifest_file.id)
+                evidence.extend(
+                    item.model_copy(
+                        update={
+                            "source": item.source.model_copy(update={"path": manifest_file.path})
+                        }
+                    )
+                    for item in mapped.evidence_items
+                )
+                mapping_gaps.extend(
+                    {
+                        "file_id": manifest_file.id,
+                        **gap.model_dump(mode="json"),
+                    }
+                    for gap in mapped.gaps
+                )
+                manifest_file.parse_status = "parsed"
+            except Exception as exc:
+                manifest_file.parse_status = "failed"
+                manifest_file.error = str(exc)
+
         for artifact in state.get("parsed_artifacts", []):
             pairs = [
                 f"{header}={value}"
@@ -217,56 +266,36 @@ class ReportingService:
                 )
             )
         state["evidence_items"] = evidence
+        state["photo_assets"] = photo_assets
+        state["mapping_gaps"] = mapping_gaps
         self.store.write_jsonl(
             "Work/evidence.jsonl",
             [item.model_dump(mode="json") for item in evidence],
         )
+        self.store.write_json(
+            "Work/photo-manifest.json",
+            {"assets": [asset.model_dump(mode="json") for asset in photo_assets]},
+        )
+        self.store.write_json("Work/mapping-gaps.json", {"gaps": mapping_gaps})
+        self.store.write_json("Work/manifest.json", manifest.model_dump(mode="json"))
 
     async def _evaluate_coverage(self, state: dict) -> None:
         request: ReportRequest = state["request"]
         evidence: list[EvidenceItem] = state.get("evidence_items", [])
-        entries: dict[str, CoverageEntry] = {}
-        for module_id in REPORT_MODULE_IDS:
-            if module_id not in request.target_modules:
-                entries[module_id] = CoverageEntry(
-                    module_id=module_id,
-                    status=CoverageStatus.PENDING,
-                    gaps=["本轮未请求"],
-                )
-            elif evidence:
-                entries[module_id] = CoverageEntry(
-                    module_id=module_id,
-                    status=CoverageStatus.READY,
-                    evidence_ids=[item.id for item in evidence],
-                )
-            else:
-                entries[module_id] = CoverageEntry(
-                    module_id=module_id,
-                    status=CoverageStatus.BLOCKED,
-                    gaps=["未找到可解析的客户工作簿证据"],
-                )
-        coverage = CoverageMatrix(entries=entries)
+        coverage = evaluate_coverage(request, evidence)
         state["coverage_matrix"] = coverage
         self.store.write_json("Work/coverage.json", coverage.model_dump(mode="json"))
 
     async def _plan_modules(self, state: dict) -> None:
         request: ReportRequest = state["request"]
-        coverage: CoverageMatrix = state["coverage_matrix"]
-        blocked = [
-            module_id
-            for module_id in request.target_modules
-            if coverage.entries[module_id].status is CoverageStatus.BLOCKED
-        ]
-        if blocked:
-            raise MissingEvidenceError(blocked)
-        state["module_tasks"] = [
-            ModuleTask(
-                id=f"module-{module_id}",
-                module_id=module_id,
-                evidence_ids=coverage.entries[module_id].evidence_ids,
+        try:
+            state["module_tasks"] = plan_modules(
+                request,
+                state["coverage_matrix"],
+                state.get("evidence_items", []),
             )
-            for module_id in request.target_modules
-        ]
+        except CoveragePlanningError as exc:
+            raise MissingEvidenceError(exc.missing_submodules) from exc
 
     async def _draft_modules(self, state: dict) -> None:
         evidence_by_id = {item.id: item for item in state.get("evidence_items", [])}
@@ -276,7 +305,8 @@ class ReportingService:
             for evidence_id in task.evidence_ids:
                 item = evidence_by_id[evidence_id]
                 lines.append(
-                    f"- {item.fact} `[{item.id}: {item.source.path}#{item.source.sheet}!{item.source.cell}]`"
+                    f"- {item.subject}：{item.fact} "
+                    f"`[{item.id}: {item.source.path}#{item.source.sheet}!{item.source.cell}]`"
                 )
             drafts.append(
                 ModuleDraft(
@@ -322,11 +352,7 @@ class ReportingService:
             )
         review_path = self.store.write_json(
             "Outputs/Reviews/phase-a.json",
-            {
-                "issues": [
-                    issue.model_dump(mode="json") for issue in state.get("review_issues", [])
-                ]
-            },
+            {"issues": [issue.model_dump(mode="json") for issue in state.get("review_issues", [])]},
         )
         output_artifacts.append(
             OutputArtifact(kind="review", path=review_path.relative_to(self.workspace))

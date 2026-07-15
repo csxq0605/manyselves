@@ -17,34 +17,37 @@ async def test_phase_a_blocks_without_customer_evidence(tmp_path: Path) -> None:
     board = TaskBoard()
     service = ReportingService(tmp_path, bus=bus, task_board=board)
 
-    result = await service.run(
-        ReportRequest(instruction="生成 2.4 模块", target_modules=["2.4"])
-    )
+    result = await service.run(ReportRequest(instruction="生成 2.4 模块", target_modules=["2.4"]))
 
     assert result.status == "blocked"
-    assert result.missing_evidence == ["2.4"]
+    assert "2.4.1.1" in result.missing_evidence
     coverage = json.loads((tmp_path / "Work" / "coverage.json").read_text(encoding="utf-8"))
-    assert coverage["entries"]["2.4"]["status"] == "blocked"
+    assert coverage["entries"]["2.4"]["status"] == "pending"
     assert not (tmp_path / "Outputs" / "Modules" / "2.4.md").exists()
     assert any(task.status is TaskStatus.BLOCKED for task in board.get_todolist(AgentType.MAIN))
 
 
 @pytest.mark.asyncio
-async def test_phase_a_writes_traceable_module_output_from_workbook(tmp_path: Path) -> None:
+async def test_phase_a_writes_traceable_module_output_from_core_workbook(tmp_path: Path) -> None:
     inputs = tmp_path / "Inputs"
     inputs.mkdir()
     workbook = Workbook()
     sheet = workbook.active
-    sheet.title = "测温记录"
-    sheet.append(["设备", "温度"])
-    sheet.append(["1号进线柜", 80])
-    workbook.save(inputs / "巡检.xlsx")
+    sheet.title = "低配评估详情"
+    sheet.append([None] * 26)
+    sheet.append(["配电房", "低压柜", "运行电流(A)", "变压器容量(kVA)"] + [None] * 22)
+    sheet.append(["车间配电房", "1A2", 2300, 2500] + [None] * 22)
+    workbook.save(inputs / "S4-4诊断工作用表.xlsx")
 
     bus = MessageBus()
     board = TaskBoard()
     service = ReportingService(tmp_path, bus=bus, task_board=board)
     result = await service.run(
-        ReportRequest(instruction="生成 2.4 模块", target_modules=["2.4"])
+        ReportRequest(
+            instruction="生成 2.4 模块",
+            target_modules=["2.4"],
+            missing_evidence_policy="skip",
+        )
     )
 
     assert result.status == "completed"
@@ -52,10 +55,10 @@ async def test_phase_a_writes_traceable_module_output_from_workbook(tmp_path: Pa
     module_path = tmp_path / "Outputs" / "Modules" / "2.4.md"
     assert module_path in result.output_paths
     module_text = module_path.read_text(encoding="utf-8")
-    assert "1号进线柜" in module_text
-    assert "巡检.xlsx" in (tmp_path / "Work" / "evidence.jsonl").read_text(encoding="utf-8")
+    assert "车间配电房/1A2" in module_text
+    evidence_text = (tmp_path / "Work" / "evidence.jsonl").read_text(encoding="utf-8")
+    assert "S4-4诊断工作用表.xlsx" in evidence_text
+    evidence_rows = [json.loads(line) for line in evidence_text.splitlines()]
+    assert evidence_rows[0]["submodule_id"] == "2.4.1.1"
     assert bus._queue.qsize() >= 2
-    assert all(
-        task.status is TaskStatus.COMPLETED
-        for task in board.get_todolist(AgentType.MAIN)
-    )
+    assert all(task.status is TaskStatus.COMPLETED for task in board.get_todolist(AgentType.MAIN))

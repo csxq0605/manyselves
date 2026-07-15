@@ -23,7 +23,11 @@ async def test_reporting_tool_runs_phase_a_in_current_workspace(tmp_path: Path) 
         task_board=TaskBoard(),
     )
 
-    result = await tool(instruction="生成模块", target_modules=["2.1"])
+    result = await tool(
+        instruction="生成模块",
+        target_modules=["2.1"],
+        missing_evidence_policy="draft",
+    )
 
     assert result["status"] == "completed"
     assert result["output_paths"] == [
