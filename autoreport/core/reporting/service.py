@@ -28,7 +28,9 @@ from .models import (
     SourceLocation,
 )
 from .planner import CoveragePlanningError, plan_modules
+from .skills.resolver import SkillResolver
 from .store import ReportingStore
+from .workers.module_24 import Module24Worker
 
 
 class ReportingRunResult(BaseModel):
@@ -60,6 +62,7 @@ class ReportingService:
         self.task_board = task_board
         self.store = ReportingStore(self.workspace)
         self.agents, self.workflow = load_packaged_workflow()
+        self.module_24_worker = Module24Worker(SkillResolver.packaged())
         self._handlers: dict[str, Handler] = {
             "manifest-builder": self._build_manifest,
             "artifact-parser": self._parse_artifacts,
@@ -301,6 +304,9 @@ class ReportingService:
         evidence_by_id = {item.id: item for item in state.get("evidence_items", [])}
         drafts: list[ModuleDraft] = []
         for task in state.get("module_tasks", []):
+            if task.module_id == "2.4":
+                drafts.append(self.module_24_worker.run(task, list(evidence_by_id.values())))
+                continue
             lines = [f"# {task.module_id} 配电现状分析", ""]
             for evidence_id in task.evidence_ids:
                 item = evidence_by_id[evidence_id]
@@ -316,6 +322,11 @@ class ReportingService:
                 )
             )
         state["module_drafts"] = drafts
+        for draft in drafts:
+            self.store.write_json(
+                f"Work/drafts/{draft.module_id}.json",
+                draft.model_dump(mode="json"),
+            )
 
     async def _audit_evidence(self, state: dict) -> None:
         known = {item.id for item in state.get("evidence_items", [])}

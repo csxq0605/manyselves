@@ -56,6 +56,7 @@ async def test_phase_a_writes_traceable_module_output_from_core_workbook(tmp_pat
     assert module_path in result.output_paths
     module_text = module_path.read_text(encoding="utf-8")
     assert "车间配电房/1A2" in module_text
+    assert "pds.module24.configuration@1.0.0" in module_text
     evidence_text = (tmp_path / "Work" / "evidence.jsonl").read_text(encoding="utf-8")
     assert "S4-4诊断工作用表.xlsx" in evidence_text
     evidence_rows = [json.loads(line) for line in evidence_text.splitlines()]

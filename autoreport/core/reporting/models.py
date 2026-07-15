@@ -207,7 +207,10 @@ class ModuleDraft(ReportingModel):
     module_id: str
     markdown: str
     evidence_ids: list[str]
+    claims: list[Claim] = Field(default_factory=list)
     unverified_items: list[str] = Field(default_factory=list)
+    revision: int = Field(default=0, ge=0)
+    approved: bool = False
 
 
 class ReviewIssue(ReportingModel):
