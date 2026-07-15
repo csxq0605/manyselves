@@ -19,6 +19,7 @@ from .mappers import map_s2_1, map_s4_4, map_s4_6
 from .models import (
     EvidenceItem,
     ModuleDraft,
+    ModuleTask,
     OutputArtifact,
     ParsedArtifact,
     PhotoAsset,
@@ -28,6 +29,8 @@ from .models import (
     SourceLocation,
 )
 from .planner import CoveragePlanningError, plan_modules
+from .review.auditor import audit_draft
+from .review.revisions import RevisionLimitError, RevisionRouter
 from .skills.resolver import SkillResolver
 from .store import ReportingStore
 from .workers.module_24 import Module24Worker
@@ -62,7 +65,9 @@ class ReportingService:
         self.task_board = task_board
         self.store = ReportingStore(self.workspace)
         self.agents, self.workflow = load_packaged_workflow()
-        self.module_24_worker = Module24Worker(SkillResolver.packaged())
+        self.skills = SkillResolver.packaged()
+        self.module_24_worker = Module24Worker(self.skills)
+        self.revision_router = RevisionRouter(max_rounds=2)
         self._handlers: dict[str, Handler] = {
             "manifest-builder": self._build_manifest,
             "artifact-parser": self._parse_artifacts,
@@ -332,6 +337,15 @@ class ReportingService:
         known = {item.id for item in state.get("evidence_items", [])}
         issues: list[ReviewIssue] = []
         for draft in state.get("module_drafts", []):
+            if draft.module_id == "2.4":
+                issues.extend(
+                    audit_draft(
+                        draft,
+                        state.get("evidence_items", []),
+                        self.skills,
+                    )
+                )
+                continue
             missing = sorted(set(draft.evidence_ids) - known)
             if missing:
                 issues.append(
@@ -345,13 +359,69 @@ class ReportingService:
         state["review_issues"] = issues
 
     async def _route_revisions(self, state: dict) -> None:
-        blocking = [
-            issue.module_id
-            for issue in state.get("review_issues", [])
-            if issue.severity == "blocking"
-        ]
-        if blocking:
-            raise RuntimeError(f"evidence audit blocked modules: {', '.join(blocking)}")
+        evidence = state.get("evidence_items", [])
+        tasks = {task.module_id: task for task in state.get("module_tasks", [])}
+        final_drafts: list[ModuleDraft] = []
+        final_issues: list[ReviewIssue] = []
+        for draft in state.get("module_drafts", []):
+            module_issues = [
+                issue
+                for issue in state.get("review_issues", [])
+                if issue.module_id == draft.module_id
+            ]
+            if draft.module_id != "2.4":
+                if any(issue.severity == "blocking" for issue in module_issues):
+                    raise RuntimeError(f"evidence audit blocked module {draft.module_id}")
+                final_drafts.append(draft.model_copy(update={"approved": True}))
+                final_issues.extend(module_issues)
+                continue
+
+            parent_task = tasks[draft.module_id]
+            current = draft
+            while any(issue.severity == "blocking" for issue in module_issues):
+
+                def revise_submodule(
+                    submodule_id: str,
+                    _claims: list,
+                    _issues: list[ReviewIssue],
+                ) -> list:
+                    evidence_ids = parent_task.submodule_evidence.get(submodule_id, [])
+                    local_task = ModuleTask(
+                        id=f"{parent_task.id}-{submodule_id}-r{current.revision + 1}",
+                        module_id="2.4",
+                        evidence_ids=evidence_ids,
+                        submodule_evidence={submodule_id: evidence_ids},
+                        revision=current.revision + 1,
+                    )
+                    return self.module_24_worker.run(local_task, evidence).claims
+
+                try:
+                    current = self.revision_router.route(
+                        current,
+                        module_issues,
+                        revise_submodule,
+                    )
+                except RevisionLimitError as exc:
+                    state["revision_escalation"] = exc.payload
+                    self.store.write_json("Work/revision-escalation.json", exc.payload)
+                    raise RuntimeError(
+                        f"module {draft.module_id} exceeded local revision limit"
+                    ) from exc
+                module_issues = audit_draft(current, evidence, self.skills)
+
+            current = self.revision_router.route(
+                current,
+                module_issues,
+                lambda _submodule_id, claims, _issues: claims,
+            )
+            final_drafts.append(current)
+            final_issues.extend(module_issues)
+            self.store.write_json(
+                f"Work/drafts/{current.module_id}.json",
+                current.model_dump(mode="json"),
+            )
+        state["module_drafts"] = final_drafts
+        state["review_issues"] = final_issues
 
     async def _deliver(self, state: dict) -> None:
         output_artifacts: list[OutputArtifact] = []

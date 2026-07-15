@@ -215,9 +215,12 @@ class ModuleDraft(ReportingModel):
 
 class ReviewIssue(ReportingModel):
     module_id: str
+    submodule_id: str | None = None
+    claim_id: str | None = None
     kind: str = Field(min_length=1)
     message: str = Field(min_length=1)
     severity: Literal["warning", "blocking"]
+    round: int = Field(default=0, ge=0)
 
 
 class OutputArtifact(ReportingModel):

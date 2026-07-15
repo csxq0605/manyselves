@@ -61,5 +61,9 @@ async def test_phase_a_writes_traceable_module_output_from_core_workbook(tmp_pat
     assert "S4-4诊断工作用表.xlsx" in evidence_text
     evidence_rows = [json.loads(line) for line in evidence_text.splitlines()]
     assert evidence_rows[0]["submodule_id"] == "2.4.1.1"
+    draft_state = json.loads(
+        (tmp_path / "Work" / "drafts" / "2.4.json").read_text(encoding="utf-8")
+    )
+    assert draft_state["approved"] is True
     assert bus._queue.qsize() >= 2
     assert all(task.status is TaskStatus.COMPLETED for task in board.get_todolist(AgentType.MAIN))

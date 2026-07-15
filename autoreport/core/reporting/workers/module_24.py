@@ -26,6 +26,28 @@ _RISK_TEXT = {
 }
 
 
+def render_module_24_markdown(claims: list[Claim]) -> str:
+    claims_by_submodule: dict[str, list[Claim]] = defaultdict(list)
+    for claim in claims:
+        claims_by_submodule[claim.submodule_id].append(claim)
+    lines = ["# 2.4 供配电设备安全状态", ""]
+    definitions = REPORT_TAXONOMY["2.4"].submodules
+    for submodule_id, definition in definitions.items():
+        submodule_claims = claims_by_submodule.get(submodule_id)
+        if not submodule_claims:
+            continue
+        lines.extend([f"## {submodule_id} {definition.title}", ""])
+        for claim in submodule_claims:
+            evidence = ", ".join(claim.evidence_ids) or "未核实"
+            skills = ", ".join(claim.skill_ids)
+            lines.append(
+                f"- **{_KIND_LABELS[claim.kind]}**：{claim.text} "
+                f"`[evidence: {evidence}; skill: {skills}]`"
+            )
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 class Module24Worker:
     def __init__(self, skills: SkillResolver):
         self.skills = skills
@@ -76,7 +98,7 @@ class Module24Worker:
             for submodule_id in REPORT_TAXONOMY["2.4"].submodules
             for claim in claims_by_submodule.get(submodule_id, [])
         ]
-        markdown = self._render_markdown(claims_by_submodule)
+        markdown = render_module_24_markdown(claims)
         return ModuleDraft(
             module_id="2.4",
             markdown=markdown,
@@ -200,21 +222,3 @@ class Module24Worker:
                 )
             )
         return claims
-
-    def _render_markdown(self, claims_by_submodule: dict[str, list[Claim]]) -> str:
-        lines = ["# 2.4 供配电设备安全状态", ""]
-        definitions = REPORT_TAXONOMY["2.4"].submodules
-        for submodule_id, definition in definitions.items():
-            claims = claims_by_submodule.get(submodule_id)
-            if not claims:
-                continue
-            lines.extend([f"## {submodule_id} {definition.title}", ""])
-            for claim in claims:
-                evidence = ", ".join(claim.evidence_ids) or "未核实"
-                skills = ", ".join(claim.skill_ids)
-                lines.append(
-                    f"- **{_KIND_LABELS[claim.kind]}**：{claim.text} "
-                    f"`[evidence: {evidence}; skill: {skills}]`"
-                )
-            lines.append("")
-        return "\n".join(lines).rstrip() + "\n"
