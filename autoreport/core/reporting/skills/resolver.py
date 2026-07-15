@@ -48,7 +48,7 @@ class SkillResolver:
     def __init__(self, root: Path):
         self.root = Path(root)
         self._by_submodule: dict[str, SkillDefinition] = {}
-        for path in sorted(self.root.glob("*.md")):
+        for path in sorted(self.root.rglob("*.md")):
             skill = _parse_skill(path)
             for submodule_id in skill.submodule_ids:
                 if submodule_id in self._by_submodule:
@@ -57,7 +57,7 @@ class SkillResolver:
 
     @classmethod
     def packaged(cls) -> "SkillResolver":
-        root = Path(__file__).resolve().parents[3] / "templates" / "reporting" / "skills" / "2.4"
+        root = Path(__file__).resolve().parents[3] / "templates" / "reporting" / "skills"
         return cls(root)
 
     def resolve(self, submodule_id: str) -> SkillDefinition:

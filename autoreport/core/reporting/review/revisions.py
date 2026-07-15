@@ -3,6 +3,7 @@
 from collections.abc import Callable
 
 from ..models import Claim, ModuleDraft, ReviewIssue
+from ..workers.generic import render_module_markdown
 from ..workers.module_24 import render_module_24_markdown
 
 RevisionFunction = Callable[[str, list[Claim], list[ReviewIssue]], list[Claim]]
@@ -65,12 +66,15 @@ class RevisionRouter:
             if submodule_id not in inserted:
                 revised_claims.extend(replacements[submodule_id])
 
-        if draft.module_id != "2.4":
-            raise ValueError("Phase A revision router only supports module 2.4")
+        markdown = (
+            render_module_24_markdown(revised_claims)
+            if draft.module_id == "2.4"
+            else render_module_markdown(draft.module_id, revised_claims)
+        )
         return draft.model_copy(
             update={
                 "claims": revised_claims,
-                "markdown": render_module_24_markdown(revised_claims),
+                "markdown": markdown,
                 "revision": draft.revision + 1,
                 "approved": False,
             }

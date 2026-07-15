@@ -159,7 +159,7 @@ def load_workflow_definition(
 
 
 def load_packaged_workflow() -> tuple[dict[str, AgentDefinition], WorkflowDefinition]:
-    """Load the built-in Phase A configuration shipped with AutoReport."""
+    """Load the built-in V2 configuration shipped with AutoReport."""
 
     templates = Path(__file__).resolve().parents[2] / "templates" / "reporting"
     agents = load_agent_definitions(templates / "agents")

@@ -41,12 +41,13 @@ def _evidence(
     )
 
 
-def test_packaged_skills_cover_every_module_24_submodule() -> None:
+def test_packaged_skills_cover_every_report_submodule() -> None:
     resolver = SkillResolver.packaged()
 
     assert all(
         resolver.resolve(submodule_id).reference.endswith("@1.0.0")
-        for submodule_id in REPORT_TAXONOMY["2.4"].submodules
+        for module in REPORT_TAXONOMY.values()
+        for submodule_id in module.submodules
     )
 
 
@@ -79,6 +80,7 @@ def test_module_24_worker_emits_evidence_bound_claim_chain() -> None:
     assert all(claim.evidence_ids == ["ev-residual"] for claim in draft.claims)
     assert all(claim.skill_ids for claim in draft.claims)
     assert all("@" in skill_id for claim in draft.claims for skill_id in claim.skill_ids)
+    assert "# 2.4 配电设备/元件风险" in draft.markdown
     assert "2.4.3.1 低压回路剩余电流过大" in draft.markdown
 
 

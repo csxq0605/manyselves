@@ -1,4 +1,4 @@
-"""Phase A reporting service executed inside the AutoReport runtime."""
+"""Complete V2 reporting service executed inside the AutoReport runtime."""
 
 import asyncio
 import uuid
@@ -32,10 +32,13 @@ from .planner import CoveragePlanningError, plan_modules
 from .rendering.docx import DocxRenderer
 from .report_state import build_report_state
 from .review.auditor import audit_draft
+from .review.cross_module import cross_module_review
 from .review.revisions import RevisionLimitError, RevisionRouter
 from .skills.resolver import SkillResolver
 from .store import ReportingStore
+from .workers.generic import GenericModuleWorker
 from .workers.module_24 import Module24Worker
+from .workers.orchestrator import draft_modules_parallel
 
 
 class ReportingRunResult(BaseModel):
@@ -69,6 +72,11 @@ class ReportingService:
         self.agents, self.workflow = load_packaged_workflow()
         self.skills = SkillResolver.packaged()
         self.module_24_worker = Module24Worker(self.skills)
+        self.module_workers = {
+            module_id: GenericModuleWorker(module_id, self.skills)
+            for module_id in ("2.1", "2.2", "2.3", "2.5")
+        }
+        self.module_workers["2.4"] = self.module_24_worker
         self.revision_router = RevisionRouter(max_rounds=2)
         template_root = Path(__file__).resolve().parents[2] / "templates" / "reporting"
         self.report_template_path = template_root / "report_template.docx"
@@ -311,27 +319,18 @@ class ReportingService:
             raise MissingEvidenceError(exc.missing_submodules) from exc
 
     async def _draft_modules(self, state: dict) -> None:
-        evidence_by_id = {item.id: item for item in state.get("evidence_items", [])}
-        drafts: list[ModuleDraft] = []
-        for task in state.get("module_tasks", []):
-            if task.module_id == "2.4":
-                drafts.append(self.module_24_worker.run(task, list(evidence_by_id.values())))
-                continue
-            lines = [f"# {task.module_id} 配电现状分析", ""]
-            for evidence_id in task.evidence_ids:
-                item = evidence_by_id[evidence_id]
-                lines.append(
-                    f"- {item.subject}：{item.fact} "
-                    f"`[{item.id}: {item.source.path}#{item.source.sheet}!{item.source.cell}]`"
-                )
-            drafts.append(
-                ModuleDraft(
-                    module_id=task.module_id,
-                    markdown="\n".join(lines) + "\n",
-                    evidence_ids=task.evidence_ids,
-                )
-            )
+        evidence_items = list(state.get("evidence_items", []))
+        drafts, executions = await draft_modules_parallel(
+            state.get("module_tasks", []),
+            evidence_items,
+            self.module_workers,
+        )
         state["module_drafts"] = drafts
+        state["module_executions"] = executions
+        self.store.write_json(
+            "Work/module-execution.json",
+            {"modules": [execution.model_dump(mode="json") for execution in executions]},
+        )
         for draft in drafts:
             self.store.write_json(
                 f"Work/drafts/{draft.module_id}.json",
@@ -339,29 +338,26 @@ class ReportingService:
             )
 
     async def _audit_evidence(self, state: dict) -> None:
-        known = {item.id for item in state.get("evidence_items", [])}
         issues: list[ReviewIssue] = []
         for draft in state.get("module_drafts", []):
-            if draft.module_id == "2.4":
-                issues.extend(
-                    audit_draft(
-                        draft,
-                        state.get("evidence_items", []),
-                        self.skills,
-                    )
+            issues.extend(
+                audit_draft(
+                    draft,
+                    state.get("evidence_items", []),
+                    self.skills,
                 )
-                continue
-            missing = sorted(set(draft.evidence_ids) - known)
-            if missing:
-                issues.append(
-                    ReviewIssue(
-                        module_id=draft.module_id,
-                        kind="unknown_evidence",
-                        message=f"未知证据引用：{', '.join(missing)}",
-                        severity="blocking",
-                    )
-                )
+            )
+        cross_issues = cross_module_review(
+            state.get("module_drafts", []),
+            state.get("evidence_items", []),
+        )
+        issues.extend(cross_issues)
+        state["cross_module_issues"] = cross_issues
         state["review_issues"] = issues
+        self.store.write_json(
+            "Work/cross-module-review.json",
+            {"issues": [issue.model_dump(mode="json") for issue in cross_issues]},
+        )
 
     async def _route_revisions(self, state: dict) -> None:
         evidence = state.get("evidence_items", [])
@@ -374,15 +370,14 @@ class ReportingService:
                 for issue in state.get("review_issues", [])
                 if issue.module_id == draft.module_id
             ]
-            if draft.module_id != "2.4":
-                if any(issue.severity == "blocking" for issue in module_issues):
-                    raise RuntimeError(f"evidence audit blocked module {draft.module_id}")
-                final_drafts.append(draft.model_copy(update={"approved": True}))
-                final_issues.extend(module_issues)
-                continue
-
             parent_task = tasks[draft.module_id]
             current = draft
+            persistent_cross = [
+                issue
+                for issue in module_issues
+                if issue.kind in {"metric_conflict", "action_conflict"}
+                and issue.severity == "blocking"
+            ]
             while any(issue.severity == "blocking" for issue in module_issues):
 
                 def revise_submodule(
@@ -393,12 +388,19 @@ class ReportingService:
                     evidence_ids = parent_task.submodule_evidence.get(submodule_id, [])
                     local_task = ModuleTask(
                         id=f"{parent_task.id}-{submodule_id}-r{current.revision + 1}",
-                        module_id="2.4",
+                        module_id=draft.module_id,
                         evidence_ids=evidence_ids,
                         submodule_evidence={submodule_id: evidence_ids},
                         revision=current.revision + 1,
                     )
-                    return self.module_24_worker.run(local_task, evidence).claims
+                    return (
+                        self.module_workers[draft.module_id]
+                        .run(
+                            local_task,
+                            evidence,
+                        )
+                        .claims
+                    )
 
                 try:
                     current = self.revision_router.route(
@@ -412,7 +414,7 @@ class ReportingService:
                     raise RuntimeError(
                         f"module {draft.module_id} exceeded local revision limit"
                     ) from exc
-                module_issues = audit_draft(current, evidence, self.skills)
+                module_issues = audit_draft(current, evidence, self.skills) + persistent_cross
 
             current = self.revision_router.route(
                 current,
@@ -427,6 +429,11 @@ class ReportingService:
             )
         state["module_drafts"] = final_drafts
         state["review_issues"] = final_issues
+        for final_draft in final_drafts:
+            self.store.write_json(
+                f"Work/drafts/{final_draft.module_id}.json",
+                final_draft.model_dump(mode="json"),
+            )
 
     async def _deliver(self, state: dict) -> None:
         output_artifacts: list[OutputArtifact] = []
@@ -438,6 +445,10 @@ class ReportingService:
             )
         review_path = self.store.write_json(
             "Outputs/Reviews/phase-a.json",
+            {"issues": [issue.model_dump(mode="json") for issue in state.get("review_issues", [])]},
+        )
+        self.store.write_json(
+            "Outputs/Reviews/full-review.json",
             {"issues": [issue.model_dump(mode="json") for issue in state.get("review_issues", [])]},
         )
         output_artifacts.append(
@@ -453,10 +464,15 @@ class ReportingService:
             photo_assets=state.get("photo_assets", []),
             module_drafts=state.get("module_drafts", []),
             review_issues=state.get("review_issues", []),
+            module_executions=state.get("module_executions", []),
         )
         self.store.write_json(
             "Work/report-state.json",
             report_state.model_dump(mode="json"),
+        )
+        self.store.write_json(
+            "Work/editorial.json",
+            report_state.editorial.model_dump(mode="json"),
         )
         expected_template_hash = self.report_template_hash_path.read_text(encoding="utf-8").split()[
             0

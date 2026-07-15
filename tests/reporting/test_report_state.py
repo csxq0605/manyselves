@@ -67,6 +67,9 @@ def test_report_state_accepts_only_audited_approved_drafts() -> None:
 
     assert state.module_drafts[0].approved is True
     assert state.evidence_items[0].id == "ev-1"
+    assert state.editorial.protected_claim_ids == ["claim-1"]
+    assert state.rule_version == "v2-handoff-2026-05-29"
+    assert state.skill_versions == ["pds.module24.installation@1.0.0"]
 
 
 def test_report_state_rejects_unapproved_draft_or_blocking_issue() -> None:

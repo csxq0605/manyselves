@@ -95,6 +95,27 @@ def test_auditor_blocks_false_overload_claim_for_96_99_percent() -> None:
     )
 
 
+def test_auditor_applies_false_overload_guard_to_module_21() -> None:
+    evidence = _evidence().model_copy(update={"module_id": "2.1", "submodule_id": "2.1.1"})
+    claim = _claim(text="车间配电房2A2当前已过载运行。").model_copy(
+        update={
+            "module_id": "2.1",
+            "submodule_id": "2.1.1",
+            "skill_ids": ["pds.module21.architecture@1.0.0"],
+        }
+    )
+    draft = ModuleDraft(
+        module_id="2.1",
+        markdown="draft",
+        evidence_ids=[evidence.id],
+        claims=[claim],
+    )
+
+    issues = audit_draft(draft, [evidence], SkillResolver.packaged())
+
+    assert any(issue.kind == "threshold_misuse" for issue in issues)
+
+
 def test_auditor_records_ng_without_photo_as_warning() -> None:
     evidence = _evidence(
         submodule_id="2.4.2.5",

@@ -13,15 +13,15 @@ def _text(value: Any) -> str:
     return str(value).strip() if value not in (None, "") else ""
 
 
-def _known_24_submodule(value: Any) -> str | None:
+def _known_submodule(value: Any) -> str | None:
     candidate = _text(value)
-    if not candidate.startswith("2.4."):
+    if not candidate.startswith(("2.1.", "2.2.", "2.3.", "2.4.", "2.5.")):
         return None
     try:
-        submodule = resolve_submodule(candidate)
+        resolve_submodule(candidate)
     except ValueError:
         return None
-    return candidate if submodule.module_id == "2.4" else None
+    return candidate
 
 
 def _submodule_from_path(value: Any) -> str | None:
@@ -29,7 +29,11 @@ def _submodule_from_path(value: Any) -> str | None:
     if not path_text:
         return None
     definitions = sorted(
-        REPORT_TAXONOMY["2.4"].submodules.values(),
+        (
+            definition
+            for module in REPORT_TAXONOMY.values()
+            for definition in module.submodules.values()
+        ),
         key=lambda definition: len(definition.title),
         reverse=True,
     )
@@ -48,7 +52,7 @@ def map_s4_6(path: Path, *, file_id: str) -> MappingResult:
         if "评估信息汇总表" in workbook.sheetnames:
             sheet = workbook["评估信息汇总表"]
             for row in range(4, sheet.max_row + 1):
-                submodule_id = _known_24_submodule(sheet.cell(row, 2).value)
+                submodule_id = _known_submodule(sheet.cell(row, 2).value)
                 if not submodule_id:
                     continue
                 finding = _text(sheet.cell(row, 6).value)
@@ -71,7 +75,7 @@ def map_s4_6(path: Path, *, file_id: str) -> MappingResult:
                         column="F",
                         subject=f"评估总表 {submodule_id}",
                         fact=fact,
-                        module_id="2.4",
+                        module_id=resolve_submodule(submodule_id).module_id,
                         submodule_id=submodule_id,
                         confidence=0.65,
                         needs_confirmation=True,
@@ -116,7 +120,7 @@ def map_s4_6(path: Path, *, file_id: str) -> MappingResult:
                         column="C",
                         subject=f"评估总表 {submodule_id}",
                         fact=fact,
-                        module_id="2.4",
+                        module_id=resolve_submodule(submodule_id).module_id,
                         submodule_id=submodule_id,
                         confidence=0.6,
                         needs_confirmation=True,

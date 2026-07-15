@@ -13,7 +13,7 @@
 
 </div>
 
-本仓库是在 AutoReport 完整桌面代码底座上改造的独立配电报告产品。当前已完成配电报告 Phase A 的 2.4 纵向迁移：三张核心工作簿、WPS `DISPIMG` 图片、子模块覆盖判断、版本化 Skill、可审计 Claim、局部返工、ReportState 与模板化 DOCX 均运行在同一套 AutoReport runtime 内。
+本仓库是在 AutoReport 完整桌面代码底座上改造的独立配电报告产品。V2 迁移现已覆盖 2.1–2.5 五个模块的 37 个叶级子模块：三张核心工作簿、WPS `DISPIMG` 图片、精确 Coverage、版本化 Skill、可审计 Claim、有界局部返工、五模块真实并行、跨模块审核、Chief Editor、SkillCandidate 治理、ReportState 与模板化 DOCX 均运行在同一套 AutoReport runtime 内。
 
 AutoReport 源码已经直接迁入本仓库，不是运行时依赖；Nexgent 只用于借鉴声明式 Agent 定义和 phase/pipeline/parallel 编排思想。
 
@@ -85,7 +85,7 @@ export DEEPSEEK_API_KEY="sk-..."
 autoreport
 ```
 
-## 配电报告 Phase A 工作流
+## 配电报告 V2 工作流
 
 客户项目必须把输入文件放在 `Inputs/`。当前专用适配器识别：
 
@@ -93,21 +93,25 @@ autoreport
 - `S4-4诊断工作用表.xlsx`：现场明细、测量值、同排状态与 WPS 图片；
 - `S4-6评估总表.xlsx`：既有汇总结论与建议，统一标记为待原始证据复核。
 
-Main Agent 调用 `run_reporting_workflow` 后依次生成 Manifest、Evidence、子模块 Coverage、2.4 Claim、审校结果和 DOCX。`missing_evidence_policy` 支持 `ask`、`block`、`skip`、`draft`；任意 Excel 行不能替代精确子模块证据。运行产物只写项目内：
+Main Agent 调用 `run_reporting_workflow` 后依次生成 Manifest、Evidence、叶级子模块 Coverage，并发生成 2.1–2.5 Claim，执行证据审核、跨模块一致性审核和局部返工，再由 Chief Editor 生成第 1/3 章并渲染 DOCX。`missing_evidence_policy` 支持 `ask`、`block`、`skip`、`draft`；任意 Excel 行不能替代精确子模块证据。运行产物只写项目内：
 
 ```text
 Work/manifest.json
 Work/evidence.jsonl
 Work/coverage.json
 Work/photo-manifest.json
+Work/module-execution.json
+Work/cross-module-review.json
+Work/editorial.json
 Work/report-state.json
-Outputs/Modules/2.4.md
+Outputs/Modules/2.1.md ... 2.5.md
 Outputs/Reviews/phase-a.json
+Outputs/Reviews/full-review.json
 Outputs/Reports/配电安全专家咨询报告.docx
 Outputs/Reports/render-log.json
 ```
 
-Phase A 对 96.99% 负荷率有硬门禁：它低于 100%，不得写成当前已过载；只允许提示容量余量和负荷继续增长风险。所有定量/重要判断保存 Evidence ID 与 Skill 版本，NG 缺同排照片时生成补证警告。
+V2 对 96.99% 负荷率有硬门禁：它低于 100%，不得写成当前已过载；S4-4 的 10A 仅是工作表附图/复核触发值，不能表述为法定安全限值。所有定量/重要判断保存 Evidence ID 与 Skill 版本，NG 缺同排照片时生成补证警告。`SkillGovernance` 把不可变候选版本保存在项目 `Work/skills`，只有隔离回归全部通过才能发布，并保留追加式发布/回滚历史。
 
 ## MinerU 集成
 

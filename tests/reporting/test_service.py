@@ -74,3 +74,39 @@ async def test_phase_a_writes_traceable_module_output_from_core_workbook(tmp_pat
     assert render_log["output_sha256"]
     assert bus._queue.qsize() >= 2
     assert all(task.status is TaskStatus.COMPLETED for task in board.get_todolist(AgentType.MAIN))
+
+
+@pytest.mark.asyncio
+async def test_full_workflow_drafts_all_five_modules_with_parallel_execution_metadata(
+    tmp_path: Path,
+) -> None:
+    bus = MessageBus()
+    board = TaskBoard()
+    service = ReportingService(tmp_path, bus=bus, task_board=board)
+
+    result = await service.run(
+        ReportRequest(
+            instruction="生成完整报告并显式标记缺失证据",
+            missing_evidence_policy="draft",
+        )
+    )
+
+    assert result.status == "completed"
+    executions = json.loads(
+        (tmp_path / "Work" / "module-execution.json").read_text(encoding="utf-8")
+    )
+    assert [item["module_id"] for item in executions["modules"]] == [
+        "2.1",
+        "2.2",
+        "2.3",
+        "2.4",
+        "2.5",
+    ]
+    for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5"):
+        draft = json.loads(
+            (tmp_path / "Work" / "drafts" / f"{module_id}.json").read_text(encoding="utf-8")
+        )
+        assert draft["approved"] is True
+        assert draft["claims"]
+        assert all(claim["unverified"] is True for claim in draft["claims"])
+        assert all("@1.0.0" in claim["skill_ids"][0] for claim in draft["claims"])

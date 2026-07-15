@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from autoreport.core.reporting.mappers.s4_4 import map_s4_4
 
@@ -159,3 +159,64 @@ def test_s4_4_maps_residual_current_with_its_own_photo(tmp_path: Path) -> None:
     assert item.unit == "A"
     assert item.photo_refs == ["ID_RESIDUAL"]
     assert item.source.cell == "J5:K5"
+
+
+def test_s4_4_routes_load_harmonics_and_surge_to_system_modules(tmp_path: Path) -> None:
+    path = tmp_path / "S4-4诊断工作用表.xlsx"
+    _write_s4_4(path)
+
+    result = map_s4_4(path, file_id="file-s44")
+
+    load = next(
+        item
+        for item in result.evidence_items
+        if item.subject == "车间配电房/1A2" and item.submodule_id == "2.1.1"
+    )
+    harmonic = next(
+        item
+        for item in result.evidence_items
+        if item.subject == "车间配电房/1A2" and item.submodule_id == "2.2.1.1"
+    )
+    surge = next(
+        item
+        for item in result.evidence_items
+        if item.subject == "车间配电房/1A2" and item.submodule_id == "2.3.3"
+    )
+    assert load.module_id == "2.1"
+    assert load.value == pytest.approx(63.7376)
+    assert harmonic.fact == "谐波=>6.2%"
+    assert surge.fact == "电涌保护装置=OK"
+
+
+def test_s4_4_routes_environment_and_operations_observations(tmp_path: Path) -> None:
+    path = tmp_path / "S4-4诊断工作用表.xlsx"
+    _write_s4_4(path)
+    workbook = load_workbook(path)
+    general = workbook.create_sheet("配电房合规性")
+    general.append([None] * 21)
+    general.append([None] * 21)
+    general.append([None] * 21)
+    general.append(
+        ["车间配电房", "OK", None, None, None, None, None, None, None, "NG", None, "OK", None, "NG"]
+    )
+    thermal = workbook.create_sheet("红外热成像检测记录表")
+    thermal.append([None] * 11)
+    thermal.append([None] * 11)
+    thermal.append(["车间配电房", 30, None, "1A2", None, "A相接头", 62, None, None, None, None])
+    workbook.save(path)
+    workbook.close()
+
+    result = map_s4_4(path, file_id="file-s44")
+
+    assert any(
+        item.submodule_id == "2.5.5" and "安全用具=NG" in item.fact
+        for item in result.evidence_items
+    )
+    assert any(
+        item.submodule_id == "2.5.7" and "整机备件=NG" in item.fact
+        for item in result.evidence_items
+    )
+    assert any(
+        item.submodule_id == "2.2.2.1" and "相对环境温升=32.0K" in item.fact
+        for item in result.evidence_items
+    )

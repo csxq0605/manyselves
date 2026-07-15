@@ -90,11 +90,19 @@ def test_docx_renderer_writes_headings_issue_table_and_image_fallback(
     rendered = Document(output_path)
     texts = [paragraph.text for paragraph in rendered.paragraphs]
     assert "配电安全评估报告" in texts
-    assert any("2.4 供配电设备安全状态" in text for text in texts)
+    assert "1 配电评估概述" in texts
+    assert "1.1 评估背景" in texts
+    assert "1.2 待提升问题与建议概览" in texts
+    assert "2 评估内容描述" in texts
+    assert any("2.4 配电设备/元件风险" in text for text in texts)
     assert any("2.4.2.5 电缆、桥架、母线安装问题" in text for text in texts)
+    assert "3 结论与建议" in texts
+    assert "3.1 风险/问题汇总与概览" in texts
     assert any("图片缺失：ID_MISSING" in text for text in texts)
     assert rendered.tables
-    assert rendered.tables[-1].cell(0, 0).text == "子模块"
+    assert any(table.cell(0, 0).text == "3.2 改善行动列表与优先级" for table in rendered.tables)
+    assert rendered.tables[-1].cell(0, 0).text == "审校与补证事项"
+    assert rendered.tables[-1].cell(1, 0).text == "子模块"
     for style_name in ("Normal", "Heading 1", "Heading 2"):
         style = rendered.styles[style_name]
         assert style.element.rPr.rFonts.get(qn("w:eastAsia")) == "Hiragino Sans GB"

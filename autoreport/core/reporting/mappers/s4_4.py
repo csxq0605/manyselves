@@ -48,6 +48,22 @@ def _map_low_voltage(path: Path, file_id: str, sheet: Any) -> list:
                     unit="%",
                 )
             )
+            evidence.append(
+                make_evidence(
+                    file_id=file_id,
+                    path=path,
+                    sheet=sheet.title,
+                    cell=f"C{row}:E{row}",
+                    row=row,
+                    column="C",
+                    subject=subject,
+                    fact=fact,
+                    module_id="2.1",
+                    submodule_id="2.1.1",
+                    value=load_rate,
+                    unit="%",
+                )
+            )
 
         paired_fields = (
             (6, 7, "安全连锁", "2.4.1.3"),
@@ -81,6 +97,52 @@ def _map_low_voltage(path: Path, file_id: str, sheet: Any) -> list:
                     photo_refs=dispimg_refs(photo_value),
                     needs_confirmation=_text(value).upper().startswith("NG")
                     and not dispimg_refs(photo_value),
+                )
+            )
+            secondary = {
+                "变压器噪声震动": ("2.2", "2.2.2.3"),
+                "变压器温度": ("2.2", "2.2.2.1"),
+            }.get(label)
+            if secondary:
+                evidence.append(
+                    make_evidence(
+                        file_id=file_id,
+                        path=path,
+                        sheet=sheet.title,
+                        cell=cell,
+                        row=row,
+                        column=start_letter,
+                        subject=subject,
+                        fact=f"{label}={_text(value)}",
+                        module_id=secondary[0],
+                        submodule_id=secondary[1],
+                        photo_refs=dispimg_refs(photo_value),
+                    )
+                )
+
+        for value_column, photo_column, label, module_id, submodule_id in (
+            (17, 18, "谐波", "2.2", "2.2.1.1"),
+            (19, 20, "电涌保护装置", "2.3", "2.3.3"),
+        ):
+            value = sheet.cell(row, value_column).value
+            if value in (None, ""):
+                continue
+            start_letter = get_column_letter(value_column)
+            end_letter = get_column_letter(photo_column)
+            evidence.append(
+                make_evidence(
+                    file_id=file_id,
+                    path=path,
+                    sheet=sheet.title,
+                    cell=f"{start_letter}{row}:{end_letter}{row}",
+                    row=row,
+                    column=start_letter,
+                    subject=subject,
+                    fact=f"{label}={_text(value)}",
+                    module_id=module_id,
+                    submodule_id=submodule_id,
+                    photo_refs=dispimg_refs(sheet.cell(row, photo_column).value),
+                    needs_confirmation=_text(value).upper().startswith("NG"),
                 )
             )
 
@@ -144,6 +206,18 @@ def _map_general_inspection(path: Path, file_id: str, sheet: Any) -> list:
         18: "模拟屏或站控单元",
         20: "其他",
     }
+    routes = {
+        2: ("2.2", "2.2.2.3"),
+        4: ("2.2", "2.2.2.3"),
+        6: ("2.2", "2.2.2.3"),
+        8: ("2.2", "2.2.2.3"),
+        10: ("2.5", "2.5.5"),
+        12: ("2.5", "2.5.5"),
+        14: ("2.5", "2.5.7"),
+        16: ("2.2", "2.2.2.3"),
+        18: ("2.5", "2.5.4"),
+        20: ("2.2", "2.2.2.3"),
+    }
     for row in range(4, sheet.max_row + 1):
         room = sheet.cell(row, 1).value
         populated = [sheet.cell(row, column).value for column in labels]
@@ -169,6 +243,22 @@ def _map_general_inspection(path: Path, file_id: str, sheet: Any) -> list:
                     fact=f"{label}={_text(value)}",
                     module_id="2.4",
                     submodule_id="2.4.4",
+                    photo_refs=dispimg_refs(photo_value),
+                )
+            )
+            route_module, route_submodule = routes[column]
+            evidence.append(
+                make_evidence(
+                    file_id=file_id,
+                    path=path,
+                    sheet=sheet.title,
+                    cell=f"{start_letter}{row}:{end_letter}{row}",
+                    row=row,
+                    column=start_letter,
+                    subject=_subject(room),
+                    fact=f"{label}={_text(value)}",
+                    module_id=route_module,
+                    submodule_id=route_submodule,
                     photo_refs=dispimg_refs(photo_value),
                 )
             )
@@ -242,6 +332,23 @@ def _map_thermal(path: Path, file_id: str, sheet: Any) -> list:
                 fact=fact,
                 module_id="2.4",
                 submodule_id="2.4.4",
+                photo_refs=dispimg_refs(sheet.cell(row, 11).value),
+                value=float(measured),
+                unit="℃",
+            )
+        )
+        evidence.append(
+            make_evidence(
+                file_id=file_id,
+                path=path,
+                sheet=sheet.title,
+                cell=f"F{row}:K{row}",
+                row=row,
+                column="F",
+                subject=_subject(current_room, current_cabinet),
+                fact=fact,
+                module_id="2.2",
+                submodule_id="2.2.2.1",
                 photo_refs=dispimg_refs(sheet.cell(row, 11).value),
                 value=float(measured),
                 unit="℃",

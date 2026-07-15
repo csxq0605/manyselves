@@ -4,6 +4,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
+from ..taxonomy import resolve_submodule
 from .common import MappingGap, MappingResult, make_evidence
 
 _MODULE_24_DOCUMENTS = {
@@ -12,6 +13,31 @@ _MODULE_24_DOCUMENTS = {
     "设备巡检/红外成像历史记录": "2.4.4",
     "维护试验与巡检报告": "2.4.4",
 }
+
+_DOCUMENT_ROUTES = (
+    (("SOP", "EOP", "操作规程", "应急预案"), "2.5.1"),
+    (("保护定值", "定值计算"), "2.3.1"),
+    (("自动切换", "ATS"), "2.1.3"),
+    (("无功补偿", "电容柜"), "2.1.5"),
+    (("组织架构", "人员配备"), "2.5.3.1"),
+    (("维护计划", "维护记录", "维护工作"), "2.5.3.2"),
+    (("维保覆盖", "维保记录"), "2.5.3.3"),
+    (("单线图", "系统图", "图纸"), "2.5.2"),
+    (("智能化", "站控", "监控系统"), "2.5.4"),
+    (("LOTO", "安全用具", "操作工具"), "2.5.5"),
+    (("退市", "生命周期"), "2.5.6"),
+    (("备件",), "2.5.7"),
+)
+
+
+def _route_document(document_name: str) -> str | None:
+    if exact := _MODULE_24_DOCUMENTS.get(document_name):
+        return exact
+    folded = document_name.upper()
+    for keywords, submodule_id in _DOCUMENT_ROUTES:
+        if any(keyword.upper() in folded for keyword in keywords):
+            return submodule_id
+    return None
 
 
 def map_s2_1(path: Path, *, file_id: str) -> MappingResult:
@@ -37,7 +63,8 @@ def map_s2_1(path: Path, *, file_id: str) -> MappingResult:
             fact = f"具备情况={availability}；有效性={effectiveness}"
             if note:
                 fact += f"；备注={note}"
-            submodule_id = _MODULE_24_DOCUMENTS.get(document_name)
+            submodule_id = _route_document(document_name)
+            module_id = resolve_submodule(submodule_id).module_id if submodule_id else None
             evidence.append(
                 make_evidence(
                     file_id=file_id,
@@ -48,7 +75,7 @@ def map_s2_1(path: Path, *, file_id: str) -> MappingResult:
                     column="G",
                     subject=f"{category}/{document_name}",
                     fact=fact,
-                    module_id="2.4" if submodule_id else None,
+                    module_id=module_id,
                     submodule_id=submodule_id,
                     needs_confirmation=availability.upper() != "OK"
                     or effectiveness.upper() != "OK",

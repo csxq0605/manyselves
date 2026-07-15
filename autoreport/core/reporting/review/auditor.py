@@ -68,7 +68,7 @@ def audit_draft(
                 )
                 continue
             if (
-                item.submodule_id == "2.4.1.1"
+                item.submodule_id in {"2.1.1", "2.4.1.1"}
                 and item.unit == "%"
                 and isinstance(item.value, (int, float))
                 and float(item.value) < 100

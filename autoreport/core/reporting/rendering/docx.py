@@ -1,6 +1,7 @@
 """Render an audited ReportState into a template-backed DOCX file."""
 
 import hashlib
+import re
 from pathlib import Path
 
 from docx import Document
@@ -19,6 +20,18 @@ _KIND_LABELS = {
     ClaimKind.RISK: "风险",
     ClaimKind.RECOMMENDATION: "建议",
 }
+
+
+def _evidence_note(evidence_ids: list[str]) -> str:
+    if not evidence_ids:
+        return "未核实"
+    preview = ", ".join(f"{evidence_id[:13]}…" for evidence_id in evidence_ids[:3])
+    remaining = len(evidence_ids) - 3
+    return f"{preview}（另 {remaining} 条）" if remaining > 0 else preview
+
+
+def _review_message(message: str) -> str:
+    return re.sub(r"(ev-[0-9a-f]{10})[0-9a-f]+", r"\1…", message)
 
 
 class RenderResult(ReportingModel):
@@ -42,6 +55,8 @@ class DocxRenderer:
         self._clear_template_body(document)
         self._set_document_fonts(document)
         self._add_title(document, state.title)
+        self._add_overview(document, state)
+        document.add_heading("2 评估内容描述", level=1)
 
         evidence_by_id = {item.id: item for item in state.evidence_items}
         assets_by_id = {asset.id: asset for asset in state.photo_assets}
@@ -102,6 +117,7 @@ class DocxRenderer:
                             document.add_paragraph(f"[图片缺失：{photo_id}]")
                             missing_photo_ids.append(photo_id)
 
+        self._add_conclusions(document, state)
         self._add_review_table(document, state)
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -154,19 +170,74 @@ class DocxRenderer:
                 return
 
     @staticmethod
-    def _add_review_table(document: Document, state: ReportState) -> None:
-        document.add_heading("审校与补证事项", level=1)
-        table = document.add_table(rows=1, cols=4)
+    def _add_overview(document: Document, state: ReportState) -> None:
+        document.add_heading("1 配电评估概述", level=1)
+        document.add_heading("1.1 评估背景", level=2)
+        document.add_paragraph(state.editorial.overview)
+        document.add_heading("1.2 待提升问题与建议概览", level=2)
+        table = document.add_table(rows=1, cols=5)
         table.style = "Table Grid"
+        for index, header in enumerate(("序号", "类别", "问题/主题", "优先级", "备注")):
+            table.cell(0, index).text = header
+        for index, item in enumerate(state.editorial.risk_summary, start=1):
+            cells = table.add_row().cells
+            cells[0].text = str(index)
+            cells[1].text = item.module_id
+            cells[2].text = item.text
+            cells[3].text = item.priority
+            cells[4].text = _evidence_note(item.evidence_ids)
+
+    @staticmethod
+    def _add_conclusions(document: Document, state: ReportState) -> None:
+        document.add_heading("3 结论与建议", level=1)
+        document.add_heading("3.1 风险/问题汇总与概览", level=2)
+        document.add_paragraph(state.editorial.overview)
+        for item in state.editorial.risk_summary:
+            paragraph = document.add_paragraph(
+                f"[{item.priority}] {item.module_id}/{item.submodule_id}：{item.text}"
+            )
+            DocxRenderer._set_optional_style(paragraph, document, "List Bullet", "正文")
+            paragraph.paragraph_format.space_after = Pt(0)
+            paragraph.paragraph_format.line_spacing = 1.0
+        table = document.add_table(rows=2, cols=5)
+        table.style = "Table Grid"
+        title_cell = table.rows[0].cells[0].merge(table.rows[0].cells[-1])
+        title_paragraph = title_cell.paragraphs[0]
+        title_paragraph.text = "3.2 改善行动列表与优先级"
+        title_paragraph.paragraph_format.keep_with_next = True
+        title_run = title_paragraph.runs[0]
+        title_run.bold = True
+        title_run.font.size = Pt(16)
+        for index, header in enumerate(("类别", "问题/主题", "优先级", "建议措施", "备注")):
+            table.cell(1, index).text = header
+        for action in state.editorial.actions:
+            cells = table.add_row().cells
+            cells[0].text = action.module_id
+            cells[1].text = action.submodule_id
+            cells[2].text = action.priority
+            cells[3].text = action.text
+            cells[4].text = _evidence_note(action.evidence_ids)
+
+    @staticmethod
+    def _add_review_table(document: Document, state: ReportState) -> None:
+        table = document.add_table(rows=2, cols=4)
+        table.style = "Table Grid"
+        title_cell = table.rows[0].cells[0].merge(table.rows[0].cells[-1])
+        title_paragraph = title_cell.paragraphs[0]
+        title_paragraph.text = "审校与补证事项"
+        title_paragraph.paragraph_format.keep_with_next = True
+        title_run = title_paragraph.runs[0]
+        title_run.bold = True
+        title_run.font.size = Pt(18)
         headers = ("子模块", "类型", "级别", "说明")
         for index, header in enumerate(headers):
-            table.cell(0, index).text = header
+            table.cell(1, index).text = header
         for issue in state.review_issues:
             cells = table.add_row().cells
             cells[0].text = issue.submodule_id or issue.module_id
             cells[1].text = issue.kind
             cells[2].text = issue.severity
-            cells[3].text = issue.message
+            cells[3].text = _review_message(issue.message)
 
     @staticmethod
     def _validate_rendered_document(output_path: Path, state: ReportState) -> None:
@@ -180,3 +251,10 @@ class DocxRenderer:
             expected = f"{draft.module_id} {REPORT_TAXONOMY[draft.module_id].title}"
             if expected not in texts:
                 raise ValueError(f"rendered DOCX is missing module heading {expected}")
+        for heading in (
+            "1 配电评估概述",
+            "2 评估内容描述",
+            "3 结论与建议",
+        ):
+            if heading not in texts:
+                raise ValueError(f"rendered DOCX is missing fixed heading {heading}")

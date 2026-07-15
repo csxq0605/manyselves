@@ -5,4 +5,4 @@ reads: [module_drafts, review_issues]
 writes: [output_artifacts]
 tools: [apply_patch]
 ---
-将草稿、审校记录和运行摘要写入当前项目，并返回可由文件树打开的相对路径。
+由 Chief Editor 在不改变受保护 Claim 的前提下生成第 1/3 章，再将五模块草稿、完整审校记录、ReportState 和模板 DOCX 写入当前项目。

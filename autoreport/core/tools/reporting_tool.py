@@ -13,8 +13,8 @@ from .task_board import TaskBoard
 class RunReportingWorkflowTool(Tool):
     name = "run_reporting_workflow"
     description = (
-        "Run the configured power-distribution report Phase A workflow in the current project. "
-        "Use this for report generation, evidence coverage checks, and requested module rewrites."
+        "Run the complete V2 power-distribution report workflow in the current project. "
+        "Use this for five-module report generation, evidence coverage checks, and local rewrites."
     )
 
     def __init__(self, workspace: Path, bus: MessageBus, task_board: TaskBoard):

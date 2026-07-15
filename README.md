@@ -15,7 +15,7 @@ English | [中文](README_zh.md)
 
 ## Overview
 
-This repository is the independent power-distribution report product based directly on the AutoReport desktop codebase. The Phase A module 2.4 vertical slice is now implemented locally: the three core workbooks, WPS `DISPIMG` media, submodule coverage, versioned skills, auditable claims, local revision, ReportState, and template-backed DOCX delivery all run inside the existing AutoReport runtime.
+This repository is the independent power-distribution report product based directly on the AutoReport desktop codebase. The V2 migration now covers all 37 leaf submodules across report modules 2.1–2.5: the three core workbooks, WPS `DISPIMG` media, exact coverage, versioned Skills, auditable claims, bounded local revision, true five-module parallel drafting, cross-module review, Chief Editor summaries, governed Skill candidates, ReportState, and template-backed DOCX delivery all run inside the existing AutoReport runtime.
 
 The upstream AutoReport source is preserved as the implementation base, not used as a runtime dependency. Nexgent is only a design reference for declarative agent definitions and phase/pipeline/parallel orchestration.
 
@@ -87,23 +87,27 @@ export DEEPSEEK_API_KEY="sk-..."
 autoreport
 ```
 
-## Power-distribution Phase A workflow
+## Power-distribution V2 workflow
 
-Customer inputs belong under the project `Inputs/` directory. Dedicated adapters currently recognize `S2-1收资表.xlsx`, `S4-4诊断工作用表.xlsx`, and `S4-6评估总表.xlsx`. The Main Agent tool builds the manifest and evidence store, evaluates exact submodule coverage, generates evidence-bound module 2.4 claims, audits them, and writes:
+Customer inputs belong under the project `Inputs/` directory. Dedicated adapters recognize `S2-1收资表.xlsx`, `S4-4诊断工作用表.xlsx`, and `S4-6评估总表.xlsx`. The Main Agent tool builds the manifest and evidence store, evaluates exact leaf-submodule coverage, drafts modules 2.1–2.5 concurrently with deterministic ordering, runs evidence and cross-module reviews, builds Chapters 1 and 3 through the Chief Editor, and writes:
 
 ```text
 Work/manifest.json
 Work/evidence.jsonl
 Work/coverage.json
 Work/photo-manifest.json
+Work/module-execution.json
+Work/cross-module-review.json
+Work/editorial.json
 Work/report-state.json
-Outputs/Modules/2.4.md
+Outputs/Modules/2.1.md ... 2.5.md
 Outputs/Reviews/phase-a.json
+Outputs/Reviews/full-review.json
 Outputs/Reports/配电安全专家咨询报告.docx
 Outputs/Reports/render-log.json
 ```
 
-`missing_evidence_policy` supports `ask`, `block`, `skip`, and `draft`. Arbitrary spreadsheet rows cannot make a submodule ready. A hard regression gate prevents the measured 96.99% load rate from being described as an existing overload; quantitative and material claims preserve Evidence IDs and Skill versions, while an NG row without its paired photo produces a supplementation warning.
+`missing_evidence_policy` supports `ask`, `block`, `skip`, and `draft`. Arbitrary spreadsheet rows cannot make a submodule ready. Hard regression gates prevent the measured 96.99% load rate from being described as an existing overload and prevent the workbook's 10 A photo trigger from being presented as a statutory safety limit. Quantitative and material claims preserve Evidence IDs and Skill versions, while an NG row without its paired photo produces a supplementation warning. `SkillGovernance` stores immutable candidates under project `Work/skills`, requires isolated regression success before publication, and maintains append-only publish/rollback history.
 
 ## MinerU Integration
 

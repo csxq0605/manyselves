@@ -30,7 +30,7 @@ def render_module_24_markdown(claims: list[Claim]) -> str:
     claims_by_submodule: dict[str, list[Claim]] = defaultdict(list)
     for claim in claims:
         claims_by_submodule[claim.submodule_id].append(claim)
-    lines = ["# 2.4 供配电设备安全状态", ""]
+    lines = [f"# 2.4 {REPORT_TAXONOMY['2.4'].title}", ""]
     definitions = REPORT_TAXONOMY["2.4"].submodules
     for submodule_id, definition in definitions.items():
         submodule_claims = claims_by_submodule.get(submodule_id)

@@ -21,6 +21,11 @@ def test_s4_6_maps_summary_taxonomy_without_using_filename_as_location(
     row[5] = "总电箱进线缺少地线"
     row[6] = "补敷接地线"
     summary.append(row)
+    architecture = [None] * 20
+    architecture[1] = "2.1.1"
+    architecture[5] = "负荷分配待优化"
+    architecture[6] = "复核运行方式"
+    summary.append(architecture)
     conclusion = workbook.create_sheet("结论建议汇总表")
     conclusion.append([None] * 8)
     conclusion.append(
@@ -35,6 +40,18 @@ def test_s4_6_maps_summary_taxonomy_without_using_filename_as_location(
             "配电设备＞等电位连接与接地问题",
         ]
     )
+    conclusion.append(
+        [
+            None,
+            None,
+            "操作规程未更新",
+            "误操作风险",
+            "修订规程",
+            None,
+            None,
+            "运维管理＞SOP/EOP",
+        ]
+    )
     workbook.save(path)
 
     result = map_s4_6(path, file_id="file-s46")
@@ -46,3 +63,7 @@ def test_s4_6_maps_summary_taxonomy_without_using_filename_as_location(
     assert summary_item.needs_confirmation is True
     conclusion_item = next(item for item in result.evidence_items if item.source.cell == "C2:E2")
     assert conclusion_item.submodule_id == "2.4.2.2"
+    architecture_item = next(item for item in result.evidence_items if item.source.cell == "F5:G5")
+    assert (architecture_item.module_id, architecture_item.submodule_id) == ("2.1", "2.1.1")
+    operations_item = next(item for item in result.evidence_items if item.source.cell == "C3:E3")
+    assert (operations_item.module_id, operations_item.submodule_id) == ("2.5", "2.5.1")
