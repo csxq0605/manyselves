@@ -4,7 +4,7 @@ from xml.etree import ElementTree
 import pytest
 
 from autoreport.core.reporting.agentic_models import TaskEnvelope
-from autoreport.core.reporting.config import load_agent_definition
+from autoreport.core.reporting.config import AgentDefinition, load_agent_definition
 from autoreport.core.reporting.prompts import PromptAssembler
 
 
@@ -49,6 +49,23 @@ def test_system_prompt_rejects_malformed_identity_xml(tmp_path: Path) -> None:
         PromptAssembler.system_prompt(load_agent_definition(identity))
 
 
+@pytest.mark.parametrize("field_name", ["name", "description"])
+def test_system_prompt_rejects_xml_forbidden_identity_metadata(
+    tmp_path: Path,
+    field_name: str,
+) -> None:
+    values = {"name": "auditor", "description": "审计员"}
+    values[field_name] += "\x01"
+    definition = AgentDefinition(
+        **values,
+        instructions="<role_and_perspective>独立核验。</role_and_perspective>",
+        source_path=tmp_path / "agent.md",
+    )
+
+    with pytest.raises(ValueError, match="system prompt must be valid XML"):
+        PromptAssembler.system_prompt(definition)
+
+
 def test_task_context_is_xml_and_separate_from_system() -> None:
     envelope = TaskEnvelope(
         task_id="t1",
@@ -74,3 +91,27 @@ def test_task_context_is_xml_and_separate_from_system() -> None:
     assert root.findtext("allowed_output") == "module_submission"
     assert root.findtext("prior_result_ref") == "drafts/2.4-v0.json"
     assert root.findtext("issue_ref") == "issues/2.4-1.json"
+
+
+def test_task_context_rejects_xml_forbidden_envelope_value() -> None:
+    envelope = TaskEnvelope(
+        task_id="t1",
+        run_id="r1",
+        agent_id="auditor",
+        objective="审计\x01 2.4",
+    )
+
+    with pytest.raises(ValueError, match="task context must be valid XML"):
+        PromptAssembler.task_message(envelope, [])
+
+
+def test_task_context_rejects_xml_forbidden_shared_artifact() -> None:
+    envelope = TaskEnvelope(
+        task_id="t1",
+        run_id="r1",
+        agent_id="auditor",
+        objective="审计 2.4",
+    )
+
+    with pytest.raises(ValueError, match="task context must be valid XML"):
+        PromptAssembler.task_message(envelope, ["drafts/2.4\x01.json"])

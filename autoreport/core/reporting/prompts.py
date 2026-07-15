@@ -7,6 +7,14 @@ from .agentic_models import TaskEnvelope
 from .config import AgentDefinition
 
 
+def _validated_xml(document: str, *, label: str) -> str:
+    try:
+        ElementTree.fromstring(document)
+    except ElementTree.ParseError as exc:
+        raise ValueError(f"{label} must be valid XML: {exc}") from exc
+    return document
+
+
 class PromptAssembler:
     """Assemble identity and task prompts without mixing their lifecycles."""
 
@@ -21,12 +29,13 @@ class PromptAssembler:
             raise ValueError(
                 f"{definition.source_path}: instructions must be a valid XML fragment"
             ) from exc
-        return (
+        prompt = (
             f"<agent_identity name={quoteattr(definition.name)}>\n"
             f"<description>{escape(definition.description)}</description>\n"
             f"{instructions}\n"
             "</agent_identity>"
         )
+        return _validated_xml(prompt, label="system prompt")
 
     @staticmethod
     def task_message(envelope: TaskEnvelope, shared_artifacts: list[str]) -> str:
@@ -51,7 +60,7 @@ class PromptAssembler:
         issues = "\n".join(
             f"<issue_ref>{escape(ref)}</issue_ref>" for ref in envelope.issue_refs
         )
-        return (
+        message = (
             "<task_context>\n"
             f"<task_id>{escape(envelope.task_id)}</task_id>\n"
             f"<run_id>{escape(envelope.run_id)}</run_id>\n"
@@ -62,3 +71,4 @@ class PromptAssembler:
             f"{prior_result}\n{issues}\n"
             "</task_context>"
         )
+        return _validated_xml(message, label="task context")
