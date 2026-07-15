@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
+
 
 class ReportingStore:
     """Write reporting state only beneath the active AutoReport workspace."""
@@ -30,6 +32,15 @@ class ReportingStore:
             encoding="utf-8",
         )
         return path
+
+    def write_run_model(self, run_id: str, relative: str, model: BaseModel) -> Path:
+        safe_run_id = Path(run_id).name
+        if safe_run_id != run_id or Path(relative).is_absolute() or ".." in Path(relative).parts:
+            raise ValueError("run path must stay beneath Work/runs/<run_id>")
+        return self.write_json(
+            f"Work/runs/{safe_run_id}/{relative}",
+            model.model_dump(mode="json"),
+        )
 
     def write_jsonl(self, relative: str, values: list[dict[str, Any]]) -> Path:
         path = self.workspace / relative
