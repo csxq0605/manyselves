@@ -1,0 +1,136 @@
+import asyncio
+from pathlib import Path
+
+import pytest
+from docx import Document
+
+from autoreport.core.loops.bus import MessageBus
+from autoreport.core.reporting.agentic_models import (
+    AgentResult,
+    AgentRunStatus,
+    AuditSubmission,
+    ClaimRecord,
+    CrossReviewSubmission,
+    EditedReportSubmission,
+    ModuleSubmission,
+    PlanSubmission,
+    TaskEnvelope,
+)
+from autoreport.core.reporting.models import REPORT_MODULE_IDS, ReportRequest
+from autoreport.core.reporting.service import ReportingService
+from autoreport.core.reporting.workflow import ReportWorkflowRunner
+from autoreport.core.tools.task_board import TaskBoard
+
+
+class ScriptedWorkflowAgents:
+    def __init__(self):
+        self.active_specialists = 0
+        self.max_active_specialists = 0
+        self.closed = False
+
+    async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
+        agent_id = definition.id
+        if agent_id == "report-planner":
+            payload = PlanSubmission(
+                module_tasks=[
+                    TaskEnvelope(
+                        task_id=f"planned-{module_id}",
+                        run_id=envelope.run_id,
+                        agent_id=f"module-{module_id}-specialist",
+                        objective=f"分析模块 {module_id}",
+                    )
+                    for module_id in REPORT_MODULE_IDS
+                ],
+                rationale="五个专业并行分析后汇合。",
+            )
+        elif agent_id.startswith("module-"):
+            module_id = agent_id.removeprefix("module-").removesuffix("-specialist")
+            self.active_specialists += 1
+            self.max_active_specialists = max(
+                self.max_active_specialists, self.active_specialists
+            )
+            await asyncio.sleep(0.02)
+            self.active_specialists -= 1
+            narrative = f"模块 {module_id} 从本专业机理出发形成主动分析。"
+            payload = ModuleSubmission(
+                module_id=module_id,
+                markdown=narrative,
+                claims=[
+                    ClaimRecord(
+                        id=f"C-{module_id}-001",
+                        module_id=module_id,
+                        text=narrative,
+                        claim_type="technical_interpretation",
+                        confidence=0.5,
+                        footnote_required=False,
+                        unresolved=True,
+                    )
+                ],
+                source_ids=[],
+                unresolved_questions=["尚无客户事实，保留判断边界"],
+                revision=envelope.revision,
+            )
+        elif agent_id == "evidence-auditor":
+            module_id = envelope.task_id.split("-")[1]
+            payload = AuditSubmission(
+                module_id=module_id,
+                approved=True,
+                issues=[],
+                checked_claim_ids=[f"C-{module_id}-001"],
+            )
+        elif agent_id == "cross-module-reviewer":
+            payload = CrossReviewSubmission(
+                approved=True,
+                global_constraints=["所有未知均保持为未知"],
+            )
+        elif agent_id == "chief-editor":
+            payload = EditedReportSubmission(
+                title="配电安全专家咨询报告",
+                overview="本报告按五个专业视角综合审视配电安全。",
+                module_narratives={
+                    module_id: f"模块 {module_id} 从本专业机理出发形成主动分析。"
+                    for module_id in REPORT_MODULE_IDS
+                },
+                conclusion="现有资料不足以形成客户现场事实结论，后续应补充核验。",
+                protected_claim_ids=[f"C-{module_id}-001" for module_id in REPORT_MODULE_IDS],
+            )
+        else:
+            raise AssertionError(agent_id)
+        return AgentResult(
+            task_id=envelope.task_id,
+            run_id=envelope.run_id,
+            agent_id=agent_id,
+            session_id=session_key or envelope.task_id,
+            status=AgentRunStatus.COMPLETED,
+            payload=payload,
+        )
+
+    async def close_workflow(self, workflow_id):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_full_five_module_workflow_runs_parallel_barrier_editor_and_handoff_docx(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(tmp_path, bus=MessageBus(), task_board=TaskBoard())
+    agents = ScriptedWorkflowAgents()
+    state = {
+        "run_id": "run-full",
+        "request": ReportRequest(
+            instruction="生成完整配电安全专家报告",
+            missing_evidence_policy="draft",
+        ),
+    }
+
+    await ReportWorkflowRunner(service, agents).run(state)
+
+    assert agents.max_active_specialists == 5
+    assert agents.closed is True
+    assert set(state["module_submissions"]) == set(REPORT_MODULE_IDS)
+    report_path = tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx"
+    assert report_path.is_file()
+    rendered = Document(report_path)
+    text = "\n".join(paragraph.text for paragraph in rendered.paragraphs)
+    assert "模块 2.1 从本专业机理出发形成主动分析。" in text
+    assert "模块 2.5 从本专业机理出发形成主动分析。" in text

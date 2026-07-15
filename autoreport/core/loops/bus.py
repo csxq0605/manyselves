@@ -1,12 +1,15 @@
 """Message bus for async communication between components."""
 
 import asyncio
+import inspect
 import threading
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, TypeVar
 
 from loguru import logger
 
 from ...interfaces.types import Message
+
+MessageT = TypeVar("MessageT", bound=Message)
 
 
 class MessageBus:
@@ -15,7 +18,6 @@ class MessageBus:
     def __init__(self) -> None:
         """Initialize message bus."""
         self._subscribers: dict[type[Message], list[Callable]] = {}
-        self._lock = asyncio.Lock()
         self._subscribers_lock = threading.Lock()
         self._queue: asyncio.Queue[Message] = asyncio.Queue()
         self._shutdown = False
@@ -43,7 +45,7 @@ class MessageBus:
         message_type = type(message)
         callbacks = []
 
-        async with self._lock:
+        with self._subscribers_lock:
             callbacks.extend(self._subscribers.get(message_type, []))
 
             for msg_type, subs in self._subscribers.items():
@@ -52,7 +54,7 @@ class MessageBus:
 
         for callback in callbacks:
             try:
-                if asyncio.iscoroutinefunction(callback):
+                if inspect.iscoroutinefunction(callback):
                     await callback(message)
                 else:
                     callback(message)
@@ -74,6 +76,34 @@ class MessageBus:
                 self._subscribers[message_type] = []
             self._subscribers[message_type].append(callback)
         logger.debug("Subscribed to message type: {}", message_type.__name__)
+
+    async def wait_for(
+        self,
+        message_type: type[MessageT],
+        predicate: Callable[[MessageT], bool],
+        timeout: float,
+    ) -> MessageT:
+        """Wait once for a matching processed message, then always unsubscribe."""
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[MessageT] = loop.create_future()
+
+        def callback(message: MessageT) -> None:
+            if future.done():
+                return
+            try:
+                matches = predicate(message)
+            except Exception as exc:
+                future.set_exception(exc)
+                return
+            if matches:
+                future.set_result(message)
+
+        self.subscribe(message_type, callback)
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self.unsubscribe(message_type, callback)
 
     def unsubscribe(
         self,

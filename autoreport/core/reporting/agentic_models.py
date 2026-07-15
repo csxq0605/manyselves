@@ -72,7 +72,7 @@ class ResearchNote(StrictModel):
 
 class ClaimRecord(StrictModel):
     id: str = Field(pattern=r"^C-")
-    module_id: Literal["2.4"]
+    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
     text: str = Field(min_length=1)
     claim_type: Literal[
         "project_fact", "technical_interpretation", "risk_judgment", "recommendation"
@@ -93,7 +93,7 @@ class ClaimRecord(StrictModel):
 
 class ModuleSubmission(StrictModel):
     kind: Literal["module_submission"] = "module_submission"
-    module_id: Literal["2.4"]
+    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
     markdown: str = Field(min_length=1)
     claims: list[ClaimRecord]
     source_ids: list[str]
@@ -109,14 +109,43 @@ class PlanSubmission(StrictModel):
 
 class AuditSubmission(StrictModel):
     kind: Literal["audit_submission"] = "audit_submission"
-    module_id: Literal["2.4"]
+    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
     approved: bool
     issues: list[ReviewIssue]
     checked_claim_ids: list[str]
 
 
+class CrossReviewSubmission(StrictModel):
+    kind: Literal["cross_review_submission"] = "cross_review_submission"
+    approved: bool
+    issues: list[ReviewIssue] = Field(default_factory=list)
+    global_constraints: list[str] = Field(default_factory=list)
+    unresolved_disputes: list[str] = Field(default_factory=list)
+
+
+class EditedReportSubmission(StrictModel):
+    kind: Literal["edited_report_submission"] = "edited_report_submission"
+    title: str = Field(min_length=1)
+    overview: str = Field(min_length=1)
+    module_narratives: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str]
+    conclusion: str = Field(min_length=1)
+    protected_claim_ids: list[str] = Field(default_factory=list)
+    citation_anchors: dict[str, str] = Field(default_factory=dict)
+    unresolved_editorial_issues: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def complete_modules(self) -> "EditedReportSubmission":
+        if set(self.module_narratives) != {"2.1", "2.2", "2.3", "2.4", "2.5"}:
+            raise ValueError("edited report requires exactly modules 2.1-2.5")
+        return self
+
+
 Submission = Annotated[
-    ModuleSubmission | PlanSubmission | AuditSubmission,
+    ModuleSubmission
+    | PlanSubmission
+    | AuditSubmission
+    | CrossReviewSubmission
+    | EditedReportSubmission,
     Field(discriminator="kind"),
 ]
 

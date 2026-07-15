@@ -41,7 +41,7 @@ from ...interfaces.types import (
     ToolResult as ToolResultMsg,
 )
 from ...utils.agent_labels import get_agent_badge
-from ..tools import SkillLoader
+from ..tools.skill_tool import SkillLoader
 from ..tools.manifest_tool import ManifestManager, ManifestTool
 from ..tools.registry import ToolRegistry
 from .bus import MessageBus
@@ -198,6 +198,7 @@ class AgentLoop:
         skill_loader: SkillLoader | None = None,
         manifest_manager: ManifestManager | None = None,
         task_board=None,
+        system_prompt: str | None = None,
     ):
         """Initialize agent loop.
 
@@ -227,11 +228,13 @@ class AgentLoop:
         self._task_board = task_board
 
         self._prompt_loader = prompt_loader or PromptLoader()
+        self._system_prompt_override = system_prompt
         self._cached_system_prompt: str | None = None
         self._cached_system_prompt_signature: tuple[Any, ...] | None = None
 
         self._status = AgentStatus.IDLE
         self._running = False
+        self._processing_task: asyncio.Task | None = None
         self._message_queue: asyncio.Queue[UserMessage] = asyncio.Queue()
         self._current_message: UserMessage | None = None
         # Set True when this agent emits a ReportMessage during the current
@@ -280,7 +283,7 @@ class AgentLoop:
         await self._publish_queue_update()
 
         # Start processing task
-        asyncio.create_task(self._process_loop())
+        self._processing_task = asyncio.create_task(self._process_loop())
 
     async def stop(self) -> None:
         """Stop the agent loop."""
@@ -288,6 +291,16 @@ class AgentLoop:
             return
 
         self._running = False
+        self.bus.unsubscribe(UserMessage, self._bus_callback)
+        self.bus.unsubscribe(TaskUpdateMessage, self._handle_task_update)
+        self.bus.unsubscribe(ReportMessage, self._handle_report_message)
+        if self._processing_task is not None:
+            self._processing_task.cancel()
+            try:
+                await self._processing_task
+            except asyncio.CancelledError:
+                pass
+            self._processing_task = None
         logger.info("Stopping agent loop for {}", self.agent_type)
 
     def cancel_current(self) -> None:
@@ -751,12 +764,17 @@ class AgentLoop:
             stream_committed = False
 
             try:
-                async for chunk in self.llm_provider.chat_stream(
+                stream = self.llm_provider.chat_stream(
                     messages=messages,
                     tools=tool_definitions if tool_definitions else None,
                     temperature=self.config.temperature,
                     max_tokens=self.config.max_tokens,
-                ):
+                )
+                if not hasattr(stream, "__aiter__"):
+                    # ABC fallback is a coroutine which raises NotImplementedError.
+                    await stream
+                    raise NotImplementedError
+                async for chunk in stream:
                     if chunk.delta:
                         accumulated_content += chunk.delta
                         # Stream chunk to UI
@@ -798,6 +816,21 @@ class AgentLoop:
                     if self._cancel_event.is_set():
                         logger.info("Stream cancelled for agent {}", self.agent_type)
                         break
+            except NotImplementedError:
+                response = await self.llm_provider.chat(
+                    messages=messages,
+                    tools=tool_definitions if tool_definitions else None,
+                    temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens,
+                )
+                accumulated_content = response.content or ""
+                accumulated_tool_calls = response.tool_calls
+                accumulated_thinking = getattr(response, "thinking", None)
+                if accumulated_content and not accumulated_tool_calls:
+                    self._conversation_history.append(
+                        LLMMessage(role="assistant", content=accumulated_content)
+                    )
+                    stream_committed = True
             except Exception as e:
                 last_error = str(e)
                 raise
@@ -987,12 +1020,16 @@ class AgentLoop:
             accumulated_content = ""
             accumulated_tool_calls = []
             accumulated_thinking = ""
-            async for chunk in self.llm_provider.chat_stream(
+            stream = self.llm_provider.chat_stream(
                 messages=messages,
                 tools=tool_definitions if tool_definitions else None,
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
-            ):
+            )
+            if not hasattr(stream, "__aiter__"):
+                await stream
+                raise NotImplementedError
+            async for chunk in stream:
                 if chunk.delta:
                     accumulated_content += chunk.delta
                     await self.bus.publish(
@@ -1380,6 +1417,9 @@ class AgentLoop:
         summary. The assembled text is cached, but the cache is invalidated
         automatically when the underlying prompt files change.
         """
+        if self._system_prompt_override is not None:
+            return self._system_prompt_override
+
         agent_type_str = self._get_agent_type_str()
         logger.debug("Loading system prompt for agent: {}", self.agent_type)
         prompt_signature = self._prompt_loader.get_signature(agent_type_str)

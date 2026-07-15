@@ -8,8 +8,10 @@ from pathlib import Path
 from openpyxl import load_workbook
 from pydantic import BaseModel, ConfigDict, Field
 
+from ...config.schema import AgentDefaults
 from ...interfaces.types import AgentType, SystemNotice
 from ..loops.bus import MessageBus
+from ..providers.base import LLMProvider
 from ..tools.task_board import TaskBoard
 from .config import AgentDefinition, load_packaged_workflow
 from .coverage import evaluate_coverage
@@ -39,6 +41,8 @@ from .store import ReportingStore
 from .workers.generic import GenericModuleWorker
 from .workers.module_24 import Module24Worker
 from .workers.orchestrator import draft_modules_parallel
+from .agent_runner import ReportingAgentRunner
+from .workflow import ReportWorkflowRunner
 
 
 class ReportingRunResult(BaseModel):
@@ -64,10 +68,20 @@ Handler = Callable[[dict], Awaitable[None]]
 class ReportingService:
     """Run the packaged declarative workflow against the current project."""
 
-    def __init__(self, workspace: Path, *, bus: MessageBus, task_board: TaskBoard):
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        bus: MessageBus,
+        task_board: TaskBoard,
+        llm_provider: LLMProvider | None = None,
+        agent_defaults: AgentDefaults | None = None,
+    ):
         self.workspace = Path(workspace).resolve()
         self.bus = bus
         self.task_board = task_board
+        self.llm_provider = llm_provider
+        self.agent_defaults = agent_defaults or AgentDefaults()
         self.store = ReportingStore(self.workspace)
         self.agents, self.workflow = load_packaged_workflow()
         self.skills = SkillResolver.packaged()
@@ -83,7 +97,7 @@ class ReportingService:
         self.report_template_hash_path = template_root / "report_template.sha256"
         self._handlers: dict[str, Handler] = {
             "manifest-builder": self._build_manifest,
-            "artifact-parser": self._parse_artifacts,
+            "intake-parser": self._parse_artifacts,
             "evidence-normalizer": self._normalize_evidence,
             "coverage-evaluator": self._evaluate_coverage,
             "report-planner": self._plan_modules,
@@ -101,18 +115,51 @@ class ReportingService:
         await self._notice(f"配电报告流程 {run_id} 已启动。")
 
         try:
-            for phase in self.workflow.phases:
-                phases.append(phase.id)
-                if phase.mode == "pipeline":
-                    for agent_id in phase.agents:
-                        await self._run_agent(self.agents[agent_id], state)
-                else:
-                    await asyncio.gather(
-                        *(
-                            self._run_agent(self.agents[agent_id], state)
-                            for agent_id in phase.agents
-                        )
+            if self.llm_provider is not None:
+                phases.extend(phase.id for phase in self.workflow.phases)
+                runner = ReportWorkflowRunner(
+                    self,
+                    ReportingAgentRunner(
+                        self.workspace,
+                        self.bus,
+                        self.llm_provider,
+                        self.agent_defaults,
+                    ),
+                )
+                await runner.run(state)
+            else:
+                # Compatibility path for offline legacy fixtures only. The GUI always
+                # injects its active provider and therefore never enters this writer.
+                compatibility_task = self.task_board.create_task(
+                    AgentType.MAIN, AgentType.MAIN, "offline-reporting-fixture"
+                )
+                self.task_board.start_task(
+                    compatibility_task.task_id, target_agent=AgentType.MAIN
+                )
+                phases.extend(["intake", "coverage", "module", "quality"])
+                try:
+                    await self._build_manifest(state)
+                    await self._parse_artifacts(state)
+                    await self._normalize_evidence(state)
+                    await self._evaluate_coverage(state)
+                    await self._plan_modules(state)
+                    await self._draft_modules(state)
+                    await self._audit_evidence(state)
+                    await self._route_revisions(state)
+                    await self._deliver(state)
+                except MissingEvidenceError:
+                    self.task_board.block_task(
+                        compatibility_task.task_id, target_agent=AgentType.MAIN
                     )
+                    raise
+                except Exception:
+                    self.task_board.fail_task(
+                        compatibility_task.task_id, target_agent=AgentType.MAIN
+                    )
+                    raise
+                self.task_board.complete_task(
+                    compatibility_task.task_id, target_agent=AgentType.MAIN
+                )
         except MissingEvidenceError as exc:
             result = ReportingRunResult(
                 run_id=run_id,
@@ -286,6 +333,12 @@ class ReportingService:
                     source=artifact.source,
                 )
             )
+        # Runtime source tools and ClaimLedger use stable E-* identifiers. Mapper
+        # internals may emit legacy ev-* ids, so normalize once at the boundary.
+        evidence = [
+            item.model_copy(update={"id": f"E-{index:04d}"})
+            for index, item in enumerate(evidence, start=1)
+        ]
         state["evidence_items"] = evidence
         state["photo_assets"] = photo_assets
         state["mapping_gaps"] = mapping_gaps

@@ -2,9 +2,10 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, TypeAlias
+from typing import Any, Literal, TypeAlias
+from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class MessageType(str, Enum):
@@ -30,6 +31,13 @@ class MessageType(str, Enum):
     QUEUE_UPDATE = "queue_update"
     REPORT = "report"
     SYSTEM_NOTICE = "system_notice"
+    PEER_QUERY = "peer_query"
+    PEER_REPLY = "peer_reply"
+    PROGRESS_NOTE = "progress_note"
+    RESEARCH_NOTE_PUBLISHED = "research_note_published"
+    REVISION_REQUEST = "revision_request"
+    BLOCKED_NOTICE = "blocked_notice"
+    AGENT_RESULT = "agent_result"
 
 
 class AgentType(str, Enum):
@@ -287,3 +295,90 @@ class SystemNotice(Message):
     # "interrupt" renders as a muted italic "Interrupted" marker — emitted when
     # the user stops a running response so the UI avoids a fake "[已取消]" bubble.
     kind: str = "notice"
+
+
+class WorkflowMessage(Message):
+    """Common routing metadata for persisted reporting-workflow messages."""
+
+    message_id: str = Field(default_factory=lambda: f"msg-{uuid4().hex}")
+    workflow_id: str = ""
+    task_id: str
+    sender: AgentId = Field(
+        validation_alias=AliasChoices("sender", "agent_type", "source_agent")
+    )
+    recipient: AgentId = Field(
+        default="workflow",
+        validation_alias=AliasChoices("recipient", "target_agent"),
+    )
+    priority: Literal["low", "normal", "high", "urgent"] = "normal"
+    requires_reply: bool = False
+    artifact_refs: list[str] = Field(default_factory=list)
+    content: str = ""
+
+
+class PeerQueryMessage(WorkflowMessage):
+    """A targeted question; long evidence remains in referenced artifacts."""
+
+    type: MessageType = MessageType.PEER_QUERY
+    query_id: str
+    source_session_id: str
+    question: str
+    requires_reply: bool = True
+
+    @property
+    def source_agent(self) -> AgentId:
+        return self.sender
+
+    @property
+    def target_agent(self) -> AgentId:
+        return self.recipient
+
+
+class PeerReplyMessage(WorkflowMessage):
+    """A reply isolated to the original query and requesting session."""
+
+    type: MessageType = MessageType.PEER_REPLY
+    query_id: str
+    target_session_id: str
+    answer: str
+    source_ids: list[str] = Field(default_factory=list)
+
+    @property
+    def source_agent(self) -> AgentId:
+        return self.sender
+
+    @property
+    def target_agent(self) -> AgentId:
+        return self.recipient
+
+
+class ProgressNoteMessage(WorkflowMessage):
+    type: MessageType = MessageType.PROGRESS_NOTE
+    note_kind: Literal["progress", "gap"] = "progress"
+
+
+class ResearchNotePublishedMessage(WorkflowMessage):
+    type: MessageType = MessageType.RESEARCH_NOTE_PUBLISHED
+    note_id: str
+
+
+class RevisionRequestMessage(WorkflowMessage):
+    type: MessageType = MessageType.REVISION_REQUEST
+    issue_refs: list[str] = Field(default_factory=list)
+    requires_reply: bool = True
+
+
+class BlockedNoticeMessage(WorkflowMessage):
+    type: MessageType = MessageType.BLOCKED_NOTICE
+    reason: str
+
+
+class AgentResultMessage(WorkflowMessage):
+    type: MessageType = MessageType.AGENT_RESULT
+    run_id: str
+    result_path: str
+    status: Literal["completed", "blocked", "incomplete", "failed"] = "completed"
+
+    @property
+    def agent_type(self) -> AgentId:
+        return self.sender

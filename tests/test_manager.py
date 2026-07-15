@@ -126,7 +126,11 @@ async def test_start_creates_loops(mock_factory, manager):
 
     await manager.start()
     assert manager.is_running
-    assert len(manager._loops) == len(AgentType)
+    assert set(manager._loops) == {"main"}
+    assert all(
+        legacy not in manager._loops
+        for legacy in ("data_analysis", "plotting", "theory", "report")
+    )
 
     await manager.stop()
 

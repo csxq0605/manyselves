@@ -1,11 +1,13 @@
 """Tests for async message bus."""
 
+import asyncio
 
 import pytest
 
 from autoreport.core.loops.bus import MessageBus
 from autoreport.interfaces.types import (
     AgentResponse,
+    AgentResultMessage,
     Message,
     UserMessage,
 )
@@ -143,3 +145,50 @@ async def test_publish_queues_message(bus):
     msg = UserMessage(content="Queued")
     await bus.publish(msg)
     assert not bus._queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_resolves_only_matching_message_and_unsubscribes(bus):
+    processor = asyncio.create_task(bus.process_queue())
+    waiter = asyncio.create_task(
+        bus.wait_for(
+            AgentResultMessage,
+            lambda message: message.task_id == "wanted",
+            timeout=1.0,
+        )
+    )
+    await asyncio.sleep(0)
+    await bus.publish(
+        AgentResultMessage(
+            workflow_id="wf-1",
+            task_id="other",
+            run_id="run-1",
+            sender="auditor",
+            recipient="workflow",
+            result_path="other.json",
+            status="completed",
+        )
+    )
+    await bus.publish(
+        AgentResultMessage(
+            workflow_id="wf-1",
+            task_id="wanted",
+            run_id="run-1",
+            sender="auditor",
+            recipient="workflow",
+            result_path="wanted.json",
+            status="completed",
+        )
+    )
+
+    assert (await waiter).result_path == "wanted.json"
+    assert bus._subscribers.get(AgentResultMessage) == []
+    bus.shutdown()
+    await processor
+
+
+@pytest.mark.asyncio
+async def test_wait_for_timeout_unsubscribes(bus):
+    with pytest.raises(asyncio.TimeoutError):
+        await bus.wait_for(UserMessage, lambda _: True, timeout=0.01)
+    assert bus._subscribers.get(UserMessage) == []

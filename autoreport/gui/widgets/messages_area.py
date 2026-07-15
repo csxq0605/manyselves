@@ -256,7 +256,6 @@ class MessagesArea(QScrollArea):
 
         # Auto-scroll if enabled
         if self._auto_scroll_enabled:
-            QTimer.singleShot(0, lambda r=row: self.ensureWidgetVisible(r, 0, 0))
             self._schedule_scroll_to_bottom()
 
         return row
@@ -309,7 +308,6 @@ class MessagesArea(QScrollArea):
 
         # Auto-scroll if enabled
         if self._auto_scroll_enabled:
-            QTimer.singleShot(0, lambda g=group: self.ensureWidgetVisible(g, 0, 0))
             self._schedule_scroll_to_bottom()
 
         return group
@@ -380,7 +378,6 @@ class MessagesArea(QScrollArea):
         self._update_timeline_chains()
 
         if self._auto_scroll_enabled:
-            QTimer.singleShot(0, lambda r=row: self.ensureWidgetVisible(r, 0, 0))
             self._schedule_scroll_to_bottom()
 
     def scroll_to_bottom(self) -> None:
@@ -404,6 +401,11 @@ class MessagesArea(QScrollArea):
         """Keep following streaming output unless user has scrolled up."""
         if self._user_scrolled:
             return
+        # A previously queued retry may have targeted an earlier layout range.
+        # Restart the short retry sequence from the current range so streaming
+        # cannot snap to the top while rows are still settling.
+        self._auto_scroll_timer.stop()
+        self._pending_scroll_to_bottom = False
         self._schedule_scroll_to_bottom()
 
     def clear(self) -> None:

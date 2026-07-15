@@ -14,7 +14,12 @@ KNOWN_CARRIERS = {
     "coverage_matrix",
     "module_tasks",
     "module_drafts",
+    "research_notes",
+    "claim_ledger",
+    "source_ledger",
     "review_issues",
+    "report_state",
+    "citation_plan",
     "output_artifacts",
 }
 
@@ -56,9 +61,45 @@ class PhaseDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(min_length=1)
-    mode: Literal["pipeline", "parallel"]
-    agents: list[str] = Field(min_length=1)
+    mode: Literal["pipeline", "parallel", "barrier"]
+    agents: list[str] = Field(default_factory=list)
+    pipelines: list["PipelineDefinition"] = Field(default_factory=list)
     needs: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def execution_shape_matches_mode(self) -> "PhaseDefinition":
+        if self.mode == "barrier":
+            if self.agents or self.pipelines:
+                raise ValueError("barrier phases cannot execute agents or pipelines")
+            if not self.needs:
+                raise ValueError("barrier phases require at least one dependency")
+            return self
+        if self.mode == "pipeline":
+            if not self.agents or self.pipelines:
+                raise ValueError("pipeline phases require agents and cannot contain pipelines")
+            return self
+        if bool(self.agents) == bool(self.pipelines):
+            raise ValueError("parallel phases require exactly one of agents or pipelines")
+        return self
+
+
+class PipelineDefinition(BaseModel):
+    """One independently progressing path inside a parallel workflow phase."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    id: str = Field(min_length=1)
+    agents: list[str] = Field(min_length=1)
+    revision_agent: str | None = Field(default=None, alias="revisionAgent")
+    max_revisions: int = Field(default=0, ge=0, le=10, alias="maxRevisions")
+
+    @model_validator(mode="after")
+    def revision_is_local_and_bounded(self) -> "PipelineDefinition":
+        if self.max_revisions and not self.revision_agent:
+            raise ValueError("maxRevisions requires revisionAgent")
+        if self.revision_agent and self.revision_agent not in self.agents:
+            raise ValueError("revisionAgent must belong to its pipeline")
+        return self
 
 
 class WorkflowDefinition(BaseModel):
@@ -176,10 +217,13 @@ def load_workflow_definition(
 
     _validate_phase_graph(workflow.phases)
     for phase in workflow.phases:
-        unknown = sorted(set(phase.agents) - set(agents))
+        referenced_agents = set(phase.agents)
+        for pipeline in phase.pipelines:
+            referenced_agents.update(pipeline.agents)
+        unknown = sorted(referenced_agents - set(agents))
         if unknown:
             raise ConfigurationError(f"phase {phase.id} references unknown agents: {unknown}")
-        if phase.mode == "parallel":
+        if phase.mode == "parallel" and phase.agents:
             owners: dict[str, str] = {}
             for agent_id in phase.agents:
                 for carrier in agents[agent_id].writes:

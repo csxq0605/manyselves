@@ -3,7 +3,9 @@
 from pathlib import Path
 from typing import Any, Literal
 
+from ...config.schema import AgentDefaults
 from ..loops.bus import MessageBus
+from ..providers.base import LLMProvider
 from ..reporting.models import ReportRequest
 from ..reporting.service import ReportingService
 from .registry import Tool
@@ -17,12 +19,22 @@ class RunReportingWorkflowTool(Tool):
         "Use this for five-module report generation, evidence coverage checks, and local rewrites."
     )
 
-    def __init__(self, workspace: Path, bus: MessageBus, task_board: TaskBoard):
+    def __init__(
+        self,
+        workspace: Path,
+        bus: MessageBus,
+        task_board: TaskBoard,
+        *,
+        llm_provider: LLMProvider | None = None,
+        agent_defaults: AgentDefaults | None = None,
+    ):
         self.workspace = Path(workspace).resolve()
         self.service = ReportingService(
             self.workspace,
             bus=bus,
             task_board=task_board,
+            llm_provider=llm_provider,
+            agent_defaults=agent_defaults,
         )
 
     async def __call__(

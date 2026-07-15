@@ -123,19 +123,120 @@ def test_packaged_phase_a_declares_the_complete_vertical_flow() -> None:
     agents, workflow = load_packaged_workflow()
 
     assert set(agents) == {
+        "main-agent",
         "manifest-builder",
-        "artifact-parser",
+        "intake-parser",
         "evidence-normalizer",
         "coverage-evaluator",
         "report-planner",
-        "module-worker",
+        "module-2.1-specialist",
+        "module-2.2-specialist",
+        "module-2.3-specialist",
+        "module-2.4-specialist",
+        "module-2.5-specialist",
         "evidence-auditor",
         "revision-router",
+        "cross-module-reviewer",
+        "chief-editor",
+        "citation-builder",
+        "docx-renderer",
         "project-delivery",
     }
     assert [(phase.id, phase.mode) for phase in workflow.phases] == [
-        ("intake", "pipeline"),
-        ("coverage", "pipeline"),
-        ("module", "parallel"),
-        ("quality", "pipeline"),
+        ("preparation", "pipeline"),
+        ("planning", "pipeline"),
+        ("module-pipelines", "parallel"),
+        ("module-barrier", "barrier"),
+        ("cross-module-review", "pipeline"),
+        ("editing-and-delivery", "pipeline"),
     ]
+
+
+def test_packaged_workflow_has_five_locally_revisable_module_pipelines() -> None:
+    agents, workflow = load_packaged_workflow()
+    module_phase = next(phase for phase in workflow.phases if phase.id == "module-pipelines")
+
+    assert [pipeline.id for pipeline in module_phase.pipelines] == [
+        "module-2.1",
+        "module-2.2",
+        "module-2.3",
+        "module-2.4",
+        "module-2.5",
+    ]
+    for module_id, pipeline in zip(("2.1", "2.2", "2.3", "2.4", "2.5"), module_phase.pipelines):
+        assert pipeline.agents == [f"module-{module_id}-specialist", "evidence-auditor"]
+        assert pipeline.revision_agent == f"module-{module_id}-specialist"
+        assert pipeline.max_revisions == 2
+        assert pipeline.revision_agent in agents
+
+    barrier = next(phase for phase in workflow.phases if phase.id == "module-barrier")
+    reviewer = next(phase for phase in workflow.phases if phase.id == "cross-module-review")
+    assert barrier.needs == ["module-pipelines"]
+    assert reviewer.needs == ["module-barrier"]
+
+
+def test_workflow_rejects_invalid_barrier_and_revision_configuration(tmp_path: Path) -> None:
+    agent = load_agent_definition(_write_agent(tmp_path / "known.md", "known"))
+    workflow = tmp_path / "workflow.yml"
+    workflow.write_text(
+        "id: invalid\nphases:\n"
+        "  - id: modules\n    mode: parallel\n    pipelines:\n"
+        "      - id: one\n        agents: [known]\n        revisionAgent: missing\n"
+        "        maxRevisions: 0\n"
+        "  - id: barrier\n    mode: barrier\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError):
+        load_workflow_definition(workflow, {agent.id: agent})
+
+
+def test_packaged_identities_are_complete_scoped_and_corpus_agnostic() -> None:
+    agents, _ = load_packaged_workflow()
+    human_roles = {
+        "main-agent",
+        "report-planner",
+        "intake-parser",
+        "evidence-normalizer",
+        "module-2.1-specialist",
+        "module-2.2-specialist",
+        "module-2.3-specialist",
+        "module-2.4-specialist",
+        "module-2.5-specialist",
+        "evidence-auditor",
+        "cross-module-reviewer",
+        "chief-editor",
+    }
+    required_sections = {
+        "role_and_perspective",
+        "mission",
+        "default_posture",
+        "owned_decisions",
+        "tools_and_loop",
+        "collaboration",
+        "completion_standard",
+        "deliverables",
+    }
+    for agent_id in human_roles:
+        identity = agents[agent_id]
+        assert required_sections <= {
+            section for section in required_sections if f"<{section}>" in identity.instructions
+        }
+
+    expert_tools = set(agents["module-2.4-specialist"].tools)
+    assert {"search_project_evidence", "search_reference_library", "web_search", "query_peer"} <= expert_tools
+    assert "web_search" not in agents["intake-parser"].tools
+    assert "request_revision" in agents["evidence-auditor"].tools
+    assert "request_revision" in agents["cross-module-reviewer"].tools
+    assert "web_search" not in agents["chief-editor"].tools
+    assert agents["docx-renderer"].tools == []
+
+    combined = "\n".join(agent.instructions for agent in agents.values())
+    forbidden = (
+        "01_页面导入知识库",
+        "02_本地skill提示词资料_禁止导入",
+        "配电安全报告工具V2-交接",
+        "现状—结论—风险—建议",
+        "事实—风险—建议",
+    )
+    assert not any(term in combined for term in forbidden)

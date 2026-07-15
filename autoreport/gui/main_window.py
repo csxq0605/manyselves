@@ -1416,6 +1416,8 @@ class MainWindow(QMainWindow):
 
     def _handle_agent_response(self, message: AgentResponse) -> None:
         agent_str = str(message.agent_type)
+        if "--session-" in agent_str:
+            return
         if not self._is_visible_agent(agent_str):
             if not message.streaming and message.content:
                 self._conv_store.append_message(
@@ -1506,6 +1508,8 @@ class MainWindow(QMainWindow):
 
     def _handle_user_message(self, message: UserMessage) -> None:
         agent_str = str(message.agent_type)
+        if "--session-" in agent_str:
+            return
         if not self._is_visible_agent(agent_str):
             self._conv_store.append_message(
                 agent_str,
@@ -1583,6 +1587,8 @@ class MainWindow(QMainWindow):
 
     def _handle_tool_call(self, message: ToolCallMessage) -> None:
         agent_str = str(message.agent_type)
+        if "--session-" in agent_str:
+            return
         state = self._state_for_agent(agent_str)
         if message.tool_name == "manage_tasks":
             state.phase = "tool"
@@ -1640,6 +1646,8 @@ class MainWindow(QMainWindow):
 
     def _handle_tool_result(self, message: ToolResult) -> None:
         agent_str = str(message.agent_type)
+        if "--session-" in agent_str:
+            return
         state = self._state_for_agent(agent_str)
         latest_task_summary_fn = getattr(self, "_latest_persisted_task_summary", None)
         latest_task_summary = (
@@ -2017,6 +2025,8 @@ class MainWindow(QMainWindow):
 
     def _handle_status_change(self, message: StatusChange) -> None:
         agent_str = str(message.agent_type)
+        if "--session-" in agent_str:
+            return
         self._agent_status_cache[agent_str] = (str(message.status), dict(message.extra or {}))
         if self._is_visible_agent(agent_str):
             self.agent_panel.set_status(message.status, message.extra)
@@ -2059,6 +2069,8 @@ class MainWindow(QMainWindow):
     def _handle_system_notice(self, message: SystemNotice) -> None:
         """Handle SystemNotice and render in target agent panel."""
         agent_str = normalize_agent_id(message.agent_type)
+        if "--session-" in agent_str:
+            return
         bubble_title = None
         is_interrupt = getattr(message, "kind", "notice") == "interrupt"
         display_mode = "inline_notice" if is_interrupt else "bubble"
@@ -2088,6 +2100,8 @@ class MainWindow(QMainWindow):
 
     def _handle_queue_update(self, message: QueueUpdateMessage) -> None:
         agent_str = str(message.agent_type)
+        if "--session-" in agent_str:
+            return
         self._agent_queue_cache[agent_str] = list(message.queued_messages)
         if self._is_visible_agent(agent_str):
             self.agent_panel.set_queue_preview(message.queued_messages)

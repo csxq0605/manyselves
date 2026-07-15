@@ -29,17 +29,16 @@ from ..tools import (
     PDFParseTool,
     ReadTool,
     RespondTool,
-    RunReportingWorkflowTool,
     SendToAgentTool,
     SkillLoader,
     TaskBoard,
 )
+from ..tools.reporting_tool import RunReportingWorkflowTool
 from ..tools.registry import ToolRegistry
+from ..reporting.config import load_packaged_workflow
+from ..reporting.prompts import PromptAssembler
 from .agent_loop import AgentLoop
 from .bus import MessageBus
-
-_LEGACY_AGENT_IDS = ("main", "data_analysis", "plotting", "theory", "report")
-
 
 class LoopManager:
     """Manager for all agent loops."""
@@ -188,26 +187,25 @@ class LoopManager:
         await self.start()
 
     async def _create_loops(self) -> None:
-        """Create loops for the currently configured compatibility agents."""
+        """Create the sole user-facing Main loop; workflow roles are task-scoped."""
         config = self.config_manager.config.agents.defaults
         llm_provider = self._provider_manager.get_active_provider()
-
-        for agent_id in _LEGACY_AGENT_IDS:
-            tools = self._create_tools_for_agent(agent_id)
-
-            loop = AgentLoop(
-                agent_type=agent_id,
-                workspace=self.workspace,
-                tools=tools,
-                bus=self.bus,
-                config=config,
-                llm_provider=llm_provider,
-                loop_manager=self,
-                skill_loader=self.skill_loader,
-                manifest_manager=self.manifest_manager,
-                task_board=self._task_board,
-            )
-            self._loops[agent_id] = loop
+        agents, _workflow = load_packaged_workflow()
+        definition = agents["main-agent"]
+        loop = AgentLoop(
+            agent_type="main",
+            workspace=self.workspace,
+            tools=self._create_tools_for_agent("main"),
+            bus=self.bus,
+            config=config,
+            llm_provider=llm_provider,
+            loop_manager=self,
+            skill_loader=self.skill_loader,
+            manifest_manager=self.manifest_manager,
+            task_board=self._task_board,
+            system_prompt=PromptAssembler.system_prompt(definition),
+        )
+        self._loops["main"] = loop
 
     def get_loop(self, agent_id: AgentId | AgentType) -> "AgentLoop | None":
         """Get an agent loop by registry identifier.
@@ -303,11 +301,17 @@ class LoopManager:
 
         # Inter-agent communication tools
         if agent_id == "main":
+            try:
+                reporting_provider = self._provider_manager.get_active_provider()
+            except ValueError:
+                reporting_provider = None
             registry.register(
                 RunReportingWorkflowTool(
                     workspace=self.workspace,
                     bus=self.bus,
                     task_board=self._task_board,
+                    llm_provider=reporting_provider,
+                    agent_defaults=self.config_manager.config.agents.defaults,
                 )
             )
             registry.register(
