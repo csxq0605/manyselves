@@ -38,6 +38,7 @@ dependencies = [
     "markdown>=3.5.0,<4.0.0",
     "pyqt6-qscintilla>=2.14.1",
     "openpyxl>=3.1.5",
+    "python-docx>=1.2.0,<2.0.0",
 ]
 
 [project.optional-dependencies]

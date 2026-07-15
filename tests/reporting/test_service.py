@@ -54,6 +54,9 @@ async def test_phase_a_writes_traceable_module_output_from_core_workbook(tmp_pat
     assert result.phases == ["intake", "coverage", "module", "quality"]
     module_path = tmp_path / "Outputs" / "Modules" / "2.4.md"
     assert module_path in result.output_paths
+    report_path = tmp_path / "Outputs" / "Reports" / "配电安全评估报告.docx"
+    assert report_path in result.output_paths
+    assert report_path.exists()
     module_text = module_path.read_text(encoding="utf-8")
     assert "车间配电房/1A2" in module_text
     assert "pds.module24.configuration@1.0.0" in module_text
@@ -65,5 +68,9 @@ async def test_phase_a_writes_traceable_module_output_from_core_workbook(tmp_pat
         (tmp_path / "Work" / "drafts" / "2.4.json").read_text(encoding="utf-8")
     )
     assert draft_state["approved"] is True
+    render_log = json.loads(
+        (tmp_path / "Outputs" / "Reports" / "render-log.json").read_text(encoding="utf-8")
+    )
+    assert render_log["output_sha256"]
     assert bus._queue.qsize() >= 2
     assert all(task.status is TaskStatus.COMPLETED for task in board.get_todolist(AgentType.MAIN))

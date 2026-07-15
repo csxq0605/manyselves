@@ -33,4 +33,5 @@ async def test_reporting_tool_runs_phase_a_in_current_workspace(tmp_path: Path) 
     assert result["output_paths"] == [
         "Outputs/Modules/2.1.md",
         "Outputs/Reviews/phase-a.json",
+        "Outputs/Reports/配电安全评估报告.docx",
     ]

@@ -29,6 +29,8 @@ from .models import (
     SourceLocation,
 )
 from .planner import CoveragePlanningError, plan_modules
+from .rendering.docx import DocxRenderer
+from .report_state import build_report_state
 from .review.auditor import audit_draft
 from .review.revisions import RevisionLimitError, RevisionRouter
 from .skills.resolver import SkillResolver
@@ -68,6 +70,9 @@ class ReportingService:
         self.skills = SkillResolver.packaged()
         self.module_24_worker = Module24Worker(self.skills)
         self.revision_router = RevisionRouter(max_rounds=2)
+        template_root = Path(__file__).resolve().parents[2] / "templates" / "reporting"
+        self.report_template_path = template_root / "report_template.docx"
+        self.report_template_hash_path = template_root / "report_template.sha256"
         self._handlers: dict[str, Handler] = {
             "manifest-builder": self._build_manifest,
             "artifact-parser": self._parse_artifacts,
@@ -438,4 +443,34 @@ class ReportingService:
         output_artifacts.append(
             OutputArtifact(kind="review", path=review_path.relative_to(self.workspace))
         )
+
+        report_state = build_report_state(
+            title="配电安全评估报告",
+            request=state["request"],
+            manifest=state["project_manifest"],
+            coverage=state["coverage_matrix"],
+            evidence_items=state.get("evidence_items", []),
+            photo_assets=state.get("photo_assets", []),
+            module_drafts=state.get("module_drafts", []),
+            review_issues=state.get("review_issues", []),
+        )
+        self.store.write_json(
+            "Work/report-state.json",
+            report_state.model_dump(mode="json"),
+        )
+        expected_template_hash = self.report_template_hash_path.read_text(encoding="utf-8").split()[
+            0
+        ]
+        report_relative = Path("Outputs") / "Reports" / "配电安全评估报告.docx"
+        render_result = DocxRenderer(
+            self.report_template_path,
+            asset_root=self.workspace,
+        ).render(report_state, self.workspace / report_relative)
+        if render_result.template_sha256 != expected_template_hash:
+            raise ValueError("packaged DOCX template hash does not match approved template")
+        self.store.write_json(
+            "Outputs/Reports/render-log.json",
+            render_result.model_dump(mode="json"),
+        )
+        output_artifacts.append(OutputArtifact(kind="report", path=report_relative))
         state["output_artifacts"] = output_artifacts
