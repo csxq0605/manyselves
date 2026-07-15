@@ -1,2 +1,0 @@
-"""Framework-independent domain carriers."""
-

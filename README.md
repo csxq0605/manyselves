@@ -1,136 +1,234 @@
-# 本地配电报告多 Agent 工作区
+<div align="center">
 
-这是一个从零实现的本地 PyQt 配电报告流程应用。当前版本首先打通流程架构：用户在项目工作区中组织资料、查看文件并与主 Agent 对话，后台按声明式工作流依次完成资料清单、解析、证据规范化、覆盖判断、报告规划、模块草稿、证据审校、局部返工路由和项目交付。
+![title](https://raw.githubusercontent.com/xjsongphy/AutoReport/master/assets/screenshots/title.png)
 
-## 参考边界
+### A Multi-Agent Collaborative System for Automated Physics Experiment Report Writing
 
-- AutoReport 仅作为职责设计参考：项目文件工作区、文件查看器、主 Agent 对话、MessageBus、TaskBoard 和 Agent 运行循环。
-- Nexgent 仅作为编排设计参考：Markdown/frontmatter Agent 定义与 YAML `phase`、`pipeline`、`parallel` 表达。
-- 本仓库不导入两个参考项目的包，不访问其源码路径，也不要求它们存在才能安装、测试或运行。
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#)
+[![Python](https://img.shields.io/badge/python-%E2%89%A5%203.12-blue.svg)](https://www.python.org/)
+[![Built with PyQt6](https://img.shields.io/badge/built%20with-PyQt6-green.svg)](https://www.riverbankcomputing.com/software/pyqt/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/xjsongphy/AutoReport/blob/master/LICENSE)
 
-## 当前流程
+English | [中文](https://github.com/xjsongphy/AutoReport/blob/master/README_zh.md)
 
-```text
-PyQt 项目文件树 / 文件查看器 / 主 Agent 对话
-                    │
-                    ▼
-              ReportRequest
-                    │
-                    ▼
-ProjectManifest → ParsedArtifact → EvidenceItem → CoverageMatrix
-                                                    │
-                                                    ▼
-                                             Report Planner
-                                                    │
-                                                    ▼
-Module Worker → Evidence Auditor → Revision Router → Project Delivery
-```
+</div>
 
-运行时同时具备：
+## Overview
 
-- 类型化领域载体，禁止用一份无结构字符串贯穿流程。
-- MessageBus 事件历史和 TaskBoard 状态机。
-- `pipeline` 串行状态传递与 `parallel` 并行执行。
-- 未声明载体写入、并行写冲突、Agent 异常和依赖失败传播。
-- 所有项目状态与输出落在当前客户项目目录。
-- 知识文件不会被当成客户事实写入证据账本。
+A multi-agent collaborative automated physics experiment report writing system. Users provide experimental data and reference materials, then agents collaboratively generate LaTeX reports through theoretical derivation, data analysis, visualization, and typesetting.
 
-## 本地安装
+## Features
 
-要求 Python 3.12 或更高版本。
+### Core Capabilities
+- **Multi-Agent Collaboration** — Main Agent orchestrates, with four sub-agents (Data Analysis, Plotting, Theory, Report) each specializing in their domain
+- **Directory Permission Isolation** — Each agent can only write to designated directories, preventing cross-contamination
+- **Waitlist/Todolist Tracking** — Structured task delegation with linked waitlist-todolist chains and auto-notification on completion
+- **Checkpoint Rollback** — Automatically creates checkpoints at key nodes; roll back to any historical state
+- **Interactive Adjustment** — Users can message any agent at any time for intervention and optimization
+
+### UI/UX (Claude Code Style)
+- **Streaming Responses** — Real-time agent output, word-by-word streaming
+- **Switchable Agent Panel** — A single agent chat panel with a dropdown selector to switch among Main / Data Analysis / Plotting / Theory / Report
+- **Recent Projects Cache** — VSCode-style recent projects list, cached in `~/.autoreport/recent_projects.json`
+- **File Explorer** — VSCode-style file tree with 22px row height, 16px icons, concise labels (Data, References, Theory, Plots, Outline, Tex)
+- **Context Chip Bar** — Visual indicator for file/line selections with toggle to include/exclude from messages
+- **Chat Interface** — Claude Code-style conversation display with proper Markdown rendering and grouped tool calls
+- **Slash Commands** — `/clear`, `/new`, `/help`, `/compact`, `/init`
+
+### Developer Tools
+- **@ File References** — Type `@` in chat to fuzzy-search and insert file references as Markdown links
+- **Selected Line Context** — Text selections in preview pane are automatically appended to agent messages
+- **Sub-Agent Debug Mode** — Disconnect from Main Agent channel, test individual agents independently
+
+### LLM Integration
+- **Multi-Provider Support** — Anthropic, OpenAI, DeepSeek, etc. Runtime model switching
+- **Provider Presets** — 50+ provider templates from [cc-switch](https://github.com/farion1231/cc-switch)
+- **Context Auto-Compact** — Automatically trims conversation history when approaching context window limits
+
+## Main Workspace
+
+The main workspace combines the project file tree, document preview, and agent chat timeline in one window. Users can inspect generated LaTeX/PDF output while continuing to interact with the agent team.
+
+![AutoReport main workspace](https://raw.githubusercontent.com/xjsongphy/AutoReport/master/assets/screenshots/main-window.png)
+
+## Quick Start
+
+**Prerequisites:** Python >= 3.12, [uv](https://docs.astral.sh/uv/) package manager, TeX distribution, at least one LLM Provider API key.
+
+Install from PyPI:
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]'
+pip install autoreport-gui
+autoreport
 ```
 
-## 启动 GUI
+Or with `uv`:
 
 ```bash
-.venv/bin/pds-report --project /absolute/path/to/customer-project
+uv pip install autoreport-gui
+autoreport
 ```
 
-窗口只包含项目文件区、文件查看器和主 Agent 对话。可以从文件区新建或打开另一个客户项目。
-
-## Headless 验证
+Install from source:
 
 ```bash
-.venv/bin/pds-report \
-  --headless \
-  --project .test-projects/smoke \
-  --message '写作配电报告，要求深度思考，先做2.4'
+git clone https://github.com/xjsongphy/AutoReport && cd AutoReport
+uv sync
 ```
 
-命令返回 JSON，包括运行状态、主 Agent 消息和生成文件路径。
+Run:
 
-## 客户项目目录
-
-```text
-customer-project/
-├── Inputs/                 # 客户输入资料
-├── Knowledge/              # 方法论与知识资料，不作为客户事实
-├── Work/
-│   ├── manifest.json
-│   ├── evidence.jsonl
-│   ├── coverage.json
-│   └── runs/               # 可恢复运行快照、任务和事件
-└── Outputs/
-    ├── Modules/            # 结构化模块草稿
-    ├── Reviews/            # 证据审校记录
-    └── Reports/            # 本轮运行摘要；正式 DOCX 属于后续阶段
+```bash
+autoreport
 ```
 
-所有路径都从客户项目根目录派生。应用不会将项目运行数据写入源码仓库、用户主目录或系统临时目录。
+The start window lets users open an existing experiment folder, create a new project, configure API providers, or resume a recent project.
 
-## Agent 配置
+![AutoReport start window](https://raw.githubusercontent.com/xjsongphy/AutoReport/master/assets/screenshots/start-window.png)
 
-Agent 位于 `src/pds_report/resources/agents/`，使用 Markdown/frontmatter：
+First launch prompts for API configuration. Pre-configure via environment variables:
 
-```markdown
----
-id: evidence-normalizer
-role: evidence
-reads: [parsed_artifacts]
-writes: [evidence_items]
-tools: [normalize_evidence]
----
-
-将解析结果规范化为客户证据。不得从方法论或 FAQ 生成客户事实。
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..."
+export DEEPSEEK_API_KEY="sk-..."
+autoreport
 ```
 
-加载器会校验重复 ID、未知载体以及缺失的读写合同。
+## MinerU Integration
 
-## 工作流配置
+AutoReport uses [mineru-open-api](https://github.com/opendatalab/MinerU) CLI for PDF parsing (PDF, images, DOCX, PPTX, XLSX → Markdown).
 
-工作流位于 `src/pds_report/resources/workflows/`：
+**Setup:**
+
+1. Install mineru-open-api:
+   ```bash
+   curl -fsSL https://cdn-mineru.openxlab.org.cn/open-api-cli/install.sh | sh
+   ```
+   See [mineru-open-api docs](https://mineru.net/ecosystem?tab=cli) for details.
+
+2. Register at [MinerU](https://mineru.net/apiManage/token) for an API key, then authenticate:
+   ```bash
+   mineru-open-api auth
+   ```
+
+3. The app auto-detects availability on startup and shows a warning if not installed.
+
+Supports batch processing (max 200MB / 600 pages per file), text/image/table/formula extraction.
+
+## Configuration
+
+Configuration file: `autoreport.config.yaml`
+
+The API configuration dialog manages provider presets, active provider selection, API keys, base URLs, and default models.
+
+![AutoReport API configuration](https://raw.githubusercontent.com/xjsongphy/AutoReport/master/assets/screenshots/configuration-window.png)
 
 ```yaml
-id: phase-a-flow
-phases:
-  - id: intake
-    mode: pipeline
-    agents: [manifest-builder, artifact-parser, evidence-normalizer]
-  - id: module
-    mode: parallel
-    agents: [module-worker]
+agents:
+  defaults:
+    model: "anthropic/claude-sonnet-4.5"
+    temperature: 0.1
+    max_tool_iterations: 200
 ```
 
-加载器会在运行前拒绝未知 Agent、非法模式、未知依赖、重复阶段和循环依赖。
-
-## 验证
+## Debug Mode
 
 ```bash
-.venv/bin/ruff check src tests
-QT_QPA_PLATFORM=offscreen .venv/bin/pytest -q
+autoreport --debug-agent data_analysis
+autoreport --debug-agent data_analysis --debug-agent plotting
 ```
 
-测试临时目录固定在仓库内 `.test-projects/`。构建 wheel 时可把构建临时目录也固定到仓库内：
+Valid agents: `data_analysis`, `plotting`, `theory`, `report`
+
+## Project Structure
+
+```
+my_experiment/
+├── Data/            # Raw experimental data (user input) + analysis results
+│   └── Processed/   # Data Analysis Agent output only
+├── References/      # Reference materials (PDF, images), custom templates
+├── Theory/          # Theory Agent output only
+├── Plots/           # Plotting Agent plots and generated images
+│   ├── Fig/         # Generated figures
+│   └── Scripts/     # Plotting scripts
+├── Outline/         # Main Agent report outline and routing notes
+└── Tex/             # Report Agent LaTeX source and compiled output
+```
+
+### Agent Permissions
+
+| Agent | Write Directory | Read Scope |
+|-------|----------------|------------|
+| Main Agent | `Outline/` | All directories |
+| Data Analysis | `Data/Processed/` | All directories |
+| Plotting | `Plots/` | All directories |
+| Theory | `Theory/` | All directories |
+| Report | `Tex/` | All directories |
+| User | `Data/`, `References/` | All directories |
+
+## Architecture
+
+```
+autoreport/
+├── app.py                 # Entry point: CLI parsing, LoopManager startup
+├── config/                # Pydantic-based config (YAML loading, API key validation)
+├── core/
+│   ├── loops/            # Agent runtime: LoopManager, AgentLoop, MessageBus
+│   ├── providers/        # LLM provider abstraction (factory, base classes)
+│   ├── prompts/          # Progressive prompt loading (identity → full instructions)
+│   ├── tools/            # Tool system (registry, file tools, exec tools, PDF tool, skill tool)
+│   ├── checkpoints.py    # Operation-log checkpoints with reversible file operations
+│   ├── conversations.py  # Multi-session conversation store
+│   ├── file_search.py    # Fuzzy file search for @ references
+│   ├── preset_sync.py    # cc-switch preset synchronization
+│   └── recent_projects.py# Recent projects cache
+├── gui/                  # PyQt6 interface (main window, dialogs, widgets)
+│   └── widgets/          # Reusable components (file tree, preview, agent panel)
+├── interfaces/           # GUI-backend protocol (protocol definitions, message types)
+├── resources/            # Built-in resources
+├── templates/            # Built-in templates (agent prompts, report templates)
+│   ├── agents/           # Agent prompt files (Markdown)
+│   └── reports/          # LaTeX report templates
+├── external/             # Git-ignored synced content (presets, skills)
+│   ├── cc-switch/        # Provider presets from cc-switch repo
+│   └── skills/           # Skill Markdown files
+└── utils/                # Logging configuration (loguru)
+```
+
+## Development
 
 ```bash
-mkdir -p .build-tmp
-TMPDIR="$PWD/.build-tmp" .venv/bin/python -m hatchling build -t wheel
+# Run tests
+uv run pytest -v
+
+# Lint
+uv run ruff check autoreport tests
+uv run ruff check --fix autoreport tests
+
+# Run with coverage
+uv run pytest --cov=autoreport --cov-report=html
 ```
 
-## 当前范围
+## UI Icons
 
-当前交付是可运行的流程架构和单模块纵向骨架。它尚不包含 2.1-2.5 的完整专业知识、正式 DOCX Renderer、跨模块总编与长期 Skill 发布；这些能力应在现有领域载体和配置化运行时上继续实现，不改变 GUI 边界。
+Agent type icons are from [Tabler Icons](https://tabler-icons.io/) — 6000+ free SVG icons, MIT License.
+
+## Reference Projects
+
+- [DeepCode](https://github.com/HKUDS/DeepCode) — API config (YAML secrets + env fallback), multi-provider support, error handling
+- [cc-switch](https://github.com/farion1231/cc-switch) — Provider presets (50+ providers)
+- [nanobot](https://github.com/HKUDS/nanobot) — AgentLoop architecture, tool definitions, compact/command system
+- [codex](https://github.com/openai/codex) — UI design patterns, streaming implementation
+- [openclaw](https://github.com/openclaw/openclaw) — Personal AI assistant, skills system, multi-channel agent design
+- [VS Code](https://github.com/microsoft/vscode) — Editor UI/UX patterns, panel layout, command and extension architecture
+- [Claude Code](https://claude.com/claude-code) — Agent chat panel UI/UX (bubble messages, grouped tool calls, streaming, `@` references, slash commands)
+- [PKUMpLtX](https://github.com/CastleStar14654/PKUMpLtX) — Built-in LaTeX report template (PKU Modern Physics Laboratory, revtex4-2 based)
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/chart?repos=xjsongphy/AutoReport&type=date&legend=top-left&sealed_token=Y3lV1Yo5tEoNSv5pWKul9FmJwDeZqIHN2Wn166i3TDTJnf4IOue7kaSUbnrDALp_TN4G79kz1IrUOc66GxXpkupO_tinFyx52scf-IQs_OtNrPgzMIO_bM-SLf3cTQE89VHP3ZCqUHhOKrWrObw3JFGrRMvZVDXzT-ty1u7J9cENkSVjaDTFaDb3DfEI)](https://www.star-history.com/?repos=xjsongphy%2FAutoReport&type=date&legend=top-left)
+
+## License
+
+MIT License
