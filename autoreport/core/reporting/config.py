@@ -1,0 +1,167 @@
+"""Declarative Agent and workflow definitions for reporting phases."""
+
+from pathlib import Path
+from typing import Literal
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+KNOWN_CARRIERS = {
+    "report_request",
+    "project_manifest",
+    "parsed_artifacts",
+    "evidence_items",
+    "coverage_matrix",
+    "module_tasks",
+    "module_drafts",
+    "review_issues",
+    "output_artifacts",
+}
+
+
+class ConfigurationError(ValueError):
+    """Raised before a reporting workflow enters the running state."""
+
+
+class AgentDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    role: str = Field(min_length=1)
+    reads: list[str] = Field(default_factory=list)
+    writes: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    instructions: str = Field(min_length=1)
+    source_path: Path
+
+
+class PhaseDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    mode: Literal["pipeline", "parallel"]
+    agents: list[str] = Field(min_length=1)
+    needs: list[str] = Field(default_factory=list)
+
+
+class WorkflowDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    phases: list[PhaseDefinition] = Field(min_length=1)
+
+
+def _frontmatter(content: str, path: Path) -> tuple[dict, str]:
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise ConfigurationError(f"{path}: missing YAML frontmatter")
+    try:
+        closing = next(index for index, line in enumerate(lines[1:], start=1) if line.strip() == "---")
+    except StopIteration as exc:
+        raise ConfigurationError(f"{path}: unterminated YAML frontmatter") from exc
+    try:
+        data = yaml.safe_load("\n".join(lines[1:closing])) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigurationError(f"{path}: invalid YAML: {exc}") from exc
+    body = "\n".join(lines[closing + 1 :]).strip()
+    return data, body
+
+
+def load_agent_definition(path: Path) -> AgentDefinition:
+    """Load one Markdown/frontmatter Agent contract."""
+
+    path = Path(path)
+    data, instructions = _frontmatter(path.read_text(encoding="utf-8"), path)
+    try:
+        definition = AgentDefinition(
+            **data,
+            instructions=instructions,
+            source_path=path,
+        )
+    except ValidationError as exc:
+        raise ConfigurationError(f"{path}: {exc}") from exc
+    unknown = sorted((set(definition.reads) | set(definition.writes)) - KNOWN_CARRIERS)
+    if unknown:
+        raise ConfigurationError(f"{path}: unknown carriers: {', '.join(unknown)}")
+    return definition
+
+
+def load_agent_definitions(directory: Path) -> dict[str, AgentDefinition]:
+    """Load all Agent definitions in a directory and reject duplicate IDs."""
+
+    agents: dict[str, AgentDefinition] = {}
+    for path in sorted(Path(directory).glob("*.md")):
+        definition = load_agent_definition(path)
+        if definition.id in agents:
+            raise ConfigurationError(f"duplicate agent id: {definition.id}")
+        agents[definition.id] = definition
+    return agents
+
+
+def _validate_phase_graph(phases: list[PhaseDefinition]) -> None:
+    ids = [phase.id for phase in phases]
+    if len(ids) != len(set(ids)):
+        raise ConfigurationError("duplicate phase id")
+    known = set(ids)
+    for phase in phases:
+        unknown = sorted(set(phase.needs) - known)
+        if unknown:
+            raise ConfigurationError(f"phase {phase.id} has unknown dependencies: {unknown}")
+
+    graph = {phase.id: phase.needs for phase in phases}
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(phase_id: str) -> None:
+        if phase_id in visiting:
+            raise ConfigurationError(f"cyclic phase dependency at {phase_id}")
+        if phase_id in visited:
+            return
+        visiting.add(phase_id)
+        for dependency in graph[phase_id]:
+            visit(dependency)
+        visiting.remove(phase_id)
+        visited.add(phase_id)
+
+    for phase_id in graph:
+        visit(phase_id)
+
+
+def load_workflow_definition(
+    path: Path,
+    agents: dict[str, AgentDefinition],
+) -> WorkflowDefinition:
+    """Load and validate the phase graph before execution."""
+
+    path = Path(path)
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        workflow = WorkflowDefinition.model_validate(data)
+    except (OSError, yaml.YAMLError, ValidationError) as exc:
+        raise ConfigurationError(f"{path}: {exc}") from exc
+
+    _validate_phase_graph(workflow.phases)
+    for phase in workflow.phases:
+        unknown = sorted(set(phase.agents) - set(agents))
+        if unknown:
+            raise ConfigurationError(f"phase {phase.id} references unknown agents: {unknown}")
+        if phase.mode == "parallel":
+            owners: dict[str, str] = {}
+            for agent_id in phase.agents:
+                for carrier in agents[agent_id].writes:
+                    if carrier in owners:
+                        raise ConfigurationError(
+                            f"parallel phase {phase.id} has conflicting write {carrier}: "
+                            f"{owners[carrier]} and {agent_id}"
+                        )
+                    owners[carrier] = agent_id
+    return workflow
+
+
+def load_packaged_workflow() -> tuple[dict[str, AgentDefinition], WorkflowDefinition]:
+    """Load the built-in Phase A configuration shipped with AutoReport."""
+
+    templates = Path(__file__).resolve().parents[2] / "templates" / "reporting"
+    agents = load_agent_definitions(templates / "agents")
+    workflow = load_workflow_definition(templates / "workflows" / "phase-a.yml", agents)
+    return agents, workflow
