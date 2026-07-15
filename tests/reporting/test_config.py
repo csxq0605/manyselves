@@ -16,8 +16,8 @@ def _write_agent(path: Path, agent_id: str, *, writes: str = "evidence_items") -
         "\n".join(
             [
                 "---",
-                f"id: {agent_id}",
-                "role: evidence",
+                f"name: {agent_id}",
+                "description: evidence",
                 "reads: [parsed_artifacts]",
                 f"writes: [{writes}]",
                 "tools: [read]",
@@ -38,6 +38,17 @@ def test_loads_agent_frontmatter_and_instruction_body(tmp_path: Path) -> None:
     assert agent.id == "evidence-normalizer"
     assert agent.writes == ["evidence_items"]
     assert "可追溯证据" in agent.instructions
+
+
+def test_public_loader_rejects_legacy_identity_fields(tmp_path: Path) -> None:
+    path = tmp_path / "legacy.md"
+    path.write_text(
+        "---\nid: legacy-agent\nrole: legacy\n---\n旧身份。",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="extra_forbidden"):
+        load_agent_definition(path)
 
 
 def test_load_nexgent_style_agent_definition(tmp_path: Path) -> None:

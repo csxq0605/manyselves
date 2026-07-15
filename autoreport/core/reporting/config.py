@@ -84,15 +84,14 @@ def _frontmatter(content: str, path: Path) -> tuple[dict, str]:
     return data, body
 
 
-def load_agent_definition(path: Path) -> AgentDefinition:
-    """Load one Markdown/frontmatter Agent contract."""
-
+def _load_agent_definition(path: Path, *, allow_legacy: bool) -> AgentDefinition:
     path = Path(path)
     data, instructions = _frontmatter(path.read_text(encoding="utf-8"), path)
-    if "name" not in data and "id" in data:
-        data["name"] = data.pop("id")
-    if "description" not in data and "role" in data:
-        data["description"] = data.pop("role")
+    if allow_legacy:
+        if "name" not in data and "id" in data:
+            data["name"] = data.pop("id")
+        if "description" not in data and "role" in data:
+            data["description"] = data.pop("role")
     try:
         definition = AgentDefinition(
             **data,
@@ -107,16 +106,30 @@ def load_agent_definition(path: Path) -> AgentDefinition:
     return definition
 
 
-def load_agent_definitions(directory: Path) -> dict[str, AgentDefinition]:
-    """Load all Agent definitions in a directory and reject duplicate names."""
+def load_agent_definition(path: Path) -> AgentDefinition:
+    """Load one Markdown/frontmatter Agent contract using the current schema."""
 
+    return _load_agent_definition(path, allow_legacy=False)
+
+
+def _load_agent_definitions(
+    directory: Path,
+    *,
+    allow_legacy: bool,
+) -> dict[str, AgentDefinition]:
     agents: dict[str, AgentDefinition] = {}
     for path in sorted(Path(directory).glob("*.md")):
-        definition = load_agent_definition(path)
+        definition = _load_agent_definition(path, allow_legacy=allow_legacy)
         if definition.name in agents:
             raise ConfigurationError(f"duplicate agent name: {definition.name}")
         agents[definition.name] = definition
     return agents
+
+
+def load_agent_definitions(directory: Path) -> dict[str, AgentDefinition]:
+    """Load current-schema Agent definitions and reject duplicate names."""
+
+    return _load_agent_definitions(directory, allow_legacy=False)
 
 
 def _validate_phase_graph(phases: list[PhaseDefinition]) -> None:
@@ -183,6 +196,6 @@ def load_packaged_workflow() -> tuple[dict[str, AgentDefinition], WorkflowDefini
     """Load the built-in V2 configuration shipped with AutoReport."""
 
     templates = Path(__file__).resolve().parents[2] / "templates" / "reporting"
-    agents = load_agent_definitions(templates / "agents")
+    agents = _load_agent_definitions(templates / "agents", allow_legacy=True)
     workflow = load_workflow_definition(templates / "workflows" / "phase-a.yml", agents)
     return agents, workflow
