@@ -71,6 +71,14 @@ class ParsedArtifact(ReportingModel):
     payload: dict[str, Any]
 
 
+class PhotoAsset(ReportingModel):
+    id: str = Field(min_length=1)
+    path: Path
+    sha256: str = Field(min_length=1)
+    media_type: str = Field(min_length=1)
+    source_member: str = Field(min_length=1)
+
+
 class EvidenceItem(ReportingModel):
     id: str = Field(min_length=1)
     subject: str = Field(min_length=1)

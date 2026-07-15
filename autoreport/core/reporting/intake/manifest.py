@@ -5,7 +5,6 @@ from pathlib import Path
 
 from ..models import ManifestFile, ProjectManifest
 
-
 _WORKBOOK_MEDIA_TYPES = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
