@@ -1,25 +1,24 @@
 ﻿"""Preview widget with a unified editor for all file types."""
 
-from dataclasses import dataclass, field
 import json
-from pathlib import Path
-from pathlib import PureWindowsPath
 import shutil
 import subprocess
+from dataclasses import dataclass, field
+from pathlib import Path, PureWindowsPath
 
 import pandas as pd
 from loguru import logger
-from PyQt6.QtCore import QEvent, QFileSystemWatcher, QSignalBlocker, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QFileSystemWatcher, QSignalBlocker, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtPdf import QPdfDocument
 from PyQt6.QtPdfWidgets import QPdfView
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMessageBox,
-    QFrame,
-    QHeaderView,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -755,6 +754,7 @@ class PreviewWidget(QWidget):
         self._tab_area_hovered = False
         self._tab_hovered_index = -1
         self._tab_affordance_hovered_index = -1
+        self._refreshing_tab_affordances = False
         self._file_watcher = QFileSystemWatcher(self)
         self._file_watcher.fileChanged.connect(self._on_watched_file_changed)
 
@@ -1372,8 +1372,6 @@ class PreviewWidget(QWidget):
         if not file_path_str:
             return
 
-        file_path = Path(file_path_str)
-
         menu = create_isolated_context_menu(self)
 
         close_act = menu.addAction("Close")
@@ -1474,6 +1472,7 @@ class PreviewWidget(QWidget):
     def _refresh_unified_tab_affordances(self) -> None:
         duplicate_names = self._duplicate_tab_names()
         current_index = self._unified_tab_bar.currentIndex()
+        self._refreshing_tab_affordances = True
 
         def _wrap_affordance(
             inner: QWidget,
@@ -1555,6 +1554,10 @@ class PreviewWidget(QWidget):
                     missing=missing,
                 ),
             )
+        QTimer.singleShot(
+            0,
+            lambda: setattr(self, "_refreshing_tab_affordances", False),
+        )
 
     def _duplicate_tab_names(self) -> set[str]:
         counts: dict[str, int] = {}
@@ -1579,6 +1582,11 @@ class PreviewWidget(QWidget):
         return f".../{parts[-1]}"
 
     def eventFilter(self, obj, event):  # noqa: N802
+        affordance_index = (
+            obj.property("tabAffordanceIndex") if isinstance(obj, QWidget) else None
+        )
+        if self._refreshing_tab_affordances and isinstance(affordance_index, int):
+            return super().eventFilter(obj, event)
         if obj is self._unified_tab_bar:
             if event.type() == QEvent.Type.MouseMove:
                 idx = self._unified_tab_bar.tabAt(event.position().toPoint())
@@ -1589,7 +1597,7 @@ class PreviewWidget(QWidget):
                 if self._tab_hovered_index != -1:
                     self._tab_hovered_index = -1
                     self._refresh_unified_tab_affordances()
-        idx = obj.property("tabAffordanceIndex") if isinstance(obj, QWidget) else None
+        idx = affordance_index
         if isinstance(idx, int):
             if event.type() in (QEvent.Type.Enter, QEvent.Type.HoverEnter):
                 if self._tab_affordance_hovered_index != idx:
