@@ -5,6 +5,7 @@ __pycache__/
 dist/
 .uv-cache
 .build-tmp/
+.worktrees/
 .test-home/
 logs/
 external/cc-switch/
