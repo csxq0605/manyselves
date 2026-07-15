@@ -4,6 +4,7 @@ from pydantic import ValidationError
 from autoreport.core.reporting.agentic_models import (
     AgentResult,
     AgentRunStatus,
+    AuditSubmission,
     ClaimRecord,
     ModuleSubmission,
     SourceKind,
@@ -67,3 +68,13 @@ def test_module_submission_preserves_free_form_markdown():
         revision=0,
     )
     assert "事实：" not in submission.markdown
+
+
+def test_audit_submission_rejects_untyped_review_issue():
+    with pytest.raises(ValidationError, match="issues"):
+        AuditSubmission(
+            module_id="2.4",
+            approved=False,
+            issues=[{"arbitrary": "value"}],
+            checked_claim_ids=[],
+        )

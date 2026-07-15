@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .models import CoverageMatrix, EvidenceItem, PhotoAsset
+from .models import CoverageMatrix, EvidenceItem, PhotoAsset, ReviewIssue
 
 
 class StrictModel(BaseModel):
@@ -111,7 +111,7 @@ class AuditSubmission(StrictModel):
     kind: Literal["audit_submission"] = "audit_submission"
     module_id: Literal["2.4"]
     approved: bool
-    issues: list[dict]
+    issues: list[ReviewIssue]
     checked_claim_ids: list[str]
 
 
