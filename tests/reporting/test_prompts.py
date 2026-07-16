@@ -5,6 +5,7 @@ import pytest
 
 from autoreport.core.reporting.agentic_models import TaskEnvelope
 from autoreport.core.reporting.config import AgentDefinition, load_agent_definition
+from autoreport.core.reporting.module_skills import ModuleSkillLibrary
 from autoreport.core.reporting.prompts import PromptAssembler
 
 
@@ -31,11 +32,42 @@ def test_system_prompt_quotes_identity_name_as_one_xml_attribute(tmp_path: Path)
         encoding="utf-8",
     )
 
-    root = ElementTree.fromstring(
-        PromptAssembler.system_prompt(load_agent_definition(identity))
-    )
+    root = ElementTree.fromstring(PromptAssembler.system_prompt(load_agent_definition(identity)))
 
     assert root.attrib == {"name": 'auditor" injected="yes'}
+
+
+def test_system_prompt_injects_escaped_module_skill_content(tmp_path: Path) -> None:
+    definition = AgentDefinition(
+        name="module-2.1-specialist",
+        description="架构专家",
+        instructions="<role>分析系统。</role>",
+        source_path=tmp_path / "agent.md",
+    )
+    skill = ModuleSkillLibrary.packaged().for_agent(definition.id)[0]
+
+    root = ElementTree.fromstring(PromptAssembler.system_prompt(definition, module_skills=[skill]))
+
+    skill_node = root.find("./module_skills/module_skill")
+    assert skill_node is not None
+    assert skill_node.attrib["id"] == "pds.module21.architecture"
+    assert skill_node.attrib["module_id"] == "2.1"
+    assert "负荷率必须保留计算口径" in (skill_node.text or "")
+
+
+def test_planner_prompt_contains_skill_index_but_not_bodies(tmp_path: Path) -> None:
+    definition = AgentDefinition(
+        name="report-planner",
+        description="规划负责人",
+        instructions="<role>规划模块。</role>",
+        source_path=tmp_path / "agent.md",
+    )
+    library = ModuleSkillLibrary.packaged()
+
+    prompt = PromptAssembler.system_prompt(definition, module_skill_index=library.index_text())
+
+    assert "pds.module24.configuration" in prompt
+    assert "负荷率必须保留计算口径" not in prompt
 
 
 def test_system_prompt_rejects_malformed_identity_xml(tmp_path: Path) -> None:

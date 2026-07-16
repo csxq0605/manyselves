@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import ast
+import asyncio
 import json
 import operator
 import os
+import re
 from html import escape
 from pathlib import Path
 from uuid import uuid4
@@ -45,6 +46,7 @@ from ..tools.reporting_research_tools import (
 )
 from .agentic_models import AgentResult, AgentRunStatus, Submission, TaskEnvelope
 from .config import AgentDefinition
+from .module_skills import ModuleSkillLibrary
 from .prompts import PromptAssembler
 from .research.reference_library import ReferenceLibrary
 from .research.web import BraveWebResearchBackend, DisabledWebResearchBackend
@@ -94,17 +96,27 @@ class InspectImageTool(Tool):
         if not target.is_relative_to(self.workspace) or not target.is_file():
             raise ValueError("image must be a file inside the project")
         with Image.open(target) as image:
-            return {"path": path, "width": image.width, "height": image.height, "format": image.format}
+            return {
+                "path": path,
+                "width": image.width,
+                "height": image.height,
+                "format": image.format,
+            }
 
 
 class CalculateTool(Tool):
     name = "calculate"
     description = "Evaluate a basic arithmetic expression with no names or code execution."
     _ops = {
-        ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
-        ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv,
-        ast.Mod: operator.mod, ast.Pow: operator.pow,
-        ast.USub: operator.neg, ast.UAdd: operator.pos,
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.FloorDiv: operator.floordiv,
+        ast.Mod: operator.mod,
+        ast.Pow: operator.pow,
+        ast.USub: operator.neg,
+        ast.UAdd: operator.pos,
     }
 
     async def __call__(self, expression: str) -> dict:
@@ -113,6 +125,7 @@ class CalculateTool(Tool):
         Args:
             expression: Arithmetic expression containing numbers and operators only.
         """
+
         def evaluate(node):
             if isinstance(node, ast.Expression):
                 return evaluate(node.body)
@@ -123,6 +136,7 @@ class CalculateTool(Tool):
             if isinstance(node, ast.UnaryOp) and type(node.op) in self._ops:
                 return self._ops[type(node.op)](evaluate(node.operand))
             raise ValueError("unsupported expression")
+
         return {"expression": expression, "result": evaluate(ast.parse(expression, mode="eval"))}
 
 
@@ -144,9 +158,25 @@ class ReportingAgentRunner:
         self.defaults = defaults
         self.timeout = timeout
         self.store = ReportingStore(self.workspace)
+        self.module_skills = ModuleSkillLibrary.packaged()
         self._runtime_by_identity: dict[str, str] = {}
         self._sessions: dict[tuple[str, str], tuple[AgentLoop, str, str]] = {}
         self.bus.subscribe(PeerQueryMessage, self._route_peer_query)
+
+    def _system_prompt(self, definition: AgentDefinition, envelope: TaskEnvelope) -> str:
+        module_id: str | None = None
+        if definition.id == "evidence-auditor":
+            match = re.search(r"2\.[1-5]", envelope.task_id)
+            if match is None:
+                raise ValueError("evidence-auditor task must identify one fixed module")
+            module_id = match.group(0)
+        skills = self.module_skills.for_agent(definition.id, module_id=module_id)
+        index = self.module_skills.index_text() if definition.id == "report-planner" else None
+        return PromptAssembler.system_prompt(
+            definition,
+            module_skills=skills,
+            module_skill_index=index,
+        )
 
     async def _route_peer_query(self, message: PeerQueryMessage) -> None:
         runtime_id = self._runtime_by_identity.get(str(message.recipient))
@@ -197,27 +227,45 @@ class ReportingAgentRunner:
             "inspect_image": InspectImageTool(self.workspace),
             "calculate": CalculateTool(),
             "publish_research_note": PublishResearchNoteTool(
-                self.workspace, self.bus, workflow_id, envelope.run_id,
-                envelope.task_id, definition.id,
+                self.workspace,
+                self.bus,
+                workflow_id,
+                envelope.run_id,
+                envelope.task_id,
+                definition.id,
             ),
             "query_peer": QueryPeerTool(
                 self.bus, envelope.task_id, definition.id, session_id, workflow_id
             ),
             "reply_peer": ReplyPeerTool(self.bus, definition.id, workflow_id),
             "report_gap": ReportGapTool(
-                definition.id, envelope.run_id, envelope.task_id, self.store,
-                self.bus, workflow_id,
+                definition.id,
+                envelope.run_id,
+                envelope.task_id,
+                self.store,
+                self.bus,
+                workflow_id,
             ),
             "request_revision": RequestRevisionTool(
                 self.bus, workflow_id, envelope.task_id, definition.id
             ),
             "submit_result": SubmitResultTool(
-                definition.id, session_id, envelope.run_id, envelope.task_id,
-                self.store, self.bus, workflow_id,
+                definition.id,
+                session_id,
+                envelope.run_id,
+                envelope.task_id,
+                self.store,
+                self.bus,
+                workflow_id,
             ),
             "report_blocked": ReportBlockedTool(
-                definition.id, session_id, envelope.run_id, envelope.task_id,
-                self.store, self.bus, workflow_id,
+                definition.id,
+                session_id,
+                envelope.run_id,
+                envelope.task_id,
+                self.store,
+                self.bus,
+                workflow_id,
             ),
         }
         for name in definition.tools:
@@ -258,7 +306,7 @@ class ReportingAgentRunner:
                 bus=self.bus,
                 config=config,
                 llm_provider=self.llm_provider,
-                system_prompt=PromptAssembler.system_prompt(definition),
+                system_prompt=self._system_prompt(definition, envelope),
             )
             self._sessions[cache_key] = (loop, session_id, runtime_id)
             self._runtime_by_identity[definition.id] = runtime_id
