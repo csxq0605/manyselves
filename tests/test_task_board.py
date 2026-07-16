@@ -21,6 +21,18 @@ def test_task_board_accepts_registry_agent_ids():
     }
 
 
+def test_get_all_returns_terminal_task_history_without_exposing_internal_list():
+    board = TaskBoard()
+    task = board.create_task("workflow", "report-planner", "plan")
+    board.start_task(task.task_id)
+    board.complete_task(task.task_id)
+
+    snapshot = board.get_all()
+    snapshot.clear()
+
+    assert board.get_all()[0].status is TaskStatus.COMPLETED
+
+
 class TestTaskBoard:
     def test_create_task_dual_view(self):
         board = TaskBoard()
@@ -57,12 +69,19 @@ class TestTaskBoard:
 
     def test_complete_task_chain_with_shared_id(self):
         board = TaskBoard()
-        t1 = board.create_task(AgentType.DATA_ANALYSIS, AgentType.MAIN, "delegate plot", task_id="tk999")
+        t1 = board.create_task(
+            AgentType.DATA_ANALYSIS, AgentType.MAIN, "delegate plot", task_id="tk999"
+        )
         t2 = board.create_task(AgentType.MAIN, AgentType.PLOTTING, "create plot", task_id="tk999")
         affected = board.complete_task(t2.task_id, target_agent=AgentType.PLOTTING)
         assert len(affected) == 2
-        assert board.get_task(t2.task_id, target_agent=AgentType.PLOTTING).status == TaskStatus.COMPLETED
-        assert board.get_task(t1.task_id, target_agent=AgentType.MAIN).status == TaskStatus.COMPLETED
+        assert (
+            board.get_task(t2.task_id, target_agent=AgentType.PLOTTING).status
+            == TaskStatus.COMPLETED
+        )
+        assert (
+            board.get_task(t1.task_id, target_agent=AgentType.MAIN).status == TaskStatus.COMPLETED
+        )
 
     def test_local_todo_not_in_own_waitlist(self):
         """A local todo (source == target) must not appear in the agent's own
@@ -90,9 +109,7 @@ class TestTaskBoard:
             for t in main_todo
         )
         assert any(
-            t.task_id == delegated.task_id
-            and t.status == TaskStatus.COMPLETED
-            for t in main_wait
+            t.task_id == delegated.task_id and t.status == TaskStatus.COMPLETED for t in main_wait
         )
 
     def test_fail_task_chain_with_shared_id(self):
@@ -129,10 +146,16 @@ class TestTaskBoard:
         # Data -> Main -> Plotting delegation chain, shared task_id
         board = TaskBoard()
         board.create_task(
-            AgentType.DATA_ANALYSIS, AgentType.MAIN, "delegate plot", task_id="tk1",
+            AgentType.DATA_ANALYSIS,
+            AgentType.MAIN,
+            "delegate plot",
+            task_id="tk1",
         )
         board.create_task(
-            AgentType.MAIN, AgentType.PLOTTING, "draw", task_id="tk1",
+            AgentType.MAIN,
+            AgentType.PLOTTING,
+            "draw",
+            task_id="tk1",
         )
         affected = board.block_task("tk1", target_agent=AgentType.PLOTTING)
         statuses = {t.target_agent: t.status for t in affected}
@@ -143,10 +166,16 @@ class TestTaskBoard:
     def test_get_blocked_waitlist_lists_only_blocked_delegated(self):
         board = TaskBoard()
         board.create_task(
-            AgentType.DATA_ANALYSIS, AgentType.MAIN, "delegate plot", task_id="tk1",
+            AgentType.DATA_ANALYSIS,
+            AgentType.MAIN,
+            "delegate plot",
+            task_id="tk1",
         )
         board.create_task(
-            AgentType.MAIN, AgentType.PLOTTING, "draw", task_id="tk1",
+            AgentType.MAIN,
+            AgentType.PLOTTING,
+            "draw",
+            task_id="tk1",
         )
         board.block_task("tk1", target_agent=AgentType.PLOTTING)
         blocked = board.get_blocked_waitlist(AgentType.MAIN)

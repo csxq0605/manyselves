@@ -30,6 +30,7 @@ from autoreport.core.reporting.service import ReportingService
 from autoreport.core.reporting.taxonomy import REPORT_TAXONOMY
 from autoreport.core.reporting.workflow import ReportWorkflowRunner
 from autoreport.core.tools.task_board import TaskBoard
+from autoreport.interfaces.types import TaskStatus
 
 
 class ScriptedWorkflowAgents:
@@ -180,6 +181,34 @@ class DriftingRevisionAgents(ScriptedWorkflowAgents):
         return result
 
 
+class RepeatedAuditAgents(ScriptedWorkflowAgents):
+    async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
+        result = await super().run(
+            definition,
+            envelope,
+            shared_artifacts,
+            workflow_id=workflow_id,
+            session_key=session_key,
+        )
+        if definition.id == "evidence-auditor":
+            result.payload = AuditSubmission(
+                module_id="2.4",
+                approved=False,
+                issues=[
+                    ReviewIssue(
+                        module_id="2.4",
+                        submodule_id="2.4.1.1",
+                        kind="unsupported",
+                        message="仍需定向修订",
+                        severity="blocking",
+                        round=envelope.revision,
+                    )
+                ],
+                checked_claim_ids=[],
+            )
+        return result
+
+
 @pytest.mark.asyncio
 async def test_full_five_module_workflow_runs_parallel_barrier_editor_and_handoff_docx(
     tmp_path: Path,
@@ -321,3 +350,48 @@ async def test_active_workflow_passes_traceable_photo_to_renderer(
 
     rendered = Document(tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx")
     assert len(rendered.inline_shapes) == template_photo_count + 1
+
+
+@pytest.mark.asyncio
+async def test_yaml_revision_budget_and_task_board_lifecycle(tmp_path: Path) -> None:
+    board = TaskBoard()
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=board,
+        llm_provider=NeverCalledProvider(),
+    )
+    service.workflow = service.workflow.model_copy(
+        update={
+            "phases": [
+                phase.model_copy(
+                    update={
+                        "pipelines": [
+                            pipeline.model_copy(update={"max_revisions": 1})
+                            for pipeline in phase.pipelines
+                        ]
+                    }
+                )
+                for phase in service.workflow.phases
+            ]
+        }
+    )
+    state = {
+        "run_id": "run-budget",
+        "request": ReportRequest(
+            instruction="验证返工预算",
+            target_modules=["2.4"],
+            missing_evidence_policy="draft",
+        ),
+    }
+
+    with pytest.raises(Exception, match="revision budget"):
+        await ReportWorkflowRunner(service, RepeatedAuditAgents(target_modules=("2.4",))).run(state)
+
+    tasks = board.get_all()
+    assert tasks
+    assert all(
+        task.status in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.BLOCKED}
+        for task in tasks
+    )
+    assert any("evidence-auditor:audit-2.4-r1" in task.brief for task in tasks)

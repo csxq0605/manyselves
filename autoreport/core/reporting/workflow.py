@@ -42,6 +42,14 @@ class ReportWorkflowRunner:
         self.service = service
         self.agent_runner = agent_runner
         self.agents = service.agents
+        module_phase = next(
+            phase for phase in service.workflow.phases if phase.id == "module-pipelines"
+        )
+        self.pipeline_by_module = {
+            pipeline.id.removeprefix("module-"): pipeline for pipeline in module_phase.pipelines
+        }
+        if set(self.pipeline_by_module) != set(REPORT_MODULE_IDS):
+            raise AgentWorkflowError("workflow must declare one pipeline for every report module")
 
     async def _agent(
         self,
@@ -52,13 +60,50 @@ class ReportWorkflowRunner:
         *,
         session_key: str | None = None,
     ):
-        result = await self.agent_runner.run(
-            self.agents[agent_id],
-            envelope,
-            artifacts,
-            workflow_id=workflow_id,
-            session_key=session_key,
+        board_task = self.service.task_board.create_task(
+            source="report-workflow",
+            target=agent_id,
+            brief=f"reporting:{workflow_id}:{agent_id}:{envelope.task_id}",
+            session_id=workflow_id,
         )
+        self.service.task_board.start_task(
+            board_task.task_id,
+            target_agent=agent_id,
+            session_id=workflow_id,
+        )
+        try:
+            result = await self.agent_runner.run(
+                self.agents[agent_id],
+                envelope,
+                artifacts,
+                workflow_id=workflow_id,
+                session_key=session_key,
+            )
+        except BaseException:
+            self.service.task_board.fail_task(
+                board_task.task_id,
+                target_agent=agent_id,
+                session_id=workflow_id,
+            )
+            raise
+        if result.status is AgentRunStatus.COMPLETED:
+            self.service.task_board.complete_task(
+                board_task.task_id,
+                target_agent=agent_id,
+                session_id=workflow_id,
+            )
+        elif result.status is AgentRunStatus.BLOCKED:
+            self.service.task_board.block_task(
+                board_task.task_id,
+                target_agent=agent_id,
+                session_id=workflow_id,
+            )
+        else:
+            self.service.task_board.fail_task(
+                board_task.task_id,
+                target_agent=agent_id,
+                session_id=workflow_id,
+            )
         if result.status is not AgentRunStatus.COMPLETED:
             raise AgentWorkflowError(
                 f"{agent_id} ended as {result.status.value}: {result.reason or 'no reason'}"
@@ -217,6 +262,7 @@ class ReportWorkflowRunner:
     async def _module_pipeline(
         self, module_id: str, state: dict, workflow_id: str
     ) -> ModuleSubmission:
+        revision_budget = self.pipeline_by_module[module_id].max_revisions
         specialist_id = f"module-{module_id}-specialist"
         planned = next(
             item for item in state["plan_submission"].module_tasks if item.agent_id == specialist_id
@@ -246,7 +292,7 @@ class ReportWorkflowRunner:
             "Work/runs/%s/ledgers/sources.json" % state["run_id"],
         ]
         previous_payload: ModuleSubmission | None = None
-        for revision in range(3):
+        for revision in range(revision_budget + 1):
             current = envelope.model_copy(update={"revision": revision})
             payload = await self._agent(
                 specialist_id,
@@ -295,8 +341,10 @@ class ReportWorkflowRunner:
                 self.service.store.write_text(f"Outputs/Modules/{module_id}.md", payload.markdown)
                 await self.service._notice(f"模块 {module_id} 已通过独立证据审计。")
                 return payload
-            if revision == 2:
-                raise AgentWorkflowError(f"module {module_id} exceeded its local revision budget")
+            if revision == revision_budget:
+                raise AgentWorkflowError(
+                    f"module {module_id} exceeded declared revision budget ({revision_budget})"
+                )
             blocking = [issue for issue in audit.issues if issue.severity == "blocking"]
             if not blocking:
                 raise AgentWorkflowError(
@@ -381,8 +429,11 @@ class ReportWorkflowRunner:
     ) -> None:
         current: ModuleSubmission = state["module_submissions"][module_id]
         revision = current.revision + 1
-        if revision > 2:
-            raise AgentWorkflowError(f"module {module_id} exceeded its total revision budget")
+        revision_budget = self.pipeline_by_module[module_id].max_revisions
+        if revision > revision_budget:
+            raise AgentWorkflowError(
+                f"module {module_id} exceeded declared revision budget ({revision_budget})"
+            )
         issues = [issue for issue in all_issues if issue.module_id == module_id]
         target_submodules = {issue.submodule_id for issue in issues}
         if None in target_submodules:

@@ -51,7 +51,13 @@ class TaskBoard:
             session_id=session_id,
         )
         self._tasks.append(task)
-        logger.debug("TaskBoard: created task {} ({} -> {}, {})", task.task_id, source, target, task.brief[:60])
+        logger.debug(
+            "TaskBoard: created task {} ({} -> {}, {})",
+            task.task_id,
+            source,
+            target,
+            task.brief[:60],
+        )
         return task
 
     def get_task(
@@ -112,7 +118,9 @@ class TaskBoard:
         target_agent: AgentId | AgentType | None = None,
         session_id: str | None = None,
     ) -> TaskItem:
-        task = self._require_task(task_id, target_agent=target_agent, active_only=False, session_id=session_id)
+        task = self._require_task(
+            task_id, target_agent=target_agent, active_only=False, session_id=session_id
+        )
         if task.status != TaskStatus.PENDING:
             raise ValueError(f"Task {task_id} is {task.status}, expected {TaskStatus.PENDING}")
         task.status = TaskStatus.IN_PROGRESS
@@ -125,7 +133,9 @@ class TaskBoard:
         target_agent: AgentId | AgentType | None = None,
         session_id: str | None = None,
     ) -> list[TaskItem]:
-        return self._update_chain(task_id, TaskStatus.COMPLETED, target_agent=target_agent, session_id=session_id)
+        return self._update_chain(
+            task_id, TaskStatus.COMPLETED, target_agent=target_agent, session_id=session_id
+        )
 
     def fail_task(
         self,
@@ -133,7 +143,9 @@ class TaskBoard:
         target_agent: AgentId | AgentType | None = None,
         session_id: str | None = None,
     ) -> list[TaskItem]:
-        return self._update_chain(task_id, TaskStatus.FAILED, target_agent=target_agent, session_id=session_id)
+        return self._update_chain(
+            task_id, TaskStatus.FAILED, target_agent=target_agent, session_id=session_id
+        )
 
     def cancel_task(
         self,
@@ -141,7 +153,9 @@ class TaskBoard:
         target_agent: AgentId | AgentType | None = None,
         session_id: str | None = None,
     ) -> list[TaskItem]:
-        return self._update_chain(task_id, TaskStatus.CANCELLED, target_agent=target_agent, session_id=session_id)
+        return self._update_chain(
+            task_id, TaskStatus.CANCELLED, target_agent=target_agent, session_id=session_id
+        )
 
     def block_task(
         self,
@@ -167,7 +181,9 @@ class TaskBoard:
         target_agent: AgentId | AgentType | None = None,
         session_id: str | None = None,
     ) -> list[TaskItem]:
-        task = self._require_task(task_id, target_agent=target_agent, active_only=False, session_id=session_id)
+        task = self._require_task(
+            task_id, target_agent=target_agent, active_only=False, session_id=session_id
+        )
         if task.status not in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS):
             raise ValueError(f"Task {task_id} is {task.status}, cannot {new_status.value}")
         affected: list[TaskItem] = []
@@ -188,7 +204,9 @@ class TaskBoard:
             affected.append(upstream)
             current_target = upstream.source_agent
 
-        logger.debug("TaskBoard: {} task {} (chain: {} affected)", new_status.value, task_id, len(affected))
+        logger.debug(
+            "TaskBoard: {} task {} (chain: {} affected)", new_status.value, task_id, len(affected)
+        )
         return affected
 
     def _mark(self, task: TaskItem, new_status: TaskStatus) -> None:
@@ -215,13 +233,15 @@ class TaskBoard:
     ) -> list[TaskItem]:
         agent_id = normalize_agent_id(agent_type)
         active_assigned = [
-            t for t in self._tasks
+            t
+            for t in self._tasks
             if t.target_agent == agent_id
             and t.status in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED)
             and (session_id is None or t.session_id == session_id)
         ]
         local_resolved = [
-            t for t in self._tasks
+            t
+            for t in self._tasks
             if t.source_agent == agent_id
             and t.target_agent == agent_id
             and t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
@@ -254,10 +274,12 @@ class TaskBoard:
         # entries so the source agent retains the "what I was waiting on"
         # history while also seeing the resolved follow-up in todolist.
         return [
-            t for t in self._tasks
+            t
+            for t in self._tasks
             if t.source_agent == agent_id
             and t.target_agent != agent_id
-            and t.status in (
+            and t.status
+            in (
                 TaskStatus.PENDING,
                 TaskStatus.IN_PROGRESS,
                 TaskStatus.COMPLETED,
@@ -273,7 +295,8 @@ class TaskBoard:
         """Tasks this agent dispatched that are currently BLOCKED (need its action)."""
         agent_id = normalize_agent_id(agent_type)
         return [
-            t for t in self._tasks
+            t
+            for t in self._tasks
             if t.source_agent == agent_id
             and t.target_agent != agent_id
             and t.status == TaskStatus.BLOCKED
@@ -292,6 +315,11 @@ class TaskBoard:
             }
             for agent_id in agent_ids
         }
+
+    def get_all(self) -> list[TaskItem]:
+        """Return a snapshot of every task record, including terminal history."""
+
+        return list(self._tasks)
 
     def _require_task(
         self,
