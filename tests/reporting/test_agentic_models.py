@@ -105,21 +105,22 @@ def test_claim_submodule_must_belong_to_claim_module():
         )
 
 
-def test_blocking_audit_issue_requires_fixed_submodule():
-    with pytest.raises(ValidationError, match="blocking audit issue.*submodule"):
-        AuditSubmission(
-            module_id="2.4",
-            approved=False,
-            issues=[
-                ReviewIssue(
-                    module_id="2.4",
-                    kind="unsupported",
-                    message="需要定向修订",
-                    severity="blocking",
-                )
-            ],
-            checked_claim_ids=[],
-        )
+def test_blocking_audit_issue_can_be_module_scoped():
+    submission = AuditSubmission(
+        module_id="2.4",
+        approved=False,
+        issues=[
+            ReviewIssue(
+                module_id="2.4",
+                kind="unsupported",
+                message="需要模块级复核",
+                severity="blocking",
+            )
+        ],
+        checked_claim_ids=[],
+    )
+
+    assert submission.issues[0].submodule_id is None
 
 
 def test_audit_submission_rejects_untyped_review_issue():

@@ -17,6 +17,7 @@ from autoreport.core.reporting.agentic_models import (
     ModuleSubmission,
     PlanSubmission,
     TaskEnvelope,
+    WorkflowDecisionSubmission,
 )
 from autoreport.core.reporting.models import (
     REPORT_MODULE_IDS,
@@ -42,6 +43,7 @@ class ScriptedWorkflowAgents:
         self.closed = False
         self.specialist_ids: list[str] = []
         self.envelopes: dict[str, TaskEnvelope] = {}
+        self.decision_calls = 0
 
     async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
         agent_id = definition.id
@@ -102,6 +104,14 @@ class ScriptedWorkflowAgents:
                 approved=True,
                 issues=[],
                 checked_claim_ids=[f"C-{module_id}-001"],
+            )
+        elif agent_id == "main-agent":
+            self.decision_calls += 1
+            module_id = envelope.task_id.split("module-")[-1].split("-r")[0]
+            payload = WorkflowDecisionSubmission(
+                decision="revise",
+                rationale="审计提出了可处理的新问题。",
+                target_module_ids=[module_id],
             )
         elif agent_id == "cross-module-reviewer":
             payload = CrossReviewSubmission(
@@ -206,6 +216,11 @@ class RepeatedAuditAgents(ScriptedWorkflowAgents):
                 ],
                 checked_claim_ids=[],
             )
+        if definition.id == "main-agent" and self.decision_calls >= 2:
+            result.payload = WorkflowDecisionSubmission(
+                decision="stop_incomplete",
+                rationale="相同审计问题重复出现且没有新证据，继续返工不会收敛。",
+            )
         return result
 
 
@@ -276,7 +291,7 @@ async def test_partial_request_runs_only_target_module_and_propagates_requiremen
 
 
 @pytest.mark.asyncio
-async def test_workflow_rejects_revision_that_changes_unrequested_submodule(
+async def test_workflow_records_revision_diff_instead_of_rejecting_business_drift(
     tmp_path: Path,
 ) -> None:
     service = ReportingService(
@@ -295,8 +310,11 @@ async def test_workflow_rejects_revision_that_changes_unrequested_submodule(
         ),
     }
 
-    with pytest.raises(Exception, match="protected submodule 2.4.2.2"):
-        await ReportWorkflowRunner(service, agents).run(state)
+    await ReportWorkflowRunner(service, agents).run(state)
+
+    diff = tmp_path / "Work/runs/run-drift/reviews/diff-2.4-r1.json"
+    assert diff.is_file()
+    assert "2.4.2.2" in diff.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -353,7 +371,9 @@ async def test_active_workflow_passes_traceable_photo_to_renderer(
 
 
 @pytest.mark.asyncio
-async def test_yaml_revision_budget_and_task_board_lifecycle(tmp_path: Path) -> None:
+async def test_lead_agent_stops_repeated_revision_loop_and_task_board_closes(
+    tmp_path: Path,
+) -> None:
     board = TaskBoard()
     service = ReportingService(
         tmp_path,
@@ -361,32 +381,20 @@ async def test_yaml_revision_budget_and_task_board_lifecycle(tmp_path: Path) -> 
         task_board=board,
         llm_provider=NeverCalledProvider(),
     )
-    service.workflow = service.workflow.model_copy(
-        update={
-            "phases": [
-                phase.model_copy(
-                    update={
-                        "pipelines": [
-                            pipeline.model_copy(update={"max_revisions": 1})
-                            for pipeline in phase.pipelines
-                        ]
-                    }
-                )
-                for phase in service.workflow.phases
-            ]
-        }
-    )
     state = {
         "run_id": "run-budget",
         "request": ReportRequest(
-            instruction="验证返工预算",
+            instruction="验证主决策 Agent 识别重复返工",
             target_modules=["2.4"],
             missing_evidence_policy="draft",
         ),
     }
 
-    with pytest.raises(Exception, match="revision budget"):
-        await ReportWorkflowRunner(service, RepeatedAuditAgents(target_modules=("2.4",))).run(state)
+    agents = RepeatedAuditAgents(target_modules=("2.4",))
+    with pytest.raises(Exception, match="相同审计问题重复出现"):
+        await ReportWorkflowRunner(service, agents).run(state)
+
+    assert agents.decision_calls == 2
 
     tasks = board.get_all()
     assert tasks
@@ -394,4 +402,4 @@ async def test_yaml_revision_budget_and_task_board_lifecycle(tmp_path: Path) -> 
         task.status in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.BLOCKED}
         for task in tasks
     )
-    assert any("evidence-auditor:audit-2.4-r1" in task.brief for task in tasks)
+    assert any("main-agent:decision-module-2.4-r1" in task.brief for task in tasks)

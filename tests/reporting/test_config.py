@@ -5,9 +5,7 @@ import pytest
 from autoreport.core.reporting.config import (
     ConfigurationError,
     load_agent_definition,
-    load_agent_definitions,
-    load_packaged_workflow,
-    load_workflow_definition,
+    load_packaged_agents,
 )
 
 
@@ -91,34 +89,8 @@ def test_agent_definition_rejects_tools_that_are_also_disallowed(tmp_path: Path)
         load_agent_definition(path)
 
 
-def test_workflow_rejects_unknown_agent(tmp_path: Path) -> None:
-    agent = load_agent_definition(_write_agent(tmp_path / "known.md", "known"))
-    workflow = tmp_path / "workflow.yml"
-    workflow.write_text(
-        "id: phase-a\nphases:\n  - id: intake\n    mode: pipeline\n    agents: [known, missing]\n",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ConfigurationError, match="missing"):
-        load_workflow_definition(workflow, {agent.id: agent})
-
-
-def test_parallel_phase_rejects_conflicting_writes(tmp_path: Path) -> None:
-    _write_agent(tmp_path / "one.md", "one", writes="module_drafts")
-    _write_agent(tmp_path / "two.md", "two", writes="module_drafts")
-    agents = load_agent_definitions(tmp_path)
-    workflow = tmp_path / "workflow.yml"
-    workflow.write_text(
-        "id: phase-a\nphases:\n  - id: module\n    mode: parallel\n    agents: [one, two]\n",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ConfigurationError, match="module_drafts"):
-        load_workflow_definition(workflow, agents)
-
-
-def test_packaged_phase_a_declares_the_complete_vertical_flow() -> None:
-    agents, workflow = load_packaged_workflow()
+def test_packaged_agent_set_is_complete() -> None:
+    agents = load_packaged_agents()
 
     assert set(agents) == {
         "main-agent",
@@ -139,57 +111,8 @@ def test_packaged_phase_a_declares_the_complete_vertical_flow() -> None:
         "docx-renderer",
         "project-delivery",
     }
-    assert [(phase.id, phase.mode) for phase in workflow.phases] == [
-        ("preparation", "pipeline"),
-        ("planning", "pipeline"),
-        ("module-pipelines", "parallel"),
-        ("module-barrier", "barrier"),
-        ("cross-module-review", "pipeline"),
-        ("editing-and-delivery", "pipeline"),
-    ]
-
-
-def test_packaged_workflow_has_five_locally_revisable_module_pipelines() -> None:
-    agents, workflow = load_packaged_workflow()
-    module_phase = next(phase for phase in workflow.phases if phase.id == "module-pipelines")
-
-    assert [pipeline.id for pipeline in module_phase.pipelines] == [
-        "module-2.1",
-        "module-2.2",
-        "module-2.3",
-        "module-2.4",
-        "module-2.5",
-    ]
-    for module_id, pipeline in zip(("2.1", "2.2", "2.3", "2.4", "2.5"), module_phase.pipelines):
-        assert pipeline.agents == [f"module-{module_id}-specialist", "evidence-auditor"]
-        assert pipeline.revision_agent == f"module-{module_id}-specialist"
-        assert pipeline.max_revisions == 2
-        assert pipeline.revision_agent in agents
-
-    barrier = next(phase for phase in workflow.phases if phase.id == "module-barrier")
-    reviewer = next(phase for phase in workflow.phases if phase.id == "cross-module-review")
-    assert barrier.needs == ["module-pipelines"]
-    assert reviewer.needs == ["module-barrier"]
-
-
-def test_workflow_rejects_invalid_barrier_and_revision_configuration(tmp_path: Path) -> None:
-    agent = load_agent_definition(_write_agent(tmp_path / "known.md", "known"))
-    workflow = tmp_path / "workflow.yml"
-    workflow.write_text(
-        "id: invalid\nphases:\n"
-        "  - id: modules\n    mode: parallel\n    pipelines:\n"
-        "      - id: one\n        agents: [known]\n        revisionAgent: missing\n"
-        "        maxRevisions: 0\n"
-        "  - id: barrier\n    mode: barrier\n",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ConfigurationError):
-        load_workflow_definition(workflow, {agent.id: agent})
-
-
 def test_packaged_identities_are_complete_scoped_and_corpus_agnostic() -> None:
-    agents, _ = load_packaged_workflow()
+    agents = load_packaged_agents()
     human_roles = {
         "main-agent",
         "report-planner",

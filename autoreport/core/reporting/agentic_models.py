@@ -147,16 +147,14 @@ class AuditSubmission(StrictModel):
     checked_claim_ids: list[str]
 
     @model_validator(mode="after")
-    def blocking_issues_are_submodule_scoped(self) -> "AuditSubmission":
+    def issues_stay_inside_the_audited_module(self) -> "AuditSubmission":
         for issue in self.issues:
             if issue.module_id != self.module_id:
                 raise ValueError("audit issue module does not match audited module")
-            if issue.severity == "blocking":
-                if issue.submodule_id is None:
-                    raise ValueError("blocking audit issue requires a fixed submodule")
+            if issue.submodule_id is not None:
                 definition = resolve_submodule(issue.submodule_id)
                 if definition.module_id != self.module_id:
-                    raise ValueError("blocking audit issue submodule belongs to another module")
+                    raise ValueError("audit issue submodule belongs to another module")
         return self
 
 
@@ -166,6 +164,28 @@ class CrossReviewSubmission(StrictModel):
     issues: list[ReviewIssue] = Field(default_factory=list)
     global_constraints: list[str] = Field(default_factory=list)
     unresolved_disputes: list[str] = Field(default_factory=list)
+
+
+class WorkflowDecisionSubmission(StrictModel):
+    """A business decision made by the user-facing lead Agent after a review."""
+
+    kind: Literal["workflow_decision_submission"] = "workflow_decision_submission"
+    decision: Literal["accept", "revise", "request_user", "stop_incomplete"]
+    rationale: str = Field(min_length=1)
+    target_module_ids: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(
+        default_factory=list
+    )
+    target_submodule_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def revision_targets_are_structurally_valid(self) -> "WorkflowDecisionSubmission":
+        if self.decision == "revise" and not self.target_module_ids:
+            raise ValueError("revise decision requires at least one target module")
+        for submodule_id in self.target_submodule_ids:
+            definition = resolve_submodule(submodule_id)
+            if self.target_module_ids and definition.module_id not in self.target_module_ids:
+                raise ValueError("revision submodule is outside the selected modules")
+        return self
 
 
 class TableSubmission(StrictModel):
@@ -207,6 +227,7 @@ Submission = Annotated[
     | PlanSubmission
     | AuditSubmission
     | CrossReviewSubmission
+    | WorkflowDecisionSubmission
     | EditedReportSubmission,
     Field(discriminator="kind"),
 ]

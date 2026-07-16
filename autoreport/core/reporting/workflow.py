@@ -15,6 +15,7 @@ from .agentic_models import (
     ModuleSubmission,
     PlanSubmission,
     TaskEnvelope,
+    WorkflowDecisionSubmission,
 )
 from .assets import ReportAssetAssembler, validate_editor_protection
 from .claim_ledger import ClaimLedger
@@ -23,7 +24,7 @@ from .models import REPORT_MODULE_IDS, OutputArtifact
 from .rendering.packaged_docx import PackagedDocxCore
 from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
 from .request_gate import ReportingBlockedError, RequestGate
-from .revision_guard import RevisionGuard
+from .revision_diff import build_revision_diff
 from .source_ledger import SourceLedger
 from .taxonomy import REPORT_TAXONOMY, resolve_submodule
 
@@ -35,21 +36,28 @@ class AgentWorkflowError(RuntimeError):
     pass
 
 
+class ReportingNeedsDecisionError(RuntimeError):
+    """The lead Agent decided that safe autonomous progress is no longer useful."""
+
+
 class ReportWorkflowRunner:
-    """Execute declared dependencies, parallel pipelines, barriers and local revisions."""
+    """Execute declared dependencies while leaving review decisions to the lead Agent."""
 
     def __init__(self, service: "ReportingService", agent_runner: ReportingAgentRunner):
         self.service = service
         self.agent_runner = agent_runner
         self.agents = service.agents
-        module_phase = next(
-            phase for phase in service.workflow.phases if phase.id == "module-pipelines"
-        )
-        self.pipeline_by_module = {
-            pipeline.id.removeprefix("module-"): pipeline for pipeline in module_phase.pipelines
+        required = {
+            "main-agent",
+            "report-planner",
+            "evidence-auditor",
+            "cross-module-reviewer",
+            "chief-editor",
+            *(f"module-{module_id}-specialist" for module_id in REPORT_MODULE_IDS),
         }
-        if set(self.pipeline_by_module) != set(REPORT_MODULE_IDS):
-            raise AgentWorkflowError("workflow must declare one pipeline for every report module")
+        missing = sorted(required - set(self.agents))
+        if missing:
+            raise AgentWorkflowError(f"reporting Agent identities are missing: {missing}")
 
     async def _agent(
         self,
@@ -113,22 +121,22 @@ class ReportWorkflowRunner:
     async def run(self, state: dict) -> None:
         run_id = state["run_id"]
         workflow_id = f"full-power-distribution-report:{run_id}"
-        phase = "preparation"
+        activity = "preparation"
         try:
             await self.service._notice("正在整理项目资料并建立可追溯证据入口。")
             await self._prepare(state)
             gate = RequestGate.evaluate(state["request"], state["coverage_matrix"])
             state["gate_decision"] = gate
             if not gate.proceed:
-                self._checkpoint(state, phase, "blocked", ", ".join(gate.missing_evidence))
+                self._checkpoint(state, activity, "blocked", ", ".join(gate.missing_evidence))
                 raise ReportingBlockedError(gate.missing_evidence)
-            self._checkpoint(state, phase, "completed")
-            phase = "planning"
+            self._checkpoint(state, activity, "completed")
+            activity = "planning"
             await self.service._notice("资料入口已建立，Planner 正在拆分五个专业任务。")
             plan = await self._plan(state, workflow_id)
             state["plan_submission"] = plan
-            self._checkpoint(state, phase, "completed")
-            phase = "module-pipelines"
+            self._checkpoint(state, activity, "completed")
+            activity = "module-work"
             await self.service._notice("五个专业模块已并行启动，各模块完成后立即进入独立审计。")
             requested_modules = tuple(state["request"].target_modules)
             outcomes = await asyncio.gather(
@@ -142,11 +150,17 @@ class ReportWorkflowRunner:
             state["module_submissions"] = {item.module_id: item for item in submissions}
             self._checkpoint(
                 state,
-                phase,
+                activity,
                 "completed" if len(submissions) == len(requested_modules) else "failed",
             )
             failures = [item for item in outcomes if isinstance(item, BaseException)]
             if failures:
+                needs_decision = next(
+                    (item for item in failures if isinstance(item, ReportingNeedsDecisionError)),
+                    None,
+                )
+                if needs_decision is not None:
+                    raise needs_decision
                 raise AgentWorkflowError(
                     "module pipelines failed after preserving successful results: "
                     + "; ".join(str(item) for item in failures)
@@ -163,35 +177,37 @@ class ReportWorkflowRunner:
                 self._checkpoint(state, "partial-delivery", "completed")
                 await self.service._notice("目标模块已完成并通过独立证据审计。")
                 return
-            phase = "cross-module-review"
+            activity = "cross-module-review"
             await self.service._notice("五个模块均已通过本地审计，开始跨模块一致性审查。")
             await self._cross_review(state, workflow_id)
-            self._checkpoint(state, phase, "completed")
-            phase = "chief-edit"
+            self._checkpoint(state, activity, "completed")
+            activity = "chief-edit"
             await self.service._notice("跨模块审查通过，总编正在整合全文并保护来源语义。")
             await self._chief_edit(state, workflow_id)
-            self._checkpoint(state, phase, "completed")
-            phase = "delivery"
+            self._checkpoint(state, activity, "completed")
+            activity = "delivery"
             await self.service._notice("正文与引用已批准，正在使用交接包渲染核心生成 DOCX。")
             self._deliver(state)
-            self._checkpoint(state, phase, "completed")
+            self._checkpoint(state, activity, "completed")
         except ReportingBlockedError:
             raise
         except Exception as exc:
-            self._checkpoint(state, phase, "failed", str(exc))
+            self._checkpoint(state, activity, "failed", str(exc))
             raise
         finally:
             await self.agent_runner.close_workflow(workflow_id)
 
-    def _checkpoint(self, state: dict, phase: str, status: str, error: str | None = None) -> None:
-        """Persist recoverable phase/output references without serializing sessions."""
+    def _checkpoint(
+        self, state: dict, activity: str, status: str, error: str | None = None
+    ) -> None:
+        """Persist recoverable workflow/output references without serializing sessions."""
         completed_modules = sorted(state.get("module_submissions", {}))
         self.service.store.write_json(
             f"Work/runs/{state['run_id']}/workflow-state.json",
             {
                 "workflow_id": f"full-power-distribution-report:{state['run_id']}",
                 "run_id": state["run_id"],
-                "phase": phase,
+                "activity": activity,
                 "status": status,
                 "completed_modules": completed_modules,
                 "plan_ref": (
@@ -262,7 +278,6 @@ class ReportWorkflowRunner:
     async def _module_pipeline(
         self, module_id: str, state: dict, workflow_id: str
     ) -> ModuleSubmission:
-        revision_budget = self.pipeline_by_module[module_id].max_revisions
         specialist_id = f"module-{module_id}-specialist"
         planned = next(
             item for item in state["plan_submission"].module_tasks if item.agent_id == specialist_id
@@ -292,7 +307,9 @@ class ReportWorkflowRunner:
             "Work/runs/%s/ledgers/sources.json" % state["run_id"],
         ]
         previous_payload: ModuleSubmission | None = None
-        for revision in range(revision_budget + 1):
+        decision_history: list[str] = []
+        revision = 0
+        while True:
             current = envelope.model_copy(update={"revision": revision})
             payload = await self._agent(
                 specialist_id,
@@ -304,11 +321,11 @@ class ReportWorkflowRunner:
             if not isinstance(payload, ModuleSubmission) or payload.module_id != module_id:
                 raise AgentWorkflowError(f"{specialist_id} returned the wrong module payload")
             if previous_payload is not None:
-                RevisionGuard.validate(
-                    previous_payload,
-                    payload,
-                    set(current.target_submodule_ids),
+                diff_path = self.service.store.write_json(
+                    f"Work/runs/{state['run_id']}/reviews/diff-{module_id}-r{revision}.json",
+                    build_revision_diff(previous_payload, payload),
                 )
+                decision_history.append(diff_path.relative_to(self.service.workspace).as_posix())
             draft_path = self.service.store.write_json(
                 f"Work/runs/{state['run_id']}/modules/{module_id}-r{revision}.json",
                 payload.model_dump(mode="json"),
@@ -341,35 +358,90 @@ class ReportWorkflowRunner:
                 self.service.store.write_text(f"Outputs/Modules/{module_id}.md", payload.markdown)
                 await self.service._notice(f"模块 {module_id} 已通过独立证据审计。")
                 return payload
-            if revision == revision_budget:
-                raise AgentWorkflowError(
-                    f"module {module_id} exceeded declared revision budget ({revision_budget})"
-                )
-            blocking = [issue for issue in audit.issues if issue.severity == "blocking"]
-            if not blocking:
-                raise AgentWorkflowError(
-                    f"evidence-auditor rejected module {module_id} without blocking issues"
-                )
-            target_submodules = {issue.submodule_id for issue in blocking}
-            if None in target_submodules:
-                raise AgentWorkflowError("blocking audit issue must identify a submodule")
             issue_path = self.service.store.write_json(
                 f"Work/runs/{state['run_id']}/reviews/issues-{module_id}-r{revision}.json",
                 {"issues": [issue.model_dump(mode="json") for issue in audit.issues]},
             )
+            issue_ref = issue_path.relative_to(self.service.workspace).as_posix()
+            decision_history.append(issue_ref)
+            decision = await self._lead_decision(
+                scope=f"module-{module_id}",
+                state=state,
+                workflow_id=workflow_id,
+                review_ref=issue_ref,
+                history_refs=decision_history,
+                available_modules=[module_id],
+            )
+            if decision.decision == "accept":
+                self.service.store.write_text(f"Outputs/Modules/{module_id}.md", payload.markdown)
+                return payload
+            if decision.decision in {"request_user", "stop_incomplete"}:
+                raise ReportingNeedsDecisionError(decision.rationale)
+            target_submodules = [
+                item
+                for item in decision.target_submodule_ids
+                if resolve_submodule(item).module_id == module_id
+            ]
             envelope = envelope.model_copy(
                 update={
                     "prior_result_ref": draft_path.relative_to(self.service.workspace).as_posix(),
-                    "issue_refs": [issue_path.relative_to(self.service.workspace).as_posix()],
-                    "target_submodule_ids": sorted(target_submodules),
+                    "issue_refs": [issue_ref],
+                    "target_submodule_ids": target_submodules,
                 }
             )
             previous_payload = payload
-        raise AssertionError("unreachable")
+            revision += 1
+
+    async def _lead_decision(
+        self,
+        *,
+        scope: str,
+        state: dict,
+        workflow_id: str,
+        review_ref: str,
+        history_refs: list[str],
+        available_modules: list[str],
+    ) -> WorkflowDecisionSubmission:
+        decision_index = sum(1 for ref in history_refs if "/decisions/" in ref)
+        envelope = TaskEnvelope(
+            task_id=f"decision-{scope}-r{decision_index}",
+            run_id=state["run_id"],
+            agent_id="main-agent",
+            objective=(
+                "根据当前审计与完整历史判断是否继续返工。识别重复问题、没有新证据的循环"
+                "以及真实收敛；不要依据预设轮数作决定。"
+            ),
+            input_refs=[review_ref, *history_refs],
+            constraints=[
+                f"可选择的模块：{', '.join(available_modules)}",
+                "revise 必须明确 target_module_ids；小节范围不明确时可以留空并交由责任专家整体处理",
+                "request_user 或 stop_incomplete 必须说明无法继续自主推进的具体原因",
+            ],
+            allowed_outputs=["workflow_decision_submission"],
+        )
+        payload = await self._agent(
+            "main-agent",
+            envelope,
+            envelope.input_refs,
+            workflow_id,
+            session_key=f"lead-{scope}",
+        )
+        if not isinstance(payload, WorkflowDecisionSubmission):
+            raise AgentWorkflowError("main-agent returned the wrong decision payload")
+        if any(module_id not in available_modules for module_id in payload.target_module_ids):
+            raise AgentWorkflowError("main-agent selected a module outside the available scope")
+        decision_path = self.service.store.write_json(
+            f"Work/runs/{state['run_id']}/decisions/{scope}-r{decision_index}.json",
+            payload.model_dump(mode="json"),
+        )
+        history_refs.append(decision_path.relative_to(self.service.workspace).as_posix())
+        return payload
 
     async def _cross_review(self, state: dict, workflow_id: str) -> None:
         prior_review: str | None = None
-        for review_round in range(3):
+        decision_history: list[str] = []
+        review_round = 0
+        while True:
             refs = [
                 f"Work/runs/{state['run_id']}/modules/{module_id}-r{state['module_submissions'][module_id].revision}.json"
                 for module_id in REPORT_MODULE_IDS
@@ -406,38 +478,57 @@ class ReportWorkflowRunner:
                 )
                 state["cross_review"] = payload
                 return
-            if review_round == 2:
-                raise AgentWorkflowError(
-                    "cross-module review exceeded its targeted revision budget"
+            review_ref = review_path.relative_to(self.service.workspace).as_posix()
+            decision_history.append(review_ref)
+            decision = await self._lead_decision(
+                scope="cross-module",
+                state=state,
+                workflow_id=workflow_id,
+                review_ref=review_ref,
+                history_refs=decision_history,
+                available_modules=list(REPORT_MODULE_IDS),
+            )
+            if decision.decision == "accept":
+                self.service.store.write_json(
+                    "Outputs/Reviews/full-review.json", payload.model_dump(mode="json")
                 )
-            modules = sorted({issue.module_id for issue in blocking})
-            if not modules:
-                raise AgentWorkflowError("cross-module reviewer rejected without actionable issues")
+                state["cross_review"] = payload
+                return
+            if decision.decision in {"request_user", "stop_incomplete"}:
+                raise ReportingNeedsDecisionError(decision.rationale)
+            modules = list(decision.target_module_ids)
             await asyncio.gather(
                 *(
-                    self._revise_cross_issue(module_id, blocking, state, workflow_id)
+                    self._revise_cross_issue(
+                        module_id,
+                        blocking,
+                        decision.target_submodule_ids,
+                        state,
+                        workflow_id,
+                    )
                     for module_id in modules
                 )
             )
+            review_round += 1
 
     async def _revise_cross_issue(
         self,
         module_id: str,
         all_issues: list,
+        selected_submodules: list[str],
         state: dict,
         workflow_id: str,
     ) -> None:
         current: ModuleSubmission = state["module_submissions"][module_id]
         revision = current.revision + 1
-        revision_budget = self.pipeline_by_module[module_id].max_revisions
-        if revision > revision_budget:
-            raise AgentWorkflowError(
-                f"module {module_id} exceeded declared revision budget ({revision_budget})"
-            )
         issues = [issue for issue in all_issues if issue.module_id == module_id]
-        target_submodules = {issue.submodule_id for issue in issues}
-        if None in target_submodules:
-            raise AgentWorkflowError("blocking cross-review issue must identify a submodule")
+        target_submodules = {
+            item
+            for item in selected_submodules
+            if resolve_submodule(item).module_id == module_id
+        }
+        if not target_submodules:
+            target_submodules = {issue.submodule_id for issue in issues if issue.submodule_id}
         for submodule_id in target_submodules:
             if resolve_submodule(submodule_id).module_id != module_id:
                 raise AgentWorkflowError(
@@ -474,7 +565,10 @@ class ReportWorkflowRunner:
         )
         if not isinstance(payload, ModuleSubmission) or payload.module_id != module_id:
             raise AgentWorkflowError(f"targeted revision returned wrong module {module_id}")
-        RevisionGuard.validate(current, payload, set(envelope.target_submodule_ids))
+        diff_path = self.service.store.write_json(
+            f"Work/runs/{state['run_id']}/reviews/diff-{module_id}-r{revision}.json",
+            build_revision_diff(current, payload),
+        )
         self.service.store.write_json(
             f"Work/runs/{state['run_id']}/modules/{module_id}-r{revision}.json",
             payload.model_dump(mode="json"),
@@ -486,6 +580,7 @@ class ReportWorkflowRunner:
             objective=f"复核模块 {module_id} 的定向修订是否解决问题且未破坏证据边界。",
             input_refs=[
                 f"Work/runs/{state['run_id']}/modules/{module_id}-r{revision}.json",
+                diff_path.relative_to(self.service.workspace).as_posix(),
                 *envelope.issue_refs,
                 "Work/evidence.jsonl",
             ],
@@ -500,12 +595,12 @@ class ReportWorkflowRunner:
             workflow_id,
             session_key=f"auditor-{module_id}",
         )
-        if (
-            not isinstance(audit, AuditSubmission)
-            or not audit.approved
-            or any(issue.severity == "blocking" for issue in audit.issues)
-        ):
-            raise AgentWorkflowError(f"module {module_id} targeted revision did not pass audit")
+        if not isinstance(audit, AuditSubmission):
+            raise AgentWorkflowError(f"module {module_id} revision returned an invalid audit")
+        self.service.store.write_json(
+            f"Work/runs/{state['run_id']}/reviews/audit-{module_id}-cross-r{revision}.json",
+            audit.model_dump(mode="json"),
+        )
         self.service.store.write_text(f"Outputs/Modules/{module_id}.md", payload.markdown)
         state["module_submissions"][module_id] = payload
 

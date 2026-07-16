@@ -11,7 +11,7 @@ from ..loops.bus import MessageBus
 from ..providers.base import LLMProvider
 from ..tools.task_board import TaskBoard
 from .agent_runner import ReportingAgentRunner
-from .config import load_packaged_workflow
+from .config import load_packaged_agents
 from .coverage import evaluate_coverage
 from .intake.adapters import IntakeAdapterRegistry
 from .intake.manifest import build_manifest
@@ -27,7 +27,7 @@ from .models import (
 )
 from .request_gate import ReportingBlockedError
 from .store import ReportingStore
-from .workflow import ReportWorkflowRunner
+from .workflow import ReportingNeedsDecisionError, ReportWorkflowRunner
 
 
 class ReportingRunResult(BaseModel):
@@ -35,7 +35,6 @@ class ReportingRunResult(BaseModel):
 
     run_id: str
     status: str
-    phases: list[str] = Field(default_factory=list)
     output_paths: list[Path] = Field(default_factory=list)
     missing_evidence: list[str] = Field(default_factory=list)
     error: str | None = None
@@ -63,19 +62,17 @@ class ReportingService:
         self.llm_provider = llm_provider
         self.agent_defaults = agent_defaults or AgentDefaults()
         self.store = ReportingStore(self.workspace)
-        self.agents, self.workflow = load_packaged_workflow()
+        self.agents = load_packaged_agents()
         template_root = Path(__file__).resolve().parents[2] / "templates" / "reporting"
         self.report_template_path = template_root / "report_template.docx"
 
     async def run(self, request: ReportRequest) -> ReportingRunResult:
         self.store.ensure_layout()
         run_id = f"report-{uuid.uuid4().hex[:10]}"
-        phases: list[str] = []
         state: dict = {"request": request, "run_id": run_id}
         await self._notice(f"配电报告流程 {run_id} 已启动。")
 
         try:
-            phases.extend(phase.id for phase in self.workflow.phases)
             runner = ReportWorkflowRunner(
                 self,
                 ReportingAgentRunner(
@@ -90,17 +87,24 @@ class ReportingService:
             result = ReportingRunResult(
                 run_id=run_id,
                 status="blocked",
-                phases=phases,
                 missing_evidence=exc.missing_evidence,
             )
             self._save_run(result)
             await self._notice("配电报告流程等待补资或用户确认：" + ", ".join(exc.missing_evidence))
             return result
+        except ReportingNeedsDecisionError as exc:
+            result = ReportingRunResult(
+                run_id=run_id,
+                status="needs_decision",
+                error=str(exc),
+            )
+            self._save_run(result)
+            await self._notice(f"主决策 Agent 已停止自主返工，等待用户决策：{exc}")
+            return result
         except Exception as exc:
             result = ReportingRunResult(
                 run_id=run_id,
                 status="failed",
-                phases=phases,
                 error=str(exc),
             )
             self._save_run(result)
@@ -111,7 +115,6 @@ class ReportingService:
         result = ReportingRunResult(
             run_id=run_id,
             status="completed",
-            phases=phases,
             output_paths=[self.workspace / artifact.path for artifact in artifacts],
         )
         self._save_run(result)

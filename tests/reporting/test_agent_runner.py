@@ -8,7 +8,7 @@ from autoreport.core.loops.bus import MessageBus
 from autoreport.core.providers.base import LLMProvider, LLMResponse, LLMToolCall
 from autoreport.core.reporting.agent_runner import ReportingAgentRunner
 from autoreport.core.reporting.agentic_models import AgentRunStatus, ModuleSubmission, TaskEnvelope
-from autoreport.core.reporting.config import load_packaged_workflow
+from autoreport.core.reporting.config import load_packaged_agents
 
 
 class DirectSubmissionProvider(LLMProvider):
@@ -68,7 +68,7 @@ async def test_reporting_agent_runner_uses_real_isolated_loop_and_can_finish_wit
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
     provider = DirectSubmissionProvider()
-    agents, _workflow = load_packaged_workflow()
+    agents = load_packaged_agents()
     runner = ReportingAgentRunner(
         tmp_path, bus, provider, AgentDefaults(max_tool_iterations=5), timeout=5
     )

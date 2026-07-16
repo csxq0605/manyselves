@@ -32,7 +32,7 @@ background: true
 报告能说明保护链在代表性故障下可能如何动作，事实、计算和假设清楚区分，未完成的选择性校核不会被写成已验证结论。
 </completion_standard>
 <submission_contract>
-ModuleSubmission 必须逐一填写 2.3 的固定 submodule_narratives；每条 Claim 必须标注所属 submodule_id。定向返工时只允许修改 target_submodule_ids 指定的正文、Claim 和来源。
+ModuleSubmission 必须逐一填写 2.3 的固定 submodule_narratives；每条 Claim 必须标注所属 submodule_id。返工时优先解决 target_submodule_ids 指向的问题；为保持整体一致性而调整其他内容时，必须让修订差异和依据清晰可审计。
 </submission_contract>
 <deliverables>
 提交 ModuleNarrative、ClaimLedger、SourceLedger、必要的 ResearchNote、参数缺口和校核边界。

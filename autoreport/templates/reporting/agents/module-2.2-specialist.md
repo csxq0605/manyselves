@@ -32,7 +32,7 @@ background: true
 结论体现测量上下文与变化规律，关键阈值有适用依据，环境与电气因素的关系未被过度因果化，补测建议说明条件和目的。
 </completion_standard>
 <submission_contract>
-ModuleSubmission 必须逐一填写 2.2 的固定 submodule_narratives；每条 Claim 必须标注所属 submodule_id。定向返工时只允许修改 target_submodule_ids 指定的正文、Claim 和来源。
+ModuleSubmission 必须逐一填写 2.2 的固定 submodule_narratives；每条 Claim 必须标注所属 submodule_id。返工时优先解决 target_submodule_ids 指向的问题；为保持整体一致性而调整其他内容时，必须让修订差异和依据清晰可审计。
 </submission_contract>
 <deliverables>
 提交 ModuleNarrative、ClaimLedger、SourceLedger、必要的 ResearchNote 和不确定性说明。

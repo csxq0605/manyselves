@@ -18,7 +18,7 @@ from ...interfaces.types import (
     normalize_agent_id,
 )
 from ..checkpoints import CheckpointManager
-from ..reporting.config import load_packaged_workflow
+from ..reporting.config import load_packaged_agents
 from ..reporting.prompts import PromptAssembler
 from ..tools import (
     ApplyPatchTool,
@@ -191,7 +191,7 @@ class LoopManager:
         """Create the sole user-facing Main loop; workflow roles are task-scoped."""
         config = self.config_manager.config.agents.defaults
         llm_provider = self._provider_manager.get_active_provider()
-        agents, _workflow = load_packaged_workflow()
+        agents = load_packaged_agents()
         definition = agents["main-agent"]
         loop = AgentLoop(
             agent_type="main",

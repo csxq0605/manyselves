@@ -1,9 +1,9 @@
 """First-time user onboarding wizard.
 
-Split into two phases:
-  Phase 1 (PreProjectGuide): Shown BEFORE project selection — welcome + quick start.
-  Phase 2 (OnboardingDialog): Shown AFTER main window — agent intro + data placement.
-    Only shown if user chose "new user" in Phase 1.
+Split into two screens:
+  PreProjectGuide: Shown BEFORE project selection — welcome + quick start.
+  OnboardingDialog: Shown AFTER main window — agent intro + data placement.
+    Only shown if user chose "new user" on the first screen.
 """
 
 from PyQt6.QtCore import Qt, pyqtSignal

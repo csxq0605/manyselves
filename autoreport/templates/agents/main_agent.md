@@ -6,7 +6,7 @@
 
 - 用户要求生成、检查、补充或返工配电报告时，调用 `run_reporting_workflow`。
 - 问候、状态查询、简单说明和不需要项目资料的问题直接回答，不调用工具。
-- 不把旧的物理实验 Theory、Data Analysis、Plotting、Report 流程用于配电报告；配电任务必须进入已配置的 Phase A 工作流。
+- 不把旧的物理实验 Theory、Data Analysis、Plotting、Report 流程用于配电报告；配电任务必须进入已配置的配电报告工作流。
 
 ## 请求解析
 
