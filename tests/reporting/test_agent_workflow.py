@@ -24,10 +24,13 @@ from autoreport.core.tools.task_board import TaskBoard
 
 
 class ScriptedWorkflowAgents:
-    def __init__(self):
+    def __init__(self, target_modules=REPORT_MODULE_IDS):
+        self.target_modules = tuple(target_modules)
         self.active_specialists = 0
         self.max_active_specialists = 0
         self.closed = False
+        self.specialist_ids: list[str] = []
+        self.envelopes: dict[str, TaskEnvelope] = {}
 
     async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
         agent_id = definition.id
@@ -40,11 +43,13 @@ class ScriptedWorkflowAgents:
                         agent_id=f"module-{module_id}-specialist",
                         objective=f"分析模块 {module_id}",
                     )
-                    for module_id in REPORT_MODULE_IDS
+                    for module_id in self.target_modules
                 ],
                 rationale="五个专业并行分析后汇合。",
             )
         elif agent_id.startswith("module-"):
+            self.specialist_ids.append(agent_id)
+            self.envelopes[agent_id] = envelope
             module_id = agent_id.removeprefix("module-").removesuffix("-specialist")
             self.active_specialists += 1
             self.max_active_specialists = max(
@@ -153,3 +158,34 @@ async def test_full_five_module_workflow_runs_parallel_barrier_editor_and_handof
     text = "\n".join(paragraph.text for paragraph in rendered.paragraphs)
     assert "模块 2.1 从本专业机理出发形成主动分析。" in text
     assert "模块 2.5 从本专业机理出发形成主动分析。" in text
+
+
+@pytest.mark.asyncio
+async def test_partial_request_runs_only_target_module_and_propagates_requirements(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=NeverCalledProvider(),
+    )
+    agents = ScriptedWorkflowAgents(target_modules=("2.4",))
+    state = {
+        "run_id": "run-partial",
+        "request": ReportRequest(
+            instruction="只重写设备模块",
+            target_modules=["2.4"],
+            execution_requirements=["深度核对现场图片"],
+            missing_evidence_policy="draft",
+        ),
+    }
+
+    await ReportWorkflowRunner(service, agents).run(state)
+
+    assert agents.specialist_ids == ["module-2.4-specialist"]
+    assert "深度核对现场图片" in agents.envelopes[
+        "module-2.4-specialist"
+    ].constraints
+    assert (tmp_path / "Outputs/Modules/2.4.md").is_file()
+    assert not (tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx").exists()

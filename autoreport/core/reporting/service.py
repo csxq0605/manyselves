@@ -26,6 +26,7 @@ from .models import (
     ReportRequest,
     SourceLocation,
 )
+from .request_gate import ReportingBlockedError
 from .store import ReportingStore
 from .workflow import ReportWorkflowRunner
 
@@ -86,6 +87,18 @@ class ReportingService:
                 ),
             )
             await runner.run(state)
+        except ReportingBlockedError as exc:
+            result = ReportingRunResult(
+                run_id=run_id,
+                status="blocked",
+                phases=phases,
+                missing_evidence=exc.missing_evidence,
+            )
+            self._save_run(result)
+            await self._notice(
+                "配电报告流程等待补资或用户确认：" + ", ".join(exc.missing_evidence)
+            )
+            return result
         except Exception as exc:
             result = ReportingRunResult(
                 run_id=run_id,

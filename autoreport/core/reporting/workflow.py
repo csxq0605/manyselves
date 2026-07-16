@@ -21,6 +21,7 @@ from .delivery import DeliveryPackage, ProjectDelivery
 from .models import REPORT_MODULE_IDS, OutputArtifact
 from .rendering.packaged_docx import PackagedDocxCore
 from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
+from .request_gate import ReportingBlockedError, RequestGate
 from .source_ledger import SourceLedger
 
 if TYPE_CHECKING:
@@ -65,6 +66,11 @@ class ReportWorkflowRunner:
         try:
             await self.service._notice("正在整理项目资料并建立可追溯证据入口。")
             await self._prepare(state)
+            gate = RequestGate.evaluate(state["request"], state["coverage_matrix"])
+            state["gate_decision"] = gate
+            if not gate.proceed:
+                self._checkpoint(state, phase, "blocked", ", ".join(gate.missing_evidence))
+                raise ReportingBlockedError(gate.missing_evidence)
             self._checkpoint(state, phase, "completed")
             phase = "planning"
             await self.service._notice("资料入口已建立，Planner 正在拆分五个专业任务。")
@@ -73,19 +79,39 @@ class ReportWorkflowRunner:
             self._checkpoint(state, phase, "completed")
             phase = "module-pipelines"
             await self.service._notice("五个专业模块已并行启动，各模块完成后立即进入独立审计。")
+            requested_modules = tuple(state["request"].target_modules)
             outcomes = await asyncio.gather(
-                *(self._module_pipeline(module_id, state, workflow_id) for module_id in REPORT_MODULE_IDS),
+                *(
+                    self._module_pipeline(module_id, state, workflow_id)
+                    for module_id in requested_modules
+                ),
                 return_exceptions=True,
             )
             submissions = [item for item in outcomes if isinstance(item, ModuleSubmission)]
             state["module_submissions"] = {item.module_id: item for item in submissions}
-            self._checkpoint(state, phase, "completed" if len(submissions) == 5 else "failed")
+            self._checkpoint(
+                state,
+                phase,
+                "completed" if len(submissions) == len(requested_modules) else "failed",
+            )
             failures = [item for item in outcomes if isinstance(item, BaseException)]
             if failures:
                 raise AgentWorkflowError(
                     "module pipelines failed after preserving successful results: "
                     + "; ".join(str(item) for item in failures)
                 )
+            if set(requested_modules) != set(REPORT_MODULE_IDS):
+                state["output_artifacts"] = [
+                    OutputArtifact(
+                        kind="module",
+                        path=Path(f"Outputs/Modules/{module_id}.md"),
+                        module_id=module_id,
+                    )
+                    for module_id in requested_modules
+                ]
+                self._checkpoint(state, "partial-delivery", "completed")
+                await self.service._notice("目标模块已完成并通过独立证据审计。")
+                return
             phase = "cross-module-review"
             await self.service._notice("五个模块均已通过本地审计，开始跨模块一致性审查。")
             await self._cross_review(state, workflow_id)
@@ -98,6 +124,8 @@ class ReportWorkflowRunner:
             await self.service._notice("正文与引用已批准，正在使用交接包渲染核心生成 DOCX。")
             self._deliver(state)
             self._checkpoint(state, phase, "completed")
+        except ReportingBlockedError:
+            raise
         except Exception as exc:
             self._checkpoint(state, phase, "failed", str(exc))
             raise
@@ -147,19 +175,22 @@ class ReportWorkflowRunner:
 
     async def _plan(self, state: dict, workflow_id: str) -> PlanSubmission:
         request = state["request"]
+        requested_modules = tuple(request.target_modules)
+        module_text = "、".join(requested_modules)
         task = TaskEnvelope(
             task_id="report-plan",
             run_id=state["run_id"],
             agent_id="report-planner",
             objective=(
-                "为完整配电安全专家报告规划 2.1-2.5 五个模块。"
+                f"为配电安全专家报告规划目标模块：{module_text}。"
                 f"用户要求：{request.instruction}"
             ),
             input_refs=["Work/coverage.json", "Work/evidence.jsonl", "Work/manifest.json"],
             constraints=[
-                "五个模块都必须形成独立 TaskEnvelope",
+                f"仅为目标模块 {module_text} 形成独立 TaskEnvelope",
                 "Knowledge 与网络只是可选参考，不能补成客户事实",
                 f"缺失证据策略={request.missing_evidence_policy}",
+                *request.execution_requirements,
             ],
             allowed_outputs=["plan_submission"],
         )
@@ -170,9 +201,9 @@ class ReportWorkflowRunner:
         if not isinstance(payload, PlanSubmission):
             raise AgentWorkflowError("report-planner returned the wrong payload type")
         planned = {item.agent_id for item in payload.module_tasks}
-        required = {f"module-{module_id}-specialist" for module_id in REPORT_MODULE_IDS}
+        required = {f"module-{module_id}-specialist" for module_id in requested_modules}
         if planned != required:
-            raise AgentWorkflowError("planner must assign exactly one task to every module specialist")
+            raise AgentWorkflowError("planner must assign exactly one task to every requested module")
         return payload
 
     async def _module_pipeline(
@@ -190,6 +221,15 @@ class ReportWorkflowRunner:
                 "run_id": state["run_id"],
                 "agent_id": specialist_id,
                 "allowed_outputs": ["module_submission"],
+                "constraints": list(
+                    dict.fromkeys(
+                        [
+                            *planned.constraints,
+                            *state["request"].execution_requirements,
+                            f"缺失证据策略={state['request'].missing_evidence_policy}",
+                        ]
+                    )
+                ),
             }
         )
         artifacts = ["Work/evidence.jsonl", "Work/coverage.json", "Work/runs/%s/ledgers/sources.json" % state["run_id"]]
