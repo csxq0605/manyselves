@@ -31,10 +31,18 @@ class DirectSubmissionProvider(LLMProvider):
                             "kind": "module_submission",
                             "module_id": "2.1",
                             "markdown": "配电结构分析呈现系统关系，而非固定字段复述。",
+                            "submodule_narratives": {
+                                "2.1.1": "负荷与容量分析。",
+                                "2.1.2": "关键负荷路径分析。",
+                                "2.1.3": "自动切换分析。",
+                                "2.1.4": "并联闭锁分析。",
+                                "2.1.5": "无功补偿分析。",
+                            },
                             "claims": [
                                 {
                                     "id": "C-2.1-001",
                                     "module_id": "2.1",
+                                    "submodule_id": "2.1.1",
                                     "text": "配电结构分析呈现系统关系，而非固定字段复述。",
                                     "claim_type": "technical_interpretation",
                                     "source_ids": [],

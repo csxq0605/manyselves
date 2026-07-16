@@ -22,7 +22,9 @@ from .models import REPORT_MODULE_IDS, OutputArtifact
 from .rendering.packaged_docx import PackagedDocxCore
 from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
 from .request_gate import ReportingBlockedError, RequestGate
+from .revision_guard import RevisionGuard
 from .source_ledger import SourceLedger
+from .taxonomy import REPORT_TAXONOMY, resolve_submodule
 
 if TYPE_CHECKING:
     from .service import ReportingService
@@ -50,8 +52,11 @@ class ReportWorkflowRunner:
         session_key: str | None = None,
     ):
         result = await self.agent_runner.run(
-            self.agents[agent_id], envelope, artifacts,
-            workflow_id=workflow_id, session_key=session_key,
+            self.agents[agent_id],
+            envelope,
+            artifacts,
+            workflow_id=workflow_id,
+            session_key=session_key,
         )
         if result.status is not AgentRunStatus.COMPLETED:
             raise AgentWorkflowError(
@@ -132,9 +137,7 @@ class ReportWorkflowRunner:
         finally:
             await self.agent_runner.close_workflow(workflow_id)
 
-    def _checkpoint(
-        self, state: dict, phase: str, status: str, error: str | None = None
-    ) -> None:
+    def _checkpoint(self, state: dict, phase: str, status: str, error: str | None = None) -> None:
         """Persist recoverable phase/output references without serializing sessions."""
         completed_modules = sorted(state.get("module_submissions", {}))
         self.service.store.write_json(
@@ -182,8 +185,7 @@ class ReportWorkflowRunner:
             run_id=state["run_id"],
             agent_id="report-planner",
             objective=(
-                f"为配电安全专家报告规划目标模块：{module_text}。"
-                f"用户要求：{request.instruction}"
+                f"为配电安全专家报告规划目标模块：{module_text}。用户要求：{request.instruction}"
             ),
             input_refs=["Work/coverage.json", "Work/evidence.jsonl", "Work/manifest.json"],
             constraints=[
@@ -195,7 +197,10 @@ class ReportWorkflowRunner:
             allowed_outputs=["plan_submission"],
         )
         payload = await self._agent(
-            "report-planner", task, task.input_refs, workflow_id,
+            "report-planner",
+            task,
+            task.input_refs,
+            workflow_id,
             session_key="planner",
         )
         if not isinstance(payload, PlanSubmission):
@@ -203,7 +208,9 @@ class ReportWorkflowRunner:
         planned = {item.agent_id for item in payload.module_tasks}
         required = {f"module-{module_id}-specialist" for module_id in requested_modules}
         if planned != required:
-            raise AgentWorkflowError("planner must assign exactly one task to every requested module")
+            raise AgentWorkflowError(
+                "planner must assign exactly one task to every requested module"
+            )
         return payload
 
     async def _module_pipeline(
@@ -211,8 +218,7 @@ class ReportWorkflowRunner:
     ) -> ModuleSubmission:
         specialist_id = f"module-{module_id}-specialist"
         planned = next(
-            item for item in state["plan_submission"].module_tasks
-            if item.agent_id == specialist_id
+            item for item in state["plan_submission"].module_tasks if item.agent_id == specialist_id
         )
         task_id = f"module-{module_id}"
         envelope = planned.model_copy(
@@ -221,6 +227,7 @@ class ReportWorkflowRunner:
                 "run_id": state["run_id"],
                 "agent_id": specialist_id,
                 "allowed_outputs": ["module_submission"],
+                "target_submodule_ids": list(REPORT_TAXONOMY[module_id].submodules),
                 "constraints": list(
                     dict.fromkeys(
                         [
@@ -232,15 +239,29 @@ class ReportWorkflowRunner:
                 ),
             }
         )
-        artifacts = ["Work/evidence.jsonl", "Work/coverage.json", "Work/runs/%s/ledgers/sources.json" % state["run_id"]]
+        artifacts = [
+            "Work/evidence.jsonl",
+            "Work/coverage.json",
+            "Work/runs/%s/ledgers/sources.json" % state["run_id"],
+        ]
+        previous_payload: ModuleSubmission | None = None
         for revision in range(3):
             current = envelope.model_copy(update={"revision": revision})
             payload = await self._agent(
-                specialist_id, current, artifacts, workflow_id,
+                specialist_id,
+                current,
+                artifacts,
+                workflow_id,
                 session_key=f"specialist-{module_id}",
             )
             if not isinstance(payload, ModuleSubmission) or payload.module_id != module_id:
                 raise AgentWorkflowError(f"{specialist_id} returned the wrong module payload")
+            if previous_payload is not None:
+                RevisionGuard.validate(
+                    previous_payload,
+                    payload,
+                    set(current.target_submodule_ids),
+                )
             draft_path = self.service.store.write_json(
                 f"Work/runs/{state['run_id']}/modules/{module_id}-r{revision}.json",
                 payload.model_dump(mode="json"),
@@ -254,9 +275,13 @@ class ReportWorkflowRunner:
                 constraints=["不得代替责任专家重写专业结论"],
                 allowed_outputs=["audit_submission"],
                 revision=revision,
+                target_submodule_ids=list(current.target_submodule_ids),
             )
             audit = await self._agent(
-                "evidence-auditor", audit_task, audit_task.input_refs, workflow_id,
+                "evidence-auditor",
+                audit_task,
+                audit_task.input_refs,
+                workflow_id,
                 session_key=f"auditor-{module_id}",
             )
             if not isinstance(audit, AuditSubmission) or audit.module_id != module_id:
@@ -271,6 +296,14 @@ class ReportWorkflowRunner:
                 return payload
             if revision == 2:
                 raise AgentWorkflowError(f"module {module_id} exceeded its local revision budget")
+            blocking = [issue for issue in audit.issues if issue.severity == "blocking"]
+            if not blocking:
+                raise AgentWorkflowError(
+                    f"evidence-auditor rejected module {module_id} without blocking issues"
+                )
+            target_submodules = {issue.submodule_id for issue in blocking}
+            if None in target_submodules:
+                raise AgentWorkflowError("blocking audit issue must identify a submodule")
             issue_path = self.service.store.write_json(
                 f"Work/runs/{state['run_id']}/reviews/issues-{module_id}-r{revision}.json",
                 {"issues": [issue.model_dump(mode="json") for issue in audit.issues]},
@@ -279,8 +312,10 @@ class ReportWorkflowRunner:
                 update={
                     "prior_result_ref": draft_path.relative_to(self.service.workspace).as_posix(),
                     "issue_refs": [issue_path.relative_to(self.service.workspace).as_posix()],
+                    "target_submodule_ids": sorted(target_submodules),
                 }
             )
+            previous_payload = payload
         raise AssertionError("unreachable")
 
     async def _cross_review(self, state: dict, workflow_id: str) -> None:
@@ -302,8 +337,11 @@ class ReportWorkflowRunner:
                 prior_result_ref=prior_review,
             )
             payload = await self._agent(
-                "cross-module-reviewer", envelope, envelope.input_refs,
-                workflow_id, session_key="cross-reviewer",
+                "cross-module-reviewer",
+                envelope,
+                envelope.input_refs,
+                workflow_id,
+                session_key="cross-reviewer",
             )
             if not isinstance(payload, CrossReviewSubmission):
                 raise AgentWorkflowError("cross-module-reviewer returned the wrong payload type")
@@ -320,12 +358,17 @@ class ReportWorkflowRunner:
                 state["cross_review"] = payload
                 return
             if review_round == 2:
-                raise AgentWorkflowError("cross-module review exceeded its targeted revision budget")
+                raise AgentWorkflowError(
+                    "cross-module review exceeded its targeted revision budget"
+                )
             modules = sorted({issue.module_id for issue in blocking})
             if not modules:
                 raise AgentWorkflowError("cross-module reviewer rejected without actionable issues")
             await asyncio.gather(
-                *(self._revise_cross_issue(module_id, blocking, state, workflow_id) for module_id in modules)
+                *(
+                    self._revise_cross_issue(module_id, blocking, state, workflow_id)
+                    for module_id in modules
+                )
             )
 
     async def _revise_cross_issue(
@@ -340,13 +383,22 @@ class ReportWorkflowRunner:
         if revision > 2:
             raise AgentWorkflowError(f"module {module_id} exceeded its total revision budget")
         issues = [issue for issue in all_issues if issue.module_id == module_id]
+        target_submodules = {issue.submodule_id for issue in issues}
+        if None in target_submodules:
+            raise AgentWorkflowError("blocking cross-review issue must identify a submodule")
+        for submodule_id in target_submodules:
+            if resolve_submodule(submodule_id).module_id != module_id:
+                raise AgentWorkflowError(
+                    f"cross-review issue targets {submodule_id} outside module {module_id}"
+                )
         issue_path = self.service.store.write_json(
             f"Work/runs/{state['run_id']}/reviews/cross-issues-{module_id}-r{revision}.json",
             {"issues": [issue.model_dump(mode="json") for issue in issues]},
         )
         previous = f"Work/runs/{state['run_id']}/modules/{module_id}-r{current.revision}.json"
         planned = next(
-            item for item in state["plan_submission"].module_tasks
+            item
+            for item in state["plan_submission"].module_tasks
             if item.agent_id == f"module-{module_id}-specialist"
         )
         envelope = planned.model_copy(
@@ -358,15 +410,19 @@ class ReportWorkflowRunner:
                 "prior_result_ref": previous,
                 "issue_refs": [issue_path.relative_to(self.service.workspace).as_posix()],
                 "allowed_outputs": ["module_submission"],
+                "target_submodule_ids": sorted(target_submodules),
             }
         )
         payload = await self._agent(
-            envelope.agent_id, envelope,
+            envelope.agent_id,
+            envelope,
             [previous, *envelope.issue_refs, "Work/evidence.jsonl"],
-            workflow_id, session_key=f"specialist-{module_id}",
+            workflow_id,
+            session_key=f"specialist-{module_id}",
         )
         if not isinstance(payload, ModuleSubmission) or payload.module_id != module_id:
             raise AgentWorkflowError(f"targeted revision returned wrong module {module_id}")
+        RevisionGuard.validate(current, payload, set(envelope.target_submodule_ids))
         self.service.store.write_json(
             f"Work/runs/{state['run_id']}/modules/{module_id}-r{revision}.json",
             payload.model_dump(mode="json"),
@@ -383,10 +439,14 @@ class ReportWorkflowRunner:
             ],
             allowed_outputs=["audit_submission"],
             revision=revision,
+            target_submodule_ids=list(envelope.target_submodule_ids),
         )
         audit = await self._agent(
-            "evidence-auditor", audit_envelope, audit_envelope.input_refs,
-            workflow_id, session_key=f"auditor-{module_id}",
+            "evidence-auditor",
+            audit_envelope,
+            audit_envelope.input_refs,
+            workflow_id,
+            session_key=f"auditor-{module_id}",
         )
         if (
             not isinstance(audit, AuditSubmission)
@@ -416,8 +476,11 @@ class ReportWorkflowRunner:
             allowed_outputs=["edited_report_submission"],
         )
         payload = await self._agent(
-            "chief-editor", envelope, envelope.input_refs,
-            workflow_id, session_key="chief-editor",
+            "chief-editor",
+            envelope,
+            envelope.input_refs,
+            workflow_id,
+            session_key="chief-editor",
         )
         if not isinstance(payload, EditedReportSubmission):
             raise AgentWorkflowError("chief-editor returned the wrong payload type")
@@ -442,19 +505,15 @@ class ReportWorkflowRunner:
             ledger=ledger,
             citation_anchors=edited.citation_anchors,
         )
-        self.service.store.write_json(
-            "Work/report-state.json", report.model_dump(mode="json")
-        )
+        self.service.store.write_json("Work/report-state.json", report.model_dump(mode="json"))
         output = self.service.workspace / "Outputs/Reports/配电安全专家咨询报告.docx"
-        render = PdsDocxRenderer(
-            PackagedDocxCore(self.service.report_template_path)
-        ).render(report, output)
+        render = PdsDocxRenderer(PackagedDocxCore(self.service.report_template_path)).render(
+            report, output
+        )
         self.service.store.write_json(
             "Outputs/Reports/render-log.json", render.model_dump(mode="json")
         )
-        receipt = ProjectDelivery(
-            self.service.workspace / "Outputs/Deliveries"
-        ).deliver(
+        receipt = ProjectDelivery(self.service.workspace / "Outputs/Deliveries").deliver(
             DeliveryPackage(
                 report_id="power-distribution-report",
                 version=state["run_id"],
@@ -471,7 +530,12 @@ class ReportWorkflowRunner:
             receipt.model_dump(mode="json"),
         )
         state["output_artifacts"] = [
-            *(OutputArtifact(kind="module", path=Path(f"Outputs/Modules/{module_id}.md"), module_id=module_id) for module_id in REPORT_MODULE_IDS),
+            *(
+                OutputArtifact(
+                    kind="module", path=Path(f"Outputs/Modules/{module_id}.md"), module_id=module_id
+                )
+                for module_id in REPORT_MODULE_IDS
+            ),
             OutputArtifact(kind="review", path=Path("Outputs/Reviews/full-review.json")),
             OutputArtifact(kind="report", path=Path("Outputs/Reports/配电安全专家咨询报告.docx")),
             OutputArtifact(

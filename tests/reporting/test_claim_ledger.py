@@ -8,6 +8,11 @@ from autoreport.core.reporting.agentic_models import (
     SourceRecord,
 )
 from autoreport.core.reporting.claim_ledger import CitationBindingError, ClaimLedger
+from autoreport.core.reporting.taxonomy import REPORT_TAXONOMY
+
+
+def _first_submodule(module_id: str) -> str:
+    return next(iter(REPORT_TAXONOMY[module_id].submodules))
 
 
 def _sources() -> list[SourceRecord]:
@@ -41,6 +46,7 @@ def test_ledger_accepts_all_five_modules_and_builds_deterministic_citations() ->
         ClaimRecord(
             id=f"C-00{index}",
             module_id=module_id,
+            submodule_id=_first_submodule(module_id),
             text=f"模块 {module_id} 的关键判断",
             claim_type="risk_judgment",
             source_ids=["E-001"],
@@ -62,6 +68,7 @@ def test_footnote_numbers_remain_contiguous_when_non_footnoted_claims_are_presen
         ClaimRecord(
             id="C-001",
             module_id="2.1",
+            submodule_id="2.1.1",
             text="仅用于后台的不确定项",
             claim_type="technical_interpretation",
             source_ids=[],
@@ -71,6 +78,7 @@ def test_footnote_numbers_remain_contiguous_when_non_footnoted_claims_are_presen
         ClaimRecord(
             id="C-002",
             module_id="2.1",
+            submodule_id="2.1.1",
             text="需要脚注的现场判断",
             claim_type="risk_judgment",
             source_ids=["E-001"],
@@ -85,6 +93,7 @@ def test_ledger_rejects_unregistered_and_wrong_domain_sources() -> None:
     claim = ClaimRecord(
         id="C-001",
         module_id="2.1",
+        submodule_id="2.1.1",
         text="现场主变负载率为 92%",
         claim_type="project_fact",
         source_ids=["E-404"],
@@ -108,6 +117,7 @@ def test_resolved_risk_judgment_requires_project_evidence() -> None:
     claim = ClaimRecord(
         id="C-001",
         module_id="2.5",
+        submodule_id="2.5.1",
         text="运维闭环缺失形成高风险",
         claim_type="risk_judgment",
         source_ids=["R-001"],
@@ -135,6 +145,7 @@ def test_citation_binding_survives_chief_editor_rewrite_via_explicit_anchor() ->
     claim = ClaimRecord(
         id="C-001",
         module_id="2.3",
+        submodule_id="2.3.1",
         text="原模块判断",
         claim_type="risk_judgment",
         source_ids=["E-001", "R-001"],

@@ -31,6 +31,9 @@ ReviewIssue 必须包含责任模块、受影响 Claim、证据定位、问题�
 <completion_standard>
 所有关键论断均有恰当来源或清晰限定，引用可定位，不同来源类型未被混淆，剩余争议被显式记录。
 </completion_standard>
+<submission_contract>
+每个 blocking ReviewIssue 必须填写合法 submodule_id；返工范围只能覆盖这些被点名的子模块，不得用整章返工替代局部问题定位。
+</submission_contract>
 <deliverables>
 提交模块审计状态、阻塞与警告问题、修订请求及已核验 Claim 清单。
 </deliverables>

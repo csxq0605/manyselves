@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .models import CoverageMatrix, EvidenceItem, PhotoAsset, ReviewIssue
+from .taxonomy import REPORT_TAXONOMY, resolve_submodule
 
 
 class StrictModel(BaseModel):
@@ -34,6 +35,19 @@ class TaskEnvelope(StrictModel):
     revision: int = Field(default=0, ge=0)
     prior_result_ref: str | None = None
     issue_refs: list[str] = Field(default_factory=list)
+    target_submodule_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def targets_use_fixed_taxonomy(self) -> "TaskEnvelope":
+        for submodule_id in self.target_submodule_ids:
+            definition = resolve_submodule(submodule_id)
+            if self.agent_id.startswith("module-"):
+                module_id = self.agent_id.removeprefix("module-").removesuffix("-specialist")
+                if definition.module_id != module_id:
+                    raise ValueError(
+                        f"target submodule {submodule_id} does not belong to module {module_id}"
+                    )
+        return self
 
 
 class PreparationResult(StrictModel):
@@ -73,6 +87,7 @@ class ResearchNote(StrictModel):
 class ClaimRecord(StrictModel):
     id: str = Field(pattern=r"^C-")
     module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
+    submodule_id: str = Field(min_length=1)
     text: str = Field(min_length=1)
     claim_type: Literal[
         "project_fact", "technical_interpretation", "risk_judgment", "recommendation"
@@ -84,6 +99,10 @@ class ClaimRecord(StrictModel):
 
     @model_validator(mode="after")
     def project_fact_uses_evidence(self) -> "ClaimRecord":
+        if resolve_submodule(self.submodule_id).module_id != self.module_id:
+            raise ValueError(
+                f"submodule {self.submodule_id} does not belong to module {self.module_id}"
+            )
         if self.claim_type == "project_fact" and not any(
             source_id.startswith("E-") for source_id in self.source_ids
         ):
@@ -95,10 +114,23 @@ class ModuleSubmission(StrictModel):
     kind: Literal["module_submission"] = "module_submission"
     module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
     markdown: str = Field(min_length=1)
+    submodule_narratives: dict[str, str]
     claims: list[ClaimRecord]
     source_ids: list[str]
     unresolved_questions: list[str]
     revision: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def uses_exact_fixed_submodules(self) -> "ModuleSubmission":
+        expected = set(REPORT_TAXONOMY[self.module_id].submodules)
+        if set(self.submodule_narratives) != expected:
+            raise ValueError("module submission requires exact fixed submodules")
+        if any(not narrative.strip() for narrative in self.submodule_narratives.values()):
+            raise ValueError("submodule narratives cannot be empty")
+        wrong_claims = [claim.id for claim in self.claims if claim.module_id != self.module_id]
+        if wrong_claims:
+            raise ValueError(f"claims do not belong to module {self.module_id}: {wrong_claims}")
+        return self
 
 
 class PlanSubmission(StrictModel):
@@ -113,6 +145,19 @@ class AuditSubmission(StrictModel):
     approved: bool
     issues: list[ReviewIssue]
     checked_claim_ids: list[str]
+
+    @model_validator(mode="after")
+    def blocking_issues_are_submodule_scoped(self) -> "AuditSubmission":
+        for issue in self.issues:
+            if issue.module_id != self.module_id:
+                raise ValueError("audit issue module does not match audited module")
+            if issue.severity == "blocking":
+                if issue.submodule_id is None:
+                    raise ValueError("blocking audit issue requires a fixed submodule")
+                definition = resolve_submodule(issue.submodule_id)
+                if definition.module_id != self.module_id:
+                    raise ValueError("blocking audit issue submodule belongs to another module")
+        return self
 
 
 class CrossReviewSubmission(StrictModel):

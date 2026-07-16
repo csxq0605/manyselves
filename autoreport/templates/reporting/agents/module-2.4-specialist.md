@@ -31,6 +31,9 @@ background: true
 <completion_standard>
 每项重要判断都能回到明确设备、位置和证据，问题机理与运行后果连贯，图片引用准确，建议说明实施对象、前置条件和验证目的。
 </completion_standard>
+<submission_contract>
+ModuleSubmission 必须逐一填写 2.4 的固定 submodule_narratives；每条 Claim 必须标注所属 submodule_id。定向返工时只允许修改 target_submodule_ids 指定的正文、Claim 和来源。
+</submission_contract>
 <deliverables>
 提交 ModuleNarrative、ClaimLedger、SourceLedger、图片与问题关联、必要的 ResearchNote 及证据缺口。
 </deliverables>

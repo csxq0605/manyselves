@@ -13,6 +13,7 @@ from autoreport.core.reporting.rendering.pds_docx_renderer import (
     ReportPhoto,
     ReportTable,
 )
+from autoreport.core.reporting.taxonomy import REPORT_TAXONOMY
 
 
 def _approved_report(photo_path: Path) -> ApprovedReport:
@@ -24,6 +25,7 @@ def _approved_report(photo_path: Path) -> ApprovedReport:
         ClaimRecord(
             id=f"C-00{index}",
             module_id=module_id,
+            submodule_id=next(iter(REPORT_TAXONOMY[module_id].submodules)),
             text=narratives[module_id],
             claim_type="risk_judgment",
             source_ids=["E-001"],
@@ -89,7 +91,9 @@ def test_renderer_uses_handoff_core_preserves_prose_and_adds_superscript_index_t
     assert "总编形成的结论保持不变。" in all_text
     assert "项目证据 E-*" in all_text
     assert "Inputs/设备.xlsx；工作表=问题；单元格=A2:F2；图片=IMG-1" in all_text
-    assert any(run.font.superscript and run.text == "1" for p in rendered.paragraphs for run in p.runs)
+    assert any(
+        run.font.superscript and run.text == "1" for p in rendered.paragraphs for run in p.runs
+    )
     assert any(table.cell(0, 0).text == "对象" for table in rendered.tables)
     assert len(rendered.inline_shapes) == 1
 

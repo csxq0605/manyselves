@@ -31,6 +31,9 @@ background: true
 <completion_standard>
 论证揭示控制是否形成闭环、缺口如何影响风险暴露与恢复能力，改进建议包含责任对象、触发条件、动作和验证方式。
 </completion_standard>
+<submission_contract>
+ModuleSubmission 必须逐一填写 2.5 的固定 submodule_narratives；每条 Claim 必须标注所属 submodule_id。定向返工时只允许修改 target_submodule_ids 指定的正文、Claim 和来源。
+</submission_contract>
 <deliverables>
 提交 ModuleNarrative、ClaimLedger、SourceLedger、必要的 ResearchNote、执行证据边界和管理改进重点。
 </deliverables>

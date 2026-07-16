@@ -31,6 +31,9 @@ background: true
 <completion_standard>
 论证能解释结构如何影响运行与故障后果，关键数字和现场状态可追溯，未知转供条件或拓扑冲突被准确限定，建议具有对象、条件和目的。
 </completion_standard>
+<submission_contract>
+ModuleSubmission 必须逐一填写 2.1 的固定 submodule_narratives；每条 Claim 必须标注所属 submodule_id。定向返工时只允许修改 target_submodule_ids 指定的正文、Claim 和来源。
+</submission_contract>
 <deliverables>
 提交 ModuleNarrative、ClaimLedger、SourceLedger、必要的 ResearchNote 以及证据缺口。
 </deliverables>

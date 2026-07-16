@@ -6,6 +6,7 @@ import pytest
 
 from autoreport.core.loops.bus import MessageBus
 from autoreport.core.reporting.store import ReportingStore
+from autoreport.core.reporting.taxonomy import REPORT_TAXONOMY
 from autoreport.core.tools.reporting_collaboration_tools import (
     PeerMessageRouter,
     QueryPeerTool,
@@ -25,6 +26,9 @@ MODULE_PAYLOAD = {
     "kind": "module_submission",
     "module_id": "2.4",
     "markdown": "设备分析正文",
+    "submodule_narratives": {
+        submodule_id: f"{submodule_id} 分析" for submodule_id in REPORT_TAXONOMY["2.4"].submodules
+    },
     "claims": [],
     "source_ids": [],
     "unresolved_questions": [],
@@ -59,7 +63,15 @@ async def test_submit_result_supports_full_five_module_domain_without_research(
     tmp_path: Path,
 ):
     bus = MessageBus()
-    payload = {**MODULE_PAYLOAD, "module_id": "2.1", "markdown": "系统架构分析"}
+    payload = {
+        **MODULE_PAYLOAD,
+        "module_id": "2.1",
+        "markdown": "系统架构分析",
+        "submodule_narratives": {
+            submodule_id: f"{submodule_id} 分析"
+            for submodule_id in REPORT_TAXONOMY["2.1"].submodules
+        },
+    }
     tool = SubmitResultTool(
         agent_id="module-2.1-specialist",
         session_id="session-21",

@@ -17,8 +17,9 @@ from autoreport.core.reporting.agentic_models import (
     PlanSubmission,
     TaskEnvelope,
 )
-from autoreport.core.reporting.models import REPORT_MODULE_IDS, ReportRequest
+from autoreport.core.reporting.models import REPORT_MODULE_IDS, ReportRequest, ReviewIssue
 from autoreport.core.reporting.service import ReportingService
+from autoreport.core.reporting.taxonomy import REPORT_TAXONOMY
 from autoreport.core.reporting.workflow import ReportWorkflowRunner
 from autoreport.core.tools.task_board import TaskBoard
 
@@ -52,19 +53,22 @@ class ScriptedWorkflowAgents:
             self.envelopes[agent_id] = envelope
             module_id = agent_id.removeprefix("module-").removesuffix("-specialist")
             self.active_specialists += 1
-            self.max_active_specialists = max(
-                self.max_active_specialists, self.active_specialists
-            )
+            self.max_active_specialists = max(self.max_active_specialists, self.active_specialists)
             await asyncio.sleep(0.02)
             self.active_specialists -= 1
             narrative = f"模块 {module_id} 从本专业机理出发形成主动分析。"
             payload = ModuleSubmission(
                 module_id=module_id,
                 markdown=narrative,
+                submodule_narratives={
+                    submodule_id: f"{submodule_id}：{narrative}"
+                    for submodule_id in REPORT_TAXONOMY[module_id].submodules
+                },
                 claims=[
                     ClaimRecord(
                         id=f"C-{module_id}-001",
                         module_id=module_id,
+                        submodule_id=next(iter(REPORT_TAXONOMY[module_id].submodules)),
                         text=narrative,
                         claim_type="technical_interpretation",
                         confidence=0.5,
@@ -121,6 +125,38 @@ class NeverCalledProvider(LLMProvider):
 
     async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
         raise AssertionError("ReportWorkflowRunner must use the injected scripted agents")
+
+
+class DriftingRevisionAgents(ScriptedWorkflowAgents):
+    async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
+        result = await super().run(
+            definition,
+            envelope,
+            shared_artifacts,
+            workflow_id=workflow_id,
+            session_key=session_key,
+        )
+        if definition.id == "evidence-auditor" and envelope.revision == 0:
+            result.payload = AuditSubmission(
+                module_id="2.4",
+                approved=False,
+                issues=[
+                    ReviewIssue(
+                        module_id="2.4",
+                        submodule_id="2.4.1.1",
+                        kind="unsupported",
+                        message="只修订容量判断",
+                        severity="blocking",
+                    )
+                ],
+                checked_claim_ids=[],
+            )
+        if definition.id == "module-2.4-specialist" and envelope.revision == 1:
+            assert isinstance(result.payload, ModuleSubmission)
+            payload = result.payload.model_dump(mode="python")
+            payload["submodule_narratives"]["2.4.2.2"] = "越界修改接地子模块"
+            result.payload = ModuleSubmission.model_validate(payload)
+        return result
 
 
 @pytest.mark.asyncio
@@ -184,8 +220,30 @@ async def test_partial_request_runs_only_target_module_and_propagates_requiremen
     await ReportWorkflowRunner(service, agents).run(state)
 
     assert agents.specialist_ids == ["module-2.4-specialist"]
-    assert "深度核对现场图片" in agents.envelopes[
-        "module-2.4-specialist"
-    ].constraints
+    assert "深度核对现场图片" in agents.envelopes["module-2.4-specialist"].constraints
     assert (tmp_path / "Outputs/Modules/2.4.md").is_file()
     assert not (tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx").exists()
+
+
+@pytest.mark.asyncio
+async def test_workflow_rejects_revision_that_changes_unrequested_submodule(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=NeverCalledProvider(),
+    )
+    agents = DriftingRevisionAgents(target_modules=("2.4",))
+    state = {
+        "run_id": "run-drift",
+        "request": ReportRequest(
+            instruction="修订设备模块",
+            target_modules=["2.4"],
+            missing_evidence_policy="draft",
+        ),
+    }
+
+    with pytest.raises(Exception, match="protected submodule 2.4.2.2"):
+        await ReportWorkflowRunner(service, agents).run(state)
