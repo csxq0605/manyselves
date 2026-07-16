@@ -72,10 +72,11 @@ class ClaimLedger(StrictModel):
                 raise ValueError(f"web source {source.id} requires accessed_at")
         elif source.kind == SourceKind.LOCAL_REFERENCE:
             normalized = source.locator.replace("\\", "/")
-            if "01_页面导入知识库" not in normalized:
-                raise ValueError(f"local reference {source.id} must be located in 01_页面导入知识库")
-            if "02_本地skill提示词资料_禁止导入" in normalized:
-                raise ValueError("runtime citation of 02_本地skill提示词资料_禁止导入 is forbidden")
+            path_part = normalized.split("；", 1)[0].split("#", 1)[0]
+            if not path_part.startswith("Knowledge/") or "/../" in f"/{path_part}/":
+                raise ValueError(
+                    f"local reference {source.id} must be located beneath project Knowledge"
+                )
         elif source.kind == SourceKind.PROJECT_EVIDENCE:
             if source.locator.startswith(("http://", "https://")):
                 raise ValueError(f"project evidence {source.id} must use a project file locator")

@@ -1,4 +1,4 @@
-"""Search the explicitly allowed ``01`` local reference library."""
+"""Search the project-local ``Knowledge`` reference library."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class ReferenceHit:
 
 
 class ReferenceLibrary:
-    """A workspace-bound reader which cannot escape the ``01`` directory."""
+    """A workspace-bound reader which cannot escape the Knowledge directory."""
 
     TEXT_SUFFIXES = {".csv", ".html", ".htm", ".json", ".md", ".txt"}
     DOCUMENT_SUFFIXES = {".docx"}
@@ -36,7 +36,7 @@ class ReferenceLibrary:
 
     def __init__(self, workspace: Path):
         self.workspace = Path(workspace).resolve()
-        self.root = (self.workspace / "Knowledge/01_页面导入知识库").resolve()
+        self.root = (self.workspace / "Knowledge").resolve()
 
     def _safe_path(self, value: str | Path) -> Path:
         candidate = Path(value)
@@ -44,7 +44,7 @@ class ReferenceLibrary:
             candidate = self.workspace / candidate
         resolved = candidate.resolve()
         if not resolved.is_relative_to(self.root):
-            raise ValueError("reference path must stay beneath the 01 reference library")
+            raise ValueError("reference path must stay beneath project Knowledge")
         return resolved
 
     def _read_text(self, path: Path) -> str:
@@ -63,7 +63,7 @@ class ReferenceLibrary:
     def open(self, relative_path: str) -> ReferenceDocument:
         path = self._safe_path(relative_path)
         if not path.is_file():
-            raise ValueError("reference path is not a file in the 01 reference library")
+            raise ValueError("reference path is not a file in project Knowledge")
         text = self._read_text(path)
         return ReferenceDocument(
             title=path.stem,
@@ -84,7 +84,7 @@ class ReferenceLibrary:
             try:
                 safe_path = self._safe_path(path)
             except ValueError:
-                # This also blocks symlinks from 01 into any sibling directory.
+                # This blocks symlinks from Knowledge into any external directory.
                 continue
             if safe_path.suffix.casefold() not in self.TEXT_SUFFIXES | self.DOCUMENT_SUFFIXES:
                 continue

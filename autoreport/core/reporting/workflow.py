@@ -159,7 +159,7 @@ class ReportWorkflowRunner:
             input_refs=["Work/coverage.json", "Work/evidence.jsonl", "Work/manifest.json"],
             constraints=[
                 "五个模块都必须形成独立 TaskEnvelope",
-                "01 与网络只是可选参考，不能补成客户事实",
+                "Knowledge 与网络只是可选参考，不能补成客户事实",
                 f"缺失证据策略={request.missing_evidence_policy}",
             ],
             allowed_outputs=["plan_submission"],

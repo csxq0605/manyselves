@@ -72,8 +72,11 @@ class SourceLedger:
         return f"{prefix}{max(numbers, default=0) + 1:03d}"
 
     def register_local(self, title: str, locator: str, content: str) -> SourceRecord:
-        if not locator.startswith("Knowledge/01_页面导入知识库/"):
-            raise ValueError("local references must be located beneath the 01 library")
+        locator_path = locator.split("；", 1)[0].split("#", 1)[0]
+        resolved = (self.workspace / locator_path).resolve()
+        knowledge_root = (self.workspace / "Knowledge").resolve()
+        if not resolved.is_relative_to(knowledge_root) or resolved == knowledge_root:
+            raise ValueError("local references must be located beneath project Knowledge")
         digest = self._digest(content)
         with self._lock:
             records = self._load()

@@ -69,8 +69,6 @@ class InspectDocumentTool(Tool):
         target = (self.workspace / path).resolve()
         if not target.is_relative_to(self.workspace) or not target.is_file():
             raise ValueError("document must be a file inside the project")
-        if "02_本地skill提示词资料_禁止导入" in target.parts:
-            raise ValueError("runtime access to 02 is forbidden")
         if target.suffix.casefold() == ".docx":
             document = Document(target)
             text = "\n".join(p.text for p in document.paragraphs)

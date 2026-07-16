@@ -88,7 +88,7 @@ class OpenProjectSourceTool(Tool):
 class SearchReferenceLibraryTool(Tool):
     name = "search_reference_library"
     description = (
-        "Optionally search the allowed 01 local reference library for methods, terms, "
+        "Optionally search project Knowledge for methods, terms, "
         "thresholds, or mechanisms. R-* results are not customer facts."
     )
 
@@ -124,7 +124,7 @@ class SearchReferenceLibraryTool(Tool):
 
 class OpenReferenceTool(Tool):
     name = "open_reference"
-    description = "Open a file beneath the allowed 01 library and register it as R-*."
+    description = "Open a file beneath project Knowledge and register it as R-*."
 
     def __init__(self, library: ReferenceLibrary, ledger: SourceLedger):
         self.library = library

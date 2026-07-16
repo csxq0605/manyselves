@@ -2,8 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.reporting.agentic_models import ClaimRecord, SourceKind, SourceRecord
-from autoreport.core.reporting.claim_ledger import ClaimLedger, CitationBindingError
+from autoreport.core.reporting.agentic_models import (
+    ClaimRecord,
+    SourceKind,
+    SourceRecord,
+)
+from autoreport.core.reporting.claim_ledger import CitationBindingError, ClaimLedger
 
 
 def _sources() -> list[SourceRecord]:
@@ -18,7 +22,7 @@ def _sources() -> list[SourceRecord]:
             id="R-001",
             kind=SourceKind.LOCAL_REFERENCE,
             title="低压配电参考",
-            locator="Knowledge/01_页面导入知识库/低压.md；章节=接地；版本=2026-01",
+            locator="Knowledge/标准/低压.md；章节=接地；版本=2026-01",
         ),
         SourceRecord(
             id="W-001",
@@ -111,6 +115,20 @@ def test_resolved_risk_judgment_requires_project_evidence() -> None:
 
     with pytest.raises(ValueError, match="risk.*E-"):
         ClaimLedger(claims=[claim], sources=_sources())
+
+
+def test_local_reference_accepts_any_knowledge_locator_and_rejects_other_roots() -> None:
+    accepted = SourceRecord(
+        id="R-009",
+        kind=SourceKind.LOCAL_REFERENCE,
+        title="设备手册",
+        locator="Knowledge/供应商/低压柜.md；章节=维护",
+    )
+    ClaimLedger(claims=[], sources=[accepted])
+
+    rejected = accepted.model_copy(update={"locator": "Inputs/低压柜.md"})
+    with pytest.raises(ValueError, match="Knowledge"):
+        ClaimLedger(claims=[], sources=[rejected])
 
 
 def test_citation_binding_survives_chief_editor_rewrite_via_explicit_anchor() -> None:

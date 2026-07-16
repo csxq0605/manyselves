@@ -9,10 +9,10 @@ from autoreport.core.reporting.source_ledger import SourceLedger
 def test_source_ids_are_stable_per_kind_and_persisted(tmp_path: Path):
     ledger = SourceLedger(tmp_path, "run-1")
     local = ledger.register_local(
-        "标准摘录", "Knowledge/01_页面导入知识库/a.md", "正文"
+        "标准摘录", "Knowledge/任意目录/a.md", "正文"
     )
     same_local = SourceLedger(tmp_path, "run-1").register_local(
-        "标准摘录", "Knowledge/01_页面导入知识库/a.md", "正文"
+        "标准摘录", "Knowledge/任意目录/a.md", "正文"
     )
     web = SourceLedger(tmp_path, "run-1").register_web(
         "机构说明", "https://example.org/guide", "网页正文", publisher="机构"
@@ -42,3 +42,13 @@ def test_project_evidence_keeps_e_id_and_rejects_conflict(tmp_path: Path):
 def test_source_ledger_rejects_run_path_escape(tmp_path: Path):
     with pytest.raises(ValueError, match="run_id"):
         SourceLedger(tmp_path, "../outside")
+
+
+def test_source_ledger_accepts_any_knowledge_path_and_rejects_other_roots(tmp_path: Path):
+    ledger = SourceLedger(tmp_path, "run-1")
+
+    source = ledger.register_local("参考", "Knowledge/供应商/手册.md", "正文")
+
+    assert source.locator == "Knowledge/供应商/手册.md"
+    with pytest.raises(ValueError, match="Knowledge"):
+        ledger.register_local("现场", "Inputs/检测.md", "正文")

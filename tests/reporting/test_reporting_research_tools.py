@@ -52,7 +52,7 @@ async def test_project_evidence_search_and_open_return_only_e_items(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_reference_search_and_open_share_stable_r_id(tmp_path: Path):
-    root = tmp_path / "Knowledge/01_页面导入知识库"
+    root = tmp_path / "Knowledge/供应商/手册"
     root.mkdir(parents=True)
     (root / "guide.md").write_text("连接点温升与负荷相关", encoding="utf-8")
     ledger = SourceLedger(tmp_path, "run-1")
