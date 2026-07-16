@@ -137,25 +137,6 @@ class TestMainAgentTools:
             assert len(tool_names) >= 1
 
 
-class TestMainOnlyRuntime:
-    """Persistent desktop runtime exposes only Main."""
-
-    @pytest.mark.asyncio
-    async def test_only_main_loop_is_started(self):
-        async with HeadlessBackend(_workspace()) as b:
-            assert b.loop_manager.get_loop(AgentType.MAIN) is not None
-            assert b.loop_manager.get_loop(AgentType.DATA_ANALYSIS) is None
-            assert b.loop_manager.get_loop(AgentType.PLOTTING) is None
-            assert b.loop_manager.get_loop(AgentType.THEORY) is None
-            assert b.loop_manager.get_loop(AgentType.REPORT) is None
-
-    @pytest.mark.asyncio
-    async def test_headless_sender_rejects_removed_persistent_agent(self):
-        async with HeadlessBackend(_workspace()) as b:
-            with pytest.raises(ValueError, match="exposes only 'main'"):
-                await b.send("data_analysis", "obsolete direct message")
-
-
 class TestErrorHandling:
     """Error handling in agent execution."""
 

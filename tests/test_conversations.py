@@ -280,26 +280,6 @@ class TestAutoNaming:
         sessions = store.get_sessions()
         assert sessions[0]["name"] == "Custom"
 
-    @pytest.mark.skip(reason="GUI conversation store is Main-only")
-    def test_sub_agent_no_auto_name(self, store: ConversationStore):
-        """Sub-agent messages should not trigger auto-naming.
-
-        Auto-naming (rename_current_session_from_first_message) only fires for the
-        main agent, so the persisted metadata name stays '新对话'. Note: get_sessions()
-        derives a *display* name from the first user message when the stored name is
-        the default, so we assert against the persisted metadata directly.
-        """
-        store.append_message("data_analysis", "user", "Data analysis request")
-        sessions = store.get_sessions()
-        assert len(sessions) == 1
-        # Persisted metadata name is unchanged (auto-naming did not fire).
-        meta = store._load_sessions_metadata()
-        assert meta[0]["name"] == "新对话"
-        # The display name returned by get_sessions() is derived from the message,
-        # but that is presentation only — the underlying stored name is the default.
-        assert sessions[0]["name"] == "Data analysis request"
-
-
 class TestClearAndLifecycle:
     """clear / clear_current_session."""
 
@@ -308,25 +288,6 @@ class TestClearAndLifecycle:
         store.append_message("main", "user", "hello")
         store.clear("main")
         assert store.load_messages("main") == []
-
-    @pytest.mark.skip(reason="GUI conversation store is Main-only")
-    def test_clear_current_session(self, store: ConversationStore):
-        """clear_current_session should clear all agents for current session."""
-        store.append_message("main", "user", "m1")
-        store.append_message("data_analysis", "user", "m2")
-        store.clear_current_session()
-        assert store.load_messages("main") == []
-        assert store.load_messages("data_analysis") == []
-
-    @pytest.mark.skip(reason="GUI conversation store is Main-only")
-    def test_get_agent_types_with_history(self, store: ConversationStore):
-        """Should list agent types that have messages."""
-        assert store.get_agent_types_with_history() == []
-        store.append_message("main", "user", "hi")
-        store.append_message("data_analysis", "user", "hi")
-        result = store.get_agent_types_with_history()
-        assert "main" in result
-        assert "data_analysis" in result
 
     def test_get_last_user_message(self, store: ConversationStore):
         """Should return the last user message."""
@@ -499,15 +460,6 @@ class TestGetSessionsStaleFilter:
 
 class TestAgentScopedHistory:
     """get_sessions(agent_type) filters the dropdown to one agent's own conversations."""
-
-    @pytest.mark.skip(reason="GUI conversation store is Main-only")
-    def test_unfiltered_shows_every_agent(self, store: ConversationStore):
-        """Without a filter, sessions from any agent are all visible."""
-        store.append_message("main", "user", "hello from main")
-        store.append_message("theory", "user", "hello from theory")
-
-        ids = {s["id"] for s in store.get_sessions()}
-        assert len(ids) == 2
 
     def test_scoped_to_current_agent_only(self, store: ConversationStore):
         """Each agent's dropdown sees only its own sessions."""

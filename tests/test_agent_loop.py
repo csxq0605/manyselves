@@ -19,8 +19,10 @@ from manyselves.interfaces.types import (
     ReportMessage,
     SystemNotice,
     TaskUpdateMessage,
-    ToolResult as ToolResultMsg,
     UserMessage,
+)
+from manyselves.interfaces.types import (
+    ToolResult as ToolResultMsg,
 )
 
 
@@ -467,111 +469,6 @@ async def test_loop_marks_turn_reported_on_own_report(agent_loop):
     msg = await asyncio.wait_for(agent_loop.bus._queue.get(), timeout=1)
     await agent_loop.bus._notify_subscribers(msg)
     assert agent_loop._turn_reported is True
-
-
-@pytest.mark.asyncio
-@pytest.mark.skip(reason="persistent legacy sub-agent respond tool was removed")
-async def test_respond_tool_call_marks_turn_reported_synchronously(
-    workspace, config, mock_provider, mock_prompt_loader
-):
-    """A successful respond tool result marks the turn before bus delivery catches up."""
-    from manyselves.core.tools.agent_tools import RespondTool
-    from manyselves.core.tools.registry import ToolRegistry
-    from manyselves.core.tools.task_board import TaskBoard
-
-    board = TaskBoard()
-    board.create_task(AgentType.MAIN, AgentType.PLOTTING, "draw", task_id="tk1")
-    bus = MessageBus()
-    tools = ToolRegistry()
-    tools.register(RespondTool(bus=bus, agent_type=AgentType.PLOTTING, task_board=board))
-    loop = AgentLoop(
-        agent_type=AgentType.PLOTTING,
-        workspace=workspace,
-        tools=tools,
-        bus=bus,
-        config=config,
-        llm_provider=mock_provider,
-        prompt_loader=mock_prompt_loader,
-        loop_manager=None,
-        task_board=board,
-    )
-    response = SimpleNamespace(
-        content="",
-        thinking=None,
-        tool_calls=[
-            LLMToolCall(
-                id="call_respond",
-                name="respond",
-                arguments={
-                    "task_id": "tk1",
-                    "type": "reply",
-                    "summary": "Done",
-                    "content": "done",
-                },
-            )
-        ],
-    )
-
-    await loop._handle_tool_calls(response, "blocking:tk1")
-
-    assert loop._turn_reported is True
-
-
-@pytest.mark.asyncio
-@pytest.mark.skip(reason="persistent legacy sub-agent respond tool was removed")
-async def test_respond_tool_suppresses_followup_agent_text(
-    workspace, config, mock_provider, mock_prompt_loader
-):
-    """After respond succeeds, extra model prose must not render as a plain reply."""
-    from manyselves.core.tools.agent_tools import RespondTool
-    from manyselves.core.tools.registry import ToolRegistry
-    from manyselves.core.tools.task_board import TaskBoard
-
-    board = TaskBoard()
-    board.create_task(AgentType.MAIN, AgentType.PLOTTING, "draw", task_id="tk1")
-    bus = MessageBus()
-    tools = ToolRegistry()
-    tools.register(RespondTool(bus=bus, agent_type=AgentType.PLOTTING, task_board=board))
-    loop = AgentLoop(
-        agent_type=AgentType.PLOTTING,
-        workspace=workspace,
-        tools=tools,
-        bus=bus,
-        config=config,
-        llm_provider=mock_provider,
-        prompt_loader=mock_prompt_loader,
-        loop_manager=None,
-        task_board=board,
-    )
-    mock_provider.chat.return_value = LLMResponse(content="extra follow-up", tool_calls=[])
-    response = SimpleNamespace(
-        content="",
-        thinking=None,
-        tool_calls=[
-            LLMToolCall(
-                id="call_respond",
-                name="respond",
-                arguments={
-                    "task_id": "tk1",
-                    "type": "reply",
-                    "summary": "Done",
-                    "content": "done",
-                },
-            )
-        ],
-    )
-
-    await loop._handle_tool_calls(response, "blocking:tk1")
-
-    published = []
-    while not bus._queue.empty():
-        published.append(bus._queue.get_nowait())
-
-    assert loop._turn_reported is True
-    assert not [
-        msg for msg in published
-        if isinstance(msg, AgentResponse) and msg.content
-    ]
 
 
 @pytest.mark.asyncio

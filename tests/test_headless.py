@@ -66,3 +66,11 @@ async def test_headless_backend_skips_before_provider_init_for_missing_socksio(
 
     with pytest.raises(pytest.skip.Exception, match="socksio"):
         await backend.start()
+
+
+@pytest.mark.asyncio
+async def test_headless_sender_rejects_removed_persistent_agent(tmp_path):
+    backend = HeadlessBackend(_workspace(tmp_path))
+
+    with pytest.raises(ValueError, match="exposes only 'main'"):
+        await backend.send("data_analysis", "obsolete direct message")
