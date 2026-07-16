@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .taxonomy import REPORT_TAXONOMY, resolve_submodule
+from .taxonomy import resolve_submodule
 
 REPORT_MODULE_IDS = ("2.1", "2.2", "2.3", "2.4", "2.5")
 
@@ -107,37 +107,6 @@ class EvidenceItem(ReportingModel):
         return self
 
 
-class ClaimKind(StrEnum):
-    FACT = "fact"
-    CONCLUSION = "conclusion"
-    RISK = "risk"
-    RECOMMENDATION = "recommendation"
-
-
-class Claim(ReportingModel):
-    id: str = Field(min_length=1)
-    module_id: str
-    submodule_id: str
-    kind: ClaimKind
-    text: str = Field(min_length=1)
-    evidence_ids: list[str] = Field(default_factory=list)
-    skill_ids: list[str] = Field(default_factory=list)
-    unverified: bool = False
-
-    @model_validator(mode="after")
-    def claim_is_traceable_and_in_taxonomy(self) -> "Claim":
-        if self.module_id not in REPORT_TAXONOMY:
-            raise ValueError(f"unknown report module: {self.module_id}")
-        submodule = resolve_submodule(self.submodule_id)
-        if submodule.module_id != self.module_id:
-            raise ValueError(
-                f"submodule {self.submodule_id} does not belong to module {self.module_id}"
-            )
-        if not self.evidence_ids and not self.unverified:
-            raise ValueError("claim requires evidence_ids or unverified=true")
-        return self
-
-
 class CoverageStatus(StrEnum):
     READY = "ready"
     PENDING = "pending"
@@ -190,27 +159,6 @@ class CoverageMatrix(ReportingModel):
                 f"unknown={unknown}, mismatched={mismatched}"
             )
         return self
-
-
-class ModuleTask(ReportingModel):
-    id: str = Field(min_length=1)
-    module_id: str
-    evidence_ids: list[str] = Field(default_factory=list)
-    submodule_evidence: dict[str, list[str]] = Field(default_factory=dict)
-    missing_submodules: list[str] = Field(default_factory=list)
-    skipped_submodules: list[str] = Field(default_factory=list)
-    allow_unverified: bool = False
-    revision: int = Field(default=0, ge=0)
-
-
-class ModuleDraft(ReportingModel):
-    module_id: str
-    markdown: str
-    evidence_ids: list[str]
-    claims: list[Claim] = Field(default_factory=list)
-    unverified_items: list[str] = Field(default_factory=list)
-    revision: int = Field(default=0, ge=0)
-    approved: bool = False
 
 
 class ReviewIssue(ReportingModel):

@@ -5,6 +5,7 @@ import pytest
 from docx import Document
 
 from autoreport.core.loops.bus import MessageBus
+from autoreport.core.providers.base import LLMProvider
 from autoreport.core.reporting.agentic_models import (
     AgentResult,
     AgentRunStatus,
@@ -109,11 +110,24 @@ class ScriptedWorkflowAgents:
         self.closed = True
 
 
+class NeverCalledProvider(LLMProvider):
+    def __init__(self):
+        super().__init__("test", model="never-called")
+
+    async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        raise AssertionError("ReportWorkflowRunner must use the injected scripted agents")
+
+
 @pytest.mark.asyncio
 async def test_full_five_module_workflow_runs_parallel_barrier_editor_and_handoff_docx(
     tmp_path: Path,
 ) -> None:
-    service = ReportingService(tmp_path, bus=MessageBus(), task_board=TaskBoard())
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=NeverCalledProvider(),
+    )
     agents = ScriptedWorkflowAgents()
     state = {
         "run_id": "run-full",

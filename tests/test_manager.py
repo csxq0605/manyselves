@@ -46,11 +46,13 @@ def gui():
 @pytest.fixture
 def manager(workspace, config_manager, gui):
     bus = MessageBus()
-    return LoopManager(
+    manager = LoopManager(
         workspace=workspace,
         config_manager=config_manager,
         bus=bus,
     )
+    manager._provider_manager.register_provider("test-provider", AsyncMock())
+    return manager
 
 
 def test_init(manager):

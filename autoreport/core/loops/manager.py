@@ -18,6 +18,8 @@ from ...interfaces.types import (
     normalize_agent_id,
 )
 from ..checkpoints import CheckpointManager
+from ..reporting.config import load_packaged_workflow
+from ..reporting.prompts import PromptAssembler
 from ..tools import (
     ApplyPatchTool,
     DeleteFileTool,
@@ -33,12 +35,11 @@ from ..tools import (
     SkillLoader,
     TaskBoard,
 )
-from ..tools.reporting_tool import RunReportingWorkflowTool
 from ..tools.registry import ToolRegistry
-from ..reporting.config import load_packaged_workflow
-from ..reporting.prompts import PromptAssembler
+from ..tools.reporting_tool import RunReportingWorkflowTool
 from .agent_loop import AgentLoop
 from .bus import MessageBus
+
 
 class LoopManager:
     """Manager for all agent loops."""
@@ -301,10 +302,7 @@ class LoopManager:
 
         # Inter-agent communication tools
         if agent_id == "main":
-            try:
-                reporting_provider = self._provider_manager.get_active_provider()
-            except ValueError:
-                reporting_provider = None
+            reporting_provider = self._provider_manager.get_active_provider()
             registry.register(
                 RunReportingWorkflowTool(
                     workspace=self.workspace,

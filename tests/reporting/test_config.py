@@ -135,7 +135,6 @@ def test_packaged_phase_a_declares_the_complete_vertical_flow() -> None:
         "module-2.4-specialist",
         "module-2.5-specialist",
         "evidence-auditor",
-        "revision-router",
         "cross-module-reviewer",
         "chief-editor",
         "citation-builder",

@@ -15,7 +15,7 @@ from .task_board import TaskBoard
 class RunReportingWorkflowTool(Tool):
     name = "run_reporting_workflow"
     description = (
-        "Run the complete V2 power-distribution report workflow in the current project. "
+        "Run the complete provider-backed V2 multi-agent power-distribution report workflow. "
         "Use this for five-module report generation, evidence coverage checks, and local rewrites."
     )
 
@@ -25,7 +25,7 @@ class RunReportingWorkflowTool(Tool):
         bus: MessageBus,
         task_board: TaskBoard,
         *,
-        llm_provider: LLMProvider | None = None,
+        llm_provider: LLMProvider,
         agent_defaults: AgentDefaults | None = None,
     ):
         self.workspace = Path(workspace).resolve()
