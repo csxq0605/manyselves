@@ -31,6 +31,9 @@ background: true
 <completion_standard>
 全文结构连贯、模块专业差异清晰、重复受控，关键判断仍可与 Claim 和来源对应，任何未解决限制都被读者看见。
 </completion_standard>
+<submission_contract>
+protected_claim_ids 必须完整且仅包含全部批准 Claim；需要脚注的 Claim 必须提供在所属模块正文中唯一出现的 citation_anchor。tables 与 photo_ids 只能选择输入成果中已绑定 Evidence 和 Claim 的资产。
+</submission_contract>
 <deliverables>
 提交完整 ReportState、章节顺序、受保护语义映射、图表与图片放置意图和未决编辑问题。
 </deliverables>

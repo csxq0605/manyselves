@@ -16,6 +16,7 @@ from .agentic_models import (
     PlanSubmission,
     TaskEnvelope,
 )
+from .assets import ReportAssetAssembler, validate_editor_protection
 from .claim_ledger import ClaimLedger
 from .delivery import DeliveryPackage, ProjectDelivery
 from .models import REPORT_MODULE_IDS, OutputArtifact
@@ -467,11 +468,14 @@ class ReportWorkflowRunner:
                 *(f"Outputs/Modules/{module_id}.md" for module_id in REPORT_MODULE_IDS),
                 "Outputs/Reviews/full-review.json",
                 f"Work/runs/{state['run_id']}/ledgers/sources.json",
+                "Work/evidence.jsonl",
+                "Work/photo-manifest.json",
             ],
             constraints=[
                 "不得改变批准事实、数值、风险等级和来源语义",
                 "citation_anchors 必须是正文中唯一出现的准确片段",
                 "正文不得套用统一的事实-证据-风险模板",
+                "tables 和 photo_ids 只能选择可追溯到 Evidence 与 Claim 的资产",
             ],
             allowed_outputs=["edited_report_submission"],
         )
@@ -484,6 +488,12 @@ class ReportWorkflowRunner:
         )
         if not isinstance(payload, EditedReportSubmission):
             raise AgentWorkflowError("chief-editor returned the wrong payload type")
+        claims = [
+            claim
+            for module_id in REPORT_MODULE_IDS
+            for claim in state["module_submissions"][module_id].claims
+        ]
+        validate_editor_protection(payload, claims)
         state["edited_report"] = payload
 
     def _deliver(self, state: dict) -> None:
@@ -497,6 +507,12 @@ class ReportWorkflowRunner:
             claims=claims,
             sources=SourceLedger(self.service.workspace, state["run_id"]).records,
         )
+        tables, photos = ReportAssetAssembler(self.service.workspace).build(
+            state.get("evidence_items", []),
+            state.get("photo_assets", []),
+            claims,
+            edited,
+        )
         report = ApprovedReport(
             title=edited.title,
             overview=edited.overview,
@@ -504,6 +520,8 @@ class ReportWorkflowRunner:
             conclusion=edited.conclusion,
             ledger=ledger,
             citation_anchors=edited.citation_anchors,
+            tables=tables,
+            photos=photos,
         )
         self.service.store.write_json("Work/report-state.json", report.model_dump(mode="json"))
         output = self.service.workspace / "Outputs/Reports/配电安全专家咨询报告.docx"

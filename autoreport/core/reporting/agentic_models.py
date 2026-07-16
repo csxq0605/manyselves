@@ -168,6 +168,21 @@ class CrossReviewSubmission(StrictModel):
     unresolved_disputes: list[str] = Field(default_factory=list)
 
 
+class TableSubmission(StrictModel):
+    title: str = Field(min_length=1)
+    headers: list[str] = Field(min_length=1)
+    rows: list[list[str]] = Field(default_factory=list)
+    source_ids: list[str] = Field(min_length=1)
+    claim_ids: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def rows_match_headers(self) -> "TableSubmission":
+        invalid = [index for index, row in enumerate(self.rows) if len(row) != len(self.headers)]
+        if invalid:
+            raise ValueError(f"table rows do not match header width: {invalid}")
+        return self
+
+
 class EditedReportSubmission(StrictModel):
     kind: Literal["edited_report_submission"] = "edited_report_submission"
     title: str = Field(min_length=1)
@@ -176,6 +191,8 @@ class EditedReportSubmission(StrictModel):
     conclusion: str = Field(min_length=1)
     protected_claim_ids: list[str] = Field(default_factory=list)
     citation_anchors: dict[str, str] = Field(default_factory=dict)
+    tables: list[TableSubmission] = Field(default_factory=list)
+    photo_ids: list[str] = Field(default_factory=list)
     unresolved_editorial_issues: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")

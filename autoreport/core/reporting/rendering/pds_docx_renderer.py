@@ -87,7 +87,9 @@ class ApprovedReport(StrictModel):
         for table in self.tables:
             unknown_sources = sorted(set(table.source_ids) - source_ids)
             if unknown_sources:
-                raise ValueError(f"table {table.title} references unknown sources: {unknown_sources}")
+                raise ValueError(
+                    f"table {table.title} references unknown sources: {unknown_sources}"
+                )
             unknown_claims = sorted(set(table.claim_ids) - claim_ids)
             if unknown_claims:
                 raise ValueError(f"table {table.title} references unknown claims: {unknown_claims}")
@@ -186,7 +188,9 @@ class PdsDocxRenderer:
                 ]
             )
             for photo in report.photos:
-                if any(claims_by_id[claim_id].module_id == module_id for claim_id in photo.claim_ids):
+                if any(
+                    claims_by_id[claim_id].module_id == module_id for claim_id in photo.claim_ids
+                ):
                     lines.extend([f"[[PHOTO:{photo.id}]]", ""])
         for table in report.tables:
             source_note = "、".join(table.source_ids)
@@ -226,7 +230,13 @@ class PdsDocxRenderer:
     @staticmethod
     def _materialize_citations(document: Document) -> None:
         paragraphs = list(document.paragraphs)
-        paragraphs.extend(p for table in document.tables for row in table.rows for cell in row.cells for p in cell.paragraphs)
+        paragraphs.extend(
+            p
+            for table in document.tables
+            for row in table.rows
+            for cell in row.cells
+            for p in cell.paragraphs
+        )
         for paragraph in paragraphs:
             text = paragraph.text
             if not _CITATION_TOKEN.search(text):
@@ -285,9 +295,12 @@ class PdsDocxRenderer:
     def _canonical_docx(data: bytes) -> bytes:
         source = io.BytesIO(data)
         target = io.BytesIO()
-        with zipfile.ZipFile(source, "r") as input_zip, zipfile.ZipFile(
-            target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
-        ) as output_zip:
+        with (
+            zipfile.ZipFile(source, "r") as input_zip,
+            zipfile.ZipFile(
+                target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+            ) as output_zip,
+        ):
             for name in sorted(input_zip.namelist()):
                 info = zipfile.ZipInfo(name, date_time=(2000, 1, 1, 0, 0, 0))
                 info.compress_type = zipfile.ZIP_DEFLATED
@@ -301,7 +314,10 @@ class PdsDocxRenderer:
             rendered = Document(output_path)
         except Exception as exc:
             raise ValueError("rendered file is not Word/WPS-openable") from exc
-        text = "\n".join(paragraph.text for paragraph in rendered.paragraphs)
+        text = "\n".join(
+            "".join(run.text for run in paragraph.runs if run.font.superscript is not True)
+            for paragraph in rendered.paragraphs
+        )
         protected = [report.overview, report.conclusion, *report.module_narratives.values()]
         missing = [value for value in protected if value not in text]
         if missing:

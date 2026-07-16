@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from PIL import Image
 
 from autoreport.core.loops.bus import MessageBus
 from autoreport.core.providers.base import LLMProvider
@@ -17,7 +18,14 @@ from autoreport.core.reporting.agentic_models import (
     PlanSubmission,
     TaskEnvelope,
 )
-from autoreport.core.reporting.models import REPORT_MODULE_IDS, ReportRequest, ReviewIssue
+from autoreport.core.reporting.models import (
+    REPORT_MODULE_IDS,
+    EvidenceItem,
+    PhotoAsset,
+    ReportRequest,
+    ReviewIssue,
+    SourceLocation,
+)
 from autoreport.core.reporting.service import ReportingService
 from autoreport.core.reporting.taxonomy import REPORT_TAXONOMY
 from autoreport.core.reporting.workflow import ReportWorkflowRunner
@@ -25,8 +33,9 @@ from autoreport.core.tools.task_board import TaskBoard
 
 
 class ScriptedWorkflowAgents:
-    def __init__(self, target_modules=REPORT_MODULE_IDS):
+    def __init__(self, target_modules=REPORT_MODULE_IDS, photo_ids=()):
         self.target_modules = tuple(target_modules)
+        self.photo_ids = tuple(photo_ids)
         self.active_specialists = 0
         self.max_active_specialists = 0
         self.closed = False
@@ -57,6 +66,10 @@ class ScriptedWorkflowAgents:
             await asyncio.sleep(0.02)
             self.active_specialists -= 1
             narrative = f"模块 {module_id} 从本专业机理出发形成主动分析。"
+            photo_claim = module_id == "2.4" and bool(self.photo_ids)
+            claim_text = "1A2 柜连接状态需要复核" if photo_claim else narrative
+            if photo_claim:
+                narrative += claim_text + "。"
             payload = ModuleSubmission(
                 module_id=module_id,
                 markdown=narrative,
@@ -69,11 +82,12 @@ class ScriptedWorkflowAgents:
                         id=f"C-{module_id}-001",
                         module_id=module_id,
                         submodule_id=next(iter(REPORT_TAXONOMY[module_id].submodules)),
-                        text=narrative,
+                        text=claim_text,
                         claim_type="technical_interpretation",
-                        confidence=0.5,
-                        footnote_required=False,
-                        unresolved=True,
+                        source_ids=["E-0001"] if photo_claim else [],
+                        confidence=1.0 if photo_claim else 0.5,
+                        footnote_required=photo_claim,
+                        unresolved=not photo_claim,
                     )
                 ],
                 source_ids=[],
@@ -94,15 +108,22 @@ class ScriptedWorkflowAgents:
                 global_constraints=["所有未知均保持为未知"],
             )
         elif agent_id == "chief-editor":
+            module_narratives = {
+                module_id: f"模块 {module_id} 从本专业机理出发形成主动分析。"
+                for module_id in REPORT_MODULE_IDS
+            }
+            if self.photo_ids:
+                module_narratives["2.4"] += "1A2 柜连接状态需要复核。"
             payload = EditedReportSubmission(
                 title="配电安全专家咨询报告",
                 overview="本报告按五个专业视角综合审视配电安全。",
-                module_narratives={
-                    module_id: f"模块 {module_id} 从本专业机理出发形成主动分析。"
-                    for module_id in REPORT_MODULE_IDS
-                },
+                module_narratives=module_narratives,
                 conclusion="现有资料不足以形成客户现场事实结论，后续应补充核验。",
                 protected_claim_ids=[f"C-{module_id}-001" for module_id in REPORT_MODULE_IDS],
+                citation_anchors=(
+                    {"C-2.4-001": "1A2 柜连接状态需要复核"} if self.photo_ids else {}
+                ),
+                photo_ids=list(self.photo_ids),
             )
         else:
             raise AssertionError(agent_id)
@@ -247,3 +268,56 @@ async def test_workflow_rejects_revision_that_changes_unrequested_submodule(
 
     with pytest.raises(Exception, match="protected submodule 2.4.2.2"):
         await ReportWorkflowRunner(service, agents).run(state)
+
+
+@pytest.mark.asyncio
+async def test_active_workflow_passes_traceable_photo_to_renderer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=NeverCalledProvider(),
+    )
+    photo_path = tmp_path / "Work/assets/IMG-1.png"
+    photo_path.parent.mkdir(parents=True)
+    Image.new("RGB", (40, 30), color="red").save(photo_path)
+    template_photo_count = len(Document(service.report_template_path).inline_shapes)
+
+    async def normalize(state: dict) -> None:
+        state["evidence_items"] = [
+            EvidenceItem(
+                id="E-0001",
+                subject="1A2 柜",
+                fact="连接点存在异常",
+                source=SourceLocation(file_id="F-1", path=Path("Inputs/check.xlsx"), cell="A2"),
+                module_id="2.4",
+                submodule_id="2.4.1.1",
+                photo_refs=["IMG-1"],
+            )
+        ]
+        state["photo_assets"] = [
+            PhotoAsset(
+                id="IMG-1",
+                path=photo_path.relative_to(tmp_path),
+                sha256="test",
+                media_type="image/png",
+                source_member="media/image1.png",
+            )
+        ]
+
+    monkeypatch.setattr(service, "_normalize_evidence", normalize)
+    state = {
+        "run_id": "run-photo",
+        "request": ReportRequest(
+            instruction="生成带现场图片的完整报告",
+            missing_evidence_policy="draft",
+        ),
+    }
+
+    await ReportWorkflowRunner(service, ScriptedWorkflowAgents(photo_ids=("IMG-1",))).run(state)
+
+    rendered = Document(tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx")
+    assert len(rendered.inline_shapes) == template_photo_count + 1

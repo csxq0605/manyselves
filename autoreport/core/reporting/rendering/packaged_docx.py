@@ -21,6 +21,7 @@ def _is_separator(line: str) -> bool:
 
 
 def _append_markdown(document: Document, report_text: str) -> None:
+    style_names = {style.name for style in document.styles}
     lines = report_text.splitlines()
     index = 0
     while index < len(lines):
@@ -33,11 +34,7 @@ def _append_markdown(document: Document, report_text: str) -> None:
             document.add_heading(heading.group(2).strip(), level=min(len(heading.group(1)), 4))
             index += 1
             continue
-        if (
-            line.startswith("|")
-            and index + 1 < len(lines)
-            and _is_separator(lines[index + 1])
-        ):
+        if line.startswith("|") and index + 1 < len(lines) and _is_separator(lines[index + 1]):
             headers = _cells(line)
             index += 2
             rows: list[list[str]] = []
@@ -56,9 +53,17 @@ def _append_markdown(document: Document, report_text: str) -> None:
                     cells[column].text = value
             continue
         if line.startswith("- "):
-            document.add_paragraph(line[2:].strip(), style="List Bullet")
+            text = line[2:].strip()
+            if "List Bullet" in style_names:
+                document.add_paragraph(text, style="List Bullet")
+            else:
+                document.add_paragraph(f"• {text}")
         elif re.match(r"^\d+\.\s+", line):
-            document.add_paragraph(re.sub(r"^\d+\.\s+", "", line), style="List Number")
+            text = re.sub(r"^\d+\.\s+", "", line)
+            if "List Number" in style_names:
+                document.add_paragraph(text, style="List Number")
+            else:
+                document.add_paragraph(line)
         else:
             document.add_paragraph(line)
         index += 1
