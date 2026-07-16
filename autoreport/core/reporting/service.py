@@ -3,7 +3,6 @@
 import uuid
 from pathlib import Path
 
-from openpyxl import load_workbook
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...config.schema import AgentDefaults
@@ -14,6 +13,7 @@ from ..tools.task_board import TaskBoard
 from .agent_runner import ReportingAgentRunner
 from .config import load_packaged_workflow
 from .coverage import evaluate_coverage
+from .intake.adapters import IntakeAdapterRegistry
 from .intake.manifest import build_manifest
 from .intake.wps_images import extract_wps_images
 from .mappers import map_s2_1, map_s4_4, map_s4_6
@@ -24,7 +24,6 @@ from .models import (
     PhotoAsset,
     ProjectManifest,
     ReportRequest,
-    SourceLocation,
 )
 from .request_gate import ReportingBlockedError
 from .store import ReportingStore
@@ -95,9 +94,7 @@ class ReportingService:
                 missing_evidence=exc.missing_evidence,
             )
             self._save_run(result)
-            await self._notice(
-                "配电报告流程等待补资或用户确认：" + ", ".join(exc.missing_evidence)
-            )
+            await self._notice("配电报告流程等待补资或用户确认：" + ", ".join(exc.missing_evidence))
             return result
         except Exception as exc:
             result = ReportingRunResult(
@@ -141,39 +138,12 @@ class ReportingService:
     async def _parse_artifacts(self, state: dict) -> None:
         manifest: ProjectManifest = state["project_manifest"]
         artifacts: list[ParsedArtifact] = []
+        registry = IntakeAdapterRegistry()
         for manifest_file in manifest.files:
             if manifest_file.purpose in {"s2-1", "s4-4", "s4-6"}:
                 continue
             try:
-                workbook = load_workbook(
-                    self.workspace / manifest_file.path,
-                    read_only=True,
-                    data_only=True,
-                )
-                for sheet in workbook.worksheets:
-                    rows = list(sheet.iter_rows(values_only=True))
-                    if not rows:
-                        continue
-                    headers = [
-                        str(value or f"column_{index + 1}") for index, value in enumerate(rows[0])
-                    ]
-                    for row_index, row in enumerate(rows[1:], start=2):
-                        if not any(value not in (None, "") for value in row):
-                            continue
-                        artifacts.append(
-                            ParsedArtifact(
-                                id=f"artifact-{len(artifacts) + 1:04d}",
-                                kind="workbook_row",
-                                source=SourceLocation(
-                                    file_id=manifest_file.id,
-                                    path=manifest_file.path,
-                                    sheet=sheet.title,
-                                    cell=f"A{row_index}",
-                                ),
-                                payload={"headers": headers, "values": list(row)},
-                            )
-                        )
-                workbook.close()
+                artifacts.extend(registry.parse(self.workspace / manifest_file.path, manifest_file))
                 manifest_file.parse_status = "parsed"
             except Exception as exc:
                 manifest_file.parse_status = "failed"
@@ -228,20 +198,47 @@ class ReportingService:
                 manifest_file.error = str(exc)
 
         for artifact in state.get("parsed_artifacts", []):
-            pairs = [
-                f"{header}={value}"
-                for header, value in zip(
-                    artifact.payload["headers"], artifact.payload["values"], strict=False
+            if artifact.kind == "manual_required":
+                mapping_gaps.append(
+                    {
+                        "file_id": artifact.source.file_id,
+                        "kind": "manual_required",
+                        **artifact.payload,
+                    }
                 )
-                if value not in (None, "")
-            ]
-            if not pairs:
+                continue
+            if artifact.kind == "workbook_row":
+                pairs = [
+                    f"{header}={value}"
+                    for header, value in zip(
+                        artifact.payload["headers"],
+                        artifact.payload["values"],
+                        strict=False,
+                    )
+                    if value not in (None, "")
+                ]
+                if not pairs:
+                    continue
+                subject = str(artifact.payload["values"][0])
+                fact = "; ".join(pairs)
+            elif artifact.kind in {"text", "document_paragraph", "pdf_page"}:
+                fact = str(artifact.payload.get("text", "")).strip()
+                if not fact:
+                    continue
+                subject = artifact.source.path.name
+            elif artifact.kind == "image_metadata":
+                subject = artifact.source.path.name
+                fact = (
+                    f"图片元数据：{artifact.payload['width']}x{artifact.payload['height']}，"
+                    f"格式={artifact.payload['format']}，模式={artifact.payload['mode']}"
+                )
+            else:
                 continue
             evidence.append(
                 EvidenceItem(
                     id=f"ev-{len(evidence) + 1:04d}",
-                    subject=str(artifact.payload["values"][0]),
-                    fact="; ".join(pairs),
+                    subject=subject,
+                    fact=fact,
                     source=artifact.source,
                 )
             )

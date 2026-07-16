@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from docx import Document
 from openpyxl import Workbook
 
 from autoreport.core.reporting.intake.manifest import build_manifest
@@ -54,3 +55,20 @@ def test_manifest_keeps_corrupt_workbook_for_isolated_parse_failure(tmp_path: Pa
 
     assert [item.purpose for item in manifest.files] == ["s4-4", "s4-6"]
 
+
+def test_manifest_includes_supported_and_manual_required_input_formats(tmp_path: Path) -> None:
+    inputs = tmp_path / "Inputs"
+    inputs.mkdir()
+    for filename in ("说明.txt", "现场.md", "图纸.dwg", "视频.mp4"):
+        (inputs / filename).write_bytes(b"content")
+    Document().save(inputs / "检查.docx")
+
+    manifest = build_manifest(tmp_path)
+
+    assert {item.path.name for item in manifest.files} == {
+        "说明.txt",
+        "现场.md",
+        "图纸.dwg",
+        "视频.mp4",
+        "检查.docx",
+    }

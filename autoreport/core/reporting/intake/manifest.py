@@ -5,9 +5,20 @@ from pathlib import Path
 
 from ..models import ManifestFile, ProjectManifest
 
-_WORKBOOK_MEDIA_TYPES = {
+_INPUT_MEDIA_TYPES = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".md": "text/markdown",
+    ".txt": "text/plain",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".pdf": "application/pdf",
+    ".dwg": "image/vnd.dwg",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".avi": "video/x-msvideo",
 }
 
 _CORE_PURPOSE_MARKERS = {
@@ -31,7 +42,7 @@ def _stable_file_id(relative_path: Path, sha256: str) -> str:
 
 
 def build_manifest(workspace: Path) -> ProjectManifest:
-    """Hash supported workbooks under ``Inputs/`` without opening them."""
+    """Hash supported and explicit-manual-review inputs without opening them."""
 
     workspace = Path(workspace).resolve()
     inputs = workspace / "Inputs"
@@ -42,7 +53,7 @@ def build_manifest(workspace: Path) -> ProjectManifest:
     candidates = sorted(
         path
         for path in inputs.rglob("*")
-        if path.is_file() and path.suffix.casefold() in _WORKBOOK_MEDIA_TYPES
+        if path.is_file() and path.suffix.casefold() in _INPUT_MEDIA_TYPES
     )
     for path in candidates:
         relative_path = path.relative_to(workspace)
@@ -52,7 +63,7 @@ def build_manifest(workspace: Path) -> ProjectManifest:
                 id=_stable_file_id(relative_path, digest),
                 path=relative_path,
                 sha256=digest,
-                media_type=_WORKBOOK_MEDIA_TYPES[path.suffix.casefold()],
+                media_type=_INPUT_MEDIA_TYPES[path.suffix.casefold()],
                 purpose=_purpose_for(path),
             )
         )
