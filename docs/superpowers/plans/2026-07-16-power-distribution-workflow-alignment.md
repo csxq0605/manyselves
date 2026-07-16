@@ -1,5 +1,7 @@
 # Power Distribution Workflow Alignment Implementation Plan
 
+> **Implementation status (2026-07-16):** Tasks 1–9 and the documentation alignment are implemented and committed. Verification: reporting subsystem `129 passed`; full non-integration suite `1034 passed, 9 deselected`; `uv build` produced both sdist and wheel. Changed reporting files pass Ruff. The repository-wide Ruff command was run and still reports 134 pre-existing issues outside this plan's change scope.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the active AutoReport workflow honor the approved request, Knowledge, submodule, asset, rendering, state, and capability-governance contracts without restoring the deleted deterministic writer.
@@ -503,23 +505,23 @@ Run: `UV_CACHE_DIR=/tmp/autoreport-uv-cache uv run pytest tests/reporting/skills
 **Interfaces:**
 - Documents the same public contract verified by Tasks 1—9.
 
-- [ ] **Step 1: Remove runtime 01/02 naming claims and document Knowledge/ plus import-only selection**
+- [x] **Step 1: Remove runtime 01/02 naming claims and document Knowledge/ plus import-only selection**
 
-- [ ] **Step 2: Run source scans**
+- [x] **Step 2: Run source scans**
 
 Run: `rg -n '01_页面导入知识库|02_本地skill提示词资料_禁止导入' autoreport/core autoreport/templates tests/reporting`
 
 Expected: no runtime name-matching contract; historical design documents may mention the source folders only as import inputs.
 
-- [ ] **Step 3: Run report subsystem**
+- [x] **Step 3: Run report subsystem**
 
 Run: `UV_CACHE_DIR=/tmp/autoreport-uv-cache QT_QPA_PLATFORM=offscreen uv run pytest tests/reporting -q`
 
-- [ ] **Step 4: Run deterministic full suite**
+- [x] **Step 4: Run deterministic full suite**
 
 Run: `UV_CACHE_DIR=/tmp/autoreport-uv-cache QT_QPA_PLATFORM=offscreen uv run pytest -q -m 'not integration'`
 
-- [ ] **Step 5: Run static and package checks**
+- [x] **Step 5: Run static and package checks**
 
 Run: `UV_CACHE_DIR=/tmp/autoreport-uv-cache uv run ruff check autoreport tests`
 
@@ -527,6 +529,6 @@ Run: `git diff --check`
 
 Run: `UV_CACHE_DIR=/tmp/autoreport-uv-cache uv build`
 
-- [ ] **Step 6: Audit requirements and Git state**
+- [x] **Step 6: Audit requirements and Git state**
 
 Confirm the current cleanup plus Tasks 1—9 are tracked, there is no absolute `/Users/.../work` production dependency, and no offline writer is reachable from `RunReportingWorkflowTool`.

@@ -9,7 +9,7 @@ from autoreport.core.reporting.module_skills import ModuleSkillLibrary
 from autoreport.core.reporting.prompts import PromptAssembler
 
 
-def test_system_prompt_contains_identity_but_not_runtime_corpus(tmp_path: Path) -> None:
+def test_system_prompt_contains_identity_without_project_runtime_paths(tmp_path: Path) -> None:
     identity = tmp_path / "agent.md"
     identity.write_text(
         "---\nname: auditor\ndescription: 审计员\ntools: [submit_result]\nmaxTurns: 4\n---\n"
@@ -20,8 +20,7 @@ def test_system_prompt_contains_identity_but_not_runtime_corpus(tmp_path: Path) 
     prompt = PromptAssembler.system_prompt(load_agent_definition(identity))
 
     assert "独立核验" in prompt
-    assert "01_页面导入知识库" not in prompt
-    assert "02_本地skill提示词资料_禁止导入" not in prompt
+    assert str(tmp_path) not in prompt
 
 
 def test_system_prompt_quotes_identity_name_as_one_xml_attribute(tmp_path: Path) -> None:

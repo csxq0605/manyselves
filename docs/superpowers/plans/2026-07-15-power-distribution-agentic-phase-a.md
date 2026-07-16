@@ -1,5 +1,7 @@
 # 配电安全专家多智能体 Phase A Implementation Plan
 
+> **状态（2026-07-16）：** 本文是已完成并被全量工作流取代的历史 Phase A 计划。当前实现与后续变更以 `2026-07-16-power-distribution-workflow-alignment.md` 和同日设计文档为准。下方出现的旧交接源目录标签只描述当时的导入来源，不再构成运行时目录协议。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在保留 AutoReport PyQt GUI 和既有解析底座的前提下，交付一个真实可运行的 2.4 配电设备与元件风险分析纵向样板，由 Planner、2.4 Specialist、Evidence Auditor 三个独立 Agent Loop 自主研究、协作、返工并生成可溯源 DOCX。
@@ -13,12 +15,12 @@
 - Python 版本保持 `>=3.12`，不引入 Nexgent 运行时或新的 Agent 框架依赖。
 - AutoReport 是唯一代码底座；保留现有 PyQt GUI、项目目录树、预览、Provider、AgentLoop、MessageBus、TaskBoard 与解析/归一化能力。
 - 用户只与 Main Agent 对话；Phase A 仅正式支持 `target_modules=["2.4"]`，其他组合必须明确返回 `unsupported_phase`，不能回退到确定性 Worker 冒充多智能体完成。
-- `Knowledge/01_页面导入知识库` 是 Agent 自主调用的参考搜索语料，只能形成 `R-*` 来源；不得进入身份、system prompt 或每轮固定上下文。
-- 任何路径段以 `02_本地skill提示词资料_禁止导入` 开头的内容在运行时不可扫描、读取、索引、注入或引用。
+- 导入阶段只把选中的参考资料复制进项目 `Knowledge/`；运行时对 `Knowledge/` 下任意目录名中的支持文件一视同仁，均可形成 `R-*` 来源和引用。
+- 运行时不得依据导入前的 01/02 标签、目录名、文件名或标题做白名单、黑名单或名称匹配；未选择的资料应留在 `Knowledge/` 之外。
 - 客户现场事实只能来自项目资料与人工确认，形成 `E-*`；本地参考 `R-*` 和网络资料 `W-*` 均不能填补不存在的现场事实。
 - Agent 自主决定直接写作、搜索本地参考、联网、询问同伴、继续行动或结束；外层 Workflow 不实现固定研究状态机。
 - 正文不强制“事实—证据—风险—建议”重复结构；关键事实、数值和结论以自然脚注标记，完整可溯源关系保存在隐藏 Claim Ledger 与文末证据索引。
-- `02` 仅可在开发期用于抽象匿名测试断言；本计划的运行测试不得读取交接包 `02` 目录。
+- 旧本地提示词资料仅可在开发期用于抽象匿名测试断言；运行测试不得读取项目 `Knowledge/` 之外的交接源目录。
 - DOCX 沿用交接包 `core/docx_renderer.py` 的确定性排版能力；移除 Dify 包装，并禁用会新增、改写或替换 Agent 正文的内容生成 fallback。
 - Phase A 的三条模型会话必须相互隔离；跨 Agent 仅传递 `TaskEnvelope`、类型化消息和已持久化成果。
 - 任何 Agent 自然结束但未调用 `submit_result` 或 `report_blocked` 时只重试提醒一次；第二次仍未提交则保存原始输出并标记 `incomplete`。
@@ -45,7 +47,7 @@ Phase A 完成必须同时证明三条行为路径：
 
 - `autoreport/core/reporting/agentic_models.py`：工作流任务、来源、研究笔记、Claim Ledger、提交成果和运行状态的唯一类型定义。
 - `autoreport/core/reporting/prompts.py`：身份 system prompt 与动态 XML task context 的严格分离组装器。
-- `autoreport/core/reporting/research/reference_library.py`：只检索工作区 `01` 的本地参考后端。
+- `autoreport/core/reporting/research/reference_library.py`：检索项目 `Knowledge/` 全部支持文件的本地参考后端。
 - `autoreport/core/reporting/research/web.py`：可替换 WebResearchBackend、Brave 实现及 URL 打开白名单。
 - `autoreport/core/reporting/research/__init__.py`：研究后端公开接口。
 - `autoreport/core/reporting/source_ledger.py`：稳定分配/持久化 `R-*`、`W-*` 来源编号。
@@ -155,7 +157,7 @@ def test_source_prefix_must_match_kind():
             id="W-001",
             kind=SourceKind.LOCAL_REFERENCE,
             title="参考条款",
-            locator="Knowledge/01_页面导入知识库/a.md",
+            locator="Knowledge/标准/a.md",
         )
 
 
@@ -194,7 +196,7 @@ def test_write_run_model_stays_beneath_run_directory(tmp_path):
         id="R-001",
         kind=SourceKind.LOCAL_REFERENCE,
         title="参考资料",
-        locator="Knowledge/01_页面导入知识库/a.md",
+        locator="Knowledge/标准/a.md",
     )
     path = store.write_run_model("run-1", "ledgers/sources/R-001.json", source)
     assert path == tmp_path / "Work/runs/run-1/ledgers/sources/R-001.json"
@@ -592,8 +594,7 @@ def test_system_prompt_contains_identity_but_not_runtime_corpus(tmp_path):
     )
     prompt = PromptAssembler.system_prompt(load_agent_definition(identity))
     assert "独立核验" in prompt
-    assert "01_页面导入知识库" not in prompt
-    assert "02_本地skill提示词资料_禁止导入" not in prompt
+    assert str(tmp_path) not in prompt
 
 
 def test_task_context_is_xml_and_separate_from_system(tmp_path):
@@ -732,18 +733,20 @@ git commit -m "feat: load role-aware agent identities"
 from autoreport.core.reporting.research.reference_library import ReferenceLibrary
 
 
-def test_reference_search_reads_01_and_excludes_02(tmp_path):
-    allowed = tmp_path / "Knowledge/01_页面导入知识库"
-    forbidden = tmp_path / "Knowledge/02_本地skill提示词资料_禁止导入"
-    allowed.mkdir(parents=True)
-    forbidden.mkdir(parents=True)
-    (allowed / "温升.md").write_text("连接点温升需要结合负荷与环境判断", encoding="utf-8")
-    (forbidden / "客户样例.md").write_text("连接点温升 客户A 柜号G01", encoding="utf-8")
+def test_reference_search_reads_arbitrary_knowledge_subdirectories(tmp_path):
+    standards = tmp_path / "Knowledge/标准"
+    manuals = tmp_path / "Knowledge/供应商/手册"
+    standards.mkdir(parents=True)
+    manuals.mkdir(parents=True)
+    (standards / "温升.md").write_text("连接点温升需要结合负荷与环境判断", encoding="utf-8")
+    (manuals / "低压柜.md").write_text("连接点温升需要复核负荷", encoding="utf-8")
 
     hits = ReferenceLibrary(tmp_path).search("连接点温升")
 
-    assert [hit.relative_path for hit in hits] == ["Knowledge/01_页面导入知识库/温升.md"]
-    assert "客户A" not in hits[0].snippet
+    assert {hit.relative_path for hit in hits} == {
+        "Knowledge/标准/温升.md",
+        "Knowledge/供应商/手册/低压柜.md",
+    }
 
 
 def test_reference_search_does_not_fallback_to_whole_knowledge(tmp_path):
@@ -760,8 +763,8 @@ from autoreport.core.reporting.source_ledger import SourceLedger
 
 def test_same_local_source_receives_stable_r_id(tmp_path):
     ledger = SourceLedger(tmp_path, "run-1")
-    first = ledger.register_local("标准摘录", "Knowledge/01_页面导入知识库/a.md", "abc")
-    second = ledger.register_local("标准摘录", "Knowledge/01_页面导入知识库/a.md", "abc")
+    first = ledger.register_local("标准摘录", "Knowledge/标准/a.md", "abc")
+    second = ledger.register_local("标准摘录", "Knowledge/标准/a.md", "abc")
     assert first.id == second.id == "R-001"
 
 
@@ -803,7 +806,7 @@ class ReferenceLibrary:
 
     def __init__(self, workspace: Path):
         self.workspace = Path(workspace).resolve()
-        self.root = self.workspace / "Knowledge/01_页面导入知识库"
+        self.root = (self.workspace / "Knowledge").resolve()
 
     def search(self, query: str, limit: int = 5) -> list[ReferenceHit]:
         terms = [term.casefold() for term in query.split() if term.strip()]
@@ -812,8 +815,6 @@ class ReferenceLibrary:
         hits: list[ReferenceHit] = []
         for path in sorted(self.root.rglob("*")):
             if not path.is_file() or path.suffix.casefold() not in self.TEXT_SUFFIXES:
-                continue
-            if any(part.startswith("02_本地skill提示词资料_禁止导入") for part in path.parts):
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
             lowered = text.casefold()
@@ -963,9 +964,9 @@ Run: `uv run pytest tests/reporting/research/test_reference_library.py tests/rep
 
 Expected: `4 passed`。
 
-Run: `rg -n '02_本地skill提示词资料_禁止导入' autoreport`
+Run: `rg -n 'Knowledge/' autoreport/core/reporting autoreport/core/tools`
 
-Expected: 只允许命中 `reference_library.py` 的拒绝条件；不得命中模板、Prompt 或 Tool 描述。
+Expected: Knowledge 只作为统一项目参考根目录出现；不得存在按子目录名或文件名区分引用资格的逻辑。
 
 - [ ] **Step 5: 提交本地参考搜索**
 
@@ -1833,8 +1834,6 @@ def test_phase_a_registry_contains_three_real_agents():
 def test_runtime_identities_do_not_embed_local_corpora_or_rigid_prose():
     agents, _ = load_packaged_workflow()
     joined = "\n".join(agent.instructions for agent in agents.values())
-    assert "01_页面导入知识库" not in joined
-    assert "02_本地skill提示词资料_禁止导入" not in joined
     assert "事实—证据—风险—建议" not in joined
     assert "事实：" not in joined
 ```
@@ -2273,7 +2272,7 @@ def test_citation_plan_adds_markers_only_to_key_claims():
         SourceRecord(id="E-001", kind=SourceKind.PROJECT_EVIDENCE,
                      title="红外记录", locator="Inputs/a.xlsx#Sheet1!B2"),
         SourceRecord(id="R-001", kind=SourceKind.LOCAL_REFERENCE,
-                     title="温升参考", locator="Knowledge/01_页面导入知识库/a.md"),
+                     title="温升参考", locator="Knowledge/标准/a.md"),
     ]
     ledger = ClaimLedger(submission, sources)
     plan = ledger.build_citation_plan()
@@ -3155,7 +3154,7 @@ Expected: FAIL，首次失败发生在 Agent Loop/ToolFactory/Delivery 尚未完
 
 - [ ] **Step 3: 完成 harness 接线与 GUI 目录刷新**
 
-`agentic_harness` 建立最小项目：`Inputs/` 中写入现有匿名 s4-4/s4-6 fixture，`Knowledge/01_页面导入知识库` 可选写入测试参考；创建 `MessageBus`、`TaskBoard`、`LoopManager`、ScriptedProvider、FakeWebBackend，启动 loops 后调用真实 `RunReportingWorkflowTool`，最终在 fixture teardown 中停止 loops。
+`agentic_harness` 建立最小项目：`Inputs/` 中写入现有匿名 s4-4/s4-6 fixture，`Knowledge/任意目录` 可选写入测试参考；创建 `MessageBus`、`TaskBoard`、`LoopManager`、ScriptedProvider、FakeWebBackend，启动 loops 后调用真实 `RunReportingWorkflowTool`，最终在 fixture teardown 中停止 loops。
 
 GUI 项目树不新增报告专用模型，只确保现有刷新入口在收到 completed `SystemNotice` 后调用：
 
@@ -3225,12 +3224,12 @@ Expected: PASS；被 `integration` marker 标记且需要真实 LLM 的测试可
 
 - [ ] **Step 3: 审计知识和身份边界**
 
-Run: `rg -n '01_页面导入知识库|02_本地skill提示词资料_禁止导入' autoreport/templates autoreport/core/reporting autoreport/core/tools`
+Run: `rg -n 'Knowledge/' autoreport/templates autoreport/core/reporting autoreport/core/tools`
 
 Expected:
 
-- `01_页面导入知识库` 只出现在 `reference_library.py` 的根目录定位以及面向开发者的注释/文档，不出现在三份 Agent identity 或 PromptAssembler；
-- `02_本地skill提示词资料_禁止导入` 只出现在 `reference_library.py` 的拒绝条件，不出现在身份、Prompt、工具输出或成果。
+- `Knowledge/` 只作为统一项目参考根目录和 `R-*` 定位前缀出现；
+- 不存在基于任意子目录名、编号或文件名的允许/拒绝分支。
 
 - [ ] **Step 4: 审计活跃运行链和来源前缀**
 

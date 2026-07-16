@@ -95,8 +95,6 @@ async def test_reporting_agent_runner_uses_real_isolated_loop_and_can_finish_wit
 
     assert result.status is AgentRunStatus.COMPLETED
     assert isinstance(result.payload, ModuleSubmission)
-    assert "01_页面导入知识库" not in provider.system_prompts[0]
-    assert "02_本地skill提示词资料_禁止导入" not in provider.system_prompts[0]
     assert "负荷率必须保留计算口径" in provider.system_prompts[0]
     assert "剩余电流大于 10A" not in provider.system_prompts[0]
     assert (tmp_path / "Work/runs/run-test/results/module-2.1.json").is_file()

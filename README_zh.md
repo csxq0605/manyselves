@@ -87,31 +87,39 @@ autoreport
 
 ## 配电报告 V2 工作流
 
-客户项目必须把输入文件放在 `Inputs/`。当前专用适配器识别：
+客户项目必须把输入文件放在 `Inputs/`。当前专用业务映射器识别：
 
 - `S2-1收资表.xlsx`：资料具备情况、有效性与缺口；
 - `S4-4诊断工作用表.xlsx`：现场明细、测量值、同排状态与 WPS 图片；
 - `S4-6评估总表.xlsx`：既有汇总结论与建议，统一标记为待原始证据复核。
 
-Main Agent 调用 `run_reporting_workflow` 后依次生成 Manifest、Evidence、叶级子模块 Coverage，并发生成 2.1–2.5 Claim，执行证据审核、跨模块一致性审核和局部返工，再由 Chief Editor 生成第 1/3 章并渲染 DOCX。`missing_evidence_policy` 支持 `ask`、`block`、`skip`、`draft`；任意 Excel 行不能替代精确子模块证据。运行产物只写项目内：
+统一资料适配器还支持 XLSX/XLSM、DOCX、Markdown、文本、图片和 PDF；DWG 与视频会保留为明确的 `manual_required` 成果，不会静默丢失。
+
+参考资料统一放在项目 `Knowledge/`。只有导入阶段负责选择哪些资料被复制进来；运行时会把 `Knowledge/` 下任意目录名中的所有支持文件视为可搜索、可登记 `R-*`、可引用的参考来源，不存在 01/02 分支、目录名白名单或文件名匹配。Knowledge 与网络来源可以支持专业解释，但不能转化为客户现场事实 `E-*`。
+
+Main Agent 先形成类型化请求，并在任何报告 Agent 启动前执行缺资门禁。局部请求只运行所选模块，不生成完整 DOCX；完整请求并行运行 2.1–2.5，逐模块独立审计，按 YAML 预算执行以子模块为边界的局部返工，再进行跨模块审查。Chief Editor 必须保护全部批准 Claim，并且只能选择能重新绑定到 Evidence 与 Claim 的表格和照片，最后由仓库内置渲染核心生成 DOCX。模块专家只接收本模块 Skill 正文，审计员只接收被审模块 Skill，Planner 只接收不含正文的 Skill 索引。
+
+`missing_evidence_policy` 支持 `ask`、`block`、`skip`、`draft`；任意 Excel 行不能替代精确子模块证据。运行产物只写项目内：
 
 ```text
 Work/manifest.json
 Work/evidence.jsonl
 Work/coverage.json
 Work/photo-manifest.json
-Work/module-execution.json
-Work/cross-module-review.json
-Work/editorial.json
 Work/report-state.json
+Work/runs/<run-id>/workflow-state.json
+Work/runs/<run-id>/modules/*.json
+Work/runs/<run-id>/reviews/*.json
+Work/runs/<run-id>/ledgers/sources.json
 Outputs/Modules/2.1.md ... 2.5.md
-Outputs/Reviews/phase-a.json
 Outputs/Reviews/full-review.json
 Outputs/Reports/配电安全专家咨询报告.docx
 Outputs/Reports/render-log.json
+Capabilities/skills/manifest.json
+Capabilities/skills/{candidates,evaluations,versions}/...
 ```
 
-V2 对 96.99% 负荷率有硬门禁：它低于 100%，不得写成当前已过载；S4-4 的 10A 仅是工作表附图/复核触发值，不能表述为法定安全限值。所有定量/重要判断保存 Evidence ID 与 Skill 版本，NG 缺同排照片时生成补证警告。`SkillGovernance` 把不可变候选版本保存在项目 `Work/skills`，只有隔离回归全部通过才能发布，并保留追加式发布/回滚历史。
+内置模块 Skill 明确约束：负荷率低于 100% 时不得写成当前已过载；S4-4 的 10A 只是工作表附图/复核触发值，不能表述为法定安全限值。`SkillGovernanceStore` 把不可变候选、评测和版本保存在项目 `Capabilities/skills/`；只有评测不退化且用户明确确认时才能发布，回退只切换 active manifest 指针，不删除历史版本。
 
 ## MinerU 集成
 

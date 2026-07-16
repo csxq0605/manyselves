@@ -9,7 +9,7 @@ def _source() -> SourceRecord:
         id="R-001",
         kind=SourceKind.LOCAL_REFERENCE,
         title="参考资料",
-        locator="Knowledge/01_页面导入知识库/a.md",
+        locator="Knowledge/参考/a.md",
     )
 
 

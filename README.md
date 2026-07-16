@@ -89,25 +89,33 @@ autoreport
 
 ## Power-distribution V2 workflow
 
-Customer inputs belong under the project `Inputs/` directory. Dedicated adapters recognize `S2-1收资表.xlsx`, `S4-4诊断工作用表.xlsx`, and `S4-6评估总表.xlsx`. The Main Agent tool builds the manifest and evidence store, evaluates exact leaf-submodule coverage, drafts modules 2.1–2.5 concurrently with deterministic ordering, runs evidence and cross-module reviews, builds Chapters 1 and 3 through the Chief Editor, and writes:
+Customer inputs belong under the project `Inputs/` directory. Dedicated business mappers recognize `S2-1收资表.xlsx`, `S4-4诊断工作用表.xlsx`, and `S4-6评估总表.xlsx`. The intake registry also handles XLSX/XLSM, DOCX, Markdown, text, images, and PDF; DWG and video files remain visible as explicit `manual_required` artifacts.
+
+Reference material belongs under project `Knowledge/`. Import-time selection decides what is copied there. At runtime, every supported file anywhere below `Knowledge/` is eligible for search, `R-*` registration, and citation—there are no import-source-label branches, directory-name allowlists, or filename matching rules. Knowledge and web sources can support interpretation but cannot become customer-site facts (`E-*`).
+
+The Main Agent creates a typed request. Missing-evidence policy is evaluated before any reporting Agent starts; partial requests run only their selected modules and do not create a full DOCX. Full requests plan and draft modules 2.1–2.5 concurrently, audit each module independently, enforce YAML revision budgets and submodule-scoped revisions, cross-review the approved modules, and pass protected claims plus traceable tables/photos through the Chief Editor and packaged DOCX renderer. Module specialists receive only their own packaged Skill bodies, auditors receive only the module under review, and the Planner receives metadata-only Skill indexes.
+
+Runtime outputs stay inside the project:
 
 ```text
 Work/manifest.json
 Work/evidence.jsonl
 Work/coverage.json
 Work/photo-manifest.json
-Work/module-execution.json
-Work/cross-module-review.json
-Work/editorial.json
 Work/report-state.json
+Work/runs/<run-id>/workflow-state.json
+Work/runs/<run-id>/modules/*.json
+Work/runs/<run-id>/reviews/*.json
+Work/runs/<run-id>/ledgers/sources.json
 Outputs/Modules/2.1.md ... 2.5.md
-Outputs/Reviews/phase-a.json
 Outputs/Reviews/full-review.json
 Outputs/Reports/配电安全专家咨询报告.docx
 Outputs/Reports/render-log.json
+Capabilities/skills/manifest.json
+Capabilities/skills/{candidates,evaluations,versions}/...
 ```
 
-`missing_evidence_policy` supports `ask`, `block`, `skip`, and `draft`. Arbitrary spreadsheet rows cannot make a submodule ready. Hard regression gates prevent the measured 96.99% load rate from being described as an existing overload and prevent the workbook's 10 A photo trigger from being presented as a statutory safety limit. Quantitative and material claims preserve Evidence IDs and Skill versions, while an NG row without its paired photo produces a supplementation warning. `SkillGovernance` stores immutable candidates under project `Work/skills`, requires isolated regression success before publication, and maintains append-only publish/rollback history.
+`missing_evidence_policy` supports `ask`, `block`, `skip`, and `draft`. Arbitrary spreadsheet rows cannot make a submodule ready. Packaged module Skills prevent a measured load rate below 100% from being described as an existing overload and prevent the workbook's 10 A photo trigger from being presented as a statutory safety limit. `SkillGovernanceStore` keeps immutable candidates and evaluations under `Capabilities/skills/`; publication requires a non-regressing evaluation plus explicit user confirmation, and rollback only changes the active manifest pointer.
 
 ## MinerU Integration
 

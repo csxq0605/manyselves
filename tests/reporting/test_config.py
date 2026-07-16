@@ -95,8 +95,7 @@ def test_workflow_rejects_unknown_agent(tmp_path: Path) -> None:
     agent = load_agent_definition(_write_agent(tmp_path / "known.md", "known"))
     workflow = tmp_path / "workflow.yml"
     workflow.write_text(
-        "id: phase-a\nphases:\n  - id: intake\n    mode: pipeline\n"
-        "    agents: [known, missing]\n",
+        "id: phase-a\nphases:\n  - id: intake\n    mode: pipeline\n    agents: [known, missing]\n",
         encoding="utf-8",
     )
 
@@ -110,8 +109,7 @@ def test_parallel_phase_rejects_conflicting_writes(tmp_path: Path) -> None:
     agents = load_agent_definitions(tmp_path)
     workflow = tmp_path / "workflow.yml"
     workflow.write_text(
-        "id: phase-a\nphases:\n  - id: module\n    mode: parallel\n"
-        "    agents: [one, two]\n",
+        "id: phase-a\nphases:\n  - id: module\n    mode: parallel\n    agents: [one, two]\n",
         encoding="utf-8",
     )
 
@@ -223,7 +221,12 @@ def test_packaged_identities_are_complete_scoped_and_corpus_agnostic() -> None:
         }
 
     expert_tools = set(agents["module-2.4-specialist"].tools)
-    assert {"search_project_evidence", "search_reference_library", "web_search", "query_peer"} <= expert_tools
+    assert {
+        "search_project_evidence",
+        "search_reference_library",
+        "web_search",
+        "query_peer",
+    } <= expert_tools
     assert "web_search" not in agents["intake-parser"].tools
     assert "request_revision" in agents["evidence-auditor"].tools
     assert "request_revision" in agents["cross-module-reviewer"].tools
@@ -232,8 +235,6 @@ def test_packaged_identities_are_complete_scoped_and_corpus_agnostic() -> None:
 
     combined = "\n".join(agent.instructions for agent in agents.values())
     forbidden = (
-        "01_页面导入知识库",
-        "02_本地skill提示词资料_禁止导入",
         "配电安全报告工具V2-交接",
         "现状—结论—风险—建议",
         "事实—风险—建议",
