@@ -6,16 +6,12 @@ from docx import Document
 
 from autoreport.core.reporting.agentic_models import ClaimRecord, SourceKind, SourceRecord
 from autoreport.core.reporting.claim_ledger import ClaimLedger
-from autoreport.core.reporting.rendering.handoff_docx import HandoffDocxCore
+from autoreport.core.reporting.rendering.packaged_docx import PackagedDocxCore
 from autoreport.core.reporting.rendering.pds_docx_renderer import (
     ApprovedReport,
     PdsDocxRenderer,
     ReportPhoto,
     ReportTable,
-)
-
-HANDOFF_CORE = Path(
-    "/Users/zzymima0000/Documents/Codex/work/配电安全报告工具V2-交接/插件源码目录/core/docx_renderer.py"
 )
 
 
@@ -77,7 +73,7 @@ def test_renderer_uses_handoff_core_preserves_prose_and_adds_superscript_index_t
 
     Image.new("RGB", (30, 20), color="red").save(photo)
     renderer = PdsDocxRenderer(
-        HandoffDocxCore(HANDOFF_CORE, template_path=template),
+        PackagedDocxCore(template),
     )
     output = tmp_path / "final.docx"
 
@@ -145,10 +141,26 @@ def test_failed_post_render_validation_does_not_publish_output(tmp_path: Path) -
     assert not output.exists()
 
 
-def test_handoff_adapter_explicitly_forbids_structured_model_prose_generation(
+def test_packaged_core_explicitly_forbids_structured_model_prose_generation(
     tmp_path: Path,
 ) -> None:
-    core = HandoffDocxCore(HANDOFF_CORE, template_path=tmp_path / "template.docx")
+    template = tmp_path / "template.docx"
+    Document().save(template)
+    core = PackagedDocxCore(template)
 
     with pytest.raises(ValueError, match="structured-model prose generation is disabled"):
         core.render_approved_prose("approved", report_model={"issues": []})
+
+
+def test_packaged_core_renders_markdown_without_external_source(tmp_path: Path) -> None:
+    template = tmp_path / "template.docx"
+    Document().save(template)
+
+    name, data = PackagedDocxCore(template).render_approved_prose(
+        "# 标题\n\n正文\n\n| 对象 | 动作 |\n| --- | --- |\n| 1A2 | 复核连接 |"
+    )
+
+    rendered = Document(io.BytesIO(data))
+    assert name == "配电安全专家咨询报告.docx"
+    assert "正文" in "\n".join(paragraph.text for paragraph in rendered.paragraphs)
+    assert rendered.tables[0].cell(1, 1).text == "复核连接"

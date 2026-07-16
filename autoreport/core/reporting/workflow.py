@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,7 +19,7 @@ from .agentic_models import (
 from .claim_ledger import ClaimLedger
 from .delivery import DeliveryPackage, ProjectDelivery
 from .models import REPORT_MODULE_IDS, OutputArtifact
-from .rendering.handoff_docx import HandoffDocxCore
+from .rendering.packaged_docx import PackagedDocxCore
 from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
 from .source_ledger import SourceLedger
 
@@ -406,13 +405,9 @@ class ReportWorkflowRunner:
         self.service.store.write_json(
             "Work/report-state.json", report.model_dump(mode="json")
         )
-        core_path = Path(os.environ.get(
-            "AUTOREPORT_HANDOFF_DOCX_CORE",
-            "/Users/zzymima0000/Documents/Codex/work/配电安全报告工具V2-交接/插件源码目录/core/docx_renderer.py",
-        ))
         output = self.service.workspace / "Outputs/Reports/配电安全专家咨询报告.docx"
         render = PdsDocxRenderer(
-            HandoffDocxCore(core_path, template_path=self.service.report_template_path)
+            PackagedDocxCore(self.service.report_template_path)
         ).render(report, output)
         self.service.store.write_json(
             "Outputs/Reports/render-log.json", render.model_dump(mode="json")

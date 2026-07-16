@@ -121,7 +121,12 @@ class NeverCalledProvider(LLMProvider):
 @pytest.mark.asyncio
 async def test_full_five_module_workflow_runs_parallel_barrier_editor_and_handoff_docx(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv(
+        "AUTOREPORT_HANDOFF_DOCX_CORE",
+        str(tmp_path / "external-core-must-not-be-used.py"),
+    )
     service = ReportingService(
         tmp_path,
         bus=MessageBus(),
