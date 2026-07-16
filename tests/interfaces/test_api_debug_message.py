@@ -1,7 +1,7 @@
 """Tests for ApiDebugMessage."""
 
 from datetime import datetime
-from autoreport.interfaces.types import ApiDebugMessage, MessageType
+from manyselves.interfaces.types import ApiDebugMessage, MessageType
 
 
 def test_api_debug_message_creation():

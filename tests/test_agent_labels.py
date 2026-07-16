@@ -1,7 +1,7 @@
 """Tests for agent_labels utility functions."""
 
-from autoreport.interfaces.types import AgentType
-from autoreport.utils.agent_labels import (
+from manyselves.interfaces.types import AgentType
+from manyselves.utils.agent_labels import (
     AGENT_LABELS,
     get_agent_badge,
     get_agent_name,

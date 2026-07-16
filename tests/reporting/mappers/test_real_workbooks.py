@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.reporting.intake.wps_images import extract_wps_images
-from autoreport.core.reporting.mappers.s2_1 import map_s2_1
-from autoreport.core.reporting.mappers.s4_4 import map_s4_4
-from autoreport.core.reporting.mappers.s4_6 import map_s4_6
+from manyselves.core.reporting.intake.wps_images import extract_wps_images
+from manyselves.core.reporting.mappers.s2_1 import map_s2_1
+from manyselves.core.reporting.mappers.s4_4 import map_s4_4
+from manyselves.core.reporting.mappers.s4_6 import map_s4_6
 
 REAL_INPUT_DIR = Path("/Users/zzymima0000/Documents/Codex/work/写作上传材料")
 pytestmark = pytest.mark.skipif(

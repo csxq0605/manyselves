@@ -2,8 +2,8 @@
 
 import pytest
 
-from autoreport.core.tools.task_board import TaskBoard
-from autoreport.interfaces.types import AgentType, TaskStatus
+from manyselves.core.tools.task_board import TaskBoard
+from manyselves.interfaces.types import AgentType, TaskStatus
 
 
 def test_task_board_accepts_registry_agent_ids():

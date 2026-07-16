@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.file_search import FileMatch, FileSearchManager, FuzzyMatcher
+from manyselves.core.file_search import FileMatch, FileSearchManager, FuzzyMatcher
 
 # ── FuzzyMatcher tests ──────────────────────────────────────────────────
 

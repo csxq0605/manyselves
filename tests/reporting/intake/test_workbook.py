@@ -2,7 +2,7 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from autoreport.core.reporting.intake.workbook import inspect_workbook
+from manyselves.core.reporting.intake.workbook import inspect_workbook
 
 
 def test_workbook_artifact_preserves_sheet_dimensions_and_formulas(tmp_path: Path) -> None:

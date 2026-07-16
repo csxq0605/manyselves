@@ -4,13 +4,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from autoreport.core.providers.base import LLMProvider, LLMResponse, LLMToolCall, Message
-from autoreport.core.providers.defaults import DEFAULT_MODELS
-from autoreport.core.providers.factory import (
+from manyselves.core.providers.base import LLMProvider, LLMResponse, LLMToolCall, Message
+from manyselves.core.providers.defaults import DEFAULT_MODELS
+from manyselves.core.providers.factory import (
     ProviderFactory,
     ProviderManager,
 )
-from autoreport.core.providers.openai_provider import OpenAICompatProvider
+from manyselves.core.providers.openai_provider import OpenAICompatProvider
 
 # ── Base dataclass tests ────────────────────────────────────────────────
 
@@ -59,7 +59,7 @@ def test_llm_response_defaults():
 
 
 def test_anthropic_convert_simple_messages():
-    from autoreport.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.core.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     messages = [
@@ -77,7 +77,7 @@ def test_anthropic_convert_simple_messages():
 
 
 def test_anthropic_convert_tool_calls():
-    from autoreport.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.core.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     tc = LLMToolCall(id="call_1", name="read", arguments={"path": "test.txt"})
@@ -105,7 +105,7 @@ def test_anthropic_convert_tool_calls():
 
 
 def test_anthropic_convert_never_emits_null_content():
-    from autoreport.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.core.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     messages = [
@@ -127,7 +127,7 @@ def test_anthropic_convert_merges_consecutive_text_as_string():
     ``invalid type: null, expected a string``. The merge must collapse
     text-only results back to a string while keeping tool blocks as an array.
     """
-    from autoreport.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.core.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     messages = [
@@ -151,7 +151,7 @@ def test_anthropic_convert_merges_consecutive_text_as_string():
 
 def test_anthropic_convert_merges_text_with_tool_use_keeps_array():
     """A merged turn that still carries a tool_use block must stay a list."""
-    from autoreport.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.core.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     tc = LLMToolCall(id="call_1", name="read", arguments={"path": "x"})
@@ -176,7 +176,7 @@ def test_anthropic_convert_drops_thinking_blocks_on_replay():
     API's encrypted ``signature``, so re-sending a fabricated thinking block
     makes the next request fail to deserialize (root cause of the
     "messages[0].content: invalid type: null" error on the second turn)."""
-    from autoreport.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.core.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     tc = LLMToolCall(id="call_1", name="read", arguments={"path": "x"})
@@ -214,7 +214,7 @@ def test_anthropic_convert_flattens_historical_tool_replay_for_compatible_endpoi
     later user turn can fail. Once the assistant has already produced a normal
     follow-up reply, replay the plain-text assistant turns only.
     """
-    from autoreport.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.core.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     provider._supports_cache = False
@@ -241,7 +241,7 @@ def test_anthropic_convert_flattens_historical_tool_replay_for_compatible_endpoi
 
 
 def test_anthropic_convert_tools():
-    from autoreport.core.providers.anthropic_provider import AnthropicProvider
+    from manyselves.core.providers.anthropic_provider import AnthropicProvider
 
     provider = AnthropicProvider.__new__(AnthropicProvider)
     tools = [{"name": "read", "description": "Read a file or inspect a directory", "input_schema": {"type": "object"}}]

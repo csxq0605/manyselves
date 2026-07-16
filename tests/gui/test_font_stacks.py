@@ -12,7 +12,7 @@ WEB_FONT_ALIASES = ("-apple-system", "BlinkMacSystemFont")
 
 
 def _gui_source_files() -> list[Path]:
-    root = Path(__file__).resolve().parents[2] / "autoreport" / "gui"
+    root = Path(__file__).resolve().parents[2] / "manyselves" / "gui"
     return sorted(root.rglob("*.py"))
 
 

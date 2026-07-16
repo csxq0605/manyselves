@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.config import AppConfig, ConfigManager, Settings
-from autoreport.config.schema import ApiConfig
+from manyselves.config import AppConfig, ConfigManager, Settings
+from manyselves.config.schema import ApiConfig
 
 
 @pytest.fixture
@@ -105,7 +105,7 @@ async def test_config_manager_env_override():
 
     try:
         # Re-create settings to pick up env var
-        from autoreport.config.schema import Settings
+        from manyselves.config.schema import Settings
         settings = Settings()
         settings._apply_env_overrides(config_manager.config)
 

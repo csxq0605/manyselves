@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.tools.exec_tools import ExecTool
-from autoreport.core.tools.file_tools import ApplyPatchTool, ReadTool
-from autoreport.core.tools.registry import ToolRegistry
+from manyselves.core.tools.exec_tools import ExecTool
+from manyselves.core.tools.file_tools import ApplyPatchTool, ReadTool
+from manyselves.core.tools.registry import ToolRegistry
 
 
 def _workspace():
@@ -146,7 +146,7 @@ class TestBashTool:
     async def test_simple_calculation(self):
         ws = _workspace()
         tool = ExecTool(working_dir=ws)
-        result = await tool(command="python -c \"print(2+2)\"", command_description="Show simple calculation")
+        result = await tool(command="python3 -c \"print(2+2)\"", command_description="Show simple calculation")
         output = result.get("stdout", str(result)) if isinstance(result, dict) else str(result)
         assert "4" in output
 
@@ -162,7 +162,7 @@ class TestBashTool:
     async def test_nonzero_exit(self):
         ws = _workspace()
         tool = ExecTool(working_dir=ws)
-        result = await tool(command="python -c \"exit(2)\"", command_description="Exit with nonzero code")
+        result = await tool(command="python3 -c \"exit(2)\"", command_description="Exit with nonzero code")
         assert result.get("returncode") == 2
 
     @pytest.mark.asyncio

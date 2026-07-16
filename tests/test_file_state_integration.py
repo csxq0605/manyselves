@@ -10,13 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.tools.file_state import FileState, FileStateManager
-from autoreport.core.tools.file_tools import (
+from manyselves.core.tools.file_state import FileState, FileStateManager
+from manyselves.core.tools.file_tools import (
     ApplyPatchTool,
     DeleteFileTool,
     ReadTool,
 )
-from autoreport.core.tools.manifest_tool import ManifestManager
+from manyselves.core.tools.manifest_tool import ManifestManager
 
 # ---------------------------------------------------------------------------
 # Fixtures

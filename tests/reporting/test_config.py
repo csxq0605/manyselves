@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.reporting.config import (
+from manyselves.core.reporting.config import (
     ConfigurationError,
     load_agent_definition,
     load_packaged_agents,
@@ -110,6 +110,7 @@ def test_packaged_agent_set_is_complete() -> None:
         "citation-builder",
         "docx-renderer",
         "project-delivery",
+        "product-skill-maintainer",
     }
 def test_packaged_identities_are_complete_scoped_and_corpus_agnostic() -> None:
     agents = load_packaged_agents()

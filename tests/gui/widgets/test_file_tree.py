@@ -19,8 +19,8 @@ from PyQt6.QtGui import QKeyEvent, QMouseEvent
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtWidgets import QAbstractItemDelegate, QTreeWidgetItem
 
-from autoreport.gui.theme import get_theme_colors
-from autoreport.gui.widgets.file_tree import (
+from manyselves.gui.theme import get_theme_colors
+from manyselves.gui.widgets.file_tree import (
     FIXED_DIRECTORIES,
     FILE_TREE_CONTENT_LEFT_INSET,
     FileTreeWidget,
@@ -35,14 +35,9 @@ def test_fixed_directories_constant() -> None:
     assert set(FIXED_DIRECTORIES) == {
         "Inputs",
         "Knowledge",
+        "Templates",
         "Work",
         "Outputs",
-        "Data",
-        "References",
-        "Theory",
-        "Plots",
-        "Outline",
-        "Tex",
     }
 
 
@@ -135,7 +130,7 @@ def test_top_level_tree_content_has_left_inset(qtbot, tmp_path: Path) -> None:
 
 def test_drag_guard_does_not_reference_class_constant() -> None:
     import inspect
-    import autoreport.gui.widgets.file_tree as file_tree_module
+    import manyselves.gui.widgets.file_tree as file_tree_module
 
     # Ensure drag guard uses module-level FIXED_DIRECTORIES, not class attr.
     file_source = inspect.getsource(file_tree_module)
@@ -179,7 +174,7 @@ def test_context_menu_has_required_actions() -> None:
 
 
 def test_file_tree_copy_paste_shortcuts_duplicate_selected_file(qtbot, tmp_path: Path) -> None:
-    source = tmp_path / "References" / "note.txt"
+    source = tmp_path / "Inputs" / "note.txt"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("copied", encoding="utf-8")
 
@@ -200,12 +195,12 @@ def test_file_tree_copy_paste_shortcuts_duplicate_selected_file(qtbot, tmp_path:
 
     assert widget._handle_tree_key(copy_event) is True
     assert widget._handle_tree_key(paste_event) is True
-    assert (tmp_path / "References" / "note copy.txt").read_text(encoding="utf-8") == "copied"
+    assert (tmp_path / "Inputs" / "note copy.txt").read_text(encoding="utf-8") == "copied"
 
 
 def test_file_tree_copy_paste_cmd_shortcut_works_on_mac(qtbot, tmp_path: Path) -> None:
     """⌘C / ⌘V must trigger copy/paste (matches() misses Cmd on macOS)."""
-    source = tmp_path / "References" / "note.txt"
+    source = tmp_path / "Inputs" / "note.txt"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("copied", encoding="utf-8")
 
@@ -226,11 +221,11 @@ def test_file_tree_copy_paste_cmd_shortcut_works_on_mac(qtbot, tmp_path: Path) -
 
     assert widget._handle_tree_key(copy_cmd) is True
     assert widget._handle_tree_key(paste_cmd) is True
-    assert (tmp_path / "References" / "note copy.txt").read_text(encoding="utf-8") == "copied"
+    assert (tmp_path / "Inputs" / "note copy.txt").read_text(encoding="utf-8") == "copied"
 
 
 def test_unique_copy_target_naming(tmp_path: Path) -> None:
-    from autoreport.gui.widgets.file_tree import FileTreeWidget
+    from manyselves.gui.widgets.file_tree import FileTreeWidget
 
     d = tmp_path
     # no collision -> keep original name
@@ -271,19 +266,19 @@ def test_file_operations_use_correct_paths() -> None:
 
 
 def _make_multi_select_tree(qtbot, tmp_path: Path) -> tuple:
-    """Build a tree with Theory/a.tex and Theory/b.tex; return (widget, a_item, b_item)."""
-    theory = tmp_path / "Theory"
+    """Build a tree with Knowledge/a.txt and Knowledge/b.txt; return (widget, a_item, b_item)."""
+    theory = tmp_path / "Knowledge"
     theory.mkdir()
-    (theory / "a.tex").write_text("a", encoding="utf-8")
-    (theory / "b.tex").write_text("b", encoding="utf-8")
+    (theory / "a.txt").write_text("a", encoding="utf-8")
+    (theory / "b.txt").write_text("b", encoding="utf-8")
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
     tree = widget.tree
-    # select_file forces the directory to be populated and selects a.tex.
-    widget.select_file(theory / "a.tex")
-    root = tree.topLevelItem(FIXED_DIRECTORIES.index("Theory"))
+    # select_file forces the directory to be populated and selects a.txt.
+    widget.select_file(theory / "a.txt")
+    root = tree.topLevelItem(FIXED_DIRECTORIES.index("Knowledge"))
     items = {root.child(i).text(0): root.child(i) for i in range(root.childCount())}
-    return widget, items["a.tex"], items["b.tex"]
+    return widget, items["a.txt"], items["b.txt"]
 
 
 def _click_item(tree, item, modifier) -> None:
@@ -305,9 +300,9 @@ def test_ctrl_click_toggles_multi_selection(qtbot, tmp_path: Path) -> None:
     widget, a, b = _make_multi_select_tree(qtbot, tmp_path)
     tree = widget.tree
 
-    assert {i.text(0) for i in tree.selectedItems()} == {"a.tex"}
+    assert {i.text(0) for i in tree.selectedItems()} == {"a.txt"}
     _click_item(tree, b, Qt.KeyboardModifier.ControlModifier)
-    assert {i.text(0) for i in tree.selectedItems()} == {"a.tex", "b.tex"}
+    assert {i.text(0) for i in tree.selectedItems()} == {"a.txt", "b.txt"}
 
 
 def test_select_file_preserves_active_multi_selection(qtbot, tmp_path: Path) -> None:
@@ -318,11 +313,11 @@ def test_select_file_preserves_active_multi_selection(qtbot, tmp_path: Path) -> 
     # Establish multi-selection (a selected, ctrl-toggle b).
     sm = tree.selectionModel()
     sm.select(tree.indexFromItem(b), QItemSelectionModel.SelectionFlag.Toggle)
-    assert {i.text(0) for i in tree.selectedItems()} == {"a.tex", "b.tex"}
+    assert {i.text(0) for i in tree.selectedItems()} == {"a.txt", "b.txt"}
 
     # The preview's file-changed feedback calls select_file; selection survives.
-    widget.select_file((tmp_path / "Theory" / "b.tex"))
-    assert {i.text(0) for i in tree.selectedItems()} == {"a.tex", "b.tex"}
+    widget.select_file((tmp_path / "Knowledge" / "b.txt"))
+    assert {i.text(0) for i in tree.selectedItems()} == {"a.txt", "b.txt"}
 
 
 def test_drag_drop_handles_multiple_files() -> None:
@@ -366,9 +361,13 @@ def test_selected_nested_dir_is_used_for_new_file(qtbot, tmp_path: Path) -> None
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    data_item = widget.tree.topLevelItem(0)
+    data_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Outputs"))
     data_item.setExpanded(True)
-    processed_item = data_item.child(0)
+    processed_item = next(
+        data_item.child(i)
+        for i in range(data_item.childCount())
+        if data_item.child(i).data(0, Qt.ItemDataRole.UserRole) == "Outputs/Reports"
+    )
     widget.tree.setCurrentItem(processed_item)
 
     widget._new_file()
@@ -379,8 +378,8 @@ def test_selected_nested_dir_is_used_for_new_file(qtbot, tmp_path: Path) -> None
     widget.tree.blockSignals(False)
     widget._finalize_pending_new_item()
 
-    assert (tmp_path / "Data" / "Processed" / "a.txt").exists()
-    assert not (tmp_path / "Data" / "a.txt").exists()
+    assert (tmp_path / "Outputs" / "Reports" / "a.txt").exists()
+    assert not (tmp_path / "Outputs" / "a.txt").exists()
 
 
 def test_hover_text_uses_tilde_prefixed_system_path(qtbot, tmp_path: Path) -> None:
@@ -388,7 +387,7 @@ def test_hover_text_uses_tilde_prefixed_system_path(qtbot, tmp_path: Path) -> No
     qtbot.addWidget(widget)
 
     item = QTreeWidgetItem()
-    file_path = tmp_path / "Plots" / "plot.py"
+    file_path = tmp_path / "Work" / "plot.py"
     item.setData(0, 257, str(file_path))
 
     assert widget._hover_text_for_item(item) == FileTreeWidget._tilde_path(file_path)
@@ -413,11 +412,11 @@ def test_repeat_new_click_cancels_empty_pending_and_restarts(qtbot, tmp_path: Pa
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    widget._new_file_in_dir("References")
+    widget._new_file_in_dir("Inputs")
     first_pending = widget._pending_new_item
     assert first_pending is not None
 
-    widget._new_file_in_dir("References")
+    widget._new_file_in_dir("Inputs")
     second_pending = widget._pending_new_item
 
     assert second_pending is not None
@@ -428,17 +427,17 @@ def test_repeat_new_click_keeps_typed_pending_and_starts_another(qtbot, tmp_path
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    widget._new_file_in_dir("References")
+    widget._new_file_in_dir("Inputs")
     first_pending = widget._pending_new_item
     assert first_pending is not None
     widget.tree.blockSignals(True)
     first_pending.setText(0, "first.txt")
     widget.tree.blockSignals(False)
 
-    widget._new_file_in_dir("References")
+    widget._new_file_in_dir("Inputs")
     second_pending = widget._pending_new_item
 
-    assert (tmp_path / "References" / "first.txt").exists()
+    assert (tmp_path / "Inputs" / "first.txt").exists()
     assert second_pending is not None
     assert first_pending is not second_pending
 
@@ -447,14 +446,14 @@ def test_repeat_new_click_uses_live_editor_text(qtbot, tmp_path: Path) -> None:
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    widget._new_file_in_dir("References")
+    widget._new_file_in_dir("Inputs")
     qtbot.wait(20)
     assert widget._pending_editor is not None
     widget._pending_editor.setText("typed.txt")
 
-    widget._new_file_in_dir("References")
+    widget._new_file_in_dir("Inputs")
 
-    assert (tmp_path / "References" / "typed.txt").exists()
+    assert (tmp_path / "Inputs" / "typed.txt").exists()
     assert widget._pending_new_item is not None
 
 
@@ -462,7 +461,7 @@ def test_close_editor_uses_live_editor_text(qtbot, tmp_path: Path) -> None:
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    widget._new_file_in_dir("References")
+    widget._new_file_in_dir("Inputs")
     qtbot.wait(20)
     assert widget._pending_editor is not None
     editor = widget._pending_editor
@@ -470,7 +469,7 @@ def test_close_editor_uses_live_editor_text(qtbot, tmp_path: Path) -> None:
 
     widget._on_close_editor(editor, QAbstractItemDelegate.EndEditHint.NoHint)
 
-    assert (tmp_path / "References" / "closed.txt").exists()
+    assert (tmp_path / "Inputs" / "closed.txt").exists()
     assert widget._pending_new_item is None
 
 
@@ -478,11 +477,11 @@ def test_new_file_in_collapsed_nested_dir_keeps_pending_item(qtbot, tmp_path: Pa
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    data_item = widget.tree.topLevelItem(0)
-    processed_item = data_item.child(0)
+    data_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Outputs"))
+    processed_item = data_item.child(2)
     assert not processed_item.isExpanded()
 
-    widget._new_file_in_dir("Data/Processed")
+    widget._new_file_in_dir("Outputs/Reports")
 
     pending = widget._pending_new_item
     assert pending is not None
@@ -494,15 +493,15 @@ def test_drop_target_resolves_nested_directories(qtbot, tmp_path: Path) -> None:
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    data_item = widget.tree.topLevelItem(0)
-    processed_item = data_item.child(0)
+    data_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Outputs"))
+    processed_item = data_item.child(2)
 
-    assert widget._resolve_target_dir(processed_item) == "Data/Processed"
+    assert widget._resolve_target_dir(processed_item) == "Outputs/Reports"
 
 
 def test_drag_hover_highlights_resolved_directory(qtbot, tmp_path: Path) -> None:
-    target_file = tmp_path / "References" / "note.txt"
-    nested_file = tmp_path / "References" / "nested" / "deep.txt"
+    target_file = tmp_path / "Inputs" / "note.txt"
+    nested_file = tmp_path / "Inputs" / "nested" / "deep.txt"
     target_file.parent.mkdir(parents=True, exist_ok=True)
     nested_file.parent.mkdir(parents=True, exist_ok=True)
     target_file.write_text("x", encoding="utf-8")
@@ -511,7 +510,7 @@ def test_drag_hover_highlights_resolved_directory(qtbot, tmp_path: Path) -> None
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    refs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("References"))
+    refs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Inputs"))
     refs_item.setExpanded(True)
     widget._on_item_expanded(refs_item)
     file_item = None
@@ -521,7 +520,7 @@ def test_drag_hover_highlights_resolved_directory(qtbot, tmp_path: Path) -> None
         child = refs_item.child(i)
         if child.data(0, Qt.ItemDataRole.UserRole + 1) == str(target_file):
             file_item = child
-        if child.data(0, Qt.ItemDataRole.UserRole) == "References/nested":
+        if child.data(0, Qt.ItemDataRole.UserRole) == "Inputs/nested":
             nested_item = child
             child.setExpanded(True)
             widget._on_item_expanded(child)
@@ -549,7 +548,7 @@ def test_tree_row_states_paint_row_and_branch_with_same_color(qtbot, tmp_path: P
     qtbot.addWidget(widget)
 
     colors = get_theme_colors()
-    refs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("References"))
+    refs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Inputs"))
     assert refs_item is not None
 
     widget.tree.setCurrentItem(refs_item)
@@ -566,16 +565,16 @@ def test_tree_row_states_paint_row_and_branch_with_same_color(qtbot, tmp_path: P
     assert widget.tree._row_background_color(refs_item).name() == colors["tree_sel_bg"]
     widget._set_editing_item(None)
 
-    widget._new_file_in_dir("References")
+    widget._new_file_in_dir("Inputs")
     pending = widget._pending_new_item
     assert pending is not None
     assert widget._editing_item is pending
     assert widget.tree._row_background_color(pending).name() == colors["tree_sel_bg"]
     widget._cancel_pending_new_item()
 
-    refs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("References"))
+    refs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Inputs"))
     assert refs_item is not None
-    widget._rename_directory(tmp_path / "References", refs_item)
+    widget._rename_directory(tmp_path / "Inputs", refs_item)
     assert widget._editing_item is refs_item
     assert widget.tree._row_background_color(refs_item).name() == colors["tree_sel_bg"]
     widget._set_editing_item(None)
@@ -596,16 +595,16 @@ def test_tree_row_states_paint_row_and_branch_with_same_color(qtbot, tmp_path: P
     assert f'background-color: {colors["bg"]};' in stylesheet
 
 
-def test_processed_directory_is_not_draggable_but_files_inside_are(qtbot, tmp_path: Path) -> None:
-    processed_file = tmp_path / "Data" / "Processed" / "result.txt"
+def test_reports_directory_is_not_draggable_but_files_inside_are(qtbot, tmp_path: Path) -> None:
+    processed_file = tmp_path / "Outputs" / "Reports" / "result.txt"
     processed_file.parent.mkdir(parents=True, exist_ok=True)
     processed_file.write_text("ok", encoding="utf-8")
 
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    data_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Data"))
-    processed_item = data_item.child(0)
+    data_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Outputs"))
+    processed_item = data_item.child(2)
     processed_item.setExpanded(True)
     widget._on_item_expanded(processed_item)
     file_item = processed_item.child(0)
@@ -629,7 +628,7 @@ def test_empty_directory_keeps_expand_indicator_after_reload(qtbot, tmp_path: Pa
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    references_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("References"))
+    references_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Inputs"))
     assert references_item is not None
 
     references_item.setExpanded(True)
@@ -656,7 +655,7 @@ def test_refresh_recovers_directory_indicator_policy(qtbot, tmp_path: Path) -> N
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    references_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("References"))
+    references_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Inputs"))
     assert references_item is not None
 
     references_item.setChildIndicatorPolicy(
@@ -665,7 +664,7 @@ def test_refresh_recovers_directory_indicator_policy(qtbot, tmp_path: Path) -> N
     widget.refresh()
 
     # refresh() rebuilds the tree, so re-fetch the item before asserting.
-    references_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("References"))
+    references_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Inputs"))
     assert references_item is not None
     assert (
         references_item.childIndicatorPolicy()
@@ -677,15 +676,15 @@ def test_expand_top_level_collapses_other_top_level(qtbot, tmp_path: Path) -> No
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    data_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Data"))
-    refs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("References"))
+    data_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Knowledge"))
+    refs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Inputs"))
     assert data_item is not None
     assert refs_item is not None
 
     data_item.setExpanded(True)
     assert data_item.isExpanded()
 
-    widget._collapse_other_top_level_dirs("References")
+    widget._collapse_other_top_level_dirs("Inputs")
     refs_item.setExpanded(True)
 
     assert not data_item.isExpanded()
@@ -704,21 +703,21 @@ def test_new_file_editor_is_bound_after_start_create(qtbot, tmp_path: Path) -> N
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    widget._new_file_in_dir("References")
+    widget._new_file_in_dir("Inputs")
     qtbot.wait(20)
     assert widget._pending_new_item is not None
     assert widget._pending_editor is not None
 
 
 def test_directory_changed_restores_selected_file(qtbot, tmp_path: Path) -> None:
-    target_file = tmp_path / "References" / "keep.txt"
+    target_file = tmp_path / "Inputs" / "keep.txt"
     target_file.parent.mkdir(parents=True, exist_ok=True)
     target_file.write_text("x", encoding="utf-8")
 
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    refs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("References"))
+    refs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Inputs"))
     assert refs_item is not None
     refs_item.setExpanded(True)
     widget._on_item_expanded(refs_item)
@@ -733,7 +732,7 @@ def test_directory_changed_restores_selected_file(qtbot, tmp_path: Path) -> None
     assert selected is not None
 
     widget.tree.setCurrentItem(selected)
-    widget._on_directory_changed(str((tmp_path / "References").resolve()))
+    widget._on_directory_changed(str((tmp_path / "Inputs").resolve()))
 
     current = widget.tree.currentItem()
     assert current is not None
@@ -741,7 +740,7 @@ def test_directory_changed_restores_selected_file(qtbot, tmp_path: Path) -> None
 
 
 def test_select_moved_path_keeps_selection_on_new_file(qtbot, tmp_path: Path) -> None:
-    moved = tmp_path / "References" / "moved.txt"
+    moved = tmp_path / "Inputs" / "moved.txt"
     moved.parent.mkdir(parents=True, exist_ok=True)
     moved.write_text("x", encoding="utf-8")
 
@@ -756,38 +755,36 @@ def test_select_moved_path_keeps_selection_on_new_file(qtbot, tmp_path: Path) ->
 
 
 def test_internal_move_keeps_references_expand_indicator(qtbot, tmp_path: Path) -> None:
-    source = tmp_path / "Data" / "raw.txt"
+    source = tmp_path / "Knowledge" / "standard.txt"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("x", encoding="utf-8")
 
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    data_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Data"))
-    refs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("References"))
+    data_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Knowledge"))
+    refs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Inputs"))
     assert data_item is not None
     assert refs_item is not None
 
     data_item.setExpanded(True)
     widget._on_item_expanded(data_item)
-    processed_item = None
     file_item = None
     for i in range(data_item.childCount()):
         child = data_item.child(i)
-        rel = child.data(0, Qt.ItemDataRole.UserRole)
-        if rel == "Data/Processed":
-            processed_item = child
         if child.data(0, Qt.ItemDataRole.UserRole + 1) == str(source):
             file_item = child
-    assert processed_item is not None
     assert file_item is not None
+
+    outputs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Outputs"))
+    processed_item = outputs_item.child(2)
 
     widget.tree.clearSelection()
     file_item.setSelected(True)
     widget._handle_internal_move(None, processed_item)
 
     # _handle_internal_move refreshes the tree, rebuilding all items.
-    references_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("References"))
+    references_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Inputs"))
     assert references_item is not None
     assert (
         references_item.childIndicatorPolicy()
@@ -796,15 +793,15 @@ def test_internal_move_keeps_references_expand_indicator(qtbot, tmp_path: Path) 
 
 
 def test_internal_move_keeps_indicator_when_references_is_expanded(qtbot, tmp_path: Path) -> None:
-    source = tmp_path / "Data" / "raw.txt"
+    source = tmp_path / "Knowledge" / "standard.txt"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("x", encoding="utf-8")
 
     widget = FileTreeWidget(tmp_path)
     qtbot.addWidget(widget)
 
-    data_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Data"))
-    refs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("References"))
+    data_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Knowledge"))
+    refs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Inputs"))
     assert data_item is not None
     assert refs_item is not None
 
@@ -813,24 +810,22 @@ def test_internal_move_keeps_indicator_when_references_is_expanded(qtbot, tmp_pa
 
     data_item.setExpanded(True)
     widget._on_item_expanded(data_item)
-    processed_item = None
     file_item = None
     for i in range(data_item.childCount()):
         child = data_item.child(i)
-        rel = child.data(0, Qt.ItemDataRole.UserRole)
-        if rel == "Data/Processed":
-            processed_item = child
         if child.data(0, Qt.ItemDataRole.UserRole + 1) == str(source):
             file_item = child
-    assert processed_item is not None
     assert file_item is not None
+
+    outputs_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Outputs"))
+    processed_item = outputs_item.child(2)
 
     widget.tree.clearSelection()
     file_item.setSelected(True)
     widget._handle_internal_move(None, processed_item)
 
     # _handle_internal_move refreshes the tree, rebuilding all items.
-    references_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("References"))
+    references_item = widget.tree.topLevelItem(FIXED_DIRECTORIES.index("Inputs"))
     assert references_item is not None
     assert (
         references_item.childIndicatorPolicy()
@@ -867,7 +862,7 @@ def test_clicking_blank_area_selects_root_directory(qtbot, tmp_path: Path) -> No
 
 
 def test_select_file_updates_current_item(qtbot, tmp_path: Path) -> None:
-    target = tmp_path / "Tex" / "a.tex"
+    target = tmp_path / "Outputs" / "a.txt"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("x", encoding="utf-8")
 
@@ -881,7 +876,7 @@ def test_select_file_updates_current_item(qtbot, tmp_path: Path) -> None:
 
 
 def test_file_tree_state_is_persisted_and_restored(qtbot, tmp_path: Path) -> None:
-    target = tmp_path / "Tex" / "state.tex"
+    target = tmp_path / "Outputs" / "state.txt"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("x", encoding="utf-8")
 

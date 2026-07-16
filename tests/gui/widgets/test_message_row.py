@@ -3,9 +3,9 @@
 from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
 from PyQt6.QtGui import QContextMenuEvent, QKeyEvent, QWheelEvent
 from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
-from autoreport.gui.widgets.message_row import MessageRow, _raw_markdown_for_selected_text
-from autoreport.gui.widgets.messages_area import MessagesArea
-from autoreport.gui.widgets.ui_utils import compact_tooltip_qss
+from manyselves.gui.widgets.message_row import MessageRow, _raw_markdown_for_selected_text
+from manyselves.gui.widgets.messages_area import MessagesArea
+from manyselves.gui.widgets.ui_utils import compact_tooltip_qss
 
 
 def test_user_message_renders_badge_style(qtbot):
@@ -151,7 +151,7 @@ def test_label_context_menu_includes_rollback_when_checkpoint_is_bound(qtbot, mo
             return None
 
     monkeypatch.setattr(
-        "autoreport.gui.widgets.message_row.create_isolated_context_menu",
+        "manyselves.gui.widgets.message_row.create_isolated_context_menu",
         lambda _parent: _FakeMenu(),
     )
 

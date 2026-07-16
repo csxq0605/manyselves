@@ -4,16 +4,16 @@ from pathlib import Path
 import pytest
 from docx import Document
 
-from autoreport.core.reporting.agentic_models import ClaimRecord, SourceKind, SourceRecord
-from autoreport.core.reporting.claim_ledger import ClaimLedger
-from autoreport.core.reporting.rendering.packaged_docx import PackagedDocxCore
-from autoreport.core.reporting.rendering.pds_docx_renderer import (
+from manyselves.core.reporting.agentic_models import ClaimRecord, SourceKind, SourceRecord
+from manyselves.core.reporting.claim_ledger import ClaimLedger
+from manyselves.core.reporting.rendering.packaged_docx import PackagedDocxCore
+from manyselves.core.reporting.rendering.pds_docx_renderer import (
     ApprovedReport,
     PdsDocxRenderer,
     ReportPhoto,
     ReportTable,
 )
-from autoreport.core.reporting.taxonomy import REPORT_TAXONOMY
+from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 
 
 def _approved_report(photo_path: Path) -> ApprovedReport:

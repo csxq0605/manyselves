@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.reporting.research.reference_library import ReferenceLibrary
+from manyselves.core.reporting.research.reference_library import ReferenceLibrary
 
 
 def test_reference_search_reads_every_supported_file_beneath_knowledge(tmp_path: Path):

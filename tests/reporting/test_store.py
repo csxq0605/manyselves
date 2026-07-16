@@ -1,7 +1,7 @@
 import pytest
 
-from autoreport.core.reporting.agentic_models import SourceKind, SourceRecord
-from autoreport.core.reporting.store import ReportingStore
+from manyselves.core.reporting.agentic_models import SourceKind, SourceRecord
+from manyselves.core.reporting.store import ReportingStore
 
 
 def _source() -> SourceRecord:

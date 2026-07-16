@@ -1,6 +1,6 @@
 import pytest
 
-from autoreport.core.reporting.taxonomy import REPORT_TAXONOMY, resolve_submodule
+from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY, resolve_submodule
 
 
 def test_taxonomy_contains_fixed_module_24_submodules() -> None:

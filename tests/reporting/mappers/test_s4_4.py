@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook, load_workbook
 
-from autoreport.core.reporting.mappers.s4_4 import map_s4_4
+from manyselves.core.reporting.mappers.s4_4 import map_s4_4
 
 
 def _write_s4_4(path: Path) -> None:

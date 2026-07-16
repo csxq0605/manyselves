@@ -1,25 +1,26 @@
 [project]
 name = "manyselves"
-version = "1.2"
+version = "1.2.0"
 description = "A local workspace for document-defined agent teams."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [
-    { name = "xjsongphy" },
+    { name = "Manyselves contributors" },
 ]
 keywords = ["agents", "multi-agent", "workspace", "local-first", "pyqt6"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: X11 Applications :: Qt",
-    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
-    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development",
 ]
 dependencies = [
     "pydantic>=2.12.0,<3.0.0",
@@ -53,11 +54,6 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[project.urls]
-Homepage = "https://github.com/csxq0605/autoreport-power-distribution"
-Repository = "https://github.com/csxq0605/autoreport-power-distribution"
-Issues = "https://github.com/csxq0605/autoreport-power-distribution/issues"
-
 [tool.hatch.build]
 exclude = [
     "/.venv*",
@@ -73,7 +69,7 @@ exclude = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["autoreport"]
+packages = ["manyselves"]
 
 [tool.ruff]
 line-length = 100
@@ -97,5 +93,4 @@ dev = [
 ]
 
 [project.scripts]
-manyselves = "autoreport.__main__:main"
-autoreport = "autoreport.__main__:main"
+manyselves = "manyselves.__main__:main"

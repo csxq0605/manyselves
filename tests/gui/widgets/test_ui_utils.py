@@ -1,7 +1,7 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget
 
-from autoreport.gui.widgets.ui_utils import NoWheelComboBox
+from manyselves.gui.widgets.ui_utils import NoWheelComboBox
 
 
 def test_combo_popup_host_is_transparent_without_fill(qtbot) -> None:

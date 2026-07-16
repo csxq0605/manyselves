@@ -1,13 +1,14 @@
 """Tests for refactored AgentPanel with MessagesArea and DebugPanel."""
 
 from pathlib import Path
+
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import QApplication, QLabel
 
-from autoreport.gui.widgets.agent_panel import AgentPanel
-from autoreport.gui.widgets.file_search_popup import FileMatch
+from manyselves.gui.widgets.agent_panel import AgentPanel
+from manyselves.gui.widgets.file_search_popup import FileMatch
 
 
 @pytest.fixture
@@ -24,7 +25,7 @@ def agent_panel(qtbot):
 
 def test_agent_panel_has_messages_area(agent_panel):
     """AgentPanel should have a MessagesArea widget."""
-    from autoreport.gui.widgets.messages_area import MessagesArea
+    from manyselves.gui.widgets.messages_area import MessagesArea
 
     messages_area = agent_panel._messages_area
     assert isinstance(messages_area, MessagesArea)
@@ -33,7 +34,7 @@ def test_agent_panel_has_messages_area(agent_panel):
 
 def test_agent_panel_has_debug_panel(agent_panel):
     """AgentPanel should have a DebugPanel widget."""
-    from autoreport.gui.widgets.debug_panel import DebugPanel
+    from manyselves.gui.widgets.debug_panel import DebugPanel
 
     debug_panel = agent_panel._debug_panel
     assert isinstance(debug_panel, DebugPanel)
@@ -456,7 +457,7 @@ def test_thinking_stream_merge_handles_delta_snapshot_and_final(agent_panel):
 
 
 def test_summary_arrow_stays_next_to_text(qtbot):
-    from autoreport.gui.widgets.message_row import MessageRow
+    from manyselves.gui.widgets.message_row import MessageRow
 
     row = MessageRow(
         role="agent",
@@ -478,7 +479,7 @@ def test_summary_arrow_stays_next_to_text(qtbot):
 
 
 def test_thought_summary_stays_single_line_when_width_is_sufficient(qtbot):
-    from autoreport.gui.widgets.message_row import MessageRow
+    from manyselves.gui.widgets.message_row import MessageRow
 
     row = MessageRow(
         role="agent",
@@ -498,7 +499,7 @@ def test_thought_summary_stays_single_line_when_width_is_sufficient(qtbot):
 
 
 def test_thought_summary_label_keeps_visible_width(qtbot):
-    from autoreport.gui.widgets.message_row import MessageRow
+    from manyselves.gui.widgets.message_row import MessageRow
 
     row = MessageRow(
         role="agent",
@@ -517,7 +518,7 @@ def test_thought_summary_label_keeps_visible_width(qtbot):
 
 
 def test_thought_detail_aligns_close_to_summary_start(qtbot):
-    from autoreport.gui.widgets.message_row import MessageRow
+    from manyselves.gui.widgets.message_row import MessageRow
 
     row = MessageRow(
         role="agent",
@@ -933,7 +934,7 @@ def test_edit_saved_retracts_following_rows_and_sends_immediately(qtbot, agent_p
 
 def test_edit_saved_resends_plain_text_with_latest_file_context(qtbot, agent_panel):
     wrapped = "Editor context: file\nCurrent file: old.tex\n\nold user"
-    row = agent_panel.add_message(role="user", content=wrapped)
+    agent_panel.add_message(role="user", content=wrapped)
     target_row = agent_panel._messages_area.get_message_rows()[-1]
     agent_panel.set_opened_file("latest.tex")
 
@@ -1214,7 +1215,7 @@ def test_file_reference_popup_lists_other_agents_with_main_first(agent_panel):
         if popup._list_widget.item(row).data(Qt.ItemDataRole.UserRole)[0] == "agent"
     ]
 
-    assert agent_types == ["main", "data_analysis", "plotting", "report"]
+    assert agent_types == ["main"]
 
 
 def test_command_popup_is_attached_above_composer_and_keyboard_selects(agent_panel, qtbot):
@@ -1257,6 +1258,37 @@ def test_command_popup_only_lists_slash_commands(agent_panel, qtbot):
     assert agent_panel._cmd_popup.count() > 0
     for row in range(agent_panel._cmd_popup.count()):
         assert agent_panel._cmd_popup.item(row).data(Qt.ItemDataRole.UserRole).startswith("/")
+
+
+def test_sent_messages_and_commands_are_saved_to_project_input_history(tmp_path, qtbot):
+    panel = AgentPanel("main", "Main", workspace=tmp_path)
+    qtbot.addWidget(panel)
+    sent = []
+    panel.message_sent.connect(sent.append)
+
+    panel._input_field.setPlainText("write the report")
+    panel._on_send()
+    panel._input_field.setPlainText("/status")
+    panel._on_send()
+
+    assert sent == ["write the report"]
+    assert panel._input_field.input_history() == ["write the report", "/status"]
+    assert (tmp_path / ".manyselves" / "input_history.json").exists()
+    assert panel._input_field.toPlainText() == ""
+
+
+def test_retry_command_resends_previous_non_command_message(tmp_path, qtbot):
+    panel = AgentPanel("main", "Main", workspace=tmp_path)
+    qtbot.addWidget(panel)
+    sent = []
+    panel.message_sent.connect(sent.append)
+
+    panel._input_field.setPlainText("generate summary")
+    panel._on_send()
+    panel._input_field.setPlainText("/retry")
+    panel._on_send()
+
+    assert sent == ["generate summary", "generate summary"]
 
 
 def test_command_popup_mouse_click_completes_selected_command(agent_panel, qtbot):

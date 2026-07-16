@@ -2,13 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.reporting.agentic_models import (
+from manyselves.core.reporting.agentic_models import (
     ClaimRecord,
     SourceKind,
     SourceRecord,
 )
-from autoreport.core.reporting.claim_ledger import CitationBindingError, ClaimLedger
-from autoreport.core.reporting.taxonomy import REPORT_TAXONOMY
+from manyselves.core.reporting.claim_ledger import CitationBindingError, ClaimLedger
+from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 
 
 def _first_submodule(module_id: str) -> str:

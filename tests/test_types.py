@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from autoreport.interfaces.types import (
+from manyselves.interfaces.types import (
     AgentResponse,
     AgentStatus,
     AgentType,

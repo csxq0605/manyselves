@@ -2,7 +2,7 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from autoreport.core.reporting.mappers.s4_6 import map_s4_6
+from manyselves.core.reporting.mappers.s4_6 import map_s4_6
 
 
 def test_s4_6_maps_summary_taxonomy_without_using_filename_as_location(

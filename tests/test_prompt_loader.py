@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.prompts.loader import PromptLoader
+from manyselves.core.prompts.loader import PromptLoader
 
 
 @pytest.fixture
@@ -15,10 +15,6 @@ def agents_dir():
         "# Main Agent\n\nYou are the main agent.\n\n## Core Rules\n\nCoordinate sub-agents.\n",
         encoding="utf-8",
     )
-    (d / "data_analysis_agent.md").write_text(
-        "# Data Analysis Agent\n\nYou analyze data.\n\n## Instructions\n\nProcess CSV files.\n",
-        encoding="utf-8",
-    )
     return d
 
 
@@ -26,13 +22,6 @@ def test_load_prompt_main(agents_dir):
     loader = PromptLoader(agents_dir=agents_dir)
     result = loader.load_prompt("main")
     assert "main agent" in result
-
-
-def test_load_prompt_data_analysis(agents_dir):
-    loader = PromptLoader(agents_dir=agents_dir)
-    result = loader.load_prompt("data_analysis")
-    assert "data" in result
-    assert "CSV" in result
 
 
 def test_cache_hits(agents_dir):
@@ -60,24 +49,7 @@ def test_fallback_for_missing_file(agents_dir):
 
 def test_fallback_built_in_types(agents_dir):
     loader = PromptLoader(agents_dir=agents_dir)
-    for agent_type in ["main", "data_analysis", "plotting", "theory", "report"]:
-        result = loader.load_prompt(agent_type)
-        assert len(result) > 0
-
-
-def test_report_prompt_pins_table_and_float_layout_rules():
-    prompt = Path("autoreport/templates/agents/report_agent.md").read_text(encoding="utf-8")
-
-    assert "表格自适应宽度" in prompt
-    assert "不要全行占满" in prompt
-    assert "图表强制固定在源码位置" in prompt
-
-
-def test_plotting_prompt_uses_apply_patch_not_write_file():
-    prompt = Path("autoreport/templates/agents/plotting_agent.md").read_text(encoding="utf-8")
-
-    assert "apply_patch" in prompt
-    assert "write_file" not in prompt
+    assert len(loader.load_prompt("main")) > 0
 
 
 def test_load_shared_context_available(agents_dir):
@@ -97,8 +69,6 @@ def test_load_shared_context_missing(agents_dir):
 def test_get_filename_mapping(agents_dir):
     loader = PromptLoader(agents_dir=agents_dir)
     assert loader._get_filename("main") == "main_agent.md"
-    assert loader._get_filename("data_analysis") == "data_analysis_agent.md"
-    assert loader._get_filename("plotting") == "plotting_agent.md"
 
 
 def test_get_filename_unknown_type(agents_dir):
@@ -106,14 +76,15 @@ def test_get_filename_unknown_type(agents_dir):
     assert loader._get_filename("custom") == "custom_agent.md"
 
 
-def test_get_filename_normalizes_hyphens(agents_dir):
+def test_get_filename_normalizes_hyphens_for_task_roles(agents_dir):
     loader = PromptLoader(agents_dir=agents_dir)
-    assert loader._get_filename("data-analysis") == "data_analysis_agent.md"
+    assert loader._get_filename("evidence-auditor") == "evidence_auditor_agent.md"
 
 
 def test_packaged_main_prompt_routes_distribution_reports_through_workflow_tool():
     prompt = PromptLoader().load_prompt("main")
 
     assert "run_reporting_workflow" in prompt
+    assert "resume_reporting_workflow" in prompt
     assert "配电报告" in prompt
     assert "automated physics experiment" not in prompt.lower()

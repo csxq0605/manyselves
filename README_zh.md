@@ -1,8 +1,10 @@
 <div align="center">
 
-![title](assets/screenshots/title.png)
+![Manyselves](assets/screenshots/title.png)
 
-### 本地 GUI 配电报告多 Agent 工作区
+### One runtime. Many selves.
+
+**由文档定义 Agent 团队的本地工作空间**
 
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#)
 [![Python](https://img.shields.io/badge/python-%E2%89%A5%203.12-blue.svg)](https://www.python.org/)
@@ -13,142 +15,79 @@
 
 </div>
 
-本仓库是在 AutoReport 完整桌面代码底座上改造的独立配电报告产品。V2 迁移现已覆盖 2.1–2.5 五个模块的 37 个叶级子模块：三张核心工作簿、WPS `DISPIMG` 图片、精确 Coverage、版本化 Skill、可审计 Claim、有界局部返工、五模块真实并行、跨模块审核、Chief Editor、SkillCandidate 治理、ReportState 与模板化 DOCX 均运行在同一套 AutoReport runtime 内。
+## Manyselves 是什么？
 
-AutoReport 源码已经直接迁入本仓库，不是运行时依赖；Nexgent 只用于借鉴声明式 Agent 定义和 phase/pipeline/parallel 编排思想。
+Manyselves 是一套本地桌面 Agent 团队运行时。Agent 的身份、边界、技能和
+交接关系由文档定义；保留同一个工作空间，只需更换这些定义，就能把它变成
+另一支团队。
 
-## 功能特性
+运行时负责稳定的通用部分：Main Agent 对话、项目文件树、文档预览、任务路由、
+工具、检查点、Provider 接入和本地产物。当前仓库内置了一支可用于生产的配电
+报告团队；它是 Manyselves 能承载的一种能力，而不是产品边界。
 
-### 核心能力
-- **多 Agent 协作** — 主 Agent 调度，数据分析、图像绘制、理论推导、报告撰写四个子 Agent 各司其职
-- **目录权限隔离** — 每个 Agent 只能写入指定目录，防止交叉污染
-- **任务清单跟踪** — 结构化任务委派，waitlist 与 todolist 链式关联，完成时自动通知
-- **检查点回滚** — 关键节点自动创建检查点，可回滚到任意历史状态
-- **交互式调整** — 用户可随时向任意 Agent 发送消息进行干预和优化
+![Manyselves 如何成为一支团队](assets/screenshots/workflow.png)
 
-### UI/UX（Claude Code 风格）
-- **流式传输** — 实时显示 Agent 输出，逐字流式呈现
-- **可切换 Agent 面板** — 单个 Agent 聊天面板，顶部下拉选择器在 Main / Data Analysis / Plotting / Theory / Report 之间切换
-- **最近项目缓存** — VSCode 风格的最近项目列表，缓存于 `~/.autoreport/recent_projects.json`
-- **文件树** — VSCode 风格文件树，22px 行高、16px 图标，简洁标签（Data、References、Theory、Plots、Outline、Tex）
-- **上下文引用栏** — 文件/行选择的可视化指示器，可切换是否包含在消息中
-- **对话界面** — Claude Code 风格的对话显示，正确的 Markdown 渲染，工具调用按名称分组显示
-- **斜杠命令** — `/clear`、`/new`、`/help`、`/compact`、`/init`
+## 定义团队，而不是重做应用
 
-### 开发工具
-- **@ 文件引用** — 在聊天输入中输入 `@` 触发模糊搜索，选择文件后插入 Markdown 引用链接
-- **选中行上下文** — 在预览面板中选中的文本会自动附加到 Agent 消息中
-- **子 Agent 调试模式** — 断开与主 Agent 的通道，独立测试单个 Agent
+Manyselves 团队由三层组成：
 
-### LLM 集成
-- **多 Provider 支持** — Anthropic、OpenAI、DeepSeek 等，运行时切换模型
-- **Provider 预设** — 来自 [cc-switch](https://github.com/farion1231/cc-switch) 的 50+ 服务商模板
-- **上下文自动压缩** — 接近上下文窗口限制时自动裁剪对话历史
+1. **身份文档**定义每个 Agent 的职责、限制、输入、输出和交接；
+2. **Skill 文档**沉淀可复用的领域方法和质量标准；
+3. **运行时工具与工作流**把这些定义连接到文件、状态、复核和交付物。
 
-## 主工作区
+当前定义位于 `manyselves/templates/agents/` 和
+`manyselves/templates/reporting/`。哪些变化只需改文档，哪些需要扩展 Python，
+见[定义一支团队](docs/team-definition.md)。
 
-主工作区把项目文件树、文档预览和 Agent 对话时间线放在同一窗口中。用户可以查看生成的 LaTeX/PDF 输出，同时继续与 Agent 团队交互。
+## 通用运行时能力
 
-![AutoReport 主工作区](https://raw.githubusercontent.com/xjsongphy/AutoReport/master/assets/screenshots/main-window.png)
+- **一个稳定的 Main 入口** — 用户只和 Main 对话，任务级专家、审计、复核与
+  编辑角色通过同一时间线回报进度；
+- **本地项目工作空间** — 在一个窗口查看输入、知识、工作状态与输出；
+- **文档上下文** — 预览文件、使用 `@` 引用、附加选中行并渲染 Markdown；
+- **可靠执行** — 流式响应、任务路由、类型化状态、检查点、回滚和可恢复决策；
+- **多 LLM Provider** — 支持 Anthropic、OpenAI、DeepSeek 及兼容 API；
+- **可扩展交付** — 工具与工作流可以生成文档、复核记录、台账和状态快照。
 
 ## 快速开始
 
-**前置依赖：** Python >= 3.12、[uv](https://docs.astral.sh/uv/) 包管理器、TeX 发行版、至少一个 LLM Provider 的 API Key。
-
-从源码安装：
+需要 Python 3.12+、[uv](https://docs.astral.sh/uv/) 和至少一个 Provider API Key。
 
 ```bash
-git clone https://github.com/csxq0605/autoreport-power-distribution.git
-cd autoreport-power-distribution
+git clone <repository-url> manyselves
+cd manyselves
 uv sync
-uv run autoreport
+uv run manyselves
 ```
 
-如果本机没有 `uv`，使用仓库内部的 Python 3.12 虚拟环境：
+![Manyselves 启动页](assets/screenshots/start-window.png)
+
+没有 `uv` 时，在仓库内部创建虚拟环境：
 
 ```bash
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -e .
-.venv/bin/autoreport
+.venv/bin/manyselves
 ```
 
-启动窗口用于打开已有项目文件夹、新建项目、配置 API Provider，或从最近项目列表恢复工作。
-
-![AutoReport 启动窗口](assets/screenshots/start-window.png)
-
-首次启动会提示配置 API。也可通过环境变量预配置：
+也可通过环境变量预配置 Provider：
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 export OPENAI_API_KEY="sk-..."
 export DEEPSEEK_API_KEY="sk-..."
-autoreport
+uv run manyselves
 ```
 
-## 配电报告 V2 工作流
+## 配置与本地状态
 
-客户项目必须把输入文件放在 `Inputs/`。当前专用业务映射器识别：
+规范配置文件固定为仓库根目录的 `manyselves.config.yaml`，从任何目录启动
+Manyselves 都使用同一默认文件；规范 Python 包名为 `manyselves`。显式传入的
+配置路径仍优先。
 
-- `S2-1收资表.xlsx`：资料具备情况、有效性与缺口；
-- `S4-4诊断工作用表.xlsx`：现场明细、测量值、同排状态与 WPS 图片；
-- `S4-6评估总表.xlsx`：既有汇总结论与建议，统一标记为待原始证据复核。
+应用偏好写入仓库根目录 `.manyselves/`；项目状态和交付物只写入所选项目目录。
 
-统一资料适配器还支持 XLSX/XLSM、DOCX、Markdown、文本、图片和 PDF；DWG 与视频会保留为明确的 `manual_required` 成果，不会静默丢失。
-
-参考资料统一放在项目 `Knowledge/`。只有导入阶段负责选择哪些资料被复制进来；运行时会把 `Knowledge/` 下任意目录名中的所有支持文件视为可搜索、可登记 `R-*`、可引用的参考来源，不存在 01/02 分支、目录名白名单或文件名匹配。Knowledge 与网络来源可以支持专业解释，但不能转化为客户现场事实 `E-*`。
-
-Main Agent 先形成类型化请求，并在任何报告 Agent 启动前执行缺资门禁。局部请求只运行所选模块，不生成完整 DOCX；完整请求并行运行 2.1–2.5，逐模块独立审计，按 YAML 预算执行以子模块为边界的局部返工，再进行跨模块审查。Chief Editor 必须保护全部批准 Claim，并且只能选择能重新绑定到 Evidence 与 Claim 的表格和照片，最后由仓库内置渲染核心生成 DOCX。模块专家只接收本模块 Skill 正文，审计员只接收被审模块 Skill，Planner 只接收不含正文的 Skill 索引。
-
-`missing_evidence_policy` 支持 `ask`、`block`、`skip`、`draft`；任意 Excel 行不能替代精确子模块证据。运行产物只写项目内：
-
-```text
-Work/manifest.json
-Work/evidence.jsonl
-Work/coverage.json
-Work/photo-manifest.json
-Work/report-state.json
-Work/runs/<run-id>/workflow-state.json
-Work/runs/<run-id>/modules/*.json
-Work/runs/<run-id>/reviews/*.json
-Work/runs/<run-id>/ledgers/sources.json
-Outputs/Modules/2.1.md ... 2.5.md
-Outputs/Reviews/full-review.json
-Outputs/Reports/配电安全专家咨询报告.docx
-Outputs/Reports/render-log.json
-Capabilities/skills/manifest.json
-Capabilities/skills/{candidates,evaluations,versions}/...
-```
-
-内置模块 Skill 明确约束：负荷率低于 100% 时不得写成当前已过载；S4-4 的 10A 只是工作表附图/复核触发值，不能表述为法定安全限值。`SkillGovernanceStore` 把不可变候选、评测和版本保存在项目 `Capabilities/skills/`；只有评测不退化且用户明确确认时才能发布，回退只切换 active manifest 指针，不删除历史版本。
-
-## MinerU 集成
-
-AutoReport 使用 [mineru-open-api](https://github.com/opendatalab/MinerU) CLI 解析 PDF（支持 PDF、图片、DOCX、PPTX、XLSX → Markdown）。
-
-**安装：**
-
-1. 安装 mineru-open-api：
-   ```bash
-   curl -fsSL https://cdn-mineru.openxlab.org.cn/open-api-cli/install.sh | sh
-   ```
-   详见 [mineru-open-api 文档](https://mineru.net/ecosystem?tab=cli)。
-
-2. 在 [MinerU](https://mineru.net/apiManage/token) 注册获取 API Key，然后认证：
-   ```bash
-   mineru-open-api auth
-   ```
-
-3. 应用启动时自动检测可用性，未安装会给出警告。
-
-支持批量处理（单文件上限 200MB / 600 页），可提取文本/图片/表格/公式。
-
-## 配置
-
-配置文件：`autoreport.config.yaml`
-
-API 配置对话框用于管理 Provider 预设、当前 Provider 选择、API 密钥、Base URL 和默认模型。
-
-![AutoReport API 配置](https://raw.githubusercontent.com/xjsongphy/AutoReport/master/assets/screenshots/configuration-window.png)
+![Manyselves API 配置](assets/screenshots/configuration-window.png)
 
 ```yaml
 agents:
@@ -158,103 +97,90 @@ agents:
     max_tool_iterations: 200
 ```
 
-## 调试模式
+## 内置能力：配电报告
 
-```bash
-autoreport --debug-agent data_analysis
-autoreport --debug-agent data_analysis --debug-agent plotting
+仓库内置团队负责资料接入、五模块并行撰写、责任审计、跨模块复核、Chief
+Editor 整合、Skill 治理和模板化 DOCX 交付。
+
+客户事实放在 `Inputs/`；项目标准与解释资料放在 `Knowledge/`。当前适配三张
+核心工作簿、WPS `DISPIMG` 图片、XLSX/XLSM、DOCX、Markdown、文本、图片和
+PDF；DWG 与视频会明确保留为 `manual_required`，不会静默丢失。
+
+客户事实 `E-*`、参考来源 `R-*`、Claim、Coverage、缺资决策、Skill 版本、
+复核发现和报告版本均可审计。知识库与网络资料可以辅助解释，但不能变成客户
+现场事实。
+
+2.1–2.5 五个固定模块并行撰写，然后经过责任审计、跨模块复核与完整文档整合。
+缺少证据时可选择 `ask`、`block`、`skip` 或 `draft`，持久化决策可跨进程恢复。
+交付后修订会从基线恢复，只重跑责任模块，再复核完整报告并发布不可变子版本。
+
+典型项目结构：
+
+```text
+项目/
+├── Inputs/                         # 客户事实
+├── Knowledge/                      # 项目参考资料
+├── Templates/                      # 可选 report_template.docx
+├── Work/
+│   ├── evidence.jsonl
+│   ├── coverage.json
+│   ├── report-state.json
+│   ├── runs/<run-id>/              # 状态、模块、复核、台账和决策
+│   └── report-versions/<id>/        # 不可变版本快照
+└── Outputs/
+    ├── Modules/                     # 2.1–2.5 模块稿
+    ├── Reviews/                     # 责任审计和跨模块复核
+    └── Reports/                     # 完整 DOCX 与渲染日志
 ```
 
-可选 Agent：`data_analysis`、`plotting`、`theory`、`report`
+报告修订与 Skill 演进互相独立。只有用户明确要求能力演进时才执行：
+`FeedbackRecord → SkillCandidate → EvaluationResult → 确认 → SkillVersion`。
+后续运行按 packaged、product、project 的顺序解析 Skill；每个报告版本都会固化
+实际使用的 ID、版本、scope、哈希和模板 provenance。
 
-## 项目结构
+证据决策、验收边界、修订和产物的完整约定见
+[配电报告能力契约](docs/capabilities/power-distribution.md)。
 
-```
-my_experiment/
-├── Data/            # 原始实验数据（用户放入）+ 分析结果
-│   └── Processed/   # 数据分析 Agent 仅可写入此目录
-├── References/      # 参考资料（PDF、图片）、自定义模板
-├── Theory/          # 理论推导 Agent 仅可写入此目录
-├── Plots/           # 图像绘制 Agent 仅可写入此目录
-│   ├── Fig/         # 生成的图像
-│   └── Scripts/     # 绘图脚本
-├── Outline/         # 主 Agent 撰写报告大纲与路由记录
-└── Tex/             # 报告 Agent 仅可写入此目录
-```
+## 可选文档解析
 
-### Agent 权限
-
-| Agent | 写入目录 | 读取范围 |
-|-------|----------------|------------|
-| 主 Agent | `Outline/` | 全部目录 |
-| 数据分析 | `Data/Processed/` | 全部目录 |
-| 图像绘制 | `Plots/` | 全部目录 |
-| 理论推导 | `Theory/` | 全部目录 |
-| 报告撰写 | `Tex/` | 全部目录 |
-| 用户 | `Data/`、`References/` | 全部目录 |
+Manyselves 可以调用可选的文档转换命令行工具，把 PDF、图片、DOCX、PPTX 和
+XLSX 转成 Markdown。安装并认证兼容的转换工具后，应用会在启动时自动检测；
+本地工作空间的核心使用不依赖该集成。
 
 ## 架构
 
-```
-autoreport/
-├── app.py                 # 入口点：CLI 解析、LoopManager 启动
-├── config/                # 基于 Pydantic 的配置（YAML 加载、API 密钥验证）
+```text
+manyselves/                         # 规范 Python 包
+├── app.py                          # CLI 与桌面启动
+├── branding.py                     # 对外品牌契约
+├── config/                         # 仓库本地 YAML 配置
 ├── core/
-│   ├── loops/            # Agent 运行时：LoopManager、AgentLoop、MessageBus
-│   ├── providers/        # LLM Provider 抽象层（工厂、基类）
-│   ├── prompts/          # 渐进式提示词加载（身份 → 完整指令）
-│   ├── tools/            # 工具系统（注册表、文件工具、执行工具、PDF 工具、技能工具）
-│   ├── checkpoints.py    # 基于操作日志的检查点，支持可逆文件操作回滚
-│   ├── conversations.py  # 多会话对话存储
-│   ├── file_search.py    # @ 引用的模糊文件搜索
-│   ├── preset_sync.py    # cc-switch 预设同步
-│   └── recent_projects.py# 最近项目缓存
-├── gui/                  # PyQt6 界面（主窗口、对话框、小部件）
-│   └── widgets/          # 可复用组件（文件树、预览、Agent 面板）
-├── interfaces/           # GUI-后台协议（Protocol 定义、消息类型）
-├── resources/            # 内置资源
-├── templates/            # 内置模板（Agent 提示词、报告模板）
-│   ├── agents/           # Agent 提示词文件（Markdown）
-│   └── reports/          # LaTeX 报告模板
-├── external/             # Git 忽略的同步内容（预设、技能）
-│   ├── cc-switch/        # 来自 cc-switch 仓库的 Provider 预设
-│   └── skills/           # Skill Markdown 文件
-└── utils/                # 日志配置（loguru）
+│   ├── loops/                      # Agent 运行时与 MessageBus
+│   ├── providers/                  # LLM Provider 抽象
+│   ├── reporting/                  # 当前内置配电报告能力
+│   └── tools/                      # 工作区和工作流工具
+├── gui/                            # PyQt6 桌面界面
+├── resources/                      # Manyselves 应用图标
+└── templates/
+    ├── agents/                     # Main 身份与公共策略
+    └── reporting/                  # 内置团队身份与 Skills
 ```
 
 ## 开发
 
 ```bash
-# 运行测试
-uv run pytest -v
-
-# 代码检查
-uv run ruff check autoreport tests
-uv run ruff check --fix autoreport tests
-
-# 覆盖率
-uv run pytest --cov=autoreport --cov-report=html
+QT_QPA_PLATFORM=offscreen uv run pytest -q
+uv run ruff check manyselves tests scripts
+uv run python scripts/build_brand_assets.py
 ```
 
-## UI 图标
+命名、图标、配色和兼容规则见[品牌系统](docs/brand.md)。
 
-Agent 类型图标来自 [Tabler Icons](https://tabler-icons.io/) — 6000+ 免费 SVG 图标，MIT License。
+## 产品身份
 
-## 参考项目
-
-- [DeepCode](https://github.com/HKUDS/DeepCode) — API 配置、多 provider 支持、错误处理
-- [cc-switch](https://github.com/farion1231/cc-switch) — Provider 预设（50+ 服务商）
-- [nanobot](https://github.com/HKUDS/nanobot) — AgentLoop 架构、工具定义、compact/命令系统
-- [codex](https://github.com/openai/codex) — UI 设计模式、流式传输实现
-- [openclaw](https://github.com/openclaw/openclaw) — 个人 AI 助手、技能系统、多渠道 Agent 设计
-- [VS Code](https://github.com/microsoft/vscode) — 编辑器 UI/UX 模式、面板布局、命令与扩展架构
-- [Claude Code](https://claude.com/claude-code) — Agent 聊天面板 UI/UX（气泡消息、工具调用分组、流式输出、`@` 引用、斜杠命令）
-- [PKUMpLtX](https://github.com/CastleStar14654/PKUMpLtX) — 内置 LaTeX 报告模板来源（北大近代物理实验，基于 revtex4-2）
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/chart?repos=xjsongphy/AutoReport&type=date&legend=top-left&sealed_token=Y3lV1Yo5tEoNSv5pWKul9FmJwDeZqIHN2Wn166i3TDTJnf4IOue7kaSUbnrDALp_TN4G79kz1IrUOc66GxXpkupO_tinFyx52scf-IQs_OtNrPgzMIO_bM-SLf3cTQE89VHP3ZCqUHhOKrWrObw3JFGrRMvZVDXzT-ty1u7J9cENkSVjaDTFaDb3DfEI)](https://www.star-history.com/?repos=xjsongphy%2FAutoReport&type=date&legend=top-left)
+Manyselves 作为独立产品维护，拥有自己的名称、软件包、资产、文档、配置和
+发行产物。
 
 ## 许可证
 
-MIT License
+MIT License — Copyright (c) 2026 Manyselves contributors。

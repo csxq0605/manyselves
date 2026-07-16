@@ -1,13 +1,20 @@
 ﻿import json
 from pathlib import Path
 
+from docx import Document
 from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
 from PyQt6.QtGui import QColor, QPixmap, QWheelEvent
-from PyQt6.QtWidgets import QApplication, QLabel, QTabBar, QPushButton
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QTabBar,
+    QTextBrowser,
+)
 
-from autoreport.gui.theme import get_theme_colors
-from autoreport.gui.widgets.preview import PreviewWidget, _EmbeddedImageLabel
+from manyselves.gui.theme import get_theme_colors
+from manyselves.gui.widgets.preview import PreviewWidget, _EmbeddedImageLabel
 
 
 def test_clicking_unified_tab_switches_active_file(qtbot, tmp_path: Path) -> None:
@@ -68,10 +75,8 @@ def test_selected_unified_tabs_use_active_background(qtbot, tmp_path: Path) -> N
 
 def test_file_action_buttons_follow_active_suffix(qtbot, tmp_path: Path) -> None:
     py_file = tmp_path / "run.py"
-    tex_file = tmp_path / "paper.tex"
     txt_file = tmp_path / "note.txt"
     py_file.write_text("print('x')", encoding="utf-8")
-    tex_file.write_text("\\documentclass{article}", encoding="utf-8")
     txt_file.write_text("hello", encoding="utf-8")
 
     widget = PreviewWidget(tmp_path)
@@ -82,14 +87,56 @@ def test_file_action_buttons_follow_active_suffix(qtbot, tmp_path: Path) -> None
     assert widget._run_button.isVisible()
     assert not widget._preview_button.isVisible()
 
-    widget.load_file(tex_file)
-    assert widget._active_action_kind == "tex"
-    assert widget._run_button.isVisible()
-    assert widget._preview_button.isVisible()
-
     widget.load_file(txt_file)
     assert widget._active_action_kind == ""
     assert not widget._run_button.isVisible()
+
+
+def test_docx_opens_as_in_app_preview_and_exposes_word_action(qtbot, tmp_path: Path) -> None:
+    docx_file = tmp_path / "report.docx"
+    document = Document()
+    document.add_heading("配电安全报告", level=1)
+    document.add_paragraph("这是报告正文。")
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "设备"
+    table.cell(0, 1).text = "状态"
+    table.cell(1, 0).text = "1A2 柜"
+    table.cell(1, 1).text = "需复核"
+    document.save(docx_file)
+
+    widget = PreviewWidget(tmp_path)
+    qtbot.addWidget(widget)
+    widget.load_file(docx_file)
+
+    state = widget._panels[0]._tabs[str(docx_file.resolve())]
+    assert state.viewer_type == "docx"
+    assert isinstance(state.viewer, QTextBrowser)
+    preview_text = state.viewer.toPlainText()
+    assert "配电安全报告" in preview_text
+    assert "这是报告正文" in preview_text
+    assert "1A2 柜" in preview_text
+    assert widget._active_action_kind == "word"
+    assert widget._preview_button.isVisible()
+    assert widget._preview_button._compact_tooltip_filter._text == "用 Word 或系统应用打开"
+
+
+def test_word_action_opens_current_docx_with_system_application(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    docx_file = tmp_path / "report.docx"
+    Document().save(docx_file)
+    opened: list[Path] = []
+    monkeypatch.setattr(
+        "manyselves.gui.widgets.preview._open_external_file",
+        lambda path: opened.append(path) or True,
+    )
+    widget = PreviewWidget(tmp_path)
+    qtbot.addWidget(widget)
+    widget.load_file(docx_file)
+
+    widget._preview_button.click()
+
+    assert opened == [docx_file.resolve()]
 
 
 def test_file_action_button_tooltips_are_chinese(qtbot, tmp_path: Path) -> None:
@@ -121,26 +168,6 @@ def test_save_current_file_persists_and_clears_modified(qtbot, tmp_path: Path) -
     assert not state.modified
 
 
-def test_preview_clicked_without_pdf_shows_information(qtbot, tmp_path: Path, monkeypatch) -> None:
-    tex_file = tmp_path / "paper.tex"
-    tex_file.write_text("\\documentclass{article}", encoding="utf-8")
-
-    widget = PreviewWidget(tmp_path)
-    qtbot.addWidget(widget)
-    widget.load_file(tex_file)
-
-    called = {"count": 0}
-
-    def _fake_info(*args, **kwargs):
-        called["count"] += 1
-        return QMessageBox.StandardButton.Ok
-
-    monkeypatch.setattr("autoreport.gui.widgets.preview.information_box", _fake_info)
-    widget._on_preview_clicked()
-
-    assert called["count"] == 1
-
-
 def test_confirm_close_modified_tab_uses_styled_question_box(qtbot, tmp_path: Path, monkeypatch) -> None:
     text_file = tmp_path / "note.txt"
     text_file.write_text("old", encoding="utf-8")
@@ -156,7 +183,7 @@ def test_confirm_close_modified_tab_uses_styled_question_box(qtbot, tmp_path: Pa
         seen["kwargs"] = kwargs
         return QMessageBox.StandardButton.Save
 
-    monkeypatch.setattr("autoreport.gui.widgets.preview.question_box", _fake_question)
+    monkeypatch.setattr("manyselves.gui.widgets.preview.question_box", _fake_question)
 
     result = widget._confirm_close_modified_tab(text_file)
 

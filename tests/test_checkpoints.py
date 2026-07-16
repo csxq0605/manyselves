@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.checkpoints import (
+from manyselves.core.checkpoints import (
     CheckpointData,
     CheckpointManager,
     FileOperation,

@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.reporting.config import ConfigurationError
-from autoreport.core.reporting.module_skills import ModuleSkillLibrary
+from manyselves.core.reporting.config import ConfigurationError
+from manyselves.core.reporting.module_skills import ModuleSkillLibrary
 
 
 def test_specialist_receives_only_owned_module_skills() -> None:

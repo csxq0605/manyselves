@@ -2,11 +2,10 @@
 
 from pathlib import Path
 
-import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QInputMethodEvent, QKeyEvent
 
-from autoreport.gui.widgets.chat_input import ChatInput
+from manyselves.gui.widgets.chat_input import ChatInput
 
 
 def test_enter_key_sends_message(qtbot):
@@ -254,6 +253,48 @@ def test_tab_selects_active_popup_item(qtbot):
     widget.keyPressEvent(key_event)
 
     assert events == ["select"]
+
+
+def test_up_down_browse_history_and_restore_unsent_draft(qtbot):
+    widget = ChatInput()
+    qtbot.addWidget(widget)
+    widget.set_input_history(["first", "second"])
+    widget.setPlainText("unsent draft")
+
+    qtbot.keyPress(widget, Qt.Key.Key_Up)
+    assert widget.toPlainText() == "second"
+    qtbot.keyPress(widget, Qt.Key.Key_Up)
+    assert widget.toPlainText() == "first"
+    qtbot.keyPress(widget, Qt.Key.Key_Down)
+    assert widget.toPlainText() == "second"
+    qtbot.keyPress(widget, Qt.Key.Key_Down)
+    assert widget.toPlainText() == "unsent draft"
+
+
+def test_history_does_not_take_over_multiline_cursor_navigation(qtbot):
+    widget = ChatInput()
+    qtbot.addWidget(widget)
+    widget.set_input_history(["old command"])
+    widget.setPlainText("line one\nline two")
+
+    qtbot.keyPress(widget, Qt.Key.Key_Up)
+
+    assert widget.toPlainText() == "line one\nline two"
+
+
+def test_popup_navigation_keeps_priority_over_input_history(qtbot):
+    widget = ChatInput()
+    qtbot.addWidget(widget)
+    widget.set_input_history(["old command"])
+    widget.setPlainText("/he")
+    widget.set_popup_active(True)
+    events = []
+    widget.popup_navigate.connect(events.append)
+
+    qtbot.keyPress(widget, Qt.Key.Key_Up)
+
+    assert events == ["up"]
+    assert widget.toPlainText() == "/he"
 
 
 def test_cursor_move_back_to_prefixed_token_reopens_popup(qtbot):

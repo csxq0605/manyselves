@@ -22,14 +22,14 @@ import importlib.util
 import os
 from pathlib import Path
 
-from loguru import logger
 import pytest
+from loguru import logger
 
-from autoreport.config import ConfigManager
-from autoreport.core.loops import LoopManager, MessageBus
-from autoreport.core.project_structure import ensure_project_structure
-from autoreport.core.providers.factory import ProviderFactory
-from autoreport.interfaces.types import (
+from manyselves.config import ConfigManager
+from manyselves.core.loops import LoopManager, MessageBus
+from manyselves.core.project_structure import ensure_project_structure
+from manyselves.core.providers.factory import ProviderFactory
+from manyselves.interfaces.types import (
     AgentResponse,
     AgentType,
     Error,
@@ -327,22 +327,18 @@ class HeadlessBackend:
         """Send a user message to an agent.
 
         Args:
-            agent_type: "main", "data_analysis", "plotting", "theory", "report"
+            agent_type: The only persistent GUI runtime Agent, ``"main"``.
             content: Message text
             source: "user" or "main_agent"
         """
-        agent_type_map = {
-            "main": AgentType.MAIN,
-            "data_analysis": AgentType.DATA_ANALYSIS,
-            "plotting": AgentType.PLOTTING,
-            "theory": AgentType.THEORY,
-            "report": AgentType.REPORT,
-        }
-        at = agent_type_map.get(agent_type, AgentType.MAIN)
+        if agent_type != "main":
+            raise ValueError(
+                f"Unknown persistent Agent {agent_type!r}; Manyselves exposes only 'main'."
+            )
 
         await self.bus.publish(UserMessage(
             content=content,
-            agent_type=at,
+            agent_type=AgentType.MAIN,
             source=source,
         ))
 

@@ -4,10 +4,10 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QPushButton
 
-from autoreport.config import ConfigManager
-from autoreport.core.user_settings import UserSettings
-from autoreport.gui.onboarding import PreProjectGuide, show_pre_project_guide
-from autoreport.gui.project_dialog import (
+from manyselves.config import ConfigManager
+from manyselves.core.user_settings import UserSettings
+from manyselves.gui.onboarding import PreProjectGuide, show_pre_project_guide
+from manyselves.gui.project_dialog import (
     ProjectDialog,
     create_project_structure,
     is_valid_project,
@@ -20,7 +20,7 @@ def test_is_valid_project_detects_markers(tmp_path: Path) -> None:
     assert is_valid_project(empty) is False
 
     real = tmp_path / "proj"
-    (real / "data").mkdir(parents=True)
+    (real / "Inputs").mkdir(parents=True)
     assert is_valid_project(real) is True
 
 
@@ -30,16 +30,12 @@ def test_create_project_structure_scaffolds_all_dirs(tmp_path: Path) -> None:
     # All fixed project directories must exist after scaffolding.
     assert is_valid_project(proj) is True
     for sub in (
-        "Data",
-        "Data/Processed",
-        "References",
-        "Theory",
-        "Theory/Derivations",
-        "Plots",
-        "Plots/Fig",
-        "Plots/Scripts",
-        "Outline",
-        "Tex",
+        "Inputs",
+        "Knowledge",
+        "Work/runs",
+        "Outputs/Modules",
+        "Outputs/Reviews",
+        "Outputs/Reports",
     ):
         assert (proj / sub).is_dir()
 
@@ -70,7 +66,7 @@ def test_show_pre_project_guide_skips_when_already_seen(
 def test_project_dialog_has_tutorial_button(qtbot, tmp_path: Path, monkeypatch) -> None:
     # Point ConfigManager at an isolated config so the test is hermetic.
     monkeypatch.chdir(tmp_path)
-    cm = ConfigManager(config_path=tmp_path / "autoreport.config.yaml")
+    cm = ConfigManager(config_path=tmp_path / "manyselves.config.yaml")
     dialog = ProjectDialog(cm)
     qtbot.addWidget(dialog)
 
@@ -94,12 +90,12 @@ def test_tutorial_button_overrides_persistence_and_propagates_choice(
     UserSettings().has_seen_onboarding = True  # already seen → would normally skip
 
     monkeypatch.chdir(tmp_path)
-    cm = ConfigManager(config_path=tmp_path / "autoreport.config.yaml")
+    cm = ConfigManager(config_path=tmp_path / "manyselves.config.yaml")
     dialog = ProjectDialog(cm)
     qtbot.addWidget(dialog)
 
     # Stub the modal guide so it doesn't block; report "wants full tutorial".
-    import autoreport.gui.onboarding as onboarding
+    import manyselves.gui.onboarding as onboarding
 
     monkeypatch.setattr(onboarding, "show_pre_project_guide", lambda *a, **k: True)
 

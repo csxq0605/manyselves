@@ -6,8 +6,8 @@ from docx import Document
 from openpyxl import Workbook
 from PIL import Image
 
-from autoreport.core.reporting.intake.adapters import IntakeAdapterRegistry
-from autoreport.core.reporting.models import ManifestFile
+from manyselves.core.reporting.intake.adapters import IntakeAdapterRegistry
+from manyselves.core.reporting.models import ManifestFile
 
 
 def _manifest(path: Path) -> ManifestFile:

@@ -3,9 +3,9 @@
 import inspect
 from types import SimpleNamespace
 
-from autoreport.gui import main_window
-from autoreport.gui.theme import scrollbar_stylesheet
-from autoreport.gui.widgets import (
+from manyselves.gui import main_window
+from manyselves.gui.theme import scrollbar_stylesheet
+from manyselves.gui.widgets import (
     base_popup_dropdown,
     chat_input,
     conversation_history,

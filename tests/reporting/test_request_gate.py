@@ -1,6 +1,6 @@
-from autoreport.core.reporting.coverage import evaluate_coverage
-from autoreport.core.reporting.models import ReportRequest
-from autoreport.core.reporting.request_gate import RequestGate
+from manyselves.core.reporting.coverage import evaluate_coverage
+from manyselves.core.reporting.models import ReportRequest
+from manyselves.core.reporting.request_gate import RequestGate
 
 
 def _request(policy: str) -> ReportRequest:
@@ -20,6 +20,13 @@ def test_ask_and_block_stop_before_professional_agents() -> None:
         assert decision.status == "blocked"
         assert decision.missing_evidence
         assert all(item.startswith("2.4") for item in decision.missing_evidence)
+
+
+def test_ask_gate_identifies_affected_modules_for_resume_decision() -> None:
+    request = _request("ask")
+    decision = RequestGate.evaluate(request, evaluate_coverage(request, []))
+
+    assert decision.affected_modules == ["2.4"]
 
 
 def test_draft_and_skip_continue_with_explicit_pending_coverage() -> None:

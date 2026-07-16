@@ -3,7 +3,7 @@ import sys
 from PyQt6.QtCore import QPoint
 from PyQt6.QtWidgets import QMainWindow
 
-from autoreport.gui.title_bar import TitleBar
+from manyselves.gui.title_bar import TitleBar
 
 
 def test_title_bar_keeps_right_gap_draggable(qtbot) -> None:

@@ -3,9 +3,9 @@
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
-from autoreport.gui.widgets.messages_area import MessagesArea
-from autoreport.gui.widgets.message_row import MessageRow
-from autoreport.gui.widgets.tool_call_group import ToolCallGroup
+from manyselves.gui.widgets.messages_area import MessagesArea
+from manyselves.gui.widgets.message_row import MessageRow
+from manyselves.gui.widgets.tool_call_group import ToolCallGroup
 
 
 def test_messages_area_initial_state(qtbot):

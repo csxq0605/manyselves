@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from autoreport.core.reporting.agentic_models import (
+from manyselves.core.reporting.agentic_models import (
     AgentResult,
     AgentRunStatus,
     AuditSubmission,
@@ -11,8 +11,8 @@ from autoreport.core.reporting.agentic_models import (
     SourceRecord,
     TaskEnvelope,
 )
-from autoreport.core.reporting.models import ReviewIssue
-from autoreport.core.reporting.taxonomy import REPORT_TAXONOMY
+from manyselves.core.reporting.models import ReviewIssue
+from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 
 
 def _narratives(module_id: str) -> dict[str, str]:
@@ -112,9 +112,15 @@ def test_blocking_audit_issue_can_be_module_scoped():
         issues=[
             ReviewIssue(
                 module_id="2.4",
+                claim_id="C-2.4-001",
                 kind="unsupported",
                 message="需要模块级复核",
                 severity="blocking",
+                affected_claim_ids=["C-2.4-001"],
+                evidence_refs=["E-0001"],
+                blocking_reason="该问题会影响模块专业结论。",
+                resolution_criteria=["责任专家修订并由审计员复核"],
+                owner_agent_id="module-2.4-specialist",
             )
         ],
         checked_claim_ids=[],

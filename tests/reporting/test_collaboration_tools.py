@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.loops.bus import MessageBus
-from autoreport.core.reporting.store import ReportingStore
-from autoreport.core.reporting.taxonomy import REPORT_TAXONOMY
-from autoreport.core.tools.reporting_collaboration_tools import (
+from manyselves.core.loops.bus import MessageBus
+from manyselves.core.reporting.store import ReportingStore
+from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
+from manyselves.core.tools.reporting_collaboration_tools import (
     PeerMessageRouter,
     QueryPeerTool,
     ReplyPeerTool,
@@ -15,7 +15,7 @@ from autoreport.core.tools.reporting_collaboration_tools import (
     ReportGapTool,
     SubmitResultTool,
 )
-from autoreport.interfaces.types import (
+from manyselves.interfaces.types import (
     AgentResultMessage,
     BlockedNoticeMessage,
     ProgressNoteMessage,

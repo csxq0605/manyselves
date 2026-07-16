@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.conversations import ConversationStore
-from autoreport.interfaces.types import (
+from manyselves.core.conversations import ConversationStore
+from manyselves.interfaces.types import (
     AgentResponse,
     AgentStatus,
     AgentType,

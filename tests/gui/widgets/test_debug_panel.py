@@ -4,7 +4,7 @@ import pytest
 import os
 import tempfile
 from datetime import datetime
-from autoreport.gui.widgets.debug_panel import DebugPanel
+from manyselves.gui.widgets.debug_panel import DebugPanel
 
 
 def test_add_debug_entry(qtbot):

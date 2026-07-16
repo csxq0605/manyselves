@@ -8,17 +8,14 @@ Run:
     uv run pytest tests/test_agent_integration.py -v -m "not integration"  # skip slow ones
 """
 
-import asyncio
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from autoreport.interfaces.types import (
+from manyselves.interfaces.types import (
     AgentResponse,
     AgentType,
-    Error,
-    StatusChange,
     ToolCallMessage,
     ToolResult,
 )
@@ -140,83 +137,23 @@ class TestMainAgentTools:
             assert len(tool_names) >= 1
 
 
-class TestSubAgentInteraction:
-    """Sub-agent (data analysis) interaction."""
+class TestMainOnlyRuntime:
+    """Persistent desktop runtime exposes only Main."""
 
     @pytest.mark.asyncio
-    async def test_data_analysis_agent_responds(self):
-        """Data analysis agent should respond to direct messages."""
+    async def test_only_main_loop_is_started(self):
         async with HeadlessBackend(_workspace()) as b:
-            collector = MessageCollector(b.bus)
-            collector.start()
-
-            await b.send("data_analysis", "请分析 Data/experiment.csv 的数据结构")
-            # Wait for the first response to confirm it reacts, then wait for
-            # IDLE so get_full_agent_text captures the final non-streaming text.
-            await collector.wait_for(AgentResponse, timeout=60)
-            await collector.wait_for_idle(AgentType.DATA_ANALYSIS, timeout=90)
-
-            text = collector.get_full_agent_text(AgentType.DATA_ANALYSIS)
-            assert len(text) > 0
+            assert b.loop_manager.get_loop(AgentType.MAIN) is not None
+            assert b.loop_manager.get_loop(AgentType.DATA_ANALYSIS) is None
+            assert b.loop_manager.get_loop(AgentType.PLOTTING) is None
+            assert b.loop_manager.get_loop(AgentType.THEORY) is None
+            assert b.loop_manager.get_loop(AgentType.REPORT) is None
 
     @pytest.mark.asyncio
-    async def test_data_analysis_reads_csv(self):
-        """Data analysis agent should be able to read and analyze CSV files."""
+    async def test_headless_sender_rejects_removed_persistent_agent(self):
         async with HeadlessBackend(_workspace()) as b:
-            collector = MessageCollector(b.bus)
-            collector.start()
-
-            await b.send(
-                "data_analysis",
-                "读取 Data/experiment.csv 文件，告诉我数据的基本统计信息",
-            )
-            await collector.wait_for(ToolCallMessage, timeout=60, count=1)
-
-            # Should have tool calls (read or python_exec)
-            assert len(collector.tool_calls) >= 1
-
-            # Wait for the agent loop to finish so the final non-streaming
-            # response has been published before reading the accumulated text.
-            await collector.wait_for_idle(AgentType.DATA_ANALYSIS, timeout=90)
-            text = collector.get_full_agent_text(AgentType.DATA_ANALYSIS)
-            assert len(text) > 10
-
-
-class TestAgentCoordination:
-    """Main agent coordinating with sub-agents."""
-
-    @pytest.mark.skip(reason="Requires LLM to choose delegation; non-deterministic with current prompts")
-    @pytest.mark.asyncio
-    async def test_main_agent_can_delegate(self):
-        """Main agent should be able to delegate tasks to sub-agents.
-
-        NOTE: This test is skipped because it relies on specific LLM behavior
-        (choosing to delegate via send_to_agent). With the current agent prompts,
-        the LLM may choose different paths (reading files directly, etc.).
-        This test should be re-enabled after agent prompts are updated to match
-        the new report protocol.
-        """
-        async with HeadlessBackend(_workspace()) as b:
-            collector = MessageCollector(b.bus)
-            collector.start()
-
-            await b.send(
-                "main",
-                "请让数据分析 agent 分析 Data/experiment.csv 文件中的电压和电流数据",
-            )
-            # Wait for main agent to start processing
-            await collector.wait_for(AgentResponse, timeout=120, count=1)
-            # Wait for tool calls to be made
-            await collector.wait_for(ToolCallMessage, timeout=30, count=1)
-            # Give Main time to finish its turn
-            await asyncio.sleep(3)
-
-            # Verify that a dispatch tool call was made
-            dispatch_calls = [tc for tc in collector.tool_calls if tc.tool_name == "send_to_agent"]
-            assert len(dispatch_calls) > 0, (
-                f"Main agent did not call send_to_agent to delegate. "
-                f"Tool calls: {[tc.tool_name for tc in collector.tool_calls]}"
-            )
+            with pytest.raises(ValueError, match="exposes only 'main'"):
+                await b.send("data_analysis", "obsolete direct message")
 
 
 class TestErrorHandling:

@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from autoreport.core.reporting.coverage import evaluate_coverage
-from autoreport.core.reporting.models import (
+from manyselves.core.reporting.coverage import evaluate_coverage
+from manyselves.core.reporting.models import (
     CoverageStatus,
     EvidenceItem,
     ReportRequest,

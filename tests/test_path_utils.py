@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.tools.path_utils import resolve_and_validate_path
+from manyselves.core.tools.path_utils import resolve_and_validate_path
 
 
 @pytest.fixture

@@ -1,18 +1,18 @@
 import re
 from pathlib import Path
 
-from autoreport.gui import theme
+from manyselves.gui import theme
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_gui_components_do_not_define_local_color_palettes():
     files = [
-        ROOT / "autoreport/gui/main_window.py",
-        ROOT / "autoreport/gui/widgets/tool_call_group.py",
-        ROOT / "autoreport/gui/icons.py",
-        ROOT / "autoreport/gui/scintilla_utils.py",
-        ROOT / "autoreport/gui/widgets/markdown_renderer.py",
+        ROOT / "manyselves/gui/main_window.py",
+        ROOT / "manyselves/gui/widgets/tool_call_group.py",
+        ROOT / "manyselves/gui/icons.py",
+        ROOT / "manyselves/gui/scintilla_utils.py",
+        ROOT / "manyselves/gui/widgets/markdown_renderer.py",
     ]
     color_pattern = re.compile(r"#[0-9A-Fa-f]{6,8}|rgba?\([^)]*\)")
 

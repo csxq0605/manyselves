@@ -4,10 +4,10 @@ import asyncio
 
 import pytest
 
-from autoreport.core.loops.bus import MessageBus
-from autoreport.core.tools.task_board import TaskBoard
-from autoreport.core.tools.task_tools import ManageTasksTool
-from autoreport.interfaces.types import AgentType, ReportMessage, TaskStatus, TaskUpdateMessage
+from manyselves.core.loops.bus import MessageBus
+from manyselves.core.tools.task_board import TaskBoard
+from manyselves.core.tools.task_tools import ManageTasksTool
+from manyselves.interfaces.types import AgentType, ReportMessage, TaskStatus, TaskUpdateMessage
 
 
 @pytest.fixture

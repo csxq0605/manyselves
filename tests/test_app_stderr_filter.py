@@ -1,6 +1,6 @@
 """Tests for app-level stderr noise filtering."""
 
-from autoreport.app import _BLOCK_STDERR_PATTERNS
+from manyselves.app import _BLOCK_STDERR_PATTERNS
 
 
 def test_macos_tsm_capslock_noise_is_filtered() -> None:

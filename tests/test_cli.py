@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from autoreport.app import app
+from manyselves.app import app
 
 
 class TestCLIOptions:
@@ -36,9 +36,9 @@ class TestCLISyncPresets:
         from typer.testing import CliRunner
 
         runner = CliRunner()
-        with patch("autoreport.app._try_sync_presets", return_value=True):
-            with patch("autoreport.app.setup_logging"):
-                with patch("autoreport.config.presets.load_presets", return_value=["p1", "p2"]):
+        with patch("manyselves.app._try_sync_presets", return_value=True):
+            with patch("manyselves.app.setup_logging"):
+                with patch("manyselves.config.presets.load_presets", return_value=["p1", "p2"]):
                     result = runner.invoke(app, ["--sync-presets"])
                     assert result.exit_code == 0
                     assert "2 presets" in result.output
@@ -48,8 +48,8 @@ class TestCLISyncPresets:
         from typer.testing import CliRunner
 
         runner = CliRunner()
-        with patch("autoreport.app._try_sync_presets", return_value=False):
-            with patch("autoreport.app.setup_logging"):
+        with patch("manyselves.app._try_sync_presets", return_value=False):
+            with patch("manyselves.app.setup_logging"):
                 result = runner.invoke(app, ["--sync-presets"])
                 assert result.exit_code == 1
 
@@ -58,9 +58,9 @@ class TestCLISyncPresets:
         from typer.testing import CliRunner
 
         runner = CliRunner()
-        with patch("autoreport.app._try_sync_presets", return_value=True):
-            with patch("autoreport.app.setup_logging"):
-                with patch("autoreport.config.presets.load_presets", return_value=[]):
+        with patch("manyselves.app._try_sync_presets", return_value=True):
+            with patch("manyselves.app.setup_logging"):
+                with patch("manyselves.config.presets.load_presets", return_value=[]):
                     result = runner.invoke(app, ["--sync-presets"])
                     assert "No such option" not in result.output
 

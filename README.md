@@ -1,8 +1,10 @@
 <div align="center">
 
-![title](assets/screenshots/title.png)
+![Manyselves](assets/screenshots/title.png)
 
-### Local Multi-Agent Workspace for Power-Distribution Reports
+### One runtime. Many selves.
+
+**A local workspace for document-defined agent teams.**
 
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#)
 [![Python](https://img.shields.io/badge/python-%E2%89%A5%203.12-blue.svg)](https://www.python.org/)
@@ -13,140 +15,91 @@ English | [中文](README_zh.md)
 
 </div>
 
-## Overview
+## What is Manyselves?
 
-This repository is the independent power-distribution report product based directly on the AutoReport desktop codebase. The V2 migration now covers all 37 leaf submodules across report modules 2.1–2.5: the three core workbooks, WPS `DISPIMG` media, exact coverage, versioned Skills, auditable claims, bounded local revision, true five-module parallel drafting, cross-module review, Chief Editor summaries, governed Skill candidates, ReportState, and template-backed DOCX delivery all run inside the existing AutoReport runtime.
+Manyselves is a local desktop runtime for teams of AI agents whose identities,
+boundaries, skills, and handoffs live in documents. Keep the same workspace and
+change those definitions to turn it into a different team.
 
-The upstream AutoReport source is preserved as the implementation base, not used as a runtime dependency. Nexgent is only a design reference for declarative agent definitions and phase/pipeline/parallel orchestration.
+The runtime supplies the durable parts: a Main Agent conversation, project file
+tree, document preview, task routing, tools, checkpoints, provider integration,
+and local artifacts. The repository currently ships a production-grade
+power-distribution reporting team as its bundled capability; that team is an
+example of what the runtime can host, not the limit of the product.
 
-## Features
+![How Manyselves becomes a team](assets/screenshots/workflow.png)
 
-### Core Capabilities
-- **Multi-Agent Collaboration** — Main Agent orchestrates, with four sub-agents (Data Analysis, Plotting, Theory, Report) each specializing in their domain
-- **Directory Permission Isolation** — Each agent can only write to designated directories, preventing cross-contamination
-- **Waitlist/Todolist Tracking** — Structured task delegation with linked waitlist-todolist chains and auto-notification on completion
-- **Checkpoint Rollback** — Automatically creates checkpoints at key nodes; roll back to any historical state
-- **Interactive Adjustment** — Users can message any agent at any time for intervention and optimization
+## Define the team, not another app
 
-### UI/UX (Claude Code Style)
-- **Streaming Responses** — Real-time agent output, word-by-word streaming
-- **Switchable Agent Panel** — A single agent chat panel with a dropdown selector to switch among Main / Data Analysis / Plotting / Theory / Report
-- **Recent Projects Cache** — VSCode-style recent projects list, cached in `~/.autoreport/recent_projects.json`
-- **File Explorer** — VSCode-style file tree with 22px row height, 16px icons, concise labels (Data, References, Theory, Plots, Outline, Tex)
-- **Context Chip Bar** — Visual indicator for file/line selections with toggle to include/exclude from messages
-- **Chat Interface** — Claude Code-style conversation display with proper Markdown rendering and grouped tool calls
-- **Slash Commands** — `/clear`, `/new`, `/help`, `/compact`, `/init`
+Three layers shape a Manyselves team:
 
-### Developer Tools
-- **@ File References** — Type `@` in chat to fuzzy-search and insert file references as Markdown links
-- **Selected Line Context** — Text selections in preview pane are automatically appended to agent messages
-- **Sub-Agent Debug Mode** — Disconnect from Main Agent channel, test individual agents independently
+1. **Identity documents** define each Agent's role, constraints, inputs, outputs,
+   and handoffs.
+2. **Skill documents** encode reusable domain methods and quality criteria.
+3. **Runtime tools and workflows** connect those definitions to files, state,
+   review, and deliverables.
 
-### LLM Integration
-- **Multi-Provider Support** — Anthropic, OpenAI, DeepSeek, etc. Runtime model switching
-- **Provider Presets** — 50+ provider templates from [cc-switch](https://github.com/farion1231/cc-switch)
-- **Context Auto-Compact** — Automatically trims conversation history when approaching context window limits
+The current definitions are under `manyselves/templates/agents/` and
+`manyselves/templates/reporting/`. See [Defining a team](docs/team-definition.md)
+for the separation between document-only customization and Python extensions.
 
-## Main Workspace
+## Runtime capabilities
 
-The main workspace combines the project file tree, document preview, and agent chat timeline in one window. Users can inspect generated LaTeX/PDF output while continuing to interact with the agent team.
+- **One stable Main surface** — users talk to Main while task-scoped specialists,
+  auditors, reviewers, and editors report through one timeline.
+- **Local project workspace** — inspect inputs, knowledge, work state, and outputs
+  without moving project data to a separate product database.
+- **Document context** — preview files, add `@` references, attach selected lines,
+  and render Markdown in conversation.
+- **Reliable execution** — streaming responses, task routing, typed state,
+  checkpoints, rollback, and resumable decisions.
+- **Multiple LLM providers** — Anthropic, OpenAI, DeepSeek, and compatible APIs,
+  with provider presets and runtime model selection.
+- **Extensible delivery** — tools and workflows can produce documents, review
+  records, ledgers, state snapshots, and other project artifacts.
 
-![AutoReport main workspace](https://raw.githubusercontent.com/xjsongphy/AutoReport/master/assets/screenshots/main-window.png)
+## Quick start
 
-## Quick Start
-
-**Prerequisites:** Python >= 3.12, [uv](https://docs.astral.sh/uv/) package manager, TeX distribution, at least one LLM Provider API key.
-
-Install from source:
+Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), and an API key for
+at least one supported LLM provider.
 
 ```bash
-git clone https://github.com/csxq0605/autoreport-power-distribution.git
-cd autoreport-power-distribution
+git clone <repository-url> manyselves
+cd manyselves
 uv sync
-uv run autoreport
+uv run manyselves
 ```
 
-Without `uv`, use a Python 3.12 virtual environment inside the repository:
+![Manyselves start window](assets/screenshots/start-window.png)
+
+Without `uv`, create the virtual environment inside the repository:
 
 ```bash
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -e .
-.venv/bin/autoreport
+.venv/bin/manyselves
 ```
 
-The start window lets users open an existing project folder, create a new project, configure API providers, or resume a recent project.
-
-![AutoReport start window](assets/screenshots/start-window.png)
-
-First launch prompts for API configuration. Pre-configure via environment variables:
+You can preconfigure provider keys through environment variables:
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 export OPENAI_API_KEY="sk-..."
 export DEEPSEEK_API_KEY="sk-..."
-autoreport
+uv run manyselves
 ```
 
-## Power-distribution V2 workflow
+## Configuration and local state
 
-Customer inputs belong under the project `Inputs/` directory. Dedicated business mappers recognize `S2-1收资表.xlsx`, `S4-4诊断工作用表.xlsx`, and `S4-6评估总表.xlsx`. The intake registry also handles XLSX/XLSM, DOCX, Markdown, text, images, and PDF; DWG and video files remain visible as explicit `manual_required` artifacts.
+The canonical application configuration is the repository-root
+`manyselves.config.yaml`, regardless of the directory from which Manyselves is
+launched. The canonical Python namespace is `manyselves`.
 
-Reference material belongs under project `Knowledge/`. Import-time selection decides what is copied there. At runtime, every supported file anywhere below `Knowledge/` is eligible for search, `R-*` registration, and citation—there are no import-source-label branches, directory-name allowlists, or filename matching rules. Knowledge and web sources can support interpretation but cannot become customer-site facts (`E-*`).
+Explicit configuration paths still override the default. Application preferences
+stay under the repository-root `.manyselves/` directory; project state and
+deliverables stay inside the selected project.
 
-The Main Agent creates a typed request. Missing-evidence policy is evaluated before any reporting Agent starts; partial requests run only their selected modules and do not create a full DOCX. Full requests plan and draft modules 2.1–2.5 concurrently and audit each module independently. When a review does not pass, the Main Agent reads the review history and revision diffs, then decides whether to revise, accept, request user input, or stop incomplete; there is no YAML business-loop limit. Cross-reviewed modules pass protected claims plus traceable tables/photos through the Chief Editor and packaged DOCX renderer. Module specialists receive only their own packaged Skill bodies, auditors receive only the module under review, and the Planner receives metadata-only Skill indexes.
-
-Runtime outputs stay inside the project:
-
-```text
-Work/manifest.json
-Work/evidence.jsonl
-Work/coverage.json
-Work/photo-manifest.json
-Work/report-state.json
-Work/runs/<run-id>/workflow-state.json
-Work/runs/<run-id>/modules/*.json
-Work/runs/<run-id>/reviews/*.json
-Work/runs/<run-id>/ledgers/sources.json
-Outputs/Modules/2.1.md ... 2.5.md
-Outputs/Reviews/full-review.json
-Outputs/Reports/配电安全专家咨询报告.docx
-Outputs/Reports/render-log.json
-Capabilities/skills/manifest.json
-Capabilities/skills/{candidates,evaluations,versions}/...
-```
-
-`missing_evidence_policy` supports `ask`, `block`, `skip`, and `draft`. Arbitrary spreadsheet rows cannot make a submodule ready. Packaged module Skills prevent a measured load rate below 100% from being described as an existing overload and prevent the workbook's 10 A photo trigger from being presented as a statutory safety limit. `SkillGovernanceStore` keeps immutable candidates and evaluations under `Capabilities/skills/`; publication requires a non-regressing evaluation plus explicit user confirmation, and rollback only changes the active manifest pointer.
-
-## MinerU Integration
-
-AutoReport uses [mineru-open-api](https://github.com/opendatalab/MinerU) CLI for PDF parsing (PDF, images, DOCX, PPTX, XLSX → Markdown).
-
-**Setup:**
-
-1. Install mineru-open-api:
-   ```bash
-   curl -fsSL https://cdn-mineru.openxlab.org.cn/open-api-cli/install.sh | sh
-   ```
-   See [mineru-open-api docs](https://mineru.net/ecosystem?tab=cli) for details.
-
-2. Register at [MinerU](https://mineru.net/apiManage/token) for an API key, then authenticate:
-   ```bash
-   mineru-open-api auth
-   ```
-
-3. The app auto-detects availability on startup and shows a warning if not installed.
-
-Supports batch processing (max 200MB / 600 pages per file), text/image/table/formula extraction.
-
-## Configuration
-
-Configuration file: repository-root `autoreport.config.yaml`. AutoReport uses
-this same file regardless of the directory from which `uv run autoreport` is
-launched.
-
-The API configuration dialog manages provider presets, active provider selection, API keys, base URLs, and default models.
-
-![AutoReport API configuration](https://raw.githubusercontent.com/xjsongphy/AutoReport/master/assets/screenshots/configuration-window.png)
+![Manyselves API configuration](assets/screenshots/configuration-window.png)
 
 ```yaml
 agents:
@@ -156,103 +109,97 @@ agents:
     max_tool_iterations: 200
 ```
 
-## Debug Mode
+## Bundled capability: power-distribution reports
 
-```bash
-autoreport --debug-agent data_analysis
-autoreport --debug-agent data_analysis --debug-agent plotting
+The included team coordinates evidence intake, five parallel report modules,
+responsibility audit, cross-module review, Chief Editor integration, governed
+Skill evolution, and template-backed DOCX delivery.
+
+Customer facts go in `Inputs/`; project standards and interpretation references
+go in `Knowledge/`. The workflow recognizes the three core workbooks, WPS
+`DISPIMG` media, XLSX/XLSM, DOCX, Markdown, text, images, and PDF. Unsupported
+DWG and video files remain visible as `manual_required` instead of disappearing.
+
+Customer facts (`E-*`), reference sources (`R-*`), claims, coverage, missing
+evidence decisions, loaded Skill versions, review findings, and report versions
+remain auditable. Knowledge and web sources can support interpretation but never
+become customer-site facts.
+
+The five fixed modules 2.1–2.5 draft in parallel, then pass responsibility audit,
+cross review, and complete-document composition. Missing evidence can `ask`,
+`block`, `skip`, or `draft`; durable decisions survive process restarts. A
+post-delivery revision restores a baseline, reruns only the responsible module,
+rechecks the full report, and publishes an immutable child version.
+
+Typical project output:
+
+```text
+project/
+├── Inputs/                         # Customer facts
+├── Knowledge/                      # Project references
+├── Templates/                      # Optional report_template.docx override
+├── Work/
+│   ├── evidence.jsonl
+│   ├── coverage.json
+│   ├── report-state.json
+│   ├── runs/<run-id>/              # State, modules, reviews, ledgers, decisions
+│   └── report-versions/<id>/        # Immutable version snapshots
+└── Outputs/
+    ├── Modules/                     # Modules 2.1–2.5
+    ├── Reviews/                     # Responsibility and cross-module reviews
+    └── Reports/                     # Complete DOCX and render log
 ```
 
-Valid agents: `data_analysis`, `plotting`, `theory`, `report`
+Skill evolution is separate from report revision and requires explicit intent:
+`FeedbackRecord → SkillCandidate → EvaluationResult → confirmation → SkillVersion`.
+Later runs resolve packaged, product, then project Skills; every report version
+freezes the exact IDs, versions, scopes, hashes, and template provenance it used.
 
-## Project Structure
+See the [full capability contract](docs/capabilities/power-distribution.md) for
+evidence decisions, acceptance boundaries, revision, and artifact details.
 
-```
-my_experiment/
-├── Data/            # Raw experimental data (user input) + analysis results
-│   └── Processed/   # Data Analysis Agent output only
-├── References/      # Reference materials (PDF, images), custom templates
-├── Theory/          # Theory Agent output only
-├── Plots/           # Plotting Agent plots and generated images
-│   ├── Fig/         # Generated figures
-│   └── Scripts/     # Plotting scripts
-├── Outline/         # Main Agent report outline and routing notes
-└── Tex/             # Report Agent LaTeX source and compiled output
-```
+## Optional document parsing
 
-### Agent Permissions
-
-| Agent | Write Directory | Read Scope |
-|-------|----------------|------------|
-| Main Agent | `Outline/` | All directories |
-| Data Analysis | `Data/Processed/` | All directories |
-| Plotting | `Plots/` | All directories |
-| Theory | `Theory/` | All directories |
-| Report | `Tex/` | All directories |
-| User | `Data/`, `References/` | All directories |
+Manyselves can use an optional document-conversion CLI to convert PDF, images,
+DOCX, PPTX, and XLSX to Markdown. Install and authenticate a compatible converter;
+the application detects it at startup. Core local workspace use does not depend
+on this integration.
 
 ## Architecture
 
-```
-autoreport/
-├── app.py                 # Entry point: CLI parsing, LoopManager startup
-├── config/                # Pydantic-based config (YAML loading, API key validation)
+```text
+manyselves/                         # Canonical Python package
+├── app.py                          # CLI and desktop startup
+├── branding.py                     # Public product identity contract
+├── config/                         # Repository-local YAML configuration
 ├── core/
-│   ├── loops/            # Agent runtime: LoopManager, AgentLoop, MessageBus
-│   ├── providers/        # LLM provider abstraction (factory, base classes)
-│   ├── prompts/          # Progressive prompt loading (identity → full instructions)
-│   ├── tools/            # Tool system (registry, file tools, exec tools, PDF tool, skill tool)
-│   ├── checkpoints.py    # Operation-log checkpoints with reversible file operations
-│   ├── conversations.py  # Multi-session conversation store
-│   ├── file_search.py    # Fuzzy file search for @ references
-│   ├── preset_sync.py    # cc-switch preset synchronization
-│   └── recent_projects.py# Recent projects cache
-├── gui/                  # PyQt6 interface (main window, dialogs, widgets)
-│   └── widgets/          # Reusable components (file tree, preview, agent panel)
-├── interfaces/           # GUI-backend protocol (protocol definitions, message types)
-├── resources/            # Built-in resources
-├── templates/            # Built-in templates (agent prompts, report templates)
-│   ├── agents/           # Agent prompt files (Markdown)
-│   └── reports/          # LaTeX report templates
-├── external/             # Git-ignored synced content (presets, skills)
-│   ├── cc-switch/        # Provider presets from cc-switch repo
-│   └── skills/           # Skill Markdown files
-└── utils/                # Logging configuration (loguru)
+│   ├── loops/                      # Agent runtime and MessageBus
+│   ├── providers/                  # LLM provider abstraction
+│   ├── reporting/                  # Bundled reporting capability
+│   └── tools/                      # Workspace and workflow tools
+├── gui/                            # PyQt6 desktop interface
+├── resources/                      # Manyselves application icon
+└── templates/
+    ├── agents/                     # Main identity and common policy
+    └── reporting/                  # Bundled team identities and Skills
 ```
 
 ## Development
 
 ```bash
-# Run tests
-uv run pytest -v
-
-# Lint
-uv run ruff check autoreport tests
-uv run ruff check --fix autoreport tests
-
-# Run with coverage
-uv run pytest --cov=autoreport --cov-report=html
+QT_QPA_PLATFORM=offscreen uv run pytest -q
+uv run ruff check manyselves tests scripts
+uv run python scripts/build_brand_assets.py
 ```
 
-## UI Icons
+See [Brand system](docs/brand.md) for naming, assets, palette, and compatibility
+rules.
 
-Agent type icons are from [Tabler Icons](https://tabler-icons.io/) — 6000+ free SVG icons, MIT License.
+## Product identity
 
-## Reference Projects
-
-- [DeepCode](https://github.com/HKUDS/DeepCode) — API config (YAML secrets + env fallback), multi-provider support, error handling
-- [cc-switch](https://github.com/farion1231/cc-switch) — Provider presets (50+ providers)
-- [nanobot](https://github.com/HKUDS/nanobot) — AgentLoop architecture, tool definitions, compact/command system
-- [codex](https://github.com/openai/codex) — UI design patterns, streaming implementation
-- [openclaw](https://github.com/openclaw/openclaw) — Personal AI assistant, skills system, multi-channel agent design
-- [VS Code](https://github.com/microsoft/vscode) — Editor UI/UX patterns, panel layout, command and extension architecture
-- [Claude Code](https://claude.com/claude-code) — Agent chat panel UI/UX (bubble messages, grouped tool calls, streaming, `@` references, slash commands)
-- [PKUMpLtX](https://github.com/CastleStar14654/PKUMpLtX) — Built-in LaTeX report template (PKU Modern Physics Laboratory, revtex4-2 based)
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/chart?repos=xjsongphy/AutoReport&type=date&legend=top-left&sealed_token=Y3lV1Yo5tEoNSv5pWKul9FmJwDeZqIHN2Wn166i3TDTJnf4IOue7kaSUbnrDALp_TN4G79kz1IrUOc66GxXpkupO_tinFyx52scf-IQs_OtNrPgzMIO_bM-SLf3cTQE89VHP3ZCqUHhOKrWrObw3JFGrRMvZVDXzT-ty1u7J9cENkSVjaDTFaDb3DfEI)](https://www.star-history.com/?repos=xjsongphy%2FAutoReport&type=date&legend=top-left)
+Manyselves is maintained as an independent product with its own name, package,
+assets, documentation, configuration, and release artifacts.
 
 ## License
 
-MIT License
+MIT License — Copyright (c) 2026 Manyselves contributors.

@@ -4,8 +4,8 @@ import asyncio
 
 import pytest
 
-from autoreport.core.loops.bus import MessageBus
-from autoreport.interfaces.types import (
+from manyselves.core.loops.bus import MessageBus
+from manyselves.interfaces.types import (
     AgentResponse,
     AgentResultMessage,
     Message,

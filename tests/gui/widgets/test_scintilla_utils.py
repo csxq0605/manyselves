@@ -1,12 +1,12 @@
 from PyQt6.QtGui import QColor
 
-from autoreport.gui.scintilla_utils import (
+from manyselves.gui.scintilla_utils import (
     CODE_TEXT_LEFT_MARGIN,
     LINE_NUMBER_MARGIN_MIN_WIDTH,
     apply_scintilla_style,
     configure_lexer_colors,
 )
-from autoreport.gui.theme import get_theme_colors
+from manyselves.gui.theme import get_theme_colors
 
 
 def _scintilla_color_value(color: QColor) -> int:
@@ -93,7 +93,7 @@ def test_markdown_styles_match_vscode(qtbot):
     """
     from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 
-    from autoreport.gui.scintilla_utils import configure_lexer_colors
+    from manyselves.gui.scintilla_utils import configure_lexer_colors
 
     sci = QsciScintilla()
     qtbot.addWidget(sci)
@@ -106,7 +106,7 @@ def test_markdown_styles_match_vscode(qtbot):
 
     from PyQt6.QtGui import QColor
 
-    from autoreport.gui.theme import get_theme_colors
+    from manyselves.gui.theme import get_theme_colors
 
     colors = get_theme_colors()
 
@@ -135,7 +135,7 @@ def test_tex_commands_get_function_color(qtbot):
     """
     from PyQt6.Qsci import QsciLexerTeX, QsciScintilla
 
-    from autoreport.gui.scintilla_utils import (
+    from manyselves.gui.scintilla_utils import (
         attach_tex_post_styling,
         configure_lexer_colors,
     )
@@ -150,7 +150,7 @@ def test_tex_commands_get_function_color(qtbot):
     sci.setText(r"\section{Hi} and text")
     # setText triggers the attached textChanged -> command coloring.
 
-    from autoreport.gui.theme import get_theme_colors
+    from manyselves.gui.theme import get_theme_colors
 
     colors = get_theme_colors()
     text = sci.text()
@@ -169,7 +169,7 @@ def test_tex_keyword_commands_get_keyword_color(qtbot):
     """
     from PyQt6.Qsci import QsciLexerTeX, QsciScintilla
 
-    from autoreport.gui.scintilla_utils import (
+    from manyselves.gui.scintilla_utils import (
         attach_tex_post_styling,
         configure_lexer_colors,
     )
@@ -184,7 +184,7 @@ def test_tex_keyword_commands_get_keyword_color(qtbot):
     sci.setText(r"\begin{document}\n\section{Hi}\n\end{document}")
     # setText triggers the attached textChanged -> command coloring.
 
-    from autoreport.gui.theme import get_theme_colors
+    from manyselves.gui.theme import get_theme_colors
 
     colors = get_theme_colors()
     text = sci.text()
@@ -210,7 +210,7 @@ def test_markdown_hr_color_matches_vscode(qtbot):
     """
     from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 
-    from autoreport.gui.scintilla_utils import configure_lexer_colors
+    from manyselves.gui.scintilla_utils import configure_lexer_colors
 
     sci = QsciScintilla()
     qtbot.addWidget(sci)
@@ -221,7 +221,7 @@ def test_markdown_hr_color_matches_vscode(qtbot):
     sci.setText("text\n\n---\n")
     sci.SendScintilla(sci.SCI_COLOURISE, 0, -1)
 
-    from autoreport.gui.theme import get_theme_colors
+    from manyselves.gui.theme import get_theme_colors
 
     colors = get_theme_colors()
     text = sci.text()
@@ -239,7 +239,7 @@ def test_markdown_fenced_code_block_has_syntax_colors(qtbot):
     """
     from PyQt6.Qsci import QsciLexerMarkdown, QsciScintilla
 
-    from autoreport.gui.scintilla_utils import (
+    from manyselves.gui.scintilla_utils import (
         attach_markdown_post_styling,
         configure_lexer_colors,
     )
@@ -274,7 +274,7 @@ def test_tex_commands_inside_math_mode_keep_command_color(qtbot):
     """
     from PyQt6.Qsci import QsciLexerTeX, QsciScintilla
 
-    from autoreport.gui.scintilla_utils import (
+    from manyselves.gui.scintilla_utils import (
         attach_tex_post_styling,
         configure_lexer_colors,
     )
@@ -289,7 +289,7 @@ def test_tex_commands_inside_math_mode_keep_command_color(qtbot):
     sci.setText(r"$\mathrm{p}^+\mathrm{n}$ and $\frac{a}{b}$")
     # setText fires textChanged → post-styling.
 
-    from autoreport.gui.theme import get_theme_colors
+    from manyselves.gui.theme import get_theme_colors
 
     colors = get_theme_colors()
     text = sci.text()
@@ -326,7 +326,7 @@ def test_tex_comment_overrides_everything(qtbot):
     """
     from PyQt6.Qsci import QsciLexerTeX, QsciScintilla
 
-    from autoreport.gui.scintilla_utils import (
+    from manyselves.gui.scintilla_utils import (
         attach_tex_post_styling,
         configure_lexer_colors,
     )
@@ -341,7 +341,7 @@ def test_tex_comment_overrides_everything(qtbot):
     sci.setText(r"real content\n% \textbf{not bold} $E=mc^2$ \begin{not}\nmore text")
     # setText fires textChanged → post-styling.
 
-    from autoreport.gui.theme import get_theme_colors
+    from manyselves.gui.theme import get_theme_colors
 
     colors = get_theme_colors()
     text = sci.text()

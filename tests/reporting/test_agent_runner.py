@@ -1,14 +1,15 @@
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
 
-from autoreport.config.schema import AgentDefaults
-from autoreport.core.loops.bus import MessageBus
-from autoreport.core.providers.base import LLMProvider, LLMResponse, LLMToolCall
-from autoreport.core.reporting.agent_runner import ReportingAgentRunner
-from autoreport.core.reporting.agentic_models import AgentRunStatus, ModuleSubmission, TaskEnvelope
-from autoreport.core.reporting.config import load_packaged_agents
+from manyselves.config.schema import AgentDefaults
+from manyselves.core.loops.bus import MessageBus
+from manyselves.core.providers.base import LLMProvider, LLMResponse, LLMToolCall
+from manyselves.core.reporting.agent_runner import ReportingAgentRunner
+from manyselves.core.reporting.agentic_models import AgentRunStatus, ModuleSubmission, TaskEnvelope
+from manyselves.core.reporting.config import load_packaged_agents
 
 
 class DirectSubmissionProvider(LLMProvider):
@@ -61,6 +62,14 @@ class DirectSubmissionProvider(LLMProvider):
         )
 
 
+class NonRetryableFailureProvider(LLMProvider):
+    def __init__(self):
+        super().__init__("test", model="failing")
+
+    async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        raise ValueError("invalid provider request")
+
+
 @pytest.mark.asyncio
 async def test_reporting_agent_runner_uses_real_isolated_loop_and_can_finish_without_research(
     tmp_path: Path,
@@ -98,3 +107,47 @@ async def test_reporting_agent_runner_uses_real_isolated_loop_and_can_finish_wit
     assert "负荷率必须保留计算口径" in provider.system_prompts[0]
     assert "剩余电流大于 10A" not in provider.system_prompts[0]
     assert (tmp_path / "Work/runs/run-test/results/module-2.1.json").is_file()
+    summaries = list((tmp_path / "Work/runs/run-test/session-summaries").glob("*.json"))
+    assert len(summaries) == 1
+    summary = json.loads(summaries[0].read_text(encoding="utf-8"))
+    assert summary["agent_id"] == "module-2.1-specialist"
+    assert summary["status"] == "completed"
+    assert summary["context_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_reporting_agent_runner_fails_immediately_when_isolated_loop_errors(
+    tmp_path: Path,
+) -> None:
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    runner = ReportingAgentRunner(
+        tmp_path,
+        bus,
+        NonRetryableFailureProvider(),
+        AgentDefaults(max_tool_iterations=5),
+        timeout=600,
+    )
+    envelope = TaskEnvelope(
+        task_id="report-plan",
+        run_id="run-fail-fast",
+        agent_id="report-planner",
+        objective="规划报告",
+        allowed_outputs=["plan_submission"],
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="数据或参数校验失败"):
+            await asyncio.wait_for(
+                runner.run(
+                    load_packaged_agents()["report-planner"],
+                    envelope,
+                    [],
+                    workflow_id="wf-fail-fast",
+                ),
+                timeout=1,
+            )
+    finally:
+        await runner.close_workflow("wf-fail-fast")
+        bus.shutdown()
+        await bus_task

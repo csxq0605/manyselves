@@ -2,13 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.reporting.research.web import (
+from manyselves.core.reporting.research.web import (
     DisabledWebResearchBackend,
     OpenedWebSource,
     WebSearchHit,
 )
-from autoreport.core.reporting.source_ledger import SourceLedger
-from autoreport.core.tools.reporting_research_tools import (
+from manyselves.core.reporting.source_ledger import SourceLedger
+from manyselves.core.tools.reporting_research_tools import (
     OpenWebSourceTool,
     WebSearchTool,
 )

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PyQt6.QtWidgets import QFrame
 
-from autoreport.gui.widgets.conversation_history import ConversationHistoryDropdown
+from manyselves.gui.widgets.conversation_history import ConversationHistoryDropdown
 
 
 @pytest.fixture

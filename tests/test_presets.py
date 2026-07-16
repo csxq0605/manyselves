@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from autoreport.config.presets import (
+from manyselves.config.presets import (
     ProviderPreset,
     _builtin_presets,
     _extract_ts_number,

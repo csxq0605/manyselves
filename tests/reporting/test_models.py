@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from autoreport.core.reporting.models import (
+from manyselves.core.reporting.models import (
     CoverageEntry,
     CoverageMatrix,
     CoverageStatus,

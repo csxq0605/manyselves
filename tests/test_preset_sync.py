@@ -5,17 +5,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from autoreport.core.preset_sync import SyncError, is_cached, sync_presets
+from manyselves.core.preset_sync import SyncError, is_cached, sync_presets
 
 
 def test_is_cached_false_by_default():
-    with patch("autoreport.core.preset_sync._cache_dir", return_value=Path("/nonexistent")):
+    with patch("manyselves.core.preset_sync._cache_dir", return_value=Path("/nonexistent")):
         assert is_cached() is False
 
 
 def test_sync_presets_raises_when_all_fail():
     with (
-        patch("autoreport.core.preset_sync._cache_dir", return_value=Path("/tmp/test_sync")),
+        patch("manyselves.core.preset_sync._cache_dir", return_value=Path("/tmp/test_sync")),
         patch("urllib.request.urlopen", side_effect=Exception("Network error")),
     ):
         with pytest.raises(SyncError, match="无法同步预设数据"):
@@ -40,7 +40,7 @@ def test_sync_presets_success():
         config_dir = cache_dir / "src" / "config"
 
         with (
-            patch("autoreport.core.preset_sync._cache_dir", return_value=cache_dir),
+            patch("manyselves.core.preset_sync._cache_dir", return_value=cache_dir),
             patch("urllib.request.urlopen", return_value=mock_response),
         ):
             count = sync_presets()
@@ -70,7 +70,7 @@ def test_sync_presets_partial_failure():
             return mock_resp
 
         with (
-            patch("autoreport.core.preset_sync._cache_dir", return_value=cache_dir),
+            patch("manyselves.core.preset_sync._cache_dir", return_value=cache_dir),
             patch("urllib.request.urlopen", side_effect=mock_urlopen),
         ):
             count = sync_presets()

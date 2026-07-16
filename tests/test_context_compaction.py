@@ -2,8 +2,8 @@
 
 import pytest
 
-from autoreport.core.loops.agent_loop import _estimate_tokens, _trim_messages_to_budget
-from autoreport.core.providers.base import Message as LLMMessage
+from manyselves.core.loops.agent_loop import _estimate_tokens, _trim_messages_to_budget
+from manyselves.core.providers.base import Message as LLMMessage
 
 
 class TestEstimateTokens:
@@ -22,7 +22,7 @@ class TestEstimateTokens:
         assert _estimate_tokens(msgs) == 34
 
     def test_tool_calls_add_overhead(self):
-        from autoreport.core.providers.base import LLMToolCall
+        from manyselves.core.providers.base import LLMToolCall
         tc = LLMToolCall(id="call_1", name="read", arguments={"path": "test.txt"})
         msgs = [LLMMessage(role="assistant", content="", tool_calls=[tc])]
         tokens = _estimate_tokens(msgs)

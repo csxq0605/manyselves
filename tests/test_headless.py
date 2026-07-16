@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.config.schema import ApiConfig
+from manyselves.config.schema import ApiConfig
 from tests.headless import HeadlessBackend
 
 
@@ -17,7 +17,7 @@ def _workspace(tmp_path: Path) -> Path:
 @pytest.mark.asyncio
 async def test_headless_backend_skips_when_provider_is_unusable(tmp_path, monkeypatch):
     """Integration harness should skip when configured providers cannot start."""
-    from autoreport.core.providers.factory import ProviderFactory
+    from manyselves.core.providers.factory import ProviderFactory
 
     backend = HeadlessBackend(_workspace(tmp_path))
     backend.config_manager.config.providers.configurations.clear()
@@ -44,7 +44,7 @@ async def test_headless_backend_skips_before_provider_init_for_missing_socksio(
     tmp_path, monkeypatch
 ):
     """SOCKS proxy environments should skip before provider construction."""
-    from autoreport.core.providers.factory import ProviderFactory
+    from manyselves.core.providers.factory import ProviderFactory
 
     backend = HeadlessBackend(_workspace(tmp_path))
     backend.config_manager.config.providers.configurations.clear()

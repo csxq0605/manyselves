@@ -1,7 +1,7 @@
 """Tests for API configuration dialog widgets."""
 
-from autoreport.config.schema import ApiConfig
-from autoreport.gui.config_dialog import ConfigCard
+from manyselves.config.schema import ApiConfig
+from manyselves.gui.config_dialog import ConfigCard
 
 
 def test_config_card_icon_buttons_keep_size_but_align_to_test_button_right_edge(qtbot) -> None:

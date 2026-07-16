@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from autoreport.config.schema import ApiConfig, AppConfig
-from autoreport.core.loops.bus import MessageBus
-from autoreport.core.loops.manager import LoopManager
-from autoreport.interfaces.types import AgentType
+from manyselves.config.schema import ApiConfig, AppConfig
+from manyselves.core.loops.bus import MessageBus
+from manyselves.core.loops.manager import LoopManager
+from manyselves.interfaces.types import AgentType
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ def test_manager_loop_lookup_uses_string_id(manager):
 def test_subscribes_to_restart(manager):
     assert manager.is_running is False
     # Verify bus subscription
-    from autoreport.interfaces.types import RestartRequest
+    from manyselves.interfaces.types import RestartRequest
     assert RestartRequest in manager.bus._subscribers
 
 
@@ -81,37 +81,24 @@ def test_create_tools_for_main(manager):
     assert "apply_patch" in tool_names
     # MAIN delegates — it does not get the exec/shell tool.
     assert "exec" not in tool_names
-    # MAIN is the only agent that can dispatch to sub-agents.
-    assert "send_to_agent" in tool_names
+    assert "send_to_agent" not in tool_names
     assert "run_reporting_workflow" in tool_names
+    assert "resume_reporting_workflow" in tool_names
+    assert "revise_reporting_workflow" in tool_names
+    assert "project_skill_evolution" in tool_names
+    assert "run_product_skill_maintainer" in tool_names
+    assert "product_skill_evolution" not in tool_names
     assert "respond" not in tool_names
 
 
-def test_create_tools_for_data_analysis(manager):
-    tools = manager._create_tools_for_agent(AgentType.DATA_ANALYSIS)
+@pytest.mark.parametrize("legacy_type", [AgentType.DATA_ANALYSIS, AgentType.THEORY, AgentType.PLOTTING])
+def test_legacy_agent_ids_do_not_receive_runtime_orchestration_tools(manager, legacy_type):
+    tools = manager._create_tools_for_agent(legacy_type)
     tool_names = {t.name for t in tools.get_all().values()}
-    # Shell execution tool is now named "exec" (formerly "bash").
-    assert "exec" in tool_names
-    assert "parse_pdf" in tool_names
-    assert "respond" in tool_names
-
-
-def test_create_tools_for_theory(manager):
-    tools = manager._create_tools_for_agent(AgentType.THEORY)
-    tool_names = {t.name for t in tools.get_all().values()}
-    assert "read" in tool_names
-    assert "apply_patch" in tool_names
-    # THEORY has no shell execution tool.
     assert "exec" not in tool_names
-    assert "parse_pdf" in tool_names
-
-
-def test_create_tools_for_plotting(manager):
-    tools = manager._create_tools_for_agent(AgentType.PLOTTING)
-    tool_names = {t.name for t in tools.get_all().values()}
-    assert "exec" in tool_names
-    # PLOTTING never reads reference PDFs directly.
-    assert "parse_pdf" not in tool_names
+    assert "respond" not in tool_names
+    assert "send_to_agent" not in tool_names
+    assert "run_reporting_workflow" not in tool_names
 
 
 def test_create_tools_write_dirs_main(manager, workspace):
@@ -121,7 +108,7 @@ def test_create_tools_write_dirs_main(manager, workspace):
 
 
 @pytest.mark.asyncio
-@patch("autoreport.core.loops.manager.ProviderFactory")
+@patch("manyselves.core.loops.manager.ProviderFactory")
 async def test_start_creates_loops(mock_factory, manager):
     mock_provider = AsyncMock()
     mock_factory.create_provider.return_value = mock_provider
@@ -138,7 +125,7 @@ async def test_start_creates_loops(mock_factory, manager):
 
 
 @pytest.mark.asyncio
-@patch("autoreport.core.loops.manager.ProviderFactory")
+@patch("manyselves.core.loops.manager.ProviderFactory")
 async def test_stop_clears_loops(mock_factory, manager):
     mock_provider = AsyncMock()
     mock_factory.create_provider.return_value = mock_provider

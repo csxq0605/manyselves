@@ -2,8 +2,8 @@
 
 from PyQt6.QtCore import Qt
 
-from autoreport.gui.widgets.status_indicator import StatusIndicator, _SPINNER_FRAMES
-from autoreport.gui.theme import get_theme_colors
+from manyselves.gui.widgets.status_indicator import StatusIndicator, _SPINNER_FRAMES
+from manyselves.gui.theme import get_theme_colors
 
 
 def _make_indicator(qtbot):

@@ -3,7 +3,7 @@
 import tempfile
 from pathlib import Path
 
-from autoreport.config.schema import (
+from manyselves.config.schema import (
     AgentDefaults,
     AgentsConfig,
     ApiConfig,
@@ -73,9 +73,9 @@ def test_settings_load_default():
 
 
 def test_settings_default_config_path_is_independent_of_cwd(monkeypatch, tmp_path):
-    import autoreport.config.schema as schema
+    import manyselves.config.schema as schema
 
-    expected = Path(schema.__file__).resolve().parents[2] / "autoreport.config.yaml"
+    expected = Path(schema.__file__).resolve().parents[2] / "manyselves.config.yaml"
     monkeypatch.chdir(tmp_path)
 
     settings = Settings(_env_file=None)

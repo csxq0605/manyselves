@@ -4,7 +4,7 @@ import pytest
 from PyQt6.QtCore import QRectF, Qt
 from PyQt6.QtWidgets import QLabel, QPushButton, QSizePolicy, QWidget
 
-from autoreport.gui.widgets.tool_call_group import ToolCallGroup
+from manyselves.gui.widgets.tool_call_group import ToolCallGroup
 
 
 def test_collapsed_shows_summary(qtbot):

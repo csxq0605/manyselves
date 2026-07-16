@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.tools.file_tools import (
+from manyselves.core.tools.file_tools import (
     ApplyPatchTool,
     ReadTool,
 )

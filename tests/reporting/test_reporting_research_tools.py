@@ -3,17 +3,18 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.loops.bus import MessageBus
-from autoreport.core.reporting.research.reference_library import ReferenceLibrary
-from autoreport.core.reporting.source_ledger import SourceLedger
-from autoreport.core.tools.reporting_research_tools import (
+from manyselves.core.loops.bus import MessageBus
+from manyselves.core.reporting.models import EvidenceItem
+from manyselves.core.reporting.research.reference_library import ReferenceLibrary
+from manyselves.core.reporting.source_ledger import SourceLedger
+from manyselves.core.tools.reporting_research_tools import (
     OpenProjectSourceTool,
     OpenReferenceTool,
     PublishResearchNoteTool,
     SearchProjectEvidenceTool,
     SearchReferenceLibraryTool,
 )
-from autoreport.interfaces.types import ResearchNotePublishedMessage
+from manyselves.interfaces.types import ResearchNotePublishedMessage
 
 
 def _write_evidence(workspace: Path) -> None:
@@ -48,6 +49,26 @@ async def test_project_evidence_search_and_open_return_only_e_items(tmp_path: Pa
     assert opened["evidence"]["source"]["cell"] == "B2"
     with pytest.raises(ValueError, match="E-"):
         await opener("R-001")
+
+
+@pytest.mark.asyncio
+async def test_project_evidence_search_reuses_prepared_ledger_locator(tmp_path: Path):
+    _write_evidence(tmp_path)
+    ledger = SourceLedger(tmp_path, "run-1")
+    item = EvidenceItem.model_validate_json(
+        (tmp_path / "Work/evidence.jsonl").read_text(encoding="utf-8")
+    )
+    ledger.register_project(
+        "E-007",
+        "低压柜连接点",
+        "Inputs/红外.xlsx；工作表=Sheet1；单元格=B2",
+        item.model_dump_json(),
+    )
+
+    result = await SearchProjectEvidenceTool(tmp_path, ledger)("连接点")
+
+    assert result["hits"][0]["id"] == "E-007"
+    assert ledger.records[0].locator == "Inputs/红外.xlsx；工作表=Sheet1；单元格=B2"
 
 
 @pytest.mark.asyncio

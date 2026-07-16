@@ -1,13 +1,14 @@
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
 from docx import Document
 from PIL import Image
 
-from autoreport.core.loops.bus import MessageBus
-from autoreport.core.providers.base import LLMProvider
-from autoreport.core.reporting.agentic_models import (
+from manyselves.core.loops.bus import MessageBus
+from manyselves.core.providers.base import LLMProvider
+from manyselves.core.reporting.agentic_models import (
     AgentResult,
     AgentRunStatus,
     AuditSubmission,
@@ -19,23 +20,51 @@ from autoreport.core.reporting.agentic_models import (
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
-from autoreport.core.reporting.models import (
+from manyselves.core.reporting.models import (
     REPORT_MODULE_IDS,
     EvidenceItem,
     PhotoAsset,
     ReportRequest,
     ReviewIssue,
+    RevisionRequest,
     SourceLocation,
 )
-from autoreport.core.reporting.service import ReportingService
-from autoreport.core.reporting.taxonomy import REPORT_TAXONOMY
-from autoreport.core.reporting.workflow import ReportWorkflowRunner
-from autoreport.core.tools.task_board import TaskBoard
-from autoreport.interfaces.types import TaskStatus
+from manyselves.core.reporting.revisions import RevisionCoordinator
+from manyselves.core.reporting.service import ReportingService
+from manyselves.core.reporting.session_summary import AgentSessionSummary, SessionSummaryStore
+from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
+from manyselves.core.reporting.workflow import ReportWorkflowRunner
+from manyselves.core.tools.task_board import TaskBoard
+from manyselves.interfaces.types import TaskStatus
+
+
+def blocking_issue(
+    *,
+    kind: str,
+    message: str,
+    claim_id: str = "C-2.4-001",
+    round: int = 0,
+) -> ReviewIssue:
+    return ReviewIssue(
+        module_id="2.4",
+        submodule_id="2.4.1.1",
+        claim_id=claim_id,
+        kind=kind,
+        message=message,
+        severity="blocking",
+        round=round,
+        affected_claim_ids=[claim_id],
+        evidence_refs=["E-0001"],
+        blocking_reason="继续交付会形成未经解决的专业错误。",
+        resolution_criteria=["责任专家修订后由 Evidence Auditor 复审确认问题已解决"],
+        owner_agent_id="module-2.4-specialist",
+    )
 
 
 class ScriptedWorkflowAgents:
-    def __init__(self, target_modules=REPORT_MODULE_IDS, photo_ids=()):
+    def __init__(
+        self, target_modules=REPORT_MODULE_IDS, photo_ids=(), workspace: Path | None = None
+    ):
         self.target_modules = tuple(target_modules)
         self.photo_ids = tuple(photo_ids)
         self.active_specialists = 0
@@ -44,6 +73,7 @@ class ScriptedWorkflowAgents:
         self.specialist_ids: list[str] = []
         self.envelopes: dict[str, TaskEnvelope] = {}
         self.decision_calls = 0
+        self.workspace = workspace
 
     async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
         agent_id = definition.id
@@ -138,7 +168,7 @@ class ScriptedWorkflowAgents:
             )
         else:
             raise AssertionError(agent_id)
-        return AgentResult(
+        result = AgentResult(
             task_id=envelope.task_id,
             run_id=envelope.run_id,
             agent_id=agent_id,
@@ -146,6 +176,25 @@ class ScriptedWorkflowAgents:
             status=AgentRunStatus.COMPLETED,
             payload=payload,
         )
+        if self.workspace is not None:
+            SessionSummaryStore(self.workspace).save(
+                AgentSessionSummary(
+                    summary_id=f"summary-{envelope.task_id}-{envelope.revision}",
+                    run_id=envelope.run_id,
+                    task_id=envelope.task_id,
+                    agent_id=agent_id,
+                    session_id=session_key or envelope.task_id,
+                    status="completed",
+                    objective=envelope.objective,
+                    input_refs=[],
+                    output_refs=[],
+                    issue_refs=[],
+                    message_count=1,
+                    tool_names=["submit_result"],
+                    agent_rationale="测试摘要",
+                )
+            )
+        return result
 
     async def close_workflow(self, workflow_id):
         self.closed = True
@@ -157,6 +206,47 @@ class NeverCalledProvider(LLMProvider):
 
     async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
         raise AssertionError("ReportWorkflowRunner must use the injected scripted agents")
+
+
+class PostDeliveryRevisionAgents(ScriptedWorkflowAgents):
+    def __init__(self, *, drift: bool = False):
+        super().__init__(target_modules=("2.4",))
+        self.drift = drift
+
+    async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
+        result = await super().run(
+            definition,
+            envelope,
+            shared_artifacts,
+            workflow_id=workflow_id,
+            session_key=session_key,
+        )
+        if definition.id == "module-2.4-specialist":
+            payload = result.payload
+            assert isinstance(payload, ModuleSubmission)
+            narratives = dict(payload.submodule_narratives)
+            narratives["2.4.1.1"] = "2.4.1.1：已根据反馈修订设备状态边界。"
+            if self.drift:
+                narratives["2.4.2.2"] = "2.4.2.2：额外改变了未授权范围。"
+            result = result.model_copy(
+                update={
+                    "payload": payload.model_copy(
+                        update={
+                            "markdown": "模块 2.4 已根据交付后反馈完成局部修订。",
+                            "submodule_narratives": narratives,
+                        }
+                    )
+                }
+            )
+        elif definition.id == "chief-editor":
+            payload = result.payload
+            assert isinstance(payload, EditedReportSubmission)
+            narratives = dict(payload.module_narratives)
+            narratives["2.4"] = "模块 2.4 已根据交付后反馈完成局部修订。"
+            result = result.model_copy(
+                update={"payload": payload.model_copy(update={"module_narratives": narratives})}
+            )
+        return result
 
 
 class DriftingRevisionAgents(ScriptedWorkflowAgents):
@@ -172,15 +262,7 @@ class DriftingRevisionAgents(ScriptedWorkflowAgents):
             result.payload = AuditSubmission(
                 module_id="2.4",
                 approved=False,
-                issues=[
-                    ReviewIssue(
-                        module_id="2.4",
-                        submodule_id="2.4.1.1",
-                        kind="unsupported",
-                        message="只修订容量判断",
-                        severity="blocking",
-                    )
-                ],
+                issues=[blocking_issue(kind="unsupported", message="只修订容量判断")],
                 checked_claim_ids=[],
             )
         if definition.id == "module-2.4-specialist" and envelope.revision == 1:
@@ -205,12 +287,9 @@ class RepeatedAuditAgents(ScriptedWorkflowAgents):
                 module_id="2.4",
                 approved=False,
                 issues=[
-                    ReviewIssue(
-                        module_id="2.4",
-                        submodule_id="2.4.1.1",
+                    blocking_issue(
                         kind="unsupported",
                         message="仍需定向修订",
-                        severity="blocking",
                         round=envelope.revision,
                     )
                 ],
@@ -224,15 +303,111 @@ class RepeatedAuditAgents(ScriptedWorkflowAgents):
         return result
 
 
+class AcceptingBlockingAgents(ScriptedWorkflowAgents):
+    async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
+        result = await super().run(
+            definition,
+            envelope,
+            shared_artifacts,
+            workflow_id=workflow_id,
+            session_key=session_key,
+        )
+        if definition.id == "evidence-auditor":
+            result.payload = AuditSubmission(
+                module_id="2.4",
+                approved=False,
+                issues=[blocking_issue(kind="unsupported", message="现场事实缺少证据。")],
+                checked_claim_ids=[],
+            )
+        if definition.id == "main-agent":
+            result.payload = WorkflowDecisionSubmission(
+                decision="accept",
+                rationale="尝试直接绕过阻断问题。",
+                target_module_ids=["2.4"],
+            )
+        return result
+
+
+class CrossRevisionAuditAgents(ScriptedWorkflowAgents):
+    def __init__(self):
+        super().__init__()
+        self.cross_round = 0
+
+    async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
+        if definition.id == "main-agent":
+            self.decision_calls += 1
+            payload = (
+                WorkflowDecisionSubmission(
+                    decision="revise",
+                    rationale="先定向修订 2.4。",
+                    target_module_ids=["2.4"],
+                    target_submodule_ids=["2.4.1.1"],
+                )
+                if self.decision_calls == 1
+                else WorkflowDecisionSubmission(
+                    decision="stop_incomplete",
+                    rationale="责任审计确认冲突仍未解决。",
+                )
+            )
+            return AgentResult(
+                task_id=envelope.task_id,
+                run_id=envelope.run_id,
+                agent_id=definition.id,
+                session_id=session_key or envelope.task_id,
+                status=AgentRunStatus.COMPLETED,
+                payload=payload,
+            )
+        result = await super().run(
+            definition,
+            envelope,
+            shared_artifacts,
+            workflow_id=workflow_id,
+            session_key=session_key,
+        )
+        if definition.id == "cross-module-reviewer":
+            self.cross_round += 1
+            result.payload = CrossReviewSubmission(
+                approved=self.cross_round > 1,
+                issues=(
+                    []
+                    if self.cross_round > 1
+                    else [
+                        blocking_issue(
+                            kind="cross_conflict",
+                            message="2.4 判断与其他模块冲突。",
+                        )
+                    ]
+                ),
+            )
+        if definition.id == "evidence-auditor" and "-cross-" in envelope.task_id:
+            result.payload = AuditSubmission(
+                module_id="2.4",
+                approved=False,
+                issues=[
+                    blocking_issue(
+                        kind="cross_conflict_unresolved",
+                        message="定向修订仍未解决冲突。",
+                    )
+                ],
+                checked_claim_ids=[],
+            )
+        return result
+
+
 @pytest.mark.asyncio
 async def test_full_five_module_workflow_runs_parallel_barrier_editor_and_handoff_docx(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(
-        "AUTOREPORT_HANDOFF_DOCX_CORE",
+        "MANYSELVES_HANDOFF_DOCX_CORE",
         str(tmp_path / "external-core-must-not-be-used.py"),
     )
+    project_template = tmp_path / "Templates/report_template.docx"
+    project_template.parent.mkdir(parents=True)
+    template_document = Document()
+    template_document.add_paragraph("PROJECT TEMPLATE MARKER")
+    template_document.save(project_template)
     service = ReportingService(
         tmp_path,
         bus=MessageBus(),
@@ -257,8 +432,33 @@ async def test_full_five_module_workflow_runs_parallel_barrier_editor_and_handof
     assert report_path.is_file()
     rendered = Document(report_path)
     text = "\n".join(paragraph.text for paragraph in rendered.paragraphs)
+    assert "PROJECT TEMPLATE MARKER" in text
     assert "模块 2.1 从本专业机理出发形成主动分析。" in text
     assert "模块 2.5 从本专业机理出发形成主动分析。" in text
+    version_path = tmp_path / "Work/report-versions/run-full/version.json"
+    assert version_path.is_file()
+    version = json.loads(version_path.read_text(encoding="utf-8"))
+    assert version["parent_version_id"] is None
+    assert version["artifact_refs"]["final_docx"].startswith(
+        "Work/report-versions/run-full/artifacts/"
+    )
+    assert version["artifact_refs"]["report_template"].startswith(
+        "Work/report-versions/run-full/artifacts/"
+    )
+    provenance = json.loads(
+        (tmp_path / "Work/runs/run-full/template-provenance.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert provenance["source"] == "project"
+    assert provenance["selected_path"] == "Templates/report_template.docx"
+    assert len(provenance["sha256"]) == 64
+    render_log = json.loads(
+        (tmp_path / "Outputs/Reports/render-log.json").read_text(encoding="utf-8")
+    )
+    assert render_log["template"]["source"] == "project"
+    assert render_log["template"]["sha256"] == provenance["sha256"]
+    assert version["skill_provenance"]
 
 
 @pytest.mark.asyncio
@@ -288,6 +488,39 @@ async def test_partial_request_runs_only_target_module_and_propagates_requiremen
     assert "深度核对现场图片" in agents.envelopes["module-2.4-specialist"].constraints
     assert (tmp_path / "Outputs/Modules/2.4.md").is_file()
     assert not (tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "policy,required_constraint",
+    [
+        ("draft", "待核实或不确定性"),
+        ("skip", "标注“未评估”"),
+    ],
+)
+async def test_missing_evidence_choice_reaches_specialist_as_contract(
+    tmp_path: Path, policy: str, required_constraint: str
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=NeverCalledProvider(),
+    )
+    agents = ScriptedWorkflowAgents(target_modules=("2.4",))
+    state = {
+        "run_id": f"run-{policy}",
+        "request": ReportRequest(
+            instruction="生成设备模块",
+            target_modules=["2.4"],
+            missing_evidence_policy=policy,
+        ),
+    }
+
+    await ReportWorkflowRunner(service, agents).run(state)
+
+    constraints = agents.envelopes["module-2.4-specialist"].constraints
+    assert any(required_constraint in value for value in constraints)
 
 
 @pytest.mark.asyncio
@@ -403,3 +636,144 @@ async def test_lead_agent_stops_repeated_revision_loop_and_task_board_closes(
         for task in tasks
     )
     assert any("main-agent:decision-module-2.4-r1" in task.brief for task in tasks)
+
+
+@pytest.mark.asyncio
+async def test_main_agent_cannot_accept_unresolved_blocking_module_issue(tmp_path: Path) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=NeverCalledProvider(),
+    )
+    state = {
+        "run_id": "run-blocking-accept",
+        "request": ReportRequest(
+            instruction="验证阻断问题不可绕过",
+            target_modules=["2.4"],
+            missing_evidence_policy="draft",
+        ),
+    }
+
+    with pytest.raises(Exception, match="blocking"):
+        await ReportWorkflowRunner(
+            service,
+            AcceptingBlockingAgents(target_modules=("2.4",)),
+        ).run(state)
+
+
+@pytest.mark.asyncio
+async def test_cross_revision_must_pass_responsibility_audit_before_state_update(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=NeverCalledProvider(),
+    )
+    state = {
+        "run_id": "run-cross-audit",
+        "request": ReportRequest(
+            instruction="验证跨模块返修重新审计",
+            missing_evidence_policy="draft",
+        ),
+    }
+    agents = CrossRevisionAuditAgents()
+
+    with pytest.raises(Exception, match="责任审计确认冲突仍未解决"):
+        await ReportWorkflowRunner(service, agents).run(state)
+
+    assert agents.decision_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_post_delivery_revision_restores_parent_reuses_untouched_modules_and_delivers_full_docx(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=NeverCalledProvider(),
+    )
+    baseline_state = {
+        "run_id": "run-baseline",
+        "request": ReportRequest(
+            instruction="生成完整基线报告",
+            missing_evidence_policy="draft",
+        ),
+    }
+    await ReportWorkflowRunner(service, ScriptedWorkflowAgents(workspace=tmp_path)).run(
+        baseline_state
+    )
+    baseline_version = baseline_state["report_version"]
+    untouched_hash = baseline_version.artifact_sha256["module_submission:2.1"]
+
+    agents = PostDeliveryRevisionAgents()
+    result = await RevisionCoordinator(service, agents).run(
+        RevisionRequest(
+            baseline_version_id="run-baseline",
+            feedback="只修订设备状态判断边界。",
+            target_module_ids=["2.4"],
+            target_submodule_ids=["2.4.1.1"],
+            promote_to_skill=True,
+            promote_skill_id="pds.module24.device-risk",
+        )
+    )
+
+    assert result.status == "completed"
+    assert result.feedback_record_id
+    assert not (tmp_path / "Capabilities/skills/manifest.json").exists()
+    child = baseline_version.__class__.model_validate_json(
+        (tmp_path / f"Work/report-versions/{result.run_id}/version.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert child.parent_version_id == "run-baseline"
+    assert child.artifact_sha256["module_submission:2.1"] == untouched_hash
+    assert (
+        child.artifact_sha256["module_submission:2.4"]
+        != baseline_version.artifact_sha256["module_submission:2.4"]
+    )
+    assert agents.envelopes["module-2.4-specialist"].context_summary_refs
+    assert (tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx").is_file()
+
+
+@pytest.mark.asyncio
+async def test_post_delivery_scope_drift_creates_reviewable_expansion_request(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=NeverCalledProvider(),
+    )
+    baseline_state = {
+        "run_id": "run-baseline",
+        "request": ReportRequest(
+            instruction="生成完整基线报告",
+            missing_evidence_policy="draft",
+        ),
+    }
+    await ReportWorkflowRunner(service, ScriptedWorkflowAgents()).run(baseline_state)
+
+    result = await RevisionCoordinator(service, PostDeliveryRevisionAgents(drift=True)).run(
+        RevisionRequest(
+            baseline_version_id="run-baseline",
+            feedback="只修订设备状态判断边界。",
+            target_module_ids=["2.4"],
+            target_submodule_ids=["2.4.1.1"],
+        )
+    )
+
+    assert result.status == "needs_scope_expansion"
+    assert result.scope_expansion_request_id
+    request_path = (
+        tmp_path
+        / f"Work/runs/{result.run_id}/scope-expansions/{result.scope_expansion_request_id}.json"
+    )
+    expansion = json.loads(request_path.read_text(encoding="utf-8"))
+    assert expansion["unexpected_submodule_ids"] == ["2.4.2.2"]
+    assert not (tmp_path / f"Work/report-versions/{result.run_id}/version.json").exists()

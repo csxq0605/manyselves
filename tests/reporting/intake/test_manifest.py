@@ -3,7 +3,7 @@ from pathlib import Path
 from docx import Document
 from openpyxl import Workbook
 
-from autoreport.core.reporting.intake.manifest import build_manifest
+from manyselves.core.reporting.intake.manifest import build_manifest
 
 
 def _write_workbook(path: Path) -> None:

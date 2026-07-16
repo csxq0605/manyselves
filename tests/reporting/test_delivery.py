@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from docx import Document
 
-from autoreport.core.reporting.delivery import DeliveryPackage, ProjectDelivery
+from manyselves.core.reporting.delivery import DeliveryPackage, ProjectDelivery
 
 
 def _package(tmp_path: Path) -> DeliveryPackage:

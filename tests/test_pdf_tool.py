@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from autoreport.core.tools.pdf_tool import PDFParseTool
+from manyselves.core.tools.pdf_tool import PDFParseTool
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ async def test_parse_single_success(workspace):
 
     with (
         patch.object(PDFParseTool, "is_available", return_value=True),
-        patch("autoreport.core.tools.pdf_tool.asyncio.create_subprocess_exec", return_value=mock_proc),
+        patch("manyselves.core.tools.pdf_tool.asyncio.create_subprocess_exec", return_value=mock_proc),
         patch("pathlib.Path.rglob", return_value=[workspace / "References" / "test.md"]),
     ):
         # Create the expected output
@@ -107,7 +107,7 @@ async def test_parse_surfaces_auth_failure_as_tool_error(workspace):
 
     with (
         patch.object(PDFParseTool, "is_available", return_value=True),
-        patch("autoreport.core.tools.pdf_tool.asyncio.create_subprocess_exec", return_value=mock_proc),
+        patch("manyselves.core.tools.pdf_tool.asyncio.create_subprocess_exec", return_value=mock_proc),
     ):
         with pytest.raises(RuntimeError, match="user authenticate failed"):
             await tool(file_paths="References/auth.pdf")

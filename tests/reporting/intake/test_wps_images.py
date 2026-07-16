@@ -1,7 +1,7 @@
 from pathlib import Path
 from zipfile import ZipFile
 
-from autoreport.core.reporting.intake.wps_images import extract_wps_images
+from manyselves.core.reporting.intake.wps_images import extract_wps_images
 
 
 def test_extract_wps_images_follows_cell_image_relationships(tmp_path: Path) -> None:

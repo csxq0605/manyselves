@@ -1,8 +1,8 @@
 from copy import deepcopy
 
-from autoreport.core.reporting.agentic_models import ClaimRecord, ModuleSubmission
-from autoreport.core.reporting.revision_diff import build_revision_diff
-from autoreport.core.reporting.taxonomy import REPORT_TAXONOMY
+from manyselves.core.reporting.agentic_models import ClaimRecord, ModuleSubmission
+from manyselves.core.reporting.revision_diff import build_revision_diff
+from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 
 
 def _submission() -> ModuleSubmission:

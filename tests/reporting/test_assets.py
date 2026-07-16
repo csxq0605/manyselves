@@ -2,16 +2,16 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.reporting.agentic_models import (
+from manyselves.core.reporting.agentic_models import (
     ClaimRecord,
     EditedReportSubmission,
     TableSubmission,
 )
-from autoreport.core.reporting.assets import (
+from manyselves.core.reporting.assets import (
     ReportAssetAssembler,
     validate_editor_protection,
 )
-from autoreport.core.reporting.models import EvidenceItem, PhotoAsset, SourceLocation
+from manyselves.core.reporting.models import EvidenceItem, PhotoAsset, SourceLocation
 
 
 def _edited(**updates) -> EditedReportSubmission:

@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.tools.file_tools import ApplyPatchTool, ReadTool
-from autoreport.core.tools.registry import Tool, ToolRegistry
+from manyselves.core.tools.file_tools import ApplyPatchTool, ReadTool
+from manyselves.core.tools.registry import Tool, ToolRegistry
 
 
 class DummyTool(Tool):

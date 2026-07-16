@@ -1,4 +1,4 @@
-from autoreport.interfaces.types import (
+from manyselves.interfaces.types import (
     AgentType,
     MessageType,
     ReportMessage,

@@ -3,10 +3,10 @@ from xml.etree import ElementTree
 
 import pytest
 
-from autoreport.core.reporting.agentic_models import TaskEnvelope
-from autoreport.core.reporting.config import AgentDefinition, load_agent_definition
-from autoreport.core.reporting.module_skills import ModuleSkillLibrary
-from autoreport.core.reporting.prompts import PromptAssembler
+from manyselves.core.reporting.agentic_models import TaskEnvelope
+from manyselves.core.reporting.config import AgentDefinition, load_agent_definition
+from manyselves.core.reporting.module_skills import ModuleSkillLibrary
+from manyselves.core.reporting.prompts import PromptAssembler
 
 
 def test_system_prompt_contains_identity_without_project_runtime_paths(tmp_path: Path) -> None:
@@ -122,6 +122,21 @@ def test_task_context_is_xml_and_separate_from_system() -> None:
     assert root.findtext("allowed_output") == "module_submission"
     assert root.findtext("prior_result_ref") == "drafts/2.4-v0.json"
     assert root.findtext("issue_ref") == "issues/2.4-1.json"
+
+
+def test_task_context_marks_session_summary_as_context_only() -> None:
+    envelope = TaskEnvelope(
+        task_id="t-summary",
+        run_id="run-summary",
+        agent_id="module-2.4-specialist",
+        objective="修订设备模块",
+        context_summary_refs=["Work/report-versions/v1/session-summaries/summary.json"],
+    )
+
+    message = PromptAssembler.task_message(envelope, [])
+
+    assert 'context_only="true"' in message
+    assert "session-summaries/summary.json" in message
 
 
 def test_task_context_rejects_xml_forbidden_envelope_value() -> None:

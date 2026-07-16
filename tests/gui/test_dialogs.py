@@ -3,8 +3,8 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
-from autoreport.gui.theme import get_theme_colors
-from autoreport.gui.dialogs import (
+from manyselves.gui.theme import get_theme_colors
+from manyselves.gui.dialogs import (
     critical_box,
     information_box,
     styled_message_box,

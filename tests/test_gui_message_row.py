@@ -1,8 +1,8 @@
 """Tests for markdown rendering, code blocks, and copy button behavior."""
 
-from autoreport.gui.widgets.message_row import MessageRow
-from autoreport.gui.widgets.markdown_renderer import render_markdown
-import autoreport.gui.theme as theme
+from manyselves.gui.widgets.message_row import MessageRow
+from manyselves.gui.widgets.markdown_renderer import render_markdown
+import manyselves.gui.theme as theme
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel
 

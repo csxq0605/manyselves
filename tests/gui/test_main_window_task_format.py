@@ -2,10 +2,10 @@
 
 from types import SimpleNamespace
 
-from autoreport.gui.main_window import MainWindow
-from autoreport.gui.widgets.agent_panel import AgentPanel
-from autoreport.core.tools.task_board import TaskBoard
-from autoreport.interfaces.types import AgentResponse, AgentType, ToolCallMessage, ToolResult
+from manyselves.gui.main_window import MainWindow
+from manyselves.gui.widgets.agent_panel import AgentPanel
+from manyselves.core.tools.task_board import TaskBoard
+from manyselves.interfaces.types import AgentResponse, AgentType, ToolCallMessage, ToolResult
 
 
 def test_manage_tasks_format_omits_empty_sections():

@@ -2,8 +2,8 @@
 
 from types import SimpleNamespace
 
-from autoreport.gui.main_window import MainWindow
-from autoreport.interfaces.types import AgentType, ReportMessage, SystemNotice, UserMessage
+from manyselves.gui.main_window import MainWindow
+from manyselves.interfaces.types import AgentType, ReportMessage, SystemNotice, UserMessage
 
 
 def test_system_notice_renders_in_target_agent_panel():

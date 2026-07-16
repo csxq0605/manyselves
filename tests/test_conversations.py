@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from autoreport.core.conversations import ConversationStore
+from manyselves.core.conversations import ConversationStore
 
 
 @pytest.fixture
@@ -280,6 +280,7 @@ class TestAutoNaming:
         sessions = store.get_sessions()
         assert sessions[0]["name"] == "Custom"
 
+    @pytest.mark.skip(reason="GUI conversation store is Main-only")
     def test_sub_agent_no_auto_name(self, store: ConversationStore):
         """Sub-agent messages should not trigger auto-naming.
 
@@ -308,6 +309,7 @@ class TestClearAndLifecycle:
         store.clear("main")
         assert store.load_messages("main") == []
 
+    @pytest.mark.skip(reason="GUI conversation store is Main-only")
     def test_clear_current_session(self, store: ConversationStore):
         """clear_current_session should clear all agents for current session."""
         store.append_message("main", "user", "m1")
@@ -316,6 +318,7 @@ class TestClearAndLifecycle:
         assert store.load_messages("main") == []
         assert store.load_messages("data_analysis") == []
 
+    @pytest.mark.skip(reason="GUI conversation store is Main-only")
     def test_get_agent_types_with_history(self, store: ConversationStore):
         """Should list agent types that have messages."""
         assert store.get_agent_types_with_history() == []
@@ -340,7 +343,7 @@ class TestMigration:
         """Old flat .jsonl files should be migrated to session subdirectories."""
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir)
-            conv_dir = workspace / ".autoreport" / "conversations"
+            conv_dir = workspace / ".manyselves" / "conversations"
             conv_dir.mkdir(parents=True)
 
             for agent in ["main", "data_analysis"]:
@@ -365,7 +368,7 @@ class TestMigration:
         """If sessions.json already exists, old files should not be migrated."""
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir)
-            conv_dir = workspace / ".autoreport" / "conversations"
+            conv_dir = workspace / ".manyselves" / "conversations"
             conv_dir.mkdir(parents=True)
 
             (conv_dir / "sessions.json").write_text("[]", encoding="utf-8")
@@ -405,7 +408,7 @@ class TestGetSessionsStaleFilter:
 
     def test_stale_empty_session_is_filtered(self, tmp_path):
         """A session present in sessions.json but with no .jsonl is excluded."""
-        conv_dir = tmp_path / ".autoreport" / "conversations"
+        conv_dir = tmp_path / ".manyselves" / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
 
         stale_ts = (datetime.now() - timedelta(minutes=10)).isoformat(timespec="seconds")
@@ -419,7 +422,7 @@ class TestGetSessionsStaleFilter:
 
     def test_session_with_messages_always_kept(self, tmp_path):
         """A session with messages should be kept even if its timestamp is old."""
-        conv_dir = tmp_path / ".autoreport" / "conversations"
+        conv_dir = tmp_path / ".manyselves" / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
 
         stale_ts = (datetime.now() - timedelta(hours=1)).isoformat(timespec="seconds")
@@ -444,7 +447,7 @@ class TestGetSessionsStaleFilter:
 
     def test_mix_of_empty_and_nonempty(self, tmp_path):
         """Only sessions with a non-empty .jsonl are kept; empty ones are filtered."""
-        conv_dir = tmp_path / ".autoreport" / "conversations"
+        conv_dir = tmp_path / ".manyselves" / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
 
         stale_ts = (datetime.now() - timedelta(minutes=10)).isoformat(timespec="seconds")
@@ -477,7 +480,7 @@ class TestGetSessionsStaleFilter:
 
     def test_empty_jsonl_session_is_filtered(self, tmp_path):
         """A session whose .jsonl exists but is empty (0 bytes) is excluded."""
-        conv_dir = tmp_path / ".autoreport" / "conversations"
+        conv_dir = tmp_path / ".manyselves" / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
 
         self._write_sessions_json(conv_dir, [
@@ -497,6 +500,7 @@ class TestGetSessionsStaleFilter:
 class TestAgentScopedHistory:
     """get_sessions(agent_type) filters the dropdown to one agent's own conversations."""
 
+    @pytest.mark.skip(reason="GUI conversation store is Main-only")
     def test_unfiltered_shows_every_agent(self, store: ConversationStore):
         """Without a filter, sessions from any agent are all visible."""
         store.append_message("main", "user", "hello from main")
