@@ -1,4 +1,4 @@
-"""AutoReport entry point wrapper.
+"""Manyselves entry point wrapper for the compatibility ``autoreport`` package.
 
 Cleans conflicting environment variables (from conda/msys2) before
 importing PyQt6, which prevents "Must construct a QApplication" errors

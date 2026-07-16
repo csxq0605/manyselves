@@ -62,76 +62,6 @@ wheels = [
 ]
 
 [[package]]
-name = "autoreport-power-distribution"
-version = "1.2"
-source = { editable = "." }
-dependencies = [
-    { name = "aiofiles" },
-    { name = "anthropic" },
-    { name = "httpx" },
-    { name = "loguru" },
-    { name = "markdown" },
-    { name = "matplotlib" },
-    { name = "openai" },
-    { name = "openpyxl" },
-    { name = "pandas" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "pyqt6" },
-    { name = "pyqt6-qscintilla" },
-    { name = "python-docx" },
-    { name = "pyyaml" },
-    { name = "rich" },
-    { name = "typer" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest-asyncio" },
-    { name = "pytest-qt" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiofiles", specifier = ">=24.0.0,<25.0.0" },
-    { name = "anthropic", specifier = ">=0.45.0,<1.0.0" },
-    { name = "httpx", specifier = ">=0.28.0,<1.0.0" },
-    { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
-    { name = "markdown", specifier = ">=3.5.0,<4.0.0" },
-    { name = "matplotlib", specifier = ">=3.10.0,<4.0.0" },
-    { name = "openai", specifier = ">=1.60.0,<2.0.0" },
-    { name = "openpyxl", specifier = ">=3.1.5" },
-    { name = "pandas", specifier = ">=2.2.0,<3.0.0" },
-    { name = "pydantic", specifier = ">=2.12.0,<3.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.12.0,<3.0.0" },
-    { name = "pyqt6", specifier = ">=6.8.0,<7.0.0" },
-    { name = "pyqt6-qscintilla", specifier = ">=2.14.1" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0,<9.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0,<1.0.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0.0,<7.0.0" },
-    { name = "python-docx", specifier = ">=1.2.0,<2.0.0" },
-    { name = "pyyaml", specifier = ">=6.0,<7.0.0" },
-    { name = "rich", specifier = ">=13.0.0,<14.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9.0" },
-    { name = "typer", specifier = ">=0.15.0,<1.0.0" },
-]
-provides-extras = ["dev"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest-asyncio", specifier = ">=0.26.0" },
-    { name = "pytest-qt", specifier = ">=4.5.0" },
-]
-
-[[package]]
 name = "certifi"
 version = "2026.4.22"
 source = { registry = "https://pypi.org/simple" }
@@ -692,6 +622,76 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ce/68/b30e913340c380ddac9580c6e6230991fc37240ec4f64704833e4f3e2769/lxml-6.1.1-cp314-cp314t-win32.whl", hash = "sha256:649dda677cf3bd6ac9ae14007ba0c824ded8ce5808b53fc7431d9140399118c1", size = 3897345, upload-time = "2026-05-18T19:17:33.562Z" },
     { url = "https://files.pythonhosted.org/packages/3c/4e/9eb2af5335545f9fbcd7af57bcf87c6025d31eaa31b14ec184a6c8675328/lxml-6.1.1-cp314-cp314t-win_amd64.whl", hash = "sha256:793033d6c5cdf33a573f910d9bea14ef8f5771820411d118da8e1182edb53d5e", size = 4393350, upload-time = "2026-05-18T19:18:10.076Z" },
     { url = "https://files.pythonhosted.org/packages/7f/2c/0f1e93c636720e8a3eb59af2bfda99d98b55891e1c53bc30c2e0e865f01b/lxml-6.1.1-cp314-cp314t-win_arm64.whl", hash = "sha256:58bb955caba94e467d2a96da17660d2d704e0675894cba21ab8a775b8621fd1c", size = 3817223, upload-time = "2026-05-19T19:22:56.823Z" },
+]
+
+[[package]]
+name = "manyselves"
+version = "1.2"
+source = { editable = "." }
+dependencies = [
+    { name = "aiofiles" },
+    { name = "anthropic" },
+    { name = "httpx" },
+    { name = "loguru" },
+    { name = "markdown" },
+    { name = "matplotlib" },
+    { name = "openai" },
+    { name = "openpyxl" },
+    { name = "pandas" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pyqt6" },
+    { name = "pyqt6-qscintilla" },
+    { name = "python-docx" },
+    { name = "pyyaml" },
+    { name = "rich" },
+    { name = "typer" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest-asyncio" },
+    { name = "pytest-qt" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiofiles", specifier = ">=24.0.0,<25.0.0" },
+    { name = "anthropic", specifier = ">=0.45.0,<1.0.0" },
+    { name = "httpx", specifier = ">=0.28.0,<1.0.0" },
+    { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
+    { name = "markdown", specifier = ">=3.5.0,<4.0.0" },
+    { name = "matplotlib", specifier = ">=3.10.0,<4.0.0" },
+    { name = "openai", specifier = ">=1.60.0,<2.0.0" },
+    { name = "openpyxl", specifier = ">=3.1.5" },
+    { name = "pandas", specifier = ">=2.2.0,<3.0.0" },
+    { name = "pydantic", specifier = ">=2.12.0,<3.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.12.0,<3.0.0" },
+    { name = "pyqt6", specifier = ">=6.8.0,<7.0.0" },
+    { name = "pyqt6-qscintilla", specifier = ">=2.14.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0,<9.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0,<1.0.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0.0,<7.0.0" },
+    { name = "python-docx", specifier = ">=1.2.0,<2.0.0" },
+    { name = "pyyaml", specifier = ">=6.0,<7.0.0" },
+    { name = "rich", specifier = ">=13.0.0,<14.0.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9.0" },
+    { name = "typer", specifier = ">=0.15.0,<1.0.0" },
+]
+provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest-asyncio", specifier = ">=0.26.0" },
+    { name = "pytest-qt", specifier = ">=4.5.0" },
 ]
 
 [[package]]

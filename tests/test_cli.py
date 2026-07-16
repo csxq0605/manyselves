@@ -15,7 +15,8 @@ class TestCLIOptions:
         runner = CliRunner()
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "AutoReport" in result.output
+        assert "Manyselves" in result.output
+        assert "物理实验" not in result.output
 
     def test_unknown_option(self):
         """Unknown options should produce an error."""

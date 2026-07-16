@@ -1,14 +1,14 @@
 [project]
-name = "autoreport-power-distribution"
+name = "manyselves"
 version = "1.2"
-description = "Local multi-agent power-distribution report workspace based on AutoReport"
+description = "A local workspace for document-defined agent teams."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [
     { name = "xjsongphy" },
 ]
-keywords = ["agents", "power-distribution", "report", "pyqt6"]
+keywords = ["agents", "multi-agent", "workspace", "local-first", "pyqt6"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: X11 Applications :: Qt",
@@ -97,4 +97,5 @@ dev = [
 ]
 
 [project.scripts]
+manyselves = "autoreport.__main__:main"
 autoreport = "autoreport.__main__:main"

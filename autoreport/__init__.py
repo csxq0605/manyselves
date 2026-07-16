@@ -1,3 +1,3 @@
-"""AutoReport - Agent-based automated physics experiment report writing system."""
+"""Manyselves — a local workspace for document-defined agent teams."""
 
-__version__ = "0.1.0"
+__version__ = "1.2.0"
