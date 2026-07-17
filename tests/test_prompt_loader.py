@@ -86,5 +86,7 @@ def test_packaged_main_prompt_routes_distribution_reports_through_workflow_tool(
 
     assert "run_reporting_workflow" in prompt
     assert "resume_reporting_workflow" in prompt
+    assert "当前 run" in prompt
+    assert "历史 Outputs" in prompt
     assert "配电报告" in prompt
     assert "automated physics experiment" not in prompt.lower()

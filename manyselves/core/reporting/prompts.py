@@ -81,6 +81,10 @@ class PromptAssembler:
             f'<context_summary_ref context_only="true">{escape(ref)}</context_summary_ref>'
             for ref in envelope.context_summary_refs
         )
+        expected_plan_agents = "\n".join(
+            f"<expected_plan_agent_id>{escape(agent_id)}</expected_plan_agent_id>"
+            for agent_id in envelope.expected_plan_agent_ids
+        )
         message = (
             "<task_context>\n"
             f"<task_id>{escape(envelope.task_id)}</task_id>\n"
@@ -89,7 +93,7 @@ class PromptAssembler:
             f"<revision>{envelope.revision}</revision>\n"
             f"<objective>{escape(envelope.objective)}</objective>\n"
             f"{inputs}\n{artifacts}\n{constraints}\n{allowed_outputs}\n"
-            f"{prior_result}\n{issues}\n{summaries}\n"
+            f"{prior_result}\n{issues}\n{summaries}\n{expected_plan_agents}\n"
             "</task_context>"
         )
         return _validated_xml(message, label="task context")

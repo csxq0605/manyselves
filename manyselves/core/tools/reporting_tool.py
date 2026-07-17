@@ -10,6 +10,13 @@ from ..reporting.models import EvidenceDecisionAction, ReportRequest, RevisionRe
 from ..reporting.service import ReportingService
 from .registry import Tool
 from .task_board import TaskBoard
+from .outcomes import ToolOutcome, normalize_tool_outcome
+
+
+def reporting_result_outcome(payload: dict[str, Any]) -> ToolOutcome:
+    """Normalize a reporting entry-point result for loop and GUI consumers."""
+
+    return normalize_tool_outcome(payload, "run_reporting_workflow")
 
 
 class RunReportingWorkflowTool(Tool):

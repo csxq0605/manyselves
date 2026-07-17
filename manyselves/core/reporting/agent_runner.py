@@ -8,12 +8,9 @@ import json
 import operator
 import os
 import re
-from html import escape
 from pathlib import Path
 from uuid import uuid4
 
-from docx import Document
-from PIL import Image
 from pydantic import TypeAdapter
 
 from ...config.schema import AgentDefaults
@@ -22,11 +19,14 @@ from ...interfaces.types import (
     AgentResultMessage,
     Error,
     PeerQueryMessage,
+    PeerReplyMessage,
     UserMessage,
 )
 from ..loops.agent_loop import AgentLoop
 from ..loops.bus import MessageBus
 from ..providers.base import LLMProvider
+from ..artifacts import ArtifactGateway, ArtifactGrant, parse_artifact
+from ..tools.artifact_tools import OpenArtifactTool, OpenToolResultTool, SearchTextTool
 from ..tools.registry import Tool, ToolRegistry
 from ..tools.reporting_collaboration_tools import (
     QueryPeerTool,
@@ -47,7 +47,9 @@ from ..tools.reporting_research_tools import (
 )
 from ..tools.skill_evolution_tools import ProductSkillEvolutionTool
 from .agentic_models import AgentResult, AgentRunStatus, Submission, TaskEnvelope
+from .capabilities import compile_agent_access, scoped_gateway
 from .config import AgentDefinition
+from .message_router import WorkflowMessageRouter
 from .module_skills import ModuleSkillLibrary
 from .prompts import PromptAssembler
 from .research.reference_library import ReferenceLibrary
@@ -76,12 +78,16 @@ class InspectDocumentTool(Tool):
         target = (self.workspace / path).resolve()
         if not target.is_relative_to(self.workspace) or not target.is_file():
             raise ValueError("document must be a file inside the project")
-        if target.suffix.casefold() == ".docx":
-            document = Document(target)
-            text = "\n".join(p.text for p in document.paragraphs)
-        else:
-            text = target.read_text(encoding="utf-8", errors="ignore")
-        return {"path": target.relative_to(self.workspace).as_posix(), "text": text[:max_chars]}
+        parsed = parse_artifact(target)
+        text = "\n".join(f"[{block.locator}] {block.text}" for block in parsed.blocks)
+        return {
+            "path": target.relative_to(self.workspace).as_posix(),
+            "kind": parsed.kind,
+            "text": text[:max_chars],
+            "truncated": len(text) > max_chars,
+            "visual_verified": parsed.visual_verified,
+            "error": parsed.error,
+        }
 
 
 class InspectImageTool(Tool):
@@ -100,13 +106,14 @@ class InspectImageTool(Tool):
         target = (self.workspace / path).resolve()
         if not target.is_relative_to(self.workspace) or not target.is_file():
             raise ValueError("image must be a file inside the project")
-        with Image.open(target) as image:
-            return {
-                "path": path,
-                "width": image.width,
-                "height": image.height,
-                "format": image.format,
-            }
+        parsed = parse_artifact(target)
+        return {
+            "path": path,
+            "kind": parsed.kind,
+            "metadata": parsed.blocks[0].text if parsed.blocks else "",
+            "visual_verified": False,
+            "error": parsed.error,
+        }
 
 
 class CalculateTool(Tool):
@@ -174,9 +181,11 @@ class ReportingAgentRunner:
             product_root=self.product_skill_root,
             project_root=self.workspace / "Capabilities/skills",
         )
-        self._runtime_by_identity: dict[str, str] = {}
         self._sessions: dict[tuple[str, str], tuple[AgentLoop, str, str]] = {}
-        self.bus.subscribe(PeerQueryMessage, self._route_peer_query)
+        self._artifact_root = ArtifactGateway(
+            self.workspace, ArtifactGrant("root", "root", "workflow", "root")
+        )
+        self._routers: dict[str, WorkflowMessageRouter] = {}
 
     def _system_prompt(self, definition: AgentDefinition, envelope: TaskEnvelope) -> str:
         module_id: str | None = None
@@ -205,27 +214,24 @@ class ReportingAgentRunner:
         ]
 
     async def _route_peer_query(self, message: PeerQueryMessage) -> None:
-        runtime_id = self._runtime_by_identity.get(str(message.recipient))
-        if runtime_id is None:
+        """Backward-compatible delegate; workflow routers own production routing."""
+        router = self._routers.get(message.workflow_id)
+        if router is not None:
+            await router._route_query(message)
             return
-        artifacts = "".join(
-            f"<artifact_ref>{escape(ref)}</artifact_ref>" for ref in message.artifact_refs
-        )
         await self.bus.publish(
-            UserMessage(
-                agent_type=runtime_id,
-                source=str(message.sender),
-                message_id=message.query_id,
-                content=(
-                    "<peer_query>"
-                    f"<workflow_id>{escape(message.workflow_id)}</workflow_id>"
-                    f"<task_id>{escape(message.task_id)}</task_id>"
-                    f"<query_id>{escape(message.query_id)}</query_id>"
-                    f"<source_agent>{escape(str(message.sender))}</source_agent>"
-                    f"<source_session_id>{escape(message.source_session_id)}</source_session_id>"
-                    f"<question>{escape(message.question)}</question>"
-                    f"{artifacts}</peer_query>"
+            PeerReplyMessage(
+                workflow_id=message.workflow_id,
+                task_id=message.task_id,
+                query_id=message.query_id,
+                sender="workflow",
+                recipient=message.sender,
+                target_session_id=message.source_session_id,
+                answer=(
+                    f"Peer '{message.recipient}' is not available because workflow "
+                    f"'{message.workflow_id}' is not active."
                 ),
+                content="workflow closed",
             )
         )
 
@@ -235,8 +241,30 @@ class ReportingAgentRunner:
         envelope: TaskEnvelope,
         session_id: str,
         workflow_id: str,
+        *,
+        gateway: ArtifactGateway | None = None,
+        shared_artifacts: list[str] | None = None,
     ) -> ToolRegistry:
         registry = ToolRegistry()
+        gateway = gateway or scoped_gateway(
+            self._artifact_root,
+            workflow_id=workflow_id,
+            envelope=envelope,
+            agent_id=definition.id,
+            session_id=session_id,
+        )
+        access = compile_agent_access(
+            definition,
+            envelope,
+            [
+                *envelope.input_refs,
+                *envelope.issue_refs,
+                *envelope.context_summary_refs,
+                *([envelope.prior_result_ref] if envelope.prior_result_ref else []),
+                *(shared_artifacts or []),
+            ],
+            gateway=gateway,
+        )
         ledger = SourceLedger(self.workspace, envelope.run_id)
         library = ReferenceLibrary(self.workspace)
         key = os.getenv("BRAVE_SEARCH_API_KEY", "").strip()
@@ -251,6 +279,9 @@ class ReportingAgentRunner:
             "open_source": OpenWebSourceTool(web, ledger),
             "inspect_document": InspectDocumentTool(self.workspace),
             "inspect_image": InspectImageTool(self.workspace),
+            "open_artifact": OpenArtifactTool(gateway),
+            "open_tool_result": OpenToolResultTool(gateway),
+            "search_text": SearchTextTool(gateway),
             "calculate": CalculateTool(),
             "publish_research_note": PublishResearchNoteTool(
                 self.workspace,
@@ -283,6 +314,8 @@ class ReportingAgentRunner:
                 self.store,
                 self.bus,
                 workflow_id,
+                expected_plan_agent_ids=envelope.expected_plan_agent_ids,
+                allowed_outputs=envelope.allowed_outputs,
             ),
             "report_blocked": ReportBlockedTool(
                 definition.id,
@@ -298,7 +331,7 @@ class ReportingAgentRunner:
             available["product_skill_evolution"] = ProductSkillEvolutionTool(
                 self.product_skill_root.parents[1]
             )
-        for name in definition.tools:
+        for name in access.tool_names:
             if name not in available:
                 raise ValueError(f"unsupported tool in {definition.id}: {name}")
             registry.register(available[name])
@@ -321,10 +354,45 @@ class ReportingAgentRunner:
         workflow_id: str,
         session_key: str | None = None,
     ) -> AgentResult:
+        router = self._routers.get(workflow_id)
+        if router is None:
+            router = WorkflowMessageRouter(self.bus, workflow_id)
+            self._routers[workflow_id] = router
+        inherited_refs = [
+            *router.research_notes,
+            *router.gaps,
+            *router.blocked_notices,
+            *router.revision_requests.get(definition.id, []),
+        ]
+        shared_artifacts = list(dict.fromkeys([*shared_artifacts, *inherited_refs]))
+        if router.revision_requests.get(definition.id):
+            envelope = envelope.model_copy(
+                update={
+                    "issue_refs": list(
+                        dict.fromkeys(
+                            [*envelope.issue_refs, *router.revision_requests[definition.id]]
+                        )
+                    )
+                }
+            )
         cache_key = (workflow_id, session_key or envelope.task_id)
         cached = self._sessions.get(cache_key)
+        gateway = scoped_gateway(
+            self._artifact_root,
+            workflow_id=workflow_id,
+            envelope=envelope,
+            agent_id=definition.id,
+            session_id=(cached[1] if cached is not None else "pending"),
+        )
         if cached is None:
             session_id = f"session-{uuid4().hex[:12]}"
+            gateway = scoped_gateway(
+                self._artifact_root,
+                workflow_id=workflow_id,
+                envelope=envelope,
+                agent_id=definition.id,
+                session_id=session_id,
+            )
             runtime_id = f"{definition.id}--{session_id}"
             config = self.defaults.model_copy(
                 update={"max_tool_iterations": min(definition.max_turns, 40)}
@@ -332,18 +400,38 @@ class ReportingAgentRunner:
             loop = AgentLoop(
                 agent_type=runtime_id,
                 workspace=self.workspace,
-                tools=self._tools(definition, envelope, session_id, workflow_id),
+                tools=self._tools(
+                    definition,
+                    envelope,
+                    session_id,
+                    workflow_id,
+                    gateway=gateway,
+                    shared_artifacts=shared_artifacts,
+                ),
                 bus=self.bus,
                 config=config,
                 llm_provider=self.llm_provider,
                 system_prompt=self._system_prompt(definition, envelope),
+                usage_run_id=envelope.run_id,
+                usage_task_id=envelope.task_id,
+                artifact_gateway=gateway,
             )
             self._sessions[cache_key] = (loop, session_id, runtime_id)
-            self._runtime_by_identity[definition.id] = runtime_id
+            router.register_session(definition.id, session_id, runtime_id)
             await loop.start()
         else:
             loop, session_id, runtime_id = cached
-            loop.tools = self._tools(definition, envelope, session_id, workflow_id)
+            loop.artifact_gateway = gateway
+            loop.tools = self._tools(
+                definition,
+                envelope,
+                session_id,
+                workflow_id,
+                gateway=gateway,
+                shared_artifacts=shared_artifacts,
+            )
+            loop.usage_run_id = envelope.run_id
+            loop.usage_task_id = envelope.task_id
         task_message = PromptAssembler.task_message(envelope, shared_artifacts)
 
         async def wait_result() -> AgentResult:
@@ -464,6 +552,6 @@ class ReportingAgentRunner:
         for key in keys:
             loop, _session_id, runtime_id = self._sessions.pop(key)
             await loop.stop()
-            for identity, active_runtime in list(self._runtime_by_identity.items()):
-                if active_runtime == runtime_id:
-                    self._runtime_by_identity.pop(identity, None)
+        router = self._routers.pop(workflow_id, None)
+        if router is not None:
+            router.close()

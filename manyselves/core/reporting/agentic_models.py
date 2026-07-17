@@ -37,6 +37,7 @@ class TaskEnvelope(StrictModel):
     issue_refs: list[str] = Field(default_factory=list)
     context_summary_refs: list[str] = Field(default_factory=list)
     target_submodule_ids: list[str] = Field(default_factory=list)
+    expected_plan_agent_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def targets_use_fixed_taxonomy(self) -> "TaskEnvelope":

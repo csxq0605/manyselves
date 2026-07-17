@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -59,6 +60,41 @@ class BlockingTool(Tool):
         return {"status": "unexpected"}
 
 
+class CountingTool(Tool):
+    name = "counting_tool"
+    description = "Count executions."
+
+    def __init__(self):
+        self.calls = 0
+
+    async def __call__(self, value: int) -> dict:
+        self.calls += 1
+        return {"value": value}
+
+
+class RepeatingToolProvider(LLMProvider):
+    def __init__(self):
+        super().__init__("key", model="progress-model")
+        self.calls = 0
+        self.received_messages = []
+
+    async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        self.calls += 1
+        self.received_messages.append(list(messages))
+        if self.calls < 3:
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    LLMToolCall(
+                        id=f"repeat-{self.calls}",
+                        name="counting_tool",
+                        arguments={"value": 1},
+                    )
+                ],
+            )
+        return LLMResponse(content="stopped repeating")
+
+
 def _loop(tmp_path: Path, provider: LLMProvider) -> AgentLoop:
     return AgentLoop(
         agent_type="main",
@@ -84,6 +120,14 @@ async def test_provider_retry_is_bounded_and_announced(tmp_path: Path, monkeypat
 
     assert response.content == "recovered"
     assert provider.calls == 3
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / ".manyselves/usage/main.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [row["attempt"] for row in rows] == [1, 2, 3]
+    assert [row["status"] for row in rows] == ["error", "error", "success"]
     notices = [item for item in list(loop.bus._queue._queue) if isinstance(item, SystemNotice)]
     assert len(notices) == 2
     assert "自动重试（1/2）" in notices[0].content
@@ -149,3 +193,76 @@ async def test_cancel_current_cancels_active_long_running_tool(tmp_path: Path):
     await asyncio.wait_for(task, timeout=1)
 
     assert loop._active_tool_task is None
+
+
+@pytest.mark.asyncio
+async def test_tool_round_executes_only_the_configured_batch(tmp_path: Path):
+    provider = EventuallySuccessfulProvider(failures=0)
+    tool = CountingTool()
+    registry = ToolRegistry()
+    registry.register(tool)
+    loop = AgentLoop(
+        agent_type="main",
+        workspace=tmp_path,
+        tools=registry,
+        bus=MessageBus(),
+        config=AgentDefaults(max_tool_calls_per_round=2),
+        llm_provider=provider,
+    )
+    response = SimpleNamespace(
+        content="",
+        thinking=None,
+        usage=None,
+        tool_calls=[
+            LLMToolCall(
+                id=f"tool-{index}",
+                name="counting_tool",
+                arguments={"value": index},
+            )
+            for index in range(3)
+        ],
+    )
+
+    await loop._handle_tool_calls(response, "message-1")
+
+    assert tool.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_repeated_tool_results_inject_replan_into_real_tool_loop(tmp_path: Path):
+    provider = RepeatingToolProvider()
+    tool = CountingTool()
+    registry = ToolRegistry()
+    registry.register(tool)
+    loop = AgentLoop(
+        agent_type="main",
+        workspace=tmp_path,
+        tools=registry,
+        bus=MessageBus(),
+        config=AgentDefaults(),
+        llm_provider=provider,
+    )
+    loop._progress_monitor.replan_after = 2
+    response = SimpleNamespace(
+        content="",
+        thinking=None,
+        usage=None,
+        tool_calls=[
+            LLMToolCall(
+                id="repeat-initial",
+                name="counting_tool",
+                arguments={"value": 1},
+            )
+        ],
+    )
+
+    await loop._handle_tool_calls(response, "message-1")
+
+    assert tool.calls == 3
+    assert any(
+        "<progress_check>" in message.content
+        for messages in provider.received_messages
+        for message in messages
+    )
+    notices = [item for item in list(loop.bus._queue._queue) if isinstance(item, SystemNotice)]
+    assert any("重新规划" in notice.content for notice in notices)

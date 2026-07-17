@@ -49,6 +49,15 @@ class AgentWorkflowError(RuntimeError):
     pass
 
 
+class AgentWorkflowBlocked(AgentWorkflowError):
+    def __init__(self, agent_id: str, task_id: str, reason: str, artifact_refs: list[str] | None = None):
+        self.agent_id = agent_id
+        self.task_id = task_id
+        self.reason = reason
+        self.artifact_refs = list(artifact_refs or ())
+        super().__init__(f"{agent_id} blocked on {task_id}: {reason}")
+
+
 class ReportingNeedsDecisionError(RuntimeError):
     """The lead Agent decided that safe autonomous progress is no longer useful."""
 
@@ -138,6 +147,13 @@ class ReportWorkflowRunner:
                 target_agent=agent_id,
                 session_id=workflow_id,
             )
+        if result.status is AgentRunStatus.BLOCKED:
+            raise AgentWorkflowBlocked(
+                agent_id,
+                envelope.task_id,
+                result.reason or "no reason",
+                [f"Work/runs/{envelope.run_id}/results/{envelope.task_id}.json"],
+            )
         if result.status is not AgentRunStatus.COMPLETED:
             raise AgentWorkflowError(
                 f"{agent_id} ended as {result.status.value}: {result.reason or 'no reason'}"
@@ -181,6 +197,12 @@ class ReportWorkflowRunner:
             )
             failures = [item for item in outcomes if isinstance(item, BaseException)]
             if failures:
+                blocked = next(
+                    (item for item in failures if isinstance(item, AgentWorkflowBlocked)),
+                    None,
+                )
+                if blocked is not None:
+                    raise blocked
                 needs_decision = next(
                     (item for item in failures if isinstance(item, ReportingNeedsDecisionError)),
                     None,
@@ -518,6 +540,9 @@ class ReportWorkflowRunner:
                 *request.execution_requirements,
             ],
             allowed_outputs=["plan_submission"],
+            expected_plan_agent_ids=[
+                f"module-{module_id}-specialist" for module_id in requested_modules
+            ],
         )
         payload = await self._agent(
             "report-planner",

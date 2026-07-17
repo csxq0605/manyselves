@@ -13,6 +13,7 @@ from manyselves.core.tools.reporting_collaboration_tools import (
     ReplyPeerTool,
     ReportBlockedTool,
     ReportGapTool,
+    SubmissionValidationError,
     SubmitResultTool,
 )
 from manyselves.interfaces.types import (
@@ -34,6 +35,22 @@ MODULE_PAYLOAD = {
     "unresolved_questions": [],
     "revision": 0,
 }
+
+
+@pytest.mark.asyncio
+async def test_submit_result_rejects_disallowed_output_before_persisting(tmp_path: Path):
+    tool = SubmitResultTool(
+        agent_id="chief-editor",
+        session_id="session-chief",
+        run_id="run-output",
+        task_id="chief-task",
+        store=ReportingStore(tmp_path),
+        bus=MessageBus(),
+        allowed_outputs=["edited_report_submission"],
+    )
+    with pytest.raises(SubmissionValidationError, match="allowed output"):
+        await tool(payload=MODULE_PAYLOAD)
+    assert not (tmp_path / "Work/runs/run-output/results/chief-task.json").exists()
 
 
 @pytest.mark.asyncio
@@ -85,6 +102,169 @@ async def test_submit_result_supports_full_five_module_domain_without_research(
     result = await tool(payload=payload)
 
     assert result["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_submit_result_unwraps_provider_item_wrapped_lists(tmp_path: Path):
+    """Accept the list encoding emitted by the configured OpenAI-compatible API."""
+    bus = MessageBus()
+    tool = SubmitResultTool(
+        agent_id="report-planner",
+        session_id="session-plan",
+        run_id="run-1",
+        task_id="report-plan",
+        store=ReportingStore(tmp_path),
+        bus=bus,
+        workflow_id="wf-1",
+    )
+    payload = {
+        "kind": "plan_submission",
+        "rationale": "为每个固定模块安排一名专家。",
+        "module_tasks": {
+            "item": [
+                {
+                    "task_id": "module-2.1",
+                    "run_id": "run-1",
+                    "agent_id": "module-2.1-specialist",
+                    "objective": "完成 2.1 分析。",
+                    "input_refs": {"item": ["Work/evidence.jsonl"]},
+                    "constraints": {"item": []},
+                    "allowed_outputs": {"item": ["module_submission"]},
+                    "issue_refs": {"item": []},
+                    "context_summary_refs": {"item": []},
+                    "target_submodule_ids": {
+                        "item": ["2.1.1", "2.1.2", "2.1.3", "2.1.4", "2.1.5"]
+                    },
+                }
+            ]
+        },
+    }
+
+    result = await tool(payload=payload)
+
+    assert result["status"] == "completed"
+    persisted = json.loads(
+        (tmp_path / "Work/runs/run-1/results/report-plan.json").read_text(encoding="utf-8")
+    )
+    assert persisted["payload"]["module_tasks"][0]["input_refs"] == ["Work/evidence.jsonl"]
+
+
+@pytest.mark.asyncio
+async def test_submit_result_wraps_item_wrapped_scalar_as_a_single_list_value(
+    tmp_path: Path,
+):
+    bus = MessageBus()
+    tool = SubmitResultTool(
+        agent_id="report-planner",
+        session_id="session-plan",
+        run_id="run-1",
+        task_id="report-plan",
+        store=ReportingStore(tmp_path),
+        bus=bus,
+        workflow_id="wf-1",
+    )
+    payload = {
+        "kind": "plan_submission",
+        "rationale": "为每个固定模块安排一名专家。",
+        "module_tasks": {
+            "item": {
+                "task_id": "module-2.1",
+                "run_id": "run-1",
+                "agent_id": "module-2.1-specialist",
+                "objective": "完成 2.1 分析。",
+                "input_refs": {"item": "Work/evidence.jsonl"},
+                "constraints": {"item": "仅引用项目资料。"},
+                "allowed_outputs": {"item": "module_submission"},
+                "issue_refs": {"item": "E-0001"},
+                "context_summary_refs": {"item": "Work/coverage.json"},
+                "expected_plan_agent_ids": {"item": "module-2.2-specialist"},
+                "target_submodule_ids": {"item": "2.1.1"},
+            }
+        },
+    }
+
+    result = await tool(payload=payload)
+
+    assert result["status"] == "completed"
+    persisted = json.loads(
+        (tmp_path / "Work/runs/run-1/results/report-plan.json").read_text(encoding="utf-8")
+    )
+    task = persisted["payload"]["module_tasks"][0]
+    assert task["allowed_outputs"] == ["module_submission"]
+    assert task["context_summary_refs"] == ["Work/coverage.json"]
+    assert task["expected_plan_agent_ids"] == ["module-2.2-specialist"]
+
+
+@pytest.mark.asyncio
+async def test_submit_result_normalizes_an_empty_string_in_a_list_field(tmp_path: Path):
+    """Treat the provider's empty-list encoding as an empty list, not a validation error."""
+    bus = MessageBus()
+    tool = SubmitResultTool(
+        agent_id="report-planner",
+        session_id="session-plan",
+        run_id="run-1",
+        task_id="report-plan",
+        store=ReportingStore(tmp_path),
+        bus=bus,
+        workflow_id="wf-1",
+    )
+    payload = {
+        "kind": "plan_submission",
+        "rationale": "为每个固定模块安排一名专家。",
+        "module_tasks": {
+            "item": {
+                "task_id": "module-2.1",
+                "run_id": "run-1",
+                "agent_id": "module-2.1-specialist",
+                "objective": "完成 2.1 分析。",
+                "allowed_outputs": {"item": "module_submission"},
+                "issue_refs": "",
+            }
+        },
+    }
+
+    result = await tool(payload=payload)
+
+    assert result["status"] == "completed"
+    persisted = json.loads(
+        (tmp_path / "Work/runs/run-1/results/report-plan.json").read_text(encoding="utf-8")
+    )
+    assert persisted["payload"]["module_tasks"][0]["issue_refs"] == []
+
+
+@pytest.mark.asyncio
+async def test_submit_result_rejects_a_plan_that_omits_required_specialists(
+    tmp_path: Path,
+):
+    bus = MessageBus()
+    tool = SubmitResultTool(
+        agent_id="report-planner",
+        session_id="session-plan",
+        run_id="run-1",
+        task_id="report-plan",
+        store=ReportingStore(tmp_path),
+        bus=bus,
+        workflow_id="wf-1",
+        expected_plan_agent_ids=["module-2.1-specialist", "module-2.2-specialist"],
+    )
+    payload = {
+        "kind": "plan_submission",
+        "rationale": "仅安排了一项，因而应被拒绝。",
+        "module_tasks": [
+            {
+                "task_id": "module-2.1",
+                "run_id": "run-1",
+                "agent_id": "module-2.1-specialist",
+                "objective": "完成 2.1 分析。",
+                "allowed_outputs": ["module_submission"],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="missing=.*module-2.2-specialist"):
+        await tool(payload=payload)
+
+    assert not (tmp_path / "Work/runs/run-1/results/report-plan.json").exists()
 
 
 @pytest.mark.asyncio

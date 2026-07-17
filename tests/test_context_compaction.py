@@ -2,6 +2,7 @@
 
 import pytest
 
+from manyselves.core.loops import agent_loop as agent_loop_module
 from manyselves.core.loops.agent_loop import _estimate_tokens, _trim_messages_to_budget
 from manyselves.core.providers.base import Message as LLMMessage
 
@@ -89,3 +90,25 @@ class TestTrimMessagesToBudget:
         msgs = [system, LLMMessage(role="user", content="a" * 100000)]
         result = _trim_messages_to_budget(msgs, context_window=500, max_output=100)
         assert result[0] == system
+
+
+def test_working_memory_compaction_keeps_a_checkpoint_and_recent_context():
+    system = LLMMessage(role="system", content="system")
+    objective = LLMMessage(role="user", content="生成五模块报告，必须引用 E-0001。")
+    old_result = LLMMessage(
+        role="user",
+        content=("Work/evidence.jsonl E-0001 " + ("x" * 20000)),
+    )
+    recent = LLMMessage(role="user", content="继续处理当前未决问题。")
+
+    compacted = agent_loop_module._compact_messages_for_working_memory(
+        [system, objective, old_result, recent],
+        target_tokens=1200,
+    )
+
+    assert _estimate_tokens(compacted) <= 1200
+    assert compacted[0] is system
+    assert "working_memory_checkpoint" in compacted[1].content
+    assert "E-0001" in compacted[1].content
+    assert "Work/evidence.jsonl" in compacted[1].content
+    assert recent in compacted

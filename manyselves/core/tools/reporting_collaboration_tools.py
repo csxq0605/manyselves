@@ -17,9 +17,39 @@ from ...interfaces.types import (
     UserMessage,
 )
 from ..loops.bus import MessageBus
-from ..reporting.agentic_models import AgentResult, AgentRunStatus
+from ..reporting.agentic_models import AgentResult, AgentRunStatus, PlanSubmission
 from ..reporting.store import ReportingStore
 from .registry import Tool
+
+
+_LIST_FIELDS = frozenset(
+    {
+        "allowed_outputs",
+        "artifact_ids",
+        "checked_claim_ids",
+        "claim_ids",
+        "claims",
+        "constraints",
+        "context_summary_refs",
+        "expected_plan_agent_ids",
+        "global_constraints",
+        "headers",
+        "input_refs",
+        "issue_refs",
+        "issues",
+        "module_tasks",
+        "photo_ids",
+        "protected_claim_ids",
+        "rows",
+        "source_ids",
+        "tables",
+        "target_module_ids",
+        "target_submodule_ids",
+        "unresolved_disputes",
+        "unresolved_editorial_issues",
+        "unresolved_questions",
+    }
+)
 
 
 class _ResultTool(Tool):
@@ -71,22 +101,83 @@ class SubmitResultTool(_ResultTool):
         "complete; research is optional and is not a prerequisite."
     )
 
+    def __init__(
+        self,
+        *args,
+        expected_plan_agent_ids: list[str] | None = None,
+        allowed_outputs: list[str] | None = None,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.expected_plan_agent_ids = tuple(expected_plan_agent_ids or ())
+        self.allowed_outputs = frozenset(allowed_outputs or ())
+
     async def __call__(self, payload: dict) -> dict:
         """Submit a typed result.
 
         Args:
             payload: One allowed typed workflow submission for the active task.
         """
+        normalized_payload = _unwrap_item_wrapped_lists(payload)
+        submission_kind = str(normalized_payload.get("kind", ""))
+        if self.allowed_outputs and submission_kind not in self.allowed_outputs:
+            raise SubmissionValidationError(
+                f"submission kind '{submission_kind or '<missing>'}' is not an allowed output; "
+                f"expected one of {sorted(self.allowed_outputs)}"
+            )
         result = AgentResult(
             task_id=self.task_id,
             run_id=self.run_id,
             agent_id=self.agent_id,
             session_id=self.session_id,
             status=AgentRunStatus.COMPLETED,
-            payload=payload,
+            payload=normalized_payload,
         )
+        if self.expected_plan_agent_ids and isinstance(result.payload, PlanSubmission):
+            assigned = [task.agent_id for task in result.payload.module_tasks]
+            expected = set(self.expected_plan_agent_ids)
+            actual = set(assigned)
+            if actual != expected or len(assigned) != len(expected):
+                missing = sorted(expected - actual)
+                unexpected = sorted(actual - expected)
+                raise SubmissionValidationError(
+                    "plan_submission must assign exactly one task to every requested "
+                    f"specialist; missing={missing}; unexpected={unexpected}; "
+                    f"task_count={len(assigned)}"
+                )
         relative = await self._persist_and_publish(result)
         return {"status": "completed", "result_path": relative}
+
+
+class SubmissionValidationError(ValueError):
+    """A deterministic semantic validation failure for a submitted payload."""
+
+    submission_validation = True
+
+
+def _unwrap_item_wrapped_lists(value, field_name: str | None = None):
+    """Normalize the list wrapper emitted by some OpenAI-compatible APIs.
+
+    The reporting schema has no dictionary whose sole semantic field is
+    ``item``.  A mapping shaped exactly as ``{"item": value}`` is restored
+    for known list fields; a scalar value becomes a one-item list.
+    """
+
+    if isinstance(value, list):
+        return [_unwrap_item_wrapped_lists(item) for item in value]
+    if isinstance(value, dict):
+        if field_name in _LIST_FIELDS and set(value) == {"item"}:
+            item = _unwrap_item_wrapped_lists(value["item"])
+            return item if isinstance(item, list) else [item]
+        return {
+            key: _unwrap_item_wrapped_lists(item, key) for key, item in value.items()
+        }
+    if field_name in _LIST_FIELDS:
+        # The configured provider renders an empty JSON array as an empty
+        # string in some function calls. A non-empty scalar is its other
+        # observed one-item-list encoding.
+        return [] if value == "" else [value]
+    return value
 
 
 class ReportBlockedTool(_ResultTool):
@@ -156,6 +247,7 @@ class QueryPeerTool(Tool):
         target_agent: str,
         question: str,
         artifact_refs: list[str] | None = None,
+        target_session_id: str | None = None,
     ) -> dict:
         """Query a peer.
 
@@ -188,6 +280,7 @@ class QueryPeerTool(Tool):
                 sender=self.agent_id,
                 recipient=target_agent,
                 source_session_id=self.session_id,
+                target_session_id=target_session_id,
                 question=question,
                 artifact_refs=artifact_refs or [],
                 content=question,

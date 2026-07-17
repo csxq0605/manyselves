@@ -321,6 +321,7 @@ class PeerQueryMessage(WorkflowMessage):
     type: MessageType = MessageType.PEER_QUERY
     query_id: str
     source_session_id: str
+    target_session_id: str | None = None
     question: str
     requires_reply: bool = True
 

@@ -8,9 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from manyselves.config.schema import AgentDefaults
+from manyselves.core.loops import agent_loop as agent_loop_module
 from manyselves.core.loops.agent_loop import AgentLoop
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMResponse, LLMStreamChunk, LLMToolCall
+from manyselves.core.providers.base import Message as LLMMessage
 from manyselves.interfaces.types import (
     AgentResponse,
     AgentStatus,
@@ -433,6 +435,92 @@ def test_format_tool_result_keeps_inter_agent_summary(agent_loop):
 def test_format_tool_result_string(agent_loop):
     result = agent_loop._format_tool_result("plain text")
     assert result == "plain text"
+
+
+def test_large_tool_result_is_persisted_and_replaced_with_a_compact_reference(
+    agent_loop, workspace
+):
+    payload = {"status": "ok", "content": "evidence-" + ("x" * 20000)}
+
+    result = agent_loop._format_tool_result(
+        payload,
+        tool_name="search_project_evidence",
+        tool_call_id="call-large",
+    )
+
+    assert len(result) < 8000
+    assert "full_result_ref" in result
+    stored = workspace / ".manyselves/tool-results/main/call-large.json"
+    assert stored.is_file()
+    assert "evidence-" + ("x" * 20000) in stored.read_text(encoding="utf-8")
+
+
+def test_working_memory_compaction_persists_removed_transcript(agent_loop, workspace):
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="original task" + ("x" * 160000)),
+        LLMMessage(role="user", content="recent task state"),
+    ]
+
+    compacted = agent_loop._compact_working_memory(messages)
+    agent_loop._compact_working_memory(messages)
+
+    assert len(compacted) < len(messages) + 1
+    checkpoints = list(
+        (workspace / ".manyselves/context-checkpoints/main").glob("*.json")
+    )
+    assert len(checkpoints) == 1
+    assert "original task" in checkpoints[0].read_text(encoding="utf-8")
+    assert "checkpoint_ref=artifact:v1:" in compacted[1].content
+
+
+def test_token_usage_ledger_prefers_provider_usage(agent_loop, workspace):
+    agent_loop.usage_run_id = "run-usage"
+    agent_loop.usage_task_id = "task-usage"
+    messages = [LLMMessage(role="user", content="x" * 10000)]
+    response = SimpleNamespace(
+        content="done",
+        usage={"input_tokens": 123, "output_tokens": 17},
+    )
+
+    record = agent_loop._record_token_usage(
+        messages,
+        response,
+        phase="initial",
+        status="success",
+        error=None,
+    )
+
+    assert record["usage_source"] == "provider"
+    assert record["input_tokens"] == 123
+    assert record["output_tokens"] == 17
+    ledger = workspace / ".manyselves/usage/run-usage.jsonl"
+    assert ledger.is_file()
+    assert '"task_id": "task-usage"' in ledger.read_text(encoding="utf-8")
+
+
+def test_token_usage_ledger_marks_length_fallback_as_estimated(agent_loop):
+    response = SimpleNamespace(content="done", usage=None)
+
+    record = agent_loop._record_token_usage(
+        [LLMMessage(role="user", content="x" * 100)],
+        response,
+        phase="followup",
+        status="success",
+        error=None,
+    )
+
+    assert record["usage_source"] == "estimated"
+    assert record["input_tokens"] > 0
+
+
+def test_progress_monitor_requests_replan_after_repeated_identical_results():
+    monitor = agent_loop_module._ProgressMonitor(replan_after=2)
+
+    assert monitor.observe(["E-0001", "Work/a.json"]) is None
+    assert monitor.observe(["E-0001", "Work/a.json"]) is None
+    assert monitor.observe(["E-0001", "Work/a.json"]) == "replan"
+    assert monitor.observe(["E-0002"]) is None
 
 
 def test_get_agent_type_str(agent_loop):

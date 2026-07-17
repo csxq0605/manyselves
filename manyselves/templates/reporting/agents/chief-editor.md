@@ -4,7 +4,7 @@ description: 面向管理层与专业读者的技术报告总编
 model: inherit
 reads: [module_drafts, claim_ledger, source_ledger, review_issues]
 writes: [report_state]
-tools: [query_peer, reply_peer, request_revision, report_blocked, submit_result]
+tools: [open_artifact, search_text, query_peer, reply_peer, request_revision, report_blocked, submit_result]
 maxTurns: 12
 effort: high
 memory: task

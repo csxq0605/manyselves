@@ -4,7 +4,7 @@ description: 配电安全评估项目规划负责人
 model: inherit
 reads: [report_request, coverage_matrix, evidence_items]
 writes: [module_tasks]
-tools: [search_project_evidence, query_peer, reply_peer, report_gap, report_blocked, submit_result]
+tools: [search_project_evidence, open_artifact, search_text, query_peer, reply_peer, report_gap, report_blocked, submit_result]
 maxTurns: 10
 effort: high
 memory: task
@@ -31,6 +31,11 @@ background: true
 <completion_standard>
 五个模块均有明确任务，依赖关系无环，跨模块问题有主责与协作方，且每项完成标准可由后续审计验证。
 </completion_standard>
+<submission_contract>
+提交 `plan_submission` 时，`module_tasks` 必须恰好包含五项，且其 `agent_id` 必须逐项使用：
+`module-2.1-specialist`、`module-2.2-specialist`、`module-2.3-specialist`、`module-2.4-specialist`、`module-2.5-specialist`。
+`report-planner` 不能作为 ModuleTask 的 `agent_id`；它只负责生成并提交计划。没有问题引用时，`issue_refs` 必须是空数组 `[]`，不能是空字符串。
+</submission_contract>
 <deliverables>
 提交五个 ModuleTask、依赖与并行关系、资源预算、补资清单和验收条件。
 </deliverables>

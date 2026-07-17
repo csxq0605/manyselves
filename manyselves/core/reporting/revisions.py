@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import shutil
+import time
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,6 +21,7 @@ from .models import (
     ReportRequest,
     RevisionRequest,
 )
+from .output_verifier import OutputVerificationError, verify_current_run_outputs
 from .session_summary import AgentSessionSummary
 from .skills.service import ProjectSkillEvolutionService
 from .versions import ReportVersion, ReportVersionStore
@@ -49,6 +51,7 @@ class RevisionCoordinator:
 
         self.service.store.ensure_layout()
         run_id = f"report-revision-{uuid.uuid4().hex[:10]}"
+        execution_started_ns = time.time_ns()
         self.service.store.write_json(
             f"Work/runs/{run_id}/revision-request.json",
             request.model_dump(mode="json"),
@@ -110,10 +113,18 @@ class RevisionCoordinator:
                 artifact_refs=[f"Work/runs/{run_id}/revision-request.json"],
             )
             feedback_record_id = feedback_record.id
+        try:
+            output_paths = verify_current_run_outputs(
+                self.service.workspace, run_id, artifacts, execution_started_ns
+            )
+        except OutputVerificationError as exc:
+            result = ReportingRunResult(run_id=run_id, status="failed", error=str(exc))
+            self.service._save_run(result)
+            return result
         result = ReportingRunResult(
             run_id=run_id,
             status="completed",
-            output_paths=[self.service.workspace / artifact.path for artifact in artifacts],
+            output_paths=output_paths,
             feedback_record_id=feedback_record_id,
         )
         self.service._save_run(result)

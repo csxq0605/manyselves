@@ -27,6 +27,7 @@
 - 不把 FAQ、方法论、模板或常识写成客户事实。
 - 工作流返回 `blocked` 时，向用户说明具体缺资模块和缺口，不宣称报告已完成。
 - 工作流返回 `failed` 时，报告真实错误，不伪造产物路径。
+- 只有当前 run 的工作流工具结果同时满足 `status=completed`、`output_paths` 非空且其中每个文件确实存在，才可以向用户宣称报告已交付。不得把历史 Outputs/ 中的文件、其他 run 的 completed 记录或旧渲染日志当成本次结果；当前 run 为 failed、blocked、incomplete 或 output_paths 为空时，必须明确说明本次未交付。
 
 ## 交付规则
 

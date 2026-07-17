@@ -18,6 +18,7 @@ from ...interfaces.types import (
     normalize_agent_id,
 )
 from ..checkpoints import CheckpointManager
+from ..artifacts import ArtifactGateway, ArtifactGrant
 from ..reporting.config import load_packaged_agents
 from ..reporting.prompts import PromptAssembler
 from ..tools import (
@@ -30,6 +31,7 @@ from ..tools import (
     ReadTool,
     TaskBoard,
 )
+from ..tools.artifact_tools import OpenArtifactTool, OpenToolResultTool, SearchTextTool
 from ..tools.registry import ToolRegistry
 from ..tools.reporting_tool import (
     ResumeReportingWorkflowTool,
@@ -71,6 +73,9 @@ class LoopManager:
         self._task_board = TaskBoard()
         self.manifest_manager = ManifestManager(self.workspace)
         self._file_state_managers: dict[str, FileStateManager] = {}
+        self._artifact_gateway = ArtifactGateway(
+            self.workspace, ArtifactGrant("main", "main", "main", "main")
+        )
 
         # Subscribe to restart requests and file rollback requests
         self.bus.subscribe(RestartRequest, self._handle_restart_request)
@@ -206,6 +211,7 @@ class LoopManager:
             manifest_manager=self.manifest_manager,
             task_board=self._task_board,
             system_prompt=PromptAssembler.system_prompt(definition),
+            artifact_gateway=self._artifact_gateway,
         )
         self._loops["main"] = loop
 
@@ -244,6 +250,9 @@ class LoopManager:
             workspace=self.workspace,
             file_state_manager=file_state_manager,
         ))
+        registry.register(OpenArtifactTool(self._artifact_gateway))
+        registry.register(OpenToolResultTool(self._artifact_gateway))
+        registry.register(SearchTextTool(self._artifact_gateway))
 
         write_dir = self.workspace / "Work"
 

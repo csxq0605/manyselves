@@ -69,6 +69,17 @@ def test_planner_prompt_contains_skill_index_but_not_bodies(tmp_path: Path) -> N
     assert "负荷率必须保留计算口径" not in prompt
 
 
+def test_packaged_planner_prompt_requires_specialist_owners() -> None:
+    definition = load_agent_definition(
+        Path(__file__).parents[2] / "manyselves/templates/reporting/agents/report-planner.md"
+    )
+
+    prompt = PromptAssembler.system_prompt(definition)
+
+    assert "module-2.1-specialist" in prompt
+    assert "`report-planner` 不能作为 ModuleTask 的 `agent_id`" in prompt
+
+
 def test_system_prompt_rejects_malformed_identity_xml(tmp_path: Path) -> None:
     identity = tmp_path / "agent.md"
     identity.write_text(
@@ -137,6 +148,21 @@ def test_task_context_marks_session_summary_as_context_only() -> None:
 
     assert 'context_only="true"' in message
     assert "session-summaries/summary.json" in message
+
+
+def test_task_context_states_required_plan_specialists() -> None:
+    envelope = TaskEnvelope(
+        task_id="report-plan",
+        run_id="run-plan",
+        agent_id="report-planner",
+        objective="规划报告",
+        expected_plan_agent_ids=["module-2.1-specialist", "module-2.2-specialist"],
+    )
+
+    message = PromptAssembler.task_message(envelope, [])
+
+    assert message.count("<expected_plan_agent_id>") == 2
+    assert "module-2.2-specialist" in message
 
 
 def test_task_context_rejects_xml_forbidden_envelope_value() -> None:

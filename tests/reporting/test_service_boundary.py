@@ -8,10 +8,10 @@ from docx import Document
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.decisions import EvidenceDecisionStore
-from manyselves.core.reporting.models import EvidenceDecisionRequest, ReportRequest
+from manyselves.core.reporting.models import EvidenceDecisionRequest, OutputArtifact, ReportRequest
 from manyselves.core.reporting.service import ReportingService
 from manyselves.core.reporting.store import ReportingStore
-from manyselves.core.reporting.workflow import ReportWorkflowRunner
+from manyselves.core.reporting.workflow import AgentWorkflowBlocked, ReportWorkflowRunner
 from manyselves.core.tools.reporting_tool import (
     ResumeReportingWorkflowTool,
     RunReportingWorkflowTool,
@@ -25,6 +25,24 @@ class TemplateResolutionProvider(LLMProvider):
 
     async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
         raise AssertionError("template resolution must not call the provider")
+
+
+@pytest.mark.asyncio
+async def test_agent_blocked_state_is_preserved(tmp_path: Path, monkeypatch) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+
+    async def blocked(_self, _state: dict) -> None:
+        raise AgentWorkflowBlocked("chief-editor", "edit", "missing reviewed modules")
+
+    monkeypatch.setattr(ReportWorkflowRunner, "run", blocked)
+    result = await service.run(ReportRequest(instruction="生成报告"))
+    assert result.status == "blocked"
+    assert result.error == "missing reviewed modules"
 
 
 def test_project_report_template_takes_priority_without_restarting_service(
@@ -188,6 +206,12 @@ async def test_draft_and_skip_resume_same_run_with_explicit_policy(
 
     async def completed(self, state: dict) -> None:
         seen["policy"] = state["request"].missing_evidence_policy
+        output = self.service.workspace / "Outputs/Reports/current-run.txt"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("verified report output", encoding="utf-8")
+        state["output_artifacts"] = [
+            OutputArtifact(kind="report", path=output.relative_to(self.service.workspace))
+        ]
 
     monkeypatch.setattr(ReportWorkflowRunner, "run", completed)
     restarted = ReportingService(
@@ -205,6 +229,29 @@ async def test_draft_and_skip_resume_same_run_with_explicit_policy(
         (tmp_path / f"Work/runs/{pending.run_id}/evidence-choice.json").read_text(encoding="utf-8")
     )
     assert choice["selected_action"] == action
+
+
+@pytest.mark.asyncio
+async def test_service_never_marks_a_run_completed_without_verified_current_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+
+    async def no_outputs(_self, _state: dict) -> None:
+        return None
+
+    monkeypatch.setattr(ReportWorkflowRunner, "run", no_outputs)
+
+    result = await service.run(ReportRequest(instruction="生成报告"))
+
+    assert result.status == "failed"
+    assert result.output_paths == []
+    assert result.error == "workflow finished without verified output artifacts"
 
 
 @pytest.mark.asyncio

@@ -150,9 +150,9 @@ class ReadTool(Tool):
 
             line_count = len(lines)
 
-            if offset is not None:
-                end = (offset + limit) if limit is not None else None
-                lines = lines[offset:end]
+            start = offset or 0
+            end = (start + limit) if limit is not None else None
+            lines = lines[start:end]
 
             content = "".join(lines)
 
@@ -165,6 +165,9 @@ class ReadTool(Tool):
                 "content": content,
                 "line_count": line_count,
                 "lines_read": len(lines),
+                "offset": start,
+                "truncated": end is not None and end < line_count,
+                "next_offset": end if end is not None and end < line_count else None,
             }
         except UnicodeDecodeError:
             logger.warning("Binary file detected (not UTF-8): {}", file_path)

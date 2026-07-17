@@ -62,6 +62,9 @@ class AgentDefaults(Base):
     max_tokens: int = 8192
     temperature: float = 0.1
     max_tool_iterations: int = 200
+    max_tool_calls_per_round: int = Field(default=4, ge=1)
+    max_tool_result_chars: int = Field(default=6000, ge=512)
+    working_memory_tokens: int = Field(default=36000, ge=4096)
     timezone: str = "Asia/Shanghai"
     prompt_templates_dir: str = "templates/agents"
 

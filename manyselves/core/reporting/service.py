@@ -1,6 +1,7 @@
 """Complete V2 reporting service executed inside the Manyselves runtime."""
 
 import asyncio
+import time
 import uuid
 from pathlib import Path
 
@@ -31,8 +32,9 @@ from .models import (
     RevisionRequest,
 )
 from .request_gate import ReportingBlockedError
+from .output_verifier import OutputVerificationError, verify_current_run_outputs
 from .store import ReportingStore
-from .workflow import ReportingNeedsDecisionError, ReportWorkflowRunner
+from .workflow import AgentWorkflowBlocked, ReportingNeedsDecisionError, ReportWorkflowRunner
 
 
 class ReportingRunResult(BaseModel):
@@ -112,6 +114,7 @@ class ReportingService:
 
     async def _execute(self, request: ReportRequest, run_id: str) -> ReportingRunResult:
         state: dict = {"request": request, "run_id": run_id}
+        execution_started_ns = time.time_ns()
         await self._notice(f"配电报告流程 {run_id} 已启动。")
 
         try:
@@ -173,6 +176,15 @@ class ReportingService:
             self._save_run(result)
             await self._notice(f"主决策 Agent 已停止自主返工，等待用户决策：{exc}")
             return result
+        except AgentWorkflowBlocked as exc:
+            result = ReportingRunResult(
+                run_id=run_id,
+                status="blocked",
+                error=exc.reason,
+            )
+            self._save_run(result)
+            await self._notice(f"{exc.agent_id} 已明确报告阻塞：{exc.reason}")
+            return result
         except Exception as exc:
             result = ReportingRunResult(
                 run_id=run_id,
@@ -184,10 +196,25 @@ class ReportingService:
             return result
 
         artifacts: list[OutputArtifact] = state.get("output_artifacts", [])
+        try:
+            output_paths = verify_current_run_outputs(
+                self.workspace, run_id, artifacts, execution_started_ns
+            )
+        except OutputVerificationError as exc:
+            result = ReportingRunResult(
+                run_id=run_id,
+                status="failed",
+                error=str(exc),
+            )
+            self._save_run(result)
+            await self._notice(
+                f"配电报告流程失败：{run_id} 未生成可验证的本次交付产物。"
+            )
+            return result
         result = ReportingRunResult(
             run_id=run_id,
             status="completed",
-            output_paths=[self.workspace / artifact.path for artifact in artifacts],
+            output_paths=output_paths,
         )
         self._save_run(result)
         await self._notice(

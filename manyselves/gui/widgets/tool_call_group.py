@@ -380,6 +380,17 @@ class ToolCallGroup(QWidget):
         detail: str | None = None,
         expandable: bool | None = None,
     ) -> None:
+        if error is None and isinstance(result, dict):
+            semantic_status = str(result.get("status", "")).casefold()
+            if semantic_status in {
+                "error", "failed", "blocked", "cancelled", "stopped_incomplete",
+                "needs_decision", "needs_scope_expansion", "needs_user_decision",
+            }:
+                error = str(
+                    result.get("error")
+                    or result.get("reason")
+                    or f"Tool ended with status: {semantic_status}"
+                )
         for call in reversed(self._calls):
             if call.name == name and call.success is None:
                 call.success = error is None
