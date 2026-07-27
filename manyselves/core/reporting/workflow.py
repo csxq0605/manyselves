@@ -1377,6 +1377,13 @@ class ReportWorkflowRunner:
             raise ValueError("review completion subject refs do not match current subjects")
         for ref in completion.subject_refs:
             read_ref(ref)
+        for ref, expected_sha256 in completion.artifact_sha256.items():
+            _, path = read_ref(ref)
+            actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+            if actual_sha256 != expected_sha256:
+                raise ValueError(
+                    f"review artifact hash mismatch after completion: {ref}"
+                )
 
         lifecycle_kinds = {
             "module": {
@@ -1631,19 +1638,29 @@ class ReportWorkflowRunner:
                         f"Work/runs/{run_id}/modules/"
                         f"{module_id}-r{candidate.revision}.json"
                     )
-                    completion_ref = (
-                        f"Work/runs/{run_id}/reviews/module-completion-"
-                        f"{module_id}-r{candidate.revision}.json"
+                    completion_ref = typed_checkpoint.module_review_completion_refs.get(
+                        module_id
                     )
+                    if not completion_ref:
+                        continue
                     if not (self.service.workspace / completion_ref).is_file():
                         continue
+                    parts = Path(completion_ref).parts
+                    try:
+                        lifecycle_id = parts[parts.index("module") + 1]
+                    except (ValueError, IndexError) as exc:
+                        raise AgentWorkflowError(
+                            f"invalid module completion path: {completion_ref}"
+                        ) from exc
                     try:
                         self._load_current_review_completion(
                             run_id=run_id,
                             completion_ref=completion_ref,
                             lifecycle="module",
                             reviewer_agent_id="evidence-auditor",
-                            reviewer_session_key=f"module-auditor-{module_id}",
+                            reviewer_session_key=(
+                                f"module-auditor-{module_id}-{lifecycle_id}"
+                            ),
                             subject_refs=[subject_ref],
                         )
                     except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -1934,22 +1951,30 @@ class ReportWorkflowRunner:
                     f"Work/runs/{run_id}/modules/"
                     f"{module_id}-r{candidate.revision}.json"
                 )
-                completion_path = self.service.workspace / (
-                    f"Work/runs/{run_id}/reviews/module-completion-"
-                    f"{module_id}-r{candidate.revision}.json"
+                completion_ref = state.get("module_review_completion_refs", {}).get(
+                    module_id
                 )
+                if not completion_ref:
+                    continue
+                completion_path = self.service.workspace / completion_ref
                 if not completion_path.is_file():
                     continue
-                completion_ref = completion_path.relative_to(
-                    self.service.workspace
-                ).as_posix()
+                parts = Path(completion_ref).parts
+                try:
+                    lifecycle_id = parts[parts.index("module") + 1]
+                except (ValueError, IndexError) as exc:
+                    raise AgentWorkflowError(
+                        f"invalid module completion path: {completion_ref}"
+                    ) from exc
                 try:
                     self._load_current_review_completion(
                         run_id=run_id,
                         completion_ref=completion_ref,
                         lifecycle="module",
                         reviewer_agent_id="evidence-auditor",
-                        reviewer_session_key=f"module-auditor-{module_id}",
+                        reviewer_session_key=(
+                            f"module-auditor-{module_id}-{lifecycle_id}"
+                        ),
                         subject_refs=[subject_ref],
                     )
                 except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -2570,6 +2595,7 @@ class ReportWorkflowRunner:
             state,
             workflow_id,
             initial_scope=initial_scope,
+            lifecycle_id="initial",
         )
 
     async def _cross_review(self, state: dict, workflow_id: str) -> None:

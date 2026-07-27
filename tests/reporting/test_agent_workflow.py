@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,6 +39,13 @@ from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.versions import ReportVersion
 from manyselves.core.reporting.workflow import FullReportCheckpoint, ReportWorkflowRunner
+
+
+def _artifact_hashes(root: Path, refs: list[str]) -> dict[str, str]:
+    return {
+        ref: hashlib.sha256((root / ref).read_bytes()).hexdigest()
+        for ref in refs
+    }
 
 
 def _module(module_id: str, revision: int = 0) -> ModuleSubmission:
@@ -225,7 +233,7 @@ async def test_module_review_requires_author_response_and_original_reviewer_verd
     module = _module("2.1")
     target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
     finding = {
-        "id": "M-001",
+        "id": "M-2.1-initial-r0-001",
         "target_submodule_id": target,
         "category": "analysis_depth",
         "impact": "advisory",
@@ -247,7 +255,7 @@ async def test_module_review_requires_author_response_and_original_reviewer_verd
         unresolved_questions=[],
         revision_responses=[
             {
-                "finding_id": "M-001",
+                "finding_id": "M-2.1-initial-r0-001",
                 "action": "implemented",
                 "summary": "已在目标小节补充责任接口、执行动作和验收方法。",
                 "changed_target_ids": [target],
@@ -273,7 +281,7 @@ async def test_module_review_requires_author_response_and_original_reviewer_verd
                         coverage={"submodule_ids": [target]},
                     verdicts=[
                         {
-                            "finding_id": "M-001",
+                            "finding_id": "M-2.1-initial-r0-001",
                             "verdict": "resolved",
                             "reason": "当前修订已形成责任、动作和验收闭环，可以关闭。",
                             "evidence_refs": [
@@ -294,12 +302,13 @@ async def test_module_review_requires_author_response_and_original_reviewer_verd
         state,
         "workflow",
         initial_scope={target},
+        lifecycle_id="initial",
     )
     assert result.revision == 1
     reviewer_calls = [call for call in runner.calls if call[0] == "evidence-auditor"]
     assert [call[2] for call in reviewer_calls] == [
-        "module-auditor-2.1",
-        "module-auditor-2.1",
+        "module-auditor-2.1-initial",
+        "module-auditor-2.1-initial",
     ]
     completion = ReviewCompletionRecord.model_validate_json(
         (
@@ -307,7 +316,7 @@ async def test_module_review_requires_author_response_and_original_reviewer_verd
             / state["module_review_completion_refs"]["2.1"]
         ).read_text(encoding="utf-8")
     )
-    assert completion.resolved_finding_ids == ["M-001"]
+    assert completion.resolved_finding_ids == ["M-2.1-initial-r0-001"]
 
 
 @pytest.mark.asyncio
@@ -317,7 +326,7 @@ async def test_module_review_resume_continues_after_persisted_findings_without_r
     module = _module("2.1")
     target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
     finding = {
-        "id": "M-RESUME",
+        "id": "M-2.1-initial-r0-RESUME",
         "target_submodule_id": target,
         "category": "analysis_depth",
         "impact": "advisory",
@@ -347,6 +356,7 @@ async def test_module_review_resume_continues_after_persisted_findings_without_r
             {"run_id": "run-review-resume"},
             "workflow",
             initial_scope={target},
+            lifecycle_id="initial",
         )
 
     patch = ModuleRevisionSubmission(
@@ -362,7 +372,7 @@ async def test_module_review_resume_continues_after_persisted_findings_without_r
         unresolved_questions=[],
         revision_responses=[
             {
-                "finding_id": "M-RESUME",
+                "finding_id": "M-2.1-initial-r0-RESUME",
                 "action": "implemented",
                 "summary": "已在目标小节补充责任接口、具体执行动作、完成时限以及可复核的验收方法。",
                 "changed_target_ids": [target],
@@ -380,7 +390,7 @@ async def test_module_review_resume_continues_after_persisted_findings_without_r
                     coverage={"submodule_ids": [target]},
                     verdicts=[
                         {
-                            "finding_id": "M-RESUME",
+                            "finding_id": "M-2.1-initial-r0-RESUME",
                             "verdict": "resolved",
                             "reason": "复核确认修订已明确责任接口、执行动作、完成时限和验收方式，可以关闭。",
                             "evidence_refs": [
@@ -401,6 +411,7 @@ async def test_module_review_resume_continues_after_persisted_findings_without_r
         state,
         "workflow",
         initial_scope={target},
+        lifecycle_id="initial",
     )
 
     assert result.revision == 1
@@ -411,13 +422,76 @@ async def test_module_review_resume_continues_after_persisted_findings_without_r
 
 
 @pytest.mark.asyncio
+async def test_module_review_lifecycles_use_disjoint_immutable_artifacts(
+    tmp_path: Path,
+) -> None:
+    module = _module("2.1")
+    target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
+    state = {"run_id": "run-isolated-reviews"}
+    initial = _ScriptedRunner(
+        tmp_path,
+        [
+            (
+                "evidence-auditor",
+                "module_review_finding_submission",
+                ModuleReviewFindingSubmission(
+                    coverage={"submodule_ids": [target]},
+                    findings=[],
+                ),
+            )
+        ],
+    )
+    await run_module_review(
+        initial,
+        "2.1",
+        module,
+        state,
+        "workflow",
+        initial_scope={target},
+        lifecycle_id="initial",
+    )
+    initial_ref = state["module_review_completion_refs"]["2.1"]
+    initial_bytes = (tmp_path / initial_ref).read_bytes()
+
+    regression = _ScriptedRunner(
+        tmp_path,
+        [
+            (
+                "evidence-auditor",
+                "module_review_finding_submission",
+                ModuleReviewFindingSubmission(
+                    coverage={"submodule_ids": [target]},
+                    findings=[],
+                ),
+            )
+        ],
+    )
+    await run_module_review(
+        regression,
+        "2.1",
+        module,
+        state,
+        "workflow",
+        initial_scope={target},
+        lifecycle_id="cross-r0",
+    )
+    regression_ref = state["module_review_completion_refs"]["2.1"]
+
+    assert initial_ref != regression_ref
+    assert "/module/initial/2.1/" in initial_ref
+    assert "/module/cross-r0/2.1/" in regression_ref
+    assert (tmp_path / initial_ref).read_bytes() == initial_bytes
+    assert (tmp_path / regression_ref).is_file()
+
+
+@pytest.mark.asyncio
 async def test_author_dispute_enters_main_before_original_reviewer_recheck(
     tmp_path: Path,
 ) -> None:
     module = _module("2.1")
     target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
     finding = {
-        "id": "M-DISPUTE",
+        "id": "M-2.1-initial-r0-DISPUTE",
         "target_submodule_id": target,
         "category": "evidence_boundary",
         "impact": "advisory",
@@ -437,7 +511,7 @@ async def test_author_dispute_enters_main_before_original_reviewer_recheck(
         unresolved_questions=[],
         revision_responses=[
             {
-                "finding_id": "M-DISPUTE",
+                "finding_id": "M-2.1-initial-r0-DISPUTE",
                 "action": "disputed",
                 "summary": "当前输入没有支持新增确定性结论的证据，因此保留原文并提出异议。",
                 "changed_target_ids": [],
@@ -462,7 +536,7 @@ async def test_author_dispute_enters_main_before_original_reviewer_recheck(
                 WorkflowDecisionSubmission(
                     decision="accept_dispute",
                     rationale="作者异议属于证据边界问题，可交回原审查者依据当前正文复核。",
-                    finding_ids=["M-DISPUTE"],
+                    finding_ids=["M-2.1-initial-r0-DISPUTE"],
                 ),
             ),
             (
@@ -472,7 +546,7 @@ async def test_author_dispute_enters_main_before_original_reviewer_recheck(
                         coverage={"submodule_ids": [target]},
                     verdicts=[
                         {
-                            "finding_id": "M-DISPUTE",
+                            "finding_id": "M-2.1-initial-r0-DISPUTE",
                             "verdict": "resolved",
                             "reason": "复核确认原文已正确保持证据边界，无需新增结论。",
                             "evidence_refs": [
@@ -494,6 +568,7 @@ async def test_author_dispute_enters_main_before_original_reviewer_recheck(
         state,
         "workflow",
         initial_scope={target},
+        lifecycle_id="initial",
     )
 
     assert [call[0] for call in runner.calls] == [
@@ -505,11 +580,14 @@ async def test_author_dispute_enters_main_before_original_reviewer_recheck(
     exception = json.loads(
         (
             tmp_path
-            / "Work/runs/run-dispute/exceptions/module-author_response-M-DISPUTE.json"
+            / (
+                "Work/runs/run-dispute/exceptions/"
+                "module-author_response-M-2.1-initial-r0-DISPUTE.json"
+            )
         ).read_text(encoding="utf-8")
     )
     assert exception["trigger"] == "author_response"
-    assert exception["finding_ids"] == ["M-DISPUTE"]
+    assert exception["finding_ids"] == ["M-2.1-initial-r0-DISPUTE"]
 
 
 @pytest.mark.asyncio
@@ -604,6 +682,11 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
         ],
     )
     state = {"run_id": "run-x", "module_submissions": modules}
+    for module_id, module in modules.items():
+        runner.service.store.write_json(
+            f"Work/runs/run-x/modules/{module_id}-r0.json",
+            module.model_dump(mode="json"),
+        )
     await run_cross_review(runner, state, "workflow")
     agents = [call[0] for call in runner.calls]
     assert agents == [
@@ -1049,12 +1132,14 @@ def test_resume_restores_exact_current_protocol_review_completions(
     run_id = "run-current-resume"
     modules = {module_id: _module(module_id) for module_id in REPORT_TAXONOMY}
     module_refs = []
+    module_completion_refs = {}
     for module_id, module in modules.items():
         subject_ref = f"Work/runs/{run_id}/modules/{module_id}-r0.json"
         module_refs.append(subject_ref)
         service.store.write_json(subject_ref, module.model_dump(mode="json"))
         finding_ref = (
-            f"Work/runs/{run_id}/reviews/module-findings-{module_id}-r0.json"
+            f"Work/runs/{run_id}/reviews/module/initial/{module_id}/"
+            "findings-r0.json"
         )
         finding_payload = ModuleReviewFindingSubmission(
             coverage={
@@ -1067,17 +1152,25 @@ def test_resume_restores_exact_current_protocol_review_completions(
             # must not invalidate an already closed semantic review.
             finding_payload["coverage"]["claim_ids"] = ["C-2.1-001"]
         service.store.write_json(finding_ref, finding_payload)
+        completion_ref = (
+            f"Work/runs/{run_id}/reviews/module/initial/{module_id}/"
+            "completion-r0.json"
+        )
+        module_completion_refs[module_id] = completion_ref
         service.store.write_json(
-            f"Work/runs/{run_id}/reviews/module-completion-{module_id}-r0.json",
+            completion_ref,
             ReviewCompletionRecord(
                 lifecycle="module",
                 run_id=run_id,
                 reviewer_agent_id="evidence-auditor",
-                reviewer_session_key=f"module-auditor-{module_id}",
+                reviewer_session_key=f"module-auditor-{module_id}-initial",
                 subject_refs=[subject_ref],
                 finding_refs=[finding_ref],
                 verdict_refs=[],
                 resolved_finding_ids=[],
+                artifact_sha256=_artifact_hashes(
+                    tmp_path, [subject_ref, finding_ref]
+                ),
             ).model_dump(mode="json"),
         )
 
@@ -1107,6 +1200,9 @@ def test_resume_restores_exact_current_protocol_review_completions(
             finding_refs=[cross_finding_ref],
             verdict_refs=[],
             resolved_finding_ids=[],
+            artifact_sha256=_artifact_hashes(
+                tmp_path, [*module_refs, cross_finding_ref]
+            ),
         ).model_dump(mode="json"),
     )
 
@@ -1135,6 +1231,9 @@ def test_resume_restores_exact_current_protocol_review_completions(
             finding_refs=[final_finding_ref],
             verdict_refs=[],
             resolved_finding_ids=[],
+            artifact_sha256=_artifact_hashes(
+                tmp_path, [edited_ref, final_finding_ref]
+            ),
         ).model_dump(mode="json"),
     )
 
@@ -1145,6 +1244,7 @@ def test_resume_restores_exact_current_protocol_review_completions(
             "run_id": run_id,
             "status": "cancelled",
             "completed_modules": list(REPORT_TAXONOMY),
+            "module_review_completion_refs": module_completion_refs,
         },
     )
 
@@ -1222,6 +1322,16 @@ def test_review_completion_replays_canonical_regression_findings(
             finding_refs=[initial_ref, regression_ref],
             verdict_refs=[first_verdict_ref, final_verdict_ref],
             resolved_finding_ids=[initial_id, regression_id],
+            artifact_sha256=_artifact_hashes(
+                tmp_path,
+                [
+                    subject_ref,
+                    initial_ref,
+                    regression_ref,
+                    first_verdict_ref,
+                    final_verdict_ref,
+                ],
+            ),
         ).model_dump(mode="json"),
     )
 
@@ -1281,6 +1391,10 @@ def test_review_completion_rejects_regression_copy_that_differs_from_verdict(
             finding_refs=[initial_ref, regression_ref],
             verdict_refs=[verdict_ref],
             resolved_finding_ids=["M-001"],
+            artifact_sha256=_artifact_hashes(
+                tmp_path,
+                [subject_ref, initial_ref, regression_ref, verdict_ref],
+            ),
         ).model_dump(mode="json"),
     )
 
@@ -1291,6 +1405,56 @@ def test_review_completion_rejects_regression_copy_that_differs_from_verdict(
             lifecycle="module",
             reviewer_agent_id="evidence-auditor",
             reviewer_session_key="module-auditor-2.4",
+            subject_refs=[subject_ref],
+        )
+
+
+def test_review_completion_rejects_artifact_mutation_after_closure(
+    tmp_path: Path,
+) -> None:
+    service = _FakeService(tmp_path)
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+    run_id = "run-review-hash"
+    subject_ref = f"Work/runs/{run_id}/subjects/current.json"
+    finding_ref = f"Work/runs/{run_id}/reviews/findings.json"
+    completion_ref = f"Work/runs/{run_id}/reviews/completion.json"
+    service.store.write_json(subject_ref, {"kind": "subject"})
+    service.store.write_json(
+        finding_ref,
+        {"kind": "module_review_finding_submission", "findings": []},
+    )
+    service.store.write_json(
+        completion_ref,
+        ReviewCompletionRecord(
+            lifecycle="module",
+            run_id=run_id,
+            reviewer_agent_id="evidence-auditor",
+            reviewer_session_key="module-auditor-2.4-initial",
+            subject_refs=[subject_ref],
+            finding_refs=[finding_ref],
+            verdict_refs=[],
+            resolved_finding_ids=[],
+            artifact_sha256=_artifact_hashes(
+                tmp_path, [subject_ref, finding_ref]
+            ),
+        ).model_dump(mode="json"),
+    )
+    service.store.write_json(
+        finding_ref,
+        {
+            "kind": "module_review_finding_submission",
+            "findings": [{"id": "M-mutated"}],
+        },
+    )
+
+    with pytest.raises(ValueError, match="hash mismatch"):
+        runner._load_current_review_completion(
+            run_id=run_id,
+            completion_ref=completion_ref,
+            lifecycle="module",
+            reviewer_agent_id="evidence-auditor",
+            reviewer_session_key="module-auditor-2.4-initial",
             subject_refs=[subject_ref],
         )
 

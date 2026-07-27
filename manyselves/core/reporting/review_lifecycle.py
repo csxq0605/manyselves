@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import hashlib
+import json
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING, Iterable
 
 from pydantic import Field
@@ -125,6 +128,45 @@ def _write_model(
     )
 
 
+def _write_immutable_model(
+    runner: "ReportWorkflowRunner",
+    relative: str,
+    model,
+) -> str:
+    """Persist semantic audit evidence once; identical resume replay is allowed."""
+
+    path = runner.service.workspace / relative
+    payload = model.model_dump(mode="json")
+    if path.is_file():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ReviewLifecycleError(
+                f"immutable audit artifact is unreadable: {relative}"
+            ) from exc
+        if existing != payload:
+            raise ReviewLifecycleError(
+                f"refusing to overwrite immutable audit artifact: {relative}"
+            )
+        return _relative(runner, path)
+    return _relative(runner, runner.service.store.write_json(relative, payload))
+
+
+def _artifact_sha256(
+    runner: "ReportWorkflowRunner",
+    refs: Iterable[str],
+) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for ref in refs:
+        path = (runner.service.workspace / ref).resolve()
+        if not path.is_relative_to(runner.service.workspace) or not path.is_file():
+            raise ReviewLifecycleError(
+                f"cannot complete review with unreadable artifact: {ref}"
+            )
+        hashes[ref] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashes
+
+
 def _load_progress(
     runner: "ReportWorkflowRunner",
     relative: str,
@@ -238,9 +280,15 @@ def _validate_module_findings(
     findings: list[ModuleReviewFinding],
     subject: ModuleSubmission,
     scope: set[str],
+    *,
+    id_prefix: str,
 ) -> None:
     _unique_ids((finding.id for finding in findings), label="module findings")
     for finding in findings:
+        if not finding.id.startswith(id_prefix):
+            raise ReviewLifecycleError(
+                f"module finding id must start with {id_prefix}: {finding.id}"
+            )
         if finding.target_submodule_id not in scope:
             raise ReviewLifecycleError(
                 f"module finding targets unreviewed submodule: {finding.id}"
@@ -554,7 +602,9 @@ def _module_review_completion(
     finding_refs: list[str],
     verdict_refs: list[str],
     resolved_ids: set[str],
+    lifecycle_id: str,
 ) -> str:
+    refs = [subject_ref, *finding_refs, *verdict_refs]
     completion = ReviewCompletionRecord(
         lifecycle="module",
         run_id=state["run_id"],
@@ -564,12 +614,13 @@ def _module_review_completion(
         finding_refs=finding_refs,
         verdict_refs=verdict_refs,
         resolved_finding_ids=sorted(resolved_ids),
+        artifact_sha256=_artifact_sha256(runner, refs),
     )
-    ref = _write_model(
+    ref = _write_immutable_model(
         runner,
         (
-            f"Work/runs/{state['run_id']}/reviews/module-completion-"
-            f"{module.module_id}-r{module.revision}.json"
+            f"Work/runs/{state['run_id']}/reviews/module/{lifecycle_id}/"
+            f"{module.module_id}/completion-r{module.revision}.json"
         ),
         completion,
     )
@@ -588,12 +639,15 @@ async def run_module_review(
     workflow_id: str,
     *,
     initial_scope: set[str],
+    lifecycle_id: str,
 ) -> ModuleSubmission:
     """Run module-local finding/response/verdict closure with one reviewer session."""
 
     if payload.module_id != module_id:
         raise ReviewLifecycleError("module review payload belongs to a different module")
-    reviewer_session_key = f"module-auditor-{module_id}"
+    if not re.fullmatch(r"[a-z0-9-]+", lifecycle_id):
+        raise ReviewLifecycleError("module review lifecycle_id is not a safe component")
+    reviewer_session_key = f"module-auditor-{module_id}-{lifecycle_id}"
     current = payload
     pending: dict[str, ModuleReviewFinding] = {}
     responses: list[RevisionResponse] = []
@@ -603,10 +657,11 @@ async def run_module_review(
     review_round = 0
     phase = "initial"
     scope = set(initial_scope)
-    progress_ref = (
-        f"Work/runs/{state['run_id']}/reviews/"
-        f"module-progress-{module_id}.json"
+    review_root = (
+        f"Work/runs/{state['run_id']}/reviews/module/"
+        f"{lifecycle_id}/{module_id}"
     )
+    progress_ref = f"{review_root}/progress.json"
 
     def save_progress(next_action: str) -> None:
         _write_model(
@@ -743,10 +798,7 @@ async def run_module_review(
         )
         input_ref = _write_model(
             runner,
-            (
-                f"Work/runs/{state['run_id']}/reviews/module-review-input-"
-                f"{module_id}-r{review_round}.json"
-            ),
+            f"{review_root}/input-r{review_round}.json",
             review_input,
         )
         output_kind = (
@@ -755,7 +807,7 @@ async def run_module_review(
             else "module_review_verdict_submission"
         )
         envelope = TaskEnvelope(
-            task_id=f"module-{module_id}-review-r{review_round}",
+            task_id=f"module-{module_id}-{lifecycle_id}-review-r{review_round}",
             run_id=state["run_id"],
             agent_id="evidence-auditor",
             objective=(
@@ -767,6 +819,10 @@ async def run_module_review(
             constraints=[
                 "coverage 记录实际检查范围，不是批准状态",
                 "finding 首次提出后不可改写；复审不得复述旧 finding",
+                (
+                    "finding id 必须以 "
+                    f"M-{module_id}-{lifecycle_id}-r{review_round}- 开头"
+                ),
                 "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
                 (
                     "首轮必须覆盖 input 中全部 required_submodule_ids"
@@ -806,13 +862,15 @@ async def run_module_review(
                 raise ReviewLifecycleError(
                     "initial module review coverage omitted assigned submodules"
                 )
-            _validate_module_findings(result.findings, current, scope)
-            review_ref = _write_model(
+            _validate_module_findings(
+                result.findings,
+                current,
+                scope,
+                id_prefix=f"M-{module_id}-{lifecycle_id}-r{review_round}-",
+            )
+            review_ref = _write_immutable_model(
                 runner,
-                (
-                    f"Work/runs/{state['run_id']}/reviews/module-findings-"
-                    f"{module_id}-r{review_round}.json"
-                ),
+                f"{review_root}/findings-r{review_round}.json",
                 result,
             )
             finding_refs.append(review_ref)
@@ -822,13 +880,15 @@ async def run_module_review(
                 raise ReviewLifecycleError("module auditor returned the wrong recheck type")
             required_ids = set(pending)
             _validate_verdicts(result.verdicts, required_ids)
-            _validate_module_findings(result.new_findings, current, scope)
-            verdict_ref = _write_model(
+            _validate_module_findings(
+                result.new_findings,
+                current,
+                scope,
+                id_prefix=f"M-{module_id}-{lifecycle_id}-r{review_round}-",
+            )
+            verdict_ref = _write_immutable_model(
                 runner,
-                (
-                    f"Work/runs/{state['run_id']}/reviews/module-verdicts-"
-                    f"{module_id}-r{review_round}.json"
-                ),
+                f"{review_root}/verdicts-r{review_round}.json",
                 result,
             )
             verdict_refs.append(verdict_ref)
@@ -871,12 +931,9 @@ async def run_module_review(
                     )
                 next_pending[finding.id] = finding
             if result.new_findings:
-                new_ref = _write_model(
+                new_ref = _write_immutable_model(
                     runner,
-                    (
-                        f"Work/runs/{state['run_id']}/reviews/module-regression-findings-"
-                        f"{module_id}-r{review_round}.json"
-                    ),
+                    f"{review_root}/regression-findings-r{review_round}.json",
                     ModuleReviewFindingSubmission(
                         coverage=result.coverage,
                         findings=result.new_findings,
@@ -895,6 +952,7 @@ async def run_module_review(
                 finding_refs=finding_refs,
                 verdict_refs=verdict_refs,
                 resolved_ids=resolved_ids,
+                lifecycle_id=lifecycle_id,
             )
             save_progress("completed")
             return current
@@ -1246,6 +1304,7 @@ async def run_cross_review(
                 state,
                 workflow_id,
                 initial_scope=local_scope,
+                lifecycle_id=f"cross-r{review_round}",
             )
             modules[module_id] = local_reviewed
             state["module_submissions"][module_id] = local_reviewed
@@ -1369,7 +1428,7 @@ async def run_cross_review(
                         f"Cross coverage for {entry.module_id} omitted dimensions: {sorted(missing)}"
                     )
             _validate_cross_findings(result.findings, modules)
-            finding_ref = _write_model(
+            finding_ref = _write_immutable_model(
                 runner,
                 f"Work/runs/{state['run_id']}/reviews/cross-findings-r{review_round}.json",
                 result,
@@ -1382,7 +1441,7 @@ async def run_cross_review(
                 raise ReviewLifecycleError("Cross reviewer returned the wrong recheck type")
             _validate_verdicts(result.verdicts, set(pending))
             _validate_cross_findings(result.new_findings, modules)
-            verdict_ref = _write_model(
+            verdict_ref = _write_immutable_model(
                 runner,
                 f"Work/runs/{state['run_id']}/reviews/cross-verdicts-r{review_round}.json",
                 result,
@@ -1431,7 +1490,7 @@ async def run_cross_review(
                     )
                 next_pending[finding.id] = finding
             if result.new_findings:
-                new_ref = _write_model(
+                new_ref = _write_immutable_model(
                     runner,
                     (
                         f"Work/runs/{state['run_id']}/reviews/"
@@ -1448,6 +1507,11 @@ async def run_cross_review(
             prior_synthesis = result.synthesis_inputs
 
         if not pending:
+            completion_refs = [
+                *module_refs.values(),
+                *finding_refs,
+                *verdict_refs,
+            ]
             completion = ReviewCompletionRecord(
                 lifecycle="cross",
                 run_id=state["run_id"],
@@ -1457,8 +1521,9 @@ async def run_cross_review(
                 finding_refs=finding_refs,
                 verdict_refs=verdict_refs,
                 resolved_finding_ids=sorted(resolved_ids),
+                artifact_sha256=_artifact_sha256(runner, completion_refs),
             )
-            completion_ref = _write_model(
+            completion_ref = _write_immutable_model(
                 runner,
                 f"Work/runs/{state['run_id']}/reviews/cross-completion.json",
                 completion,
@@ -1829,7 +1894,7 @@ async def run_final_review(
                 raise ReviewLifecycleError(
                     "initial final review did not cover every fixed section"
                 )
-            finding_ref = _write_model(
+            finding_ref = _write_immutable_model(
                 runner,
                 f"Work/runs/{state['run_id']}/reviews/final-findings-r{review_round}.json",
                 result,
@@ -1841,7 +1906,7 @@ async def run_final_review(
             if not isinstance(result, FinalReviewVerdictSubmission):
                 raise ReviewLifecycleError("final reviewer returned the wrong recheck type")
             _validate_verdicts(result.verdicts, set(pending))
-            verdict_ref = _write_model(
+            verdict_ref = _write_immutable_model(
                 runner,
                 f"Work/runs/{state['run_id']}/reviews/final-verdicts-r{review_round}.json",
                 result,
@@ -1886,7 +1951,7 @@ async def run_final_review(
                     )
                 next_pending[finding.id] = finding
             if result.new_findings:
-                new_ref = _write_model(
+                new_ref = _write_immutable_model(
                     runner,
                     (
                         f"Work/runs/{state['run_id']}/reviews/"
@@ -1903,6 +1968,7 @@ async def run_final_review(
             residual_risks = result.residual_risks
 
         if not pending:
+            completion_refs = [subject_ref, *finding_refs, *verdict_refs]
             completion = ReviewCompletionRecord(
                 lifecycle="final",
                 run_id=state["run_id"],
@@ -1912,8 +1978,9 @@ async def run_final_review(
                 finding_refs=finding_refs,
                 verdict_refs=verdict_refs,
                 resolved_finding_ids=sorted(resolved_ids),
+                artifact_sha256=_artifact_sha256(runner, completion_refs),
             )
-            completion_ref = _write_model(
+            completion_ref = _write_immutable_model(
                 runner,
                 f"Work/runs/{state['run_id']}/reviews/final-completion.json",
                 completion,

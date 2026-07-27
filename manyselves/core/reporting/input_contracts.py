@@ -752,6 +752,25 @@ class ReviewCompletionRecord(StrictModel):
     resolved_finding_ids: list[str] = Field(
         description="Every finding id closed by reviewer verdict or empty initial findings."
     )
+    artifact_sha256: dict[str, str] = Field(
+        min_length=1,
+        description=(
+            "SHA-256 for every subject, finding, and verdict ref so completion cannot "
+            "silently survive later artifact mutation."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def hashes_cover_every_reference(self) -> "ReviewCompletionRecord":
+        expected = set(self.subject_refs) | set(self.finding_refs) | set(self.verdict_refs)
+        if set(self.artifact_sha256) != expected:
+            raise ValueError("review completion hashes must cover every referenced artifact")
+        if any(
+            not re.fullmatch(r"[0-9a-f]{64}", value)
+            for value in self.artifact_sha256.values()
+        ):
+            raise ValueError("review completion hashes must be SHA-256 hex")
+        return self
 INPUT_CONTRACT_TYPES = {
     "template_distillation_input": TemplateDistillationInput,
     "module_authoring_input": ModuleAuthoringInput,
