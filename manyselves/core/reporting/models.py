@@ -30,6 +30,35 @@ REPORT_FINAL_SECTION_IDS = (
     "4.3",
     "4.4",
 )
+REPORT_FINAL_AUDIT_SECTION_IDS = (
+    "1.1",
+    "1.2",
+    "1.3",
+    "3.1.1",
+    "3.1.2",
+    "3.1.3",
+    "3.1.4",
+    "3.2",
+    "4.1",
+    "4.2",
+    "4.3",
+    "4.4",
+)
+CHIEF_SECTION_RESULT_PART_IDS = {
+    "1.1": "assessment_background",
+    "1.2": "findings_overview",
+    "1.3": "regional_executive_summary",
+    "3.1.1": "risk_panorama",
+    "3.1.2": "dimension_risk_analysis",
+    "3.1.3": "cross_module_analysis",
+    "3.1.4": "data_gap_analysis",
+    "3.2": "improvement_action_plan",
+    "4.1": "new_factory_planning",
+    "4.2": "capacity_expansion_plan",
+    "4.3": "daily_power_management",
+    "4.4": "emergency_compliance_management",
+}
+CHIEF_RESULT_PART_IDS = tuple(CHIEF_SECTION_RESULT_PART_IDS.values())
 ReportOperation = Literal[
     "distill_template_skill",
     "full_report",
@@ -142,13 +171,9 @@ class UserSupplement(ReportingModel):
         ):
             raise ValueError("claim-scoped supplement targets must use C-* ids")
         if self.scope == "final_section":
-            unknown = sorted(
-                set(self.target_ids) - set(REPORT_FINAL_SECTION_IDS)
-            )
+            unknown = sorted(set(self.target_ids) - set(REPORT_FINAL_SECTION_IDS))
             if unknown:
-                raise ValueError(
-                    f"supplement final-section targets are invalid: {unknown}"
-                )
+                raise ValueError(f"supplement final-section targets are invalid: {unknown}")
         return self
 
 
@@ -185,17 +210,11 @@ class ReportRequest(ReportingModel):
             raise ValueError("user supplement ids must be unique")
         known_supplements = set(supplement_ids)
         unknown_superseded = sorted(
-            {
-                superseded
-                for item in self.user_supplements
-                for superseded in item.supersedes
-            }
+            {superseded for item in self.user_supplements for superseded in item.supersedes}
             - known_supplements
         )
         if unknown_superseded:
-            raise ValueError(
-                f"supplements supersede unknown ids: {unknown_superseded}"
-            )
+            raise ValueError(f"supplements supersede unknown ids: {unknown_superseded}")
         requested = set(self.target_modules)
         all_modules = set(REPORT_MODULE_IDS)
         if self.operation == "distill_template_skill" and requested:
@@ -214,9 +233,7 @@ class ReportRequest(ReportingModel):
         if self.operation != "render_existing" and self.source_markdown_ref is not None:
             raise ValueError("source_markdown_ref is only valid for render_existing")
         if self.operation not in existing_module_operations and self.source_module_refs is not None:
-            raise ValueError(
-                "source_module_refs is only valid for aggregate_existing"
-            )
+            raise ValueError("source_module_refs is only valid for aggregate_existing")
         if self.source_module_refs is not None:
             if set(self.source_module_refs) != all_modules:
                 raise ValueError("source_module_refs requires exactly modules 2.1-2.5")

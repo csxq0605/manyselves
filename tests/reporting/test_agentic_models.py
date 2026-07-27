@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from manyselves.core.reporting.agentic_models import (
     CrossReviewFindingSubmission,
     CrossSynthesisInput,
+    FinalReviewFinding,
     FinalReviewFindingSubmission,
     ModuleRevisionSubmission,
     ModuleSubmission,
@@ -155,8 +156,7 @@ def test_cross_synthesis_rejects_module_refs_missing_from_declared_scope() -> No
                 "2.4.3.1 的处置接口因此无法及时触发",
             ],
             causal_chain=(
-                "2.2 的异常信号和 2.3 的保护状态未能传递到 "
-                "2.4.3.1 的现场处置及 2.5 的管理闭环。"
+                "2.2 的异常信号和 2.3 的保护状态未能传递到 2.4.3.1 的现场处置及 2.5 的管理闭环。"
             ),
             decision_implication="必须先补齐监测接口，再调整巡检和应急响应顺序。",
             action_dependencies=["先完成信号核对，再更新现场处置和管理流程"],
@@ -188,6 +188,46 @@ def test_final_review_rejects_actionable_report_defect_as_residual_risk() -> Non
             checked_section_ids=["1.1"],
             findings=[],
             residual_risks=["报告缺少 Cross 风险综合表格"],
+        )
+
+
+def test_final_finding_rejects_chapter_two_and_requires_per_target_changes() -> None:
+    base = {
+        "id": "F-001",
+        "target_section_ids": ["3.1.3"],
+        "target_changes": [
+            {
+                "target_section_id": "3.1.3",
+                "required_change": "在该小节补充行动依赖顺序和可验证的联合验收方法。",
+                "reviewer_checks": ["行动依赖、责任接口和联合验收均可核对"],
+            }
+        ],
+        "category": "synthesis",
+        "impact": "blocking",
+        "observation": "当前跨模块分析没有形成行动依赖和联合验收闭环。",
+        "evidence_refs": ["Work/runs/run-1/edited-revisions/chief-r0.json"],
+    }
+    assert FinalReviewFinding.model_validate(base).target_section_ids == ["3.1.3"]
+
+    with pytest.raises(ValidationError, match="invalid section"):
+        FinalReviewFinding.model_validate(
+            {
+                **base,
+                "target_section_ids": ["2.4"],
+                "target_changes": [
+                    {
+                        **base["target_changes"][0],
+                        "target_section_id": "2.4",
+                    }
+                ],
+            }
+        )
+    with pytest.raises(ValidationError, match="exactly match"):
+        FinalReviewFinding.model_validate(
+            {
+                **base,
+                "target_section_ids": ["3.1.3", "3.2"],
+            }
         )
 
 

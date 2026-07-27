@@ -64,6 +64,7 @@ from .input_contracts import (
     TemplateDistillationInput,
 )
 from .message_router import WorkflowMessageRouter, artifact_path_refs
+from .models import CHIEF_RESULT_PART_IDS, CHIEF_SECTION_RESULT_PART_IDS
 from .module_skills import ModuleSkillLibrary
 from .prompts import PromptAssembler
 from .research.evidence_memory import EvidenceResearchMemory
@@ -79,7 +80,6 @@ from .submission_contracts import (
 )
 from .versions import SkillProvenance
 
-
 REPORTING_SUBMISSION_STREAM_IDLE_TIMEOUT_SECONDS = 600.0
 REPORTING_AUDIT_STREAM_IDLE_TIMEOUT_SECONDS = 600.0
 REPORTING_AUDIT_AGENT_IDS = frozenset(
@@ -89,34 +89,6 @@ REPORTING_AUDIT_AGENT_IDS = frozenset(
         "chief-editor-auditor",
     }
 )
-CHIEF_RESULT_PART_IDS = (
-    "assessment_background",
-    "findings_overview",
-    "regional_executive_summary",
-    "risk_panorama",
-    "dimension_risk_analysis",
-    "cross_module_analysis",
-    "data_gap_analysis",
-    "improvement_action_plan",
-    "new_factory_planning",
-    "capacity_expansion_plan",
-    "daily_power_management",
-    "emergency_compliance_management",
-)
-CHIEF_SECTION_RESULT_PART_IDS = {
-    "1.1": "assessment_background",
-    "1.2": "findings_overview",
-    "1.3": "regional_executive_summary",
-    "3.1.1": "risk_panorama",
-    "3.1.2": "dimension_risk_analysis",
-    "3.1.3": "cross_module_analysis",
-    "3.1.4": "data_gap_analysis",
-    "3.2": "improvement_action_plan",
-    "4.1": "new_factory_planning",
-    "4.2": "capacity_expansion_plan",
-    "4.3": "daily_power_management",
-    "4.4": "emergency_compliance_management",
-}
 
 
 class InspectImageTool(Tool):
@@ -255,9 +227,7 @@ class ReportingAgentRunner:
                     else (
                         max(self.defaults.max_tool_result_chars, 320_000)
                         if definition.id == "chief-editor-auditor"
-                        else max(
-                            self.defaults.max_tool_result_chars, 180_000
-                        )
+                        else max(self.defaults.max_tool_result_chars, 180_000)
                         if definition.id
                         in {
                             "cross-module-reviewer",
@@ -340,9 +310,7 @@ class ReportingAgentRunner:
             },
         )
         if identity["session_id"] != session_id or identity["runtime_id"] != runtime_id:
-            raise RuntimeError(
-                f"reporting identity changed inside workflow: {identity_key}"
-            )
+            raise RuntimeError(f"reporting identity changed inside workflow: {identity_key}")
         identity.update(
             {
                 "status": status,
@@ -364,29 +332,20 @@ class ReportingAgentRunner:
         if not specialist and definition.id != "evidence-auditor":
             return None
         key = f"{definition.id}:{envelope.task_id}:r{envelope.revision}"
-        usage_path = (
-            self.workspace
-            / f"Work/runs/{envelope.run_id}/research-tool-usage.json"
-        )
+        usage_path = self.workspace / f"Work/runs/{envelope.run_id}/research-tool-usage.json"
 
         def guard() -> None:
             usage = (
-                json.loads(usage_path.read_text(encoding="utf-8"))
-                if usage_path.is_file()
-                else {}
+                json.loads(usage_path.read_text(encoding="utf-8")) if usage_path.is_file() else {}
             )
             used = int(usage.get(key, 0))
             usage[key] = used + 1
-            self.store.write_json(
-                f"Work/runs/{envelope.run_id}/research-tool-usage.json", usage
-            )
+            self.store.write_json(f"Work/runs/{envelope.run_id}/research-tool-usage.json", usage)
 
         return guard
 
     @staticmethod
-    def _reporting_module_id(
-        definition: AgentDefinition, envelope: TaskEnvelope
-    ) -> str | None:
+    def _reporting_module_id(definition: AgentDefinition, envelope: TaskEnvelope) -> str | None:
         if not (
             re.fullmatch(r"module-2\.[1-5]-specialist", definition.id)
             or definition.id == "evidence-auditor"
@@ -436,21 +395,13 @@ class ReportingAgentRunner:
 
         def remove_property(node: dict, name: str) -> None:
             node.get("properties", {}).pop(name, None)
-            node["required"] = [
-                field for field in node.get("required", []) if field != name
-            ]
+            node["required"] = [field for field in node.get("required", []) if field != name]
 
         if isinstance(contract, ModuleAuthoringInput):
-            schema.get("properties", {}).get("module_id", {}).update(
-                {"const": contract.module_id}
-            )
-            schema.get("properties", {}).get("revision", {}).update(
-                {"const": contract.revision}
-            )
+            schema.get("properties", {}).get("module_id", {}).update({"const": contract.module_id})
+            schema.get("properties", {}).get("revision", {}).update({"const": contract.revision})
         elif isinstance(contract, ModuleRevisionInput):
-            schema.get("properties", {}).get("module_id", {}).update(
-                {"const": contract.module_id}
-            )
+            schema.get("properties", {}).get("module_id", {}).update({"const": contract.module_id})
             schema.get("properties", {}).get("base_revision", {}).update(
                 {"const": contract.subject.revision}
             )
@@ -469,9 +420,9 @@ class ReportingAgentRunner:
                 contract.validation_report_ref,
                 *(item.evidence_id for item in contract.evidence),
             ]
-            finding.get("properties", {}).get("evidence_refs", {}).setdefault(
-                "items", {}
-            ).update({"enum": list(dict.fromkeys(allowed_evidence))})
+            finding.get("properties", {}).get("evidence_refs", {}).setdefault("items", {}).update(
+                {"enum": list(dict.fromkeys(allowed_evidence))}
+            )
             if kind == "module_review_verdict_submission":
                 remove_property(
                     schema.get("$defs", {}).get("ResolutionVerdict", {}),
@@ -532,14 +483,10 @@ class ReportingAgentRunner:
             if isinstance(contract, ModuleReviewInput):
                 for field in ("findings", "new_findings"):
                     for value in example.get(field, []):
-                        value["target_submodule_id"] = (
-                            contract.required_submodule_ids[0]
-                        )
+                        value["target_submodule_id"] = contract.required_submodule_ids[0]
                         value["evidence_refs"] = [contract.subject_ref]
             if kind.endswith("_verdict_submission"):
-                required_findings = list(
-                    getattr(contract, "required_findings", [])
-                )
+                required_findings = list(getattr(contract, "required_findings", []))
                 base_verdicts = example.get("verdicts", [])
                 base = (
                     dict(base_verdicts[0])
@@ -554,14 +501,10 @@ class ReportingAgentRunner:
                 if isinstance(contract, ModuleReviewInput):
                     base["evidence_refs"] = [contract.subject_ref]
                 elif isinstance(contract, CrossReviewInput):
-                    base["evidence_refs"] = [
-                        next(iter(contract.module_refs.values()))
-                    ]
+                    base["evidence_refs"] = [next(iter(contract.module_refs.values()))]
                 elif isinstance(contract, FinalReviewInput):
                     base["evidence_refs"] = [contract.subject_ref]
-                example["verdicts"] = [
-                    deepcopy(base) for _ in required_findings
-                ]
+                example["verdicts"] = [deepcopy(base) for _ in required_findings]
         return schema
 
     def skill_provenance(self) -> list[SkillProvenance]:
@@ -614,41 +557,26 @@ class ReportingAgentRunner:
         library = ReferenceLibrary(self.workspace)
         key = os.getenv("BRAVE_SEARCH_API_KEY", "").strip()
         web = BraveWebResearchBackend(key) if key else DisabledWebResearchBackend()
-        research_guard = self._reporting_research_guard(
-            definition, envelope, workflow_id
-        )
+        research_guard = self._reporting_research_guard(definition, envelope, workflow_id)
         template_inspection: TemplateDistillationInput | None = None
         if envelope.task_id == "template-skill-distillation":
             if (
                 definition.id != "template-distiller"
-                or envelope.input_contract_kind
-                != "template_distillation_input"
+                or envelope.input_contract_kind != "template_distillation_input"
                 or not envelope.input_contract_ref
             ):
+                raise ValueError("template distillation requires its exact typed input contract")
+            contract_path = (self.workspace / envelope.input_contract_ref).resolve()
+            if not contract_path.is_relative_to(self.workspace) or not contract_path.is_file():
                 raise ValueError(
-                    "template distillation requires its exact typed input contract"
-                )
-            contract_path = (
-                self.workspace / envelope.input_contract_ref
-            ).resolve()
-            if (
-                not contract_path.is_relative_to(self.workspace)
-                or not contract_path.is_file()
-            ):
-                raise ValueError(
-                    "template distillation input contract is not a readable "
-                    "workspace artifact"
+                    "template distillation input contract is not a readable workspace artifact"
                 )
             template_inspection = TemplateDistillationInput.model_validate_json(
                 contract_path.read_text(encoding="utf-8")
             )
             if template_inspection.run_id != envelope.run_id:
-                raise ValueError(
-                    "template distillation input contract belongs to another run"
-                )
-            template_path = (
-                self.workspace / template_inspection.template_ref
-            ).resolve()
+                raise ValueError("template distillation input contract belongs to another run")
+            template_path = (self.workspace / template_inspection.template_ref).resolve()
             if (
                 not template_path.is_relative_to(self.workspace)
                 or not template_path.is_file()
@@ -656,8 +584,7 @@ class ReportingAgentRunner:
                 != template_inspection.template_ref
             ):
                 raise ValueError(
-                    "template distillation template_ref is not one canonical "
-                    "workspace file"
+                    "template distillation template_ref is not one canonical workspace file"
                 )
         input_contract = self._input_contract(envelope)
         expected_result_part_ids = (
@@ -674,7 +601,7 @@ class ReportingAgentRunner:
         )
         required_synthesis_input_ids = (
             [item.id for item in input_contract.cross_synthesis_inputs]
-            if isinstance(input_contract, (ChiefEditorInput, ChiefRevisionInput))
+            if isinstance(input_contract, ChiefEditorInput)
             else []
         )
         required_synthesis_table_types = (
@@ -707,9 +634,7 @@ class ReportingAgentRunner:
                 one_shot=template_inspection is not None,
                 allow_template_distiller_source=template_inspection is not None,
                 required_path=(
-                    template_inspection.template_ref
-                    if template_inspection is not None
-                    else None
+                    template_inspection.template_ref if template_inspection is not None else None
                 ),
                 required_max_chars=(
                     template_inspection.inspect_max_chars
@@ -717,8 +642,7 @@ class ReportingAgentRunner:
                     else None
                 ),
                 cache_ref=(
-                    f"Work/runs/{envelope.run_id}/context/"
-                    "template-inspection.json"
+                    f"Work/runs/{envelope.run_id}/context/template-inspection.json"
                     if template_inspection is not None
                     else None
                 ),
@@ -898,9 +822,11 @@ class ReportingAgentRunner:
         )
         module_id = self._reporting_module_id(definition, envelope)
         if module_id is not None:
-            memory_ref = EvidenceResearchMemory(
-                self.workspace, envelope.run_id, module_id
-            ).ensure().as_posix()
+            memory_ref = (
+                EvidenceResearchMemory(self.workspace, envelope.run_id, module_id)
+                .ensure()
+                .as_posix()
+            )
             inherited_refs.insert(0, memory_ref)
         shared_artifacts = list(dict.fromkeys([*shared_artifacts, *inherited_refs]))
         # Specialists already have one definition per module.  Module auditors
@@ -909,9 +835,7 @@ class ReportingAgentRunner:
         # modules.  Revisions keep the same session_key and therefore the same
         # auditor identity.
         identity_key = (
-            session_key
-            if definition.id == "evidence-auditor" and session_key
-            else definition.id
+            session_key if definition.id == "evidence-auditor" and session_key else definition.id
         )
         cache_key = (workflow_id, identity_key)
         cached = self._sessions.get(cache_key)
@@ -994,10 +918,7 @@ class ReportingAgentRunner:
         input_contract_payload = None
         if envelope.input_contract_ref:
             contract_path = (self.workspace / envelope.input_contract_ref).resolve()
-            if (
-                contract_path.is_relative_to(self.workspace)
-                and contract_path.is_file()
-            ):
+            if contract_path.is_relative_to(self.workspace) and contract_path.is_file():
                 input_contract_payload = json.dumps(
                     json.loads(contract_path.read_text(encoding="utf-8")),
                     ensure_ascii=False,
@@ -1010,9 +931,7 @@ class ReportingAgentRunner:
             submission_contract_payloads={
                 kind: render_submission_schema_contract(
                     kind,
-                    self._task_submission_schema(
-                        kind, self._input_contract(envelope)
-                    ),
+                    self._task_submission_schema(kind, self._input_contract(envelope)),
                 )
                 for kind in envelope.allowed_outputs
             },
@@ -1110,9 +1029,7 @@ class ReportingAgentRunner:
                         message_id=envelope.task_id,
                         content=content,
                         internal=internal,
-                        provider_stream_idle_timeout_seconds=(
-                            provider_stream_idle_timeout_seconds
-                        ),
+                        provider_stream_idle_timeout_seconds=(provider_stream_idle_timeout_seconds),
                     )
                 )
                 done, _pending = await asyncio.wait(
@@ -1127,9 +1044,7 @@ class ReportingAgentRunner:
                     if marker in error.message:
                         from .workflow import ReportingNeedsDecisionError
 
-                        raise ReportingNeedsDecisionError(
-                            error.message.split(marker, 1)[1].strip()
-                        )
+                        raise ReportingNeedsDecisionError(error.message.split(marker, 1)[1].strip())
                     raise RuntimeError(error.message)
                 return await final_waiter
             finally:
@@ -1138,27 +1053,19 @@ class ReportingAgentRunner:
                         waiter.cancel()
                 await asyncio.gather(*waiters, return_exceptions=True)
 
-        self._save_conversation_trace(
-            loop, envelope, runtime_id, session_id, status="running"
-        )
+        self._save_conversation_trace(loop, envelope, runtime_id, session_id, status="running")
         try:
+
             async def finish_tool_slices(
                 turn: AgentResult | AgentResponse,
             ) -> AgentResult | AgentResponse:
                 """Continue one durable Agent until the current action yields a real result."""
 
-                while (
-                    isinstance(turn, AgentResponse)
-                    and turn.content
-                    in {
-                        AGENT_TURN_CONTINUATION_REQUIRED,
-                        AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
-                    }
-                ):
-                    max_tokens_continuation = (
-                        turn.content
-                        == AGENT_MAX_TOKENS_CONTINUATION_REQUIRED
-                    )
+                while isinstance(turn, AgentResponse) and turn.content in {
+                    AGENT_TURN_CONTINUATION_REQUIRED,
+                    AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+                }:
+                    max_tokens_continuation = turn.content == AGENT_MAX_TOKENS_CONTINUATION_REQUIRED
                     if max_tokens_continuation:
                         continuation_instruction = (
                             "上一模型轮次达到单次 max_tokens 上限，未产生完整提交；"
@@ -1198,15 +1105,11 @@ class ReportingAgentRunner:
             # window to the initial task as well as correction/continuation
             # turns; otherwise a chief-editor aggregation is still killed by
             # the provider default before it can submit the completed report.
-            stream_idle_timeout = self._provider_stream_idle_timeout(
-                definition
-            )
+            stream_idle_timeout = self._provider_stream_idle_timeout(definition)
             turn = await finish_tool_slices(
                 await one_turn(
                     task_message,
-                    provider_stream_idle_timeout_seconds=(
-                        stream_idle_timeout
-                    ),
+                    provider_stream_idle_timeout_seconds=(stream_idle_timeout),
                 )
             )
             if isinstance(turn, AgentResponse) and envelope.allowed_outputs:
@@ -1227,23 +1130,35 @@ class ReportingAgentRunner:
                         if envelope.input_contract_kind == "chief_revision_input"
                         else "补齐 list_result_parts 列出的十二个固定章节"
                     )
+                    submission_instruction = (
+                        "提交小型 chief_revision_submission；不得重复父版本全文、"
+                        "Cross dispositions、表格、图片或未决问题"
+                        if envelope.input_contract_kind == "chief_revision_input"
+                        else (
+                            "提交 edited_report_submission；按 list_result_parts 返回的 "
+                            "required_synthesis_input_ids 逐项提交 synthesis_disposition，并提交 "
+                            "required_synthesis_table_types，逐行填写 row_synthesis_input_ids"
+                        )
+                    )
+                    module_instruction = (
+                        "不得提交 module_narratives 或任何第二章内容。"
+                        if envelope.input_contract_kind == "chief_revision_input"
+                        else (
+                            "module_narratives 必须只提交五个精确标记 "
+                            "[[APPROVED_MODULE:2.1]] 至 [[APPROVED_MODULE:2.5]]。"
+                        )
+                    )
                     correction = (
                         "<submission_correction>\n"
-                        "你刚才未完成 edited_report_submission。批准的五模块正文绝对不得压缩、"
+                        "你刚才未完成总编提交。批准的五模块正文绝对不得压缩、"
                         f"摘要、改写或重新输出。先调用 list_result_parts；{part_instruction}，"
                         "分别用同名 part_id 调用 write_result_part。"
-                        "module_narratives 必须只提交五个精确标记 "
-                        "[[APPROVED_MODULE:2.1]] 至 [[APPROVED_MODULE:2.5]]，长字段使用当前任务 "
-                        "write_result_part 返回的 artifact_refs。随后立即调用 submit_result 提交 "
-                        "edited_report_submission；按 list_result_parts 返回的 "
-                        "required_synthesis_input_ids 逐项提交 synthesis_disposition，并提交 "
-                        "required_synthesis_table_types，逐行填写 row_synthesis_input_ids。"
+                        f"{module_instruction}"
+                        f"随后立即调用 submit_result {submission_instruction}。"
                         "不得重新读取或搜索输入。\n"
                         "</submission_correction>"
                     )
-                elif definition.id.startswith("module-") and definition.id.endswith(
-                    "-specialist"
-                ):
+                elif definition.id.startswith("module-") and definition.id.endswith("-specialist"):
                     correction = (
                         "<submission_correction>\n"
                         "你刚才尚未提交模块 commit。先调用 list_result_parts；每个固定 part "

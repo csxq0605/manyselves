@@ -25,6 +25,8 @@ from ..reporting.agentic_models import (
     CROSS_REVIEW_DIMENSIONS,
     AgentResult,
     AgentRunStatus,
+    ChiefRevisionSubmission,
+    ChiefRevisionSubmissionInput,
     CrossReviewFindingSubmission,
     CrossReviewVerdictSubmission,
     EditedReportSubmission,
@@ -38,18 +40,18 @@ from ..reporting.agentic_models import (
     ModuleSubmission,
     ModuleSubmissionInput,
     SynthesisTableSubmission,
-    TemplateSkillSubmission,
     TableSubmission,
+    TemplateSkillSubmission,
     WorkflowDecisionSubmission,
 )
 from ..reporting.claim_ledger import ClaimLedger
 from ..reporting.input_contracts import (
+    INPUT_CONTRACT_TYPES,
     AggregateEditorInput,
     ChiefEditorInput,
     ChiefRevisionInput,
     CrossReviewInput,
     FinalReviewInput,
-    INPUT_CONTRACT_TYPES,
     ModuleAuthoringInput,
     ModuleReviewInput,
     ModuleRevisionInput,
@@ -57,12 +59,14 @@ from ..reporting.input_contracts import (
     WorkflowExceptionInput,
 )
 from ..reporting.message_router import artifact_path_refs, source_record_ids
+from ..reporting.models import CHIEF_SECTION_RESULT_PART_IDS
 from ..reporting.source_ledger import SourceLedger
 from ..reporting.store import ReportingStore
 from ..reporting.submission_contracts import submission_schema
 from ..reporting.taxonomy import REPORT_TAXONOMY
 from .document_tool import InspectDocumentTool
 from .registry import Tool
+
 
 class _ResultTool(Tool):
     def __init__(
@@ -86,9 +90,7 @@ class _ResultTool(Tool):
         self.workflow_id = workflow_id
 
     async def _persist_and_publish(self, result: AgentResult) -> str:
-        path = self.store.write_run_model(
-            self.run_id, f"results/{self.task_id}.json", result
-        )
+        path = self.store.write_run_model(self.run_id, f"results/{self.task_id}.json", result)
         relative = path.relative_to(self.store.workspace).as_posix()
         await self.bus.publish(
             AgentResultMessage(
@@ -129,11 +131,7 @@ class SubmitResultTool(_ResultTool):
         self.input_contract_kind = input_contract_kind
         self.input_contract_ref = input_contract_ref
         submissions_root = (
-            self.store.workspace
-            / "Work/runs"
-            / self.run_id
-            / "submissions"
-            / self.task_id
+            self.store.workspace / "Work/runs" / self.run_id / "submissions" / self.task_id
         )
         attempt_pattern = re.compile(r"^attempt-([1-9]\d*)-raw\.json$")
         persisted_attempts = [
@@ -254,6 +252,33 @@ class SubmitResultTool(_ResultTool):
             )
         return prose, evidence_ids, binding
 
+    def _bound_text_part(self, part_id: str) -> tuple[str, str]:
+        """Load one exact current-task prose part without accepting a model path."""
+
+        prose_path = self._draft_root / f"{part_id}.md"
+        if not prose_path.is_file():
+            raise SubmissionValidationError(
+                "chief revision part is not ready for commit",
+                field=f"result_parts.{part_id}",
+                expected="a non-empty result part saved by write_result_part",
+                example={"part_id": part_id, "content": "修订后的完整目标小节正文。"},
+                received={"prose_saved": False},
+                repair_instruction=(
+                    f"Call write_result_part for part_id={part_id!r} with the complete "
+                    "revised section, then resubmit the same compact chief revision."
+                ),
+            )
+        prose = prose_path.read_text(encoding="utf-8")
+        if not prose.strip():
+            raise SubmissionValidationError(
+                "chief revision part is empty",
+                field=f"result_parts.{part_id}",
+                expected="a non-empty complete target-section body",
+                received="",
+            )
+        relative = prose_path.relative_to(self.store.workspace).as_posix()
+        return prose, relative
+
     def _runtime_claim_for_part(
         self,
         *,
@@ -281,8 +306,7 @@ class SubmitResultTool(_ResultTool):
     ) -> ModuleSubmission:
         contract = self._feedback_input_contract()
         if isinstance(contract, ModuleAuthoringInput) and (
-            commit.module_id != contract.module_id
-            or commit.revision != contract.revision
+            commit.module_id != contract.module_id or commit.revision != contract.revision
         ):
             raise SubmissionValidationError(
                 "module commit identity differs from the active authoring input",
@@ -321,9 +345,7 @@ class SubmitResultTool(_ResultTool):
             )
             claim_id = str(claim["id"])
             narratives[part_id] = (
-                prose.rstrip() + f"\n\n[[CLAIM:{claim_id}]]"
-                if evidence_ids
-                else prose
+                prose.rstrip() + f"\n\n[[CLAIM:{claim_id}]]" if evidence_ids else prose
             )
             claims.append(claim)
         return ModuleSubmission.model_validate(
@@ -333,17 +355,12 @@ class SubmitResultTool(_ResultTool):
                 "submodule_narratives": narratives,
                 "claims": claims,
                 "source_ids": sorted(
-                    {
-                        source_id
-                        for claim in claims
-                        for source_id in claim["source_ids"]
-                    }
+                    {source_id for claim in claims for source_id in claim["source_ids"]}
                 ),
                 "unresolved_questions": commit.unresolved_questions,
                 "revision": commit.revision,
                 "revision_responses": [
-                    response.model_dump(mode="python")
-                    for response in commit.revision_responses
+                    response.model_dump(mode="python") for response in commit.revision_responses
                 ],
             }
         )
@@ -401,9 +418,7 @@ class SubmitResultTool(_ResultTool):
             )
             claim_id = str(claim["id"])
             narratives[part_id] = (
-                prose.rstrip() + f"\n\n[[CLAIM:{claim_id}]]"
-                if evidence_ids
-                else prose
+                prose.rstrip() + f"\n\n[[CLAIM:{claim_id}]]" if evidence_ids else prose
             )
             claims_upsert.append(claim)
         target_ids = set(contract.target_submodule_ids)
@@ -411,23 +426,16 @@ class SubmitResultTool(_ResultTool):
             claim.id
             for claim in subject.claims
             if claim.submodule_id in target_ids
-            and claim.id
-            not in {str(claim["id"]) for claim in claims_upsert}
+            and claim.id not in {str(claim["id"]) for claim in claims_upsert}
         ]
         resulting_claims = [
-            claim
-            for claim in subject.claims
-            if claim.submodule_id not in target_ids
+            claim for claim in subject.claims if claim.submodule_id not in target_ids
         ]
         resulting_source_ids = {
-            source_id
-            for claim in resulting_claims
-            for source_id in claim.source_ids
+            source_id for claim in resulting_claims for source_id in claim.source_ids
         }
         resulting_source_ids.update(
-            source_id
-            for claim in claims_upsert
-            for source_id in claim["source_ids"]
+            source_id for claim in claims_upsert for source_id in claim["source_ids"]
         )
         return ModuleRevisionSubmission.model_validate(
             {
@@ -441,10 +449,57 @@ class SubmitResultTool(_ResultTool):
                 "source_ids": sorted(resulting_source_ids),
                 "unresolved_questions": commit.unresolved_questions,
                 "revision_responses": [
-                    response.model_dump(mode="python")
-                    for response in commit.revision_responses
+                    response.model_dump(mode="python") for response in commit.revision_responses
                 ],
             }
+        )
+
+    def _assemble_chief_revision_commit(
+        self,
+        commit: ChiefRevisionSubmissionInput,
+    ) -> ChiefRevisionSubmission:
+        contract = self._feedback_input_contract()
+        if not isinstance(contract, ChiefRevisionInput):
+            raise SubmissionValidationError(
+                "chief revision commit requires its active revision input",
+                field="$contract",
+                expected="a readable chief_revision_input for this task",
+                received=self.input_contract_ref,
+            )
+        if (
+            commit.base_subject_ref != contract.subject_ref
+            or commit.revision != contract.revision
+            or commit.revision != self.revision
+        ):
+            raise SubmissionValidationError(
+                "chief revision identity differs from the active revision input",
+                field="$identity",
+                expected={
+                    "base_subject_ref": contract.subject_ref,
+                    "revision": contract.revision,
+                },
+                example={
+                    "base_subject_ref": contract.subject_ref,
+                    "revision": contract.revision,
+                },
+                received={
+                    "base_subject_ref": commit.base_subject_ref,
+                    "revision": commit.revision,
+                },
+            )
+        section_bodies: dict[str, str] = {}
+        section_part_refs: dict[str, str] = {}
+        for section_id in contract.target_section_ids:
+            part_id = CHIEF_SECTION_RESULT_PART_IDS[section_id]
+            prose, relative = self._bound_text_part(part_id)
+            section_bodies[section_id] = prose
+            section_part_refs[section_id] = relative
+        return ChiefRevisionSubmission(
+            base_subject_ref=commit.base_subject_ref,
+            revision=commit.revision,
+            section_bodies=section_bodies,
+            section_part_refs=section_part_refs,
+            revision_responses=commit.revision_responses,
         )
 
     def _assemble_edited_report(
@@ -455,14 +510,9 @@ class SubmitResultTool(_ResultTool):
 
         contract = self._feedback_input_contract()
         claims = []
-        ledger_path = (
-            self.store.workspace
-            / f"Work/runs/{self.run_id}/ledgers/claims.json"
-        )
+        ledger_path = self.store.workspace / f"Work/runs/{self.run_id}/ledgers/claims.json"
         if ledger_path.is_file():
-            claims = ClaimLedger.model_validate_json(
-                ledger_path.read_text(encoding="utf-8")
-            ).claims
+            claims = ClaimLedger.model_validate_json(ledger_path.read_text(encoding="utf-8")).claims
 
         known_evidence = {
             source.id
@@ -498,9 +548,7 @@ class SubmitResultTool(_ResultTool):
                     received=evidence_ids,
                 )
             claim_ids = sorted(
-                claim.id
-                for claim in claims
-                if set(claim.source_ids) & set(evidence_ids)
+                claim.id for claim in claims if set(claim.source_ids) & set(evidence_ids)
             )
             if not claim_ids:
                 raise SubmissionValidationError(
@@ -520,9 +568,7 @@ class SubmitResultTool(_ResultTool):
             )
 
         synthesis_inputs = (
-            contract.cross_synthesis_inputs
-            if isinstance(contract, (ChiefEditorInput, ChiefRevisionInput))
-            else []
+            contract.cross_synthesis_inputs if isinstance(contract, ChiefEditorInput) else []
         )
         synthesis_by_id = {item.id: item for item in synthesis_inputs}
         expected_synthesis_ids = set(synthesis_by_id)
@@ -533,7 +579,6 @@ class SubmitResultTool(_ResultTool):
             "3.2": "improvement_action_plan",
         }
         raw_dispositions = materialized.get("synthesis_dispositions", [])
-        preserving_synthesis_dispositions = False
         if not isinstance(raw_dispositions, list):
             raise SubmissionValidationError(
                 "synthesis_dispositions must be a list",
@@ -542,9 +587,7 @@ class SubmitResultTool(_ResultTool):
                 received=raw_dispositions,
             )
         disposition_ids = [
-            item.get("synthesis_input_id")
-            for item in raw_dispositions
-            if isinstance(item, dict)
+            item.get("synthesis_input_id") for item in raw_dispositions if isinstance(item, dict)
         ]
         if len(disposition_ids) != len(raw_dispositions):
             raise SubmissionValidationError(
@@ -552,25 +595,6 @@ class SubmitResultTool(_ResultTool):
                 field="synthesis_dispositions",
                 received=raw_dispositions,
             )
-        if isinstance(contract, ChiefRevisionInput) and not raw_dispositions:
-            if expected_synthesis_ids and (
-                set(contract.target_section_ids) & set(section_fields)
-            ):
-                raise SubmissionValidationError(
-                    "a synthesis-section revision must resubmit current dispositions",
-                    field="synthesis_dispositions",
-                    expected="one current-task disposition per Cross synthesis input",
-                    received=[],
-                )
-            subject = self._chief_revision_subject(contract)
-            materialized["synthesis_dispositions"] = [
-                item.model_dump(mode="python")
-                for item in subject.synthesis_dispositions
-            ]
-            preserving_synthesis_dispositions = True
-            disposition_ids = [
-                item.synthesis_input_id for item in subject.synthesis_dispositions
-            ]
         if (
             len(disposition_ids) != len(set(disposition_ids))
             or set(disposition_ids) != expected_synthesis_ids
@@ -581,13 +605,7 @@ class SubmitResultTool(_ResultTool):
                 expected=sorted(expected_synthesis_ids),
                 received=disposition_ids,
             )
-        draft_root = (
-            Path("Work/runs")
-            / self.run_id
-            / "drafts"
-            / self.task_id
-            / f"r{self.revision}"
-        )
+        draft_root = Path("Work/runs") / self.run_id / "drafts" / self.task_id / f"r{self.revision}"
         for index, raw in enumerate(materialized["synthesis_dispositions"]):
             if not isinstance(raw, dict):
                 continue
@@ -599,9 +617,7 @@ class SubmitResultTool(_ResultTool):
                 raise SubmissionValidationError(
                     "synthesis disposition targets a section not authorized by Cross",
                     field=f"synthesis_dispositions.{index}.target_section_ids",
-                    expected=synthesis_by_id[
-                        synthesis_id
-                    ].target_report_section_ids,
+                    expected=synthesis_by_id[synthesis_id].target_report_section_ids,
                     received=target_sections,
                 )
             refs = raw.get("result_part_refs", [])
@@ -613,9 +629,6 @@ class SubmitResultTool(_ResultTool):
             actual_parts: set[str] = set()
             for ref in refs:
                 if not isinstance(ref, str):
-                    continue
-                if preserving_synthesis_dispositions:
-                    actual_parts.add(Path(ref).stem)
                     continue
                 path = Path(ref)
                 if path.parent != draft_root or path.suffix != ".md":
@@ -650,74 +663,66 @@ class SubmitResultTool(_ResultTool):
                 field="synthesis_tables",
                 received=raw_synthesis_tables,
             )
-        if isinstance(contract, ChiefRevisionInput) and not raw_synthesis_tables:
-            subject = self._chief_revision_subject(contract)
-            synthesis_tables = list(subject.synthesis_tables)
-        else:
-            synthesis_tables: list[SynthesisTableSubmission] = []
-            for index, raw_table in enumerate(raw_synthesis_tables):
-                if not isinstance(raw_table, dict):
-                    raise SubmissionValidationError(
-                        "synthesis table must be an object",
-                        field=f"synthesis_tables.{index}",
-                        received=raw_table,
-                    )
-                input_ids = list(raw_table.get("synthesis_input_ids", []))
-                row_input_ids = raw_table.get("row_synthesis_input_ids", [])
-                referenced_input_ids = {
-                    input_id
-                    for row_ids in row_input_ids
-                    if isinstance(row_ids, list)
-                    for input_id in row_ids
-                    if isinstance(input_id, str)
-                }
-                unknown = sorted(
-                    (set(input_ids) | referenced_input_ids) - expected_synthesis_ids
+        synthesis_tables: list[SynthesisTableSubmission] = []
+        for index, raw_table in enumerate(raw_synthesis_tables):
+            if not isinstance(raw_table, dict):
+                raise SubmissionValidationError(
+                    "synthesis table must be an object",
+                    field=f"synthesis_tables.{index}",
+                    received=raw_table,
                 )
-                if unknown:
-                    raise SubmissionValidationError(
-                        "synthesis table references unknown Cross inputs",
-                        field=f"synthesis_tables.{index}.synthesis_input_ids",
-                        expected=sorted(expected_synthesis_ids),
-                        received=input_ids,
-                    )
-                source_ids = sorted(
+            input_ids = list(raw_table.get("synthesis_input_ids", []))
+            row_input_ids = raw_table.get("row_synthesis_input_ids", [])
+            referenced_input_ids = {
+                input_id
+                for row_ids in row_input_ids
+                if isinstance(row_ids, list)
+                for input_id in row_ids
+                if isinstance(input_id, str)
+            }
+            unknown = sorted((set(input_ids) | referenced_input_ids) - expected_synthesis_ids)
+            if unknown:
+                raise SubmissionValidationError(
+                    "synthesis table references unknown Cross inputs",
+                    field=f"synthesis_tables.{index}.synthesis_input_ids",
+                    expected=sorted(expected_synthesis_ids),
+                    received=input_ids,
+                )
+            source_ids = sorted(
+                {
+                    ref
+                    for input_id in input_ids
+                    for ref in synthesis_by_id[input_id].evidence_refs
+                    if ref.startswith("E-")
+                }
+            )
+            unknown_sources = sorted(set(source_ids) - known_evidence)
+            if unknown_sources:
+                raise SubmissionValidationError(
+                    "synthesis table uses unregistered Cross evidence",
+                    field=f"synthesis_tables.{index}.synthesis_input_ids",
+                    expected=sorted(known_evidence),
+                    received=unknown_sources,
+                )
+            claim_ids = sorted(
+                claim.id for claim in claims if set(claim.source_ids) & set(source_ids)
+            )
+            if not source_ids or not claim_ids:
+                raise SubmissionValidationError(
+                    "synthesis table Cross inputs require E-* evidence linked to approved Claims",
+                    field=f"synthesis_tables.{index}.synthesis_input_ids",
+                    expected="Cross inputs whose evidence_refs include approved E-* ids",
+                    received=input_ids,
+                )
+            synthesis_tables.append(
+                SynthesisTableSubmission.model_validate(
                     {
-                        ref
-                        for input_id in input_ids
-                        for ref in synthesis_by_id[input_id].evidence_refs
-                        if ref.startswith("E-")
+                        **raw_table,
+                        "claim_ids": claim_ids,
+                        "source_ids": source_ids,
                     }
                 )
-                unknown_sources = sorted(set(source_ids) - known_evidence)
-                if unknown_sources:
-                    raise SubmissionValidationError(
-                        "synthesis table uses unregistered Cross evidence",
-                        field=f"synthesis_tables.{index}.synthesis_input_ids",
-                        expected=sorted(known_evidence),
-                        received=unknown_sources,
-                    )
-                claim_ids = sorted(
-                    claim.id
-                    for claim in claims
-                    if set(claim.source_ids) & set(source_ids)
-                )
-                if not source_ids or not claim_ids:
-                    raise SubmissionValidationError(
-                        "synthesis table Cross inputs require E-* evidence linked to approved Claims",
-                        field=f"synthesis_tables.{index}.synthesis_input_ids",
-                        expected="Cross inputs whose evidence_refs include approved E-* ids",
-                        received=input_ids,
-                    )
-                synthesis_tables.append(
-                    SynthesisTableSubmission.model_validate(
-                        {
-                            **raw_table,
-                            "claim_ids": claim_ids,
-                            "source_ids": source_ids,
-                        }
-                    )
-                )
+            )
         if expected_synthesis_ids:
             table_types = {table.table_type for table in synthesis_tables}
             required_types = {
@@ -732,9 +737,7 @@ class SubmitResultTool(_ResultTool):
                     received=sorted(table_types),
                 )
             covered_ids = {
-                input_id
-                for table in synthesis_tables
-                for input_id in table.synthesis_input_ids
+                input_id for table in synthesis_tables for input_id in table.synthesis_input_ids
             }
             if covered_ids != expected_synthesis_ids:
                 raise SubmissionValidationError(
@@ -744,22 +747,14 @@ class SubmitResultTool(_ResultTool):
                     received=sorted(covered_ids),
                 )
 
-        if isinstance(contract, ChiefRevisionInput):
-            subject = self._chief_revision_subject(contract)
-            protected_claim_ids = list(subject.protected_claim_ids)
-            if not tables:
-                tables = list(subject.tables)
-        else:
-            protected_claim_ids = sorted(claim.id for claim in claims)
+        protected_claim_ids = sorted(claim.id for claim in claims)
 
         return EditedReportSubmission.model_validate(
             {
                 **materialized,
                 "protected_claim_ids": protected_claim_ids,
                 "tables": [table.model_dump(mode="python") for table in tables],
-                "synthesis_tables": [
-                    table.model_dump(mode="python") for table in synthesis_tables
-                ],
+                "synthesis_tables": [table.model_dump(mode="python") for table in synthesis_tables],
             }
         )
 
@@ -816,9 +811,7 @@ class SubmitResultTool(_ResultTool):
             if "result_part_refs" in path:
                 return value
             if self._looks_like_text_artifact_ref(value):
-                return self._read_text_artifact_refs(
-                    [value], separator="\n\n", path=path
-                )
+                return self._read_text_artifact_refs([value], separator="\n\n", path=path)
             return value
         if isinstance(value, list):
             return [
@@ -838,9 +831,7 @@ class SubmitResultTool(_ResultTool):
                 raise SubmissionValidationError(
                     "artifact_refs must be a non-empty string list",
                     field=".".join(map(str, (*path, "artifact_refs"))),
-                    expected=(
-                        "a non-empty array of current-task Markdown artifact paths"
-                    ),
+                    expected=("a non-empty array of current-task Markdown artifact paths"),
                     example=[
                         f"Work/runs/{self.run_id}/drafts/{self.task_id}/"
                         f"r{self.revision}/<part-id>.md"
@@ -866,8 +857,7 @@ class SubmitResultTool(_ResultTool):
                 path=(*path, "artifact_refs"),
             )
         return {
-            key: self._materialize_text_artifacts(item, (*path, key))
-            for key, item in value.items()
+            key: self._materialize_text_artifacts(item, (*path, key)) for key, item in value.items()
         }
 
     @staticmethod
@@ -919,10 +909,7 @@ class SubmitResultTool(_ResultTool):
         if model is None:
             return None
         target = (self.store.workspace / self.input_contract_ref).resolve()
-        if (
-            not target.is_relative_to(self.store.workspace)
-            or not target.is_file()
-        ):
+        if not target.is_relative_to(self.store.workspace) or not target.is_file():
             return None
         try:
             return model.model_validate_json(target.read_text(encoding="utf-8"))
@@ -943,39 +930,12 @@ class SubmitResultTool(_ResultTool):
                 received=contract.subject_ref,
             )
         try:
-            return ModuleSubmission.model_validate_json(
-                target.read_text(encoding="utf-8")
-            )
+            return ModuleSubmission.model_validate_json(target.read_text(encoding="utf-8"))
         except (OSError, ValidationError, ValueError) as exc:
             raise SubmissionValidationError(
                 "module revision baseline is invalid",
                 field="$contract.subject_ref",
                 expected="a valid internal module subject",
-                received=contract.subject_ref,
-            ) from exc
-
-    def _chief_revision_subject(
-        self,
-        contract: ChiefRevisionInput,
-    ) -> EditedReportSubmission:
-        target = (self.store.workspace / contract.subject_ref).resolve()
-        run_root = (self.store.workspace / f"Work/runs/{self.run_id}").resolve()
-        if not target.is_relative_to(run_root) or not target.is_file():
-            raise SubmissionValidationError(
-                "chief revision baseline is not a readable current-run artifact",
-                field="$contract.subject_ref",
-                expected="the exact current edited report assigned by the workflow",
-                received=contract.subject_ref,
-            )
-        try:
-            return EditedReportSubmission.model_validate_json(
-                target.read_text(encoding="utf-8")
-            )
-        except (OSError, ValidationError, ValueError) as exc:
-            raise SubmissionValidationError(
-                "chief revision baseline is invalid",
-                field="$contract.subject_ref",
-                expected="a valid internal edited report subject",
                 received=contract.subject_ref,
             ) from exc
 
@@ -986,20 +946,14 @@ class SubmitResultTool(_ResultTool):
         contract,
     ) -> object:
         example = deepcopy(schema.get("examples", [{}])[0])
-        if kind == "module_submission" and isinstance(
-            contract, ModuleAuthoringInput
-        ):
+        if kind == "module_submission" and isinstance(contract, ModuleAuthoringInput):
             example["module_id"] = contract.module_id
             example["revision"] = contract.revision
-        elif kind == "module_revision_submission" and isinstance(
-            contract, ModuleRevisionInput
-        ):
+        elif kind == "module_revision_submission" and isinstance(contract, ModuleRevisionInput):
             example["module_id"] = contract.module_id
             example["base_revision"] = contract.subject.revision
             example["revision"] = contract.subject.revision + 1
-            example["unresolved_questions"] = list(
-                contract.subject.unresolved_questions
-            )
+            example["unresolved_questions"] = list(contract.subject.unresolved_questions)
             finding_ids = [
                 *(finding.id for finding in contract.module_findings),
                 *(finding.id for finding in contract.cross_findings),
@@ -1014,6 +968,22 @@ class SubmitResultTool(_ResultTool):
                     "changed_target_ids": [first_target],
                 }
                 for finding_id in finding_ids
+            ]
+        elif kind == "chief_revision_submission" and isinstance(contract, ChiefRevisionInput):
+            example["base_subject_ref"] = contract.subject_ref
+            example["revision"] = contract.revision
+            first_target = contract.target_section_ids[0]
+            example["revision_responses"] = [
+                {
+                    "finding_id": finding.id,
+                    "action": "implemented",
+                    "summary": "已在指定小节完成所需修改，其余报告内容由运行时继承。",
+                    "changed_target_ids": [
+                        change.target_section_id for change in finding.target_changes
+                    ]
+                    or [first_target],
+                }
+                for finding in contract.findings
             ]
         return example
 
@@ -1039,8 +1009,7 @@ class SubmitResultTool(_ResultTool):
             "unresolved_questions": list(patch.unresolved_questions),
             "revision": patch.revision,
             "revision_responses": [
-                response.model_dump(mode="python")
-                for response in patch.revision_responses
+                response.model_dump(mode="python") for response in patch.revision_responses
             ],
         }
 
@@ -1081,8 +1050,7 @@ class SubmitResultTool(_ResultTool):
         if not isinstance(claims, list) or not isinstance(narratives_raw, dict):
             return []
         if not isinstance(narratives, dict) or not all(
-            isinstance(key, str) and isinstance(value, str)
-            for key, value in narratives.items()
+            isinstance(key, str) and isinstance(value, str) for key, value in narratives.items()
         ):
             return []
 
@@ -1154,8 +1122,7 @@ class SubmitResultTool(_ResultTool):
             uses_artifact = (
                 isinstance(raw_narrative, dict) and "artifact_refs" in raw_narrative
             ) or (
-                isinstance(raw_narrative, str)
-                and self._looks_like_text_artifact_ref(raw_narrative)
+                isinstance(raw_narrative, str) and self._looks_like_text_artifact_ref(raw_narrative)
             )
             if requires_marker and locations != [submodule_id]:
                 action = (
@@ -1224,9 +1191,7 @@ class SubmitResultTool(_ResultTool):
         error: Exception,
         payload: dict | str,
     ) -> list[dict[str, object]]:
-        submitted_kind = (
-            str(payload.get("kind", "")) if isinstance(payload, dict) else ""
-        )
+        submitted_kind = str(payload.get("kind", "")) if isinstance(payload, dict) else ""
         allowed_kinds = sorted(self.allowed_outputs)
         active_kind = (
             submitted_kind
@@ -1467,10 +1432,7 @@ class SubmitResultTool(_ResultTool):
                 ),
             )
         target = (self.store.workspace / self.input_contract_ref).resolve()
-        if (
-            not target.is_relative_to(self.store.workspace)
-            or not target.is_file()
-        ):
+        if not target.is_relative_to(self.store.workspace) or not target.is_file():
             raise SubmissionValidationError(
                 "input contract ref is not a readable workspace artifact",
                 field="$runtime.input_contract_ref",
@@ -1527,10 +1489,7 @@ class SubmitResultTool(_ResultTool):
                         "run_id named by its input contract."
                     ),
                 )
-            cache_ref = (
-                f"Work/runs/{contract.run_id}/context/"
-                "template-inspection.json"
-            )
+            cache_ref = f"Work/runs/{contract.run_id}/context/template-inspection.json"
             cached = InspectDocumentTool(
                 self.store.workspace,
                 required_path=contract.template_ref,
@@ -1561,17 +1520,11 @@ class SubmitResultTool(_ResultTool):
         if isinstance(contract, ModuleAuthoringInput):
             if not isinstance(payload, ModuleSubmission):
                 return
-            if (
-                payload.module_id != contract.module_id
-                or payload.revision != contract.revision
-            ):
+            if payload.module_id != contract.module_id or payload.revision != contract.revision:
                 raise SubmissionValidationError(
                     "module submission identity or revision differs from its input contract",
                     field="$identity",
-                    expected=(
-                        f"module_id={contract.module_id!r} and "
-                        f"revision={contract.revision}"
-                    ),
+                    expected=(f"module_id={contract.module_id!r} and revision={contract.revision}"),
                     example={
                         "module_id": contract.module_id,
                         "revision": contract.revision,
@@ -1592,8 +1545,7 @@ class SubmitResultTool(_ResultTool):
                     expected="an empty array during initial module authoring",
                     example=[],
                     received=[
-                        response.model_dump(mode="json")
-                        for response in payload.revision_responses
+                        response.model_dump(mode="json") for response in payload.revision_responses
                     ],
                     repair_instruction=(
                         "Remove revision_responses because this is initial authoring, "
@@ -1645,13 +1597,9 @@ class SubmitResultTool(_ResultTool):
                 raise SubmissionValidationError(
                     "module patch contains out-of-scope narratives",
                     field="submodule_narratives",
-                    expected=(
-                        "a patch containing only assigned submodule ids: "
-                        f"{sorted(allowed)}"
-                    ),
+                    expected=(f"a patch containing only assigned submodule ids: {sorted(allowed)}"),
                     example={
-                        submodule_id: "<revised narrative>"
-                        for submodule_id in sorted(allowed)
+                        submodule_id: "<revised narrative>" for submodule_id in sorted(allowed)
                     },
                     received=sorted(payload.submodule_narratives),
                     repair_instruction=(
@@ -1681,19 +1629,14 @@ class SubmitResultTool(_ResultTool):
                 raise SubmissionValidationError(
                     "module patch upserts an out-of-scope Claim",
                     field="claims_upsert",
-                    expected=(
-                        "Claims whose submodule_id is one of "
-                        f"{sorted(allowed)}"
-                    ),
+                    expected=(f"Claims whose submodule_id is one of {sorted(allowed)}"),
                     example=[],
                     received=[
                         {"id": claim.id, "submodule_id": claim.submodule_id}
                         for claim in payload.claims_upsert
                     ],
                 )
-            ModuleSubmission.model_validate(
-                self._module_revision_candidate(contract, payload)
-            )
+            ModuleSubmission.model_validate(self._module_revision_candidate(contract, payload))
             return
         if isinstance(contract, ModuleReviewInput):
             allowed = set(contract.required_submodule_ids)
@@ -1717,10 +1660,7 @@ class SubmitResultTool(_ResultTool):
                 findings = payload.new_findings
             else:
                 return
-            if any(
-                finding.target_submodule_id not in allowed
-                for finding in findings
-            ):
+            if any(finding.target_submodule_id not in allowed for finding in findings):
                 raise SubmissionValidationError(
                     "module review finding target lies outside the input contract",
                     field="findings",
@@ -1762,8 +1702,7 @@ class SubmitResultTool(_ResultTool):
             else:
                 return
             if any(
-                set(entry.checked_dimensions) != required_dimensions
-                for entry in payload.coverage
+                set(entry.checked_dimensions) != required_dimensions for entry in payload.coverage
             ):
                 raise SubmissionValidationError(
                     "cross review coverage must include every declared dimension",
@@ -1848,9 +1787,8 @@ class SubmitResultTool(_ResultTool):
                 )
             return
         if isinstance(contract, ChiefRevisionInput):
-            if not isinstance(payload, EditedReportSubmission):
+            if not isinstance(payload, ChiefRevisionSubmission):
                 return
-            subject = self._chief_revision_subject(contract)
             self._require_exact_ids(
                 {response.finding_id for response in payload.revision_responses},
                 {finding.id for finding in contract.findings},
@@ -1866,88 +1804,49 @@ class SubmitResultTool(_ResultTool):
                 raise SubmissionValidationError(
                     "chief revision response declares an out-of-scope section",
                     field="revision_responses.changed_target_ids",
-                    expected=(
-                        "section ids drawn only from "
-                        f"{sorted(contract.target_section_ids)}"
-                    ),
+                    expected=(f"section ids drawn only from {sorted(contract.target_section_ids)}"),
                     example=sorted(contract.target_section_ids),
                     received=sorted(changed_targets),
                 )
-            normalized_modules = {}
-            for module_id, narrative in payload.module_narratives.items():
-                marker = f"[[APPROVED_MODULE:{module_id}]]"
-                normalized_modules[module_id] = (
-                    narrative.replace(
-                        marker,
-                        subject.module_narratives[module_id],
-                        1,
-                    )
-                    if narrative.count(marker) == 1
-                    else narrative
-                )
-            section_fields = {
-                "1.1": "assessment_background",
-                "1.2": "findings_overview",
-                "1.3": "regional_executive_summary",
-                "3.1.1": "risk_panorama",
-                "3.1.2": "dimension_risk_analysis",
-                "3.1.3": "cross_module_analysis",
-                "3.1.4": "data_gap_analysis",
-                "3.2": "improvement_action_plan",
-                "4.1": "new_factory_planning",
-                "4.2": "capacity_expansion_plan",
-                "4.3": "daily_power_management",
-                "4.4": "emergency_compliance_management",
-            }
-            changed_sections = {
-                section_id
-                for section_id, field in section_fields.items()
-                if getattr(payload, field) != getattr(subject, field)
-            }
-            changed_sections.update(
-                module_id
-                for module_id, narrative in normalized_modules.items()
-                if narrative != subject.module_narratives[module_id]
-            )
-            unexpected_sections = sorted(
-                changed_sections - set(contract.target_section_ids)
-            )
-            protected_fields = {
-                "title",
-                "protected_claim_ids",
-                "tables",
-                "photo_ids",
-                "unresolved_editorial_issues",
-            }
-            if not set(contract.target_section_ids) & {
-                "3.1.1",
-                "3.1.2",
-                "3.1.3",
-                "3.2",
-            }:
-                protected_fields.update(
-                    {"synthesis_dispositions", "synthesis_tables"}
-                )
-            unexpected_fields = sorted(
-                field
-                for field in protected_fields
-                if getattr(payload, field) != getattr(subject, field)
-            )
-            if unexpected_sections or unexpected_fields:
+            expected_sections = set(contract.target_section_ids)
+            if (
+                payload.base_subject_ref != contract.subject_ref
+                or payload.revision != contract.revision
+                or set(payload.section_bodies) != expected_sections
+                or set(payload.section_part_refs) != expected_sections
+            ):
                 raise SubmissionValidationError(
-                    "chief revision changes content outside the assigned final sections; "
-                    f"sections={unexpected_sections}; fields={unexpected_fields}",
-                    field="$",
-                    expected="only target_section_ids and revision_responses may change",
+                    "chief revision patch identity or section scope differs from its input",
+                    field="$identity",
+                    expected={
+                        "base_subject_ref": contract.subject_ref,
+                        "revision": contract.revision,
+                        "section_ids": sorted(expected_sections),
+                    },
                     example={
-                        "target_section_ids": sorted(contract.target_section_ids),
-                        "preserve_all_other_sections": True,
+                        "base_subject_ref": contract.subject_ref,
+                        "revision": contract.revision,
+                        "section_ids": sorted(expected_sections),
                     },
                     received={
-                        "unexpected_sections": unexpected_sections,
-                        "unexpected_fields": unexpected_fields,
+                        "base_subject_ref": payload.base_subject_ref,
+                        "revision": payload.revision,
+                        "section_ids": sorted(payload.section_bodies),
                     },
                 )
+            expected_root = (
+                Path("Work/runs") / self.run_id / "drafts" / self.task_id / f"r{self.revision}"
+            )
+            for section_id, ref in payload.section_part_refs.items():
+                if Path(ref) != (expected_root / f"{CHIEF_SECTION_RESULT_PART_IDS[section_id]}.md"):
+                    raise SubmissionValidationError(
+                        "chief revision uses a result part outside the active task",
+                        field=f"section_part_refs.{section_id}",
+                        expected=str(
+                            expected_root / f"{CHIEF_SECTION_RESULT_PART_IDS[section_id]}.md"
+                        ),
+                        received=ref,
+                    )
             return
         if isinstance(contract, (ChiefEditorInput, AggregateEditorInput)):
             if not isinstance(payload, EditedReportSubmission):
@@ -1975,10 +1874,7 @@ class SubmitResultTool(_ResultTool):
                 else contract.structured_modules
             )
             if source_modules:
-                ledger_path = (
-                    self.store.workspace
-                    / f"Work/runs/{self.run_id}/ledgers/claims.json"
-                )
+                ledger_path = self.store.workspace / f"Work/runs/{self.run_id}/ledgers/claims.json"
                 expected_claim_ids = (
                     {
                         claim.id
@@ -1998,11 +1894,7 @@ class SubmitResultTool(_ResultTool):
             if (
                 isinstance(contract, AggregateEditorInput)
                 and contract.source_format == "markdown"
-                and (
-                    payload.protected_claim_ids
-                    or payload.tables
-                    or payload.photo_ids
-                )
+                and (payload.protected_claim_ids or payload.tables or payload.photo_ids)
             ):
                 raise SubmissionValidationError(
                     "markdown aggregate input cannot produce unverified Claim, table, "
@@ -2019,9 +1911,7 @@ class SubmitResultTool(_ResultTool):
                     },
                     received={
                         "protected_claim_ids": payload.protected_claim_ids,
-                        "tables": [
-                            table.model_dump(mode="json") for table in payload.tables
-                        ],
+                        "tables": [table.model_dump(mode="json") for table in payload.tables],
                         "photo_ids": payload.photo_ids,
                     },
                 )
@@ -2050,18 +1940,13 @@ class SubmitResultTool(_ResultTool):
                 {
                     str(issue["field"]).split(".", 1)[1]
                     for issue in issues
-                    if str(issue.get("field", "")).startswith(
-                        "submodule_narratives."
-                    )
+                    if str(issue.get("field", "")).startswith("submodule_narratives.")
                 }
             )
             correction_ref = (
-                f"Work/runs/{self.run_id}/submissions/{self.task_id}/"
-                "correction-state.json"
+                f"Work/runs/{self.run_id}/submissions/{self.task_id}/correction-state.json"
             )
-            terminal = count >= 2 or (
-                self._validation_failures >= self.max_validation_failures
-            )
+            terminal = count >= 2 or (self._validation_failures >= self.max_validation_failures)
             self.store.write_json(
                 correction_ref,
                 {
@@ -2149,9 +2034,7 @@ class SubmitResultTool(_ResultTool):
         kind = str(normalized.get("kind", ""))
         contract = self._feedback_input_contract()
         if isinstance(contract, ModuleReviewInput):
-            normalized["coverage"] = {
-                "submodule_ids": list(contract.required_submodule_ids)
-            }
+            normalized["coverage"] = {"submodule_ids": list(contract.required_submodule_ids)}
             existing_ids = [finding.id for finding in contract.required_findings]
             prefix = contract.finding_id_prefix
             if kind == "module_review_finding_submission":
@@ -2167,9 +2050,7 @@ class SubmitResultTool(_ResultTool):
                         {**dict(verdict), "finding_id": finding_id}
                         if isinstance(verdict, dict)
                         else verdict
-                        for verdict, finding_id in zip(
-                            verdicts, existing_ids, strict=True
-                        )
+                        for verdict, finding_id in zip(verdicts, existing_ids, strict=True)
                     ]
                 normalized["new_findings"] = self._runtime_finding_ids(
                     normalized.get("new_findings", []),
@@ -2198,9 +2079,7 @@ class SubmitResultTool(_ResultTool):
                         {**dict(verdict), "finding_id": finding_id}
                         if isinstance(verdict, dict)
                         else verdict
-                        for verdict, finding_id in zip(
-                            verdicts, existing_ids, strict=True
-                        )
+                        for verdict, finding_id in zip(verdicts, existing_ids, strict=True)
                     ]
                 normalized["new_findings"] = self._runtime_finding_ids(
                     normalized.get("new_findings", []),
@@ -2208,9 +2087,7 @@ class SubmitResultTool(_ResultTool):
                     existing_ids=existing_ids,
                 )
         elif isinstance(contract, FinalReviewInput):
-            normalized["checked_section_ids"] = list(
-                contract.required_section_ids
-            )
+            normalized["checked_section_ids"] = list(contract.required_section_ids)
             existing_ids = [finding.id for finding in contract.required_findings]
             if kind == "final_review_finding_submission":
                 normalized["findings"] = self._runtime_finding_ids(
@@ -2225,9 +2102,7 @@ class SubmitResultTool(_ResultTool):
                         {**dict(verdict), "finding_id": finding_id}
                         if isinstance(verdict, dict)
                         else verdict
-                        for verdict, finding_id in zip(
-                            verdicts, existing_ids, strict=True
-                        )
+                        for verdict, finding_id in zip(verdicts, existing_ids, strict=True)
                     ]
                 normalized["new_findings"] = self._runtime_finding_ids(
                     normalized.get("new_findings", []),
@@ -2290,24 +2165,23 @@ class SubmitResultTool(_ResultTool):
             )
         if submission_kind == "module_submission":
             commit = ModuleSubmissionInput.model_validate(normalized_payload)
-            normalized_payload = self._assemble_module_commit(commit).model_dump(
-                mode="python"
-            )
+            normalized_payload = self._assemble_module_commit(commit).model_dump(mode="python")
         elif submission_kind == "module_revision_submission":
             commit = ModuleRevisionSubmissionInput.model_validate(normalized_payload)
-            normalized_payload = self._assemble_module_revision_commit(
-                commit
-            ).model_dump(mode="python")
+            normalized_payload = self._assemble_module_revision_commit(commit).model_dump(
+                mode="python"
+            )
+        elif submission_kind == "chief_revision_submission":
+            commit = ChiefRevisionSubmissionInput.model_validate(normalized_payload)
+            normalized_payload = self._assemble_chief_revision_commit(commit).model_dump(
+                mode="python"
+            )
         elif submission_kind == "edited_report_submission":
-            editor_input = EditedReportSubmissionInput.model_validate(
-                normalized_payload
+            editor_input = EditedReportSubmissionInput.model_validate(normalized_payload)
+            materialized = self._materialize_text_artifacts(editor_input.model_dump(mode="python"))
+            normalized_payload = self._assemble_edited_report(materialized).model_dump(
+                mode="python"
             )
-            materialized = self._materialize_text_artifacts(
-                editor_input.model_dump(mode="python")
-            )
-            normalized_payload = self._assemble_edited_report(
-                materialized
-            ).model_dump(mode="python")
         else:
             normalized_payload = self._materialize_text_artifacts(normalized_payload)
         result = AgentResult(
@@ -2322,9 +2196,7 @@ class SubmitResultTool(_ResultTool):
         if isinstance(result.payload, ModuleSubmission):
             sources = SourceLedger(self.store.workspace, self.run_id).records
             known_source_ids = {source.id for source in sources}
-            unknown_declared = sorted(
-                set(result.payload.source_ids) - known_source_ids
-            )
+            unknown_declared = sorted(set(result.payload.source_ids) - known_source_ids)
             if unknown_declared:
                 raise SubmissionValidationError(
                     "module_submission source_ids contain unregistered sources: "
@@ -2332,8 +2204,7 @@ class SubmitResultTool(_ResultTool):
                     "evidence/reference tools",
                     field="source_ids",
                     expected=(
-                        "only source ids registered by the current run's "
-                        "evidence/reference tools"
+                        "only source ids registered by the current run's evidence/reference tools"
                     ),
                     example=sorted(
                         source_id
@@ -2351,17 +2222,14 @@ class SubmitResultTool(_ResultTool):
                 ClaimLedger(claims=result.payload.claims, sources=sources)
             except ValueError as exc:
                 raise SubmissionValidationError(
-                    "module_submission ClaimLedger validation failed before persistence: "
-                    f"{exc}",
+                    f"module_submission ClaimLedger validation failed before persistence: {exc}",
                     field="claims",
                     expected=(
                         "Claims with unique ids, registered declared sources, correct "
                         "module/submodule ownership, and exactly one required marker in "
                         "the matching narrative"
                     ),
-                    received=[
-                        claim.model_dump(mode="json") for claim in result.payload.claims
-                    ],
+                    received=[claim.model_dump(mode="json") for claim in result.payload.claims],
                     repair_instruction=(
                         "Correct the Claim or its matching narrative marker exactly as "
                         "reported by ClaimLedger. Do not weaken, invent, or silently drop "
@@ -2371,9 +2239,7 @@ class SubmitResultTool(_ResultTool):
         if isinstance(result.payload, ModuleRevisionSubmission):
             sources = SourceLedger(self.store.workspace, self.run_id).records
             known_source_ids = {source.id for source in sources}
-            unknown_declared = sorted(
-                set(result.payload.source_ids) - known_source_ids
-            )
+            unknown_declared = sorted(set(result.payload.source_ids) - known_source_ids)
             if unknown_declared:
                 raise SubmissionValidationError(
                     "module_revision_submission source_ids contain unregistered "
@@ -2400,9 +2266,7 @@ class SubmitResultTool(_ResultTool):
                     "module_revision_submission source_ids must include every upserted "
                     f"Claim source: {missing_claim_sources}",
                     field="source_ids",
-                    expected=(
-                        "a list including every source_id referenced by claims_upsert"
-                    ),
+                    expected=("a list including every source_id referenced by claims_upsert"),
                     example=sorted(
                         {
                             source_id
@@ -2414,10 +2278,7 @@ class SubmitResultTool(_ResultTool):
                 )
         relative = await self._persist_and_publish(result)
         self.store.write_json(
-            (
-                f"Work/runs/{self.run_id}/submissions/{self.task_id}/"
-                "correction-state.json"
-            ),
+            (f"Work/runs/{self.run_id}/submissions/{self.task_id}/correction-state.json"),
             {
                 "kind": "submission_correction_state",
                 "run_id": self.run_id,
@@ -2458,9 +2319,7 @@ class _ResultPartTool(Tool):
         self.store = store
         self.expected_part_ids = tuple(dict.fromkeys(expected_part_ids or ()))
         self.evidence_binding_required = evidence_binding_required
-        self.required_synthesis_input_ids = tuple(
-            dict.fromkeys(required_synthesis_input_ids or ())
-        )
+        self.required_synthesis_input_ids = tuple(dict.fromkeys(required_synthesis_input_ids or ()))
         self.required_synthesis_table_types = tuple(
             dict.fromkeys(required_synthesis_table_types or ())
         )
@@ -2512,9 +2371,7 @@ class WriteResultPartTool(_ResultPartTool):
                 )
                 or len(evidence_ids) != len(set(evidence_ids))
             ):
-                raise ValueError(
-                    "evidence_ids must be a unique list containing only E-* ids"
-                )
+                raise ValueError("evidence_ids must be a unique list containing only E-* ids")
             known_evidence = {
                 source.id
                 for source in SourceLedger(self.store.workspace, self.run_id).records
@@ -2522,9 +2379,7 @@ class WriteResultPartTool(_ResultPartTool):
             }
             unknown = sorted(set(evidence_ids) - known_evidence)
             if unknown:
-                raise ValueError(
-                    f"evidence_ids contain unregistered current-run ids: {unknown}"
-                )
+                raise ValueError(f"evidence_ids contain unregistered current-run ids: {unknown}")
             if "[[CLAIM:" in content:
                 raise ValueError(
                     "module prose must not contain [[CLAIM:...]] markers; pass E-* ids "
@@ -2538,11 +2393,7 @@ class WriteResultPartTool(_ResultPartTool):
         self.store.write_text(relative.as_posix(), content)
         if self.evidence_binding_required:
             self.store.write_json(
-                (
-                    self.relative_root
-                    / "_evidence"
-                    / f"{part_id}.json"
-                ).as_posix(),
+                (self.relative_root / "_evidence" / f"{part_id}.json").as_posix(),
                 {
                     "kind": "module_part_evidence_binding",
                     "run_id": self.run_id,
@@ -2553,7 +2404,9 @@ class WriteResultPartTool(_ResultPartTool):
                 },
             )
         return {
-            "status": "unchanged" if previous == content else ("updated" if previous else "created"),
+            "status": "unchanged"
+            if previous == content
+            else ("updated" if previous else "created"),
             "part_id": part_id,
             "characters": len(content),
             **(
@@ -2586,9 +2439,7 @@ class ListResultPartsTool(_ResultPartTool):
                     evidence_ids = None
                     if binding_path.is_file():
                         try:
-                            binding = json.loads(
-                                binding_path.read_text(encoding="utf-8")
-                            )
+                            binding = json.loads(binding_path.read_text(encoding="utf-8"))
                         except (OSError, ValueError):
                             binding = None
                         if isinstance(binding, dict):
@@ -2600,20 +2451,12 @@ class ListResultPartsTool(_ResultPartTool):
                         }
                     )
                 else:
-                    part["artifact_ref"] = path.relative_to(
-                        self.store.workspace
-                    ).as_posix()
+                    part["artifact_ref"] = path.relative_to(self.store.workspace).as_posix()
                 parts.append(part)
         saved_ids = [part["part_id"] for part in parts]
-        missing_ids = [
-            part_id for part_id in self.expected_part_ids if part_id not in saved_ids
-        ]
+        missing_ids = [part_id for part_id in self.expected_part_ids if part_id not in saved_ids]
         unbound_ids = (
-            [
-                part["part_id"]
-                for part in parts
-                if not part.get("ready", False)
-            ]
+            [part["part_id"] for part in parts if not part.get("ready", False)]
             if self.evidence_binding_required
             else []
         )
@@ -2623,17 +2466,9 @@ class ListResultPartsTool(_ResultPartTool):
             "expected_part_ids": list(self.expected_part_ids),
             "missing_part_ids": missing_ids,
             "unbound_part_ids": unbound_ids,
-            "required_synthesis_input_ids": list(
-                self.required_synthesis_input_ids
-            ),
-            "required_synthesis_table_types": list(
-                self.required_synthesis_table_types
-            ),
-            "complete": (
-                bool(self.expected_part_ids)
-                and not missing_ids
-                and not unbound_ids
-            ),
+            "required_synthesis_input_ids": list(self.required_synthesis_input_ids),
+            "required_synthesis_table_types": list(self.required_synthesis_table_types),
+            "complete": (bool(self.expected_part_ids) and not missing_ids and not unbound_ids),
         }
 
 
@@ -2666,9 +2501,7 @@ class SubmissionValidationError(ValueError):
 
 class ReportBlockedTool(_ResultTool):
     name = "report_blocked"
-    description = (
-        "Persist a terminal blocked result with the concrete missing input or decision."
-    )
+    description = "Persist a terminal blocked result with the concrete missing input or decision."
 
     async def __call__(
         self,
@@ -2794,9 +2627,7 @@ class ReplyPeerTool(Tool):
     name = "reply_peer"
     description = "Reply to an existing peer query and identify any supporting sources."
 
-    def __init__(
-        self, bus: MessageBus, agent_id: str, workflow_id: str = ""
-    ):
+    def __init__(self, bus: MessageBus, agent_id: str, workflow_id: str = ""):
         self.bus = bus
         self.agent_id = agent_id
         self.workflow_id = workflow_id
@@ -2930,8 +2761,7 @@ class PeerMessageRouter:
 
     async def _route_query(self, message: PeerQueryMessage) -> None:
         artifacts = "".join(
-            f"<artifact_ref>{escape(ref)}</artifact_ref>"
-            for ref in message.artifact_refs
+            f"<artifact_ref>{escape(ref)}</artifact_ref>" for ref in message.artifact_refs
         )
         await self.bus.publish(
             UserMessage(

@@ -9,12 +9,15 @@ import pytest
 
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting.agentic_models import (
-    AgentResult,
     CROSS_REVIEW_DIMENSIONS,
+    FINAL_AUDIT_SECTION_IDS,
+    FINAL_REPORT_SECTION_IDS,
+    AgentResult,
+    ChiefRevisionSubmission,
     CrossReviewFindingSubmission,
     CrossReviewVerdictSubmission,
+    CrossSynthesisDisposition,
     EditedReportSubmission,
-    FINAL_REPORT_SECTION_IDS,
     FinalReviewFindingSubmission,
     FinalReviewVerdictSubmission,
     ModuleReviewFindingSubmission,
@@ -33,6 +36,7 @@ from manyselves.core.reporting.input_contracts import (
 from manyselves.core.reporting.models import CoverageMatrix, ProjectManifest
 from manyselves.core.reporting.review_lifecycle import (
     ReviewLifecycleError,
+    _apply_chief_patch,
     run_cross_review,
     run_final_review,
     run_module_review,
@@ -45,10 +49,7 @@ from manyselves.core.tools.reporting_collaboration_tools import SubmitResultTool
 
 
 def _artifact_hashes(root: Path, refs: list[str]) -> dict[str, str]:
-    return {
-        ref: hashlib.sha256((root / ref).read_bytes()).hexdigest()
-        for ref in refs
-    }
+    return {ref: hashlib.sha256((root / ref).read_bytes()).hexdigest() for ref in refs}
 
 
 def _module(module_id: str, revision: int = 0) -> ModuleSubmission:
@@ -56,8 +57,7 @@ def _module(module_id: str, revision: int = 0) -> ModuleSubmission:
         module_id=module_id,
         submodule_narratives={
             submodule_id: (
-                f"### {submodule_id}\n\n"
-                "当前模块正文说明现状、判断、风险机理、建议责任和验收方法。"
+                f"### {submodule_id}\n\n当前模块正文说明现状、判断、风险机理、建议责任和验收方法。"
             )
             for submodule_id in REPORT_TAXONOMY[module_id].submodules
         },
@@ -108,10 +108,11 @@ def _cross_synthesis_inputs() -> list[dict]:
     ]
 
 
-def _edited(module_text: dict[str, str], *, responses: list | None = None) -> EditedReportSubmission:
+def _edited(
+    module_text: dict[str, str], *, responses: list | None = None
+) -> EditedReportSubmission:
     synthesis = (
-        "综合当前证据，明确责任、优先顺序、依赖关系、风险影响、验证指标、验收方式和剩余边界。"
-        * 24
+        "综合当前证据，明确责任、优先顺序、依赖关系、风险影响、验证指标、验收方式和剩余边界。" * 24
     )
     return EditedReportSubmission(
         title="示例配电安全专家咨询报告",
@@ -122,12 +123,12 @@ def _edited(module_text: dict[str, str], *, responses: list | None = None) -> Ed
         cross_module_analysis=(
             "2.1 系统架构与 2.2 工况共同制约 2.3 保护和 2.4 设备状态，"
             "并依赖 2.5 运维形成联合整改、复核指标和验收闭环。"
-            + "说明跨模块对象、作用机制、风险传播、行动依赖和联合验收。" * 10
+            + "说明跨模块对象、作用机制、风险传播、行动依赖和联合验收。"
+            * 10
         ),
         risk_panorama=synthesis,
         dimension_risk_analysis=(
-            synthesis
-            + "系统架构、电能质量、保护、设备和运维之间存在共同、叠加、依赖和传播关系。"
+            synthesis + "系统架构、电能质量、保护、设备和运维之间存在共同、叠加、依赖和传播关系。"
         ),
         data_gap_analysis=synthesis + "数据不足会限制判断并影响置信度，应优先补证。",
         improvement_action_plan=(
@@ -219,9 +220,7 @@ class _ScriptedRunner:
             f"Work/runs/{state['run_id']}/reviews/report-integrity-{phase}.json",
             ValidationReport(
                 run_id=state["run_id"],
-                subject_ref=(
-                    f"Work/runs/{state['run_id']}/validation/report-{phase}.md"
-                ),
+                subject_ref=(f"Work/runs/{state['run_id']}/validation/report-{phase}.md"),
                 validator="test-final-report-structure/v1",
                 check_ids=["final_report.fixed_sections_and_markdown"],
                 passed=True,
@@ -299,9 +298,7 @@ class _ToolBackedModuleReviewRunner(_ScriptedRunner):
         outcome = await tool(payload=payload)
         assert outcome["status"] == "completed", outcome
         result = AgentResult.model_validate_json(
-            (
-                self.service.workspace / outcome["result_path"]
-            ).read_text(encoding="utf-8")
+            (self.service.workspace / outcome["result_path"]).read_text(encoding="utf-8")
         )
         assert result.payload is not None
         return result.payload
@@ -354,9 +351,7 @@ async def test_real_submit_result_ids_pass_module_review_lifecycle(
         module_id="2.1",
         base_revision=0,
         revision=1,
-        submodule_narratives={
-            target: "### 修订\n\n已补充责任接口、执行动作和可验证验收方法。"
-        },
+        submodule_narratives={target: "### 修订\n\n已补充责任接口、执行动作和可验证验收方法。"},
         claims_upsert=[],
         claim_ids_remove=[],
         source_ids=[],
@@ -385,18 +380,14 @@ async def test_real_submit_result_ids_pass_module_review_lifecycle(
     assert result.revision == 1
     finding_result = AgentResult.model_validate_json(
         (
-            tmp_path
-            / "Work/runs/run-tool-backed/results/"
-            "module-2.1-initial-review-r0.json"
+            tmp_path / "Work/runs/run-tool-backed/results/module-2.1-initial-review-r0.json"
         ).read_text(encoding="utf-8")
     )
     assert finding_result.payload is not None
     assert finding_result.payload.findings[0].id == finding_id
     verdict_result = AgentResult.model_validate_json(
         (
-            tmp_path
-            / "Work/runs/run-tool-backed/results/"
-            "module-2.1-initial-review-r1.json"
+            tmp_path / "Work/runs/run-tool-backed/results/module-2.1-initial-review-r1.json"
         ).read_text(encoding="utf-8")
     )
     assert verdict_result.payload is not None
@@ -423,9 +414,7 @@ async def test_module_review_requires_author_response_and_original_reviewer_verd
         module_id="2.1",
         base_revision=0,
         revision=1,
-        submodule_narratives={
-            target: "### 修订\n\n已补充责任接口、执行动作和可验证验收方法。"
-        },
+        submodule_narratives={target: "### 修订\n\n已补充责任接口、执行动作和可验证验收方法。"},
         claims_upsert=[],
         claim_ids_remove=[],
         source_ids=[],
@@ -455,15 +444,13 @@ async def test_module_review_requires_author_response_and_original_reviewer_verd
                 "evidence-auditor",
                 "module_review_verdict_submission",
                 ModuleReviewVerdictSubmission(
-                        coverage={"submodule_ids": [target]},
+                    coverage={"submodule_ids": [target]},
                     verdicts=[
                         {
                             "finding_id": "M-2.1-initial-r0-001",
                             "verdict": "resolved",
                             "reason": "当前修订已形成责任、动作和验收闭环，可以关闭。",
-                            "evidence_refs": [
-                                "Work/runs/run-1/modules/2.1-r1.json"
-                            ],
+                            "evidence_refs": ["Work/runs/run-1/modules/2.1-r1.json"],
                         }
                     ],
                     new_findings=[],
@@ -488,10 +475,7 @@ async def test_module_review_requires_author_response_and_original_reviewer_verd
         "module-auditor-2.1-initial",
     ]
     completion = ReviewCompletionRecord.model_validate_json(
-        (
-            tmp_path
-            / state["module_review_completion_refs"]["2.1"]
-        ).read_text(encoding="utf-8")
+        (tmp_path / state["module_review_completion_refs"]["2.1"]).read_text(encoding="utf-8")
     )
     assert completion.resolved_finding_ids == ["M-2.1-initial-r0-001"]
 
@@ -540,9 +524,7 @@ async def test_module_review_resume_continues_after_persisted_findings_without_r
         module_id="2.1",
         base_revision=0,
         revision=1,
-        submodule_narratives={
-            target: "### 修订\n\n已补充责任接口和可验证验收方法。"
-        },
+        submodule_narratives={target: "### 修订\n\n已补充责任接口和可验证验收方法。"},
         claims_upsert=[],
         claim_ids_remove=[],
         source_ids=[],
@@ -570,9 +552,7 @@ async def test_module_review_resume_continues_after_persisted_findings_without_r
                             "finding_id": "M-2.1-initial-r0-RESUME",
                             "verdict": "resolved",
                             "reason": "复核确认修订已明确责任接口、执行动作、完成时限和验收方式，可以关闭。",
-                            "evidence_refs": [
-                                "Work/runs/run-review-resume/modules/2.1-r1.json"
-                            ],
+                            "evidence_refs": ["Work/runs/run-review-resume/modules/2.1-r1.json"],
                         }
                     ],
                     new_findings=[],
@@ -720,15 +700,13 @@ async def test_author_dispute_enters_main_before_original_reviewer_recheck(
                 "evidence-auditor",
                 "module_review_verdict_submission",
                 ModuleReviewVerdictSubmission(
-                        coverage={"submodule_ids": [target]},
+                    coverage={"submodule_ids": [target]},
                     verdicts=[
                         {
                             "finding_id": "M-2.1-initial-r0-DISPUTE",
                             "verdict": "resolved",
                             "reason": "复核确认原文已正确保持证据边界，无需新增结论。",
-                            "evidence_refs": [
-                                "Work/runs/run-dispute/modules/2.1-r1.json"
-                            ],
+                            "evidence_refs": ["Work/runs/run-dispute/modules/2.1-r1.json"],
                         }
                     ],
                     new_findings=[],
@@ -780,9 +758,7 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
                     {
                         "id": f"C-{module_id}-CROSS",
                         "module_id": module_id,
-                        "submodule_id": next(
-                            iter(REPORT_TAXONOMY[module_id].submodules)
-                        ),
+                        "submodule_id": next(iter(REPORT_TAXONOMY[module_id].submodules)),
                         "text": "该模块已批准一个用于跨模块关系验证的边界判断。",
                         "claim_type": "risk_judgment",
                         "source_ids": [],
@@ -819,9 +795,7 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
         module_id="2.3",
         base_revision=0,
         revision=1,
-        submodule_narratives={
-            target: "### 修订\n\n已写入依赖对象、作用机制、实施顺序和联合验收。"
-        },
+        submodule_narratives={target: "### 修订\n\n已写入依赖对象、作用机制、实施顺序和联合验收。"},
         claims_upsert=[],
         claim_ids_remove=[],
         source_ids=[],
@@ -852,7 +826,7 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
                 "evidence-auditor",
                 "module_review_finding_submission",
                 ModuleReviewFindingSubmission(
-                        coverage={"submodule_ids": [target]},
+                    coverage={"submodule_ids": [target]},
                     findings=[],
                 ),
             ),
@@ -866,9 +840,7 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
                             "finding_id": "X-005",
                             "verdict": "resolved",
                             "reason": "责任模块已写入依赖机制、顺序和联合验收，接口问题关闭。",
-                            "evidence_refs": [
-                                "Work/runs/run-x/modules/2.3-r1.json"
-                            ],
+                            "evidence_refs": ["Work/runs/run-x/modules/2.3-r1.json"],
                         }
                     ],
                     new_findings=[],
@@ -891,15 +863,12 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
         "evidence-auditor",
         "cross-module-reviewer",
     ]
-    cross_sessions = [
-        call[2] for call in runner.calls if call[0] == "cross-module-reviewer"
-    ]
+    cross_sessions = [call[2] for call in runner.calls if call[0] == "cross-module-reviewer"]
     assert cross_sessions == ["cross-module-reviewer", "cross-module-reviewer"]
     recheck_input = json.loads(
-        (
-            tmp_path
-            / "Work/runs/run-x/reviews/cross-review-input-r1.json"
-        ).read_text(encoding="utf-8")
+        (tmp_path / "Work/runs/run-x/reviews/cross-review-input-r1.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert recheck_input["changed_module_ids"] == ["2.3"]
     assert set(recheck_input["modules"]) == {"2.3"}
@@ -909,18 +878,14 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
         "2.4",
         "2.5",
     }
-    assert state["cross_review_completion_ref"].endswith(
-        "reviews/cross-completion.json"
-    )
+    assert state["cross_review_completion_ref"].endswith("reviews/cross-completion.json")
 
 
 @pytest.mark.asyncio
 async def test_final_review_uses_chief_response_then_original_auditor_verdict(
     tmp_path: Path,
 ) -> None:
-    module_text = {
-        module_id: _module(module_id).markdown for module_id in REPORT_TAXONOMY
-    }
+    module_text = {module_id: _module(module_id).markdown for module_id in REPORT_TAXONOMY}
     current = _edited(module_text)
     finding = {
         "id": "F-001",
@@ -928,17 +893,19 @@ async def test_final_review_uses_chief_response_then_original_auditor_verdict(
         "category": "synthesis",
         "impact": "blocking",
         "observation": "跨领域章节缺少行动依赖和联合验收，无法支持实施排序。",
-        "evidence_refs": [
-            "Work/runs/run-f/edited-revisions/chief-r0.json"
+        "evidence_refs": ["Work/runs/run-f/edited-revisions/chief-r0.json"],
+        "target_changes": [
+            {
+                "target_section_id": "3.1.3",
+                "required_change": "在 3.1.3 补充行动依赖顺序和联合验收。",
+                "reviewer_checks": ["核对行动依赖和联合验收是否明确且不改变模块事实"],
+            }
         ],
-        "required_change": "在 3.1.3 补充行动依赖顺序和联合验收。",
-        "reviewer_checks": ["核对行动依赖和联合验收是否明确且不改变模块事实"],
     }
     revised = current.model_copy(
         update={
             "cross_module_analysis": (
-                current.cross_module_analysis
-                + " 明确先完成前置核查，再联合验收并记录剩余风险。"
+                current.cross_module_analysis + " 明确先完成前置核查，再联合验收并记录剩余风险。"
             ),
             "revision_responses": [
                 RevisionResponse(
@@ -958,60 +925,42 @@ async def test_final_review_uses_chief_response_then_original_auditor_verdict(
                 "final_review_finding_submission",
                 FinalReviewFindingSubmission(
                     checked_section_ids=[
-                        "1.1",
-                        "1.2",
-                        "1.3",
-                        "2.1",
-                        "2.2",
-                        "2.3",
-                        "2.4",
-                        "2.5",
-                        "3.1.1",
-                        "3.1.2",
-                        "3.1.3",
-                        "3.1.4",
-                        "3.2",
-                        "4.1",
-                        "4.2",
-                        "4.3",
-                        "4.4",
+                        *FINAL_AUDIT_SECTION_IDS,
                     ],
                     findings=[finding],
                     residual_risks=[],
                 ),
             ),
-            ("chief-editor", "edited_report_submission", revised),
+            (
+                "chief-editor",
+                "chief_revision_submission",
+                ChiefRevisionSubmission(
+                    base_subject_ref=("Work/runs/run-f/edited-revisions/chief-r0.json"),
+                    revision=1,
+                    section_bodies={
+                        "3.1.3": revised.cross_module_analysis,
+                    },
+                    section_part_refs={
+                        "3.1.3": (
+                            "Work/runs/run-f/drafts/chief-edit-r1/r1/cross_module_analysis.md"
+                        ),
+                    },
+                    revision_responses=revised.revision_responses,
+                ),
+            ),
             (
                 "chief-editor-auditor",
                 "final_review_verdict_submission",
                 FinalReviewVerdictSubmission(
                     checked_section_ids=[
-                        "1.1",
-                        "1.2",
-                        "1.3",
-                        "2.1",
-                        "2.2",
-                        "2.3",
-                        "2.4",
-                        "2.5",
-                        "3.1.1",
-                        "3.1.2",
-                        "3.1.3",
-                        "3.1.4",
-                        "3.2",
-                        "4.1",
-                        "4.2",
-                        "4.3",
-                        "4.4",
+                        *FINAL_AUDIT_SECTION_IDS,
                     ],
                     verdicts=[
                         {
                             "finding_id": "F-001",
                             "verdict": "resolved",
                             "reason": "当前 3.1.3 已明确实施依赖和联合验收，问题关闭。",
-                            "evidence_refs": [
-                                "Work/runs/run-f/edited-revisions/chief-r1.json"
-                            ],
+                            "evidence_refs": ["Work/runs/run-f/edited-revisions/chief-r1.json"],
                         }
                     ],
                     new_findings=[],
@@ -1023,9 +972,7 @@ async def test_final_review_uses_chief_response_then_original_auditor_verdict(
     state = {
         "run_id": "run-f",
         "edited_report": current,
-        "module_submissions": {
-            module_id: _module(module_id) for module_id in REPORT_TAXONOMY
-        },
+        "module_submissions": {module_id: _module(module_id) for module_id in REPORT_TAXONOMY},
         "cross_synthesis_inputs": [],
     }
     await run_final_review(
@@ -1044,15 +991,78 @@ async def test_final_review_uses_chief_response_then_original_auditor_verdict(
         claims=[],
         aggregate_mode=True,
     )
-    assert state["final_review_completion_ref"].endswith(
-        "reviews/final-completion.json"
+    assert state["final_review_completion_ref"].endswith("reviews/final-completion.json")
+    assert state["edited_report"].module_narratives == current.module_narratives
+    assert state["edited_report"].photo_ids == current.photo_ids
+    final_input = json.loads(
+        (tmp_path / "Work/runs/run-f/reviews/final-review-input-r0.json").read_text(
+            encoding="utf-8"
+        )
     )
-    auditor_sessions = [
-        call[2] for call in runner.calls if call[0] == "chief-editor-auditor"
-    ]
+    assert final_input["required_section_ids"] == list(FINAL_AUDIT_SECTION_IDS)
+    assert "module_narratives" not in final_input["subject"]
+    assert "\n## 2. 评估内容描述" not in final_input["canonical_markdown"]
+    auditor_sessions = [call[2] for call in runner.calls if call[0] == "chief-editor-auditor"]
     assert auditor_sessions == [
         "chief-editor-auditor",
         "chief-editor-auditor",
+    ]
+
+
+def test_chief_patch_inherits_cross_metadata_and_rebinds_changed_section() -> None:
+    current = _edited(
+        {module_id: _module(module_id).markdown for module_id in REPORT_TAXONOMY}
+    ).model_copy(
+        update={
+            "synthesis_dispositions": [
+                CrossSynthesisDisposition(
+                    synthesis_input_id="SI-001",
+                    status="integrated",
+                    target_section_ids=["3.1.1", "3.1.3"],
+                    result_part_refs=[
+                        "Work/runs/run-f/drafts/chief-edit/r0/risk_panorama.md",
+                        "Work/runs/run-f/drafts/chief-edit/r0/cross_module_analysis.md",
+                    ],
+                    merged_into_ids=[],
+                    integration_summary="该输入已进入风险全景与跨模块分析，形成联合决策依据。",
+                )
+            ],
+            "photo_ids": ["P-001"],
+            "unresolved_editorial_issues": ["保留的透明限制"],
+        }
+    )
+    patch = ChiefRevisionSubmission(
+        base_subject_ref="Work/runs/run-f/edited-revisions/chief-r0.json",
+        revision=1,
+        section_bodies={"3.1.3": "修订后的跨模块分析正文"},
+        section_part_refs={
+            "3.1.3": ("Work/runs/run-f/drafts/chief-edit-r1/r1/cross_module_analysis.md")
+        },
+        revision_responses=[
+            RevisionResponse(
+                finding_id="F-001",
+                action="implemented",
+                summary="已按最终审查要求修订跨模块分析，并完整保留所有未分配章节和元数据。",
+                changed_target_ids=["3.1.3"],
+            )
+        ],
+    )
+
+    revised = _apply_chief_patch(
+        current,
+        patch,
+        target_section_ids={"3.1.3"},
+        required_finding_ids={"F-001"},
+    )
+
+    assert revised.cross_module_analysis == "修订后的跨模块分析正文"
+    assert revised.risk_panorama == current.risk_panorama
+    assert revised.module_narratives == current.module_narratives
+    assert revised.photo_ids == ["P-001"]
+    assert revised.unresolved_editorial_issues == ["保留的透明限制"]
+    assert revised.synthesis_dispositions[0].result_part_refs == [
+        "Work/runs/run-f/drafts/chief-edit/r0/risk_panorama.md",
+        "Work/runs/run-f/drafts/chief-edit-r1/r1/cross_module_analysis.md",
     ]
 
 
@@ -1106,19 +1116,17 @@ def test_delivery_artifacts_reference_current_final_review_completion() -> None:
     )
 
     review_artifacts = [artifact for artifact in artifacts if artifact.kind == "review"]
-    assert [artifact.path.as_posix() for artifact in review_artifacts] == [
-        final_review_ref
-    ]
+    assert [artifact.path.as_posix() for artifact in review_artifacts] == [final_review_ref]
     assert all(
-        artifact.path.as_posix() != "Outputs/Reviews/full-review.json"
-        for artifact in artifacts
+        artifact.path.as_posix() != "Outputs/Reviews/full-review.json" for artifact in artifacts
     )
 
 
 def test_delivery_root_is_scoped_to_the_owning_run(tmp_path: Path) -> None:
-    assert ReportWorkflowRunner._delivery_root(
-        tmp_path, "run-delivery"
-    ) == tmp_path / "Work/runs/run-delivery/delivery"
+    assert (
+        ReportWorkflowRunner._delivery_root(tmp_path, "run-delivery")
+        == tmp_path / "Work/runs/run-delivery/delivery"
+    )
 
 
 def test_restore_delivery_rejects_obsolete_review_output_declaration(
@@ -1128,11 +1136,7 @@ def test_restore_delivery_rejects_obsolete_review_output_declaration(
     runner = object.__new__(ReportWorkflowRunner)
     runner.service = service
     run_id = "run-obsolete-review-output"
-    delivery_dir = (
-        tmp_path
-        / f"Work/runs/{run_id}/delivery"
-        / f"power-distribution-report-{run_id}"
-    )
+    delivery_dir = tmp_path / f"Work/runs/{run_id}/delivery" / f"power-distribution-report-{run_id}"
     modules_dir = delivery_dir / "modules"
     modules_dir.mkdir(parents=True)
     final_docx = delivery_dir / "report.docx"
@@ -1150,10 +1154,7 @@ def test_restore_delivery_rejects_obsolete_review_output_declaration(
         "final_docx": runner._sha256(final_docx),
         "report_state": runner._sha256(report_state),
         "manifest": runner._sha256(manifest),
-        **{
-            f"module:{module_id}": runner._sha256(path)
-            for module_id, path in module_files.items()
-        },
+        **{f"module:{module_id}": runner._sha256(path) for module_id, path in module_files.items()},
     }
     receipt_ref = f"Work/runs/{run_id}/delivery-receipt.json"
     service.store.write_json(
@@ -1163,8 +1164,7 @@ def test_restore_delivery_rejects_obsolete_review_output_declaration(
             "delivery_dir": delivery_dir.as_posix(),
             "final_docx": final_docx.as_posix(),
             "module_files": {
-                module_id: path.as_posix()
-                for module_id, path in module_files.items()
+                module_id: path.as_posix() for module_id, path in module_files.items()
             },
             "report_state": report_state.as_posix(),
             "manifest_path": manifest.as_posix(),
@@ -1199,9 +1199,7 @@ def test_restore_delivery_rejects_obsolete_review_output_declaration(
     )
     state = {
         "run_id": run_id,
-        "final_review_completion_ref": (
-            f"Work/runs/{run_id}/reviews/final-completion.json"
-        ),
+        "final_review_completion_ref": (f"Work/runs/{run_id}/reviews/final-completion.json"),
     }
 
     runner._restore_delivery_completion(state)
@@ -1232,9 +1230,7 @@ async def test_module_resume_rebinds_legacy_parts_without_replaying_old_refs(
         "module_id": module_id,
         "submodule_narratives": {
             part_id: {
-                "artifact_refs": [
-                    f"Work/runs/{run_id}/drafts/module-{module_id}/r0/{part_id}.md"
-                ]
+                "artifact_refs": [f"Work/runs/{run_id}/drafts/module-{module_id}/r0/{part_id}.md"]
             }
             for part_id in part_ids
         },
@@ -1304,9 +1300,7 @@ async def test_module_resume_rebinds_legacy_parts_without_replaying_old_refs(
             "evidence": "Work/evidence.jsonl",
             "manifest": "Work/manifest.json",
         },
-        "module_knowledge_refs": {
-            module_id: f"Work/runs/{run_id}/knowledge/module-{module_id}.md"
-        },
+        "module_knowledge_refs": {module_id: f"Work/runs/{run_id}/knowledge/module-{module_id}.md"},
     }
 
     with pytest.raises(RuntimeError, match="captured correction envelope"):
@@ -1347,10 +1341,7 @@ def test_resume_restores_exact_current_protocol_review_completions(
         subject_ref = f"Work/runs/{run_id}/modules/{module_id}-r0.json"
         module_refs.append(subject_ref)
         service.store.write_json(subject_ref, module.model_dump(mode="json"))
-        finding_ref = (
-            f"Work/runs/{run_id}/reviews/module/initial/{module_id}/"
-            "findings-r0.json"
-        )
+        finding_ref = f"Work/runs/{run_id}/reviews/module/initial/{module_id}/findings-r0.json"
         finding_payload = ModuleReviewFindingSubmission(
             coverage={
                 "submodule_ids": list(REPORT_TAXONOMY[module_id].submodules),
@@ -1362,10 +1353,7 @@ def test_resume_restores_exact_current_protocol_review_completions(
             # must not invalidate an already closed semantic review.
             finding_payload["coverage"]["claim_ids"] = ["C-2.1-001"]
         service.store.write_json(finding_ref, finding_payload)
-        completion_ref = (
-            f"Work/runs/{run_id}/reviews/module/initial/{module_id}/"
-            "completion-r0.json"
-        )
+        completion_ref = f"Work/runs/{run_id}/reviews/module/initial/{module_id}/completion-r0.json"
         module_completion_refs[module_id] = completion_ref
         service.store.write_json(
             completion_ref,
@@ -1378,9 +1366,7 @@ def test_resume_restores_exact_current_protocol_review_completions(
                 finding_refs=[finding_ref],
                 verdict_refs=[],
                 resolved_finding_ids=[],
-                artifact_sha256=_artifact_hashes(
-                    tmp_path, [subject_ref, finding_ref]
-                ),
+                artifact_sha256=_artifact_hashes(tmp_path, [subject_ref, finding_ref]),
             ).model_dump(mode="json"),
         )
 
@@ -1410,16 +1396,12 @@ def test_resume_restores_exact_current_protocol_review_completions(
             finding_refs=[cross_finding_ref],
             verdict_refs=[],
             resolved_finding_ids=[],
-            artifact_sha256=_artifact_hashes(
-                tmp_path, [*module_refs, cross_finding_ref]
-            ),
+            artifact_sha256=_artifact_hashes(tmp_path, [*module_refs, cross_finding_ref]),
         ).model_dump(mode="json"),
     )
 
     edited_ref = f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
-    edited = _edited(
-        {module_id: module.markdown for module_id, module in modules.items()}
-    )
+    edited = _edited({module_id: module.markdown for module_id, module in modules.items()})
     service.store.write_json(edited_ref, edited.model_dump(mode="json"))
     final_finding_ref = f"Work/runs/{run_id}/reviews/final-findings-r0.json"
     service.store.write_json(
@@ -1441,9 +1423,7 @@ def test_resume_restores_exact_current_protocol_review_completions(
             finding_refs=[final_finding_ref],
             verdict_refs=[],
             resolved_finding_ids=[],
-            artifact_sha256=_artifact_hashes(
-                tmp_path, [edited_ref, final_finding_ref]
-            ),
+            artifact_sha256=_artifact_hashes(tmp_path, [edited_ref, final_finding_ref]),
         ).model_dump(mode="json"),
     )
 
@@ -1645,9 +1625,7 @@ def test_review_completion_rejects_artifact_mutation_after_closure(
             finding_refs=[finding_ref],
             verdict_refs=[],
             resolved_finding_ids=[],
-            artifact_sha256=_artifact_hashes(
-                tmp_path, [subject_ref, finding_ref]
-            ),
+            artifact_sha256=_artifact_hashes(tmp_path, [subject_ref, finding_ref]),
         ).model_dump(mode="json"),
     )
     service.store.write_json(

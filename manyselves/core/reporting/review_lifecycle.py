@@ -2,30 +2,31 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 import hashlib
 import json
-from pathlib import Path
 import re
+from collections import defaultdict
+from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
 
 from pydantic import Field
 
 from .agentic_models import (
     CROSS_REVIEW_DIMENSIONS,
-    FINAL_REPORT_SECTION_IDS,
+    FINAL_AUDIT_SECTION_IDS,
+    ChiefRevisionSubmission,
     CrossReviewFinding,
     CrossReviewFindingSubmission,
     CrossReviewVerdictSubmission,
     CrossSynthesisInput,
     EditedReportSubmission,
+    FinalReviewFinding,
     FinalReviewFindingSubmission,
     FinalReviewVerdictSubmission,
-    FinalReviewFinding,
+    ModuleReviewFinding,
     ModuleReviewFindingSubmission,
     ModuleReviewVerdictSubmission,
     ModuleRevisionSubmission,
-    ModuleReviewFinding,
     ModuleSubmission,
     ResolutionVerdict,
     RevisionResponse,
@@ -34,7 +35,6 @@ from .agentic_models import (
     WorkflowDecisionSubmission,
 )
 from .assets import (
-    expand_approved_module_markers,
     validate_aggregate_retention,
     validate_editor_protection,
     validate_editor_quality,
@@ -46,15 +46,16 @@ from .input_contracts import (
     ModuleReviewInput,
     ModuleRevisionInput,
     RequestedModuleChange,
-    ReviewEvidenceExcerpt,
     ReviewCompletionRecord,
+    ReviewEvidenceExcerpt,
     ValidationFailure,
     ValidationReport,
     WorkflowExceptionInput,
-    edited_report_content_view,
+    final_audit_content_view,
     module_content_view,
     strip_runtime_claim_markers,
 )
+from .models import CHIEF_SECTION_RESULT_PART_IDS
 from .revision_diff import build_revision_diff
 from .source_ledger import SourceLedger
 from .taxonomy import REPORT_TAXONOMY
@@ -161,9 +162,7 @@ def _artifact_sha256(
     for ref in refs:
         path = (runner.service.workspace / ref).resolve()
         if not path.is_relative_to(runner.service.workspace) or not path.is_file():
-            raise ReviewLifecycleError(
-                f"cannot complete review with unreadable artifact: {ref}"
-            )
+            raise ReviewLifecycleError(f"cannot complete review with unreadable artifact: {ref}")
         hashes[ref] = hashlib.sha256(path.read_bytes()).hexdigest()
     return hashes
 
@@ -215,6 +214,65 @@ def _validate_responses(
         )
 
 
+def _apply_chief_patch(
+    baseline: EditedReportSubmission,
+    patch: ChiefRevisionSubmission,
+    *,
+    target_section_ids: set[str],
+    required_finding_ids: set[str],
+) -> EditedReportSubmission:
+    """Merge a compact chief patch while inheriting all unassigned report state."""
+
+    if set(patch.section_bodies) != target_section_ids:
+        raise ReviewLifecycleError("chief patch must contain exactly the assigned final sections")
+    _validate_responses(
+        patch.revision_responses,
+        required_finding_ids,
+        target_section_ids,
+    )
+    updates = {
+        CHIEF_SECTION_RESULT_PART_IDS[section_id]: body
+        for section_id, body in patch.section_bodies.items()
+    }
+    patched_part_refs = {
+        CHIEF_SECTION_RESULT_PART_IDS[section_id]: ref
+        for section_id, ref in patch.section_part_refs.items()
+    }
+    dispositions = []
+    for disposition in baseline.synthesis_dispositions:
+        refs_by_part = {Path(ref).stem: ref for ref in disposition.result_part_refs}
+        for section_id in disposition.target_section_ids:
+            part_id = CHIEF_SECTION_RESULT_PART_IDS[section_id]
+            if section_id in target_section_ids:
+                refs_by_part[part_id] = patched_part_refs[part_id]
+        ordered_refs = [
+            refs_by_part[CHIEF_SECTION_RESULT_PART_IDS[section_id]]
+            for section_id in disposition.target_section_ids
+        ]
+        dispositions.append(disposition.model_copy(update={"result_part_refs": ordered_refs}))
+    updates.update(
+        {
+            "synthesis_dispositions": dispositions,
+            "revision_responses": list(patch.revision_responses),
+        }
+    )
+    payload = baseline.model_dump(mode="python")
+    payload.update(updates)
+    return EditedReportSubmission.model_validate(payload)
+
+
+def _final_audit_markdown(canonical_markdown: str) -> str:
+    """Remove the immutable Chapter 2 block from model-visible final-audit prose."""
+
+    chapter_two = "\n## 2. 评估内容描述"
+    chapter_three = "\n## 3. 结论与建议"
+    start = canonical_markdown.find(chapter_two)
+    end = canonical_markdown.find(chapter_three)
+    if start < 0 or end < 0 or end <= start:
+        raise ReviewLifecycleError("canonical report is missing the fixed Chapter 2/3 boundary")
+    return canonical_markdown[:start] + canonical_markdown[end:]
+
+
 def _apply_module_patch(
     baseline: ModuleSubmission,
     patch: ModuleRevisionSubmission,
@@ -225,9 +283,7 @@ def _apply_module_patch(
     if patch.module_id != baseline.module_id:
         raise ReviewLifecycleError("module patch belongs to a different module")
     if patch.base_revision != baseline.revision:
-        raise ReviewLifecycleError(
-            "module patch base_revision does not match the supplied subject"
-        )
+        raise ReviewLifecycleError("module patch base_revision does not match the supplied subject")
     if set(patch.submodule_narratives) - target_submodule_ids:
         raise ReviewLifecycleError("module patch replaces an unassigned submodule")
     _validate_responses(
@@ -239,23 +295,15 @@ def _apply_module_patch(
     for claim_id in patch.claim_ids_remove:
         claim = baseline_claims.get(claim_id)
         if claim is None:
-            raise ReviewLifecycleError(
-                f"module patch removes unknown Claim id: {claim_id}"
-            )
+            raise ReviewLifecycleError(f"module patch removes unknown Claim id: {claim_id}")
         if claim.submodule_id not in target_submodule_ids:
-            raise ReviewLifecycleError(
-                f"module patch removes out-of-scope Claim id: {claim_id}"
-            )
+            raise ReviewLifecycleError(f"module patch removes out-of-scope Claim id: {claim_id}")
         del baseline_claims[claim_id]
     for claim in patch.claims_upsert:
         if claim.module_id != baseline.module_id:
-            raise ReviewLifecycleError(
-                f"module patch Claim belongs to another module: {claim.id}"
-            )
+            raise ReviewLifecycleError(f"module patch Claim belongs to another module: {claim.id}")
         if claim.submodule_id not in target_submodule_ids:
-            raise ReviewLifecycleError(
-                f"module patch changes out-of-scope Claim id: {claim.id}"
-            )
+            raise ReviewLifecycleError(f"module patch changes out-of-scope Claim id: {claim.id}")
         baseline_claims[claim.id] = claim
     claim_source_ids = {
         source_id for claim in baseline_claims.values() for source_id in claim.source_ids
@@ -291,9 +339,7 @@ def _validate_module_findings(
                 f"module finding id must start with {id_prefix}: {finding.id}"
             )
         if finding.target_submodule_id not in scope:
-            raise ReviewLifecycleError(
-                f"module finding targets unreviewed submodule: {finding.id}"
-            )
+            raise ReviewLifecycleError(f"module finding targets unreviewed submodule: {finding.id}")
 
 
 def _module_review_evidence_packet(
@@ -339,9 +385,7 @@ def _validate_verdicts(
     verdicts: list[ResolutionVerdict],
     required_ids: set[str],
 ) -> None:
-    verdict_ids = _unique_ids(
-        (verdict.finding_id for verdict in verdicts), label="review verdicts"
-    )
+    verdict_ids = _unique_ids((verdict.finding_id for verdict in verdicts), label="review verdicts")
     if verdict_ids != required_ids:
         raise ReviewLifecycleError(
             "review verdicts must cover exactly the required findings; "
@@ -363,11 +407,7 @@ async def _main_exception_decision(
     trigger: str = "reviewer_escalation",
 ) -> WorkflowDecisionSubmission:
     exception_ids = (
-        {
-            verdict.finding_id
-            for verdict in verdicts
-            if verdict.verdict == "escalate"
-        }
+        {verdict.finding_id for verdict in verdicts if verdict.verdict == "escalate"}
         if trigger == "reviewer_escalation"
         else {
             response.finding_id
@@ -480,23 +520,14 @@ async def request_module_revision(
     }
     targets = {
         *(finding.target_submodule_id for finding in module_findings),
-        *(
-            target_id
-            for finding in cross_findings
-            for target_id in finding.target_submodule_ids
-        ),
-        *(
-            target_id
-            for change in requested_changes
-            for target_id in change.target_submodule_ids
-        ),
+        *(target_id for finding in cross_findings for target_id in finding.target_submodule_ids),
+        *(target_id for change in requested_changes for target_id in change.target_submodule_ids),
     }
     revision_input = ModuleRevisionInput(
         run_id=state["run_id"],
         module_id=subject.module_id,
         subject_ref=(
-            f"Work/runs/{state['run_id']}/modules/"
-            f"{subject.module_id}-r{subject.revision}.json"
+            f"Work/runs/{state['run_id']}/modules/{subject.module_id}-r{subject.revision}.json"
         ),
         subject=module_content_view(subject),
         target_submodule_ids=sorted(targets),
@@ -576,10 +607,7 @@ async def request_module_revision(
     )
     subject_ref = _write_model(
         runner,
-        (
-            f"Work/runs/{state['run_id']}/modules/"
-            f"{subject.module_id}-r{revised.revision}.json"
-        ),
+        (f"Work/runs/{state['run_id']}/modules/{subject.module_id}-r{revised.revision}.json"),
         revised,
     )
     diff = build_revision_diff(subject, revised)
@@ -626,9 +654,7 @@ def _module_review_completion(
         completion,
     )
     state.setdefault("module_review_completion_refs", {})[module.module_id] = ref
-    runner.service.store.write_text(
-        f"Outputs/Modules/{module.module_id}.md", module.markdown
-    )
+    runner.service.store.write_text(f"Outputs/Modules/{module.module_id}.md", module.markdown)
     return ref
 
 
@@ -658,10 +684,7 @@ async def run_module_review(
     review_round = 0
     phase = "initial"
     scope = set(initial_scope)
-    review_root = (
-        f"Work/runs/{state['run_id']}/reviews/module/"
-        f"{lifecycle_id}/{module_id}"
-    )
+    review_root = f"Work/runs/{state['run_id']}/reviews/module/{lifecycle_id}/{module_id}"
     progress_ref = f"{review_root}/progress.json"
 
     def save_progress(next_action: str) -> None:
@@ -685,9 +708,7 @@ async def run_module_review(
         )
 
     progress = (
-        _load_progress(runner, progress_ref, ModuleReviewProgress)
-        if state.get("resume")
-        else None
+        _load_progress(runner, progress_ref, ModuleReviewProgress) if state.get("resume") else None
     )
     if progress is not None and progress.next_action != "completed":
         if progress.run_id != state["run_id"] or progress.module_id != module_id:
@@ -703,8 +724,7 @@ async def run_module_review(
         scope = set(progress.scope)
         if progress.next_action == "revise":
             candidate_path = runner.service.workspace / (
-                f"Work/runs/{state['run_id']}/modules/"
-                f"{module_id}-r{current.revision + 1}.json"
+                f"Work/runs/{state['run_id']}/modules/{module_id}-r{current.revision + 1}.json"
             )
             candidate = None
             if candidate_path.is_file():
@@ -715,10 +735,7 @@ async def run_module_review(
                     _validate_responses(
                         candidate.revision_responses,
                         set(pending),
-                        {
-                            finding.target_submodule_id
-                            for finding in pending.values()
-                        },
+                        {finding.target_submodule_id for finding in pending.values()},
                     )
                 except (OSError, ValueError):
                     candidate = None
@@ -734,9 +751,7 @@ async def run_module_review(
                 current = candidate
             responses = current.revision_responses
             exceptional = [
-                response
-                for response in responses
-                if response.action in {"disputed", "needs_input"}
+                response for response in responses if response.action in {"disputed", "needs_input"}
             ]
             if exceptional:
                 decision = await _main_exception_decision(
@@ -745,8 +760,7 @@ async def run_module_review(
                     workflow_id=workflow_id,
                     scope="module",
                     subject_refs=[
-                        f"Work/runs/{state['run_id']}/modules/"
-                        f"{module_id}-r{current.revision}.json"
+                        f"Work/runs/{state['run_id']}/modules/{module_id}-r{current.revision}.json"
                     ],
                     finding_refs=finding_refs,
                     verdicts=[],
@@ -762,22 +776,16 @@ async def run_module_review(
                         module_findings=list(pending.values()),
                     )
                     responses = current.revision_responses
-            scope = {
-                finding.target_submodule_id for finding in pending.values()
-            }
+            scope = {finding.target_submodule_id for finding in pending.values()}
             phase = "recheck"
             review_round += 1
             save_progress("review")
 
     while True:
-        subject_ref = (
-            f"Work/runs/{state['run_id']}/modules/{module_id}-r{current.revision}.json"
-        )
+        subject_ref = f"Work/runs/{state['run_id']}/modules/{module_id}-r{current.revision}.json"
         if not (runner.service.workspace / subject_ref).is_file():
             _write_model(runner, subject_ref, current)
-        signal_ref = runner._validate_module_structure(
-            state, current, f"review-r{review_round}"
-        )
+        signal_ref = runner._validate_module_structure(state, current, f"review-r{review_round}")
         validation_report = ValidationReport.model_validate_json(
             (runner.service.workspace / signal_ref).read_text(encoding="utf-8")
         )
@@ -790,9 +798,7 @@ async def run_module_review(
             subject_ref=subject_ref,
             subject_revision=current.revision,
             subject=module_content_view(current),
-            evidence=_module_review_evidence_packet(
-                runner, current, state["run_id"]
-            ),
+            evidence=_module_review_evidence_packet(runner, current, state["run_id"]),
             required_submodule_ids=sorted(scope),
             required_findings=list(pending.values()) if phase == "recheck" else [],
             revision_responses=responses if phase == "recheck" else [],
@@ -892,9 +898,7 @@ async def run_module_review(
                 result,
             )
             verdict_refs.append(verdict_ref)
-            escalated = [
-                verdict for verdict in result.verdicts if verdict.verdict == "escalate"
-            ]
+            escalated = [verdict for verdict in result.verdicts if verdict.verdict == "escalate"]
             main_accepts: set[str] = set()
             if escalated:
                 decision = await _main_exception_decision(
@@ -913,16 +917,12 @@ async def run_module_review(
                 verdict.finding_id: pending[verdict.finding_id]
                 for verdict in result.verdicts
                 if verdict.verdict == "open"
-                or (
-                    verdict.verdict == "escalate"
-                    and verdict.finding_id not in main_accepts
-                )
+                or (verdict.verdict == "escalate" and verdict.finding_id not in main_accepts)
             }
             resolved_ids.update(
                 verdict.finding_id
                 for verdict in result.verdicts
-                if verdict.verdict == "resolved"
-                or verdict.finding_id in main_accepts
+                if verdict.verdict == "resolved" or verdict.finding_id in main_accepts
             )
             for finding in result.new_findings:
                 if finding.id in pending or finding.id in resolved_ids:
@@ -968,9 +968,7 @@ async def run_module_review(
             )
             responses = current.revision_responses
             exceptional = [
-                response
-                for response in responses
-                if response.action in {"disputed", "needs_input"}
+                response for response in responses if response.action in {"disputed", "needs_input"}
             ]
             if not exceptional:
                 break
@@ -987,9 +985,7 @@ async def run_module_review(
             )
             if decision.decision != "return_to_author":
                 break
-        scope = {
-            finding.target_submodule_id for finding in pending.values()
-        }
+        scope = {finding.target_submodule_id for finding in pending.values()}
         phase = "recheck"
         review_round += 1
         save_progress("review")
@@ -1028,9 +1024,7 @@ def _run_cross_machine_checks(
         for index, check in enumerate(finding.machine_checks, start=1):
             check_id = f"{finding.id}:machine:{index}"
             check_ids.append(check_id)
-            values = [
-                _resolve_subject_path(subject, path) for path in check.target_paths
-            ]
+            values = [_resolve_subject_path(subject, path) for path in check.target_paths]
             if check.kind == "forbidden_terms_absent":
                 for path, value in zip(check.target_paths, values, strict=True):
                     present = [term for term in check.expected_values if term in value]
@@ -1045,9 +1039,7 @@ def _run_cross_machine_checks(
                         )
             elif check.kind == "required_terms_present":
                 combined = "\n".join(values)
-                missing = [
-                    term for term in check.expected_values if term not in combined
-                ]
+                missing = [term for term in check.expected_values if term not in combined]
                 if missing:
                     failures.append(
                         ValidationFailure(
@@ -1119,6 +1111,8 @@ def _validate_cross_synthesis_portfolio(
             "Cross synthesis portfolio requires a risk cluster and a global propagation "
             f"chain; missing={sorted(required_kinds - kinds)}"
         )
+
+
 async def run_cross_review(
     runner: "ReportWorkflowRunner",
     state: dict,
@@ -1137,9 +1131,7 @@ async def run_cross_review(
     phase = "initial"
     review_round = 0
     revised_owner_ids: set[str] = set()
-    progress_ref = (
-        f"Work/runs/{state['run_id']}/reviews/cross-progress.json"
-    )
+    progress_ref = f"Work/runs/{state['run_id']}/reviews/cross-progress.json"
 
     def save_progress(next_action: str) -> None:
         _write_model(
@@ -1164,9 +1156,7 @@ async def run_cross_review(
         )
 
     progress = (
-        _load_progress(runner, progress_ref, CrossReviewProgress)
-        if state.get("resume")
-        else None
+        _load_progress(runner, progress_ref, CrossReviewProgress) if state.get("resume") else None
     )
     if progress is not None and progress.next_action != "completed":
         if progress.run_id != state["run_id"]:
@@ -1202,10 +1192,7 @@ async def run_cross_review(
             machine_attempts = 0
             machine_failure_fingerprints: dict[tuple, int] = {}
             persisted_candidate: ModuleSubmission | None = None
-            modules_root = (
-                runner.service.workspace
-                / f"Work/runs/{state['run_id']}/modules"
-            )
+            modules_root = runner.service.workspace / f"Work/runs/{state['run_id']}/modules"
             candidates: list[ModuleSubmission] = []
             for path in modules_root.glob(f"{module_id}-r*.json"):
                 try:
@@ -1227,16 +1214,13 @@ async def run_cross_review(
                 except (OSError, ValueError):
                     continue
             if candidates:
-                persisted_candidate = max(
-                    candidates, key=lambda item: item.revision
-                )
+                persisted_candidate = max(candidates, key=lambda item: item.revision)
             while True:
                 machine_attempts += 1
                 if persisted_candidate is not None:
                     revised = persisted_candidate
                     revised_ref = (
-                        f"Work/runs/{state['run_id']}/modules/"
-                        f"{module_id}-r{revised.revision}.json"
+                        f"Work/runs/{state['run_id']}/modules/{module_id}-r{revised.revision}.json"
                     )
                     persisted_candidate = None
                 else:
@@ -1277,9 +1261,7 @@ async def run_cross_review(
                     findings=grouped[module_id],
                 )
                 report = ValidationReport.model_validate_json(
-                    (runner.service.workspace / validation_ref).read_text(
-                        encoding="utf-8"
-                    )
+                    (runner.service.workspace / validation_ref).read_text(encoding="utf-8")
                 )
                 if report.passed:
                     break
@@ -1325,9 +1307,7 @@ async def run_cross_review(
             )
             modules[module_id] = local_reviewed
             state["module_submissions"][module_id] = local_reviewed
-            local_review_refs[module_id] = state["module_review_completion_refs"][
-                module_id
-            ]
+            local_review_refs[module_id] = state["module_review_completion_refs"][module_id]
             revised_owner_ids.add(module_id)
             save_progress("revise")
 
@@ -1345,11 +1325,7 @@ async def run_cross_review(
             )
             for module_id in REPORT_TAXONOMY
         }
-        changed_module_ids = (
-            set(REPORT_TAXONOMY)
-            if phase == "initial"
-            else set(revised_owner_ids)
-        )
+        changed_module_ids = set(REPORT_TAXONOMY) if phase == "initial" else set(revised_owner_ids)
         if phase == "recheck" and not changed_module_ids:
             raise ReviewLifecycleError(
                 "Cross recheck requires the current revision wave module ids"
@@ -1435,11 +1411,7 @@ async def run_cross_review(
                     stage="cross_review",
                     target_ids={
                         *REPORT_TAXONOMY,
-                        *(
-                            claim.id
-                            for module in modules.values()
-                            for claim in module.claims
-                        ),
+                        *(claim.id for module in modules.values() for claim in module.claims),
                     },
                 ),
             ],
@@ -1448,9 +1420,7 @@ async def run_cross_review(
             prior_result_ref=finding_refs[-1] if finding_refs else None,
             input_contract_kind="cross_review_input",
             input_contract_ref=input_ref,
-            context_summary_refs=runner._context_refs(
-                state, "cross-module-reviewer"
-            ),
+            context_summary_refs=runner._context_refs(state, "cross-module-reviewer"),
             inline_context=runner._template_skill_context(
                 state, "core", "analysis", "synthesis", "rubric"
             ),
@@ -1491,9 +1461,7 @@ async def run_cross_review(
                 result,
             )
             verdict_refs.append(verdict_ref)
-            escalated = [
-                verdict for verdict in result.verdicts if verdict.verdict == "escalate"
-            ]
+            escalated = [verdict for verdict in result.verdicts if verdict.verdict == "escalate"]
             main_accepts: set[str] = set()
             if escalated:
                 decision = await _main_exception_decision(
@@ -1505,9 +1473,7 @@ async def run_cross_review(
                     finding_refs=finding_refs,
                     verdicts=escalated,
                     responses=[
-                        response
-                        for values in responses_by_module.values()
-                        for response in values
+                        response for values in responses_by_module.values() for response in values
                     ],
                 )
                 if decision.decision == "accept_dispute":
@@ -1516,16 +1482,12 @@ async def run_cross_review(
                 verdict.finding_id: pending[verdict.finding_id]
                 for verdict in result.verdicts
                 if verdict.verdict == "open"
-                or (
-                    verdict.verdict == "escalate"
-                    and verdict.finding_id not in main_accepts
-                )
+                or (verdict.verdict == "escalate" and verdict.finding_id not in main_accepts)
             }
             resolved_ids.update(
                 verdict.finding_id
                 for verdict in result.verdicts
-                if verdict.verdict == "resolved"
-                or verdict.finding_id in main_accepts
+                if verdict.verdict == "resolved" or verdict.finding_id in main_accepts
             )
             for finding in result.new_findings:
                 if finding.id in pending or finding.id in resolved_ids:
@@ -1602,36 +1564,31 @@ async def _request_chief_revision(
     revision_number: int,
 ) -> tuple[EditedReportSubmission, str]:
     target_sections = {
-        section_id
-        for finding in pending.values()
-        for section_id in finding.target_section_ids
+        section_id for finding in pending.values() for section_id in finding.target_section_ids
     }
     revision_input = ChiefRevisionInput(
         run_id=state["run_id"],
         subject_ref=current_ref,
-        subject=edited_report_content_view(current),
+        subject=final_audit_content_view(current),
+        revision=revision_number,
         target_section_ids=sorted(target_sections),
         findings=list(pending.values()),
         cross_synthesis_inputs=state.get("cross_synthesis_inputs", []),
     )
     revision_input_ref = _write_model(
         runner,
-        (
-            f"Work/runs/{state['run_id']}/reviews/"
-            f"chief-revision-input-r{revision_number}.json"
-        ),
+        (f"Work/runs/{state['run_id']}/reviews/chief-revision-input-r{revision_number}.json"),
         revision_input,
     )
     revision_envelope = chief_envelope.model_copy(
         update={
             "task_id": f"chief-edit-r{revision_number}",
-            "objective": "按 final review findings 定向修订当前成稿。",
+            "objective": "按 final review findings 仅修订指定的第一、三、四章小节。",
             "input_refs": [
                 revision_input_ref,
-                current_ref,
                 *chief_envelope.input_refs,
             ],
-            "allowed_outputs": ["edited_report_submission"],
+            "allowed_outputs": ["chief_revision_submission"],
             "revision": revision_number,
             "prior_result_ref": current_ref,
             "target_submodule_ids": [],
@@ -1639,7 +1596,8 @@ async def _request_chief_revision(
             "input_contract_ref": revision_input_ref,
             "constraints": [
                 *chief_envelope.constraints,
-                "只能修改 target_section_ids",
+                "只为 target_section_ids 调用 write_result_part 并提交 chief_revision_submission 小补丁",
+                "不得提交全文、第二章、Cross dispositions、表格、图片或其他元数据；运行时确定性继承",
                 "revision_responses 必须逐项且仅覆盖 assigned finding ids",
                 "不得让工作流替你补写响应、章节或引用",
             ],
@@ -1652,26 +1610,22 @@ async def _request_chief_revision(
         workflow_id,
         session_key=chief_session_key,
     )
-    if not isinstance(revised, EditedReportSubmission):
+    if not isinstance(revised, ChiefRevisionSubmission):
         raise ReviewLifecycleError("chief editor returned the wrong revision type")
-    _validate_responses(
-        revised.revision_responses,
-        set(pending),
-        target_sections,
+    if revised.base_subject_ref != current_ref or revised.revision != revision_number:
+        raise ReviewLifecycleError("chief editor patch targets the wrong subject revision")
+    revised_report = _apply_chief_patch(
+        current,
+        revised,
+        target_section_ids=target_sections,
+        required_finding_ids=set(pending),
     )
-    revised = expand_approved_module_markers(revised, approved_module_text)
-    diff = runner._final_revision_diff(current, revised)
-    unexpected_sections = sorted(
-        set(diff["changed_section_ids"]) - target_sections
-    )
+    diff = runner._final_revision_diff(current, revised_report)
+    unexpected_sections = sorted(set(diff["changed_section_ids"]) - target_sections)
     allowed_contract_fields = {"revision_responses"}
     if target_sections & {"3.1.1", "3.1.2", "3.1.3", "3.2"}:
-        allowed_contract_fields.update(
-            {"synthesis_dispositions", "synthesis_tables"}
-        )
-    unexpected_contract = sorted(
-        set(diff["changed_contract_fields"]) - allowed_contract_fields
-    )
+        allowed_contract_fields.add("synthesis_dispositions")
+    unexpected_contract = sorted(set(diff["changed_contract_fields"]) - allowed_contract_fields)
     if unexpected_sections or unexpected_contract:
         raise ReviewLifecycleError(
             "chief revision changed content outside finding scope: "
@@ -1679,24 +1633,21 @@ async def _request_chief_revision(
         )
     if aggregate_mode:
         state["editor_quality_observations"] = validate_aggregate_retention(
-            revised, approved_module_text
+            revised_report, approved_module_text
         )
         if claims:
-            validate_editor_protection(revised, claims)
+            validate_editor_protection(revised_report, claims)
     else:
-        validate_editor_protection(revised, claims)
+        validate_editor_protection(revised_report, claims)
         state["editor_quality_observations"] = validate_editor_quality(
-            revised, state["module_submissions"]
+            revised_report, state["module_submissions"]
         )
     revised_ref = _write_model(
         runner,
-        (
-            f"Work/runs/{state['run_id']}/edited-revisions/"
-            f"chief-author-r{revision_number}.json"
-        ),
-        revised,
+        (f"Work/runs/{state['run_id']}/edited-revisions/chief-author-r{revision_number}.json"),
+        revised_report,
     )
-    return revised, revised_ref
+    return revised_report, revised_ref
 
 
 async def run_final_review(
@@ -1721,9 +1672,7 @@ async def run_final_review(
     phase = "initial"
     review_round = 0
     chief_revision_number = 0
-    progress_ref = (
-        f"Work/runs/{state['run_id']}/reviews/final-progress.json"
-    )
+    progress_ref = f"Work/runs/{state['run_id']}/reviews/final-progress.json"
 
     def save_progress(next_action: str) -> None:
         _write_model(
@@ -1746,9 +1695,7 @@ async def run_final_review(
         )
 
     progress = (
-        _load_progress(runner, progress_ref, FinalReviewProgress)
-        if state.get("resume")
-        else None
+        _load_progress(runner, progress_ref, FinalReviewProgress) if state.get("resume") else None
     )
     if progress is not None and progress.next_action != "completed":
         if progress.run_id != state["run_id"]:
@@ -1766,8 +1713,7 @@ async def run_final_review(
         if progress.next_action == "revise":
             next_revision = chief_revision_number + 1
             candidate_ref = (
-                f"Work/runs/{state['run_id']}/edited-revisions/"
-                f"chief-author-r{next_revision}.json"
+                f"Work/runs/{state['run_id']}/edited-revisions/chief-author-r{next_revision}.json"
             )
             candidate_path = runner.service.workspace / candidate_ref
             revised = None
@@ -1795,8 +1741,7 @@ async def run_final_review(
                     workflow_id=workflow_id,
                     current=current,
                     current_ref=(
-                        f"Work/runs/{state['run_id']}/edited-revisions/"
-                        f"chief-r{review_round}.json"
+                        f"Work/runs/{state['run_id']}/edited-revisions/chief-r{review_round}.json"
                     ),
                     pending=pending,
                     approved_module_text=approved_module_text,
@@ -1809,9 +1754,7 @@ async def run_final_review(
             current = revised
             responses = revised.revision_responses
             exceptional = [
-                response
-                for response in responses
-                if response.action in {"disputed", "needs_input"}
+                response for response in responses if response.action in {"disputed", "needs_input"}
             ]
             if exceptional:
                 decision = await _main_exception_decision(
@@ -1850,10 +1793,7 @@ async def run_final_review(
     while True:
         subject_ref = _write_model(
             runner,
-            (
-                f"Work/runs/{state['run_id']}/edited-revisions/"
-                f"chief-r{review_round}.json"
-            ),
+            (f"Work/runs/{state['run_id']}/edited-revisions/chief-r{review_round}.json"),
             current,
         )
         canonical = runner._canonical_markdown(current)
@@ -1872,9 +1812,9 @@ async def run_final_review(
             run_id=state["run_id"],
             subject_ref=subject_ref,
             subject_revision=review_round,
-            subject=edited_report_content_view(current),
-            canonical_markdown=strip_runtime_claim_markers(canonical),
-            required_section_ids=list(FINAL_REPORT_SECTION_IDS),
+            subject=final_audit_content_view(current),
+            canonical_markdown=_final_audit_markdown(strip_runtime_claim_markers(canonical)),
+            required_section_ids=list(FINAL_AUDIT_SECTION_IDS),
             required_findings=list(pending.values()) if phase == "recheck" else [],
             revision_responses=responses if phase == "recheck" else [],
             cross_synthesis_inputs=state.get("cross_synthesis_inputs", []),
@@ -1896,17 +1836,18 @@ async def run_final_review(
             run_id=state["run_id"],
             agent_id="chief-editor-auditor",
             objective=(
-                "独立审查当前成稿的保真、综合、可追溯、可执行和交付质量。"
+                "独立审查当前成稿第一、三、四章的保真、综合、可追溯、可执行和交付质量。"
                 if phase == "initial"
-                else "由原 final reviewer 逐项判断 required_findings 是否关闭并检查全文回归。"
+                else "由原 final reviewer 逐项判断 required_findings 是否关闭并检查第一、三、四章回归。"
             ),
-            input_refs=[input_ref, subject_ref, integrity_ref],
+            input_refs=[input_ref, integrity_ref],
             constraints=[
-                "只审查总编整合与最终交付质量，不重做模块或 Cross 专业审查",
+                "只审查第一、三、四章的总编整合与最终交付质量，不重做模块或 Cross 专业审查",
+                "第二章由模块审查和运行时保真校验负责，不属于本阶段内容、覆盖范围或 finding target",
                 "residual_risks 只记录无需内容修订的透明限制",
                 "报告正文缺失、Cross 未整合、综合表或图片缺失属于 actionable finding，禁止塞入 residual_risks",
                 (
-                    "首轮 checked_section_ids 必须覆盖全部固定章节"
+                    "首轮 checked_section_ids 必须精确覆盖第一、三、四章的固定审计小节"
                     if phase == "initial"
                     else "verdicts 必须逐项且仅覆盖 required_findings；new_findings 只允许真实回归"
                 ),
@@ -1914,7 +1855,7 @@ async def run_final_review(
                     state,
                     stage="final_review",
                     target_ids={
-                        *FINAL_REPORT_SECTION_IDS,
+                        *FINAL_AUDIT_SECTION_IDS,
                         *(claim.id for claim in claims),
                     },
                 ),
@@ -1924,9 +1865,7 @@ async def run_final_review(
             prior_result_ref=finding_refs[-1] if finding_refs else None,
             input_contract_kind="final_review_input",
             input_contract_ref=input_ref,
-            context_summary_refs=runner._context_refs(
-                state, "chief-editor-auditor"
-            ),
+            context_summary_refs=runner._context_refs(state, "chief-editor-auditor"),
             inline_context=runner._template_skill_context(
                 state, "core", "synthesis", "visual", "rubric"
             ),
@@ -1941,9 +1880,9 @@ async def run_final_review(
         if phase == "initial":
             if not isinstance(result, FinalReviewFindingSubmission):
                 raise ReviewLifecycleError("final reviewer returned the wrong initial type")
-            if set(result.checked_section_ids) != set(FINAL_REPORT_SECTION_IDS):
+            if set(result.checked_section_ids) != set(FINAL_AUDIT_SECTION_IDS):
                 raise ReviewLifecycleError(
-                    "initial final review did not cover every fixed section"
+                    "initial final review did not cover every chief-owned audit section"
                 )
             finding_ref = _write_immutable_model(
                 runner,
@@ -1963,9 +1902,7 @@ async def run_final_review(
                 result,
             )
             verdict_refs.append(verdict_ref)
-            escalated = [
-                verdict for verdict in result.verdicts if verdict.verdict == "escalate"
-            ]
+            escalated = [verdict for verdict in result.verdicts if verdict.verdict == "escalate"]
             main_accepts: set[str] = set()
             if escalated:
                 decision = await _main_exception_decision(
@@ -1984,16 +1921,12 @@ async def run_final_review(
                 verdict.finding_id: pending[verdict.finding_id]
                 for verdict in result.verdicts
                 if verdict.verdict == "open"
-                or (
-                    verdict.verdict == "escalate"
-                    and verdict.finding_id not in main_accepts
-                )
+                or (verdict.verdict == "escalate" and verdict.finding_id not in main_accepts)
             }
             resolved_ids.update(
                 verdict.finding_id
                 for verdict in result.verdicts
-                if verdict.verdict == "resolved"
-                or verdict.finding_id in main_accepts
+                if verdict.verdict == "resolved" or verdict.finding_id in main_accepts
             )
             for finding in result.new_findings:
                 if finding.id in pending or finding.id in resolved_ids:
@@ -2063,9 +1996,7 @@ async def run_final_review(
             subject_ref = revised_ref
             responses = revised.revision_responses
             exceptional = [
-                response
-                for response in responses
-                if response.action in {"disputed", "needs_input"}
+                response for response in responses if response.action in {"disputed", "needs_input"}
             ]
             if not exceptional:
                 break

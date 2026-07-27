@@ -16,7 +16,6 @@ from pydantic import TypeAdapter
 from .agentic_models import SUBMISSION_INPUT_TYPES
 from .taxonomy import REPORT_TAXONOMY
 
-
 FIELD_GUIDANCE: dict[str, str] = {
     "action": "Stage-specific action selected from the declared enum; use exactly one allowed value.",
     "action_dependencies": "Ordered or conditional implementation dependencies supported by reviewed evidence.",
@@ -29,6 +28,7 @@ FIELD_GUIDANCE: dict[str, str] = {
     "artifact_ids": "Persisted artifact identifiers produced or affected by the action.",
     "artifact_refs": "Current-task durable text-part refs to materialize in listed order.",
     "assessment_background": "Final report section 1.1 body; facts must remain traceable to approved inputs.",
+    "base_subject_ref": "Exact current edited-report artifact that the compact chief patch applies to.",
     "base_revision": "Exact prior module revision to which an explicit module patch applies.",
     "capacity_expansion_plan": "Final report section 4.2 body covering evidence-bounded capacity-expansion decisions.",
     "category": "Stable defect or review-dimension category defined by the active stage contract.",
@@ -126,6 +126,8 @@ FIELD_GUIDANCE: dict[str, str] = {
         "value may be the exact artifact_ref string returned by write_result_part; the "
         "submission tool materializes only refs from the active run, task, and revision."
     ),
+    "section_bodies": "Runtime-assembled map of exactly the assigned Chapter 1, 3, or 4 section bodies.",
+    "section_part_refs": "Runtime-owned map from each changed section id to its current-task result-part ref.",
     "summary": "Concise stage-specific explanation of the submitted action or author response.",
     "synthesis_inputs": "Supported Cross relationships for chief synthesis that need no further module writeback.",
     "synthesis_dispositions": "Exactly one integrated or merged chief disposition for every Cross synthesis input.",
@@ -136,6 +138,8 @@ FIELD_GUIDANCE: dict[str, str] = {
     "tables": "Traceable tables selected for the final report; provide only registered E-* evidence_ids and runtime derives internal bindings.",
     "target_paths": "Explicit structured subject paths inspected by a machine predicate.",
     "target_section_ids": "Fixed final-report sections where the chief editor must act.",
+    "target_changes": "One explicit required change and reviewer-check set for every targeted final-report section.",
+    "target_section_id": "One exact Chapter 1, 3, or 4 section governed by this change contract.",
     "target_submodule_id": "Single fixed module-local submodule where the author must act.",
     "target_submodule_ids": "Fixed module-local submodules authorized for review or revision.",
     "task_id": "Stable task identifier within the current run.",
@@ -181,6 +185,11 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
         "Runtime preserves all approved module bindings automatically.",
         "A table declares registered E-* evidence_ids only; runtime derives its internal bindings.",
     ],
+    "chief_revision_submission": [
+        "Write only the assigned Chapter 1, 3, or 4 sections with write_result_part.",
+        "Do not resubmit the full report, Chapter 2, Cross dispositions, tables, photos, or editorial metadata.",
+        "Runtime materializes the assigned result parts and deterministically inherits every unassigned field.",
+    ],
 }
 
 
@@ -217,6 +226,9 @@ KIND_SUMMARIES: dict[str, str] = {
     ),
     "edited_report_submission": (
         "Chief-editor report structure preserving approved module prose and producing fixed synthesis sections."
+    ),
+    "chief_revision_submission": (
+        "A compact chief-editor patch for assigned Chapter 1, 3, or 4 result parts and finding responses."
     ),
     "skill_evolution_submission": (
         "Typed product Skill evolution outcome with traceable artifacts."
@@ -272,18 +284,17 @@ def _template_skill_example() -> dict[str, Any]:
             "[质量量表](references/quality-rubric.md)。\n\n"
             "所有方法只约束表达和推理，不提供当前项目事实。"
         ),
-        "analysis_language_reference": "分析语言应区分项目事实、技术解释、风险判断和建议，并明确不确定性。" * 3,
+        "analysis_language_reference": "分析语言应区分项目事实、技术解释、风险判断和建议，并明确不确定性。"
+        * 3,
         "synthesis_reference": "综合应说明共同根因、传播路径、行动依赖、责任接口和联合验收。" * 3,
-        "visual_organization_reference": "表格和图片必须服务于具体论断，保持来源绑定并避免装饰性视觉。" * 3,
+        "visual_organization_reference": "表格和图片必须服务于具体论断，保持来源绑定并避免装饰性视觉。"
+        * 3,
         "quality_rubric": "检查完整性、事实边界、推理深度、跨模块一致性、可执行性和可追溯性。" * 3,
     }
 
 
 def _edited_report_example() -> dict[str, Any]:
-    modules = {
-        module_id: f"[[APPROVED_MODULE:{module_id}]]"
-        for module_id in REPORT_TAXONOMY
-    }
+    modules = {module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_TAXONOMY}
     return {
         "kind": "edited_report_submission",
         "title": "示例配电安全专家咨询报告",
@@ -309,11 +320,28 @@ def _edited_report_example() -> dict[str, Any]:
     }
 
 
+def _chief_revision_example() -> dict[str, Any]:
+    return {
+        "kind": "chief_revision_submission",
+        "base_subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
+        "revision": 1,
+        "revision_responses": [
+            {
+                "finding_id": "F-001",
+                "action": "implemented",
+                "summary": "已按最终审查要求修订目标小节，未改动第二章和其他未分配字段。",
+                "changed_target_ids": ["3.1.3"],
+            }
+        ],
+    }
+
+
 KIND_EXAMPLES: dict[str, dict[str, Any]] = {
     "module_submission": _module_example(),
     "module_revision_submission": _module_revision_example(),
     "template_skill_submission": _template_skill_example(),
     "edited_report_submission": _edited_report_example(),
+    "chief_revision_submission": _chief_revision_example(),
     "module_review_finding_submission": {
         "kind": "module_review_finding_submission",
         "coverage": {"submodule_ids": ["2.3.1"]},
@@ -450,9 +478,7 @@ def submission_schema(kind: str) -> dict[str, Any]:
 
     schema = deepcopy(TypeAdapter(submission_model(kind)).json_schema())
     rules = KIND_SEMANTIC_RULES.get(kind, [])
-    schema["description"] = " ".join(
-        [KIND_SUMMARIES[kind], *(f"Rule: {rule}" for rule in rules)]
-    )
+    schema["description"] = " ".join([KIND_SUMMARIES[kind], *(f"Rule: {rule}" for rule in rules)])
     required = list(schema.get("required", []))
     if "kind" in schema.get("properties", {}) and "kind" not in required:
         required.insert(0, "kind")

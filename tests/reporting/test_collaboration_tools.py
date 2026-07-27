@@ -4,28 +4,32 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from manyselves.core.loops.bus import MessageBus
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
-from manyselves.core.reporting.source_ledger import SourceLedger
-from manyselves.core.reporting.agentic_models import ClaimRecord, ModuleSubmission
+from manyselves.core.reporting.agentic_models import (
+    ClaimRecord,
+    EditedReportSubmission,
+    ModuleSubmission,
+)
 from manyselves.core.reporting.claim_ledger import ClaimLedger
 from manyselves.core.reporting.input_contracts import (
     ChiefEditorInput,
+    ChiefRevisionInput,
     ModuleContentView,
     ModuleReviewInput,
     ValidationReport,
+    final_audit_content_view,
     module_content_view,
 )
+from manyselves.core.reporting.source_ledger import SourceLedger
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.submission_contracts import (
     render_submission_contract,
     submission_schema,
 )
+from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.tools.reporting_collaboration_tools import (
     ListResultPartsTool,
-    SubmissionValidationError,
     SubmitResultTool,
     WriteResultPartTool,
 )
@@ -202,24 +206,19 @@ def _write_chief_contract_and_claim_ledger(workspace: Path) -> str:
             module_id=module_id,
             revision=0,
             submodule_narratives={submodule_id: f"{module_id} 已批准正文"},
-            evidence_ids_by_submodule={
-                submodule_id: ["E-0001"] if module_id == "2.1" else []
-            },
+            evidence_ids_by_submodule={submodule_id: ["E-0001"] if module_id == "2.1" else []},
         )
     contract = ChiefEditorInput(
         run_id="run-1",
         approved_module_markers={
-            module_id: f"[[APPROVED_MODULE:{module_id}]]"
-            for module_id in REPORT_TAXONOMY
+            module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_TAXONOMY
         },
         modules=modules,
         cross_synthesis_inputs=[_cross_synthesis_input()],
         cross_review_completion_ref="Work/runs/run-1/reviews/cross-completion.json",
     )
     contract_ref = "Work/runs/run-1/context/chief-editor-input.json"
-    ReportingStore(workspace).write_json(
-        contract_ref, contract.model_dump(mode="json")
-    )
+    ReportingStore(workspace).write_json(contract_ref, contract.model_dump(mode="json"))
     return contract_ref
 
 
@@ -240,10 +239,9 @@ async def test_submit_result_preserves_raw_candidate_before_validation(
     assert "native JSON object" in issue["repair_instruction"]
     assert outcome["remaining_attempts"] == 7
     persisted = json.loads(
-        (
-            tmp_path
-            / "Work/runs/run-1/submissions/task/attempt-1-raw.json"
-        ).read_text(encoding="utf-8")
+        (tmp_path / "Work/runs/run-1/submissions/task/attempt-1-raw.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert persisted["raw_payload"] == bad
 
@@ -278,9 +276,7 @@ async def test_review_submit_runtime_assigns_coverage_and_finding_id(
         ),
     )
     contract_ref = "Work/runs/run-1/reviews/module-review-input.json"
-    ReportingStore(tmp_path).write_json(
-        contract_ref, contract.model_dump(mode="json")
-    )
+    ReportingStore(tmp_path).write_json(contract_ref, contract.model_dump(mode="json"))
     tool = _tool(
         tmp_path,
         task_id="module-2.1-review-r0",
@@ -298,9 +294,7 @@ async def test_review_submit_runtime_assigns_coverage_and_finding_id(
                     "category": "evidence_boundary",
                     "impact": "blocking",
                     "observation": "当前正文把尚未核实的条件性信息写成了确定项目事实。",
-                    "evidence_refs": [
-                        "Work/runs/run-1/modules/2.1-r0.json"
-                    ],
+                    "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
                     "required_change": "将该表述改为明确待核实，并说明证据缺口对结论的影响。",
                     "reviewer_checks": ["条件性表述和证据缺口均已清晰呈现"],
                 }
@@ -310,15 +304,10 @@ async def test_review_submit_runtime_assigns_coverage_and_finding_id(
 
     assert outcome["status"] == "completed"
     result = json.loads(
-        (
-            tmp_path
-            / "Work/runs/run-1/results/module-2.1-review-r0.json"
-        ).read_text(encoding="utf-8")
+        (tmp_path / "Work/runs/run-1/results/module-2.1-review-r0.json").read_text(encoding="utf-8")
     )
     assert result["payload"]["coverage"] == {"submodule_ids": ["2.1.1"]}
-    assert result["payload"]["findings"][0]["id"] == (
-        "M-2.1-initial-r0-001"
-    )
+    assert result["payload"]["findings"][0]["id"] == ("M-2.1-initial-r0-001")
 
 
 @pytest.mark.asyncio
@@ -331,10 +320,7 @@ async def test_submit_result_appends_attempt_after_same_run_resume(
         ref = f"Work/runs/run-1/submissions/task/attempt-{attempt}-raw.json"
         store.write_json(ref, {"raw_payload": {"original_attempt": attempt}})
         refs.append(ref)
-    before = {
-        ref: (tmp_path / ref).read_bytes()
-        for ref in refs
-    }
+    before = {ref: (tmp_path / ref).read_bytes() for ref in refs}
     await _write_bound_module_parts(tmp_path)
 
     outcome = await _tool(tmp_path)(payload=_module_payload())
@@ -343,10 +329,9 @@ async def test_submit_result_appends_attempt_after_same_run_resume(
     for ref, original_bytes in before.items():
         assert (tmp_path / ref).read_bytes() == original_bytes
     appended = json.loads(
-        (
-            tmp_path
-            / "Work/runs/run-1/submissions/task/attempt-4-raw.json"
-        ).read_text(encoding="utf-8")
+        (tmp_path / "Work/runs/run-1/submissions/task/attempt-4-raw.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert appended["raw_payload"] == _module_payload()
 
@@ -368,9 +353,9 @@ async def test_submit_result_does_not_decode_or_repair_string_payload(
     assert issue["example"]["kind"] == "module_submission"
     assert "Do not quote or JSON-stringify" in issue["repair_instruction"]
     persisted = json.loads(
-        (
-            tmp_path / "Work/runs/run-1/submissions/task/attempt-1-raw.json"
-        ).read_text(encoding="utf-8")
+        (tmp_path / "Work/runs/run-1/submissions/task/attempt-1-raw.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert persisted["raw_payload"] == candidate
 
@@ -438,9 +423,7 @@ async def test_string_payload_example_uses_current_module_authoring_contract(
 async def test_submit_result_does_not_autofill_finding_contract(
     tmp_path: Path,
 ) -> None:
-    tool = _tool(
-        tmp_path, allowed_outputs=["module_review_finding_submission"]
-    )
+    tool = _tool(tmp_path, allowed_outputs=["module_review_finding_submission"])
     payload = {
         "kind": "module_review_finding_submission",
         "coverage": {"submodule_ids": ["2.1.1"]},
@@ -469,10 +452,9 @@ async def test_submit_result_does_not_autofill_finding_contract(
         "repair_instruction",
     }.issubset(outcome["validation_errors"][0])
     raw = json.loads(
-        (
-            tmp_path
-            / "Work/runs/run-1/submissions/task/attempt-1-raw.json"
-        ).read_text(encoding="utf-8")
+        (tmp_path / "Work/runs/run-1/submissions/task/attempt-1-raw.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert raw["raw_payload"] == payload
 
@@ -481,9 +463,7 @@ async def test_submit_result_does_not_autofill_finding_contract(
 async def test_repeated_same_contract_error_stops_with_failed_result(
     tmp_path: Path,
 ) -> None:
-    tool = _tool(
-        tmp_path, allowed_outputs=["module_review_finding_submission"]
-    )
+    tool = _tool(tmp_path, allowed_outputs=["module_review_finding_submission"])
     bad = {
         "kind": "module_review_finding_submission",
         "coverage": {"submodule_ids": []},
@@ -555,12 +535,8 @@ async def test_module_commit_materializes_bound_parts_without_model_refs(
     tool = _tool(tmp_path, task_id=task_id)
     outcome = await tool(payload=_module_payload())
     result = json.loads((tmp_path / outcome["result_path"]).read_text(encoding="utf-8"))
-    assert "由项目证据支持的完整正文。" in result["payload"][
-        "submodule_narratives"
-    ]["2.1.1"]
-    assert "[[CLAIM:C-2.1-2-1-1]]" in result["payload"][
-        "submodule_narratives"
-    ]["2.1.1"]
+    assert "由项目证据支持的完整正文。" in result["payload"]["submodule_narratives"]["2.1.1"]
+    assert "[[CLAIM:C-2.1-2-1-1]]" in result["payload"]["submodule_narratives"]["2.1.1"]
     assert result["payload"]["claims"][0]["source_ids"] == ["E-0001"]
 
 
@@ -591,7 +567,7 @@ async def test_module_revision_commit_uses_bound_target_part(
             {
                 "finding_id": "M-001",
                 "action": "implemented",
-                    "summary": "已完成目标小节的定向修订，并保留所有未变更内容与证据边界。",
+                "summary": "已完成目标小节的定向修订，并保留所有未变更内容与证据边界。",
                 "changed_target_ids": ["2.1.1"],
             }
         ],
@@ -661,8 +637,7 @@ async def test_module_revision_runtime_replaces_target_claim_bindings(
     task_id = "module-2.1-revision-r1"
     subject = _module_subject_payload()
     subject["submodule_narratives"]["2.1.1"] = (
-        "### 2.1.1\n\n事实一 [[CLAIM:C-2.1-001]]；"
-        "事实二 [[CLAIM:C-2.1-002]]。"
+        "### 2.1.1\n\n事实一 [[CLAIM:C-2.1-001]]；事实二 [[CLAIM:C-2.1-002]]。"
     )
     subject["claims"] = [
         {
@@ -700,7 +675,7 @@ async def test_module_revision_runtime_replaces_target_claim_bindings(
             {
                 "finding_id": "M-001",
                 "action": "implemented",
-                    "summary": "已按审计要求重写目标小节，并声明保留其他内容与证据边界。",
+                "summary": "已按审计要求重写目标小节，并声明保留其他内容与证据边界。",
                 "changed_target_ids": ["2.1.1"],
             }
         ],
@@ -728,9 +703,7 @@ async def test_module_revision_runtime_replaces_target_claim_bindings(
 @pytest.mark.asyncio
 async def test_result_parts_report_missing_declared_ids(tmp_path: Path) -> None:
     store = ReportingStore(tmp_path)
-    writer = WriteResultPartTool(
-        "run-1", "task", 0, store, ["part-a", "part-b"]
-    )
+    writer = WriteResultPartTool("run-1", "task", 0, store, ["part-a", "part-b"])
     await writer(part_id="part-a", content="正文")
     listing = await ListResultPartsTool(
         "run-1",
@@ -806,6 +779,7 @@ def test_all_model_facing_reporting_contracts_hide_runtime_claim_protocol() -> N
         "cross_review_finding_submission",
         "cross_review_verdict_submission",
         "edited_report_submission",
+        "chief_revision_submission",
     ):
         rendered = json.dumps(submission_schema(kind), ensure_ascii=False)
         for item in forbidden:
@@ -947,8 +921,7 @@ async def test_chief_submission_accounts_for_cross_inputs_and_derives_table_trac
         "findings_overview": "发现",
         "regional_executive_summary": "摘要",
         "module_narratives": {
-            module_id: f"[[APPROVED_MODULE:{module_id}]]"
-            for module_id in REPORT_TAXONOMY
+            module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_TAXONOMY
         },
         "risk_panorama": refs["risk_panorama"],
         "dimension_risk_analysis": refs["dimension_risk_analysis"],
@@ -1004,9 +977,7 @@ async def test_chief_submission_accounts_for_cross_inputs_and_derives_table_trac
         input_contract_ref=contract_ref,
     )
 
-    incomplete = await tool(
-        payload={**payload, "synthesis_dispositions": []}
-    )
+    incomplete = await tool(payload={**payload, "synthesis_dispositions": []})
     outcome = await tool(payload=payload)
 
     assert incomplete["status"] == "correction_required"
@@ -1015,9 +986,7 @@ async def test_chief_submission_accounts_for_cross_inputs_and_derives_table_trac
     )
     assert outcome["status"] == "completed", outcome
     result = json.loads(
-        (
-            tmp_path / "Work/runs/run-1/results/chief-edit.json"
-        ).read_text(encoding="utf-8")
+        (tmp_path / "Work/runs/run-1/results/chief-edit.json").read_text(encoding="utf-8")
     )["payload"]
     assert result["synthesis_dispositions"][0]["synthesis_input_id"] == "SI-001"
     assert result["synthesis_tables"][0]["source_ids"] == ["E-0001"]
@@ -1026,14 +995,118 @@ async def test_chief_submission_accounts_for_cross_inputs_and_derives_table_trac
 
 
 @pytest.mark.asyncio
+async def test_chief_revision_commit_is_compact_and_reads_only_assigned_parts(
+    tmp_path: Path,
+) -> None:
+    baseline = EditedReportSubmission(
+        title="报告",
+        assessment_background="背景原文",
+        findings_overview="发现原文",
+        regional_executive_summary="摘要原文",
+        module_narratives={
+            module_id: f"{module_id} 已批准且不可编辑正文" for module_id in REPORT_TAXONOMY
+        },
+        risk_panorama="风险全景原文",
+        dimension_risk_analysis="维度分析原文",
+        cross_module_analysis="跨模块分析原文",
+        data_gap_analysis="数据缺口原文",
+        improvement_action_plan="行动计划原文",
+        new_factory_planning="新建规划原文",
+        capacity_expansion_plan="增容规划原文",
+        daily_power_management="日常管理原文",
+        emergency_compliance_management="应急合规原文",
+        photo_ids=["P-001"],
+        unresolved_editorial_issues=["保留的透明限制"],
+    )
+    subject_ref = "Work/runs/run-1/edited-revisions/chief-r0.json"
+    contract_ref = "Work/runs/run-1/reviews/chief-revision-input-r1.json"
+    finding = {
+        "id": "F-001",
+        "target_section_ids": ["3.1.3"],
+        "target_changes": [
+            {
+                "target_section_id": "3.1.3",
+                "required_change": "在该小节补充明确的行动依赖顺序和联合验收方法。",
+                "reviewer_checks": ["行动依赖和联合验收都已形成可核对闭环"],
+            }
+        ],
+        "category": "synthesis",
+        "impact": "blocking",
+        "observation": "当前跨模块分析缺少行动依赖顺序和联合验收闭环。",
+        "evidence_refs": [subject_ref],
+    }
+    store = ReportingStore(tmp_path)
+    store.write_json(subject_ref, baseline.model_dump(mode="json"))
+    contract = ChiefRevisionInput(
+        run_id="run-1",
+        subject_ref=subject_ref,
+        subject=final_audit_content_view(baseline),
+        revision=1,
+        target_section_ids=["3.1.3"],
+        findings=[finding],
+        cross_synthesis_inputs=[],
+    )
+    store.write_json(contract_ref, contract.model_dump(mode="json"))
+    writer = WriteResultPartTool(
+        "run-1",
+        "chief-edit-r1",
+        1,
+        store,
+        ["cross_module_analysis"],
+    )
+    await writer(
+        part_id="cross_module_analysis",
+        content="修订后的跨模块分析，明确前置动作、责任接口和联合验收。",
+    )
+    tool = _tool(
+        tmp_path,
+        task_id="chief-edit-r1",
+        allowed_outputs=["chief_revision_submission"],
+        revision=1,
+        input_contract_kind="chief_revision_input",
+        input_contract_ref=contract_ref,
+    )
+    outcome = await tool(
+        payload={
+            "kind": "chief_revision_submission",
+            "base_subject_ref": subject_ref,
+            "revision": 1,
+            "revision_responses": [
+                {
+                    "finding_id": "F-001",
+                    "action": "implemented",
+                    "summary": "已在指定小节补充行动依赖、责任接口和联合验收。",
+                    "changed_target_ids": ["3.1.3"],
+                }
+            ],
+        }
+    )
+
+    assert outcome["status"] == "completed", outcome
+    result = json.loads(
+        (tmp_path / "Work/runs/run-1/results/chief-edit-r1.json").read_text(encoding="utf-8")
+    )["payload"]
+    assert set(result) == {
+        "kind",
+        "base_subject_ref",
+        "revision",
+        "section_bodies",
+        "section_part_refs",
+        "revision_responses",
+    }
+    assert result["section_bodies"] == {
+        "3.1.3": "修订后的跨模块分析，明确前置动作、责任接口和联合验收。"
+    }
+    assert "module_narratives" not in result
+    assert "synthesis_dispositions" not in result
+
+
+@pytest.mark.asyncio
 async def test_markdown_aggregate_contract_rejects_unverified_bindings_without_clearing(
     tmp_path: Path,
 ) -> None:
     contract_ref = "Work/runs/run-1/context/aggregate-editor-input.json"
-    markers = {
-        module_id: f"[[APPROVED_MODULE:{module_id}]]"
-        for module_id in REPORT_TAXONOMY
-    }
+    markers = {module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_TAXONOMY}
     ReportingStore(tmp_path).write_json(
         contract_ref,
         {
@@ -1043,8 +1116,7 @@ async def test_markdown_aggregate_contract_rejects_unverified_bindings_without_c
             "approved_module_markers": markers,
             "structured_modules": {},
             "markdown_modules": {
-                module_id: f"模块 {module_id} 正文"
-                for module_id in REPORT_TAXONOMY
+                module_id: f"模块 {module_id} 正文" for module_id in REPORT_TAXONOMY
             },
         },
     )
@@ -1081,9 +1153,8 @@ async def test_markdown_aggregate_contract_rejects_unverified_bindings_without_c
     assert outcome["validation_errors"][0]["field"] == "protected_claim_ids"
     assert "Extra inputs are not permitted" in outcome["validation_errors"][0]["problem"]
     raw = json.loads(
-        (
-            tmp_path
-            / "Work/runs/run-1/submissions/task/attempt-1-raw.json"
-        ).read_text(encoding="utf-8")
+        (tmp_path / "Work/runs/run-1/submissions/task/attempt-1-raw.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert raw["raw_payload"]["protected_claim_ids"] == ["C-invented"]

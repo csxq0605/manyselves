@@ -10,7 +10,9 @@ from typing import Any, Literal
 from pydantic import Field, TypeAdapter, model_validator
 
 from .agentic_models import (
+    FINAL_AUDIT_SECTION_IDS,
     CrossReviewFinding,
+    CrossSynthesisDisposition,
     CrossSynthesisInput,
     EditedReportSubmission,
     EditedReportSubmissionInput,
@@ -20,6 +22,8 @@ from .agentic_models import (
     ResolutionVerdict,
     RevisionResponse,
     StrictModel,
+    SynthesisTableSubmissionInput,
+    TableSubmissionInput,
 )
 from .submission_contracts import FIELD_GUIDANCE
 from .taxonomy import REPORT_TAXONOMY
@@ -101,9 +105,7 @@ def edited_report_content_view(
             "headers": table.headers,
             "rows": table.rows,
             "evidence_ids": [
-                source_id
-                for source_id in table.source_ids
-                if source_id.startswith("E-")
+                source_id for source_id in table.source_ids if source_id.startswith("E-")
             ],
         }
         for table in subject.tables
@@ -122,6 +124,39 @@ def edited_report_content_view(
     return EditedReportSubmissionInput.model_validate(payload)
 
 
+class FinalAuditSubjectView(StrictModel):
+    """Chief-owned Chapter 1, 3, and 4 content without approved Chapter 2 prose."""
+
+    title: str = Field(min_length=1)
+    assessment_background: str = Field(min_length=1)
+    findings_overview: str = Field(min_length=1)
+    regional_executive_summary: str = Field(min_length=1)
+    risk_panorama: str = Field(min_length=1)
+    dimension_risk_analysis: str = Field(min_length=1)
+    cross_module_analysis: str = Field(min_length=1)
+    data_gap_analysis: str = Field(min_length=1)
+    improvement_action_plan: str = Field(min_length=1)
+    new_factory_planning: str = Field(min_length=1)
+    capacity_expansion_plan: str = Field(min_length=1)
+    daily_power_management: str = Field(min_length=1)
+    emergency_compliance_management: str = Field(min_length=1)
+    tables: list[TableSubmissionInput] = Field(default_factory=list)
+    synthesis_dispositions: list[CrossSynthesisDisposition] = Field(default_factory=list)
+    synthesis_tables: list[SynthesisTableSubmissionInput] = Field(default_factory=list)
+    photo_ids: list[str] = Field(default_factory=list)
+    unresolved_editorial_issues: list[str] = Field(default_factory=list)
+
+
+def final_audit_content_view(
+    subject: EditedReportSubmission,
+) -> FinalAuditSubjectView:
+    payload = edited_report_content_view(subject).model_dump(mode="python")
+    payload.pop("kind", None)
+    payload.pop("module_narratives", None)
+    payload.pop("revision_responses", None)
+    return FinalAuditSubjectView.model_validate(payload)
+
+
 class TemplateDistillationInput(StrictModel):
     kind: Literal["template_distillation_input"] = "template_distillation_input"
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
@@ -133,9 +168,7 @@ class TemplateDistillationInput(StrictModel):
         ge=1,
         description="Exact maximum character budget for the one allowed document inspection.",
     )
-    required_part_ids: list[
-        Literal["skill", "analysis", "synthesis", "visual", "rubric"]
-    ] = Field(
+    required_part_ids: list[Literal["skill", "analysis", "synthesis", "visual", "rubric"]] = Field(
         description="Exact durable result parts required before final submission."
     )
 
@@ -191,13 +224,10 @@ class ModuleAuthoringInput(StrictModel):
     @model_validator(mode="after")
     def exact_module_scope(self) -> "ModuleAuthoringInput":
         expected = set(REPORT_TAXONOMY[self.module_id].submodules)
-        if (
-            set(self.required_submodule_ids) != expected
-            or len(self.required_submodule_ids) != len(expected)
+        if set(self.required_submodule_ids) != expected or len(self.required_submodule_ids) != len(
+            expected
         ):
-            raise ValueError(
-                "module authoring input requires every fixed submodule exactly once"
-            )
+            raise ValueError("module authoring input requires every fixed submodule exactly once")
         if not set(self.saved_part_ids).issubset(expected):
             raise ValueError("existing result parts lie outside the module scope")
         if not set(self.rewrite_part_ids).issubset(expected):
@@ -290,31 +320,21 @@ class ModuleReviewInput(StrictModel):
             len(supplied_evidence_ids) != len(set(supplied_evidence_ids))
             or set(supplied_evidence_ids) != required_evidence_ids
         ):
-            raise ValueError(
-                "module review evidence must contain every bound E-* id exactly once"
-            )
+            raise ValueError("module review evidence must contain every bound E-* id exactly once")
         if not self.validation_report.passed:
-            raise ValueError(
-                "module semantic review cannot start from failed machine validation"
-            )
-        if self.phase == "initial" and (
-            self.required_findings or self.revision_responses
-        ):
+            raise ValueError("module semantic review cannot start from failed machine validation")
+        if self.phase == "initial" and (self.required_findings or self.revision_responses):
             raise ValueError("initial module review cannot contain prior findings or responses")
         if self.phase == "recheck":
             required = {finding.id for finding in self.required_findings}
             responses = {response.finding_id for response in self.revision_responses}
             if not required or responses != required:
-                raise ValueError(
-                    "module recheck requires exactly one author response per finding"
-                )
+                raise ValueError("module recheck requires exactly one author response per finding")
         return self
 
     @property
     def finding_id_prefix(self) -> str:
-        return (
-            f"M-{self.module_id}-{self.lifecycle_id}-r{self.review_round}-"
-        )
+        return f"M-{self.module_id}-{self.lifecycle_id}-r{self.review_round}-"
 
 
 class CrossReviewInput(StrictModel):
@@ -323,28 +343,22 @@ class CrossReviewInput(StrictModel):
         description="initial creates Cross findings; recheck closes required Cross findings."
     )
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
-    module_refs: dict[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
-    ] = Field(description="Workflow-owned refs for the exact five reviewed module subjects.")
-    module_revisions: dict[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], int
-    ] = Field(description="Workflow-owned revision numbers corresponding to module_refs.")
-    modules: dict[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], ModuleContentView
-    ] = Field(
+    module_refs: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str] = Field(
+        description="Workflow-owned refs for the exact five reviewed module subjects."
+    )
+    module_revisions: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], int] = Field(
+        description="Workflow-owned revision numbers corresponding to module_refs."
+    )
+    modules: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], ModuleContentView] = Field(
         description=(
             "Initial: complete five-module subjects. Recheck: only modules changed by "
             "the current Cross revision wave."
         )
     )
-    changed_module_ids: list[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
-    ] = Field(
+    changed_module_ids: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(
         description="Initial: all five modules. Recheck: only current-wave revised owners."
     )
-    unchanged_module_sha256: dict[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
-    ] = Field(
+    unchanged_module_sha256: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str] = Field(
         default_factory=dict,
         description=(
             "Recheck fingerprints for unchanged subjects retained in the same reviewer "
@@ -361,9 +375,7 @@ class CrossReviewInput(StrictModel):
         default_factory=dict,
         description="Owner-author responses grouped by responsibility module.",
     )
-    local_regression_review_refs: dict[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
-    ] = Field(
+    local_regression_review_refs: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str] = Field(
         default_factory=dict,
         description=(
             "Independent module-local regression completion refs. They do not close Cross findings."
@@ -385,10 +397,7 @@ class CrossReviewInput(StrictModel):
     @model_validator(mode="after")
     def five_subjects_and_phase_fields_match(self) -> "CrossReviewInput":
         expected = {"2.1", "2.2", "2.3", "2.4", "2.5"}
-        if (
-            set(self.module_refs) != expected
-            or set(self.module_revisions) != expected
-        ):
+        if set(self.module_refs) != expected or set(self.module_revisions) != expected:
             raise ValueError("cross review metadata requires exactly modules 2.1 through 2.5")
         for module_id, subject in self.modules.items():
             if (
@@ -408,15 +417,11 @@ class CrossReviewInput(StrictModel):
             or self.unchanged_module_sha256
         ):
             raise ValueError("initial cross review cannot contain recheck state")
-        if self.phase == "initial" and (
-            set(self.modules) != expected or changed != expected
-        ):
+        if self.phase == "initial" and (set(self.modules) != expected or changed != expected):
             raise ValueError("initial cross review requires all five complete modules")
         if self.phase == "recheck":
             if not changed or set(self.modules) != changed:
-                raise ValueError(
-                    "cross recheck full subjects must equal changed_module_ids"
-                )
+                raise ValueError("cross recheck full subjects must equal changed_module_ids")
             unchanged = expected - changed
             if set(self.unchanged_module_sha256) != unchanged:
                 raise ValueError(
@@ -435,16 +440,10 @@ class CrossReviewInput(StrictModel):
             }
             if not required or responses != required:
                 raise ValueError("cross recheck requires one owner response per finding")
-            if len(self.machine_validation_refs) != len(
-                self.machine_validation_reports
-            ):
-                raise ValueError(
-                    "cross recheck validation refs and reports must correspond"
-                )
+            if len(self.machine_validation_refs) != len(self.machine_validation_reports):
+                raise ValueError("cross recheck validation refs and reports must correspond")
             if any(not report.passed for report in self.machine_validation_reports):
-                raise ValueError(
-                    "cross recheck cannot start from failed machine validation"
-                )
+                raise ValueError("cross recheck cannot start from failed machine validation")
         return self
 
 
@@ -462,8 +461,10 @@ class FinalReviewInput(StrictModel):
         ge=0,
         description="Workflow-owned chief-editor revision number.",
     )
-    subject: EditedReportSubmissionInput = Field(
-        description="Complete current final-report content without runtime-only bindings."
+    subject: FinalAuditSubjectView = Field(
+        description=(
+            "Current chief-owned Chapter 1, 3, and 4 content without approved Chapter 2 prose."
+        )
     )
     canonical_markdown: str = Field(
         min_length=1,
@@ -495,13 +496,13 @@ class FinalReviewInput(StrictModel):
 
     @model_validator(mode="after")
     def phase_fields_match(self) -> "FinalReviewInput":
-        if not self.validation_report.passed:
+        if set(self.required_section_ids) != set(FINAL_AUDIT_SECTION_IDS):
             raise ValueError(
-                "final semantic review cannot start from failed machine validation"
+                "final review must cover exactly chief-owned Chapter 1, 3, and 4 sections"
             )
-        if self.phase == "initial" and (
-            self.required_findings or self.revision_responses
-        ):
+        if not self.validation_report.passed:
+            raise ValueError("final semantic review cannot start from failed machine validation")
+        if self.phase == "initial" and (self.required_findings or self.revision_responses):
             raise ValueError("initial final review cannot contain prior findings or responses")
         if self.phase == "recheck":
             required = {finding.id for finding in self.required_findings}
@@ -509,9 +510,7 @@ class FinalReviewInput(StrictModel):
             if not required or responses != required:
                 raise ValueError("final recheck requires one chief response per finding")
         synthesis_ids = {item.id for item in self.cross_synthesis_inputs}
-        disposition_ids = [
-            item.synthesis_input_id for item in self.subject.synthesis_dispositions
-        ]
+        disposition_ids = [item.synthesis_input_id for item in self.subject.synthesis_dispositions]
         if (
             len(disposition_ids) != len(set(disposition_ids))
             or set(disposition_ids) != synthesis_ids
@@ -520,29 +519,21 @@ class FinalReviewInput(StrictModel):
                 "final review requires one chief disposition per Cross synthesis input"
             )
         if synthesis_ids:
-            table_types = {
-                table.table_type for table in self.subject.synthesis_tables
-            }
+            table_types = {table.table_type for table in self.subject.synthesis_tables}
             if not {
                 "risk_cluster_matrix",
                 "action_dependency_matrix",
             }.issubset(table_types):
-                raise ValueError(
-                    "final review requires risk-cluster and action-dependency tables"
-                )
+                raise ValueError("final review requires risk-cluster and action-dependency tables")
             covered = {
                 synthesis_id
                 for table in self.subject.synthesis_tables
                 for synthesis_id in table.synthesis_input_ids
             }
             if covered != synthesis_ids:
-                raise ValueError(
-                    "final review synthesis tables must cover every Cross input"
-                )
+                raise ValueError("final review synthesis tables must cover every Cross input")
         elif self.subject.synthesis_tables:
-            raise ValueError(
-                "final review cannot receive synthesis tables without Cross inputs"
-            )
+            raise ValueError("final review cannot receive synthesis tables without Cross inputs")
         return self
 
 
@@ -559,6 +550,8 @@ class RequestedModuleChange(StrictModel):
         min_length=1,
         description="Fixed module-local submodules authorized for this requested change.",
     )
+
+
 class ModuleRevisionInput(StrictModel):
     kind: Literal["module_revision_input"] = "module_revision_input"
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
@@ -600,14 +593,8 @@ class ModuleRevisionInput(StrictModel):
     def assigned_findings_are_nonempty_and_in_scope(self) -> "ModuleRevisionInput":
         if self.subject.module_id != self.module_id:
             raise ValueError("module revision baseline belongs to a different module")
-        if (
-            not self.module_findings
-            and not self.cross_findings
-            and not self.requested_changes
-        ):
-            raise ValueError(
-                "module revision input requires a finding or requested change"
-            )
+        if not self.module_findings and not self.cross_findings and not self.requested_changes:
+            raise ValueError("module revision input requires a finding or requested change")
         if bool(self.validation_report_ref) != bool(self.validation_report):
             raise ValueError(
                 "validation_report_ref and validation_report must be provided together"
@@ -633,8 +620,15 @@ class ChiefRevisionInput(StrictModel):
     kind: Literal["chief_revision_input"] = "chief_revision_input"
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
     subject_ref: str = Field(min_length=1, description="Exact edited report being revised.")
-    subject: EditedReportSubmissionInput = Field(
-        description="Complete chief-editor content baseline without runtime-only bindings."
+    subject: FinalAuditSubjectView = Field(
+        description=(
+            "Chief-owned Chapter 1, 3, and 4 baseline only; immutable Chapter 2 prose "
+            "is not model-visible during final revision."
+        )
+    )
+    revision: int = Field(
+        ge=1,
+        description="Workflow-owned chief revision number for this exact patch.",
     )
     target_section_ids: list[str] = Field(
         min_length=1,
@@ -648,18 +642,28 @@ class ChiefRevisionInput(StrictModel):
         description="Original supported Cross inputs that remain mandatory during revision."
     )
 
+    @model_validator(mode="after")
+    def findings_and_targets_match(self) -> "ChiefRevisionInput":
+        invalid = sorted(set(self.target_section_ids) - set(FINAL_AUDIT_SECTION_IDS))
+        if invalid:
+            raise ValueError(f"chief revision contains non-chief target sections: {invalid}")
+        finding_targets = {
+            target for finding in self.findings for target in finding.target_section_ids
+        }
+        if set(self.target_section_ids) != finding_targets:
+            raise ValueError("chief revision targets must exactly match assigned final findings")
+        return self
+
 
 class ChiefEditorInput(StrictModel):
     kind: Literal["chief_editor_input"] = "chief_editor_input"
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
-    approved_module_markers: dict[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
-    ] = Field(
+    approved_module_markers: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str] = Field(
         description="Exact marker tokens the chief submits for deterministic prose insertion."
     )
-    modules: dict[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], ModuleContentView
-    ] = Field(description="Five module subjects closed by module review.")
+    modules: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], ModuleContentView] = Field(
+        description="Five module subjects closed by module review."
+    )
     cross_synthesis_inputs: list[CrossSynthesisInput] = Field(
         description="Cross-reviewer-supported relationships available for chief synthesis."
     )
@@ -676,9 +680,7 @@ class ChiefEditorInput(StrictModel):
         for module_id, subject in self.modules.items():
             if subject.module_id != module_id:
                 raise ValueError("chief editor module binding is inconsistent")
-            if self.approved_module_markers[module_id] != (
-                f"[[APPROVED_MODULE:{module_id}]]"
-            ):
+            if self.approved_module_markers[module_id] != (f"[[APPROVED_MODULE:{module_id}]]"):
                 raise ValueError("chief editor marker does not match its module")
         return self
 
@@ -689,20 +691,14 @@ class AggregateEditorInput(StrictModel):
     source_format: Literal["structured_module", "markdown"] = Field(
         description="Whether modules are typed subjects or validated standalone Markdown."
     )
-    approved_module_markers: dict[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
-    ] = Field(
+    approved_module_markers: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str] = Field(
         description="Exact marker tokens used for deterministic module-prose insertion."
     )
-    structured_modules: dict[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], ModuleContentView
-    ] = Field(
+    structured_modules: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], ModuleContentView] = Field(
         default_factory=dict,
         description="Exactly five typed modules when source_format=structured_module.",
     )
-    markdown_modules: dict[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
-    ] = Field(
+    markdown_modules: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str] = Field(
         default_factory=dict,
         description="Exactly five validated Markdown bodies when source_format=markdown.",
     )
@@ -716,9 +712,7 @@ class AggregateEditorInput(StrictModel):
                     "structured aggregate input requires exactly five structured_modules"
                 )
         elif set(self.markdown_modules) != expected or self.structured_modules:
-            raise ValueError(
-                "markdown aggregate input requires exactly five markdown_modules"
-            )
+            raise ValueError("markdown aggregate input requires exactly five markdown_modules")
         return self
 
 
@@ -761,12 +755,12 @@ class WorkflowExceptionInput(StrictModel):
             if response.finding_id in finding_ids
         }
         if response_ids != finding_ids:
-            raise ValueError("workflow exception requires one associated author response per finding")
+            raise ValueError(
+                "workflow exception requires one associated author response per finding"
+            )
         if self.trigger == "reviewer_escalation":
             verdict_ids = {
-                verdict.finding_id
-                for verdict in self.verdicts
-                if verdict.verdict == "escalate"
+                verdict.finding_id for verdict in self.verdicts if verdict.verdict == "escalate"
             }
             if verdict_ids != finding_ids:
                 raise ValueError("reviewer exception ids must equal escalate verdict ids")
@@ -855,9 +849,7 @@ class ReviewCompletionRecord(StrictModel):
     finding_refs: list[str] = Field(
         description="Initial and regression finding artifacts considered by completion."
     )
-    verdict_refs: list[str] = Field(
-        description="Reviewer verdict artifacts closing every finding."
-    )
+    verdict_refs: list[str] = Field(description="Reviewer verdict artifacts closing every finding.")
     resolved_finding_ids: list[str] = Field(
         description="Every finding id closed by reviewer verdict or empty initial findings."
     )
@@ -874,12 +866,11 @@ class ReviewCompletionRecord(StrictModel):
         expected = set(self.subject_refs) | set(self.finding_refs) | set(self.verdict_refs)
         if set(self.artifact_sha256) != expected:
             raise ValueError("review completion hashes must cover every referenced artifact")
-        if any(
-            not re.fullmatch(r"[0-9a-f]{64}", value)
-            for value in self.artifact_sha256.values()
-        ):
+        if any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in self.artifact_sha256.values()):
             raise ValueError("review completion hashes must be SHA-256 hex")
         return self
+
+
 INPUT_CONTRACT_TYPES = {
     "template_distillation_input": TemplateDistillationInput,
     "module_authoring_input": ModuleAuthoringInput,
@@ -961,14 +952,17 @@ def _example_final_finding() -> dict[str, Any]:
     return {
         "id": "F-001",
         "target_section_ids": ["3.1.3"],
+        "target_changes": [
+            {
+                "target_section_id": "3.1.3",
+                "required_change": ("在本节形成有证据边界的因果链、行动依赖和联合验证。"),
+                "reviewer_checks": ["综合内容不改变模块事实且形成可执行的联合判断"],
+            }
+        ],
         "category": "synthesis",
         "impact": "blocking",
         "observation": "跨领域关联风险只罗列模块名称，没有形成已支持的因果或依赖链。",
-        "evidence_refs": [
-            "Work/runs/report-example/edited-revisions/chief-r0.json"
-        ],
-        "required_change": "在 3.1.3 中形成有证据边界的因果链、行动依赖和联合验证。",
-        "reviewer_checks": ["综合内容不改变模块事实且形成可执行的联合判断"],
+        "evidence_refs": ["Work/runs/report-example/edited-revisions/chief-r0.json"],
     }
 
 
@@ -980,8 +974,7 @@ def _example_edited_report() -> dict[str, Any]:
         "findings_overview": "归纳主要发现及其管理含义。",
         "regional_executive_summary": "按真实责任边界归纳行动。",
         "module_narratives": {
-            module_id: f"[[APPROVED_MODULE:{module_id}]]"
-            for module_id in REPORT_TAXONOMY
+            module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_TAXONOMY
         },
         "cross_module_analysis": "说明已支持的跨模块关系和联合验证。",
         "risk_panorama": "按共同根因和传播能力组织风险。",
@@ -999,6 +992,14 @@ def _example_edited_report() -> dict[str, Any]:
     }
 
 
+def _example_final_audit_subject() -> dict[str, Any]:
+    payload = _example_edited_report()
+    payload.pop("kind")
+    payload.pop("module_narratives")
+    payload.pop("revision_responses")
+    return payload
+
+
 _EXAMPLE_MODULES = {
     module_id: module_content_view(
         ModuleSubmission.model_validate(_example_module(module_id))
@@ -1009,10 +1010,7 @@ _EXAMPLE_MODULE_REFS = {
     module_id: f"Work/runs/report-example/modules/{module_id}-r0.json"
     for module_id in REPORT_TAXONOMY
 }
-_EXAMPLE_MARKERS = {
-    module_id: f"[[APPROVED_MODULE:{module_id}]]"
-    for module_id in REPORT_TAXONOMY
-}
+_EXAMPLE_MARKERS = {module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_TAXONOMY}
 
 INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
     "template_distillation_input": {
@@ -1049,9 +1047,7 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "required_submodule_ids": list(REPORT_TAXONOMY["2.1"].submodules),
         "required_findings": [],
         "revision_responses": [],
-        "validation_report_ref": (
-            "Work/runs/report-example/reviews/module-quality-2.1-r0.json"
-        ),
+        "validation_report_ref": ("Work/runs/report-example/reviews/module-quality-2.1-r0.json"),
         "validation_report": {
             "kind": "validation_report",
             "run_id": "report-example",
@@ -1085,17 +1081,12 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "run_id": "report-example",
         "subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
         "subject_revision": 0,
-        "subject": _example_edited_report(),
+        "subject": _example_final_audit_subject(),
         "canonical_markdown": "# 示例报告\n\n完整成稿正文。",
         "required_section_ids": [
             "1.1",
             "1.2",
             "1.3",
-            "2.1",
-            "2.2",
-            "2.3",
-            "2.4",
-            "2.5",
             "3.1.1",
             "3.1.2",
             "3.1.3",
@@ -1109,9 +1100,7 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "required_findings": [],
         "revision_responses": [],
         "cross_synthesis_inputs": [],
-        "validation_report_ref": (
-            "Work/runs/report-example/reviews/report-integrity-r0.json"
-        ),
+        "validation_report_ref": ("Work/runs/report-example/reviews/report-integrity-r0.json"),
         "validation_report": {
             "kind": "validation_report",
             "run_id": "report-example",
@@ -1129,9 +1118,7 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "module_id": "2.1",
         "subject_ref": _EXAMPLE_MODULE_REFS["2.1"],
         "subject": _EXAMPLE_MODULES["2.1"],
-        "target_submodule_ids": [
-            next(iter(REPORT_TAXONOMY["2.1"].submodules))
-        ],
+        "target_submodule_ids": [next(iter(REPORT_TAXONOMY["2.1"].submodules))],
         "module_findings": [_example_module_finding()],
         "cross_findings": [],
         "requested_changes": [],
@@ -1142,7 +1129,8 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "kind": "chief_revision_input",
         "run_id": "report-example",
         "subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
-        "subject": _example_edited_report(),
+        "subject": _example_final_audit_subject(),
+        "revision": 1,
         "target_section_ids": ["3.1.3"],
         "findings": [_example_final_finding()],
         "cross_synthesis_inputs": [],
@@ -1153,9 +1141,7 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "approved_module_markers": _EXAMPLE_MARKERS,
         "modules": _EXAMPLE_MODULES,
         "cross_synthesis_inputs": [],
-        "cross_review_completion_ref": (
-            "Work/runs/report-example/reviews/cross-completion.json"
-        ),
+        "cross_review_completion_ref": ("Work/runs/report-example/reviews/cross-completion.json"),
     },
     "aggregate_editor_input": {
         "kind": "aggregate_editor_input",
@@ -1172,9 +1158,7 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "trigger": "reviewer_escalation",
         "finding_ids": ["X-001"],
         "subject_refs": list(_EXAMPLE_MODULE_REFS.values()),
-        "finding_refs": [
-            "Work/runs/report-example/reviews/cross-findings-r0.json"
-        ],
+        "finding_refs": ["Work/runs/report-example/reviews/cross-findings-r0.json"],
         "verdicts": [
             {
                 "finding_id": "X-001",
@@ -1228,9 +1212,7 @@ def render_input_contract(kind: str) -> str:
     ]
     for name, prop in schema.get("properties", {}).items():
         requirement = "required" if name in schema.get("required", []) else "optional"
-        lines.append(
-            f"- {name} ({requirement}): {str(prop.get('description') or '').strip()}"
-        )
+        lines.append(f"- {name} ({requirement}): {str(prop.get('description') or '').strip()}")
     lines.extend(
         [
             "valid_example:",

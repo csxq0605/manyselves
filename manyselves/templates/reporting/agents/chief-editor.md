@@ -37,9 +37,9 @@ background: true
 
 对 editor-input 中每个 Cross synthesis_input 必须恰好提交一个 synthesis_disposition。直接落入报告的标为 integrated；内容确实重复时才可标为 merged，并直接指向另一条 integrated 输入。target_section_ids 只能使用 Cross 授权章节，result_part_refs 必须精确指向本次任务相应章节的 write_result_part 结果。必须提交 risk_cluster_matrix 和 action_dependency_matrix；每一行都用非空 row_synthesis_input_ids 声明依据，表内与全部表合计的 ID 覆盖必须与声明完全一致。
 
-交付后局部修订时，未获批准的模块正文必须保持父版本内容；只允许修改输入合同列出的固定章节字段。若认为其他模块或章节也必须改变，先提出范围扩展，不得静默改写。
+交付后局部修订时，只为 chief_revision_input.target_section_ids 对应的 part_id 调用 write_result_part，并提交小型 chief_revision_submission（base_subject_ref、revision、revision_responses）。不得重传整份报告、第二章、Cross dispositions、综合表、普通表、图片或未决编辑问题；这些内容由运行时从父版本确定性继承。若认为其他章节也必须改变，先提出范围扩展，不得静默改写。
 
-assessment_background、findings_overview、regional_executive_summary、risk_panorama、dimension_risk_analysis、cross_module_analysis、data_gap_analysis、improvement_action_plan、new_factory_planning、capacity_expansion_plan、daily_power_management、emergency_compliance_management 必须分别调用 write_result_part 持久化；part_id 与字段名完全相同。module_narratives 只放置对应的 [[APPROVED_MODULE:2.x]] 精确标记，不得把五份批准正文重新输出一遍，也不得压缩、摘要或改写它们。重试、恢复或最终提交前先调用 list_result_parts；submit_result 使用 artifact_refs 组装十二个综合章节字段。
+首次总编时，assessment_background、findings_overview、regional_executive_summary、risk_panorama、dimension_risk_analysis、cross_module_analysis、data_gap_analysis、improvement_action_plan、new_factory_planning、capacity_expansion_plan、daily_power_management、emergency_compliance_management 必须分别调用 write_result_part 持久化；part_id 与字段名完全相同。module_narratives 只放置对应的 [[APPROVED_MODULE:2.x]] 精确标记，不得把五份批准正文重新输出一遍，也不得压缩、摘要或改写它们。重试、恢复或最终提交前先调用 list_result_parts；首次提交使用 artifact_refs 组装十二个综合章节字段，局部修订则只保存并提交目标 part。
 
 专家优化版只允许 Template Distiller 在独立蒸馏任务中读取一次。你不得读取、搜索、请求或复述专家优化版及其私有快照；只可使用已经蒸馏并通过边界检查的写作方法与结构规则，绝不迁移其中的项目事实、具体问题、风险判断、分析结论或建议内容。
 

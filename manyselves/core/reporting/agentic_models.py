@@ -1,11 +1,12 @@
-from enum import StrEnum
 import re
+from enum import StrEnum
 from typing import Annotated, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .models import (
+    REPORT_FINAL_AUDIT_SECTION_IDS,
     REPORT_FINAL_SECTION_IDS,
     CoverageMatrix,
     EvidenceItem,
@@ -45,18 +46,21 @@ class TaskEnvelope(StrictModel):
     context_summary_refs: list[str] = Field(default_factory=list)
     inline_context: str | None = Field(default=None, max_length=100_000)
     target_submodule_ids: list[str] = Field(default_factory=list)
-    input_contract_kind: Literal[
-        "template_distillation_input",
-        "module_authoring_input",
-        "module_review_input",
-        "cross_review_input",
-        "final_review_input",
-        "module_revision_input",
-        "chief_revision_input",
-        "chief_editor_input",
-        "aggregate_editor_input",
-        "workflow_exception_input",
-    ] | None = Field(
+    input_contract_kind: (
+        Literal[
+            "template_distillation_input",
+            "module_authoring_input",
+            "module_review_input",
+            "cross_review_input",
+            "final_review_input",
+            "module_revision_input",
+            "chief_revision_input",
+            "chief_editor_input",
+            "aggregate_editor_input",
+            "workflow_exception_input",
+        ]
+        | None
+    ) = Field(
         default=None,
         description=(
             "Semantic contract for the primary structured input artifact. When present, "
@@ -79,9 +83,7 @@ class TaskEnvelope(StrictModel):
                         f"target submodule {submodule_id} does not belong to module {module_id}"
                     )
         if bool(self.input_contract_kind) != bool(self.input_contract_ref):
-            raise ValueError(
-                "input_contract_kind and input_contract_ref must be provided together"
-            )
+            raise ValueError("input_contract_kind and input_contract_ref must be provided together")
         if self.input_contract_ref and self.input_contract_ref not in self.input_refs:
             raise ValueError("input_contract_ref must also appear in input_refs")
         return self
@@ -186,9 +188,7 @@ class RevisionResponse(StrictModel):
                 "implemented revision response requires at least one changed target id"
             )
         if self.action != "implemented" and self.changed_target_ids:
-            raise ValueError(
-                "only implemented revision responses may declare changed target ids"
-            )
+            raise ValueError("only implemented revision responses may declare changed target ids")
         return self
 
 
@@ -238,8 +238,7 @@ class ModuleSubmission(StrictModel):
         undeclared = sorted(claim_sources - set(self.source_ids))
         if undeclared:
             raise ValueError(
-                "module source_ids must include every Claim source; "
-                f"missing={undeclared}"
+                f"module source_ids must include every Claim source; missing={undeclared}"
             )
         claim_by_id = {claim.id: claim for claim in self.claims}
         if len(claim_by_id) != len(self.claims):
@@ -261,9 +260,7 @@ class ModuleSubmission(StrictModel):
                     f"submodule {claim.submodule_id}; got {locations}"
                 )
             if not requires_marker and locations:
-                raise ValueError(
-                    f"Claim {claim.id} does not require a citation marker"
-                )
+                raise ValueError(f"Claim {claim.id} does not require a citation marker")
         return self
 
     @property
@@ -309,9 +306,7 @@ class ModuleRevisionSubmission(StrictModel):
         ),
     )
     source_ids: list[str] = Field(
-        description=(
-            "Complete source-id set for the resulting module after this patch is applied."
-        )
+        description=("Complete source-id set for the resulting module after this patch is applied.")
     )
     unresolved_questions: list[str] = Field(
         default_factory=list,
@@ -328,9 +323,7 @@ class ModuleRevisionSubmission(StrictModel):
             raise ValueError("module revision must equal base_revision plus one")
         for submodule_id, narrative in self.submodule_narratives.items():
             if resolve_submodule(submodule_id).module_id != self.module_id:
-                raise ValueError(
-                    "module revision submodule belongs to a different module"
-                )
+                raise ValueError("module revision submodule belongs to a different module")
             if not narrative.strip():
                 raise ValueError("module revision narrative cannot be empty")
         upsert_ids = [claim.id for claim in self.claims_upsert]
@@ -383,8 +376,7 @@ class TemplateSkillSubmission(StrictModel):
             raise ValueError("template Skill must start with YAML frontmatter")
         try:
             closing = next(
-                index for index, line in enumerate(lines[1:], start=1)
-                if line.strip() == "---"
+                index for index, line in enumerate(lines[1:], start=1) if line.strip() == "---"
             )
         except StopIteration as exc:
             raise ValueError("template Skill frontmatter is not closed") from exc
@@ -393,9 +385,7 @@ class TemplateSkillSubmission(StrictModel):
         except yaml.YAMLError as exc:
             raise ValueError("template Skill frontmatter is invalid YAML") from exc
         if not isinstance(metadata, dict) or set(metadata) != {"name", "description"}:
-            raise ValueError(
-                "template Skill frontmatter must contain exactly name and description"
-            )
+            raise ValueError("template Skill frontmatter must contain exactly name and description")
         if metadata["name"] != self.name:
             raise ValueError("template Skill frontmatter name must match submission name")
         if str(metadata["description"]).strip() != self.description.strip():
@@ -554,9 +544,7 @@ class CrossReviewFinding(StrictModel):
             "Fixed submodules inside owner_module_id where the relationship must be written."
         ),
     )
-    related_module_ids: list[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
-    ] = Field(
+    related_module_ids: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(
         min_length=1,
         description=(
             "Other modules whose facts, risks, dependencies, or verification interfaces "
@@ -623,6 +611,29 @@ class CrossReviewFinding(StrictModel):
         return self
 
 
+class FinalReviewTargetChange(StrictModel):
+    target_section_id: str = Field(
+        min_length=1,
+        description="One fixed chief-owned Chapter 1, 3, or 4 section to revise.",
+    )
+    required_change: str = Field(
+        min_length=20,
+        description="Observable chief-editor change required in this exact section.",
+    )
+    reviewer_checks: list[str] = Field(
+        min_length=1,
+        description=("Semantic checks the same final reviewer will apply to this exact section."),
+    )
+
+    @model_validator(mode="after")
+    def target_is_chief_owned(self) -> "FinalReviewTargetChange":
+        if self.target_section_id not in FINAL_AUDIT_SECTION_IDS:
+            raise ValueError(
+                f"final target change contains invalid section id: {self.target_section_id}"
+            )
+        return self
+
+
 class FinalReviewFinding(StrictModel):
     id: str = Field(
         min_length=1,
@@ -635,6 +646,12 @@ class FinalReviewFinding(StrictModel):
         description=(
             "Fixed final-report sections where the chief editor must act. Use only ids "
             "declared by the final-review input contract."
+        ),
+    )
+    target_changes: list[FinalReviewTargetChange] = Field(
+        min_length=1,
+        description=(
+            "One explicit chief-editor change contract per targeted Chapter 1, 3, or 4 section."
         ),
     )
     category: str = Field(
@@ -662,24 +679,17 @@ class FinalReviewFinding(StrictModel):
             "Current edited-report or trusted upstream artifact refs that reproduce the defect."
         ),
     )
-    required_change: str = Field(
-        min_length=20,
-        description=(
-            "Observable chief-editor change required within target_section_ids."
-        ),
-    )
-    reviewer_checks: list[str] = Field(
-        min_length=1,
-        description=(
-            "Semantic checks the same final reviewer will perform before resolving this finding."
-        ),
-    )
 
     @model_validator(mode="after")
     def final_targets_use_fixed_sections(self) -> "FinalReviewFinding":
-        invalid = sorted(set(self.target_section_ids) - set(FINAL_REPORT_SECTION_IDS))
+        invalid = sorted(set(self.target_section_ids) - set(FINAL_AUDIT_SECTION_IDS))
         if invalid:
             raise ValueError(f"final finding contains invalid section ids: {invalid}")
+        change_ids = [change.target_section_id for change in self.target_changes]
+        if len(change_ids) != len(set(change_ids)):
+            raise ValueError("final finding target changes must use unique section ids")
+        if set(change_ids) != set(self.target_section_ids):
+            raise ValueError("final finding target_section_ids must exactly match target_changes")
         return self
 
 
@@ -721,9 +731,7 @@ class CrossSynthesisInput(StrictModel):
         min_length=1,
         description="Stable synthesis input id for chief-editor traceability.",
     )
-    related_module_ids: list[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
-    ] = Field(
+    related_module_ids: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(
         min_length=2,
         description="Modules connected by this already-supported synthesis input.",
     )
@@ -733,9 +741,7 @@ class CrossSynthesisInput(StrictModel):
         "action_dependency",
         "monitoring_blind_spot",
         "recovery_capability",
-    ] = Field(
-        description="System-level relationship class used for portfolio completeness."
-    )
+    ] = Field(description="System-level relationship class used for portfolio completeness.")
     root_causes: list[str] = Field(
         min_length=1,
         description="Evidence-bounded common causes or preconditions shared by the modules.",
@@ -781,9 +787,7 @@ class CrossSynthesisInput(StrictModel):
         min_length=20,
         description="Confidence, missing evidence, and limits on the supported inference.",
     )
-    target_report_section_ids: list[
-        Literal["3.1.1", "3.1.2", "3.1.3", "3.2"]
-    ] = Field(
+    target_report_section_ids: list[Literal["3.1.1", "3.1.2", "3.1.3", "3.2"]] = Field(
         min_length=1,
         description="Final synthesis sections that must account for this input.",
     )
@@ -812,14 +816,11 @@ class CrossSynthesisInput(StrictModel):
             ]
         )
         mentioned = {
-            match.group(1)
-            for match in re.finditer(r"(?<!\d)(2\.[1-5])(?:\.\d+)*(?!\d)", combined)
+            match.group(1) for match in re.finditer(r"(?<!\d)(2\.[1-5])(?:\.\d+)*(?!\d)", combined)
         }
         undeclared = sorted(mentioned - set(self.related_module_ids))
         if undeclared:
-            raise ValueError(
-                f"synthesis text references undeclared related modules: {undeclared}"
-            )
+            raise ValueError(f"synthesis text references undeclared related modules: {undeclared}")
         statement_modules = {
             match.group(1)
             for ref in self.module_statement_refs
@@ -828,20 +829,15 @@ class CrossSynthesisInput(StrictModel):
         missing_statements = sorted(set(self.related_module_ids) - statement_modules)
         if missing_statements:
             raise ValueError(
-                "module_statement_refs must cover every related module: "
-                f"{missing_statements}"
+                f"module_statement_refs must cover every related module: {missing_statements}"
             )
         if not any(ref.startswith("E-") for ref in self.evidence_refs):
-            raise ValueError(
-                "Cross synthesis input requires at least one E-* evidence ref"
-            )
+            raise ValueError("Cross synthesis input requires at least one E-* evidence ref")
         return self
 
 
 class ModuleReviewFindingSubmission(StrictModel):
-    kind: Literal["module_review_finding_submission"] = (
-        "module_review_finding_submission"
-    )
+    kind: Literal["module_review_finding_submission"] = "module_review_finding_submission"
     coverage: ModuleReviewCoverage = Field(
         description="Actual module-local review coverage for this pass."
     )
@@ -861,9 +857,7 @@ class ModuleReviewFindingSubmission(StrictModel):
 
 
 class ModuleReviewVerdictSubmission(StrictModel):
-    kind: Literal["module_review_verdict_submission"] = (
-        "module_review_verdict_submission"
-    )
+    kind: Literal["module_review_verdict_submission"] = "module_review_verdict_submission"
     coverage: ModuleReviewCoverage = Field(
         description="Changed-target and regression coverage for this recheck."
     )
@@ -892,14 +886,10 @@ class ModuleReviewVerdictSubmission(StrictModel):
 
 
 class CrossReviewFindingSubmission(StrictModel):
-    kind: Literal["cross_review_finding_submission"] = (
-        "cross_review_finding_submission"
-    )
+    kind: Literal["cross_review_finding_submission"] = "cross_review_finding_submission"
     coverage: list[CrossReviewCoverageEntry] = Field(
         min_length=5,
-        description=(
-            "Exactly one coverage entry for each of modules 2.1 through 2.5."
-        ),
+        description=("Exactly one coverage entry for each of modules 2.1 through 2.5."),
     )
     findings: list[CrossReviewFinding] = Field(
         default_factory=list,
@@ -931,9 +921,7 @@ class CrossReviewFindingSubmission(StrictModel):
 
 
 class CrossReviewVerdictSubmission(StrictModel):
-    kind: Literal["cross_review_verdict_submission"] = (
-        "cross_review_verdict_submission"
-    )
+    kind: Literal["cross_review_verdict_submission"] = "cross_review_verdict_submission"
     coverage: list[CrossReviewCoverageEntry] = Field(
         min_length=5,
         description="Current delta and interface-regression coverage for all five modules.",
@@ -943,9 +931,7 @@ class CrossReviewVerdictSubmission(StrictModel):
     )
     new_findings: list[CrossReviewFinding] = Field(
         default_factory=list,
-        description=(
-            "Only genuinely new cross-module regressions introduced by the revisions."
-        ),
+        description=("Only genuinely new cross-module regressions introduced by the revisions."),
     )
     synthesis_inputs: list[CrossSynthesisInput] = Field(
         default_factory=list,
@@ -969,9 +955,7 @@ class CrossReviewVerdictSubmission(StrictModel):
 
 
 class FinalReviewFindingSubmission(StrictModel):
-    kind: Literal["final_review_finding_submission"] = (
-        "final_review_finding_submission"
-    )
+    kind: Literal["final_review_finding_submission"] = "final_review_finding_submission"
     checked_section_ids: list[str] = Field(
         min_length=1,
         description="Every fixed final-report section actually checked in this pass.",
@@ -998,9 +982,7 @@ class FinalReviewFindingSubmission(StrictModel):
 
 
 class FinalReviewVerdictSubmission(StrictModel):
-    kind: Literal["final_review_verdict_submission"] = (
-        "final_review_verdict_submission"
-    )
+    kind: Literal["final_review_verdict_submission"] = "final_review_verdict_submission"
     checked_section_ids: list[str] = Field(
         min_length=1,
         description="Changed sections plus whole-report regression scope checked in this recheck.",
@@ -1043,9 +1025,7 @@ def _validate_non_actionable_residual_risks(values: list[str]) -> None:
         "未选择图片",
         "图片缺失",
     )
-    actionable = [
-        value for value in values if any(term in value for term in report_defect_terms)
-    ]
+    actionable = [value for value in values if any(term in value for term in report_defect_terms)]
     if actionable:
         raise ValueError(
             "actionable report omissions must be final-review findings, not residual_risks: "
@@ -1054,6 +1034,7 @@ def _validate_non_actionable_residual_risks(values: list[str]) -> None:
 
 
 FINAL_REPORT_SECTION_IDS = REPORT_FINAL_SECTION_IDS
+FINAL_AUDIT_SECTION_IDS = REPORT_FINAL_AUDIT_SECTION_IDS
 
 CROSS_REVIEW_DIMENSIONS = (
     "terminology",
@@ -1090,9 +1071,7 @@ class CrossSynthesisDisposition(StrictModel):
     status: Literal["integrated", "merged"] = Field(
         description="A supported Cross input must be integrated or explicitly merged."
     )
-    target_section_ids: list[
-        Literal["3.1.1", "3.1.2", "3.1.3", "3.2"]
-    ] = Field(
+    target_section_ids: list[Literal["3.1.1", "3.1.2", "3.1.3", "3.2"]] = Field(
         min_length=1,
         description="Final sections containing the resulting synthesis.",
     )
@@ -1167,15 +1146,9 @@ class SynthesisTableSubmission(StrictModel):
             raise ValueError("row_synthesis_input_ids must align one-to-one with rows")
         if any(not ids for ids in self.row_synthesis_input_ids):
             raise ValueError("every synthesis table row requires at least one Cross input")
-        row_ids = {
-            synthesis_id
-            for ids in self.row_synthesis_input_ids
-            for synthesis_id in ids
-        }
+        row_ids = {synthesis_id for ids in self.row_synthesis_input_ids for synthesis_id in ids}
         if row_ids != set(self.synthesis_input_ids):
-            raise ValueError(
-                "synthesis_input_ids must equal the union of row_synthesis_input_ids"
-            )
+            raise ValueError("synthesis_input_ids must equal the union of row_synthesis_input_ids")
         if any(len(ids) != len(set(ids)) for ids in self.row_synthesis_input_ids):
             raise ValueError("row_synthesis_input_ids must be unique within each row")
         for label, values in (
@@ -1204,9 +1177,8 @@ class TableSubmissionInput(StrictModel):
         invalid = [index for index, row in enumerate(self.rows) if len(row) != len(self.headers)]
         if invalid:
             raise ValueError(f"table rows do not match header width: {invalid}")
-        if (
-            len(self.evidence_ids) != len(set(self.evidence_ids))
-            or any(not item.startswith("E-") for item in self.evidence_ids)
+        if len(self.evidence_ids) != len(set(self.evidence_ids)) or any(
+            not item.startswith("E-") for item in self.evidence_ids
         ):
             raise ValueError("table evidence_ids must be unique E-* ids")
         return self
@@ -1241,15 +1213,9 @@ class SynthesisTableSubmissionInput(StrictModel):
             raise ValueError("row_synthesis_input_ids must align one-to-one with rows")
         if any(not ids for ids in self.row_synthesis_input_ids):
             raise ValueError("every synthesis table row requires at least one Cross input")
-        row_ids = {
-            synthesis_id
-            for ids in self.row_synthesis_input_ids
-            for synthesis_id in ids
-        }
+        row_ids = {synthesis_id for ids in self.row_synthesis_input_ids for synthesis_id in ids}
         if row_ids != set(self.synthesis_input_ids):
-            raise ValueError(
-                "synthesis_input_ids must equal the union of row_synthesis_input_ids"
-            )
+            raise ValueError("synthesis_input_ids must equal the union of row_synthesis_input_ids")
         if len(self.synthesis_input_ids) != len(set(self.synthesis_input_ids)):
             raise ValueError("synthesis_input_ids must be unique")
         if any(len(ids) != len(set(ids)) for ids in self.row_synthesis_input_ids):
@@ -1275,9 +1241,7 @@ class EditedReportSubmission(StrictModel):
     emergency_compliance_management: str = Field(min_length=1)
     protected_claim_ids: list[str] = Field(default_factory=list)
     tables: list[TableSubmission] = Field(default_factory=list)
-    synthesis_dispositions: list[CrossSynthesisDisposition] = Field(
-        default_factory=list
-    )
+    synthesis_dispositions: list[CrossSynthesisDisposition] = Field(default_factory=list)
     synthesis_tables: list[SynthesisTableSubmission] = Field(default_factory=list)
     photo_ids: list[str] = Field(default_factory=list)
     unresolved_editorial_issues: list[str] = Field(default_factory=list)
@@ -1307,14 +1271,10 @@ class EditedReportSubmission(StrictModel):
                 raise ValueError(
                     f"{field} must contain section body only, without numbered headings"
                 )
-        disposition_ids = [
-            item.synthesis_input_id for item in self.synthesis_dispositions
-        ]
+        disposition_ids = [item.synthesis_input_id for item in self.synthesis_dispositions]
         if len(disposition_ids) != len(set(disposition_ids)):
             raise ValueError("synthesis dispositions must be unique by input id")
-        dispositions_by_id = {
-            item.synthesis_input_id: item for item in self.synthesis_dispositions
-        }
+        dispositions_by_id = {item.synthesis_input_id: item for item in self.synthesis_dispositions}
         for item in self.synthesis_dispositions:
             if item.status != "merged":
                 continue
@@ -1367,6 +1327,35 @@ class ModuleRevisionSubmissionInput(StrictModel):
     revision_responses: list[RevisionResponse] = Field(min_length=1)
 
 
+class ChiefRevisionSubmission(StrictModel):
+    """Explicit final-report patch assembled from current-task result parts."""
+
+    kind: Literal["chief_revision_submission"] = "chief_revision_submission"
+    base_subject_ref: str = Field(min_length=1)
+    revision: int = Field(ge=1)
+    section_bodies: dict[str, str] = Field(min_length=1)
+    section_part_refs: dict[str, str] = Field(min_length=1)
+    revision_responses: list[RevisionResponse] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def section_maps_match(self) -> "ChiefRevisionSubmission":
+        if set(self.section_bodies) != set(self.section_part_refs):
+            raise ValueError("chief revision section bodies and result-part refs must match")
+        invalid = sorted(set(self.section_bodies) - set(FINAL_AUDIT_SECTION_IDS))
+        if invalid:
+            raise ValueError(f"chief revision contains non-chief section ids: {invalid}")
+        return self
+
+
+class ChiefRevisionSubmissionInput(StrictModel):
+    """Small chief revision commit; changed prose lives in result parts."""
+
+    kind: Literal["chief_revision_submission"] = "chief_revision_submission"
+    base_subject_ref: str = Field(min_length=1)
+    revision: int = Field(ge=1)
+    revision_responses: list[RevisionResponse] = Field(min_length=1)
+
+
 class TemplateSkillSubmissionInput(StrictModel):
     """Function-call input permitting durable references for five long Skill files."""
 
@@ -1388,9 +1377,7 @@ class EditedReportSubmissionInput(StrictModel):
     assessment_background: str | TextArtifactRef
     findings_overview: str | TextArtifactRef
     regional_executive_summary: str | TextArtifactRef
-    module_narratives: dict[
-        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str | TextArtifactRef
-    ]
+    module_narratives: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str | TextArtifactRef]
     cross_module_analysis: str | TextArtifactRef
     risk_panorama: str | TextArtifactRef
     dimension_risk_analysis: str | TextArtifactRef
@@ -1401,12 +1388,8 @@ class EditedReportSubmissionInput(StrictModel):
     daily_power_management: str | TextArtifactRef
     emergency_compliance_management: str | TextArtifactRef
     tables: list[TableSubmissionInput] = Field(default_factory=list)
-    synthesis_dispositions: list[CrossSynthesisDisposition] = Field(
-        default_factory=list
-    )
-    synthesis_tables: list[SynthesisTableSubmissionInput] = Field(
-        default_factory=list
-    )
+    synthesis_dispositions: list[CrossSynthesisDisposition] = Field(default_factory=list)
+    synthesis_tables: list[SynthesisTableSubmissionInput] = Field(default_factory=list)
     photo_ids: list[str] = Field(default_factory=list)
     unresolved_editorial_issues: list[str] = Field(default_factory=list)
     revision_responses: list[RevisionResponse] = Field(default_factory=list)
@@ -1434,6 +1417,7 @@ Submission = Annotated[
     | FinalReviewFindingSubmission
     | FinalReviewVerdictSubmission
     | WorkflowDecisionSubmission
+    | ChiefRevisionSubmission
     | EditedReportSubmission
     | SkillEvolutionSubmission,
     Field(discriminator="kind"),
@@ -1443,6 +1427,7 @@ Submission = Annotated[
 SubmissionInput = Annotated[
     ModuleSubmissionInput
     | ModuleRevisionSubmissionInput
+    | ChiefRevisionSubmissionInput
     | TemplateSkillSubmissionInput
     | ModuleReviewFindingSubmission
     | ModuleReviewVerdictSubmission
@@ -1460,6 +1445,7 @@ SubmissionInput = Annotated[
 SUBMISSION_INPUT_TYPES: dict[str, type[BaseModel]] = {
     "module_submission": ModuleSubmissionInput,
     "module_revision_submission": ModuleRevisionSubmissionInput,
+    "chief_revision_submission": ChiefRevisionSubmissionInput,
     "template_skill_submission": TemplateSkillSubmissionInput,
     "module_review_finding_submission": ModuleReviewFindingSubmission,
     "module_review_verdict_submission": ModuleReviewVerdictSubmission,
