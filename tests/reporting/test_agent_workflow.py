@@ -65,6 +65,45 @@ def _module(module_id: str, revision: int = 0) -> ModuleSubmission:
     )
 
 
+def _cross_synthesis_inputs() -> list[dict]:
+    shared = {
+        "related_module_ids": ["2.1", "2.3"],
+        "root_causes": ["2.1 供电架构约束与 2.3 保护信息不完整共同削弱屏障"],
+        "propagation_steps": [
+            "2.1 架构约束提高单点故障影响范围",
+            "2.3 保护不确定性延长故障识别与隔离时间",
+        ],
+        "causal_chain": (
+            "2.1 的供电架构约束与 2.3 的保护信息不完整叠加，"
+            "导致故障影响范围扩大并延长隔离恢复时间。"
+        ),
+        "decision_implication": "整改必须先确认保护边界，再安排架构切换和联合停送电验证。",
+        "action_dependencies": ["先完成 2.3 保护核查，再实施 2.1 架构切换"],
+        "joint_actions": ["由供配电与保护责任人联合完成方案、操作和验收"],
+        "verification_method": "通过联合模拟、保护动作记录和恢复时间指标完成闭环验证。",
+        "acceptance_criteria": ["保护动作顺序正确且恢复时间满足批准目标"],
+        "module_statement_refs": ["2.1.1", "2.3.1"],
+        "confidence_and_boundary": "当前关系由已批准模块判断支持，具体动作时限仍以现场复核为准。",
+        "target_report_section_ids": ["3.1.1", "3.1.3", "3.2"],
+        "evidence_refs": [
+            "Work/runs/run-x/modules/2.1-r0.json",
+            "Work/runs/run-x/modules/2.3-r0.json",
+        ],
+    }
+    return [
+        {
+            "id": "SI-RISK",
+            "cluster_type": "risk_cluster",
+            **shared,
+        },
+        {
+            "id": "SI-GLOBAL",
+            "cluster_type": "global_propagation",
+            **shared,
+        },
+    ]
+
+
 def _edited(module_text: dict[str, str], *, responses: list | None = None) -> EditedReportSubmission:
     synthesis = (
         "综合当前证据，明确责任、优先顺序、依赖关系、风险影响、验证指标、验收方式和剩余边界。"
@@ -595,6 +634,25 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
     tmp_path: Path,
 ) -> None:
     modules = {module_id: _module(module_id) for module_id in REPORT_TAXONOMY}
+    for module_id in ("2.1", "2.3"):
+        modules[module_id] = ModuleSubmission.model_validate(
+            {
+                **modules[module_id].model_dump(mode="python"),
+                "claims": [
+                    {
+                        "id": f"C-{module_id}-CROSS",
+                        "module_id": module_id,
+                        "submodule_id": next(
+                            iter(REPORT_TAXONOMY[module_id].submodules)
+                        ),
+                        "text": "该模块已批准一个用于跨模块关系验证的边界判断。",
+                        "claim_type": "risk_judgment",
+                        "source_ids": [],
+                        "footnote_required": False,
+                    }
+                ],
+            }
+        )
     target = next(iter(REPORT_TAXONOMY["2.3"].submodules))
     coverage = [
         {
@@ -648,7 +706,7 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
                 CrossReviewFindingSubmission(
                     coverage=coverage,
                     findings=[cross_finding],
-                    synthesis_inputs=[],
+                    synthesis_inputs=_cross_synthesis_inputs(),
                 ),
             ),
             ("module-2.3-specialist", "module_revision_submission", patch),
@@ -676,7 +734,7 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
                         }
                     ],
                     new_findings=[],
-                    synthesis_inputs=[],
+                    synthesis_inputs=_cross_synthesis_inputs(),
                 ),
             ),
         ],
@@ -699,6 +757,20 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
         call[2] for call in runner.calls if call[0] == "cross-module-reviewer"
     ]
     assert cross_sessions == ["cross-module-reviewer", "cross-module-reviewer"]
+    recheck_input = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-x/reviews/cross-review-input-r1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert recheck_input["changed_module_ids"] == ["2.3"]
+    assert set(recheck_input["modules"]) == {"2.3"}
+    assert set(recheck_input["unchanged_module_sha256"]) == {
+        "2.1",
+        "2.2",
+        "2.4",
+        "2.5",
+    }
     assert state["cross_review_completion_ref"].endswith(
         "reviews/cross-completion.json"
     )

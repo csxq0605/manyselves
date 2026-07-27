@@ -17,6 +17,7 @@ from .agentic_models import (
     CrossReviewFinding,
     CrossReviewFindingSubmission,
     CrossReviewVerdictSubmission,
+    CrossSynthesisInput,
     EditedReportSubmission,
     FinalReviewFindingSubmission,
     FinalReviewVerdictSubmission,
@@ -1102,6 +1103,23 @@ def _validate_cross_findings(
     _unique_ids((finding.id for finding in findings), label="cross findings")
 
 
+def _validate_cross_synthesis_portfolio(
+    synthesis_inputs: list[CrossSynthesisInput],
+    modules: dict[str, ModuleSubmission],
+) -> None:
+    """Require system synthesis rather than treating six-dimension coverage as evidence."""
+
+    if len(synthesis_inputs) < 2:
+        raise ReviewLifecycleError(
+            "Cross completion requires at least two supported system relationships"
+        )
+    kinds = {item.cluster_type for item in synthesis_inputs}
+    required_kinds = {"risk_cluster", "global_propagation"}
+    if not required_kinds.issubset(kinds):
+        raise ReviewLifecycleError(
+            "Cross synthesis portfolio requires a risk cluster and a global propagation "
+            f"chain; missing={sorted(required_kinds - kinds)}"
+        )
 async def run_cross_review(
     runner: "ReportWorkflowRunner",
     state: dict,
@@ -1318,7 +1336,6 @@ async def run_cross_review(
         await complete_revision_wave()
         phase = "recheck"
         review_round += 1
-        revised_owner_ids = set()
         save_progress("review")
 
     while True:
@@ -1329,6 +1346,25 @@ async def run_cross_review(
             )
             for module_id in REPORT_TAXONOMY
         }
+        changed_module_ids = (
+            set(REPORT_TAXONOMY)
+            if phase == "initial"
+            else set(revised_owner_ids)
+        )
+        if phase == "recheck" and not changed_module_ids:
+            raise ReviewLifecycleError(
+                "Cross recheck requires the current revision wave module ids"
+            )
+        unchanged_module_sha256 = (
+            {}
+            if phase == "initial"
+            else {
+                module_id: hashlib.sha256(
+                    (runner.service.workspace / module_refs[module_id]).read_bytes()
+                ).hexdigest()
+                for module_id in set(REPORT_TAXONOMY) - changed_module_ids
+            }
+        )
         cross_input = CrossReviewInput(
             phase=phase,
             run_id=state["run_id"],
@@ -1337,9 +1373,11 @@ async def run_cross_review(
                 module_id: modules[module_id].revision for module_id in REPORT_TAXONOMY
             },
             modules={
-                module_id: module_content_view(module)
-                for module_id, module in modules.items()
+                module_id: module_content_view(modules[module_id])
+                for module_id in changed_module_ids
             },
+            changed_module_ids=sorted(changed_module_ids),
+            unchanged_module_sha256=unchanged_module_sha256,
             required_findings=list(pending.values()) if phase == "recheck" else [],
             revision_responses_by_module=responses_by_module if phase == "recheck" else {},
             local_regression_review_refs=local_review_refs if phase == "recheck" else {},
@@ -1375,11 +1413,18 @@ async def run_cross_review(
                 if phase == "initial"
                 else "由原 Cross reviewer 逐项判断 required_findings 是否关闭并检查接口回归。"
             ),
-            input_refs=[input_ref, *module_refs.values()],
+            input_refs=[
+                input_ref,
+                *(module_refs[module_id] for module_id in sorted(changed_module_ids)),
+            ],
             constraints=[
                 "coverage 只记录审查范围，不含 integrated 或 approved 状态",
                 "findings 只包含必须写回责任模块的问题",
                 "synthesis_inputs 只包含无需模块返工、可供总编综合的已支持关系",
+                (
+                    "recheck 只重新读取 changed_module_ids；未修改模块使用同一会话"
+                    "已保留上下文和 SHA-256，不得重新打开全文"
+                ),
                 "不得审查单模块局部写作质量",
                 (
                     "首轮 coverage 必须对五个模块逐项覆盖全部六个维度"
@@ -1507,6 +1552,7 @@ async def run_cross_review(
             prior_synthesis = result.synthesis_inputs
 
         if not pending:
+            _validate_cross_synthesis_portfolio(prior_synthesis, modules)
             completion_refs = [
                 *module_refs.values(),
                 *finding_refs,
@@ -1538,7 +1584,6 @@ async def run_cross_review(
         await complete_revision_wave()
         phase = "recheck"
         review_round += 1
-        revised_owner_ids = set()
         save_progress("review")
 
 

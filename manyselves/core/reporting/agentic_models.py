@@ -727,10 +727,27 @@ class CrossSynthesisInput(StrictModel):
         min_length=2,
         description="Modules connected by this already-supported synthesis input.",
     )
+    cluster_type: Literal[
+        "risk_cluster",
+        "global_propagation",
+        "action_dependency",
+        "monitoring_blind_spot",
+        "recovery_capability",
+    ] = Field(
+        description="System-level relationship class used for portfolio completeness."
+    )
+    root_causes: list[str] = Field(
+        min_length=1,
+        description="Evidence-bounded common causes or preconditions shared by the modules.",
+    )
+    propagation_steps: list[str] = Field(
+        min_length=2,
+        description="Ordered mechanism or dependency steps, not a list of module conclusions.",
+    )
     causal_chain: str = Field(
         min_length=30,
         description=(
-            "Evidence-bounded causal or dependency chain that the chief editor may synthesize."
+            "Evidence-bounded causal or dependency chain that the chief editor must account for."
         ),
     )
     decision_implication: str = Field(
@@ -738,17 +755,80 @@ class CrossSynthesisInput(StrictModel):
         description="Why the relationship changes management priority, sequencing, or residual risk.",
     )
     action_dependencies: list[str] = Field(
-        default_factory=list,
+        min_length=1,
         description="Ordered or conditional implementation dependencies across modules.",
+    )
+    joint_actions: list[str] = Field(
+        min_length=1,
+        description="Cross-owner actions that must be implemented as one coordinated package.",
     )
     verification_method: str = Field(
         min_length=20,
         description="Joint acceptance or monitoring method for the relationship.",
     )
+    acceptance_criteria: list[str] = Field(
+        min_length=1,
+        description="Observable joint acceptance criteria for the complete relationship.",
+    )
+    module_statement_refs: list[str] = Field(
+        min_length=2,
+        description=(
+            "Existing module/submodule refs proving that every local link is already "
+            "written back; otherwise the reviewer must create a Cross finding."
+        ),
+    )
+    confidence_and_boundary: str = Field(
+        min_length=20,
+        description="Confidence, missing evidence, and limits on the supported inference.",
+    )
+    target_report_section_ids: list[
+        Literal["3.1.1", "3.1.2", "3.1.3", "3.2"]
+    ] = Field(
+        min_length=1,
+        description="Final synthesis sections that must account for this input.",
+    )
     evidence_refs: list[str] = Field(
         min_length=1,
         description="Reviewed Claim, module, or source refs supporting the synthesis input.",
     )
+
+    @model_validator(mode="after")
+    def traceable_modules_and_claims(self) -> "CrossSynthesisInput":
+        if len(self.related_module_ids) != len(set(self.related_module_ids)):
+            raise ValueError("related_module_ids must be unique")
+        combined = "\n".join(
+            [
+                self.causal_chain,
+                self.decision_implication,
+                *self.root_causes,
+                *self.propagation_steps,
+                *self.action_dependencies,
+                *self.joint_actions,
+                *self.acceptance_criteria,
+                *self.module_statement_refs,
+            ]
+        )
+        mentioned = {
+            match.group(1)
+            for match in re.finditer(r"(?<!\d)(2\.[1-5])(?:\.\d+)*(?!\d)", combined)
+        }
+        undeclared = sorted(mentioned - set(self.related_module_ids))
+        if undeclared:
+            raise ValueError(
+                f"synthesis text references undeclared related modules: {undeclared}"
+            )
+        statement_modules = {
+            match.group(1)
+            for ref in self.module_statement_refs
+            for match in re.finditer(r"(?<!\d)(2\.[1-5])(?:\.\d+)*(?!\d)", ref)
+        }
+        missing_statements = sorted(set(self.related_module_ids) - statement_modules)
+        if missing_statements:
+            raise ValueError(
+                "module_statement_refs must cover every related module: "
+                f"{missing_statements}"
+            )
+        return self
 
 
 class ModuleReviewFindingSubmission(StrictModel):

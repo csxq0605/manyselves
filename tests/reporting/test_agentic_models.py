@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from manyselves.core.reporting.agentic_models import (
     CrossReviewFindingSubmission,
+    CrossSynthesisInput,
     ModuleRevisionSubmission,
     ModuleSubmission,
     ResolutionVerdict,
@@ -137,6 +138,33 @@ def test_cross_coverage_contains_each_module_exactly_once() -> None:
             * 5,
             findings=[],
             synthesis_inputs=[],
+        )
+
+
+def test_cross_synthesis_rejects_module_refs_missing_from_declared_scope() -> None:
+    with pytest.raises(ValidationError, match="undeclared related modules"):
+        CrossSynthesisInput(
+            id="SI-003",
+            related_module_ids=["2.2", "2.3", "2.5"],
+            cluster_type="monitoring_blind_spot",
+            root_causes=["2.2、2.3 与 2.5 的监测接口尚未形成闭环"],
+            propagation_steps=[
+                "2.2 异常信号未形成稳定输入",
+                "2.4.3.1 的处置接口因此无法及时触发",
+            ],
+            causal_chain=(
+                "2.2 的异常信号和 2.3 的保护状态未能传递到 "
+                "2.4.3.1 的现场处置及 2.5 的管理闭环。"
+            ),
+            decision_implication="必须先补齐监测接口，再调整巡检和应急响应顺序。",
+            action_dependencies=["先完成信号核对，再更新现场处置和管理流程"],
+            joint_actions=["联合完成信号、处置与管理闭环验证"],
+            verification_method="通过事件注入、告警记录和处置时间联合验证。",
+            acceptance_criteria=["告警、处置和关闭记录可以完整追溯"],
+            module_statement_refs=["2.2.1", "2.3.1", "2.5.1"],
+            confidence_and_boundary="当前仅确认接口关系，具体阈值仍需现场数据复核。",
+            target_report_section_ids=["3.1.3", "3.2"],
+            evidence_refs=["Work/runs/example/modules/2.2-r0.json"],
         )
 
 

@@ -300,7 +300,26 @@ class CrossReviewInput(StrictModel):
     ] = Field(description="Workflow-owned revision numbers corresponding to module_refs.")
     modules: dict[
         Literal["2.1", "2.2", "2.3", "2.4", "2.5"], ModuleContentView
-    ] = Field(description="Complete five-module subjects for interface review.")
+    ] = Field(
+        description=(
+            "Initial: complete five-module subjects. Recheck: only modules changed by "
+            "the current Cross revision wave."
+        )
+    )
+    changed_module_ids: list[
+        Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
+    ] = Field(
+        description="Initial: all five modules. Recheck: only current-wave revised owners."
+    )
+    unchanged_module_sha256: dict[
+        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
+    ] = Field(
+        default_factory=dict,
+        description=(
+            "Recheck fingerprints for unchanged subjects retained in the same reviewer "
+            "session without resending their full prose."
+        ),
+    )
     required_findings: list[CrossReviewFinding] = Field(
         default_factory=list,
         description="Immutable prior Cross findings requiring one verdict each on recheck.",
@@ -338,24 +357,45 @@ class CrossReviewInput(StrictModel):
         if (
             set(self.module_refs) != expected
             or set(self.module_revisions) != expected
-            or set(self.modules) != expected
         ):
-            raise ValueError("cross review input requires exactly modules 2.1 through 2.5")
+            raise ValueError("cross review metadata requires exactly modules 2.1 through 2.5")
         for module_id, subject in self.modules.items():
             if (
                 subject.module_id != module_id
                 or subject.revision != self.module_revisions[module_id]
             ):
                 raise ValueError("cross review module binding is inconsistent")
+        changed = set(self.changed_module_ids)
+        if len(changed) != len(self.changed_module_ids):
+            raise ValueError("changed_module_ids must be unique")
         if self.phase == "initial" and (
             self.required_findings
             or self.revision_responses_by_module
             or self.local_regression_review_refs
             or self.machine_validation_refs
             or self.machine_validation_reports
+            or self.unchanged_module_sha256
         ):
             raise ValueError("initial cross review cannot contain recheck state")
+        if self.phase == "initial" and (
+            set(self.modules) != expected or changed != expected
+        ):
+            raise ValueError("initial cross review requires all five complete modules")
         if self.phase == "recheck":
+            if not changed or set(self.modules) != changed:
+                raise ValueError(
+                    "cross recheck full subjects must equal changed_module_ids"
+                )
+            unchanged = expected - changed
+            if set(self.unchanged_module_sha256) != unchanged:
+                raise ValueError(
+                    "cross recheck must fingerprint every unchanged module exactly once"
+                )
+            if any(
+                not re.fullmatch(r"[0-9a-f]{64}", value)
+                for value in self.unchanged_module_sha256.values()
+            ):
+                raise ValueError("unchanged module fingerprints must be SHA-256 hex")
             required = {finding.id for finding in self.required_findings}
             responses = {
                 response.finding_id
@@ -959,6 +999,8 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "module_refs": _EXAMPLE_MODULE_REFS,
         "module_revisions": {module_id: 0 for module_id in REPORT_TAXONOMY},
         "modules": _EXAMPLE_MODULES,
+        "changed_module_ids": list(REPORT_TAXONOMY),
+        "unchanged_module_sha256": {},
         "required_findings": [],
         "revision_responses_by_module": {},
         "local_regression_review_refs": {},
