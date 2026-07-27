@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+import re
 from html import escape
 
 from ...interfaces.types import (
@@ -11,10 +11,29 @@ from ...interfaces.types import (
     PeerReplyMessage,
     ProgressNoteMessage,
     ResearchNotePublishedMessage,
-    RevisionRequestMessage,
     UserMessage,
 )
 from ..loops.bus import MessageBus
+
+_SOURCE_RECORD_ID = re.compile(r"^[ERW]-[A-Za-z0-9][A-Za-z0-9._:-]*$")
+
+
+def is_source_record_id(ref: str) -> bool:
+    """Return whether a reference names ledger evidence rather than an artifact."""
+
+    return bool(_SOURCE_RECORD_ID.fullmatch(str(ref).strip()))
+
+
+def artifact_path_refs(refs: list[str]) -> list[str]:
+    """Keep path-like references and reject bare E/R/W ledger identifiers."""
+
+    return [ref for ref in refs if ref and not is_source_record_id(ref)]
+
+
+def source_record_ids(refs: list[str]) -> list[str]:
+    """Extract bare E/R/W ledger identifiers from a mixed reference list."""
+
+    return [ref for ref in refs if ref and is_source_record_id(ref)]
 
 
 class WorkflowMessageRouter:
@@ -23,13 +42,11 @@ class WorkflowMessageRouter:
         self.workflow_id = workflow_id
         self._sessions: dict[tuple[str, str], str] = {}
         self.research_notes: list[str] = []
-        self.revision_requests: dict[str, list[str]] = defaultdict(list)
         self.gaps: list[str] = []
         self.blocked_notices: list[str] = []
         self._subscriptions = (
             (PeerQueryMessage, self._route_query),
             (ResearchNotePublishedMessage, self._consume_research),
-            (RevisionRequestMessage, self._consume_revision),
             (ProgressNoteMessage, self._consume_progress),
             (BlockedNoticeMessage, self._consume_blocked),
         )
@@ -88,22 +105,27 @@ class WorkflowMessageRouter:
 
     def _consume_research(self, message: ResearchNotePublishedMessage) -> None:
         if message.workflow_id == self.workflow_id:
-            self.research_notes.extend(ref for ref in message.artifact_refs if ref not in self.research_notes)
-
-    def _consume_revision(self, message: RevisionRequestMessage) -> None:
-        if message.workflow_id == self.workflow_id:
-            bucket = self.revision_requests[str(message.recipient)]
-            for ref in [*message.issue_refs, *message.artifact_refs]:
-                if ref not in bucket:
-                    bucket.append(ref)
+            self.research_notes.extend(
+                ref
+                for ref in artifact_path_refs(message.artifact_refs)
+                if ref not in self.research_notes
+            )
 
     def _consume_progress(self, message: ProgressNoteMessage) -> None:
         if message.workflow_id == self.workflow_id and message.note_kind == "gap":
-            self.gaps.extend(ref for ref in message.artifact_refs if ref not in self.gaps)
+            self.gaps.extend(
+                ref
+                for ref in artifact_path_refs(message.artifact_refs)
+                if ref not in self.gaps
+            )
 
     def _consume_blocked(self, message: BlockedNoticeMessage) -> None:
         if message.workflow_id == self.workflow_id:
-            self.blocked_notices.extend(ref for ref in message.artifact_refs if ref not in self.blocked_notices)
+            self.blocked_notices.extend(
+                ref
+                for ref in artifact_path_refs(message.artifact_refs)
+                if ref not in self.blocked_notices
+            )
 
     def close(self) -> None:
         for message_type, callback in self._subscriptions:

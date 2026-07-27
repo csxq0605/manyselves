@@ -1,0 +1,10 @@
+{
+  "id": "feedback-9418853fd732",
+  "skill_id": "report-template-writing",
+  "module_id": "2.1",
+  "feedback": "基于配电安全专家知识库，创建报告模板写作技能。重点：分析语言应专业、严谨，使用风险等级描述；叙述节奏应从问题发现到风险分析再到建议；结论组织应基于OK/一般/NG分级；建议梳理应具体、可操作；章节联动应体现五大部分的关联性；图表组织应清晰展示数据和风险。",
+  "explicit_promotion_requested": true,
+  "report_version_id": "initial",
+  "artifact_refs": [],
+  "created_at": "2026-07-21T02:12:38.965686Z"
+}

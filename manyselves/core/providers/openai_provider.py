@@ -4,6 +4,7 @@ Handles all providers using the OpenAI Chat Completions API format:
 OpenAI, DeepSeek, Google, OpenRouter, Groq, and custom endpoints.
 """
 
+import asyncio
 import json
 from typing import Any
 
@@ -12,6 +13,9 @@ from openai import AsyncOpenAI
 
 from .base import LLMProvider, LLMResponse, LLMStreamChunk, LLMToolCall, Message
 from .defaults import DEFAULT_API_BASES
+
+
+OPENAI_STREAM_IDLE_TIMEOUT_SECONDS = 300.0
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -169,6 +173,7 @@ class OpenAICompatProvider(LLMProvider):
                 "output_tokens": response.usage.completion_tokens if response.usage else 0,
                 "total_tokens": response.usage.total_tokens if response.usage else 0,
             },
+            stop_reason=getattr(response.choices[0], "finish_reason", None),
         )
 
     def _convert_tools(self, tools: list[dict]) -> list[dict]:
@@ -195,6 +200,7 @@ class OpenAICompatProvider(LLMProvider):
         tools: list[dict] | None = None,
         temperature: float = 0.1,
         max_tokens: int = 8192,
+        stream_idle_timeout_seconds: float | None = None,
     ):
         """Send streaming chat completion request.
 
@@ -214,9 +220,17 @@ class OpenAICompatProvider(LLMProvider):
             params["tools"] = self._convert_tools(tools)
             params["tool_choice"] = "auto"
 
+        idle_timeout = (
+            OPENAI_STREAM_IDLE_TIMEOUT_SECONDS
+            if stream_idle_timeout_seconds is None
+            else stream_idle_timeout_seconds
+        )
         logger.debug(
-            "Sending {} streaming request: model={}, messages={}",
-            self.provider_type, self.model, len(messages),
+            "Sending {} streaming request: model={}, messages={}, idle_timeout={}s",
+            self.provider_type,
+            self.model,
+            len(messages),
+            idle_timeout,
         )
 
         # For tool calls, accumulate the arguments string fragments across chunks
@@ -226,7 +240,25 @@ class OpenAICompatProvider(LLMProvider):
         try:
             response = await self.client.chat.completions.create(**params)
 
-            async for chunk in response:
+            stream = response.__aiter__()
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(
+                        stream.__anext__(),
+                        timeout=idle_timeout,
+                    )
+                except StopAsyncIteration:
+                    break
+                except TimeoutError as exc:
+                    logger.warning(
+                        "{} stream produced no application chunk for >{}s",
+                        self.provider_type,
+                        idle_timeout,
+                    )
+                    raise TimeoutError(
+                        "provider stream idle timeout: no application chunk for "
+                        f"{idle_timeout:g}s"
+                    ) from exc
                 delta = chunk.choices[0].delta if chunk.choices else None
 
                 # Text delta
@@ -279,6 +311,7 @@ class OpenAICompatProvider(LLMProvider):
                         delta=None,
                         done=True,
                         tool_calls=final_tool_calls,
+                        stop_reason=chunk.choices[0].finish_reason,
                     )
                     return
 

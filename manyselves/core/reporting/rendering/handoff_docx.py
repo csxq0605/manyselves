@@ -66,3 +66,13 @@ class HandoffDocxCore:
             finally:
                 if original_template is not None:
                     module.TEMPLATE_PATH = original_template
+
+
+class PackagedV2DocxCore(HandoffDocxCore):
+    """Use the complete V2 handoff renderer vendored with Manyselves."""
+
+    def __init__(self, template_path: Path):
+        super().__init__(
+            Path(__file__).with_name("v2_docx_renderer.py"),
+            template_path=template_path,
+        )

@@ -32,11 +32,13 @@ def test_decision_store_resolves_each_allowed_action(tmp_path: Path, action: str
     store = EvidenceDecisionStore(tmp_path)
     store.create(_decision())
 
-    resolved = store.resolve("evidence-decision-001", action, user_notes="用户选择")
+    resolved = store.resolve(
+        "evidence-decision-001", action, decision_note="用户选择"
+    )
 
     assert resolved.status == "resolved"
     assert resolved.selected_action == action
-    assert resolved.user_notes == "用户选择"
+    assert resolved.decision_note == "用户选择"
     assert resolved.resolved_at is not None
     with pytest.raises(ValueError, match="already resolved"):
         store.resolve("evidence-decision-001", action)

@@ -37,6 +37,16 @@ async def test_bash_requires_description(temp_dir):
 
 
 @pytest.mark.asyncio
+async def test_exec_rejects_isolated_expert_document(temp_dir):
+    tool = ExecTool(working_dir=temp_dir)
+    with pytest.raises(PermissionError, match="EXPERT_TEMPLATE_AGENT_ACCESS_FORBIDDEN"):
+        await tool(
+            command="cat 'Templates/配电安全专家咨询报告(专家优化版).docx'",
+            command_description="Attempt isolated read",
+        )
+
+
+@pytest.mark.asyncio
 async def test_bash_runs_allowed_command(temp_dir):
     tool = ExecTool(working_dir=temp_dir)
     result = await tool(command="echo hello", command_description="Show greeting")

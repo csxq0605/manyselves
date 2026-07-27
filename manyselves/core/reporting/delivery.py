@@ -51,7 +51,7 @@ class ProjectDelivery:
         self._validate_inputs(package)
         destination = self.delivery_root / f"{package.report_id}-{package.version}"
         if destination.exists():
-            raise FileExistsError(f"delivery version already exists: {destination}")
+            return self._reuse_existing(package, destination)
 
         self.delivery_root.parent.mkdir(parents=True, exist_ok=True)
         staging_parent = self.delivery_root.parent
@@ -105,6 +105,67 @@ class ProjectDelivery:
             report_state=destination / state_target.name,
             manifest_path=destination / manifest_path.name,
             artifact_sha256=hashes,
+        )
+
+    def _reuse_existing(
+        self, package: DeliveryPackage, destination: Path
+    ) -> DeliveryReceipt:
+        """Reuse only a complete package whose bytes equal the requested inputs."""
+
+        manifest_path = destination / "delivery-manifest.json"
+        final_docx = destination / "配电安全专家咨询报告.docx"
+        report_state = destination / "report-state.json"
+        module_files = {
+            module_id: destination / "modules" / f"{module_id}.md"
+            for module_id in REPORT_MODULE_IDS
+        }
+        required = [manifest_path, final_docx, report_state, *module_files.values()]
+        missing = [str(path) for path in required if not path.is_file()]
+        if missing:
+            raise ValueError(
+                "existing delivery is partial and cannot be resumed safely: "
+                f"{missing}"
+            )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        expected_hashes = {
+            "final_docx": self._sha256(package.final_docx),
+            "report_state": self._sha256(package.report_state),
+            **{
+                f"module:{module_id}": self._sha256(package.module_files[module_id])
+                for module_id in REPORT_MODULE_IDS
+            },
+        }
+        actual_hashes = {
+            "final_docx": self._sha256(final_docx),
+            "report_state": self._sha256(report_state),
+            **{
+                f"module:{module_id}": self._sha256(module_files[module_id])
+                for module_id in REPORT_MODULE_IDS
+            },
+        }
+        if (
+            manifest.get("report_id") != package.report_id
+            or manifest.get("version") != package.version
+            or manifest.get("status") != "success"
+            or manifest.get("modules") != list(REPORT_MODULE_IDS)
+            or manifest.get("artifacts") != actual_hashes
+            or actual_hashes != expected_hashes
+        ):
+            raise ValueError(
+                "existing delivery does not match the current run artifacts; "
+                "refusing to overwrite or synthesize a receipt"
+            )
+        return DeliveryReceipt(
+            success=True,
+            delivery_dir=destination,
+            final_docx=final_docx,
+            module_files=module_files,
+            report_state=report_state,
+            manifest_path=manifest_path,
+            artifact_sha256={
+                **actual_hashes,
+                "manifest": self._sha256(manifest_path),
+            },
         )
 
     @staticmethod

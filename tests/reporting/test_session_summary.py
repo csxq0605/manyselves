@@ -20,7 +20,6 @@ def _result() -> AgentResult:
         status=AgentRunStatus.COMPLETED,
         payload=ModuleSubmission(
             module_id="2.1",
-            markdown="完成结构分析。",
             submodule_narratives={
                 "2.1.1": "负荷容量。",
                 "2.1.2": "关键负荷。",

@@ -124,17 +124,21 @@ class ModuleSkillLibrary:
             raise ConfigurationError(
                 f"{agent_id}: a fixed module_id is required for module Skill routing"
             )
-        return [skill for skill in self._skills if skill.module_id == module_id]
+        return [
+            skill
+            for skill in self._skills
+            if skill.module_id in {module_id, "all"}
+        ]
 
     def index_text(self) -> str:
-        """Return metadata only, suitable for Planner routing without instruction leakage."""
+        """Return metadata only for routing diagnostics without instruction leakage."""
 
         lines: list[str] = []
         for module_id in REPORT_TAXONOMY:
             entries = [
                 f"{skill.id} v{skill.version} ({skill.title}; {', '.join(skill.submodules)})"
                 for skill in self._skills
-                if skill.module_id == module_id
+                if skill.module_id in {module_id, "all"}
             ]
             lines.append(f"{module_id}: " + "; ".join(entries))
         return "\n".join(lines)

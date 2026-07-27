@@ -46,6 +46,7 @@ from .scale import dpi_scale
 from .theme import get_theme_colors, scrollbar_stylesheet
 from .title_bar import TitleBar
 from .widgets.agent_panel import AgentPanel
+from .widgets.agent_sidebar import AgentSidebar
 from .widgets.file_tree import FileTreeWidget
 from .widgets.preview import PreviewWidget
 from .widgets.ui_utils import (
@@ -100,6 +101,7 @@ class MainWindow(QMainWindow):
         self._pending_file_context: dict[str, dict | None] = {}
         self._pending_rollbacks: dict[str, dict[str, str | None]] = {}
         self._turn_state: dict[str, _TurnState] = {}
+        self._agent_stream_buffers: dict[str, str] = {}
 
         self.setWindowTitle(PRODUCT_NAME)
         self.resize(1400, 900)
@@ -242,6 +244,33 @@ class MainWindow(QMainWindow):
             #panelStatus {{
                 font-size: {px(11)};
                 color: {c["status_idle"]};
+            }}
+            #agentSidebar {{
+                background-color: {c["surface"]};
+                border-right: 1px solid {c["border"]};
+            }}
+            #agentSidebarTitle {{
+                color: {c["muted"]};
+                font-size: {px(10)};
+                font-weight: {c["fw_semibold"]};
+                padding: {px(2)} {px(6)};
+            }}
+            #agentList {{
+                background: transparent;
+                border: none;
+                outline: none;
+            }}
+            #agentList::item {{
+                min-height: {px(38)};
+                padding: {px(6)} {px(8)};
+                border-radius: {c["radius_md"]};
+            }}
+            #agentList::item:hover {{
+                background-color: {c["tree_hover"]};
+            }}
+            #agentList::item:selected {{
+                background-color: {c["tree_sel_bg"]};
+                color: {c["tree_sel_fg"]};
             }}
             {
             combo_box_qss(
@@ -871,7 +900,12 @@ class MainWindow(QMainWindow):
             main_splitter.setChildrenCollapsible(False)
             content_layout.addWidget(main_splitter)
 
-        # Left: File tree
+        # Left: live Agent switcher. Every runtime Agent owns a conversation.
+        self.agent_sidebar = AgentSidebar(self)
+        self.agent_sidebar.agent_selected.connect(self._on_agent_type_changed)
+        main_splitter.addWidget(self.agent_sidebar)
+
+        # File tree
         self.file_tree = FileTreeWidget(self.workspace)
         # Don't override minimum width - let FileTreeWidget handle it
         self.file_tree.directory_selected.connect(self._on_directory_selected)
@@ -886,7 +920,7 @@ class MainWindow(QMainWindow):
         self.preview.file_changed.connect(self._on_preview_file_changed)
         main_splitter.addWidget(self.preview)
 
-        # Right: the sole user-facing Main Agent panel.
+        # Right: conversation panel for the Agent selected in the left rail.
         self.agent_panel = AgentPanel("main", get_agent_title("main"), self.workspace)
         main_splitter.addWidget(self.agent_panel)
 
@@ -899,9 +933,10 @@ class MainWindow(QMainWindow):
 
         # Set stretch factors: file_tree is non-stretching (it has a max width),
         # extra space is split between preview and agent_panel.
-        main_splitter.setStretchFactor(0, 0)  # file_tree (fixed-ish rail)
-        main_splitter.setStretchFactor(1, 56)  # preview
-        main_splitter.setStretchFactor(2, 44)  # agent_panel
+        main_splitter.setStretchFactor(0, 0)  # Agent switcher
+        main_splitter.setStretchFactor(1, 0)  # file_tree (fixed-ish rail)
+        main_splitter.setStretchFactor(2, 56)  # preview
+        main_splitter.setStretchFactor(3, 44)  # agent_panel
 
         # Store main_splitter for resize handling
         self._main_splitter = main_splitter
@@ -955,6 +990,10 @@ class MainWindow(QMainWindow):
         self.preview.restore_open_tabs()
         self.file_tree.restore_state()
         self.agent_panel.set_agent_type("main")
+        for agent_id in self._conv_store.get_agent_types_with_history():
+            if agent_id in {"main", "report-workflow"}:
+                self.agent_sidebar.ensure_agent(agent_id)
+        self.agent_sidebar.select_agent("main")
         self.agent_panel.set_debug_mode("main" in self._debug_agents)
         self.agent_panel.conversation_cleared.connect(
             lambda: self._on_conversation_cleared(self.current_agent_type)
@@ -1248,6 +1287,17 @@ class MainWindow(QMainWindow):
         self.agent_panel._current_tool_group = None
         self.agent_panel._messages_area.clear()
         self._load_conversations_for_agent(self.current_agent_type, self.agent_panel)
+        live_content = getattr(self, "_agent_stream_buffers", {}).get(
+            self.current_agent_type, ""
+        )
+        if live_content:
+            state = self._state_for_agent(self.current_agent_type)
+            self.agent_panel.add_message(
+                "agent",
+                live_content,
+                streaming=True,
+                message_id=state.message_id,
+            )
         self.agent_panel.set_queue_preview(self._agent_queue_cache.get(self.current_agent_type, []))
         cached = self._agent_status_cache.get(self.current_agent_type)
         if cached:
@@ -1278,7 +1328,10 @@ class MainWindow(QMainWindow):
         self._pending_file_context[self.current_agent_type] = file_context
 
     def _on_agent_type_changed(self, agent_type: str) -> None:
+        if not agent_type or agent_type == self.current_agent_type:
+            return
         self.agent_panel.set_agent_type(agent_type)
+        self.agent_sidebar.select_agent(agent_type)
         self._show_current_agent_conversation()
         if hasattr(self.backend, "sync_agent_conversation"):
             self._submit_coroutine(
@@ -1381,6 +1434,11 @@ class MainWindow(QMainWindow):
             UserMessage,
         )
 
+        # Workflow continuation markers are transport messages between the
+        # runner and the same durable Agent loop.  They are not user-facing
+        # chat and must not be persisted as conversation bubbles.
+        if getattr(message, "internal", False):
+            return
         if isinstance(message, AgentResponse):
             self._handle_agent_response(message)
         elif isinstance(message, UserMessage):
@@ -1404,18 +1462,53 @@ class MainWindow(QMainWindow):
         elif isinstance(message, QueueUpdateMessage):
             self._handle_queue_update(message)
 
+    def _ensure_agent_visible(self, agent_id: str, status: str | None = None) -> None:
+        """Register a runtime Agent in the left rail without changing selection."""
+        agent_id = str(agent_id or "").strip()
+        if not agent_id:
+            return
+        cached_status = self._agent_status_cache.get(agent_id, ("idle", {}))[0]
+        self.agent_sidebar.ensure_agent(agent_id, status or cached_status)
+
+    @staticmethod
+    def _merge_stream_text(previous: str, incoming: str) -> str:
+        if not incoming:
+            return previous
+        if not previous or incoming.startswith(previous):
+            return incoming
+        if previous.endswith(incoming):
+            return previous
+        return previous + incoming
+
+    def _flush_agent_stream(self, agent_id: str, message_id: str | None = None) -> str:
+        content = self._agent_stream_buffers.pop(agent_id, "")
+        if content:
+            self._conv_store.append_message(
+                agent_id,
+                "agent",
+                content,
+                extra={"message_id": message_id},
+            )
+        return content
+
     def _handle_agent_response(self, message: AgentResponse) -> None:
         agent_str = str(message.agent_type)
-        if "--session-" in agent_str:
-            return
+        if not hasattr(self, "_agent_stream_buffers"):
+            self._agent_stream_buffers = {}
+        ensure_agent = getattr(self, "_ensure_agent_visible", None)
+        if callable(ensure_agent):
+            ensure_agent(agent_str)
         if not self._is_visible_agent(agent_str):
-            if not message.streaming and message.content:
-                self._conv_store.append_message(
-                    agent_str,
-                    "agent",
-                    message.content,
-                    extra={"message_id": message.message_id},
+            if message.streaming:
+                self._agent_stream_buffers[agent_str] = MainWindow._merge_stream_text(
+                    self._agent_stream_buffers.get(agent_str, ""), message.content
                 )
+            else:
+                if message.content:
+                    self._agent_stream_buffers[agent_str] = MainWindow._merge_stream_text(
+                        self._agent_stream_buffers.get(agent_str, ""), message.content
+                    )
+                MainWindow._flush_agent_stream(self, agent_str, message.message_id)
             return
         panel = self._get_panel_for_agent(agent_str)
         state = self._state_for_agent(agent_str)
@@ -1453,6 +1546,11 @@ class MainWindow(QMainWindow):
             state.phase = "thinking"
             return
 
+        if message.streaming:
+            self._agent_stream_buffers[agent_str] = MainWindow._merge_stream_text(
+                self._agent_stream_buffers.get(agent_str, ""), message.content
+            )
+
         if not message.streaming and not message.content:
             panel.finish_thinking()
             row = _latest_incomplete_agent_row()
@@ -1460,6 +1558,7 @@ class MainWindow(QMainWindow):
                 row.mark_complete()
             state.answer_started = False
             state.phase = "idle"
+            MainWindow._flush_agent_stream(self, agent_str, msg_id or None)
             return
 
         if not message.streaming and message.content:
@@ -1467,14 +1566,12 @@ class MainWindow(QMainWindow):
             row = _latest_incomplete_agent_row()
             if row is not None:
                 row.mark_complete()
-                self._conv_store.append_message(
-                    agent_str,
-                    "agent",
-                    row._content,
-                    extra={"message_id": msg_id or None},
-                )
                 state.answer_started = False
                 state.phase = "idle"
+                self._agent_stream_buffers[agent_str] = MainWindow._merge_stream_text(
+                    self._agent_stream_buffers.get(agent_str, ""), row._content
+                )
+                MainWindow._flush_agent_stream(self, agent_str, msg_id or None)
                 return
 
         panel.finish_thinking()
@@ -1484,12 +1581,10 @@ class MainWindow(QMainWindow):
             "agent", message.content, streaming=message.streaming, message_id=msg_id or None
         )
         if not message.streaming:
-            self._conv_store.append_message(
-                agent_str,
-                "agent",
-                message.content,
-                extra={"message_id": msg_id or None},
+            self._agent_stream_buffers[agent_str] = MainWindow._merge_stream_text(
+                self._agent_stream_buffers.get(agent_str, ""), message.content
             )
+            MainWindow._flush_agent_stream(self, agent_str, msg_id or None)
             rows = panel._messages_area.get_message_rows()
             if rows and rows[-1]._role == "agent":
                 rows[-1].mark_complete()
@@ -1498,8 +1593,13 @@ class MainWindow(QMainWindow):
 
     def _handle_user_message(self, message: UserMessage) -> None:
         agent_str = str(message.agent_type)
-        if "--session-" in agent_str:
-            return
+        ensure_agent = getattr(self, "_ensure_agent_visible", None)
+        if callable(ensure_agent):
+            ensure_agent(agent_str)
+        sidebar = getattr(self, "agent_sidebar", None)
+        if sidebar is not None and str(message.source or "user") != "user":
+            task_brief = str(getattr(message, "summary", "") or message.content).splitlines()[0]
+            sidebar.set_agent_task(agent_str, task_brief)
         if not self._is_visible_agent(agent_str):
             self._conv_store.append_message(
                 agent_str,
@@ -1577,8 +1677,18 @@ class MainWindow(QMainWindow):
 
     def _handle_tool_call(self, message: ToolCallMessage) -> None:
         agent_str = str(message.agent_type)
-        if "--session-" in agent_str:
-            return
+        ensure_agent = getattr(self, "_ensure_agent_visible", None)
+        if callable(ensure_agent):
+            ensure_agent(agent_str, "running_tool")
+        sidebar = getattr(self, "agent_sidebar", None)
+        if sidebar is not None:
+            sidebar.set_agent_task(agent_str, f"工具：{message.tool_name}")
+        if hasattr(self, "_agent_stream_buffers"):
+            MainWindow._flush_agent_stream(
+                self,
+                agent_str,
+                self._state_for_agent(agent_str).message_id,
+            )
         state = self._state_for_agent(agent_str)
         if message.tool_name == "manage_tasks":
             state.phase = "tool"
@@ -1636,8 +1746,9 @@ class MainWindow(QMainWindow):
 
     def _handle_tool_result(self, message: ToolResult) -> None:
         agent_str = str(message.agent_type)
-        if "--session-" in agent_str:
-            return
+        ensure_agent = getattr(self, "_ensure_agent_visible", None)
+        if callable(ensure_agent):
+            ensure_agent(agent_str)
         state = self._state_for_agent(agent_str)
         latest_task_summary_fn = getattr(self, "_latest_persisted_task_summary", None)
         latest_task_summary = (
@@ -2015,22 +2126,72 @@ class MainWindow(QMainWindow):
 
     def _handle_status_change(self, message: StatusChange) -> None:
         agent_str = str(message.agent_type)
-        if "--session-" in agent_str:
-            return
+        run_id = str((message.extra or {}).get("run_id") or "").strip()
+        if (
+            agent_str == "report-workflow"
+            and str(message.status) == "thinking"
+            and run_id
+            and run_id != getattr(self, "_active_report_run_id", None)
+        ):
+            MainWindow._begin_report_run(self, run_id)
         self._agent_status_cache[agent_str] = (str(message.status), dict(message.extra or {}))
+        ensure_agent = getattr(self, "_ensure_agent_visible", None)
+        if callable(ensure_agent):
+            ensure_agent(agent_str, str(message.status))
+        sidebar = getattr(self, "agent_sidebar", None)
+        if sidebar is not None:
+            sidebar.set_agent_status(agent_str, str(message.status))
+            current_task = str((message.extra or {}).get("task") or "").strip()
+            if current_task:
+                sidebar.set_agent_task(agent_str, current_task)
         if self._is_visible_agent(agent_str):
             self.agent_panel.set_status(message.status, message.extra)
 
+    def _begin_report_run(self, run_id: str) -> None:
+        """Reset transient Agent UI state at the boundary of a new report run."""
+        self._active_report_run_id = run_id
+        persistent_agents = {"main", "report-workflow"}
+        sidebar = getattr(self, "agent_sidebar", None)
+        if sidebar is not None:
+            sidebar.retain_agents(persistent_agents)
+        for cache_name in (
+            "_agent_status_cache",
+            "_agent_queue_cache",
+            "_turn_state",
+            "_agent_stream_buffers",
+        ):
+            cache = getattr(self, cache_name, None)
+            if isinstance(cache, dict):
+                for agent_id in list(cache):
+                    if agent_id not in persistent_agents:
+                        cache.pop(agent_id, None)
+        if getattr(self, "current_agent_type", "main") not in persistent_agents:
+            self.current_agent_type = "main"
+            if sidebar is not None:
+                sidebar.select_agent("main")
+
     def _handle_error(self, message: Error) -> None:
-        if self._is_visible_agent("main"):
+        agent_str = str(message.source or "main")
+        if "--session-" not in agent_str:
+            agent_str = "main"
+        ensure_agent = getattr(self, "_ensure_agent_visible", None)
+        if callable(ensure_agent):
+            ensure_agent(agent_str, "error")
+        sidebar = getattr(self, "agent_sidebar", None)
+        if sidebar is not None:
+            sidebar.set_agent_status(agent_str, "error")
+        if self._is_visible_agent(agent_str):
             self.agent_panel.add_error(message.source, message.message)
         self._conv_store.append_message(
-            "main", "error", message.message, extra={"source": message.source}
+            agent_str, "error", message.message, extra={"source": message.source}
         )
 
     def _handle_report_message(self, message: ReportMessage) -> None:
         """Handle ReportMessage and show sub-agent reports in main panel."""
         agent_str = normalize_agent_id(message.agent_type)
+        ensure_agent = getattr(self, "_ensure_agent_visible", None)
+        if callable(ensure_agent):
+            ensure_agent(agent_str, "idle")
         summary = str(getattr(message, "summary", "") or "").strip()
         bubble_title = summary or MainWindow._respond_summary(self, agent_str, message.content)
         if self._is_visible_agent("main"):
@@ -2055,12 +2216,24 @@ class MainWindow(QMainWindow):
                 "task_id": message.task_id,
             },
         )
+        self._conv_store.append_message(
+            agent_str,
+            "agent",
+            message.content,
+            extra={
+                "source": agent_str,
+                "summary": summary,
+                "report_type": message.report_type,
+                "task_id": message.task_id,
+            },
+        )
 
     def _handle_system_notice(self, message: SystemNotice) -> None:
         """Handle SystemNotice and render in target agent panel."""
         agent_str = normalize_agent_id(message.agent_type)
-        if "--session-" in agent_str:
-            return
+        ensure_agent = getattr(self, "_ensure_agent_visible", None)
+        if callable(ensure_agent):
+            ensure_agent(agent_str)
         bubble_title = None
         is_interrupt = getattr(message, "kind", "notice") == "interrupt"
         display_mode = "inline_notice" if is_interrupt else "bubble"
@@ -2090,8 +2263,9 @@ class MainWindow(QMainWindow):
 
     def _handle_queue_update(self, message: QueueUpdateMessage) -> None:
         agent_str = str(message.agent_type)
-        if "--session-" in agent_str:
-            return
+        ensure_agent = getattr(self, "_ensure_agent_visible", None)
+        if callable(ensure_agent):
+            ensure_agent(agent_str)
         self._agent_queue_cache[agent_str] = list(message.queued_messages)
         if self._is_visible_agent(agent_str):
             self.agent_panel.set_queue_preview(message.queued_messages)
@@ -2108,6 +2282,17 @@ class MainWindow(QMainWindow):
         """Handle TaskUpdateMessage — display task notification in relevant panels."""
         src_str = normalize_agent_id(message.source_agent)
         tgt_str = normalize_agent_id(message.target_agent)
+        ensure_agent = getattr(self, "_ensure_agent_visible", None)
+        if callable(ensure_agent):
+            ensure_agent(tgt_str)
+        sidebar = getattr(self, "agent_sidebar", None)
+        if sidebar is not None:
+            terminal_actions = {"completed", "failed", "cancelled", "blocked"}
+            action = str(getattr(message, "action", "")).lower()
+            sidebar.set_agent_task(
+                tgt_str,
+                None if action in terminal_actions else getattr(message, "brief", ""),
+            )
 
         agents_to_sync = {src_str, tgt_str}
         if "main" in agents_to_sync:
@@ -2308,19 +2493,21 @@ class MainWindow(QMainWindow):
         preview_min = self.preview.minimumWidth()
         agent_panel_min = self.agent_panel.minimumWidth()
 
-        remaining = max(0, total_width - file_tree_size)
+        sidebar_size = self.agent_sidebar.minimumWidth()
+        remaining = max(0, total_width - sidebar_size - file_tree_size)
         # Split remaining 56:44 (matches stretch factors), honoring minimums.
         preview_size = max(preview_min, int(remaining * 56 / 100))
         agent_panel_size = max(agent_panel_min, remaining - preview_size)
 
         # If sum exceeds total, scale down proportionally
-        total_calculated = file_tree_size + preview_size + agent_panel_size
+        total_calculated = sidebar_size + file_tree_size + preview_size + agent_panel_size
         if total_calculated > total_width:
             scale = total_width / total_calculated
+            sidebar_size = int(sidebar_size * scale)
             file_tree_size = int(file_tree_size * scale)
             preview_size = int(preview_size * scale)
             agent_panel_size = int(agent_panel_size * scale)
 
-        sizes = [file_tree_size, preview_size, agent_panel_size]
+        sizes = [sidebar_size, file_tree_size, preview_size, agent_panel_size]
         self._main_splitter.setSizes(sizes)
         self._splitter_sizes_initialized = True

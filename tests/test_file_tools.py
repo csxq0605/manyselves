@@ -41,8 +41,24 @@ async def test_read_file_pdf_rejected(temp_workspace):
     test_file = temp_workspace / "paper.pdf"
     test_file.write_bytes(b"%PDF-1.4")
     tool = ReadTool(workspace=temp_workspace)
-    with pytest.raises(ValueError, match="Use parse_pdf"):
+    with pytest.raises(ValueError, match="Use inspect_document"):
         await tool(path="paper.pdf")
+
+
+@pytest.mark.asyncio
+async def test_read_hides_and_rejects_isolated_expert_document(temp_workspace):
+    templates = temp_workspace / "Templates"
+    templates.mkdir()
+    expert = templates / "配电安全专家咨询报告(专家优化版).docx"
+    expert.write_bytes(b"isolated")
+    (templates / "report_template.docx").write_bytes(b"render-template")
+    tool = ReadTool(workspace=temp_workspace)
+
+    listing = await tool(path="Templates")
+    assert "report_template.docx" in listing["files"]
+    assert expert.name not in listing["files"]
+    with pytest.raises(PermissionError, match="EXPERT_TEMPLATE_AGENT_ACCESS_FORBIDDEN"):
+        await tool(path=f"Templates/{expert.name}")
 
 
 @pytest.mark.asyncio

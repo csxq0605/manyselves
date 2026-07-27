@@ -187,7 +187,7 @@ def test_report_message_renders_in_main_panel():
     assert kwargs["bubble_title"] == "Need x data"
 
     # Check store was called with persistence parameters
-    assert len(store_calls) == 1
+    assert len(store_calls) == 2
     call_name, args, kwargs = store_calls[0]
     assert call_name == "message"
     assert args[0] == "main"
@@ -322,11 +322,12 @@ def test_report_message_for_invisible_main_skips_panel():
     # Panel should not be called since main is not visible
     assert len(panel_calls) == 0
 
-    # But store should still persist to main
-    assert len(store_calls) == 1
+    # Persist both Main's coordination view and the source Agent's own history.
+    assert len(store_calls) == 2
     call_name, args, kwargs = store_calls[0]
     assert call_name == "message"
     assert args[0] == "main"
+    assert store_calls[1][1][0] == "data_analysis"
 
 
 def test_load_conversations_reconstructs_report_bubble_from_semantic_record():

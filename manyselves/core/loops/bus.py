@@ -81,7 +81,7 @@ class MessageBus:
         self,
         message_type: type[MessageT],
         predicate: Callable[[MessageT], bool],
-        timeout: float,
+        timeout: float | None,
     ) -> MessageT:
         """Wait once for a matching processed message, then always unsubscribe."""
 

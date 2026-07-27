@@ -1,6 +1,8 @@
 """Project-local persistence for reporting workflow state."""
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -26,13 +28,10 @@ class ReportingStore:
             (self.workspace / relative).mkdir(parents=True, exist_ok=True)
 
     def write_json(self, relative: str, value: Any) -> Path:
-        path = self.workspace / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
+        return self._atomic_write(
+            relative,
             json.dumps(value, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
         )
-        return path
 
     def write_run_model(self, run_id: str, relative: str, model: BaseModel) -> Path:
         safe_run_id = Path(run_id).name
@@ -62,16 +61,28 @@ class ReportingStore:
         )
 
     def write_jsonl(self, relative: str, values: list[dict[str, Any]]) -> Path:
-        path = self.workspace / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
         content = "".join(
             json.dumps(value, ensure_ascii=False) + "\n" for value in values
         )
-        path.write_text(content, encoding="utf-8")
-        return path
+        return self._atomic_write(relative, content)
 
     def write_text(self, relative: str, content: str) -> Path:
+        return self._atomic_write(relative, content)
+
+    def _atomic_write(self, relative: str, content: str) -> Path:
         path = self.workspace / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+            delete=False,
+        ) as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary = Path(handle.name)
+        os.replace(temporary, path)
         return path

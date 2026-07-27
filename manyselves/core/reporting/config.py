@@ -17,7 +17,14 @@ KNOWN_CARRIERS = {
     "research_notes",
     "claim_ledger",
     "source_ledger",
-    "review_issues",
+    "review_findings",
+    "revision_responses",
+    "resolution_verdicts",
+    "cross_findings",
+    "cross_synthesis_inputs",
+    "final_findings",
+    "validation_reports",
+    "review_completions",
     "report_state",
     "citation_plan",
     "output_artifacts",
@@ -37,6 +44,7 @@ class AgentDefinition(BaseModel):
     tools: list[str] = Field(default_factory=list)
     disallowed_tools: list[str] = Field(default_factory=list, alias="disallowedTools")
     max_turns: int = Field(default=8, ge=1, le=40, alias="maxTurns")
+    max_tokens: int | None = Field(default=None, ge=1024, le=65536, alias="maxTokens")
     effort: Literal["low", "medium", "high"] = "medium"
     memory: Literal["task", "session"] = "task"
     background: bool = True
@@ -73,14 +81,9 @@ def _frontmatter(content: str, path: Path) -> tuple[dict, str]:
     return data, body
 
 
-def _load_agent_definition(path: Path, *, allow_legacy: bool) -> AgentDefinition:
+def _load_agent_definition(path: Path) -> AgentDefinition:
     path = Path(path)
     data, instructions = _frontmatter(path.read_text(encoding="utf-8"), path)
-    if allow_legacy:
-        if "name" not in data and "id" in data:
-            data["name"] = data.pop("id")
-        if "description" not in data and "role" in data:
-            data["description"] = data.pop("role")
     try:
         definition = AgentDefinition(
             **data,
@@ -98,17 +101,13 @@ def _load_agent_definition(path: Path, *, allow_legacy: bool) -> AgentDefinition
 def load_agent_definition(path: Path) -> AgentDefinition:
     """Load one Markdown/frontmatter Agent contract using the current schema."""
 
-    return _load_agent_definition(path, allow_legacy=False)
+    return _load_agent_definition(path)
 
 
-def _load_agent_definitions(
-    directory: Path,
-    *,
-    allow_legacy: bool,
-) -> dict[str, AgentDefinition]:
+def _load_agent_definitions(directory: Path) -> dict[str, AgentDefinition]:
     agents: dict[str, AgentDefinition] = {}
     for path in sorted(Path(directory).glob("*.md")):
-        definition = _load_agent_definition(path, allow_legacy=allow_legacy)
+        definition = _load_agent_definition(path)
         if definition.name in agents:
             raise ConfigurationError(f"duplicate agent name: {definition.name}")
         agents[definition.name] = definition
@@ -118,11 +117,11 @@ def _load_agent_definitions(
 def load_agent_definitions(directory: Path) -> dict[str, AgentDefinition]:
     """Load current-schema Agent definitions and reject duplicate names."""
 
-    return _load_agent_definitions(directory, allow_legacy=False)
+    return _load_agent_definitions(directory)
 
 
 def load_packaged_agents() -> dict[str, AgentDefinition]:
     """Load the built-in reporting Agent identities shipped with Manyselves."""
 
     templates = Path(__file__).resolve().parents[2] / "templates" / "reporting"
-    return _load_agent_definitions(templates / "agents", allow_legacy=True)
+    return _load_agent_definitions(templates / "agents")

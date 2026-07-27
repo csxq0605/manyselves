@@ -14,6 +14,13 @@ def _get_qicon(agent_type: str, color: str | None = None, size: int = 16) -> QIc
 
 AGENT_LABELS: dict[str, dict[str, str]] = {
     "main": {"name": "Main"},
+    "template-distiller": {"name": "Template Distiller"},
+    "evidence-auditor": {"name": "Evidence Auditor"},
+    "cross-module-reviewer": {"name": "Cross-module Reviewer"},
+    "chief-editor": {"name": "Chief Editor"},
+    "chief-editor-auditor": {"name": "Final Report Auditor"},
+    "report-renderer": {"name": "Render"},
+    "render": {"name": "Render"},
     # Compatibility labels for historical task/message records; these are not
     # offered by the current Main-only GUI selector.
     "data_analysis": {"name": "Data Analysis"},
@@ -41,9 +48,17 @@ def get_agent_icon(agent_type: AgentId | AgentType, color: str | None = None, si
 
 def get_agent_name(agent_type: AgentId | AgentType) -> str:
     agent_key = normalize_agent_type(agent_type)
-    if agent_key in AGENT_LABELS:
-        return AGENT_LABELS[agent_key]["name"]
-    return agent_key.replace("_", " ").title() or "Agent"
+    role_key, separator, session_id = agent_key.partition("--session-")
+    if role_key in AGENT_LABELS:
+        name = AGENT_LABELS[role_key]["name"]
+    elif role_key.startswith("module-") and role_key.endswith("-specialist"):
+        module_id = role_key.removeprefix("module-").removesuffix("-specialist")
+        name = f"Module {module_id} Specialist"
+    else:
+        name = role_key.replace("_", " ").replace("-", " ").title() or "Agent"
+    if separator:
+        return f"{name} · {session_id[-4:]}"
+    return name
 
 
 def get_agent_badge(agent_type: AgentId | AgentType) -> str:
@@ -54,6 +69,9 @@ def get_agent_badge(agent_type: AgentId | AgentType) -> str:
 def get_agent_title(agent_type: AgentId | AgentType) -> str:
     """Get full title for an agent type."""
     name = get_agent_name(agent_type)
+    role, separator, instance = name.partition(" · ")
+    if separator:
+        return f"{role} Agent · {instance}"
     return f"{name} Agent"
 
 

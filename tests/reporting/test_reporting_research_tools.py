@@ -6,6 +6,7 @@ import pytest
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting.models import EvidenceItem
 from manyselves.core.reporting.research.reference_library import ReferenceLibrary
+from manyselves.core.reporting.research.evidence_memory import EvidenceResearchMemory
 from manyselves.core.reporting.source_ledger import SourceLedger
 from manyselves.core.tools.reporting_research_tools import (
     OpenProjectSourceTool,
@@ -69,6 +70,64 @@ async def test_project_evidence_search_reuses_prepared_ledger_locator(tmp_path: 
 
     assert result["hits"][0]["id"] == "E-007"
     assert ledger.records[0].locator == "Inputs/红外.xlsx；工作表=Sheet1；单元格=B2"
+
+
+@pytest.mark.asyncio
+async def test_project_evidence_search_bounds_large_model_requested_limit(tmp_path: Path):
+    _write_evidence(tmp_path)
+
+    result = await SearchProjectEvidenceTool(tmp_path)("连接点", limit=30)
+
+    assert result["requested_limit"] == 30
+    assert result["applied_limit"] == 12
+    assert "open_project_source" in result["guidance"]
+
+
+@pytest.mark.asyncio
+async def test_project_evidence_tools_share_a_runtime_research_guard(tmp_path: Path):
+    _write_evidence(tmp_path)
+    remaining = 1
+
+    def guard() -> None:
+        nonlocal remaining
+        if remaining == 0:
+            raise RuntimeError("RESEARCH_PHASE_COMPLETE")
+        remaining -= 1
+
+    search = SearchProjectEvidenceTool(tmp_path, research_guard=guard)
+    opener = OpenProjectSourceTool(tmp_path, research_guard=guard)
+
+    assert (await search("连接点"))["hits"]
+    with pytest.raises(RuntimeError, match="RESEARCH_PHASE_COMPLETE"):
+        await opener("E-007")
+
+
+@pytest.mark.asyncio
+async def test_project_evidence_tools_persist_deduplicated_module_memory(tmp_path: Path):
+    _write_evidence(tmp_path)
+    memory = EvidenceResearchMemory(tmp_path, "run-1", "2.4")
+    search = SearchProjectEvidenceTool(tmp_path, evidence_memory=memory)
+    opener = OpenProjectSourceTool(tmp_path, evidence_memory=memory)
+
+    first = await search("连接点")
+    second = await search("连接点")
+    opened = await opener("E-007")
+
+    saved = json.loads((tmp_path / memory.relative_path).read_text(encoding="utf-8"))
+    assert list(saved["evidence"]) == ["E-007"]
+    assert saved["queries"] == [
+        {"query": "连接点", "applied_limit": 10, "evidence_ids": ["E-007"]}
+    ]
+    assert first["cache_hit"] is False
+    assert second["cache_hit"] is True
+    assert opened["cache_hit"] is True
+    assert saved["metrics"] == {
+        "query_calls": 2,
+        "cache_hits": 1,
+        "index_searches": 1,
+        "source_opens": 1,
+        "source_cache_hits": 1,
+    }
 
 
 @pytest.mark.asyncio

@@ -20,9 +20,14 @@ class ToolOutcome(BaseModel):
 _TERMINAL_TOOLS = {
     "submit_result",
     "report_blocked",
+}
+_BACKGROUND_REPORT_START_TOOLS = {
     "run_reporting_workflow",
     "resume_reporting_workflow",
     "revise_reporting_workflow",
+}
+_BACKGROUND_REPORT_STATUS_TOOLS = {
+    "get_reporting_workflow_status",
 }
 _FAILURE_STATUSES = {"error", "failed", "cancelled", "stopped_incomplete"}
 _BLOCKED_STATUSES = {
@@ -45,6 +50,18 @@ def normalize_tool_outcome(value: Any, tool_name: str = "tool") -> ToolOutcome:
         return ToolOutcome(result=value, terminal=terminal)
 
     raw_status = str(value.get("status", "ok")).strip().casefold()
+    if tool_name == "submit_result" and raw_status == "correction_required":
+        terminal = False
+    # A successfully accepted background report is terminal for the *current
+    # Main turn*, not for the report workflow.  Ending the turn here is what
+    # lets Main wait for the ReportMessage instead of polling, replanning, or
+    # cancelling the still-running workflow in the same user turn.
+    if tool_name in _BACKGROUND_REPORT_START_TOOLS:
+        terminal = True
+    # A status query is one snapshot per user turn.  In particular, an
+    # in-progress snapshot must not feed the generic no-progress replanner.
+    if tool_name in _BACKGROUND_REPORT_STATUS_TOOLS:
+        terminal = True
     explicit_error = str(value.get("error") or "").strip() or None
     if raw_status in _BLOCKED_STATUSES:
         status = "blocked"
@@ -80,6 +97,15 @@ def canonical_terminal_message(outcome: ToolOutcome) -> str:
 
     payload = outcome.result if isinstance(outcome.result, dict) else {}
     if outcome.status == "ok":
+        raw_status = str(payload.get("status", "")).strip().casefold()
+        run_id = str(payload.get("run_id", "")).strip()
+        run_suffix = f"（run_id={run_id}）" if run_id else ""
+        if raw_status == "running":
+            return f"报告任务已在后台启动{run_suffix}，Main 正在等待工作流终态回传。"
+        if raw_status in {"pending", "in_progress"}:
+            return f"报告任务仍在后台运行{run_suffix}，Main 继续等待工作流终态回传。"
+        if raw_status in {"not_found", "unknown"}:
+            return f"未找到报告任务{run_suffix}的可用运行状态。"
         paths = payload.get("output_paths") or outcome.artifact_refs
         suffix = f" 输出：{', '.join(map(str, paths))}" if paths else ""
         return f"任务已完成并通过运行时校验。{suffix}".strip()

@@ -61,8 +61,6 @@ class ReportVersionStore:
     def publish(self, version: ReportVersion) -> ReportVersion:
         version_id = self._safe_id(version.version_id)
         destination = self.root / version_id
-        if destination.exists():
-            raise FileExistsError(f"report version already exists: {version_id}")
         if (
             version.parent_version_id is not None
             and not (
@@ -81,6 +79,24 @@ class ReportVersionStore:
             source = (self.workspace / relative).resolve()
             if not source.is_relative_to(self.workspace) or not source.is_file():
                 raise FileNotFoundError(f"session summary is missing: {relative}")
+
+        if destination.exists():
+            published = self.load(version_id)
+            requested_hashes = {
+                key: self._sha256(source) for key, source in sources.items()
+            }
+            if (
+                published.run_id != version.run_id
+                or published.parent_version_id != version.parent_version_id
+                or set(published.artifact_refs) != set(version.artifact_refs)
+                or published.artifact_sha256 != requested_hashes
+                or published.skill_provenance != version.skill_provenance
+            ):
+                raise ValueError(
+                    "existing report version is partial or differs from the current "
+                    "run; refusing to overwrite it"
+                )
+            return published
 
         self.root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=".report-version-", dir=self.root) as temp:

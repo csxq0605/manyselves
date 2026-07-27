@@ -1,779 +1,1320 @@
-import asyncio
+from __future__ import annotations
+
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from docx import Document
-from PIL import Image
 
-from manyselves.core.loops.bus import MessageBus
-from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.agentic_models import (
-    AgentResult,
-    AgentRunStatus,
-    AuditSubmission,
-    ClaimRecord,
-    CrossReviewSubmission,
+    CROSS_REVIEW_DIMENSIONS,
+    CrossReviewFindingSubmission,
+    CrossReviewVerdictSubmission,
     EditedReportSubmission,
+    FINAL_REPORT_SECTION_IDS,
+    FinalReviewFindingSubmission,
+    FinalReviewVerdictSubmission,
+    ModuleReviewFindingSubmission,
+    ModuleReviewVerdictSubmission,
+    ModuleRevisionSubmission,
     ModuleSubmission,
-    PlanSubmission,
+    ResolutionVerdict,
+    RevisionResponse,
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
-from manyselves.core.reporting.models import (
-    REPORT_MODULE_IDS,
-    EvidenceItem,
-    PhotoAsset,
-    ReportRequest,
-    ReviewIssue,
-    RevisionRequest,
-    SourceLocation,
+from manyselves.core.reporting.input_contracts import (
+    ReviewCompletionRecord,
+    ValidationReport,
 )
-from manyselves.core.reporting.revisions import RevisionCoordinator
-from manyselves.core.reporting.service import ReportingService
-from manyselves.core.reporting.session_summary import AgentSessionSummary, SessionSummaryStore
+from manyselves.core.reporting.models import CoverageMatrix, ProjectManifest
+from manyselves.core.reporting.review_lifecycle import (
+    ReviewLifecycleError,
+    run_cross_review,
+    run_final_review,
+    run_module_review,
+)
+from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
-from manyselves.core.reporting.workflow import ReportWorkflowRunner
-from manyselves.core.tools.task_board import TaskBoard
-from manyselves.interfaces.types import TaskStatus
+from manyselves.core.reporting.versions import ReportVersion
+from manyselves.core.reporting.workflow import FullReportCheckpoint, ReportWorkflowRunner
 
 
-def blocking_issue(
-    *,
-    kind: str,
-    message: str,
-    claim_id: str = "C-2.4-001",
-    round: int = 0,
-) -> ReviewIssue:
-    return ReviewIssue(
-        module_id="2.4",
-        submodule_id="2.4.1.1",
-        claim_id=claim_id,
-        kind=kind,
-        message=message,
-        severity="blocking",
-        round=round,
-        affected_claim_ids=[claim_id],
-        evidence_refs=["E-0001"],
-        blocking_reason="继续交付会形成未经解决的专业错误。",
-        resolution_criteria=["责任专家修订后由 Evidence Auditor 复审确认问题已解决"],
-        owner_agent_id="module-2.4-specialist",
+def _module(module_id: str, revision: int = 0) -> ModuleSubmission:
+    return ModuleSubmission(
+        module_id=module_id,
+        submodule_narratives={
+            submodule_id: (
+                f"### {submodule_id}\n\n"
+                "当前模块正文说明现状、判断、风险机理、建议责任和验收方法。"
+            )
+            for submodule_id in REPORT_TAXONOMY[module_id].submodules
+        },
+        claims=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision=revision,
     )
 
 
-class ScriptedWorkflowAgents:
-    def __init__(
-        self, target_modules=REPORT_MODULE_IDS, photo_ids=(), workspace: Path | None = None
-    ):
-        self.target_modules = tuple(target_modules)
-        self.photo_ids = tuple(photo_ids)
-        self.active_specialists = 0
-        self.max_active_specialists = 0
-        self.closed = False
-        self.specialist_ids: list[str] = []
-        self.envelopes: dict[str, TaskEnvelope] = {}
-        self.decision_calls = 0
+def _edited(module_text: dict[str, str], *, responses: list | None = None) -> EditedReportSubmission:
+    synthesis = (
+        "综合当前证据，明确责任、优先顺序、依赖关系、风险影响、验证指标、验收方式和剩余边界。"
+        * 24
+    )
+    return EditedReportSubmission(
+        title="示例配电安全专家咨询报告",
+        assessment_background=synthesis,
+        findings_overview=synthesis,
+        regional_executive_summary=synthesis,
+        module_narratives=module_text,
+        cross_module_analysis=(
+            "2.1 系统架构与 2.2 工况共同制约 2.3 保护和 2.4 设备状态，"
+            "并依赖 2.5 运维形成联合整改、复核指标和验收闭环。"
+            + "说明跨模块对象、作用机制、风险传播、行动依赖和联合验收。" * 10
+        ),
+        risk_panorama=synthesis,
+        dimension_risk_analysis=(
+            synthesis
+            + "系统架构、电能质量、保护、设备和运维之间存在共同、叠加、依赖和传播关系。"
+        ),
+        data_gap_analysis=synthesis + "数据不足会限制判断并影响置信度，应优先补证。",
+        improvement_action_plan=(
+            synthesis + "责任部门牵头，按依赖优先实施，以指标、复测和验收关闭。"
+        ),
+        new_factory_planning=synthesis + "新建规划设计应预留条件并完成校核和验收验证。",
+        capacity_expansion_plan=synthesis + "增容方案应结合负荷和容量完成校核与验收。",
+        daily_power_management=synthesis + "责任台账通过巡检监测、维护复测和闭环指标持续管理。",
+        emergency_compliance_management=(
+            synthesis + "应急合规需要责任人组织演练、危险能量控制、验证记录和复盘。"
+        ),
+        protected_claim_ids=[],
+        tables=[],
+        photo_ids=[],
+        unresolved_editorial_issues=[],
+        revision_responses=responses or [],
+    )
+
+
+class _FakeService:
+    def __init__(self, workspace: Path):
         self.workspace = workspace
+        self.store = ReportingStore(workspace)
+        self.notices: list[str] = []
 
-    async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
-        agent_id = definition.id
-        if agent_id == "report-planner":
-            payload = PlanSubmission(
-                module_tasks=[
-                    TaskEnvelope(
-                        task_id=f"planned-{module_id}",
-                        run_id=envelope.run_id,
-                        agent_id=f"module-{module_id}-specialist",
-                        objective=f"分析模块 {module_id}",
-                    )
-                    for module_id in self.target_modules
-                ],
-                rationale="五个专业并行分析后汇合。",
-            )
-        elif agent_id.startswith("module-"):
-            self.specialist_ids.append(agent_id)
-            self.envelopes[agent_id] = envelope
-            module_id = agent_id.removeprefix("module-").removesuffix("-specialist")
-            self.active_specialists += 1
-            self.max_active_specialists = max(self.max_active_specialists, self.active_specialists)
-            await asyncio.sleep(0.02)
-            self.active_specialists -= 1
-            narrative = f"模块 {module_id} 从本专业机理出发形成主动分析。"
-            photo_claim = module_id == "2.4" and bool(self.photo_ids)
-            claim_text = "1A2 柜连接状态需要复核" if photo_claim else narrative
-            if photo_claim:
-                narrative += claim_text + "。"
-            payload = ModuleSubmission(
-                module_id=module_id,
-                markdown=narrative,
-                submodule_narratives={
-                    submodule_id: f"{submodule_id}：{narrative}"
-                    for submodule_id in REPORT_TAXONOMY[module_id].submodules
-                },
-                claims=[
-                    ClaimRecord(
-                        id=f"C-{module_id}-001",
-                        module_id=module_id,
-                        submodule_id=next(iter(REPORT_TAXONOMY[module_id].submodules)),
-                        text=claim_text,
-                        claim_type="technical_interpretation",
-                        source_ids=["E-0001"] if photo_claim else [],
-                        confidence=1.0 if photo_claim else 0.5,
-                        footnote_required=photo_claim,
-                        unresolved=not photo_claim,
-                    )
-                ],
-                source_ids=[],
-                unresolved_questions=["尚无客户事实，保留判断边界"],
-                revision=envelope.revision,
-            )
-        elif agent_id == "evidence-auditor":
-            module_id = envelope.task_id.split("-")[1]
-            payload = AuditSubmission(
-                module_id=module_id,
-                approved=True,
-                issues=[],
-                checked_claim_ids=[f"C-{module_id}-001"],
-            )
-        elif agent_id == "main-agent":
-            self.decision_calls += 1
-            module_id = envelope.task_id.split("module-")[-1].split("-r")[0]
-            payload = WorkflowDecisionSubmission(
-                decision="revise",
-                rationale="审计提出了可处理的新问题。",
-                target_module_ids=[module_id],
-            )
-        elif agent_id == "cross-module-reviewer":
-            payload = CrossReviewSubmission(
-                approved=True,
-                global_constraints=["所有未知均保持为未知"],
-            )
-        elif agent_id == "chief-editor":
-            module_narratives = {
-                module_id: f"模块 {module_id} 从本专业机理出发形成主动分析。"
-                for module_id in REPORT_MODULE_IDS
+    async def _notice(self, message: str) -> None:
+        self.notices.append(message)
+
+
+class _ScriptedRunner:
+    def __init__(self, workspace: Path, scripted: list[tuple[str, str, object]]):
+        self.service = _FakeService(workspace)
+        self.scripted = list(scripted)
+        self.calls: list[tuple[str, str, str | None]] = []
+
+    async def _agent(
+        self,
+        agent_id,
+        envelope,
+        artifacts,
+        workflow_id,
+        *,
+        session_key=None,
+    ):
+        expected_agent, expected_output, result = self.scripted.pop(0)
+        assert agent_id == expected_agent
+        assert envelope.allowed_outputs == [expected_output]
+        self.calls.append((agent_id, expected_output, session_key))
+        return result
+
+    def _validate_module_structure(self, state, module, phase):
+        ref = (
+            f"Work/runs/{state['run_id']}/reviews/"
+            f"module-quality-{module.module_id}-r{module.revision}-{phase}.json"
+        )
+        self.service.store.write_json(
+            ref,
+            ValidationReport(
+                run_id=state["run_id"],
+                subject_ref=(
+                    f"Work/runs/{state['run_id']}/modules/"
+                    f"{module.module_id}-r{module.revision}.json"
+                ),
+                validator="test-module-structure/v1",
+                check_ids=["module.canonical_markdown"],
+                passed=True,
+            ).model_dump(mode="json"),
+        )
+        return ref
+
+    @staticmethod
+    def _user_supplement_constraints(state, **kwargs):
+        return []
+
+    @staticmethod
+    def _context_refs(state, agent_id):
+        return []
+
+    @staticmethod
+    def _template_skill_context(state, *parts):
+        return ""
+
+    @staticmethod
+    def _canonical_markdown(edited):
+        return ReportWorkflowRunner._canonical_markdown(edited)
+
+    def _validate_final_report_structure(self, state, markdown, phase):
+        self.service.store.write_json(
+            f"Work/runs/{state['run_id']}/reviews/report-integrity-{phase}.json",
+            ValidationReport(
+                run_id=state["run_id"],
+                subject_ref=(
+                    f"Work/runs/{state['run_id']}/validation/report-{phase}.md"
+                ),
+                validator="test-final-report-structure/v1",
+                check_ids=["final_report.fixed_sections_and_markdown"],
+                passed=True,
+            ).model_dump(mode="json"),
+        )
+
+    @staticmethod
+    def _final_revision_diff(previous, revised):
+        return ReportWorkflowRunner._final_revision_diff(previous, revised)
+
+
+def test_preparation_resume_uses_hash_verified_run_snapshot(tmp_path: Path) -> None:
+    service = _FakeService(tmp_path)
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+    state = {
+        "run_id": "run-preparation",
+        "project_manifest": ProjectManifest(files=[]),
+        "evidence_items": [],
+        "photo_assets": [],
+        "mapping_gaps": [],
+        "coverage_matrix": CoverageMatrix(entries={}),
+    }
+    runner._persist_preparation_snapshot(state)
+    service.store.write_json(
+        "Work/runs/run-preparation/workflow-state.json",
+        FullReportCheckpoint(
+            workflow_id="full-power-distribution-report:run-preparation",
+            run_id="run-preparation",
+            activity="preparation",
+            status="completed",
+            preparation_refs=state["preparation_refs"],
+            preparation_sha256=state["preparation_sha256"],
+        ).model_dump(mode="json"),
+    )
+
+    restored = {"run_id": "run-preparation", "resume": True}
+    runner._restore_preparation_snapshot(restored)
+    assert restored["project_manifest"].files == []
+
+    (tmp_path / state["preparation_refs"]["coverage"]).write_text(
+        '{"entries": {"tampered": {}}}', encoding="utf-8"
+    )
+    with pytest.raises(Exception, match="hash mismatch"):
+        runner._restore_preparation_snapshot(restored)
+
+
+@pytest.mark.asyncio
+async def test_module_review_requires_author_response_and_original_reviewer_verdict(
+    tmp_path: Path,
+) -> None:
+    module = _module("2.1")
+    target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
+    finding = {
+        "id": "M-001",
+        "target_submodule_id": target,
+        "category": "analysis_depth",
+        "impact": "advisory",
+        "observation": "当前建议没有明确责任接口和可以由原审查者复核的验收方式。",
+        "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
+        "required_change": "在目标小节补充责任接口、执行动作和可验证验收方法。",
+        "reviewer_checks": ["核对责任、动作和验收是否形成闭环"],
+    }
+    patch = ModuleRevisionSubmission(
+        module_id="2.1",
+        base_revision=0,
+        revision=1,
+        submodule_narratives={
+            target: "### 修订\n\n已补充责任接口、执行动作和可验证验收方法。"
+        },
+        claims_upsert=[],
+        claim_ids_remove=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision_responses=[
+            {
+                "finding_id": "M-001",
+                "action": "implemented",
+                "summary": "已在目标小节补充责任接口、执行动作和验收方法。",
+                "changed_target_ids": [target],
             }
-            if self.photo_ids:
-                module_narratives["2.4"] += "1A2 柜连接状态需要复核。"
-            payload = EditedReportSubmission(
-                title="配电安全专家咨询报告",
-                overview="本报告按五个专业视角综合审视配电安全。",
-                module_narratives=module_narratives,
-                conclusion="现有资料不足以形成客户现场事实结论，后续应补充核验。",
-                protected_claim_ids=[f"C-{module_id}-001" for module_id in REPORT_MODULE_IDS],
-                citation_anchors=(
-                    {"C-2.4-001": "1A2 柜连接状态需要复核"} if self.photo_ids else {}
+        ],
+    )
+    runner = _ScriptedRunner(
+        tmp_path,
+        [
+            (
+                "evidence-auditor",
+                "module_review_finding_submission",
+                ModuleReviewFindingSubmission(
+                    coverage={"submodule_ids": [target]},
+                    findings=[finding],
                 ),
-                photo_ids=list(self.photo_ids),
-            )
-        else:
-            raise AssertionError(agent_id)
-        result = AgentResult(
-            task_id=envelope.task_id,
-            run_id=envelope.run_id,
-            agent_id=agent_id,
-            session_id=session_key or envelope.task_id,
-            status=AgentRunStatus.COMPLETED,
-            payload=payload,
-        )
-        if self.workspace is not None:
-            SessionSummaryStore(self.workspace).save(
-                AgentSessionSummary(
-                    summary_id=f"summary-{envelope.task_id}-{envelope.revision}",
-                    run_id=envelope.run_id,
-                    task_id=envelope.task_id,
-                    agent_id=agent_id,
-                    session_id=session_key or envelope.task_id,
-                    status="completed",
-                    objective=envelope.objective,
-                    input_refs=[],
-                    output_refs=[],
-                    issue_refs=[],
-                    message_count=1,
-                    tool_names=["submit_result"],
-                    agent_rationale="测试摘要",
-                )
-            )
-        return result
-
-    async def close_workflow(self, workflow_id):
-        self.closed = True
-
-
-class NeverCalledProvider(LLMProvider):
-    def __init__(self):
-        super().__init__("test", model="never-called")
-
-    async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
-        raise AssertionError("ReportWorkflowRunner must use the injected scripted agents")
-
-
-class PostDeliveryRevisionAgents(ScriptedWorkflowAgents):
-    def __init__(self, *, drift: bool = False):
-        super().__init__(target_modules=("2.4",))
-        self.drift = drift
-
-    async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
-        result = await super().run(
-            definition,
-            envelope,
-            shared_artifacts,
-            workflow_id=workflow_id,
-            session_key=session_key,
-        )
-        if definition.id == "module-2.4-specialist":
-            payload = result.payload
-            assert isinstance(payload, ModuleSubmission)
-            narratives = dict(payload.submodule_narratives)
-            narratives["2.4.1.1"] = "2.4.1.1：已根据反馈修订设备状态边界。"
-            if self.drift:
-                narratives["2.4.2.2"] = "2.4.2.2：额外改变了未授权范围。"
-            result = result.model_copy(
-                update={
-                    "payload": payload.model_copy(
-                        update={
-                            "markdown": "模块 2.4 已根据交付后反馈完成局部修订。",
-                            "submodule_narratives": narratives,
+            ),
+            ("module-2.1-specialist", "module_revision_submission", patch),
+            (
+                "evidence-auditor",
+                "module_review_verdict_submission",
+                ModuleReviewVerdictSubmission(
+                        coverage={"submodule_ids": [target]},
+                    verdicts=[
+                        {
+                            "finding_id": "M-001",
+                            "verdict": "resolved",
+                            "reason": "当前修订已形成责任、动作和验收闭环，可以关闭。",
+                            "evidence_refs": [
+                                "Work/runs/run-1/modules/2.1-r1.json"
+                            ],
                         }
-                    )
-                }
-            )
-        elif definition.id == "chief-editor":
-            payload = result.payload
-            assert isinstance(payload, EditedReportSubmission)
-            narratives = dict(payload.module_narratives)
-            narratives["2.4"] = "模块 2.4 已根据交付后反馈完成局部修订。"
-            result = result.model_copy(
-                update={"payload": payload.model_copy(update={"module_narratives": narratives})}
-            )
-        return result
-
-
-class DriftingRevisionAgents(ScriptedWorkflowAgents):
-    async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
-        result = await super().run(
-            definition,
-            envelope,
-            shared_artifacts,
-            workflow_id=workflow_id,
-            session_key=session_key,
-        )
-        if definition.id == "evidence-auditor" and envelope.revision == 0:
-            result.payload = AuditSubmission(
-                module_id="2.4",
-                approved=False,
-                issues=[blocking_issue(kind="unsupported", message="只修订容量判断")],
-                checked_claim_ids=[],
-            )
-        if definition.id == "module-2.4-specialist" and envelope.revision == 1:
-            assert isinstance(result.payload, ModuleSubmission)
-            payload = result.payload.model_dump(mode="python")
-            payload["submodule_narratives"]["2.4.2.2"] = "越界修改接地子模块"
-            result.payload = ModuleSubmission.model_validate(payload)
-        return result
-
-
-class RepeatedAuditAgents(ScriptedWorkflowAgents):
-    async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
-        result = await super().run(
-            definition,
-            envelope,
-            shared_artifacts,
-            workflow_id=workflow_id,
-            session_key=session_key,
-        )
-        if definition.id == "evidence-auditor":
-            result.payload = AuditSubmission(
-                module_id="2.4",
-                approved=False,
-                issues=[
-                    blocking_issue(
-                        kind="unsupported",
-                        message="仍需定向修订",
-                        round=envelope.revision,
-                    )
-                ],
-                checked_claim_ids=[],
-            )
-        if definition.id == "main-agent" and self.decision_calls >= 2:
-            result.payload = WorkflowDecisionSubmission(
-                decision="stop_incomplete",
-                rationale="相同审计问题重复出现且没有新证据，继续返工不会收敛。",
-            )
-        return result
-
-
-class AcceptingBlockingAgents(ScriptedWorkflowAgents):
-    async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
-        result = await super().run(
-            definition,
-            envelope,
-            shared_artifacts,
-            workflow_id=workflow_id,
-            session_key=session_key,
-        )
-        if definition.id == "evidence-auditor":
-            result.payload = AuditSubmission(
-                module_id="2.4",
-                approved=False,
-                issues=[blocking_issue(kind="unsupported", message="现场事实缺少证据。")],
-                checked_claim_ids=[],
-            )
-        if definition.id == "main-agent":
-            result.payload = WorkflowDecisionSubmission(
-                decision="accept",
-                rationale="尝试直接绕过阻断问题。",
-                target_module_ids=["2.4"],
-            )
-        return result
-
-
-class CrossRevisionAuditAgents(ScriptedWorkflowAgents):
-    def __init__(self):
-        super().__init__()
-        self.cross_round = 0
-
-    async def run(self, definition, envelope, shared_artifacts, *, workflow_id, session_key=None):
-        if definition.id == "main-agent":
-            self.decision_calls += 1
-            payload = (
-                WorkflowDecisionSubmission(
-                    decision="revise",
-                    rationale="先定向修订 2.4。",
-                    target_module_ids=["2.4"],
-                    target_submodule_ids=["2.4.1.1"],
-                )
-                if self.decision_calls == 1
-                else WorkflowDecisionSubmission(
-                    decision="stop_incomplete",
-                    rationale="责任审计确认冲突仍未解决。",
-                )
-            )
-            return AgentResult(
-                task_id=envelope.task_id,
-                run_id=envelope.run_id,
-                agent_id=definition.id,
-                session_id=session_key or envelope.task_id,
-                status=AgentRunStatus.COMPLETED,
-                payload=payload,
-            )
-        result = await super().run(
-            definition,
-            envelope,
-            shared_artifacts,
-            workflow_id=workflow_id,
-            session_key=session_key,
-        )
-        if definition.id == "cross-module-reviewer":
-            self.cross_round += 1
-            result.payload = CrossReviewSubmission(
-                approved=self.cross_round > 1,
-                issues=(
-                    []
-                    if self.cross_round > 1
-                    else [
-                        blocking_issue(
-                            kind="cross_conflict",
-                            message="2.4 判断与其他模块冲突。",
-                        )
-                    ]
+                    ],
+                    new_findings=[],
                 ),
-            )
-        if definition.id == "evidence-auditor" and "-cross-" in envelope.task_id:
-            result.payload = AuditSubmission(
-                module_id="2.4",
-                approved=False,
-                issues=[
-                    blocking_issue(
-                        kind="cross_conflict_unresolved",
-                        message="定向修订仍未解决冲突。",
-                    )
-                ],
-                checked_claim_ids=[],
-            )
-        return result
+            ),
+        ],
+    )
+    state = {"run_id": "run-1"}
+    result = await run_module_review(
+        runner,
+        "2.1",
+        module,
+        state,
+        "workflow",
+        initial_scope={target},
+    )
+    assert result.revision == 1
+    reviewer_calls = [call for call in runner.calls if call[0] == "evidence-auditor"]
+    assert [call[2] for call in reviewer_calls] == [
+        "module-auditor-2.1",
+        "module-auditor-2.1",
+    ]
+    completion = ReviewCompletionRecord.model_validate_json(
+        (
+            tmp_path
+            / state["module_review_completion_refs"]["2.1"]
+        ).read_text(encoding="utf-8")
+    )
+    assert completion.resolved_finding_ids == ["M-001"]
 
 
 @pytest.mark.asyncio
-async def test_full_five_module_workflow_runs_parallel_barrier_editor_and_handoff_docx(
+async def test_module_review_resume_continues_after_persisted_findings_without_reaudit(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv(
-        "MANYSELVES_HANDOFF_DOCX_CORE",
-        str(tmp_path / "external-core-must-not-be-used.py"),
-    )
-    project_template = tmp_path / "Templates/report_template.docx"
-    project_template.parent.mkdir(parents=True)
-    template_document = Document()
-    template_document.add_paragraph("PROJECT TEMPLATE MARKER")
-    template_document.save(project_template)
-    service = ReportingService(
-        tmp_path,
-        bus=MessageBus(),
-        task_board=TaskBoard(),
-        llm_provider=NeverCalledProvider(),
-    )
-    agents = ScriptedWorkflowAgents()
-    state = {
-        "run_id": "run-full",
-        "request": ReportRequest(
-            instruction="生成完整配电安全专家报告",
-            missing_evidence_policy="draft",
-        ),
+    module = _module("2.1")
+    target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
+    finding = {
+        "id": "M-RESUME",
+        "target_submodule_id": target,
+        "category": "analysis_depth",
+        "impact": "advisory",
+        "observation": "当前建议没有明确责任接口、执行动作、完成时限以及可由原审查者复核的验收方式。",
+        "evidence_refs": ["Work/runs/run-review-resume/modules/2.1-r0.json"],
+        "required_change": "在目标小节补充责任接口、具体执行动作、完成时限以及可验证的验收方法。",
+        "reviewer_checks": ["核对责任和验收闭环"],
     }
-
-    await ReportWorkflowRunner(service, agents).run(state)
-
-    assert agents.max_active_specialists == 5
-    assert agents.closed is True
-    assert set(state["module_submissions"]) == set(REPORT_MODULE_IDS)
-    report_path = tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx"
-    assert report_path.is_file()
-    rendered = Document(report_path)
-    text = "\n".join(paragraph.text for paragraph in rendered.paragraphs)
-    assert "PROJECT TEMPLATE MARKER" in text
-    assert "模块 2.1 从本专业机理出发形成主动分析。" in text
-    assert "模块 2.5 从本专业机理出发形成主动分析。" in text
-    version_path = tmp_path / "Work/report-versions/run-full/version.json"
-    assert version_path.is_file()
-    version = json.loads(version_path.read_text(encoding="utf-8"))
-    assert version["parent_version_id"] is None
-    assert version["artifact_refs"]["final_docx"].startswith(
-        "Work/report-versions/run-full/artifacts/"
+    first = _ScriptedRunner(
+        tmp_path,
+        [
+            (
+                "evidence-auditor",
+                "module_review_finding_submission",
+                ModuleReviewFindingSubmission(
+                    coverage={"submodule_ids": [target]},
+                    findings=[finding],
+                ),
+            ),
+        ],
     )
-    assert version["artifact_refs"]["report_template"].startswith(
-        "Work/report-versions/run-full/artifacts/"
-    )
-    provenance = json.loads(
-        (tmp_path / "Work/runs/run-full/template-provenance.json").read_text(
-            encoding="utf-8"
+    with pytest.raises(IndexError):
+        await run_module_review(
+            first,
+            "2.1",
+            module,
+            {"run_id": "run-review-resume"},
+            "workflow",
+            initial_scope={target},
         )
+
+    patch = ModuleRevisionSubmission(
+        module_id="2.1",
+        base_revision=0,
+        revision=1,
+        submodule_narratives={
+            target: "### 修订\n\n已补充责任接口和可验证验收方法。"
+        },
+        claims_upsert=[],
+        claim_ids_remove=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision_responses=[
+            {
+                "finding_id": "M-RESUME",
+                "action": "implemented",
+                "summary": "已在目标小节补充责任接口、具体执行动作、完成时限以及可复核的验收方法。",
+                "changed_target_ids": [target],
+            }
+        ],
     )
-    assert provenance["source"] == "project"
-    assert provenance["selected_path"] == "Templates/report_template.docx"
-    assert len(provenance["sha256"]) == 64
-    render_log = json.loads(
-        (tmp_path / "Outputs/Reports/render-log.json").read_text(encoding="utf-8")
+    resumed = _ScriptedRunner(
+        tmp_path,
+        [
+            ("module-2.1-specialist", "module_revision_submission", patch),
+            (
+                "evidence-auditor",
+                "module_review_verdict_submission",
+                ModuleReviewVerdictSubmission(
+                    coverage={"submodule_ids": [target]},
+                    verdicts=[
+                        {
+                            "finding_id": "M-RESUME",
+                            "verdict": "resolved",
+                            "reason": "复核确认修订已明确责任接口、执行动作、完成时限和验收方式，可以关闭。",
+                            "evidence_refs": [
+                                "Work/runs/run-review-resume/modules/2.1-r1.json"
+                            ],
+                        }
+                    ],
+                    new_findings=[],
+                ),
+            ),
+        ],
     )
-    assert render_log["template"]["source"] == "project"
-    assert render_log["template"]["sha256"] == provenance["sha256"]
-    assert version["skill_provenance"]
+    state = {"run_id": "run-review-resume", "resume": True}
+    result = await run_module_review(
+        resumed,
+        "2.1",
+        module,
+        state,
+        "workflow",
+        initial_scope={target},
+    )
+
+    assert result.revision == 1
+    assert [call[0] for call in resumed.calls] == [
+        "module-2.1-specialist",
+        "evidence-auditor",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_partial_request_runs_only_target_module_and_propagates_requirements(
+async def test_author_dispute_enters_main_before_original_reviewer_recheck(
     tmp_path: Path,
 ) -> None:
-    service = ReportingService(
-        tmp_path,
-        bus=MessageBus(),
-        task_board=TaskBoard(),
-        llm_provider=NeverCalledProvider(),
+    module = _module("2.1")
+    target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
+    finding = {
+        "id": "M-DISPUTE",
+        "target_submodule_id": target,
+        "category": "evidence_boundary",
+        "impact": "advisory",
+        "observation": "审查者要求补写当前证据并不支持的确定性结论。",
+        "evidence_refs": ["Work/runs/run-dispute/modules/2.1-r0.json"],
+        "required_change": "逐项说明当前是否存在足够证据；若无法支持新增确定性结论，应明确提出异议并保持证据边界。",
+        "reviewer_checks": ["核对作者异议及当前证据边界"],
+    }
+    patch = ModuleRevisionSubmission(
+        module_id="2.1",
+        base_revision=0,
+        revision=1,
+        submodule_narratives={},
+        claims_upsert=[],
+        claim_ids_remove=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision_responses=[
+            {
+                "finding_id": "M-DISPUTE",
+                "action": "disputed",
+                "summary": "当前输入没有支持新增确定性结论的证据，因此保留原文并提出异议。",
+                "changed_target_ids": [],
+            }
+        ],
     )
-    agents = ScriptedWorkflowAgents(target_modules=("2.4",))
+    runner = _ScriptedRunner(
+        tmp_path,
+        [
+            (
+                "evidence-auditor",
+                "module_review_finding_submission",
+                ModuleReviewFindingSubmission(
+                    coverage={"submodule_ids": [target]},
+                    findings=[finding],
+                ),
+            ),
+            ("module-2.1-specialist", "module_revision_submission", patch),
+            (
+                "main-agent",
+                "workflow_decision_submission",
+                WorkflowDecisionSubmission(
+                    decision="accept_dispute",
+                    rationale="作者异议属于证据边界问题，可交回原审查者依据当前正文复核。",
+                    finding_ids=["M-DISPUTE"],
+                ),
+            ),
+            (
+                "evidence-auditor",
+                "module_review_verdict_submission",
+                ModuleReviewVerdictSubmission(
+                        coverage={"submodule_ids": [target]},
+                    verdicts=[
+                        {
+                            "finding_id": "M-DISPUTE",
+                            "verdict": "resolved",
+                            "reason": "复核确认原文已正确保持证据边界，无需新增结论。",
+                            "evidence_refs": [
+                                "Work/runs/run-dispute/modules/2.1-r1.json"
+                            ],
+                        }
+                    ],
+                    new_findings=[],
+                ),
+            ),
+        ],
+    )
+    state = {"run_id": "run-dispute"}
+
+    await run_module_review(
+        runner,
+        "2.1",
+        module,
+        state,
+        "workflow",
+        initial_scope={target},
+    )
+
+    assert [call[0] for call in runner.calls] == [
+        "evidence-auditor",
+        "module-2.1-specialist",
+        "main-agent",
+        "evidence-auditor",
+    ]
+    exception = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-dispute/exceptions/module-author_response-M-DISPUTE.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert exception["trigger"] == "author_response"
+    assert exception["finding_ids"] == ["M-DISPUTE"]
+
+
+@pytest.mark.asyncio
+async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
+    tmp_path: Path,
+) -> None:
+    modules = {module_id: _module(module_id) for module_id in REPORT_TAXONOMY}
+    target = next(iter(REPORT_TAXONOMY["2.3"].submodules))
+    coverage = [
+        {
+            "module_id": module_id,
+            "checked_dimensions": list(CROSS_REVIEW_DIMENSIONS),
+        }
+        for module_id in REPORT_TAXONOMY
+    ]
+    cross_finding = {
+        "id": "X-005",
+        "owner_module_id": "2.3",
+        "target_submodule_ids": [target],
+        "related_module_ids": ["2.4"],
+        "category": "dependencies",
+        "impact": "blocking",
+        "observation": "模块 2.3 未说明其行动对模块 2.4 前置条件的依赖和联合验收。",
+        "evidence_refs": [
+            "Work/runs/run-x/modules/2.3-r0.json",
+            "Work/runs/run-x/modules/2.4-r0.json",
+        ],
+        "required_change": "在责任模块目标小节写入依赖对象、作用机制、实施顺序、责任接口和联合验收方式。",
+        "reviewer_checks": ["核对责任模块已完整写入跨模块依赖与联合验收"],
+        "machine_checks": [],
+    }
+    patch = ModuleRevisionSubmission(
+        module_id="2.3",
+        base_revision=0,
+        revision=1,
+        submodule_narratives={
+            target: "### 修订\n\n已写入依赖对象、作用机制、实施顺序和联合验收。"
+        },
+        claims_upsert=[],
+        claim_ids_remove=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision_responses=[
+            {
+                "finding_id": "X-005",
+                "action": "implemented",
+                "summary": "已在责任小节写入跨模块依赖、顺序和联合验收。",
+                "changed_target_ids": [target],
+            }
+        ],
+    )
+    runner = _ScriptedRunner(
+        tmp_path,
+        [
+            (
+                "cross-module-reviewer",
+                "cross_review_finding_submission",
+                CrossReviewFindingSubmission(
+                    coverage=coverage,
+                    findings=[cross_finding],
+                    synthesis_inputs=[],
+                ),
+            ),
+            ("module-2.3-specialist", "module_revision_submission", patch),
+            (
+                "evidence-auditor",
+                "module_review_finding_submission",
+                ModuleReviewFindingSubmission(
+                        coverage={"submodule_ids": [target]},
+                    findings=[],
+                ),
+            ),
+            (
+                "cross-module-reviewer",
+                "cross_review_verdict_submission",
+                CrossReviewVerdictSubmission(
+                    coverage=coverage,
+                    verdicts=[
+                        {
+                            "finding_id": "X-005",
+                            "verdict": "resolved",
+                            "reason": "责任模块已写入依赖机制、顺序和联合验收，接口问题关闭。",
+                            "evidence_refs": [
+                                "Work/runs/run-x/modules/2.3-r1.json"
+                            ],
+                        }
+                    ],
+                    new_findings=[],
+                    synthesis_inputs=[],
+                ),
+            ),
+        ],
+    )
+    state = {"run_id": "run-x", "module_submissions": modules}
+    await run_cross_review(runner, state, "workflow")
+    agents = [call[0] for call in runner.calls]
+    assert agents == [
+        "cross-module-reviewer",
+        "module-2.3-specialist",
+        "evidence-auditor",
+        "cross-module-reviewer",
+    ]
+    cross_sessions = [
+        call[2] for call in runner.calls if call[0] == "cross-module-reviewer"
+    ]
+    assert cross_sessions == ["cross-module-reviewer", "cross-module-reviewer"]
+    assert state["cross_review_completion_ref"].endswith(
+        "reviews/cross-completion.json"
+    )
+
+
+@pytest.mark.asyncio
+async def test_final_review_uses_chief_response_then_original_auditor_verdict(
+    tmp_path: Path,
+) -> None:
+    module_text = {
+        module_id: _module(module_id).markdown for module_id in REPORT_TAXONOMY
+    }
+    current = _edited(module_text)
+    finding = {
+        "id": "F-001",
+        "target_section_ids": ["3.1.3"],
+        "category": "synthesis",
+        "impact": "blocking",
+        "observation": "跨领域章节缺少行动依赖和联合验收，无法支持实施排序。",
+        "evidence_refs": [
+            "Work/runs/run-f/edited-revisions/chief-r0.json"
+        ],
+        "required_change": "在 3.1.3 补充行动依赖顺序和联合验收。",
+        "reviewer_checks": ["核对行动依赖和联合验收是否明确且不改变模块事实"],
+    }
+    revised = current.model_copy(
+        update={
+            "cross_module_analysis": (
+                current.cross_module_analysis
+                + " 明确先完成前置核查，再联合验收并记录剩余风险。"
+            ),
+            "revision_responses": [
+                RevisionResponse(
+                    finding_id="F-001",
+                    action="implemented",
+                    summary="已在 3.1.3 补充前置顺序、联合验收和剩余风险记录。",
+                    changed_target_ids=["3.1.3"],
+                )
+            ],
+        }
+    )
+    runner = _ScriptedRunner(
+        tmp_path,
+        [
+            (
+                "chief-editor-auditor",
+                "final_review_finding_submission",
+                FinalReviewFindingSubmission(
+                    checked_section_ids=[
+                        "1.1",
+                        "1.2",
+                        "1.3",
+                        "2.1",
+                        "2.2",
+                        "2.3",
+                        "2.4",
+                        "2.5",
+                        "3.1.1",
+                        "3.1.2",
+                        "3.1.3",
+                        "3.1.4",
+                        "3.2",
+                        "4.1",
+                        "4.2",
+                        "4.3",
+                        "4.4",
+                    ],
+                    findings=[finding],
+                    residual_risks=[],
+                ),
+            ),
+            ("chief-editor", "edited_report_submission", revised),
+            (
+                "chief-editor-auditor",
+                "final_review_verdict_submission",
+                FinalReviewVerdictSubmission(
+                    checked_section_ids=[
+                        "1.1",
+                        "1.2",
+                        "1.3",
+                        "2.1",
+                        "2.2",
+                        "2.3",
+                        "2.4",
+                        "2.5",
+                        "3.1.1",
+                        "3.1.2",
+                        "3.1.3",
+                        "3.1.4",
+                        "3.2",
+                        "4.1",
+                        "4.2",
+                        "4.3",
+                        "4.4",
+                    ],
+                    verdicts=[
+                        {
+                            "finding_id": "F-001",
+                            "verdict": "resolved",
+                            "reason": "当前 3.1.3 已明确实施依赖和联合验收，问题关闭。",
+                            "evidence_refs": [
+                                "Work/runs/run-f/edited-revisions/chief-r1.json"
+                            ],
+                        }
+                    ],
+                    new_findings=[],
+                    residual_risks=[],
+                ),
+            ),
+        ],
+    )
     state = {
-        "run_id": "run-partial",
-        "request": ReportRequest(
-            instruction="只重写设备模块",
-            target_modules=["2.4"],
-            execution_requirements=["深度核对现场图片"],
-            missing_evidence_policy="draft",
+        "run_id": "run-f",
+        "edited_report": current,
+        "module_submissions": {
+            module_id: _module(module_id) for module_id in REPORT_TAXONOMY
+        },
+        "cross_synthesis_inputs": [],
+    }
+    await run_final_review(
+        runner,
+        state,
+        "workflow",
+        chief_envelope=TaskEnvelope(
+            task_id="chief-edit",
+            run_id="run-f",
+            agent_id="chief-editor",
+            objective="总编",
+            allowed_outputs=["edited_report_submission"],
+        ),
+        chief_session_key="chief-editor",
+        approved_module_text=module_text,
+        claims=[],
+        aggregate_mode=True,
+    )
+    assert state["final_review_completion_ref"].endswith(
+        "reviews/final-completion.json"
+    )
+    auditor_sessions = [
+        call[2] for call in runner.calls if call[0] == "chief-editor-auditor"
+    ]
+    assert auditor_sessions == [
+        "chief-editor-auditor",
+        "chief-editor-auditor",
+    ]
+
+
+def test_resume_restores_latest_module_subjects_but_requires_fresh_reviews(
+    tmp_path: Path,
+) -> None:
+    service = _FakeService(tmp_path)
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+    run_id = "run-resume"
+    module = _module("2.1", revision=2)
+    service.store.write_json(
+        f"Work/runs/{run_id}/modules/2.1-r2.json",
+        module.model_dump(mode="json"),
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/reviews/cross-completion.json",
+        {
+            "review_kind": "cross",
+            "subject_ref": f"Work/runs/{run_id}/modules/2.1-r2.json",
+            "finding_ref": f"Work/runs/{run_id}/reviews/cross-findings.json",
+            "response_refs": [],
+            "verdict_ref": f"Work/runs/{run_id}/reviews/cross-verdict.json",
+            "resolved_finding_ids": [],
+        },
+    )
+    checkpoint = {
+        "run_id": run_id,
+        "status": "cancelled",
+        "completed_modules": ["2.1"],
+        "cross_review_completed": True,
+        "final_review_completed": True,
+    }
+    state = {"run_id": run_id}
+    runner._restore_resume_state(state, checkpoint)
+    assert state["module_submissions"] == {}
+    assert state["specialist_submissions"]["2.1"].revision == 2
+    assert "cross_review_completion_ref" not in state
+    assert "final_review_completion_ref" not in state
+
+
+def test_delivery_artifacts_reference_current_final_review_completion() -> None:
+    final_review_ref = "Work/runs/run-delivery/reviews/final-completion.json"
+
+    artifacts = ReportWorkflowRunner._delivery_output_artifacts(
+        final_review_ref=final_review_ref,
+        delivery_manifest_ref=Path(
+            "Work/runs/run-delivery/delivery/power-distribution-report-run-delivery/"
+            "delivery-manifest.json"
+        ),
+    )
+
+    review_artifacts = [artifact for artifact in artifacts if artifact.kind == "review"]
+    assert [artifact.path.as_posix() for artifact in review_artifacts] == [
+        final_review_ref
+    ]
+    assert all(
+        artifact.path.as_posix() != "Outputs/Reviews/full-review.json"
+        for artifact in artifacts
+    )
+
+
+def test_delivery_root_is_scoped_to_the_owning_run(tmp_path: Path) -> None:
+    assert ReportWorkflowRunner._delivery_root(
+        tmp_path, "run-delivery"
+    ) == tmp_path / "Work/runs/run-delivery/delivery"
+
+
+def test_restore_delivery_rejects_obsolete_review_output_declaration(
+    tmp_path: Path,
+) -> None:
+    service = _FakeService(tmp_path)
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+    run_id = "run-obsolete-review-output"
+    delivery_dir = (
+        tmp_path
+        / f"Work/runs/{run_id}/delivery"
+        / f"power-distribution-report-{run_id}"
+    )
+    modules_dir = delivery_dir / "modules"
+    modules_dir.mkdir(parents=True)
+    final_docx = delivery_dir / "report.docx"
+    report_state = delivery_dir / "report-state.json"
+    manifest = delivery_dir / "delivery-manifest.json"
+    final_docx.write_bytes(b"docx")
+    report_state.write_text("{}", encoding="utf-8")
+    manifest.write_text("{}", encoding="utf-8")
+    module_files = {}
+    for module_id in REPORT_TAXONOMY:
+        path = modules_dir / f"{module_id}.md"
+        path.write_text(f"# {module_id}", encoding="utf-8")
+        module_files[module_id] = path
+    hashes = {
+        "final_docx": runner._sha256(final_docx),
+        "report_state": runner._sha256(report_state),
+        "manifest": runner._sha256(manifest),
+        **{
+            f"module:{module_id}": runner._sha256(path)
+            for module_id, path in module_files.items()
+        },
+    }
+    receipt_ref = f"Work/runs/{run_id}/delivery-receipt.json"
+    service.store.write_json(
+        receipt_ref,
+        {
+            "success": True,
+            "delivery_dir": delivery_dir.as_posix(),
+            "final_docx": final_docx.as_posix(),
+            "module_files": {
+                module_id: path.as_posix()
+                for module_id, path in module_files.items()
+            },
+            "report_state": report_state.as_posix(),
+            "manifest_path": manifest.as_posix(),
+            "artifact_sha256": hashes,
+        },
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/delivery-completion.json",
+        {
+            "run_id": run_id,
+            "status": "completed",
+            "delivery_receipt_ref": receipt_ref,
+            "report_version_id": run_id,
+            "output_artifacts": [
+                {
+                    "kind": "review",
+                    "path": "Outputs/Reviews/full-review.json",
+                    "module_id": None,
+                }
+            ],
+        },
+    )
+    service.store.write_json(
+        f"Work/report-versions/{run_id}/version.json",
+        ReportVersion(
+            version_id=run_id,
+            run_id=run_id,
+            artifact_refs={},
+            skill_provenance=[],
+            session_summary_refs=[],
+        ).model_dump(mode="json"),
+    )
+    state = {
+        "run_id": run_id,
+        "final_review_completion_ref": (
+            f"Work/runs/{run_id}/reviews/final-completion.json"
         ),
     }
 
-    await ReportWorkflowRunner(service, agents).run(state)
+    runner._restore_delivery_completion(state)
 
-    assert agents.specialist_ids == ["module-2.4-specialist"]
-    assert "深度核对现场图片" in agents.envelopes["module-2.4-specialist"].constraints
-    assert (tmp_path / "Outputs/Modules/2.4.md").is_file()
-    assert not (tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx").exists()
+    assert "delivery_completion_ref" not in state
+    assert "output_artifacts" not in state
 
 
 @pytest.mark.asyncio
+async def test_module_resume_rebinds_legacy_parts_without_replaying_old_refs(
+    tmp_path: Path,
+) -> None:
+    service = _FakeService(tmp_path)
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+    run_id = "run-marker-correction"
+    module_id = "2.3"
+    part_ids = list(REPORT_TAXONOMY[module_id].submodules)
+    draft_root = tmp_path / f"Work/runs/{run_id}/drafts/module-{module_id}/r0"
+    draft_root.mkdir(parents=True)
+    for part_id in part_ids:
+        (draft_root / f"{part_id}.md").write_text(
+            f"### {part_id}\n\n尚未放置结构化 Claim 标记的正文。",
+            encoding="utf-8",
+        )
+    raw_payload = {
+        "kind": "module_submission",
+        "module_id": module_id,
+        "submodule_narratives": {
+            part_id: {
+                "artifact_refs": [
+                    f"Work/runs/{run_id}/drafts/module-{module_id}/r0/{part_id}.md"
+                ]
+            }
+            for part_id in part_ids
+        },
+        "claims": [
+            {
+                "id": f"C-{module_id}-{index:03d}",
+                "module_id": module_id,
+                "submodule_id": part_id,
+                "text": "受当前项目证据支持的陈述。",
+                "claim_type": "project_fact",
+                "source_ids": ["E-0001"],
+                "confidence": 1.0,
+                "footnote_required": True,
+                "unresolved": False,
+            }
+            for index, part_id in enumerate(part_ids, start=1)
+        ],
+        "source_ids": ["E-0001"],
+        "unresolved_questions": [],
+        "revision": 0,
+        "revision_responses": [],
+    }
+    service.store.write_json(
+        f"Work/runs/{run_id}/submissions/module-{module_id}/attempt-3-raw.json",
+        {"raw_payload": raw_payload},
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/results/module-{module_id}.json",
+        {"status": "failed"},
+    )
+
+    captured: dict[str, object] = {}
+
+    async def stop_after_envelope(
+        agent_id,
+        envelope,
+        artifacts,
+        workflow_id,
+        *,
+        session_key=None,
+    ):
+        captured["agent_id"] = agent_id
+        captured["envelope"] = envelope
+        raise RuntimeError("captured correction envelope")
+
+    runner._agent = stop_after_envelope
+    planned = TaskEnvelope(
+        task_id=f"module-{module_id}",
+        run_id=run_id,
+        agent_id=f"module-{module_id}-specialist",
+        objective="完成模块正文和结构化提交。",
+        constraints=[],
+        allowed_outputs=["module_submission"],
+        target_submodule_ids=part_ids,
+    )
+    state = {
+        "run_id": run_id,
+        "resume": True,
+        "request": SimpleNamespace(
+            execution_requirements=[],
+            missing_evidence_policy="draft",
+            user_supplements=[],
+        ),
+        "module_dispatch": SimpleNamespace(module_tasks=[planned]),
+        "preparation_refs": {
+            "coverage": "Work/coverage.json",
+            "evidence": "Work/evidence.jsonl",
+            "manifest": "Work/manifest.json",
+        },
+        "module_knowledge_refs": {
+            module_id: f"Work/runs/{run_id}/knowledge/module-{module_id}.md"
+        },
+    }
+
+    with pytest.raises(RuntimeError, match="captured correction envelope"):
+        await runner._module_pipeline(module_id, state, "workflow")
+
+    envelope = captured["envelope"]
+    assert isinstance(envelope, TaskEnvelope)
+    assert envelope.target_submodule_ids == sorted(part_ids)
+    assert envelope.allowed_tools == [
+        "search_project_evidence",
+        "open_project_source",
+        "list_result_parts",
+        "write_result_part",
+        "submit_result",
+    ]
+    assert not any("/drafts/" in ref for ref in envelope.input_refs)
+    assert not any("correction-state" in ref for ref in envelope.input_refs)
+    input_contract = json.loads(
+        (tmp_path / envelope.input_contract_ref).read_text(encoding="utf-8")
+    )
+    assert input_contract["saved_part_ids"] == sorted(part_ids)
+    assert input_contract["rewrite_part_ids"] == sorted(part_ids)
+    assert "existing_part_refs" not in input_contract
+    assert "pending_correction_ref" not in input_contract
+
+
+def test_resume_restores_exact_current_protocol_review_completions(
+    tmp_path: Path,
+) -> None:
+    service = _FakeService(tmp_path)
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+    run_id = "run-current-resume"
+    modules = {module_id: _module(module_id) for module_id in REPORT_TAXONOMY}
+    module_refs = []
+    for module_id, module in modules.items():
+        subject_ref = f"Work/runs/{run_id}/modules/{module_id}-r0.json"
+        module_refs.append(subject_ref)
+        service.store.write_json(subject_ref, module.model_dump(mode="json"))
+        finding_ref = (
+            f"Work/runs/{run_id}/reviews/module-findings-{module_id}-r0.json"
+        )
+        finding_payload = ModuleReviewFindingSubmission(
+            coverage={
+                "submodule_ids": list(REPORT_TAXONOMY[module_id].submodules),
+            },
+            findings=[],
+        ).model_dump(mode="json")
+        if module_id == "2.1":
+            # Runtime-only locator metadata from the interrupted current run
+            # must not invalidate an already closed semantic review.
+            finding_payload["coverage"]["claim_ids"] = ["C-2.1-001"]
+        service.store.write_json(finding_ref, finding_payload)
+        service.store.write_json(
+            f"Work/runs/{run_id}/reviews/module-completion-{module_id}-r0.json",
+            ReviewCompletionRecord(
+                lifecycle="module",
+                run_id=run_id,
+                reviewer_agent_id="evidence-auditor",
+                reviewer_session_key=f"module-auditor-{module_id}",
+                subject_refs=[subject_ref],
+                finding_refs=[finding_ref],
+                verdict_refs=[],
+                resolved_finding_ids=[],
+            ).model_dump(mode="json"),
+        )
+
+    cross_finding_ref = f"Work/runs/{run_id}/reviews/cross-findings-r0.json"
+    service.store.write_json(
+        cross_finding_ref,
+        CrossReviewFindingSubmission(
+            coverage=[
+                {
+                    "module_id": module_id,
+                    "checked_dimensions": list(CROSS_REVIEW_DIMENSIONS),
+                }
+                for module_id in REPORT_TAXONOMY
+            ],
+            findings=[],
+            synthesis_inputs=[],
+        ).model_dump(mode="json"),
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/reviews/cross-completion.json",
+        ReviewCompletionRecord(
+            lifecycle="cross",
+            run_id=run_id,
+            reviewer_agent_id="cross-module-reviewer",
+            reviewer_session_key="cross-module-reviewer",
+            subject_refs=module_refs,
+            finding_refs=[cross_finding_ref],
+            verdict_refs=[],
+            resolved_finding_ids=[],
+        ).model_dump(mode="json"),
+    )
+
+    edited_ref = f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
+    edited = _edited(
+        {module_id: module.markdown for module_id, module in modules.items()}
+    )
+    service.store.write_json(edited_ref, edited.model_dump(mode="json"))
+    final_finding_ref = f"Work/runs/{run_id}/reviews/final-findings-r0.json"
+    service.store.write_json(
+        final_finding_ref,
+        FinalReviewFindingSubmission(
+            checked_section_ids=list(FINAL_REPORT_SECTION_IDS),
+            findings=[],
+            residual_risks=[],
+        ).model_dump(mode="json"),
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/reviews/final-completion.json",
+        ReviewCompletionRecord(
+            lifecycle="final",
+            run_id=run_id,
+            reviewer_agent_id="chief-editor-auditor",
+            reviewer_session_key="chief-editor-auditor",
+            subject_refs=[edited_ref],
+            finding_refs=[final_finding_ref],
+            verdict_refs=[],
+            resolved_finding_ids=[],
+        ).model_dump(mode="json"),
+    )
+
+    state = {"run_id": run_id}
+    runner._restore_resume_state(
+        state,
+        {
+            "run_id": run_id,
+            "status": "cancelled",
+            "completed_modules": list(REPORT_TAXONOMY),
+        },
+    )
+
+    assert set(state["module_submissions"]) == set(REPORT_TAXONOMY)
+    assert state["cross_review_completion_ref"].endswith("cross-completion.json")
+    assert state["final_review_completion_ref"].endswith("final-completion.json")
+    assert state["edited_report"] == edited
+
+
 @pytest.mark.parametrize(
-    "policy,required_constraint",
+    ("lifecycle", "reviewer_agent_id", "reviewer_session_key"),
     [
-        ("draft", "待核实或不确定性"),
-        ("skip", "标注“未评估”"),
+        ("module", "evidence-auditor", "module-auditor-2.4"),
+        ("cross", "cross-module-reviewer", "cross-module-reviewer"),
+        ("final", "chief-editor-auditor", "chief-editor-auditor"),
     ],
 )
-async def test_missing_evidence_choice_reaches_specialist_as_contract(
-    tmp_path: Path, policy: str, required_constraint: str
+def test_review_completion_replays_canonical_regression_findings(
+    tmp_path: Path,
+    lifecycle: str,
+    reviewer_agent_id: str,
+    reviewer_session_key: str,
 ) -> None:
-    service = ReportingService(
-        tmp_path,
-        bus=MessageBus(),
-        task_board=TaskBoard(),
-        llm_provider=NeverCalledProvider(),
+    service = _FakeService(tmp_path)
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+    run_id = f"run-{lifecycle}-regression-resume"
+    subject_ref = f"Work/runs/{run_id}/subjects/current.json"
+    service.store.write_json(subject_ref, {"kind": "subject"})
+
+    initial_id = f"{lifecycle.upper()}-001"
+    regression_id = f"{lifecycle.upper()}-002"
+    initial_finding = {"id": initial_id, "marker": "initial"}
+    regression_finding = {"id": regression_id, "marker": "regression"}
+    finding_kind = f"{lifecycle}_review_finding_submission"
+    verdict_kind = f"{lifecycle}_review_verdict_submission"
+    initial_ref = f"Work/runs/{run_id}/reviews/initial.json"
+    regression_ref = f"Work/runs/{run_id}/reviews/regression.json"
+    first_verdict_ref = f"Work/runs/{run_id}/reviews/verdict-r1.json"
+    final_verdict_ref = f"Work/runs/{run_id}/reviews/verdict-r2.json"
+    completion_ref = f"Work/runs/{run_id}/reviews/completion.json"
+
+    service.store.write_json(
+        initial_ref,
+        {"kind": finding_kind, "findings": [initial_finding]},
     )
-    agents = ScriptedWorkflowAgents(target_modules=("2.4",))
-    state = {
-        "run_id": f"run-{policy}",
-        "request": ReportRequest(
-            instruction="生成设备模块",
-            target_modules=["2.4"],
-            missing_evidence_policy=policy,
-        ),
-    }
+    service.store.write_json(
+        regression_ref,
+        {"kind": finding_kind, "findings": [regression_finding]},
+    )
+    service.store.write_json(
+        first_verdict_ref,
+        {
+            "kind": verdict_kind,
+            "verdicts": [{"finding_id": initial_id}],
+            "new_findings": [regression_finding],
+        },
+    )
+    service.store.write_json(
+        final_verdict_ref,
+        {
+            "kind": verdict_kind,
+            "verdicts": [{"finding_id": regression_id}],
+            "new_findings": [],
+        },
+    )
+    service.store.write_json(
+        completion_ref,
+        ReviewCompletionRecord(
+            lifecycle=lifecycle,
+            run_id=run_id,
+            reviewer_agent_id=reviewer_agent_id,
+            reviewer_session_key=reviewer_session_key,
+            subject_refs=[subject_ref],
+            finding_refs=[initial_ref, regression_ref],
+            verdict_refs=[first_verdict_ref, final_verdict_ref],
+            resolved_finding_ids=[initial_id, regression_id],
+        ).model_dump(mode="json"),
+    )
 
-    await ReportWorkflowRunner(service, agents).run(state)
+    completion, artifacts = runner._load_current_review_completion(
+        run_id=run_id,
+        completion_ref=completion_ref,
+        lifecycle=lifecycle,
+        reviewer_agent_id=reviewer_agent_id,
+        reviewer_session_key=reviewer_session_key,
+        subject_refs=[subject_ref],
+    )
 
-    constraints = agents.envelopes["module-2.4-specialist"].constraints
-    assert any(required_constraint in value for value in constraints)
+    assert completion.resolved_finding_ids == [initial_id, regression_id]
+    assert len(artifacts) == 4
 
 
-@pytest.mark.asyncio
-async def test_workflow_records_revision_diff_instead_of_rejecting_business_drift(
+def test_review_completion_rejects_regression_copy_that_differs_from_verdict(
     tmp_path: Path,
 ) -> None:
-    service = ReportingService(
-        tmp_path,
-        bus=MessageBus(),
-        task_board=TaskBoard(),
-        llm_provider=NeverCalledProvider(),
+    service = _FakeService(tmp_path)
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+    run_id = "run-regression-mismatch"
+    subject_ref = f"Work/runs/{run_id}/subjects/current.json"
+    initial_ref = f"Work/runs/{run_id}/reviews/initial.json"
+    regression_ref = f"Work/runs/{run_id}/reviews/regression.json"
+    verdict_ref = f"Work/runs/{run_id}/reviews/verdict.json"
+    completion_ref = f"Work/runs/{run_id}/reviews/completion.json"
+    service.store.write_json(subject_ref, {"kind": "subject"})
+    service.store.write_json(
+        initial_ref,
+        {"kind": "module_review_finding_submission", "findings": []},
     )
-    agents = DriftingRevisionAgents(target_modules=("2.4",))
-    state = {
-        "run_id": "run-drift",
-        "request": ReportRequest(
-            instruction="修订设备模块",
-            target_modules=["2.4"],
-            missing_evidence_policy="draft",
-        ),
-    }
-
-    await ReportWorkflowRunner(service, agents).run(state)
-
-    diff = tmp_path / "Work/runs/run-drift/reviews/diff-2.4-r1.json"
-    assert diff.is_file()
-    assert "2.4.2.2" in diff.read_text(encoding="utf-8")
-
-
-@pytest.mark.asyncio
-async def test_active_workflow_passes_traceable_photo_to_renderer(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    service = ReportingService(
-        tmp_path,
-        bus=MessageBus(),
-        task_board=TaskBoard(),
-        llm_provider=NeverCalledProvider(),
+    service.store.write_json(
+        regression_ref,
+        {
+            "kind": "module_review_finding_submission",
+            "findings": [{"id": "M-001", "marker": "persisted"}],
+        },
     )
-    photo_path = tmp_path / "Work/assets/IMG-1.png"
-    photo_path.parent.mkdir(parents=True)
-    Image.new("RGB", (40, 30), color="red").save(photo_path)
-    template_photo_count = len(Document(service.report_template_path).inline_shapes)
-
-    async def normalize(state: dict) -> None:
-        state["evidence_items"] = [
-            EvidenceItem(
-                id="E-0001",
-                subject="1A2 柜",
-                fact="连接点存在异常",
-                source=SourceLocation(file_id="F-1", path=Path("Inputs/check.xlsx"), cell="A2"),
-                module_id="2.4",
-                submodule_id="2.4.1.1",
-                photo_refs=["IMG-1"],
-            )
-        ]
-        state["photo_assets"] = [
-            PhotoAsset(
-                id="IMG-1",
-                path=photo_path.relative_to(tmp_path),
-                sha256="test",
-                media_type="image/png",
-                source_member="media/image1.png",
-            )
-        ]
-
-    monkeypatch.setattr(service, "_normalize_evidence", normalize)
-    state = {
-        "run_id": "run-photo",
-        "request": ReportRequest(
-            instruction="生成带现场图片的完整报告",
-            missing_evidence_policy="draft",
-        ),
-    }
-
-    await ReportWorkflowRunner(service, ScriptedWorkflowAgents(photo_ids=("IMG-1",))).run(state)
-
-    rendered = Document(tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx")
-    assert len(rendered.inline_shapes) == template_photo_count + 1
-
-
-@pytest.mark.asyncio
-async def test_lead_agent_stops_repeated_revision_loop_and_task_board_closes(
-    tmp_path: Path,
-) -> None:
-    board = TaskBoard()
-    service = ReportingService(
-        tmp_path,
-        bus=MessageBus(),
-        task_board=board,
-        llm_provider=NeverCalledProvider(),
+    service.store.write_json(
+        verdict_ref,
+        {
+            "kind": "module_review_verdict_submission",
+            "verdicts": [{"finding_id": "M-001"}],
+            "new_findings": [{"id": "M-001", "marker": "different"}],
+        },
     )
-    state = {
-        "run_id": "run-budget",
-        "request": ReportRequest(
-            instruction="验证主决策 Agent 识别重复返工",
-            target_modules=["2.4"],
-            missing_evidence_policy="draft",
-        ),
-    }
-
-    agents = RepeatedAuditAgents(target_modules=("2.4",))
-    with pytest.raises(Exception, match="相同审计问题重复出现"):
-        await ReportWorkflowRunner(service, agents).run(state)
-
-    assert agents.decision_calls == 2
-
-    tasks = board.get_all()
-    assert tasks
-    assert all(
-        task.status in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.BLOCKED}
-        for task in tasks
+    service.store.write_json(
+        completion_ref,
+        ReviewCompletionRecord(
+            lifecycle="module",
+            run_id=run_id,
+            reviewer_agent_id="evidence-auditor",
+            reviewer_session_key="module-auditor-2.4",
+            subject_refs=[subject_ref],
+            finding_refs=[initial_ref, regression_ref],
+            verdict_refs=[verdict_ref],
+            resolved_finding_ids=["M-001"],
+        ).model_dump(mode="json"),
     )
-    assert any("main-agent:decision-module-2.4-r1" in task.brief for task in tasks)
 
-
-@pytest.mark.asyncio
-async def test_main_agent_cannot_accept_unresolved_blocking_module_issue(tmp_path: Path) -> None:
-    service = ReportingService(
-        tmp_path,
-        bus=MessageBus(),
-        task_board=TaskBoard(),
-        llm_provider=NeverCalledProvider(),
-    )
-    state = {
-        "run_id": "run-blocking-accept",
-        "request": ReportRequest(
-            instruction="验证阻断问题不可绕过",
-            target_modules=["2.4"],
-            missing_evidence_policy="draft",
-        ),
-    }
-
-    with pytest.raises(Exception, match="blocking"):
-        await ReportWorkflowRunner(
-            service,
-            AcceptingBlockingAgents(target_modules=("2.4",)),
-        ).run(state)
-
-
-@pytest.mark.asyncio
-async def test_cross_revision_must_pass_responsibility_audit_before_state_update(
-    tmp_path: Path,
-) -> None:
-    service = ReportingService(
-        tmp_path,
-        bus=MessageBus(),
-        task_board=TaskBoard(),
-        llm_provider=NeverCalledProvider(),
-    )
-    state = {
-        "run_id": "run-cross-audit",
-        "request": ReportRequest(
-            instruction="验证跨模块返修重新审计",
-            missing_evidence_policy="draft",
-        ),
-    }
-    agents = CrossRevisionAuditAgents()
-
-    with pytest.raises(Exception, match="责任审计确认冲突仍未解决"):
-        await ReportWorkflowRunner(service, agents).run(state)
-
-    assert agents.decision_calls == 2
-
-
-@pytest.mark.asyncio
-async def test_post_delivery_revision_restores_parent_reuses_untouched_modules_and_delivers_full_docx(
-    tmp_path: Path,
-) -> None:
-    service = ReportingService(
-        tmp_path,
-        bus=MessageBus(),
-        task_board=TaskBoard(),
-        llm_provider=NeverCalledProvider(),
-    )
-    baseline_state = {
-        "run_id": "run-baseline",
-        "request": ReportRequest(
-            instruction="生成完整基线报告",
-            missing_evidence_policy="draft",
-        ),
-    }
-    await ReportWorkflowRunner(service, ScriptedWorkflowAgents(workspace=tmp_path)).run(
-        baseline_state
-    )
-    baseline_version = baseline_state["report_version"]
-    untouched_hash = baseline_version.artifact_sha256["module_submission:2.1"]
-
-    agents = PostDeliveryRevisionAgents()
-    result = await RevisionCoordinator(service, agents).run(
-        RevisionRequest(
-            baseline_version_id="run-baseline",
-            feedback="只修订设备状态判断边界。",
-            target_module_ids=["2.4"],
-            target_submodule_ids=["2.4.1.1"],
-            promote_to_skill=True,
-            promote_skill_id="pds.module24.device-risk",
+    with pytest.raises(ValueError, match="regression findings differ"):
+        runner._load_current_review_completion(
+            run_id=run_id,
+            completion_ref=completion_ref,
+            lifecycle="module",
+            reviewer_agent_id="evidence-auditor",
+            reviewer_session_key="module-auditor-2.4",
+            subject_refs=[subject_ref],
         )
-    )
 
-    assert result.status == "completed"
-    assert result.feedback_record_id
-    assert not (tmp_path / "Capabilities/skills/manifest.json").exists()
-    child = baseline_version.__class__.model_validate_json(
-        (tmp_path / f"Work/report-versions/{result.run_id}/version.json").read_text(
-            encoding="utf-8"
+
+def test_canonical_markdown_uses_only_current_fixed_sections() -> None:
+    modules = {module_id: _module(module_id).markdown for module_id in REPORT_TAXONOMY}
+    markdown = ReportWorkflowRunner._canonical_markdown(_edited(modules))
+    assert "### 1.1 评估背景" in markdown
+    assert "#### 3.1.3 跨领域关联风险" in markdown
+    assert "### 4.4 应急管理及合规性管理建议" in markdown
+
+
+def test_review_protocol_rejects_verdicts_that_guess_missing_finding_ids() -> None:
+    from manyselves.core.reporting.review_lifecycle import _validate_verdicts
+
+    with pytest.raises(ReviewLifecycleError, match="cover exactly"):
+        _validate_verdicts(
+            [
+                ResolutionVerdict(
+                    finding_id="M-OTHER",
+                    verdict="open",
+                    reason="这个 verdict 故意没有对应 required finding，用于验证合同拒绝。",
+                    evidence_refs=[],
+                )
+            ],
+            {"M-001"},
         )
-    )
-    assert child.parent_version_id == "run-baseline"
-    assert child.artifact_sha256["module_submission:2.1"] == untouched_hash
-    assert (
-        child.artifact_sha256["module_submission:2.4"]
-        != baseline_version.artifact_sha256["module_submission:2.4"]
-    )
-    assert agents.envelopes["module-2.4-specialist"].context_summary_refs
-    assert (tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx").is_file()
-
-
-@pytest.mark.asyncio
-async def test_post_delivery_scope_drift_creates_reviewable_expansion_request(
-    tmp_path: Path,
-) -> None:
-    service = ReportingService(
-        tmp_path,
-        bus=MessageBus(),
-        task_board=TaskBoard(),
-        llm_provider=NeverCalledProvider(),
-    )
-    baseline_state = {
-        "run_id": "run-baseline",
-        "request": ReportRequest(
-            instruction="生成完整基线报告",
-            missing_evidence_policy="draft",
-        ),
-    }
-    await ReportWorkflowRunner(service, ScriptedWorkflowAgents()).run(baseline_state)
-
-    result = await RevisionCoordinator(service, PostDeliveryRevisionAgents(drift=True)).run(
-        RevisionRequest(
-            baseline_version_id="run-baseline",
-            feedback="只修订设备状态判断边界。",
-            target_module_ids=["2.4"],
-            target_submodule_ids=["2.4.1.1"],
-        )
-    )
-
-    assert result.status == "needs_scope_expansion"
-    assert result.scope_expansion_request_id
-    request_path = (
-        tmp_path
-        / f"Work/runs/{result.run_id}/scope-expansions/{result.scope_expansion_request_id}.json"
-    )
-    expansion = json.loads(request_path.read_text(encoding="utf-8"))
-    assert expansion["unexpected_submodule_ids"] == ["2.4.2.2"]
-    assert not (tmp_path / f"Work/report-versions/{result.run_id}/version.json").exists()

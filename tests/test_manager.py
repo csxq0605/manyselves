@@ -78,17 +78,43 @@ def test_create_tools_for_main(manager):
     tools = manager._create_tools_for_agent(AgentType.MAIN)
     tool_names = {t.name for t in tools.get_all().values()}
     assert "read" in tool_names
+    assert "inspect_document" in tool_names
     assert "apply_patch" in tool_names
     # MAIN delegates — it does not get the exec/shell tool.
     assert "exec" not in tool_names
     assert "send_to_agent" not in tool_names
     assert "run_reporting_workflow" in tool_names
+    assert "cancel_reporting_workflow" in tool_names
+    assert "get_reporting_workflow_status" in tool_names
     assert "resume_reporting_workflow" in tool_names
     assert "revise_reporting_workflow" in tool_names
     assert "project_skill_evolution" in tool_names
     assert "run_product_skill_maintainer" in tool_names
     assert "product_skill_evolution" not in tool_names
     assert "respond" not in tool_names
+    reporting_schema = next(
+        definition["input_schema"]
+        for definition in tools.get_definitions()
+        if definition["name"] == "run_reporting_workflow"
+    )
+    assert "operation" in reporting_schema["required"]
+    assert set(reporting_schema["properties"]["operation"]["enum"]) == {
+        "distill_template_skill",
+        "full_report",
+        "module_report",
+        "aggregate_existing",
+        "render_existing",
+    }
+
+
+def test_main_does_not_advertise_mineru_when_cli_is_unavailable(manager):
+    with patch(
+        "manyselves.core.loops.manager.PDFParseTool.is_available", return_value=False
+    ):
+        tools = manager._create_tools_for_agent(AgentType.MAIN)
+
+    assert tools.get("inspect_document") is not None
+    assert tools.get("parse_pdf") is None
 
 
 @pytest.mark.parametrize("legacy_type", [AgentType.DATA_ANALYSIS, AgentType.THEORY, AgentType.PLOTTING])

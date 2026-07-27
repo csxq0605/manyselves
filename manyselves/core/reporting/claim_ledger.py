@@ -2,14 +2,15 @@
 
 This module deliberately keeps audit structure behind the report surface.  It
 never generates or rewrites report prose; it only validates sources, assigns
-stable markers, and binds markers to explicit semantic anchors.
+stable markers, and binds explicit Claim markers to source footnotes.
 """
 
 from __future__ import annotations
 
 from collections import Counter
-from typing import Mapping
 from urllib.parse import urlparse
+
+import re
 
 from pydantic import Field, model_validator
 
@@ -25,6 +26,12 @@ from .agentic_models import (
 
 class CitationBindingError(ValueError):
     """Raised when an approved claim cannot be bound to edited prose."""
+
+
+def claim_citation_marker(claim_id: str) -> str:
+    """Return the opaque marker placed once by the Claim-owning module author."""
+
+    return f"[[CLAIM:{claim_id}]]"
 
 
 class ClaimLedger(StrictModel):
@@ -102,7 +109,7 @@ class ClaimLedger(StrictModel):
             (SourceKind.LOCAL_REFERENCE, "本地参考 R-*"),
             (SourceKind.WEB, "网络来源 W-*"),
         )
-        lines = ["## 4. 证据与来源索引", ""]
+        lines = ["## 证据与来源索引", ""]
         entries = self._citation_entries()
         lines.extend(["### 脚注对应关系", ""])
         if entries:
@@ -133,21 +140,25 @@ class ClaimLedger(StrictModel):
             lines.append("")
         return "\n".join(lines).rstrip()
 
-    def bind_citations(self, narrative: str, *, anchors: Mapping[str, str] | None = None) -> str:
-        """Insert opaque markers after exact anchors without rewriting prose."""
+    def bind_citations(self, narrative: str) -> str:
+        """Replace exact Claim markers with numeric citation tokens."""
 
-        anchors = anchors or {}
         cited = narrative
         plan_by_claim = {entry.claim_id: entry for entry in self.build_citation_plan().entries}
         for claim in self.claims:
             entry = plan_by_claim.get(claim.id)
             if entry is None:
                 continue
-            anchor = anchors.get(claim.id, claim.text)
-            occurrences = cited.count(anchor)
+            marker = claim_citation_marker(claim.id)
+            occurrences = cited.count(marker)
             if occurrences != 1:
                 raise CitationBindingError(
-                    f"claim {claim.id} citation anchor must occur exactly once; got {occurrences}"
+                    f"claim {claim.id} citation marker must occur exactly once; got {occurrences}"
                 )
-            cited = cited.replace(anchor, f"{anchor}[[CITE:{entry.marker}]]", 1)
+            cited = cited.replace(marker, f"[[CITE:{entry.marker}]]", 1)
+        unresolved = sorted(set(re.findall(r"\[\[CLAIM:(C-[^\]\s]+)\]\]", cited)))
+        if unresolved:
+            raise CitationBindingError(
+                f"report contains unresolved Claim citation markers: {unresolved}"
+            )
         return cited

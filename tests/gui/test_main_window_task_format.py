@@ -5,7 +5,31 @@ from types import SimpleNamespace
 from manyselves.gui.main_window import MainWindow
 from manyselves.gui.widgets.agent_panel import AgentPanel
 from manyselves.core.tools.task_board import TaskBoard
-from manyselves.interfaces.types import AgentResponse, AgentType, ToolCallMessage, ToolResult
+from manyselves.interfaces.types import (
+    AgentResponse,
+    AgentType,
+    ToolCallMessage,
+    ToolResult,
+    UserMessage,
+)
+
+
+def test_internal_workflow_continuation_is_not_rendered_or_persisted() -> None:
+    fake = SimpleNamespace(
+        _handle_user_message=lambda _message: (_ for _ in ()).throw(
+            AssertionError("internal continuation reached the GUI")
+        )
+    )
+
+    MainWindow._dispatch_backend_message(
+        fake,
+        UserMessage(
+            content="<same_identity_continuation>continue</same_identity_continuation>",
+            agent_type="cross-module-reviewer--session-test",
+            source="workflow",
+            internal=True,
+        ),
+    )
 
 
 def test_manage_tasks_format_omits_empty_sections():

@@ -2,7 +2,7 @@
 
 import inspect
 import re
-from typing import Any, Union, get_type_hints
+from typing import Any, Literal, Union, get_type_hints
 
 from loguru import logger
 
@@ -157,6 +157,18 @@ class ToolRegistry:
 
         if type_hint in type_map:
             return type_map[type_hint].copy()
+
+        if origin is Literal:
+            values = list(getattr(type_hint, "__args__", ()))
+            value_types = {type(value) for value in values}
+            schema_type = (
+                "string"
+                if value_types <= {str}
+                else "integer"
+                if value_types <= {int}
+                else "string"
+            )
+            return {"type": schema_type, "enum": values}
 
         # Handle list[T] and dict[K, V] generic types
         if origin is list:

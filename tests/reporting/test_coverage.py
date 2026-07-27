@@ -25,7 +25,11 @@ def _evidence(
 
 
 def test_unrelated_evidence_cannot_make_module_24_ready() -> None:
-    request = ReportRequest(instruction="生成 2.4", target_modules=["2.4"])
+    request = ReportRequest(
+        operation="module_report",
+        instruction="生成 2.4",
+        target_modules=["2.4"],
+    )
     unrelated = _evidence("ev-21", "2.1", "2.1.1")
 
     coverage = evaluate_coverage(request, [unrelated])
@@ -37,7 +41,11 @@ def test_unrelated_evidence_cannot_make_module_24_ready() -> None:
 
 
 def test_coverage_marks_only_exact_submodule_ready() -> None:
-    request = ReportRequest(instruction="生成 2.4", target_modules=["2.4"])
+    request = ReportRequest(
+        operation="module_report",
+        instruction="生成 2.4",
+        target_modules=["2.4"],
+    )
     grounding = _evidence("ev-ground", "2.4", "2.4.2.2")
 
     coverage = evaluate_coverage(request, [grounding])
@@ -51,6 +59,7 @@ def test_coverage_marks_only_exact_submodule_ready() -> None:
 
 def test_block_policy_marks_missing_submodules_blocked() -> None:
     request = ReportRequest(
+        operation="module_report",
         instruction="生成 2.4",
         target_modules=["2.4"],
         missing_evidence_policy="block",

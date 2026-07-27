@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .agent_runner import ReportingAgentRunner
-from .agentic_models import EditedReportSubmission, ModuleSubmission, PlanSubmission, TaskEnvelope
+from .agentic_models import (
+    EditedReportSubmission,
+    ModuleDispatchPlan,
+    ModuleSubmission,
+    TaskEnvelope,
+)
 from .models import (
     REPORT_MODULE_IDS,
     EvidenceItem,
@@ -46,11 +51,17 @@ class RevisionCoordinator:
         self.service = service
         self.agent_runner = agent_runner
 
-    async def run(self, request: RevisionRequest) -> "ReportingRunResult":
+    async def run(
+        self,
+        request: RevisionRequest,
+        *,
+        run_id: str | None = None,
+        resume: bool = False,
+    ) -> "ReportingRunResult":
         from .service import ReportingRunResult
 
         self.service.store.ensure_layout()
-        run_id = f"report-revision-{uuid.uuid4().hex[:10]}"
+        run_id = run_id or f"report-revision-{uuid.uuid4().hex[:10]}"
         execution_started_ns = time.time_ns()
         self.service.store.write_json(
             f"Work/runs/{run_id}/revision-request.json",
@@ -59,6 +70,7 @@ class RevisionCoordinator:
         try:
             baseline = ReportVersionStore(self.service.workspace).load(request.baseline_version_id)
             state, baseline_edited = self._restore(run_id, request, baseline)
+            state["resume"] = resume
             await ReportWorkflowRunner(self.service, self.agent_runner).run_revision(
                 state, request, baseline_edited
             )
@@ -165,7 +177,14 @@ class RevisionCoordinator:
             update={
                 "instruction": revision.feedback,
                 "target_modules": list(REPORT_MODULE_IDS),
+                "user_supplements": [
+                    *baseline_request.user_supplements,
+                    *revision.user_supplements,
+                ],
             }
+        )
+        report_request = ReportRequest.model_validate(
+            report_request.model_dump(mode="json")
         )
         evidence = [
             EvidenceItem.model_validate_json(line)
@@ -204,7 +223,7 @@ class RevisionCoordinator:
                     context_key = f"evidence-auditor:{match.group(0)}"
             context_by_agent.setdefault(context_key, []).append(relative.as_posix())
 
-        plan = PlanSubmission(
+        dispatch = ModuleDispatchPlan(
             module_tasks=[
                 TaskEnvelope(
                     task_id=f"planned-{module_id}",
@@ -227,7 +246,7 @@ class RevisionCoordinator:
                     module_id: refs[f"module_submission:{module_id}"].as_posix()
                     for module_id in REPORT_MODULE_IDS
                 },
-                "plan_submission": plan,
+                "module_dispatch": dispatch,
                 "evidence_items": evidence,
                 "photo_assets": photo_assets,
                 "revision_context_by_agent": context_by_agent,

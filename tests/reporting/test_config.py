@@ -75,6 +75,7 @@ writes: [module_drafts]
     assert definition.name == "module-2.4-specialist"
     assert definition.disallowed_tools == ["exec"]
     assert definition.max_turns == 12
+    assert definition.max_tokens is None
 
 
 def test_agent_definition_rejects_tools_that_are_also_disallowed(tmp_path: Path) -> None:
@@ -94,11 +95,11 @@ def test_packaged_agent_set_is_complete() -> None:
 
     assert set(agents) == {
         "main-agent",
+        "template-distiller",
         "manifest-builder",
         "intake-parser",
         "evidence-normalizer",
         "coverage-evaluator",
-        "report-planner",
         "module-2.1-specialist",
         "module-2.2-specialist",
         "module-2.3-specialist",
@@ -107,16 +108,20 @@ def test_packaged_agent_set_is_complete() -> None:
         "evidence-auditor",
         "cross-module-reviewer",
         "chief-editor",
+        "chief-editor-auditor",
         "citation-builder",
         "docx-renderer",
         "project-delivery",
         "product-skill-maintainer",
     }
+    assert agents["chief-editor"].max_tokens == 16384
+    assert agents["module-2.4-specialist"].max_tokens == 12288
+    assert agents["cross-module-reviewer"].max_tokens == 32768
 def test_packaged_identities_are_complete_scoped_and_corpus_agnostic() -> None:
     agents = load_packaged_agents()
     human_roles = {
         "main-agent",
-        "report-planner",
+        "template-distiller",
         "intake-parser",
         "evidence-normalizer",
         "module-2.1-specialist",
@@ -127,6 +132,7 @@ def test_packaged_identities_are_complete_scoped_and_corpus_agnostic() -> None:
         "evidence-auditor",
         "cross-module-reviewer",
         "chief-editor",
+        "chief-editor-auditor",
     }
     required_sections = {
         "role_and_perspective",
@@ -152,8 +158,8 @@ def test_packaged_identities_are_complete_scoped_and_corpus_agnostic() -> None:
         "query_peer",
     } <= expert_tools
     assert "web_search" not in agents["intake-parser"].tools
-    assert "request_revision" in agents["evidence-auditor"].tools
-    assert "request_revision" in agents["cross-module-reviewer"].tools
+    assert "request_revision" not in agents["evidence-auditor"].tools
+    assert "request_revision" not in agents["cross-module-reviewer"].tools
     assert "web_search" not in agents["chief-editor"].tools
     assert agents["docx-renderer"].tools == []
 

@@ -6,6 +6,7 @@ from xml.sax.saxutils import escape, quoteattr
 from .agentic_models import TaskEnvelope
 from .config import AgentDefinition
 from .module_skills import ModuleSkill
+from .submission_contracts import render_submission_contract
 
 
 def _validated_xml(document: str, *, label: str) -> str:
@@ -51,6 +52,21 @@ class PromptAssembler:
         prompt = (
             f"<agent_identity name={quoteattr(definition.name)}>\n"
             f"<description>{escape(definition.description)}</description>\n"
+            f"<execution_profile effort={quoteattr(definition.effort)} "
+            f"model={quoteattr(definition.model)}>"
+            + (
+                "Perform deep, explicit internal comparison of evidence, alternative "
+                "explanations, failure propagation, and recommendation tradeoffs before "
+                "submitting the typed result."
+                if definition.effort == "high"
+                else (
+                    "Perform a balanced evidence and alternative-explanation review before "
+                    "submitting the typed result."
+                    if definition.effort == "medium"
+                    else "Use a concise evidence check before submitting the typed result."
+                )
+            )
+            + "</execution_profile>\n"
             f"{instructions}\n"
             f"{skills_section}"
             f"{index_section}"
@@ -59,10 +75,21 @@ class PromptAssembler:
         return _validated_xml(prompt, label="system prompt")
 
     @staticmethod
-    def task_message(envelope: TaskEnvelope, shared_artifacts: list[str]) -> str:
+    def task_message(
+        envelope: TaskEnvelope,
+        shared_artifacts: list[str],
+        *,
+        input_contract_payload: str | None = None,
+        submission_contract_payloads: dict[str, str] | None = None,
+    ) -> str:
         inputs = "\n".join(f"<input_ref>{escape(ref)}</input_ref>" for ref in envelope.input_refs)
+        already_declared = set(envelope.input_refs) | set(envelope.context_summary_refs)
+        if envelope.prior_result_ref:
+            already_declared.add(envelope.prior_result_ref)
         artifacts = "\n".join(
-            f"<shared_artifact>{escape(ref)}</shared_artifact>" for ref in shared_artifacts
+            f"<shared_artifact>{escape(ref)}</shared_artifact>"
+            for ref in dict.fromkeys(shared_artifacts)
+            if ref not in already_declared
         )
         constraints = "\n".join(
             f"<constraint>{escape(value)}</constraint>" for value in envelope.constraints
@@ -71,19 +98,45 @@ class PromptAssembler:
             f"<allowed_output>{escape(value)}</allowed_output>"
             for value in envelope.allowed_outputs
         )
+        submission_contracts = "\n".join(
+            (
+                f"<submission_contract kind={quoteattr(value)}>"
+                f"{escape((submission_contract_payloads or {}).get(value) or render_submission_contract(value))}"
+                "</submission_contract>"
+            )
+            for value in envelope.allowed_outputs
+        )
+        input_contract = (
+            (
+                f"<input_contract kind={quoteattr(envelope.input_contract_kind)} "
+                f"artifact_ref={quoteattr(envelope.input_contract_ref or '')}>"
+                f"{escape(input_contract_payload or '')}"
+                "</input_contract>"
+            )
+            if envelope.input_contract_kind
+            else ""
+        )
+        allowed_tools = "\n".join(
+            f"<allowed_tool>{escape(value)}</allowed_tool>"
+            for value in envelope.allowed_tools
+        )
         prior_result = (
             f"<prior_result_ref>{escape(envelope.prior_result_ref)}</prior_result_ref>"
             if envelope.prior_result_ref is not None
             else ""
         )
-        issues = "\n".join(f"<issue_ref>{escape(ref)}</issue_ref>" for ref in envelope.issue_refs)
         summaries = "\n".join(
             f'<context_summary_ref context_only="true">{escape(ref)}</context_summary_ref>'
             for ref in envelope.context_summary_refs
         )
-        expected_plan_agents = "\n".join(
-            f"<expected_plan_agent_id>{escape(agent_id)}</expected_plan_agent_id>"
-            for agent_id in envelope.expected_plan_agent_ids
+        inline_context = (
+            f"<inline_context>{escape(envelope.inline_context)}</inline_context>"
+            if envelope.inline_context
+            else ""
+        )
+        target_submodules = "\n".join(
+            f"<target_submodule_id>{escape(submodule_id)}</target_submodule_id>"
+            for submodule_id in envelope.target_submodule_ids
         )
         message = (
             "<task_context>\n"
@@ -93,7 +146,9 @@ class PromptAssembler:
             f"<revision>{envelope.revision}</revision>\n"
             f"<objective>{escape(envelope.objective)}</objective>\n"
             f"{inputs}\n{artifacts}\n{constraints}\n{allowed_outputs}\n"
-            f"{prior_result}\n{issues}\n{summaries}\n{expected_plan_agents}\n"
+            f"{input_contract}\n{submission_contracts}\n{allowed_tools}\n"
+            f"{prior_result}\n{summaries}\n{inline_context}\n"
+            f"{target_submodules}\n"
             "</task_context>"
         )
         return _validated_xml(message, label="task context")

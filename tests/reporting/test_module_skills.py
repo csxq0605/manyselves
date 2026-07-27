@@ -30,7 +30,7 @@ def test_auditor_receives_only_module_under_review() -> None:
     assert {skill.module_id for skill in skills} == {"2.2"}
 
 
-def test_planner_receives_index_without_skill_bodies() -> None:
+def test_routing_index_contains_metadata_without_skill_bodies() -> None:
     library = ModuleSkillLibrary.packaged()
 
     index = library.index_text()
@@ -38,7 +38,7 @@ def test_planner_receives_index_without_skill_bodies() -> None:
     assert "2.1: pds.module21.architecture" in index
     assert "2.4: pds.module24.configuration" in index
     assert "负荷率必须保留计算口径" not in index
-    assert library.for_agent("report-planner") == []
+    assert library.for_agent("main-agent") == []
 
 
 def test_loader_rejects_skill_assigned_to_wrong_module(tmp_path: Path) -> None:

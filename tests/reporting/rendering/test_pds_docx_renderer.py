@@ -1,12 +1,20 @@
+import hashlib
 import io
 from pathlib import Path
 
 import pytest
 from docx import Document
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Cm
 
 from manyselves.core.reporting.agentic_models import ClaimRecord, SourceKind, SourceRecord
 from manyselves.core.reporting.claim_ledger import ClaimLedger
-from manyselves.core.reporting.rendering.packaged_docx import PackagedDocxCore
+from manyselves.core.reporting.rendering.handoff_docx import PackagedV2DocxCore
+from manyselves.core.reporting.rendering.packaged_docx import (
+    PackagedDocxCore,
+    verify_rendered_markdown,
+)
 from manyselves.core.reporting.rendering.pds_docx_renderer import (
     ApprovedReport,
     PdsDocxRenderer,
@@ -16,10 +24,249 @@ from manyselves.core.reporting.rendering.pds_docx_renderer import (
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 
 
+def _set_style_east_asia_font(style, font_name: str) -> None:
+    run_properties = style.element.get_or_add_rPr()
+    fonts = run_properties.find(qn("w:rFonts"))
+    if fonts is None:
+        fonts = OxmlElement("w:rFonts")
+        run_properties.insert(0, fonts)
+    fonts.set(qn("w:eastAsia"), font_name)
+
+
+def _style_east_asia_font(style) -> str | None:
+    run_properties = style.element.get_or_add_rPr()
+    fonts = run_properties.find(qn("w:rFonts"))
+    return fonts.get(qn("w:eastAsia")) if fonts is not None else None
+
+
+def test_packaged_v2_core_matches_normalized_handoff_source() -> None:
+    core = PackagedV2DocxCore(Path("unused-template.docx"))
+    assert hashlib.sha256(core.source_path.read_bytes()).hexdigest() == (
+        "25798c35d270a2bfffa584b7a42918e50a44bcdfb73f9f9dfea785125de04fd2"
+    )
+
+
+def test_report_embedding_removes_only_duplicate_module_heading() -> None:
+    narrative = (
+        "## 2.5 运维管理与风险管控\n\n"
+        "### 2.5.1 SOP/EOP\n\n完整分析正文。"
+    )
+
+    embedded = PdsDocxRenderer._strip_leading_module_heading(narrative, "2.5")
+
+    assert "## 2.5 运维管理与风险管控" not in embedded
+    assert embedded.startswith("#### 2.5.1 SOP/EOP")
+
+
+def test_report_embedding_removes_module_heading_after_editor_transition() -> None:
+    narrative = (
+        "以下为运维模块的批准正文。\n\n"
+        "## 2.5 运维管理与风险管控\n\n"
+        "### 2.5.1 SOP/EOP\n\n完整分析正文。"
+    )
+
+    embedded = PdsDocxRenderer._strip_leading_module_heading(narrative, "2.5")
+
+    assert "## 2.5 运维管理与风险管控" not in embedded
+    assert "以下为运维模块的批准正文。" in embedded
+    assert "#### 2.5.1 SOP/EOP" in embedded
+
+
+def test_packaged_v2_core_removes_markdown_markers_and_uses_one_label_style(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.docx"
+    Document().save(template)
+    markdown = """# 配电安全评估报告
+
+## 1. 配电评估概述
+
+## 2. 评估内容描述
+
+### 2.1 电力系统架构问题
+
+### 现状描述
+
+现场记录显示一项异常。
+
+**判断：** 该项需要整改。
+
+### 风险与影响
+
+- 可能导致供电中断。
+
+### 建议
+
+1. 完成复核并验收。
+
+> **判定：** NG，优先级高。
+"""
+
+    _, data = PackagedV2DocxCore(template).render_approved_prose(markdown)
+
+    rendered = Document(io.BytesIO(data))
+    visible = [paragraph.text for paragraph in rendered.paragraphs if paragraph.text.strip()]
+    assert "配电安全评估报告" not in visible
+    assert "现状描述：" in visible
+    assert "判断：该项需要整改。" in visible
+    assert "风险与影响：" in visible
+    assert "建议：" in visible
+    assert "判定：NG，优先级高。" in visible
+    assert not any(text.lstrip().startswith(("#", ">", "**")) for text in visible)
+    assert not any("【" in text or "】" in text for text in visible)
+
+
+def test_packaged_v2_core_preserves_template_fonts_and_uses_consistent_type_scale(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.docx"
+    template_document = Document()
+    _set_style_east_asia_font(template_document.styles["Normal"], "Template Body CJK")
+    _set_style_east_asia_font(template_document.styles["Title"], "Template Title CJK")
+    for style_name in ("Heading 1", "Heading 2", "Heading 3", "Heading 4"):
+        _set_style_east_asia_font(
+            template_document.styles[style_name],
+            "Template Heading CJK",
+        )
+    template_document.save(template)
+
+    markdown = """# 配电安全评估报告
+
+## 2. 评估内容描述
+
+### 2.1 电力系统架构问题
+
+#### 2.1.1 电力系统负荷分配与过载风险
+
+正文段落用于验证统一排版节奏。
+"""
+
+    _, data = PackagedV2DocxCore(template).render_approved_prose(markdown)
+
+    rendered = Document(io.BytesIO(data))
+    assert _style_east_asia_font(rendered.styles["Normal"]) == "Template Body CJK"
+    assert _style_east_asia_font(rendered.styles["Title"]) == "Template Title CJK"
+    assert all(
+        _style_east_asia_font(rendered.styles[style_name]) == "Template Heading CJK"
+        for style_name in ("Heading 1", "Heading 2", "Heading 3", "Heading 4")
+    )
+    assert rendered.styles["Normal"].font.size.pt == 11
+    assert rendered.styles["Heading 1"].font.size.pt == 18
+    assert rendered.styles["Heading 2"].font.size.pt == 16
+    assert rendered.styles["Heading 3"].font.size.pt == 14
+    assert rendered.styles["Heading 4"].font.size.pt == 12
+    body = next(
+        paragraph
+        for paragraph in rendered.paragraphs
+        if paragraph.text == "正文段落用于验证统一排版节奏。"
+    )
+    assert body.paragraph_format.line_spacing == 1.3
+    assert body.paragraph_format.space_after.pt == 4
+
+
+def test_packaged_v2_core_uses_real_word_numbering_for_lists(tmp_path: Path) -> None:
+    template = tmp_path / "template.docx"
+    Document().save(template)
+    markdown = """# 配电安全评估报告
+
+## 2. 评估内容描述
+
+- 项目符号内容换行后应保持悬挂对齐。
+1. 第一项整改措施。
+3. 第三项整改措施。
+"""
+
+    _, data = PackagedV2DocxCore(template).render_approved_prose(markdown)
+
+    rendered = Document(io.BytesIO(data))
+    items = {
+        paragraph.text: paragraph
+        for paragraph in rendered.paragraphs
+        if paragraph.text.strip()
+    }
+    assert "项目符号内容换行后应保持悬挂对齐。" in items
+    assert "第一项整改措施。" in items
+    assert "第三项整改措施。" in items
+    assert all(
+        items[text]._p.pPr.numPr is not None
+        for text in (
+            "项目符号内容换行后应保持悬挂对齐。",
+            "第一项整改措施。",
+            "第三项整改措施。",
+        )
+    )
+    assert not any(
+        paragraph.text.startswith(("•", "1.", "3."))
+        for paragraph in items.values()
+    )
+    numbering_xml = rendered.part.numbering_part.element.xml
+    assert 'w:numFmt w:val="bullet"' in numbering_xml
+    assert 'w:numFmt w:val="decimal"' in numbering_xml
+    assert 'w:startOverride w:val="3"' in numbering_xml
+
+
+def test_packaged_v2_core_constrains_table_geometry_to_page_body(tmp_path: Path) -> None:
+    template = tmp_path / "template.docx"
+    template_document = Document()
+    section = template_document.sections[0]
+    section.left_margin = Cm(3.17)
+    section.right_margin = Cm(3.17)
+    template_document.save(template)
+    headers = [f"字段{i}" for i in range(1, 9)]
+    markdown = "\n".join(
+        [
+            "# 配电安全评估报告",
+            "",
+            "## 2. 评估内容描述",
+            "",
+            "| " + " | ".join(headers) + " |",
+            "| " + " | ".join("---" for _ in headers) + " |",
+            "| " + " | ".join(f"内容{i}" for i in range(1, 9)) + " |",
+        ]
+    )
+
+    _, data = PackagedV2DocxCore(template).render_approved_prose(markdown)
+
+    rendered = Document(io.BytesIO(data))
+    table = rendered.tables[0]
+    usable_twips = int(
+        (
+            rendered.sections[0].page_width.cm
+            - rendered.sections[0].left_margin.cm
+            - rendered.sections[0].right_margin.cm
+        )
+        * 567
+    )
+    table_width = int(table._tbl.tblPr.find(qn("w:tblW")).get(qn("w:w")))
+    grid_widths = [
+        int(column.get(qn("w:w")))
+        for column in table._tbl.tblGrid.findall(qn("w:gridCol"))
+    ]
+    assert table_width <= usable_twips
+    assert sum(grid_widths) == table_width
+    assert table._tbl.tblPr.find(qn("w:tblLayout")).get(qn("w:type")) == "fixed"
+    assert table._tbl.tblPr.find(qn("w:tblInd")).get(qn("w:w")) == "0"
+    assert all(
+        [
+            int(cell._tc.tcPr.find(qn("w:tcW")).get(qn("w:w")))
+            for cell in row.cells
+        ]
+        == grid_widths
+        for row in table.rows
+    )
+    table_style = rendered.styles["表格2"]
+    assert table_style.font.size.pt == 10
+
+
 def _approved_report(photo_path: Path) -> ApprovedReport:
     narratives = {
-        module_id: f"模块 {module_id} 的专家自然分析保留原样。"
-        for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5")
+        module_id: (
+            f"模块 {module_id} 的专家自然分析保留原样。"
+            f"[[CLAIM:C-00{index}]]"
+        )
+        for index, module_id in enumerate(
+            ("2.1", "2.2", "2.3", "2.4", "2.5"), 1
+        )
     }
     claims = [
         ClaimRecord(
@@ -40,9 +287,19 @@ def _approved_report(photo_path: Path) -> ApprovedReport:
     )
     return ApprovedReport(
         title="配电安全专家咨询报告",
-        overview="总编形成的概述保持不变。",
+        assessment_background="总编形成的评估背景保持不变。",
+        findings_overview="总编形成的健康度总览保持不变。",
+        regional_executive_summary="总编形成的区域摘要保持不变。",
         module_narratives=narratives,
-        conclusion="总编形成的结论保持不变。",
+        cross_module_analysis="总编形成的跨模块联合分析保持不变。",
+        risk_panorama="总编形成的风险全景保持不变。",
+        dimension_risk_analysis="总编形成的维度风险分析保持不变。",
+        data_gap_analysis="总编形成的数据缺口分析保持不变。",
+        improvement_action_plan="总编形成的改善行动计划保持不变。",
+        new_factory_planning="总编形成的新工厂规划建议保持不变。",
+        capacity_expansion_plan="总编形成的扩容建议保持不变。",
+        daily_power_management="总编形成的日常用电管理建议保持不变。",
+        emergency_compliance_management="总编形成的应急合规建议保持不变。",
         ledger=ClaimLedger(claims=claims, sources=[source]),
         tables=[
             ReportTable(
@@ -60,6 +317,7 @@ def _approved_report(photo_path: Path) -> ApprovedReport:
                 caption="1A2 柜现场状态",
                 source_id="E-001",
                 claim_ids=["C-004"],
+                submodule_id=next(iter(REPORT_TAXONOMY["2.4"].submodules)),
             )
         ],
     )
@@ -88,7 +346,8 @@ def test_renderer_uses_handoff_core_preserves_prose_and_adds_superscript_index_t
     all_text = "\n".join(paragraph.text for paragraph in rendered.paragraphs)
     assert "模块 2.4 的专家自然分析保留原样。" in all_text
     assert "配电安全专家咨询报告" in all_text
-    assert "总编形成的结论保持不变。" in all_text
+    assert "总编形成的风险全景保持不变。" in all_text
+    assert "总编形成的跨模块联合分析保持不变。" in all_text
     assert "项目证据 E-*" in all_text
     assert "Inputs/设备.xlsx；工作表=问题；单元格=A2:F2；图片=IMG-1" in all_text
     assert any(
@@ -101,6 +360,85 @@ def test_renderer_uses_handoff_core_preserves_prose_and_adds_superscript_index_t
     second = renderer.render(_approved_report(photo), second_output)
     assert second.output_sha256 == result.output_sha256
     assert second_output.read_bytes() == output.read_bytes()
+
+
+def test_renderer_accepts_the_exact_citation_bound_delivery_markdown(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.docx"
+    Document().save(template)
+    photo = tmp_path / "photo.png"
+    from PIL import Image
+
+    Image.new("RGB", (30, 20), color="red").save(photo)
+    report = _approved_report(photo)
+    delivery_markdown = report.ledger.bind_citations(
+        PdsDocxRenderer._compose_markdown(report)
+    )
+    output = tmp_path / "delivery.docx"
+
+    PdsDocxRenderer(PackagedDocxCore(template)).render(
+        report,
+        output,
+        approved_markdown=delivery_markdown,
+    )
+
+    rendered = Document(output)
+    assert not any(
+        "[[CLAIM:" in paragraph.text or "[[CITE:" in paragraph.text
+        for paragraph in rendered.paragraphs
+    )
+    assert any(
+        run.font.superscript and run.text == "1"
+        for paragraph in rendered.paragraphs
+        for run in paragraph.runs
+    )
+
+
+def test_photo_token_is_placed_inside_linked_submodule() -> None:
+    first, second = list(REPORT_TAXONOMY["2.4"].submodules)[:2]
+    narrative = f"### {first} 第一项\n\n第一项分析。\n\n### {second} 第二项\n\n第二项分析。"
+    photo = ReportPhoto(
+        id="IMG-1",
+        path=Path("photo.png"),
+        caption="第一项图证",
+        source_id="E-001",
+        claim_ids=["C-004"],
+        submodule_id=first,
+    )
+
+    placed = PdsDocxRenderer._place_photo_tokens(narrative, [photo])
+
+    assert placed.index("第一项分析。") < placed.index("[[PHOTO:IMG-1]]")
+    assert placed.index("[[PHOTO:IMG-1]]") < placed.index(f"### {second}")
+
+
+def test_multiple_adjacent_photos_become_a_two_column_evidence_group(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image
+
+    first_path = tmp_path / "first.png"
+    second_path = tmp_path / "second.png"
+    Image.new("RGB", (30, 20), color="red").save(first_path)
+    Image.new("RGB", (30, 20), color="blue").save(second_path)
+    report = _approved_report(first_path)
+    second = report.photos[0].model_copy(
+        update={"id": "IMG-2", "path": second_path, "caption": "第二幅图证"}
+    )
+    report = report.model_copy(update={"photos": [report.photos[0], second]})
+    document = Document()
+    document.add_paragraph("[[PHOTO:IMG-1]]")
+    document.add_paragraph("[[PHOTO:IMG-2]]")
+    document.add_paragraph("后续分析。")
+
+    PdsDocxRenderer._materialize_photos(document, report)
+
+    assert len(document.tables) == 1
+    assert len(document.inline_shapes) == 2
+    assert "IMG-1" in document.tables[0].cell(0, 0).text
+    assert "IMG-2" in document.tables[0].cell(0, 1).text
+    assert all("[[PHOTO:" not in paragraph.text for paragraph in document.paragraphs)
 
 
 def test_renderer_rejects_untraceable_table() -> None:
@@ -156,9 +494,32 @@ def test_packaged_core_explicitly_forbids_structured_model_prose_generation(
         core.render_approved_prose("approved", report_model={"issues": []})
 
 
+def test_render_verifier_accepts_bold_numbered_markdown_labels(tmp_path: Path) -> None:
+    output = tmp_path / "numbered-labels.docx"
+    document = Document()
+    document.add_paragraph("1. 多处剩余电流严重超标：")
+    document.add_paragraph(
+        '2. 剩余电流监测体系缺失： 两厂均"目前没有监测"，未建立持续监测机制。'
+    )
+    document.save(output)
+
+    verify_rendered_markdown(
+        output,
+        "\n\n".join(
+            [
+                "**1. 多处剩余电流严重超标：**",
+                '**2. 剩余电流监测体系缺失：** 两厂均"目前没有监测"，未建立持续监测机制。',
+            ]
+        ),
+    )
+
+
 def test_packaged_core_renders_markdown_without_external_source(tmp_path: Path) -> None:
     template = tmp_path / "template.docx"
-    Document().save(template)
+    template_document = Document()
+    template_document.add_paragraph("TEMPLATE SAMPLE BODY MUST NOT SURVIVE")
+    template_document.sections[0].header.paragraphs[0].text = "保留的模板页眉"
+    template_document.save(template)
 
     name, data = PackagedDocxCore(template).render_approved_prose(
         "# 标题\n\n正文\n\n| 对象 | 动作 |\n| --- | --- |\n| 1A2 | 复核连接 |"
@@ -166,5 +527,8 @@ def test_packaged_core_renders_markdown_without_external_source(tmp_path: Path) 
 
     rendered = Document(io.BytesIO(data))
     assert name == "配电安全专家咨询报告.docx"
-    assert "正文" in "\n".join(paragraph.text for paragraph in rendered.paragraphs)
+    rendered_text = "\n".join(paragraph.text for paragraph in rendered.paragraphs)
+    assert "正文" in rendered_text
+    assert "TEMPLATE SAMPLE BODY MUST NOT SURVIVE" not in rendered_text
+    assert rendered.sections[0].header.paragraphs[0].text == "保留的模板页眉"
     assert rendered.tables[0].cell(1, 1).text == "复核连接"

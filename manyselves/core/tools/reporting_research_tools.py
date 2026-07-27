@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,6 +11,7 @@ from ...interfaces.types import ResearchNotePublishedMessage
 from ..loops.bus import MessageBus
 from ..reporting.agentic_models import ResearchNote
 from ..reporting.research.project_evidence import ProjectEvidenceIndex, project_evidence_locator
+from ..reporting.research.evidence_memory import EvidenceResearchMemory
 from ..reporting.research.reference_library import ReferenceLibrary
 from ..reporting.research.web import WebResearchBackend
 from ..reporting.source_ledger import SourceLedger
@@ -24,9 +26,18 @@ class SearchProjectEvidenceTool(Tool):
         "file locations; use external references only for interpretation."
     )
 
-    def __init__(self, workspace: Path, ledger: SourceLedger | None = None):
-        self.index = ProjectEvidenceIndex(workspace)
+    def __init__(
+        self,
+        workspace: Path,
+        ledger: SourceLedger | None = None,
+        research_guard: Callable[[], None] | None = None,
+        evidence_memory: EvidenceResearchMemory | None = None,
+        run_id: str | None = None,
+    ):
+        self.index = ProjectEvidenceIndex(workspace, run_id=run_id)
         self.ledger = ledger
+        self.research_guard = research_guard
+        self.evidence_memory = evidence_memory
 
     async def __call__(self, query: str, limit: int = 10) -> dict:
         """Search project evidence.
@@ -35,7 +46,23 @@ class SearchProjectEvidenceTool(Tool):
             query: Terms describing the customer fact, asset, value, or location.
             limit: Maximum number of matching E-* items.
         """
-        items = self.index.search(query, limit)
+        requested_limit = limit
+        limit = max(1, min(limit, 12))
+        cached = (
+            self.evidence_memory.recall_query(query, limit)
+            if self.evidence_memory is not None
+            else None
+        )
+        cache_hit = cached is not None
+        if cached is None:
+            if self.research_guard is not None:
+                self.research_guard()
+            items = self.index.search(query, limit)
+        else:
+            items = cached
+        if self.evidence_memory is not None:
+            if not cache_hit:
+                self.evidence_memory.remember(items, query=query, applied_limit=limit)
         if self.ledger:
             for item in items:
                 self.ledger.register_project(
@@ -44,16 +71,35 @@ class SearchProjectEvidenceTool(Tool):
                     project_evidence_locator(item),
                     item.model_dump_json(),
                 )
-        return {"hits": [item.model_dump(mode="json") for item in items]}
+        return {
+            "guidance": (
+                "Each hit already contains the normalized project fact and exact locator. "
+                "Use it directly; call open_project_source only when one hit is ambiguous. "
+                "Refine the query instead of opening every hit."
+            ),
+            "requested_limit": requested_limit,
+            "applied_limit": limit,
+            "cache_hit": cache_hit,
+            "hits": [item.model_dump(mode="json") for item in items],
+        }
 
 
 class OpenProjectSourceTool(Tool):
     name = "open_project_source"
     description = "Open one normalized E-* project evidence record by its source id."
 
-    def __init__(self, workspace: Path, ledger: SourceLedger | None = None):
-        self.index = ProjectEvidenceIndex(workspace)
+    def __init__(
+        self,
+        workspace: Path,
+        ledger: SourceLedger | None = None,
+        research_guard: Callable[[], None] | None = None,
+        evidence_memory: EvidenceResearchMemory | None = None,
+        run_id: str | None = None,
+    ):
+        self.index = ProjectEvidenceIndex(workspace, run_id=run_id)
         self.ledger = ledger
+        self.research_guard = research_guard
+        self.evidence_memory = evidence_memory
 
     async def __call__(self, source_id: str) -> dict:
         """Open project evidence.
@@ -61,7 +107,20 @@ class OpenProjectSourceTool(Tool):
         Args:
             source_id: Existing E-* evidence identifier.
         """
-        item = self.index.get(source_id)
+        cached = (
+            self.evidence_memory.recall_source(source_id)
+            if self.evidence_memory is not None
+            else None
+        )
+        cache_hit = cached is not None
+        if cached is None:
+            if self.research_guard is not None:
+                self.research_guard()
+            item = self.index.get(source_id)
+        else:
+            item = cached
+        if self.evidence_memory is not None:
+            self.evidence_memory.remember([item])
         if self.ledger:
             self.ledger.register_project(
                 item.id,
@@ -69,7 +128,7 @@ class OpenProjectSourceTool(Tool):
                 project_evidence_locator(item),
                 item.model_dump_json(),
             )
-        return {"evidence": item.model_dump(mode="json")}
+        return {"cache_hit": cache_hit, "evidence": item.model_dump(mode="json")}
 
 
 class SearchReferenceLibraryTool(Tool):

@@ -1,4 +1,5 @@
 import asyncio
+import fcntl
 import json
 from pathlib import Path
 
@@ -8,15 +9,27 @@ from docx import Document
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.decisions import EvidenceDecisionStore
-from manyselves.core.reporting.models import EvidenceDecisionRequest, OutputArtifact, ReportRequest
-from manyselves.core.reporting.service import ReportingService
+from manyselves.core.reporting.models import (
+    EvidenceDecisionRequest,
+    OutputArtifact,
+    ReportRequest,
+    RevisionRequest,
+    UserSupplement,
+)
+from manyselves.core.reporting.revisions import RevisionCoordinator
+from manyselves.core.reporting.service import ReportingRunResult, ReportingService
 from manyselves.core.reporting.store import ReportingStore
-from manyselves.core.reporting.workflow import AgentWorkflowBlocked, ReportWorkflowRunner
+from manyselves.core.reporting.workflow import (
+    AgentWorkflowBlocked,
+    ReportingNeedsDecisionError,
+    ReportWorkflowRunner,
+)
 from manyselves.core.tools.reporting_tool import (
     ResumeReportingWorkflowTool,
     RunReportingWorkflowTool,
 )
 from manyselves.core.tools.task_board import TaskBoard
+from manyselves.core.usage_ledger import UsageLedger
 
 
 class TemplateResolutionProvider(LLMProvider):
@@ -25,6 +38,46 @@ class TemplateResolutionProvider(LLMProvider):
 
     async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
         raise AssertionError("template resolution must not call the provider")
+
+
+@pytest.mark.asyncio
+async def test_service_retains_same_identity_registry_while_waiting_for_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    request = ReportRequest(instruction="生成完整报告", missing_evidence_policy="draft")
+    run_id = "report-retained-identities"
+    runner_ids: list[int] = []
+
+    async def scripted_run(workflow, state: dict) -> None:
+        runner_ids.append(id(workflow.agent_runner))
+        if len(runner_ids) == 1:
+            raise ReportingNeedsDecisionError("等待用户确认命名。")
+
+    delivered = tmp_path / "Outputs/Reports/result.docx"
+    delivered.parent.mkdir(parents=True)
+    delivered.write_bytes(b"verified")
+    monkeypatch.setattr(ReportWorkflowRunner, "run", scripted_run)
+    monkeypatch.setattr(
+        "manyselves.core.reporting.service.verify_current_run_outputs",
+        lambda *_args, **_kwargs: [delivered],
+    )
+
+    first = await service._execute(request, run_id)
+    assert first.status == "needs_decision"
+    assert list(service._active_agent_runners) == [
+        f"full-power-distribution-report:{run_id}"
+    ]
+
+    second = await service._execute(request, run_id, resume=True)
+    assert second.status == "completed"
+    assert runner_ids[0] == runner_ids[1]
+    assert service._active_agent_runners == {}
 
 
 @pytest.mark.asyncio
@@ -43,6 +96,178 @@ async def test_agent_blocked_state_is_preserved(tmp_path: Path, monkeypatch) -> 
     result = await service.run(ReportRequest(instruction="生成报告"))
     assert result.status == "blocked"
     assert result.error == "missing reviewed modules"
+
+
+@pytest.mark.asyncio
+async def test_render_existing_bypasses_all_analysis_agents(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "Work/drafts/approved.md"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "# 配电安全专家咨询报告\n\n## 1. 配电评估概述\n\n这是无需重新分析的正文。\n",
+        encoding="utf-8",
+    )
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+
+    async def must_not_run(_self, _state: dict) -> None:
+        raise AssertionError("render_existing must not start the analysis workflow")
+
+    monkeypatch.setattr(ReportWorkflowRunner, "run", must_not_run)
+    result = await service.run(
+        ReportRequest(
+            operation="render_existing",
+            instruction="将已有 Markdown 转为 Word",
+            source_markdown_ref=Path("Work/drafts/approved.md"),
+            output_filename="approved.docx",
+        )
+    )
+
+    assert result.status == "completed", result.error
+    assert result.output_paths == [tmp_path / "Outputs/Reports/approved.docx"]
+    rendered = Document(result.output_paths[0])
+    rendered_text = "\n".join(paragraph.text for paragraph in rendered.paragraphs)
+    assert "配电安全专家咨询报告" in rendered_text
+    assert "这是无需重新分析的正文。" in rendered_text
+    assert "2025年8月" not in rendered_text
+    render_request = json.loads(
+        (tmp_path / f"Work/runs/{result.run_id}/render-request.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert render_request["source_markdown_ref"] == "Work/drafts/approved.md"
+    assert render_request["output_ref"] == "Outputs/Reports/approved.docx"
+
+
+@pytest.mark.asyncio
+async def test_render_existing_preserves_approved_sources_and_positive_advice(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "Work/drafts/approved-with-sources.md"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """# 配电安全专家咨询报告
+
+## 1. 配电评估概述
+
+# 1 评估概述
+
+## 1.1 评估范围与方法
+
+评估方法包括现场测量（S4-4诊断工作用表）和文件审阅（S2-1收资表）。
+
+### 2.1.5 系统无功补偿与电容柜问题
+
+【结论】
+
+OK，评估过程中未发现异常（S4-6评估信息汇总表）。
+
+【建议】
+
+保持年度检查并记录电容柜投切状态。
+""",
+        encoding="utf-8",
+    )
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+
+    result = await service.run(
+        ReportRequest(
+            operation="render_existing",
+            instruction="原样渲染批准正文",
+            source_markdown_ref=Path("Work/drafts/approved-with-sources.md"),
+            output_filename="approved-with-sources.docx",
+        )
+    )
+
+    assert result.status == "completed", result.error
+    rendered = Document(result.output_paths[0])
+    rendered_text = "\n".join(paragraph.text for paragraph in rendered.paragraphs)
+    assert "S4-4诊断工作用表" in rendered_text
+    assert "S2-1收资表" in rendered_text
+    assert "S4-6评估信息汇总表" in rendered_text
+    assert "保持年度检查并记录电容柜投切状态" in rendered_text
+    assert "1.1. 评估背景" in rendered_text
+    assert "1.1 评估范围与方法" not in rendered_text
+
+
+@pytest.mark.asyncio
+async def test_distill_template_skill_dispatches_only_the_standalone_action(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+
+    async def distill(_self, state: dict) -> None:
+        path = Path("Work/report-template-writing/SKILL.md")
+        service.store.write_text(path.as_posix(), "---\nname: report-template-writing\n---\n")
+        state["output_artifacts"] = [OutputArtifact(kind="skill", path=path)]
+
+    async def must_not_run(_self, _state: dict) -> None:
+        raise AssertionError("distill_template_skill must not start report writing")
+
+    monkeypatch.setattr(ReportWorkflowRunner, "distill_template_skill", distill)
+    monkeypatch.setattr(ReportWorkflowRunner, "run", must_not_run)
+    monkeypatch.setattr(ReportWorkflowRunner, "aggregate_existing", must_not_run)
+    result = await service.run(
+        ReportRequest(
+            operation="distill_template_skill",
+            instruction="只更新模板写作 Skill",
+            target_modules=[],
+        )
+    )
+
+    assert result.status == "completed"
+    assert result.output_paths == [tmp_path / "Work/report-template-writing/SKILL.md"]
+
+
+@pytest.mark.asyncio
+async def test_aggregate_existing_uses_aggregation_route_then_render(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+
+    async def aggregate(_self, state: dict) -> None:
+        markdown_ref = Path("Outputs/Reports/combined.md")
+        service.store.write_text(markdown_ref.as_posix(), "# 汇总报告\n\n已汇总正文。\n")
+        state["aggregate_markdown_ref"] = markdown_ref
+        state["output_artifacts"] = [OutputArtifact(kind="report", path=markdown_ref)]
+
+    async def must_not_run(_self, _state: dict) -> None:
+        raise AssertionError("aggregate_existing must not start the full analysis workflow")
+
+    monkeypatch.setattr(ReportWorkflowRunner, "aggregate_existing", aggregate)
+    monkeypatch.setattr(ReportWorkflowRunner, "run", must_not_run)
+    result = await service.run(
+        ReportRequest(
+            operation="aggregate_existing",
+            instruction="汇总已有模块并生成 Word",
+            output_filename="combined.docx",
+        )
+    )
+
+    assert result.status == "completed"
+    assert result.output_paths == [
+        tmp_path / "Outputs/Reports/combined.md",
+        tmp_path / "Outputs/Reports/combined.docx",
+    ]
+    Document(result.output_paths[1])
 
 
 def test_project_report_template_takes_priority_without_restarting_service(
@@ -64,6 +289,30 @@ def test_project_report_template_takes_priority_without_restarting_service(
 
     assert service.report_template_source == "project"
     assert service.report_template_path == project_template
+
+
+def test_expert_document_is_selected_only_for_skill_distillation(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    project_template = tmp_path / "Templates/report_template.docx"
+    expert_source = (
+        tmp_path / "Templates/配电安全专家咨询报告(专家优化版).docx"
+    )
+    project_template.parent.mkdir(parents=True)
+    Document().save(project_template)
+    Document().save(expert_source)
+
+    assert service.resolve_report_template() == (project_template, "project")
+    assert service.resolve_skill_distillation_template() == (
+        expert_source,
+        "expert-skill-source",
+    )
 
 
 def test_project_report_template_path_must_be_a_file(tmp_path: Path) -> None:
@@ -119,6 +368,7 @@ async def test_service_returns_resumable_decision_before_calling_provider_when_e
 
     result = await service.run(
         ReportRequest(
+            operation="module_report",
             instruction="生成设备模块",
             target_modules=["2.4"],
             missing_evidence_policy="ask",
@@ -158,6 +408,7 @@ async def test_supplement_rescans_the_same_run_after_process_restart(tmp_path: P
     )
     pending = await first.run(
         ReportRequest(
+            operation="module_report",
             instruction="生成设备模块",
             target_modules=["2.4"],
             missing_evidence_policy="ask",
@@ -170,11 +421,329 @@ async def test_supplement_rescans_the_same_run_after_process_restart(tmp_path: P
         task_board=TaskBoard(),
         llm_provider=NeverCalledProvider(),
     )
-    rescanned = await restarted.resume(pending.decision_id, "supplement", "已补充资料")
+    rescanned = await restarted.resume(
+        pending.decision_id,
+        "supplement",
+        [UserSupplement(id="US-rescan", content="已补充资料")],
+    )
 
     assert rescanned.run_id == pending.run_id
     assert rescanned.status == "needs_user_decision"
     assert rescanned.decision_id != pending.decision_id
+
+
+@pytest.mark.asyncio
+async def test_user_decision_resume_syncs_new_facts_into_same_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    run_id = "report-user-fact-resume"
+    request = ReportRequest(
+        operation="module_report",
+        instruction="恢复 2.4",
+        target_modules=["2.4"],
+        missing_evidence_policy="draft",
+        max_provider_attempts=1,
+        max_total_tokens=10_000,
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/request.json", request.model_dump(mode="json")
+    )
+    service._save_run(
+        ReportingRunResult(
+            run_id=run_id,
+            status="needs_decision",
+            error="XMR-001：需要用户确认两个工厂名称是否指同一实体。",
+        )
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/workflow-state.json",
+        {"run_id": run_id, "activity": "cross-module-review", "status": "failed"},
+    )
+    seen = {}
+
+    async def resumed_execute(request, resumed_run_id, *, resume=False):
+        seen["request"] = request
+        seen["run_id"] = resumed_run_id
+        seen["resume"] = resume
+        return ReportingRunResult(run_id=resumed_run_id, status="needs_decision")
+
+    monkeypatch.setattr(service, "_execute", resumed_execute)
+
+    result = await service.resume_run(
+        run_id,
+        supplements=[
+            UserSupplement(
+                id="US-factory-name",
+                content="嘉仕工厂与芜湖工厂是同一实体，全报告统一使用芜湖工厂。",
+            )
+        ],
+    )
+
+    assert result.run_id == run_id
+    assert seen["run_id"] == run_id
+    assert seen["resume"] is True
+    assert seen["request"].user_supplements[0].id == "US-factory-name"
+    assert "嘉仕工厂" in seen["request"].user_supplements[0].content
+    persisted = json.loads(
+        (tmp_path / f"Work/runs/{run_id}/user-supplements.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert persisted["supplements"] == [
+        item.model_dump(mode="json")
+        for item in seen["request"].user_supplements
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("previous_status", "previous_error"),
+    [("failed", "submission failed"), ("cancelled", "interrupted by user")],
+)
+async def test_checkpointed_terminal_run_can_resume_same_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    previous_status: str,
+    previous_error: str,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    run_id = "report-failed-resume"
+    request = ReportRequest(
+        operation="module_report",
+        instruction="恢复失败的 2.4",
+        target_modules=["2.4"],
+        missing_evidence_policy="draft",
+        max_provider_attempts=2,
+        max_total_tokens=10_000,
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/request.json", request.model_dump(mode="json")
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/workflow-state.json",
+        {"run_id": run_id, "activity": "module-pipelines", "status": "failed"},
+    )
+    service._save_run(
+        ReportingRunResult(
+            run_id=run_id, status=previous_status, error=previous_error
+        )
+    )
+    seen = {}
+
+    async def resumed_execute(request, resumed_run_id, *, resume=False):
+        seen["request"] = request
+        seen["run_id"] = resumed_run_id
+        seen["resume"] = resume
+        return ReportingRunResult(run_id=resumed_run_id, status="needs_decision")
+
+    monkeypatch.setattr(service, "_execute", resumed_execute)
+
+    result = await service.resume_run(
+        run_id, max_provider_attempts=6, max_total_tokens=20_000
+    )
+
+    assert result.run_id == run_id
+    assert seen["run_id"] == run_id
+    assert seen["resume"] is True
+
+
+@pytest.mark.asyncio
+async def test_crashed_in_progress_checkpoint_without_terminal_result_can_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    run_id = "report-crashed-resume"
+    request = ReportRequest(
+        operation="module_report",
+        instruction="恢复崩溃中的 2.4",
+        target_modules=["2.4"],
+        missing_evidence_policy="draft",
+        max_provider_attempts=2,
+        max_total_tokens=10_000,
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/request.json", request.model_dump(mode="json")
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/workflow-state.json",
+        {"run_id": run_id, "activity": "module-work", "status": "in_progress"},
+    )
+    seen = {}
+
+    async def resumed_execute(request, resumed_run_id, *, resume=False):
+        seen["run_id"] = resumed_run_id
+        seen["resume"] = resume
+        return ReportingRunResult(run_id=resumed_run_id, status="needs_decision")
+
+    monkeypatch.setattr(service, "_execute", resumed_execute)
+
+    result = await service.resume_run(
+        run_id, max_provider_attempts=6, max_total_tokens=20_000
+    )
+
+    assert result.run_id == run_id
+    assert seen == {"run_id": run_id, "resume": True}
+
+
+def test_run_lock_rejects_a_second_live_process_and_releases_on_close(
+    tmp_path: Path,
+) -> None:
+    first = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    second = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+
+    handle = first._acquire_run_lock("report-live")
+    try:
+        with pytest.raises(RuntimeError, match="already active"):
+            second._acquire_run_lock("report-live")
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+    released = second._acquire_run_lock("report-live")
+    fcntl.flock(released.fileno(), fcntl.LOCK_UN)
+    released.close()
+
+
+@pytest.mark.asyncio
+async def test_budget_resume_reuses_same_revision_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    run_id = "report-revision-budget-resume"
+    request = RevisionRequest(
+        baseline_version_id="baseline-version",
+        feedback="恢复局部修订",
+        target_module_ids=["2.4"],
+        max_provider_attempts=1,
+        max_total_tokens=10_000,
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/revision-request.json", request.model_dump(mode="json")
+    )
+    service._save_run(
+        ReportingRunResult(
+            run_id=run_id,
+            status="needs_decision",
+            error="报告运行预算已耗尽，已保存完成模块和写作分段。",
+        )
+    )
+    UsageLedger(tmp_path, run_id).record_attempt(
+        run_id=run_id,
+        task_id="module-2.4-post-delivery-r1",
+        agent_id="module-2.4-specialist",
+        input_tokens=800,
+        output_tokens=200,
+        total_tokens=1000,
+        status="success",
+    )
+    seen = {}
+
+    async def resumed_revision(_coordinator, revision, *, run_id=None, resume=False):
+        seen["request"] = revision
+        seen["run_id"] = run_id
+        seen["resume"] = resume
+        return ReportingRunResult(run_id=run_id, status="needs_decision")
+
+    monkeypatch.setattr(RevisionCoordinator, "run", resumed_revision)
+    result = await service.resume_run(
+        run_id,
+        max_provider_attempts=4,
+        max_total_tokens=20_000,
+    )
+
+    assert result.run_id == run_id
+    assert seen["run_id"] == run_id
+    assert seen["resume"] is True
+    assert seen["request"].max_provider_attempts == 4
+    assert seen["request"].max_total_tokens == 20_000
+
+
+@pytest.mark.asyncio
+async def test_revision_resume_keeps_new_supplements_structured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    run_id = "report-revision-structured-supplement"
+    request = RevisionRequest(
+        baseline_version_id="baseline-version",
+        feedback="恢复局部修订",
+        target_module_ids=["2.4"],
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/revision-request.json", request.model_dump(mode="json")
+    )
+    service._save_run(
+        ReportingRunResult(
+            run_id=run_id,
+            status="needs_decision",
+            error="等待用户确认设备名称。",
+        )
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/workflow-state.json",
+        {"run_id": run_id, "activity": "module-work", "status": "failed"},
+    )
+    seen = {}
+
+    async def resumed_revision(_coordinator, revision, *, run_id=None, resume=False):
+        seen["request"] = revision
+        return ReportingRunResult(run_id=run_id, status="needs_decision")
+
+    monkeypatch.setattr(RevisionCoordinator, "run", resumed_revision)
+    supplement = UserSupplement(
+        id="US-revision-device-name",
+        content="设备名称确认为 1A2 进线柜。",
+        scope="module",
+        target_ids=["2.4"],
+        stages=["module_authoring", "module_review"],
+    )
+
+    await service.resume_run(run_id, supplements=[supplement])
+
+    assert seen["request"].feedback == "恢复局部修订"
+    assert seen["request"].user_supplements == [supplement]
+    persisted = json.loads(
+        (tmp_path / f"Work/runs/{run_id}/user-supplements.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert persisted["supplements"] == [supplement.model_dump(mode="json")]
 
 
 @pytest.mark.asyncio
@@ -197,6 +766,7 @@ async def test_draft_and_skip_resume_same_run_with_explicit_policy(
     )
     pending = await service.run(
         ReportRequest(
+            operation="module_report",
             instruction="生成设备模块",
             target_modules=["2.4"],
             missing_evidence_policy="ask",
@@ -220,7 +790,7 @@ async def test_draft_and_skip_resume_same_run_with_explicit_policy(
         task_board=TaskBoard(),
         llm_provider=NeverCalledProvider(),
     )
-    result = await restarted.resume(pending.decision_id, action, "确认继续")
+    result = await restarted.resume(pending.decision_id, action)
 
     assert result.run_id == pending.run_id
     assert result.status == "completed"
@@ -271,6 +841,7 @@ async def test_stop_marks_run_incomplete_without_success_artifact(tmp_path: Path
     )
     pending = await service.run(
         ReportRequest(
+            operation="module_report",
             instruction="生成设备模块",
             target_modules=["2.4"],
             missing_evidence_policy="ask",
@@ -320,7 +891,11 @@ async def test_resume_tool_uses_persisted_decision_id(tmp_path: Path) -> None:
     run_id = "report-tool-resume"
     ReportingStore(tmp_path).write_json(
         f"Work/runs/{run_id}/request.json",
-        ReportRequest(instruction="生成设备模块", target_modules=["2.4"]).model_dump(mode="json"),
+        ReportRequest(
+            operation="module_report",
+            instruction="生成设备模块",
+            target_modules=["2.4"],
+        ).model_dump(mode="json"),
     )
     decision = EvidenceDecisionStore(tmp_path).create(
         EvidenceDecisionRequest(
@@ -340,4 +915,10 @@ async def test_resume_tool_uses_persisted_decision_id(tmp_path: Path) -> None:
     payload = await tool(decision.decision_id, "stop")
 
     assert payload["run_id"] == run_id
-    assert payload["status"] == "stopped_incomplete"
+    assert payload["status"] == "running"
+    task = tool.controller._tasks[run_id]
+    await task
+    persisted = ReportingRunResult.model_validate_json(
+        (tmp_path / f"Work/runs/{run_id}.json").read_text(encoding="utf-8")
+    )
+    assert persisted.status == "stopped_incomplete"

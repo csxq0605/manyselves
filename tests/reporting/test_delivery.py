@@ -37,6 +37,21 @@ def test_delivery_publishes_complete_five_module_package_atomically(tmp_path: Pa
     assert receipt.manifest_path.is_file()
 
 
+def test_delivery_reuses_only_an_identical_complete_package(tmp_path: Path) -> None:
+    delivery = ProjectDelivery(tmp_path / "project" / "Outputs")
+    package = _package(tmp_path)
+    first = delivery.deliver(package)
+
+    resumed = delivery.deliver(package)
+
+    assert resumed.delivery_dir == first.delivery_dir
+    assert resumed.artifact_sha256 == first.artifact_sha256
+
+    package.module_files["2.1"].write_text("changed", encoding="utf-8")
+    with pytest.raises(ValueError, match="does not match"):
+        delivery.deliver(package)
+
+
 def test_delivery_rejects_incomplete_or_invalid_docx_without_success_receipt(
     tmp_path: Path,
 ) -> None:

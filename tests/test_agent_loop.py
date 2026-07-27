@@ -9,10 +9,15 @@ import pytest
 
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops import agent_loop as agent_loop_module
-from manyselves.core.loops.agent_loop import AgentLoop
+from manyselves.core.loops.agent_loop import (
+    AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+    AgentLoop,
+    _is_explicit_report_cancel_request,
+)
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMResponse, LLMStreamChunk, LLMToolCall
 from manyselves.core.providers.base import Message as LLMMessage
+from manyselves.core.usage_ledger import UsageLedger
 from manyselves.interfaces.types import (
     AgentResponse,
     AgentStatus,
@@ -76,6 +81,75 @@ def workspace():
         (ws / d).mkdir()
     yield ws
     shutil.rmtree(ws, ignore_errors=True)
+
+
+def test_report_cancel_requires_direct_end_user_instruction() -> None:
+    assert _is_explicit_report_cancel_request(
+        UserMessage(content="请取消当前报告任务", agent_type="main", source="user")
+    )
+    assert not _is_explicit_report_cancel_request(
+        UserMessage(
+            content="报告还在运行，考虑取消后重试",
+            agent_type="main",
+            source="report-workflow",
+        )
+    )
+    assert not _is_explicit_report_cancel_request(
+        UserMessage(content="为什么会主动 cancel？", agent_type="main", source="user")
+    )
+    assert not _is_explicit_report_cancel_request(
+        UserMessage(content="不要取消当前报告任务", agent_type="main", source="user")
+    )
+
+
+@pytest.mark.asyncio
+async def test_background_report_start_ends_main_turn_without_followup_tool_loop(
+    workspace, config, mock_provider, mock_prompt_loader
+):
+    bus = MessageBus()
+
+    async def start_report(**kwargs):
+        return {
+            "status": "running",
+            "run_id": "report-123",
+            "task_id": "task-123",
+        }
+
+    tools = MagicMock()
+    tools.get.return_value = start_report
+    tools.get_definitions.return_value = []
+    loop = AgentLoop(
+        agent_type=AgentType.MAIN,
+        workspace=workspace,
+        tools=tools,
+        bus=bus,
+        config=config,
+        llm_provider=mock_provider,
+        prompt_loader=mock_prompt_loader,
+        loop_manager=None,
+    )
+    response = SimpleNamespace(
+        content="",
+        thinking=None,
+        tool_calls=[
+            LLMToolCall(
+                id="call_report",
+                name="run_reporting_workflow",
+                arguments={"operation": "full_report", "instruction": "生成完整报告"},
+            )
+        ],
+        usage=None,
+    )
+
+    await loop._handle_tool_calls(response, "msg-report")
+
+    mock_provider.chat.assert_not_called()
+    responses = [
+        msg for msg in bus._queue._queue
+        if isinstance(msg, AgentResponse) and not msg.streaming
+    ]
+    assert responses
+    assert "等待工作流终态回传" in responses[-1].content
 
 
 @pytest.fixture
@@ -222,6 +296,49 @@ async def test_stream_final_thinking_snapshot_is_not_published_as_second_thought
 
     assert [m.thinking for m in thinking_messages] == [thought]
     assert len(final_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_workflow_max_tokens_is_internal_continuation_not_normal_completion(
+    agent_loop, mock_provider
+):
+    async def max_tokens_stream(*args, **kwargs):
+        yield LLMStreamChunk(thinking="unfinished audit reasoning")
+        yield LLMStreamChunk(
+            done=True,
+            usage={
+                "input_tokens": 100,
+                "output_tokens": 8192,
+                "total_tokens": 8292,
+            },
+            stop_reason="max_tokens",
+        )
+
+    mock_provider.chat_stream = max_tokens_stream
+
+    await agent_loop._process_message(
+        UserMessage(
+            content="audit module 2.4",
+            agent_type=AgentType.MAIN,
+            source="workflow",
+            message_id="audit-2.4",
+            internal=True,
+        )
+    )
+
+    published = [
+        message
+        for message in list(agent_loop.bus._queue._queue)
+        if isinstance(message, AgentResponse) and not message.streaming
+    ]
+    assert [message.content for message in published] == [
+        AGENT_MAX_TOKENS_CONTINUATION_REQUIRED
+    ]
+    assert published[0].internal is True
+    assert "task is not complete" in agent_loop._conversation_history[-1].content
+    usage_rows = UsageLedger(agent_loop.workspace, "main").rows()
+    assert usage_rows[-1]["usage_source"] == "provider"
+    assert usage_rows[-1]["output_tokens"] == 8192
 
 
 @pytest.mark.asyncio
@@ -763,7 +880,16 @@ async def test_truncated_tool_call_error_mentions_apply_patch_not_write_file(
     bus = MessageBus()
     tools = MagicMock()
     tools.get.return_value = AsyncMock()
-    tools.get_definitions.return_value = []
+    tools.get_definitions.return_value = [
+        {
+            "name": "exec",
+            "input_schema": {
+                "type": "object",
+                "properties": {"command": {"type": "string"}},
+                "required": ["command"],
+            },
+        }
+    ]
     loop = AgentLoop(
         agent_type=AgentType.PLOTTING,
         workspace=workspace,

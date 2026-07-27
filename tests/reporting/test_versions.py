@@ -61,6 +61,22 @@ def test_report_version_publish_snapshots_artifacts_and_keeps_parent_immutable(
     assert not list((tmp_path / "Work/report-versions").glob(".latest-*.tmp"))
 
 
+def test_report_version_publish_is_idempotent_only_for_identical_sources(
+    tmp_path: Path,
+) -> None:
+    refs = _source_artifacts(tmp_path, "resume")
+    version = _version("version-resume", refs)
+    store = ReportVersionStore(tmp_path)
+    first = store.publish(version)
+
+    resumed = store.publish(version)
+
+    assert resumed == first
+    (tmp_path / refs["report_state"]).write_text("changed", encoding="utf-8")
+    with pytest.raises(ValueError, match="differs"):
+        store.publish(version)
+
+
 def test_report_version_rejects_missing_artifact_reference(tmp_path: Path) -> None:
     store = ReportVersionStore(tmp_path)
     version = _version("version-001", {"report_state": Path("Work/missing.json")})

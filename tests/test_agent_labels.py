@@ -111,6 +111,12 @@ class TestGetAgentTitle:
     def test_unknown_returns_agent_format(self):
         assert get_agent_title("custom_type") == "Custom Type Agent"
 
+    def test_runtime_title_keeps_instance_after_agent_label(self):
+        assert (
+            get_agent_title("report-renderer--session-12345678")
+            == "Render Agent · 5678"
+        )
+
 
 class TestAgentLabelsDict:
     """Tests for AGENT_LABELS completeness."""

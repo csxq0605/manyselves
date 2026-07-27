@@ -10,6 +10,10 @@ import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..access_policy import reject_forbidden_agent_document
+
+MAX_ARTIFACT_PAGE_CHARS = 160_000
+
 
 @dataclass(frozen=True)
 class ArtifactGrant:
@@ -64,6 +68,7 @@ class ArtifactGateway:
         return ArtifactGateway(self.workspace, grant, secret=self._secret)
 
     def _resolve_public(self, ref: str) -> Path:
+        reject_forbidden_agent_document(ref)
         target = (self.workspace / ref).resolve()
         if not target.is_relative_to(self.workspace):
             raise PermissionError("artifact is outside the project workspace")
@@ -72,6 +77,7 @@ class ArtifactGateway:
             raise PermissionError("raw .manyselves paths are never artifact authority")
         if not target.is_file():
             raise FileNotFoundError(ref)
+        reject_forbidden_agent_document(target)
         return target
 
     def _encode(self, payload: dict) -> str:
@@ -132,8 +138,11 @@ class ArtifactGateway:
         return target
 
     def open(self, ref: str, *, offset: int = 0, limit: int = 4000) -> ArtifactPage:
-        if offset < 0 or not 1 <= limit <= 8000:
-            raise ValueError("offset must be >= 0 and limit must be between 1 and 8000")
+        if offset < 0 or not 1 <= limit <= MAX_ARTIFACT_PAGE_CHARS:
+            raise ValueError(
+                "offset must be >= 0 and limit must be between 1 and "
+                f"{MAX_ARTIFACT_PAGE_CHARS}"
+            )
         content = self._resolve(ref).read_text(encoding="utf-8")
         page = content[offset : offset + limit]
         next_offset = offset + len(page) if offset + len(page) < len(content) else None

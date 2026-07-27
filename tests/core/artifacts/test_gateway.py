@@ -25,3 +25,18 @@ def test_opaque_refs_survive_gateway_recreation(tmp_path: Path) -> None:
     ref = first.persist_internal("checkpoint", "one", "recoverable")
     second = ArtifactGateway(tmp_path, grant)
     assert second.open_internal(ref).content == "recoverable"
+
+
+def test_gateway_supports_single_pass_review_bundles(tmp_path: Path) -> None:
+    (tmp_path / "Work").mkdir()
+    content = "审计正文" * 20_000
+    (tmp_path / "Work/review.json").write_text(content, encoding="utf-8")
+    gateway = ArtifactGateway(
+        tmp_path,
+        ArtifactGrant("wf", "review", "cross-module-reviewer", "session"),
+    )
+
+    page = gateway.open("Work/review.json", limit=160_000)
+
+    assert page.content == content
+    assert page.next_offset is None

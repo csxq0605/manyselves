@@ -16,7 +16,7 @@ from pydantic import ConfigDict, Field, model_validator
 from ..agentic_models import StrictModel
 from ..taxonomy import resolve_submodule
 
-ModuleId = Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
+ModuleId = Literal["2.1", "2.2", "2.3", "2.4", "2.5", "all"]
 SkillScope = Literal["project", "product"]
 
 
@@ -49,6 +49,12 @@ class SkillCandidate(ImmutableSkillModel):
 
     @model_validator(mode="after")
     def submodules_match_module(self) -> "SkillCandidate":
+        if self.module_id == "all":
+            if self.submodules != ["all"]:
+                raise ValueError(
+                    "cross-module candidate requires module_id='all' and submodules=['all']"
+                )
+            return self
         if any(resolve_submodule(item).module_id != self.module_id for item in self.submodules):
             raise ValueError("candidate submodule belongs to another module")
         return self

@@ -21,6 +21,7 @@ from ..claim_ledger import ClaimLedger
 from ..models import REPORT_MODULE_IDS
 from ..taxonomy import REPORT_TAXONOMY
 from .handoff_docx import HandoffDocxCore
+from .packaged_docx import _expected_markdown_fragments
 
 _CITATION_TOKEN = re.compile(r"\[\[CITE:(\d+)\]\]")
 _PHOTO_TOKEN = re.compile(r"^\[\[PHOTO:([^]]+)\]\]$")
@@ -50,15 +51,25 @@ class ReportPhoto(StrictModel):
     caption: str = Field(min_length=1)
     source_id: str = Field(pattern=r"^E-")
     claim_ids: list[str] = Field(min_length=1)
+    submodule_id: str | None = None
 
 
 class ApprovedReport(StrictModel):
     title: str = Field(min_length=1)
-    overview: str = Field(min_length=1)
+    assessment_background: str = Field(min_length=1)
+    findings_overview: str = Field(min_length=1)
+    regional_executive_summary: str = Field(min_length=1)
     module_narratives: dict[str, str]
-    conclusion: str = Field(min_length=1)
+    cross_module_analysis: str = Field(min_length=1)
+    risk_panorama: str = Field(min_length=1)
+    dimension_risk_analysis: str = Field(min_length=1)
+    data_gap_analysis: str = Field(min_length=1)
+    improvement_action_plan: str = Field(min_length=1)
+    new_factory_planning: str = Field(min_length=1)
+    capacity_expansion_plan: str = Field(min_length=1)
+    daily_power_management: str = Field(min_length=1)
+    emergency_compliance_management: str = Field(min_length=1)
     ledger: ClaimLedger
-    citation_anchors: dict[str, str] = Field(default_factory=dict)
     tables: list[ReportTable] = Field(default_factory=list)
     photos: list[ReportPhoto] = Field(default_factory=list)
 
@@ -78,12 +89,29 @@ class ApprovedReport(StrictModel):
             raise ValueError("approved report claim ledger requires exactly modules 2.1-2.5")
         source_ids = {source.id for source in self.ledger.sources}
         claim_ids = {claim.id for claim in self.ledger.claims}
+        claims_by_id = {claim.id: claim for claim in self.ledger.claims}
         for photo in self.photos:
             if photo.source_id not in source_ids:
                 raise ValueError(f"photo {photo.id} references unknown project source")
             unknown_claims = sorted(set(photo.claim_ids) - claim_ids)
             if unknown_claims:
                 raise ValueError(f"photo {photo.id} references unknown claims: {unknown_claims}")
+            if photo.submodule_id is not None:
+                if photo.submodule_id not in {
+                    submodule_id
+                    for module in REPORT_TAXONOMY.values()
+                    for submodule_id in module.submodules
+                }:
+                    raise ValueError(
+                        f"photo {photo.id} references unknown submodule {photo.submodule_id}"
+                    )
+                if not any(
+                    claims_by_id[claim_id].submodule_id == photo.submodule_id
+                    for claim_id in photo.claim_ids
+                ):
+                    raise ValueError(
+                        f"photo {photo.id} submodule does not match its linked claims"
+                    )
         for table in self.tables:
             unknown_sources = sorted(set(table.source_ids) - source_ids)
             if unknown_sources:
@@ -110,13 +138,19 @@ class PdsDocxRenderer:
     def __init__(self, handoff_core: HandoffDocxCore):
         self.handoff_core = handoff_core
 
-    def render(self, report: ApprovedReport, output_path: Path) -> PdsRenderResult:
+    def render(
+        self,
+        report: ApprovedReport,
+        output_path: Path,
+        *,
+        approved_markdown: str | None = None,
+    ) -> PdsRenderResult:
         """Render approved prose only and validate semantic preservation."""
 
-        markdown = self._compose_markdown(report)
-        cited_markdown = report.ledger.bind_citations(
-            markdown,
-            anchors=report.citation_anchors,
+        cited_markdown = (
+            approved_markdown
+            if approved_markdown is not None
+            else report.ledger.bind_citations(self._compose_markdown(report))
         )
         _, raw_docx = self.handoff_core.render_approved_prose(
             cited_markdown,
@@ -164,6 +198,9 @@ class PdsDocxRenderer:
 
     @staticmethod
     def _compose_markdown(report: ApprovedReport) -> str:
+        unresolved_claims = [
+            claim.text for claim in report.ledger.claims if claim.unresolved
+        ]
         lines = [
             f"# {report.title}",
             "",
@@ -171,7 +208,15 @@ class PdsDocxRenderer:
             "",
             "### 1.1 评估背景",
             "",
-            report.overview,
+            report.assessment_background,
+            "",
+            "### 1.2 健康度总览",
+            "",
+            report.findings_overview,
+            "",
+            "### 1.3 各区域执行摘要",
+            "",
+            report.regional_executive_summary,
             "",
             "## 2. 评估内容描述",
             "",
@@ -179,26 +224,24 @@ class PdsDocxRenderer:
         claims_by_id = {claim.id: claim for claim in report.ledger.claims}
         for module_id in REPORT_MODULE_IDS:
             module = REPORT_TAXONOMY[module_id]
+            module_photos = [
+                photo
+                for photo in report.photos
+                if any(
+                    claims_by_id[claim_id].module_id == module_id
+                    for claim_id in photo.claim_ids
+                )
+            ]
             lines.extend(
                 [
                     f"### {module_id} {module.title}",
                     "",
-                    report.module_narratives[module_id],
-                    "",
-                ]
-            )
-            for photo in report.photos:
-                if any(
-                    claims_by_id[claim_id].module_id == module_id for claim_id in photo.claim_ids
-                ):
-                    lines.extend([f"[[PHOTO:{photo.id}]]", ""])
-        for table in report.tables:
-            source_note = "、".join(table.source_ids)
-            lines.extend(
-                [
-                    f"{table.title}（来源：{source_note}）",
-                    "",
-                    PdsDocxRenderer._markdown_table(table),
+                    PdsDocxRenderer._place_photo_tokens(
+                        PdsDocxRenderer._strip_leading_module_heading(
+                            report.module_narratives[module_id], module_id
+                        ),
+                        module_photos,
+                    ),
                     "",
                 ]
             )
@@ -208,12 +251,145 @@ class PdsDocxRenderer:
                 "",
                 "### 3.1 风险/问题汇总与概览",
                 "",
-                report.conclusion,
+                "#### 3.1.1 风险全景图",
                 "",
-                report.ledger.source_index_markdown(),
+                report.risk_panorama,
+                "",
+                "#### 3.1.2 各维度风险分析",
+                "",
+                report.dimension_risk_analysis,
+                "",
+                "#### 3.1.3 跨领域关联风险",
+                "",
+                report.cross_module_analysis,
+                "",
+                "#### 3.1.4 数据缺口分析",
+                "",
+                report.data_gap_analysis
+                or "\n".join(f"- {text}" for text in unresolved_claims),
+                "",
+                "### 3.2 改善行动速查表",
+                "",
+                report.improvement_action_plan,
+                "",
+                "## 4. 专项问题分析",
+                "",
+                "### 4.1 新工厂建厂时规划建议",
+                "",
+                report.new_factory_planning,
+                "",
+                "### 4.2 增容建议",
+                "",
+                report.capacity_expansion_plan,
+                "",
+                "### 4.3 日常用电管理建议",
+                "",
+                report.daily_power_management,
+                "",
+                "### 4.4 应急管理及合规性管理建议",
+                "",
+                report.emergency_compliance_management,
+                "",
             ]
         )
+        if report.tables:
+            for table in report.tables:
+                source_note = "、".join(table.source_ids)
+                lines.extend(
+                    [
+                        f"{table.title}（来源：{source_note}）",
+                        "",
+                        PdsDocxRenderer._markdown_table(table),
+                        "",
+                    ]
+                )
+        source_index = report.ledger.source_index_markdown()
+        source_index = re.sub(
+            r"^##\s+(?:4\.\s+)?证据与来源索引$",
+            "证据与来源索引",
+            source_index,
+            flags=re.MULTILINE,
+        )
+        source_index = re.sub(r"^###\s+", "", source_index, flags=re.MULTILINE)
+        lines.append(source_index)
         return "\n".join(lines)
+
+    @staticmethod
+    def _strip_leading_module_heading(narrative: str, module_id: str) -> str:
+        """Remove the canonical module heading even after an editor transition."""
+
+        lines = narrative.splitlines()
+        module_heading = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if re.match(
+                    rf"^#{{1,6}}\s+{re.escape(module_id)}(?:\.|\s|$)",
+                    line.strip(),
+                )
+            ),
+            None,
+        )
+        if module_heading is None:
+            return narrative
+        del lines[module_heading]
+        while module_heading < len(lines) and not lines[module_heading].strip():
+            del lines[module_heading]
+        lines = [
+            (
+                "#" + line
+                if index >= module_heading and re.match(r"^#{1,5}\s+", line)
+                else line
+            )
+            for index, line in enumerate(lines)
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _place_photo_tokens(narrative: str, photos: list[ReportPhoto]) -> str:
+        """Place photo evidence beside its linked submodule, not at module end."""
+
+        if not photos:
+            return narrative
+        by_submodule: dict[str, list[ReportPhoto]] = {}
+        fallback: list[ReportPhoto] = []
+        for photo in photos:
+            if photo.submodule_id:
+                by_submodule.setdefault(photo.submodule_id, []).append(photo)
+            else:
+                fallback.append(photo)
+        lines = narrative.splitlines()
+        output: list[str] = []
+        active_submodule: str | None = None
+        inserted: set[str] = set()
+
+        def append_tokens(submodule_id: str | None) -> None:
+            if not submodule_id or submodule_id in inserted:
+                return
+            selected = by_submodule.get(submodule_id, [])
+            if selected:
+                output.extend(["", *[f"[[PHOTO:{photo.id}]]" for photo in selected], ""])
+                inserted.add(submodule_id)
+
+        for line in lines:
+            heading = re.match(r"^#{1,6}\s+(.+?)\s*$", line)
+            if heading:
+                append_tokens(active_submodule)
+                active_submodule = next(
+                    (
+                        submodule_id
+                        for submodule_id in by_submodule
+                        if submodule_id in heading.group(1)
+                    ),
+                    None,
+                )
+            output.append(line)
+        append_tokens(active_submodule)
+        for submodule_id, selected in by_submodule.items():
+            if submodule_id not in inserted:
+                output.extend(["", *[f"[[PHOTO:{photo.id}]]" for photo in selected]])
+        output.extend(["", *[f"[[PHOTO:{photo.id}]]" for photo in fallback]])
+        return "\n".join(output).strip()
 
     @staticmethod
     def _markdown_table(table: ReportTable) -> str:
@@ -266,22 +442,65 @@ class PdsDocxRenderer:
     @staticmethod
     def _materialize_photos(document: Document, report: ApprovedReport) -> None:
         photos = {photo.id: photo for photo in report.photos}
-        for paragraph in list(document.paragraphs):
-            match = _PHOTO_TOKEN.match(paragraph.text.strip())
+        paragraphs = list(document.paragraphs)
+        index = 0
+        while index < len(paragraphs):
+            match = _PHOTO_TOKEN.match(paragraphs[index].text.strip())
             if match is None:
+                index += 1
                 continue
-            photo = photos[match.group(1)]
-            if not photo.path.is_file():
-                raise FileNotFoundError(f"report photo not found: {photo.path}")
-            paragraph.clear()
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            paragraph.add_run().add_picture(str(photo.path), width=Cm(12.0))
-            paragraph.add_run(f"\n图 {photo.id}：{photo.caption}（来源 {photo.source_id}）")
+            marker_paragraphs = [paragraphs[index]]
+            selected = [photos[match.group(1)]]
+            scan = index + 1
+            while scan < len(paragraphs):
+                text = paragraphs[scan].text.strip()
+                next_match = _PHOTO_TOKEN.match(text)
+                if next_match is not None:
+                    marker_paragraphs.append(paragraphs[scan])
+                    selected.append(photos[next_match.group(1)])
+                    scan += 1
+                    continue
+                if not text:
+                    marker_paragraphs.append(paragraphs[scan])
+                    scan += 1
+                    continue
+                break
+            for photo in selected:
+                if not photo.path.is_file():
+                    raise FileNotFoundError(f"report photo not found: {photo.path}")
+            if len(selected) == 1:
+                paragraph = marker_paragraphs[0]
+                paragraph.clear()
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                paragraph.add_run().add_picture(str(selected[0].path), width=Cm(12.0))
+                paragraph.add_run(
+                    f"\n图 {selected[0].id}：{selected[0].caption}"
+                    f"（来源 {selected[0].source_id}）"
+                )
+                index = scan
+                continue
+
+            table = document.add_table(rows=(len(selected) + 1) // 2, cols=2)
+            table.autofit = False
+            for photo_index, photo in enumerate(selected):
+                cell = table.cell(photo_index // 2, photo_index % 2)
+                paragraph = cell.paragraphs[0]
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                paragraph.add_run().add_picture(str(photo.path), width=Cm(5.5))
+                paragraph.add_run(
+                    f"\n图 {photo.id}：{photo.caption}（来源 {photo.source_id}）"
+                )
+            marker_paragraphs[0]._p.addprevious(table._tbl)
+            for paragraph in marker_paragraphs:
+                parent = paragraph._p.getparent()
+                if parent is not None:
+                    parent.remove(paragraph._p)
+            index = scan
 
     @staticmethod
     def _style_source_index(document: Document) -> None:
         for paragraph in document.paragraphs:
-            if paragraph.text == "4. 证据与来源索引":
+            if paragraph.text == "证据与来源索引":
                 paragraph.style = "Heading 1"
             elif paragraph.text in {
                 "脚注对应关系",
@@ -314,14 +533,53 @@ class PdsDocxRenderer:
             rendered = Document(output_path)
         except Exception as exc:
             raise ValueError("rendered file is not Word/WPS-openable") from exc
-        text = "\n".join(
+        def semantic_text(value: str) -> str:
+            value = value.strip()
+            value = re.sub(r"^#{1,6}\s*", "", value)
+            value = re.sub(r"^>\s*", "", value)
+            value = re.sub(r"^[•·]\s*", "", value)
+            value = re.sub(r"^\d+\.\s+", "", value)
+            value = re.sub(r"^(\d+(?:\.\d+)+)\.\s+", r"\1 ", value)
+            value = value.replace("**", "").replace("__", "").replace("`", "")
+            value = re.sub(r"\[\[CLAIM:C-[^\]\s]+\]\]", "", value)
+            value = re.sub(r"【([^】]+)】[:：]?", r"\1：", value)
+            value = re.sub(r"\s*([：:])\s*", r"\1", value)
+            return re.sub(r"\s+", "", value)
+
+        visible = [
             "".join(run.text for run in paragraph.runs if run.font.superscript is not True)
             for paragraph in rendered.paragraphs
+        ]
+        visible.extend(
+            cell.text
+            for table in rendered.tables
+            for row in table.rows
+            for cell in row.cells
         )
-        protected = [report.overview, report.conclusion, *report.module_narratives.values()]
-        missing = [value for value in protected if value not in text]
+        semantic_visible = semantic_text("\n".join(visible))
+        text = "\n".join(visible)
+        protected = [
+            report.assessment_background,
+            report.findings_overview,
+            report.risk_panorama,
+            report.dimension_risk_analysis,
+            report.cross_module_analysis,
+            report.data_gap_analysis,
+            report.improvement_action_plan,
+            *report.module_narratives.values(),
+        ]
+        missing = [
+            fragment
+            for value in protected
+            for fragment in _expected_markdown_fragments(value)
+            if semantic_text(fragment) not in semantic_visible
+        ]
         if missing:
-            raise ValueError("rendered DOCX changed or omitted protected Agent/Chief Editor prose")
+            preview = ", ".join(repr(fragment[:120]) for fragment in missing[:8])
+            raise ValueError(
+                "rendered DOCX changed or omitted protected Agent/Chief Editor prose: "
+                + preview
+            )
         if report.title not in text:
             raise ValueError("rendered DOCX is missing the approved title")
         if _CITATION_TOKEN.search(text):

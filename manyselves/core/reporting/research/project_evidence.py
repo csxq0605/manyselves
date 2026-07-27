@@ -22,11 +22,15 @@ def project_evidence_locator(item: EvidenceItem) -> str:
 
 
 class ProjectEvidenceIndex:
-    """Search and retrieve customer facts from ``Work/evidence.jsonl`` only."""
+    """Search one run's immutable normalized customer-evidence snapshot."""
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, run_id: str | None = None):
         self.workspace = Path(workspace).resolve()
-        self.path = self.workspace / "Work/evidence.jsonl"
+        self.path = (
+            self.workspace / f"Work/runs/{run_id}/preparation/evidence.jsonl"
+            if run_id
+            else self.workspace / "Work/evidence.jsonl"
+        )
 
     def items(self) -> list[EvidenceItem]:
         if not self.path.exists():

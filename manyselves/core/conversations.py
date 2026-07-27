@@ -109,13 +109,21 @@ class ConversationStore:
         if not sessions:
             return  # No sessions yet — will be created lazily on first message
         # Load latest session for each agent type
-        for t in _AGENT_TYPES:
+        for t in self._known_agent_types():
             agent_dir = self._dir / t
             if agent_dir.exists():
                 jsonl_files = sorted(agent_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
                 if jsonl_files:
                     self._current_session_ids[t] = jsonl_files[0].stem
             # If no files for this agent, leave unset (will be lazily created)
+
+    def _known_agent_types(self) -> list[str]:
+        """Return persistent and runtime Agent ids known to this workspace."""
+        known = set(_AGENT_TYPES)
+        known.update(self._current_session_ids)
+        if self._dir.exists():
+            known.update(path.name for path in self._dir.iterdir() if path.is_dir())
+        return ["main", *sorted(item for item in known if item != "main")]
 
     def _ensure_session(self, agent_type: str) -> None:
         """Lazily create an in-memory session id for the agent.
@@ -195,7 +203,7 @@ class ConversationStore:
         """
         sessions = self._load_sessions_metadata()
         non_empty = []
-        check_agents = [agent_type] if agent_type else _AGENT_TYPES
+        check_agents = [agent_type] if agent_type else self._known_agent_types()
 
         for s in sessions:
             session_id = s.get("id")
@@ -252,7 +260,7 @@ class ConversationStore:
         sessions = [s for s in sessions if s["id"] != session_id]
         self._save_sessions_metadata(sessions)
 
-        for agent_type in _AGENT_TYPES:
+        for agent_type in self._known_agent_types():
             f = self._dir / agent_type / f"{session_id}.jsonl"
             if f.exists():
                 try:
@@ -516,7 +524,7 @@ class ConversationStore:
 
     def clear_current_session(self) -> None:
         """Clear message files for all current sessions across all agent types."""
-        for agent_type in _AGENT_TYPES:
+        for agent_type in self._known_agent_types():
             session_id = self._current_session_ids.get(agent_type)
             if session_id:
                 f = self._dir / agent_type / f"{session_id}.jsonl"
@@ -531,7 +539,7 @@ class ConversationStore:
 
     def get_agent_types_with_history(self) -> list[str]:
         result = []
-        for agent_type in _AGENT_TYPES:
+        for agent_type in self._known_agent_types():
             session_id = self._current_session_ids.get(agent_type)
             if session_id:
                 f = self._dir / agent_type / f"{session_id}.jsonl"

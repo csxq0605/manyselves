@@ -3,10 +3,15 @@
 import asyncio
 from typing import Any
 
+import httpx
 from anthropic import AsyncAnthropic
 from loguru import logger
 
 from .base import LLMProvider, LLMResponse, Message, LLMToolCall
+
+
+ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS = 600.0
+ANTHROPIC_CONNECT_TIMEOUT_SECONDS = 30.0
 
 
 class AnthropicProvider(LLMProvider):
@@ -28,6 +33,15 @@ class AnthropicProvider(LLMProvider):
             base_url=api_base,
             max_retries=0,  # Centralize retry logic in agent loop
             auth_token=api_key,  # Prevent ANTHROPIC_AUTH_TOKEN env var override
+            # The SDK otherwise uses a 5-second connect timeout even though its
+            # read timeout is 10 minutes. Compatible gateways can legitimately
+            # need longer to establish a streaming connection.
+            timeout=httpx.Timeout(
+                connect=ANTHROPIC_CONNECT_TIMEOUT_SECONDS,
+                read=ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS,
+                write=ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS,
+                pool=ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS,
+            ),
         )
 
         # cache_control (prompt caching) is an Anthropic-only feature.
@@ -355,6 +369,7 @@ class AnthropicProvider(LLMProvider):
                 "total_tokens": response.usage.input_tokens + response.usage.output_tokens,
             },
             thinking=thinking,
+            stop_reason=getattr(response, "stop_reason", None),
         )
 
     # ------------------------------------------------------------------
@@ -367,6 +382,7 @@ class AnthropicProvider(LLMProvider):
         tools: list[dict] | None = None,
         temperature: float = 0.1,
         max_tokens: int = 8192,
+        stream_idle_timeout_seconds: float | None = None,
     ):
         """Send streaming chat completion request.
 
@@ -389,15 +405,34 @@ class AnthropicProvider(LLMProvider):
         if tools:
             params["tools"] = self._convert_tools(tools)
 
-        logger.debug("Sending Anthropic streaming request: model={}, messages={}", self.model, len(messages))
+        idle_timeout = (
+            ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS
+            if stream_idle_timeout_seconds is None
+            else stream_idle_timeout_seconds
+        )
+        logger.debug(
+            "Sending Anthropic streaming request: model={}, messages={}, idle_timeout={}s",
+            self.model,
+            len(messages),
+            idle_timeout,
+        )
 
-        idle_timeout = 90  # seconds
-
+        stream_phase = "open_stream"
+        request_id = None
+        event_count = 0
+        content_delta_count = 0
+        last_event_type = None
+        last_delta_type = None
+        saw_message_stop = False
+        iterator_exhausted = False
         try:
             async with self.client.messages.stream(**params) as stream:
+                request_id = getattr(stream, "request_id", None)
+                logger.debug("Anthropic stream opened: request_id={}", request_id)
                 # Stream full events so thinking_delta is not dropped by
                 # Anthropic's text_stream convenience iterator.
                 stream_iter = stream.__aiter__()
+                stream_phase = "event_stream"
                 while True:
                     try:
                         event = await asyncio.wait_for(
@@ -405,20 +440,45 @@ class AnthropicProvider(LLMProvider):
                             timeout=idle_timeout,
                         )
                     except StopAsyncIteration:
+                        iterator_exhausted = True
+                        logger.debug(
+                            "Anthropic stream iterator exhausted: request_id={}, "
+                            "events={}, content_deltas={}, last_event={}, "
+                            "last_delta={}, saw_message_stop={}",
+                            request_id,
+                            event_count,
+                            content_delta_count,
+                            last_event_type,
+                            last_delta_type,
+                            saw_message_stop,
+                        )
                         break
+                    event_count += 1
+                    last_event_type = event.type
+                    if event.type == "message_stop":
+                        saw_message_stop = True
+                        logger.debug(
+                            "Anthropic message_stop received: request_id={}, events={}",
+                            request_id,
+                            event_count,
+                        )
                     if event.type != "content_block_delta":
                         continue
+                    content_delta_count += 1
                     delta = event.delta
+                    last_delta_type = delta.type
                     if delta.type == "text_delta":
                         yield LLMStreamChunk(delta=delta.text)
                     elif delta.type == "thinking_delta":
                         yield LLMStreamChunk(thinking=delta.thinking)
 
                 # After streaming completes, extract tool calls from final message
+                stream_phase = "final_message"
                 final_message = await asyncio.wait_for(
                     stream.get_final_message(),
                     timeout=idle_timeout,
                 )
+                stream_phase = "complete"
 
             # Parse final response (outside context manager)
             final_tool_calls = []
@@ -436,18 +496,59 @@ class AnthropicProvider(LLMProvider):
                 elif block.type == "thinking":
                     final_thinking = block.thinking
 
+            usage = getattr(final_message, "usage", None)
+            usage_payload = (
+                {
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                    "total_tokens": usage.input_tokens + usage.output_tokens,
+                }
+                if usage is not None
+                else None
+            )
+            logger.debug(
+                "Anthropic stream completed: stop_reason={}, input_tokens={}, "
+                "output_tokens={}, text_chars={}, thinking_chars={}, tool_calls={}",
+                getattr(final_message, "stop_reason", None),
+                getattr(usage, "input_tokens", None),
+                getattr(usage, "output_tokens", None),
+                len(accumulated_text),
+                len(final_thinking or ""),
+                len(final_tool_calls),
+            )
             yield LLMStreamChunk(
                 delta=None,
                 done=True,
                 tool_calls=final_tool_calls or None,
                 thinking=final_thinking,
+                usage=usage_payload,
+                stop_reason=getattr(final_message, "stop_reason", None),
             )
 
-        except asyncio.TimeoutError:
-            logger.warning("Anthropic stream stalled for >{}s", idle_timeout)
-            yield LLMStreamChunk(delta=None, done=True)
+        except asyncio.TimeoutError as exc:
+            logger.warning(
+                "Anthropic stream stalled for >{}s: phase={}, request_id={}, "
+                "events={}, content_deltas={}, last_event={}, last_delta={}, "
+                "saw_message_stop={}, iterator_exhausted={}",
+                idle_timeout,
+                stream_phase,
+                request_id,
+                event_count,
+                content_delta_count,
+                last_event_type,
+                last_delta_type,
+                saw_message_stop,
+                iterator_exhausted,
+            )
+            raise TimeoutError(
+                f"Anthropic provider stream idle timeout after {idle_timeout:g}s"
+            ) from exc
         except Exception as e:
-            logger.error("Anthropic streaming error: {}", str(e))
+            logger.error(
+                "Anthropic streaming error ({}): {}",
+                type(e).__name__,
+                str(e),
+            )
             raise
 
     # ------------------------------------------------------------------

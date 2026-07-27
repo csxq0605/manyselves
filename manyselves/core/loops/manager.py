@@ -25,6 +25,7 @@ from ..tools import (
     ApplyPatchTool,
     DeleteFileTool,
     FileStateManager,
+    InspectDocumentTool,
     ManageTasksTool,
     ManifestManager,
     PDFParseTool,
@@ -34,6 +35,8 @@ from ..tools import (
 from ..tools.artifact_tools import OpenArtifactTool, OpenToolResultTool, SearchTextTool
 from ..tools.registry import ToolRegistry
 from ..tools.reporting_tool import (
+    CancelReportingWorkflowTool,
+    GetReportingWorkflowStatusTool,
     ResumeReportingWorkflowTool,
     ReviseReportingWorkflowTool,
     RunReportingWorkflowTool,
@@ -165,6 +168,14 @@ class LoopManager:
         agent_id = normalize_agent_id(agent_type)
         loop = self._loops.get(agent_id)
         if loop is None:
+            if agent_id == "report-workflow":
+                main_loop = self._loops.get("main")
+                status_tool = main_loop.tools.get("get_reporting_workflow_status") if main_loop else None
+                controller = getattr(status_tool, "controller", None)
+                if controller is not None:
+                    cancelled = controller.cancel_all()
+                    logger.info("Cancelled background report runs: {}", cancelled)
+                    return
             logger.warning("No loop found for agent: {}", agent_type)
             return
 
@@ -275,30 +286,37 @@ class LoopManager:
             checkpoint_manager=self.checkpoint_manager,
         ))
 
-        # Main can inspect customer PDF evidence before starting a report run.
+        # Main always has a local document reader. MinerU is an optional
+        # enhancement and must not be advertised when it is unavailable.
         if agent_id == "main":
+            registry.register(InspectDocumentTool(self.workspace))
             mineru_timeout = (
                 self.config_manager.config.mineru_api.timeout
                 if hasattr(self.config_manager.config, "mineru_api")
                 else 300
             )
-            registry.register(PDFParseTool(
-                workspace=self.workspace,
-                timeout=mineru_timeout,
-            ))
+            if (
+                self.config_manager.config.mineru_api.enabled
+                and PDFParseTool.is_available()
+            ):
+                registry.register(PDFParseTool(
+                    workspace=self.workspace,
+                    timeout=mineru_timeout,
+                ))
 
         # Reporting orchestration is exposed only through task-scoped workflow tools.
         if agent_id == "main":
             reporting_provider = self._provider_manager.get_active_provider()
-            registry.register(
-                RunReportingWorkflowTool(
-                    workspace=self.workspace,
-                    bus=self.bus,
-                    task_board=self._task_board,
-                    llm_provider=reporting_provider,
-                    agent_defaults=self.config_manager.config.agents.defaults,
-                )
+            run_reporting_tool = RunReportingWorkflowTool(
+                workspace=self.workspace,
+                bus=self.bus,
+                task_board=self._task_board,
+                llm_provider=reporting_provider,
+                agent_defaults=self.config_manager.config.agents.defaults,
             )
+            registry.register(run_reporting_tool)
+            registry.register(CancelReportingWorkflowTool(run_reporting_tool.controller))
+            registry.register(GetReportingWorkflowStatusTool(run_reporting_tool.controller))
             registry.register(
                 ResumeReportingWorkflowTool(
                     workspace=self.workspace,
@@ -306,6 +324,7 @@ class LoopManager:
                     task_board=self._task_board,
                     llm_provider=reporting_provider,
                     agent_defaults=self.config_manager.config.agents.defaults,
+                    controller=run_reporting_tool.controller,
                 )
             )
             registry.register(
@@ -315,6 +334,7 @@ class LoopManager:
                     task_board=self._task_board,
                     llm_provider=reporting_provider,
                     agent_defaults=self.config_manager.config.agents.defaults,
+                    controller=run_reporting_tool.controller,
                 )
             )
             registry.register(ProjectSkillEvolutionTool(self.workspace))

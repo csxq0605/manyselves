@@ -45,7 +45,19 @@ def compile_agent_access(
             f"{definition.id} cannot read declared task refs {unreadable}; "
             "attach existing project artifacts before starting the AgentLoop"
         )
-    tools = tuple(dict.fromkeys([*definition.tools, "open_artifact", "search_text"]))
+    declared_tools = tuple(
+        dict.fromkeys([*definition.tools, "open_artifact", "search_text"])
+    )
+    if envelope.allowed_tools:
+        unknown = sorted(set(envelope.allowed_tools) - set(declared_tools))
+        if unknown:
+            raise ConfigurationError(
+                f"{definition.id} task requested undeclared tools {unknown}"
+            )
+        allowed = set(envelope.allowed_tools)
+        tools = tuple(name for name in declared_tools if name in allowed)
+    else:
+        tools = declared_tools
     return CompiledAgentAccess(gateway, tuple(readable), (), tools)
 
 

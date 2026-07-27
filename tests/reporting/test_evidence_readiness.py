@@ -1,30 +1,34 @@
 from manyselves.core.reporting.coverage import evaluate_coverage
+from manyselves.core.reporting.evidence_readiness import EvidenceReadinessPolicy
 from manyselves.core.reporting.models import ReportRequest
-from manyselves.core.reporting.request_gate import RequestGate
 
 
 def _request(policy: str) -> ReportRequest:
     return ReportRequest(
+        operation="module_report",
         instruction="生成设备模块",
         target_modules=["2.4"],
         missing_evidence_policy=policy,
     )
 
 
-def test_ask_and_block_stop_before_professional_agents() -> None:
+def test_ask_and_block_pause_before_professional_agents() -> None:
     for policy in ("ask", "block"):
         request = _request(policy)
-        decision = RequestGate.evaluate(request, evaluate_coverage(request, []))
+        decision = EvidenceReadinessPolicy.evaluate(
+            request, evaluate_coverage(request, [])
+        )
 
-        assert decision.proceed is False
-        assert decision.status == "blocked"
+        assert decision.should_block is True
         assert decision.missing_evidence
         assert all(item.startswith("2.4") for item in decision.missing_evidence)
 
 
-def test_ask_gate_identifies_affected_modules_for_resume_decision() -> None:
+def test_readiness_identifies_affected_modules_for_resume_decision() -> None:
     request = _request("ask")
-    decision = RequestGate.evaluate(request, evaluate_coverage(request, []))
+    decision = EvidenceReadinessPolicy.evaluate(
+        request, evaluate_coverage(request, [])
+    )
 
     assert decision.affected_modules == ["2.4"]
 
@@ -32,8 +36,9 @@ def test_ask_gate_identifies_affected_modules_for_resume_decision() -> None:
 def test_draft_and_skip_continue_with_explicit_pending_coverage() -> None:
     for policy in ("draft", "skip"):
         request = _request(policy)
-        decision = RequestGate.evaluate(request, evaluate_coverage(request, []))
+        decision = EvidenceReadinessPolicy.evaluate(
+            request, evaluate_coverage(request, [])
+        )
 
-        assert decision.proceed is True
-        assert decision.status == "running"
+        assert decision.should_block is False
         assert decision.missing_evidence

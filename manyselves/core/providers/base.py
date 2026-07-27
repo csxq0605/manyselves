@@ -51,6 +51,7 @@ class LLMResponse:
     usage: dict[str, int] | None = None
     streaming: bool = False  # Whether this is a streaming chunk
     thinking: str | None = None  # DeepSeek extended thinking
+    stop_reason: str | None = None  # Provider terminal reason (for example max_tokens)
 
 
 @dataclass
@@ -61,6 +62,8 @@ class LLMStreamChunk:
     tool_calls: list[LLMToolCall] | None = None  # Final tool calls at end
     done: bool = False  # Whether stream is complete
     thinking: str | None = None  # DeepSeek extended thinking
+    usage: dict[str, int] | None = None  # Provider usage, normally on the final chunk
+    stop_reason: str | None = None  # Provider terminal reason
 
 
 class LLMProvider(ABC):
@@ -109,6 +112,7 @@ class LLMProvider(ABC):
         tools: list[dict] | None = None,
         temperature: float = 0.1,
         max_tokens: int = 8192,
+        stream_idle_timeout_seconds: float | None = None,
     ):
         """Send streaming chat completion request.
 
@@ -119,6 +123,7 @@ class LLMProvider(ABC):
             tools: Optional list of tool definitions.
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
+            stream_idle_timeout_seconds: Optional per-request idle timeout.
 
         Yields:
             LLMStreamChunk with delta content for each chunk.

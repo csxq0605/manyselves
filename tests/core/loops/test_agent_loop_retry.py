@@ -46,6 +46,26 @@ class PartialStreamFailureProvider(LLMProvider):
         raise HttpFailureError(503, "stream disconnected")
 
 
+class IdleTimeoutAwareProvider(LLMProvider):
+    def __init__(self):
+        super().__init__("key", model="idle-timeout-aware")
+        self.idle_timeouts: list[float | None] = []
+
+    async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        raise AssertionError("streaming path should be used")
+
+    async def chat_stream(
+        self,
+        messages,
+        tools=None,
+        temperature=0.1,
+        max_tokens=8192,
+        stream_idle_timeout_seconds=None,
+    ):
+        self.idle_timeouts.append(stream_idle_timeout_seconds)
+        yield LLMStreamChunk(delta=None, done=True)
+
+
 class BlockingTool(Tool):
     name = "blocking_tool"
     description = "Wait until cancelled."
@@ -164,6 +184,21 @@ async def test_partial_stream_failure_is_not_retried(tmp_path: Path, monkeypatch
         await loop._chat_with_retries([], None, "message-1")
 
     assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_round_propagates_request_idle_timeout(tmp_path: Path):
+    provider = IdleTimeoutAwareProvider()
+    loop = _loop(tmp_path, provider)
+
+    await loop._chat_with_retries(
+        [],
+        None,
+        "message-1",
+        stream_idle_timeout_seconds=600.0,
+    )
+
+    assert provider.idle_timeouts == [600.0]
 
 
 @pytest.mark.asyncio

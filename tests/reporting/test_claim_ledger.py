@@ -141,7 +141,7 @@ def test_local_reference_accepts_any_knowledge_locator_and_rejects_other_roots()
         ClaimLedger(claims=[], sources=[rejected])
 
 
-def test_citation_binding_survives_chief_editor_rewrite_via_explicit_anchor() -> None:
+def test_citation_binding_replaces_stable_claim_marker() -> None:
     claim = ClaimRecord(
         id="C-001",
         module_id="2.3",
@@ -151,14 +151,14 @@ def test_citation_binding_survives_chief_editor_rewrite_via_explicit_anchor() ->
         source_ids=["E-001", "R-001"],
     )
     ledger = ClaimLedger(claims=[claim], sources=_sources())
-    edited = "总编改写后指出：上级与下级保护可能同时动作，需复核选择性。"
-
-    cited = ledger.bind_citations(
-        edited,
-        anchors={"C-001": "需复核选择性"},
+    edited = (
+        "总编保留模块判断：上级与下级保护可能同时动作，需复核选择性。"
+        "[[CLAIM:C-001]]"
     )
 
-    assert cited == "总编改写后指出：上级与下级保护可能同时动作，需复核选择性[[CITE:1]]。"
+    cited = ledger.bind_citations(edited)
+
+    assert cited.endswith("需复核选择性。[[CITE:1]]")
 
     with pytest.raises(CitationBindingError, match="C-001"):
-        ledger.bind_citations(edited, anchors={"C-001": "不存在的语义锚点"})
+        ledger.bind_citations("正文没有 Claim 标记。")

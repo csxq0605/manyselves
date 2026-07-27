@@ -1,5 +1,7 @@
 """Tests for LLM provider base classes, conversion, and factory."""
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -29,6 +31,23 @@ def test_message_dataclass():
     assert msg.tool_calls is None
     assert msg.tool_call_id is None
     assert msg.is_tool_result is False
+
+
+def test_anthropic_provider_uses_explicit_connect_timeout():
+    from manyselves.core.providers.anthropic_provider import (
+        ANTHROPIC_CONNECT_TIMEOUT_SECONDS,
+        ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS,
+        AnthropicProvider,
+    )
+
+    provider = AnthropicProvider(
+        api_key="test-key",
+        api_base="https://example.invalid",
+        model="test-model",
+    )
+
+    assert provider.client.timeout.connect == ANTHROPIC_CONNECT_TIMEOUT_SECONDS
+    assert provider.client.timeout.read == ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS
 
 
 def test_message_with_tool_calls():
@@ -309,6 +328,129 @@ def test_openai_parse_arguments():
 def test_openai_parse_arguments_invalid():
     provider = OpenAICompatProvider.__new__(OpenAICompatProvider)
     assert provider._parse_arguments("invalid json") == {}
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_has_application_level_idle_timeout(monkeypatch):
+    class NeverProducesChunk:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Event().wait()
+
+    class Completions:
+        async def create(self, **kwargs):
+            return NeverProducesChunk()
+
+    provider = OpenAICompatProvider.__new__(OpenAICompatProvider)
+    provider.model = "glm-5"
+    provider.provider_type = "custom"
+    provider.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=Completions())
+    )
+    monkeypatch.setattr(
+        "manyselves.core.providers.openai_provider.OPENAI_STREAM_IDLE_TIMEOUT_SECONDS",
+        0.01,
+    )
+
+    with pytest.raises(TimeoutError, match="provider stream idle timeout"):
+        async for _ in provider.chat_stream([Message(role="user", content="audit")]):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_surfaces_final_stop_reason_and_usage():
+    from manyselves.core.providers.anthropic_provider import AnthropicProvider
+
+    class StreamContext:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get_final_message(self):
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        type="thinking",
+                        thinking="unfinished audit reasoning",
+                    )
+                ],
+                stop_reason="max_tokens",
+                usage=SimpleNamespace(input_tokens=100, output_tokens=8192),
+            )
+
+    class Messages:
+        def stream(self, **kwargs):
+            return StreamContext()
+
+    provider = AnthropicProvider.__new__(AnthropicProvider)
+    provider.model = "mimo-v2.5-pro"
+    provider._supports_cache = False
+    provider.client = SimpleNamespace(messages=Messages())
+
+    chunks = [
+        chunk
+        async for chunk in provider.chat_stream(
+            [Message(role="user", content="audit")]
+        )
+    ]
+
+    assert len(chunks) == 1
+    assert chunks[0].done is True
+    assert chunks[0].stop_reason == "max_tokens"
+    assert chunks[0].usage == {
+        "input_tokens": 100,
+        "output_tokens": 8192,
+        "total_tokens": 8292,
+    }
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_uses_per_request_idle_timeout(monkeypatch):
+    from manyselves.core.providers.anthropic_provider import AnthropicProvider
+
+    class NeverProducesEvent:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Event().wait()
+
+    class StreamContext:
+        async def __aenter__(self):
+            return NeverProducesEvent()
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    class Messages:
+        def stream(self, **kwargs):
+            return StreamContext()
+
+    provider = AnthropicProvider.__new__(AnthropicProvider)
+    provider.model = "glm-5"
+    provider._supports_cache = False
+    provider.client = SimpleNamespace(messages=Messages())
+    monkeypatch.setattr(
+        "manyselves.core.providers.anthropic_provider.ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS",
+        0.01,
+    )
+
+    with pytest.raises(TimeoutError, match="idle timeout after 0.02s"):
+        async for _ in provider.chat_stream(
+            [Message(role="user", content="audit")],
+            stream_idle_timeout_seconds=0.02,
+        ):
+            pass
 
 
 # ── ProviderFactory tests ───────────────────────────────────────────────

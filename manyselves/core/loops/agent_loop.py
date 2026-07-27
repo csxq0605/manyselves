@@ -11,9 +11,8 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from pydantic import ValidationError
 
 if TYPE_CHECKING:
     from .manager import LoopManager
@@ -52,7 +51,6 @@ from ...interfaces.types import (
 )
 from ...utils.agent_labels import get_agent_badge
 from ..artifacts.gateway import ArtifactGateway, ArtifactGrant
-from ..usage_ledger import UsageLedger
 from ..tools.manifest_tool import ManifestManager, ManifestTool
 from ..tools.outcomes import (
     ToolOutcome,
@@ -60,12 +58,52 @@ from ..tools.outcomes import (
     normalize_tool_outcome,
 )
 from ..tools.registry import ToolRegistry
+from ..usage_ledger import UsageLedger
 from .bus import MessageBus
 
 # Tokens per char heuristic (cl100k_base averages ~0.25 tokens/char for code, ~0.3 for text)
 _TOKENS_PER_CHAR = 0.3
 _SAFETY_BUFFER = 1024  # Extra buffer for tool definitions and overhead
 _MAX_PROVIDER_RETRIES = 2
+
+# Reaching a bounded tool slice is not a terminal Agent state. Reporting
+# orchestration uses this signal to continue with the same durable identity.
+AGENT_TURN_CONTINUATION_REQUIRED = "AGENT_TURN_CONTINUATION_REQUIRED"
+AGENT_MAX_TOKENS_CONTINUATION_REQUIRED = (
+    "AGENT_MAX_TOKENS_CONTINUATION_REQUIRED"
+)
+
+_CANCEL_REPORT_NEGATIONS = (
+    "不要取消",
+    "别取消",
+    "不能取消",
+    "不许取消",
+    "do not cancel",
+    "don't cancel",
+    "do not stop",
+    "don't stop",
+)
+_CANCEL_REPORT_REQUEST = re.compile(
+    r"(?:^|[，。！？!?,;；\s])(?:请|立即|现在|马上|帮我)?"
+    r"(?:取消|停止|终止)(?:当前|这个|该|正在运行的)?"
+    r"(?:报告|报告任务|工作流|workflow|任务)"
+    r"|^(?:please\s+)?(?:cancel|stop|terminate)\b.*\b(?:report|workflow|task)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_explicit_report_cancel_request(message: UserMessage | None) -> bool:
+    """Return True only for a direct end-user instruction to cancel a report."""
+
+    if message is None or str(getattr(message, "source", "user") or "user") != "user":
+        return False
+    content = str(getattr(message, "content", "") or "").strip()
+    folded = content.casefold()
+    if content == "/stop":
+        return True
+    if any(negation in folded for negation in _CANCEL_REPORT_NEGATIONS):
+        return False
+    return bool(_CANCEL_REPORT_REQUEST.search(content))
 
 
 @dataclass
@@ -74,6 +112,7 @@ class _LoopLLMResponse:
     tool_calls: list
     thinking: str | None = None
     usage: dict[str, int] | None = None
+    stop_reason: str | None = None
     streamed: bool = False
 
 
@@ -252,12 +291,16 @@ def _compact_messages_for_working_memory(
             )
         )
     )[:80]
+    shared_memory_refs = [
+        ref for ref in references if ref.endswith("-evidence-memory.json")
+    ]
     checkpoint_content = (
         "<working_memory_checkpoint>\n"
         f"<original_objective>{objective}</original_objective>\n"
         f"<retained_references>{' '.join(references)}</retained_references>\n"
+        f"<shared_memory_refs>{' '.join(shared_memory_refs)}</shared_memory_refs>\n"
         "Older tool transcripts were persisted locally. Continue from the recent "
-        "messages and reopen referenced artifacts only when necessary.\n"
+        "messages. Reuse shared memory before searching or reopening source records.\n"
         "</working_memory_checkpoint>"
     )
     checkpoint = LLMMessage(role="user", content=checkpoint_content)
@@ -336,6 +379,7 @@ class AgentLoop:
         usage_run_id: str | None = None,
         usage_task_id: str | None = None,
         artifact_gateway: ArtifactGateway | None = None,
+        before_provider_attempt: Callable[[], Awaitable[None]] | None = None,
     ):
         """Initialize agent loop.
 
@@ -385,10 +429,10 @@ class AgentLoop:
         self._manifest_dirty = False
         self._cancel_event = asyncio.Event()
         self._consecutive_errors = 0
-        self._submission_validation_fingerprints: set[tuple[tuple[tuple[str, ...], str], ...]] = set()
         self._progress_monitor = _ProgressMonitor()
         self.usage_run_id = usage_run_id
         self.usage_task_id = usage_task_id
+        self.before_provider_attempt = before_provider_attempt
         self._usage_totals = {"input_tokens": 0, "output_tokens": 0}
         self._last_usage_record: dict[str, Any] | None = None
         self._terminal_outcome: ToolOutcome | None = None
@@ -615,6 +659,11 @@ class AgentLoop:
                 tool_defs or None,
                 getattr(message, "message_id", None),
                 phase="guard",
+                stream_idle_timeout_seconds=getattr(
+                    self._current_message,
+                    "provider_stream_idle_timeout_seconds",
+                    None,
+                ),
             )
         except Exception as e:
             logger.error("Guard re-prompt failed for {}: {}", self.agent_type, e)
@@ -849,7 +898,6 @@ class AgentLoop:
         self._terminal_outcome = None
         self._report_retries = 0
         self._main_block_retries = 0
-        self._submission_validation_fingerprints.clear()
         self._progress_monitor = _ProgressMonitor()
         # Reset cancel event for this message
         self._cancel_event.clear()
@@ -918,11 +966,18 @@ class AgentLoop:
                     tool_definitions if tool_definitions else None,
                     message.message_id,
                     phase="initial",
+                    stream_idle_timeout_seconds=(
+                        message.provider_stream_idle_timeout_seconds
+                    ),
                 )
                 accumulated_content = response.content
                 accumulated_tool_calls = response.tool_calls
                 accumulated_thinking = response.thinking
-                if accumulated_content and not accumulated_tool_calls:
+                if (
+                    accumulated_content
+                    and not accumulated_tool_calls
+                    and response.stop_reason not in {"max_tokens", "length"}
+                ):
                     self._conversation_history.append(
                         LLMMessage(role="assistant", content=accumulated_content)
                     )
@@ -985,6 +1040,41 @@ class AgentLoop:
                         kind="interrupt",
                     )
                 )
+                await self._set_status(AgentStatus.IDLE)
+                return
+
+            max_tokens_continuation_required = (
+                response.stop_reason in {"max_tokens", "length"}
+                and str(getattr(message, "source", "") or "") == "workflow"
+                and not accumulated_tool_calls
+                and not self._turn_reported
+            )
+            if max_tokens_continuation_required:
+                partial = (accumulated_content or "").rstrip()
+                continuation_marker = (
+                    "[Provider output reached the per-request max_tokens limit "
+                    "before a typed tool submission. The task is not complete.]"
+                )
+                self._conversation_history.append(
+                    LLMMessage(
+                        role="assistant",
+                        content=(
+                            f"{partial}\n\n{continuation_marker}"
+                            if partial
+                            else continuation_marker
+                        ),
+                    )
+                )
+                await self.bus.publish(
+                    AgentResponse(
+                        agent_type=self.agent_type,
+                        content=AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
+                        message_id=message.message_id,
+                        streaming=False,
+                        internal=True,
+                    )
+                )
+                await self._flush_manifest_if_needed()
                 await self._set_status(AgentStatus.IDLE)
                 return
 
@@ -1128,18 +1218,27 @@ class AgentLoop:
         messages: list[LLMMessage],
         tool_definitions: list[dict] | None,
         user_message_id: str | None,
+        stream_idle_timeout_seconds: float | None = None,
     ) -> _LoopLLMResponse:
         """Run a post-tool LLM round, streaming UI deltas when supported."""
         accumulated_content = ""
         accumulated_tool_calls = []
         accumulated_thinking = ""
+        final_usage = None
+        stop_reason = None
         try:
             try:
+                stream_kwargs: dict[str, Any] = {}
+                if stream_idle_timeout_seconds is not None:
+                    stream_kwargs["stream_idle_timeout_seconds"] = (
+                        stream_idle_timeout_seconds
+                    )
                 stream = self.llm_provider.chat_stream(
                     messages=messages,
                     tools=tool_definitions if tool_definitions else None,
                     temperature=self.config.temperature,
                     max_tokens=self.config.max_tokens,
+                    **stream_kwargs,
                 )
                 if not hasattr(stream, "__aiter__"):
                     await stream
@@ -1172,6 +1271,11 @@ class AgentLoop:
                                 )
                             )
 
+                    if chunk.usage:
+                        final_usage = chunk.usage
+                    if chunk.stop_reason:
+                        stop_reason = chunk.stop_reason
+
                     if chunk.done or self._cancel_event.is_set():
                         break
 
@@ -1179,6 +1283,8 @@ class AgentLoop:
                     content=accumulated_content,
                     tool_calls=accumulated_tool_calls,
                     thinking=accumulated_thinking or None,
+                    usage=final_usage,
+                    stop_reason=stop_reason,
                     streamed=True,
                 )
             except NotImplementedError:
@@ -1193,6 +1299,7 @@ class AgentLoop:
                     tool_calls=response.tool_calls,
                     thinking=getattr(response, "thinking", None),
                     usage=getattr(response, "usage", None),
+                    stop_reason=getattr(response, "stop_reason", None),
                     streamed=False,
                 )
         except asyncio.CancelledError:
@@ -1221,17 +1328,21 @@ class AgentLoop:
         user_message_id: str | None,
         *,
         phase: str = "provider",
+        stream_idle_timeout_seconds: float | None = None,
     ) -> _LoopLLMResponse:
         """Run one provider round with bounded, cancel-aware automatic retries."""
 
         attempts = 0
         while True:
             attempts += 1
+            if self.before_provider_attempt is not None:
+                await self.before_provider_attempt()
             try:
                 response = await self._chat_followup(
                     messages,
                     tool_definitions,
                     user_message_id,
+                    stream_idle_timeout_seconds,
                 )
                 self._last_usage_record = self._record_token_usage(
                     messages,
@@ -1367,10 +1478,20 @@ class AgentLoop:
                     if tool is None:
                         raise ValueError(f"Tool not found: {tool_call.name}")
 
+                    if (
+                        tool_call.name == "cancel_reporting_workflow"
+                        and not _is_explicit_report_cancel_request(self._current_message)
+                    ):
+                        raise PermissionError(
+                            "cancel_reporting_workflow requires an explicit cancellation "
+                            "instruction in the current end-user message; Main may not "
+                            "cancel a report while replanning or handling workflow messages"
+                        )
+
                     required_args = _tool_required_args(self.tools, tool_call.name, tool)
 
                     # Detect truncated tool calls: output hit max_tokens before arguments were complete
-                    if not tool_call.arguments:
+                    if not tool_call.arguments and required_args:
                         usage = response.usage or {}
                         output_tokens = usage.get("output_tokens", 0)
                         required_hint = (
@@ -1466,17 +1587,6 @@ class AgentLoop:
                     )
                     result_str = error_msg
                 except Exception as e:
-                    if tool_call.name == "submit_result" and (
-                        isinstance(e, ValidationError)
-                        or getattr(e, "submission_validation", False)
-                    ):
-                        fingerprint = self._validation_fingerprint(e)
-                        if fingerprint in self._submission_validation_fingerprints:
-                            raise RuntimeError(
-                                "重复的 submit_result 参数校验错误；已停止重试，"
-                                "需要修复工具参数适配或提交结构。"
-                            ) from e
-                        self._submission_validation_fingerprints.add(fingerprint)
                     logger.error(
                         "Tool execution error for {}: {} | args={}",
                         tool_call.name,
@@ -1588,6 +1698,11 @@ class AgentLoop:
                     tool_definitions,
                     user_message_id,
                     phase="tool_followup",
+                    stream_idle_timeout_seconds=getattr(
+                        self._current_message,
+                        "provider_stream_idle_timeout_seconds",
+                        None,
+                    ),
                 )
             except Exception as e:
                 last_error = str(e)
@@ -1643,8 +1758,24 @@ class AgentLoop:
                 await self._set_status(AgentStatus.IDLE)
                 return
 
+        continuation_required = (
+            iteration >= max_iterations
+            and bool(response.tool_calls)
+            and not self._turn_reported
+        )
+
         # Update conversation history with final response
-        if response.content and not self._turn_reported:
+        if continuation_required:
+            await self.bus.publish(
+                AgentResponse(
+                    agent_type=self.agent_type,
+                    content=AGENT_TURN_CONTINUATION_REQUIRED,
+                    message_id=user_message_id,
+                    streaming=False,
+                    internal=True,
+                )
+            )
+        elif response.content and not self._turn_reported:
             current_messages.append(LLMMessage(role="assistant", content=response.content))
             # Publish final content to GUI (it was generated inside the tool loop)
             await self.bus.publish(
@@ -1661,23 +1792,6 @@ class AgentLoop:
 
         if iteration >= max_iterations:
             logger.warning("Max tool iterations reached for agent: {}", self.agent_type)
-
-    @staticmethod
-    def _validation_fingerprint(error: Exception) -> tuple[tuple[tuple[str, ...], str], ...]:
-        """Identify a deterministic Pydantic failure independently of bad values."""
-
-        if not isinstance(error, ValidationError):
-            return ((("submission_contract",), f"{type(error).__name__}:{error}"),)
-
-        return tuple(
-            sorted(
-                (
-                    tuple(str(part) for part in item["loc"]),
-                    str(item["type"]),
-                )
-                for item in error.errors(include_url=False)
-            )
-        )
 
     def _compact_working_memory(
         self, messages: list[LLMMessage]

@@ -44,7 +44,7 @@ class EvidenceDecisionStore:
         self,
         decision_id: str,
         action: EvidenceDecisionAction,
-        user_notes: str | None = None,
+        decision_note: str | None = None,
     ) -> EvidenceDecisionRequest:
         current = self.load(decision_id)
         if current.status != "pending":
@@ -55,7 +55,7 @@ class EvidenceDecisionStore:
             update={
                 "status": "resolved",
                 "selected_action": action,
-                "user_notes": user_notes,
+                "decision_note": decision_note,
                 "resolved_at": datetime.now(timezone.utc),
             }
         )

@@ -1,6 +1,7 @@
 """Fixed report taxonomy shared by coverage, drafting, and review stages."""
 
 from dataclasses import dataclass
+import re
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,3 +115,43 @@ def resolve_submodule(submodule_id: str) -> SubmoduleDefinition:
         if submodule := module.submodules.get(submodule_id):
             return submodule
     raise ValueError(f"unknown report submodule: {submodule_id}")
+
+
+def compose_module_markdown(
+    module_id: str, submodule_narratives: dict[str, str]
+) -> str:
+    """Derive the only canonical module Markdown from fixed submodule prose."""
+
+    definition = REPORT_TAXONOMY[module_id]
+    expected = set(definition.submodules)
+    actual = set(submodule_narratives)
+    if actual != expected:
+        raise ValueError(
+            "cannot compose module Markdown with incomplete taxonomy; "
+            f"missing={sorted(expected - actual)}; extra={sorted(actual - expected)}"
+        )
+
+    blocks = [f"## {module_id} {definition.title}"]
+    for submodule_id, submodule in definition.submodules.items():
+        narrative = submodule_narratives[submodule_id].strip()
+        if not narrative:
+            raise ValueError(f"cannot compose empty submodule narrative: {submodule_id}")
+        lines = narrative.splitlines()
+        first_content = next(
+            (index for index, line in enumerate(lines) if line.strip()), None
+        )
+        if first_content is not None and re.match(
+            rf"^#{{1,6}}\s+{re.escape(submodule_id)}(?:\.|\s|$)",
+            lines[first_content].strip(),
+        ):
+            del lines[first_content]
+            while first_content < len(lines) and not lines[first_content].strip():
+                del lines[first_content]
+        normalized_body = "\n".join(
+            re.sub(r"^#{1,6}\s+", "#### ", line) if re.match(r"^#{1,6}\s+", line) else line
+            for line in lines
+        ).strip()
+        blocks.append(
+            f"### {submodule_id} {submodule.title}\n\n{normalized_body}"
+        )
+    return "\n\n".join(blocks)

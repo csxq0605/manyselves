@@ -11,6 +11,32 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .taxonomy import resolve_submodule
 
 REPORT_MODULE_IDS = ("2.1", "2.2", "2.3", "2.4", "2.5")
+REPORT_FINAL_SECTION_IDS = (
+    "1.1",
+    "1.2",
+    "1.3",
+    "2.1",
+    "2.2",
+    "2.3",
+    "2.4",
+    "2.5",
+    "3.1.1",
+    "3.1.2",
+    "3.1.3",
+    "3.1.4",
+    "3.2",
+    "4.1",
+    "4.2",
+    "4.3",
+    "4.4",
+)
+ReportOperation = Literal[
+    "distill_template_skill",
+    "full_report",
+    "module_report",
+    "aggregate_existing",
+    "render_existing",
+]
 
 
 class ReportingModel(BaseModel):
@@ -37,11 +63,110 @@ class SourceLocation(ReportingModel):
         return value
 
 
+SupplementScope = Literal["run", "module", "submodule", "claim", "final_section"]
+SupplementStage = Literal[
+    "module_authoring",
+    "module_review",
+    "cross_review",
+    "chief_edit",
+    "final_review",
+]
+
+
+class UserSupplement(ReportingModel):
+    """One scoped, auditable user fact or instruction added to the current run."""
+
+    id: str = Field(
+        default_factory=lambda: f"US-{uuid4().hex[:10]}",
+        pattern=r"^US-[A-Za-z0-9._-]+$",
+        description="Stable current-run supplement id used by supersedes.",
+    )
+    content: str = Field(
+        min_length=1,
+        description="Exact user-confirmed fact or instruction without inferred additions.",
+    )
+    scope: SupplementScope = Field(
+        default="run",
+        description="Run-wide or explicitly targeted applicability boundary.",
+    )
+    target_ids: list[str] = Field(
+        default_factory=list,
+        description="Required module, submodule, Claim, or final-section ids outside run scope.",
+    )
+    stages: list[SupplementStage] = Field(
+        default_factory=lambda: [
+            "module_authoring",
+            "module_review",
+            "cross_review",
+            "chief_edit",
+            "final_review",
+        ],
+        description="Only workflow stages allowed to consume this supplement.",
+    )
+    supersedes: list[str] = Field(
+        default_factory=list,
+        description="Earlier supplement ids replaced by this one while preserving audit history.",
+    )
+
+    @field_validator("content")
+    @classmethod
+    def content_is_trimmed(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("supplement content must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def scope_and_targets_match(self) -> "UserSupplement":
+        if len(self.target_ids) != len(set(self.target_ids)):
+            raise ValueError("supplement target_ids must be unique")
+        if len(self.stages) != len(set(self.stages)):
+            raise ValueError("supplement stages must be unique")
+        if len(self.supersedes) != len(set(self.supersedes)):
+            raise ValueError("supplement supersedes ids must be unique")
+        if self.id in self.supersedes:
+            raise ValueError("a supplement cannot supersede itself")
+        if self.scope == "run" and self.target_ids:
+            raise ValueError("run-scoped supplement must not declare target_ids")
+        if self.scope != "run" and not self.target_ids:
+            raise ValueError(f"{self.scope}-scoped supplement requires target_ids")
+        if self.scope == "module":
+            unknown = sorted(set(self.target_ids) - set(REPORT_MODULE_IDS))
+            if unknown:
+                raise ValueError(f"supplement module targets are invalid: {unknown}")
+        if self.scope == "submodule":
+            for target_id in self.target_ids:
+                resolve_submodule(target_id)
+        if self.scope == "claim" and any(
+            not target_id.startswith("C-") for target_id in self.target_ids
+        ):
+            raise ValueError("claim-scoped supplement targets must use C-* ids")
+        if self.scope == "final_section":
+            unknown = sorted(
+                set(self.target_ids) - set(REPORT_FINAL_SECTION_IDS)
+            )
+            if unknown:
+                raise ValueError(
+                    f"supplement final-section targets are invalid: {unknown}"
+                )
+        return self
+
+
 class ReportRequest(ReportingModel):
+    operation: ReportOperation = "full_report"
     instruction: str = Field(min_length=1)
     target_modules: list[str] = Field(default_factory=lambda: list(REPORT_MODULE_IDS))
+    source_module_refs: dict[str, Path] | None = None
+    source_markdown_ref: Path | None = None
+    output_filename: str | None = None
     execution_requirements: list[str] = Field(default_factory=list)
+    user_supplements: list[UserSupplement] = Field(
+        default_factory=list,
+        description="Scoped, stage-bound, superseding current-run user inputs.",
+    )
     missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "ask"
+    max_provider_attempts: int = Field(default=80, ge=1, le=1000)
+    max_total_tokens: int = Field(default=800_000, ge=1_000)
 
     @field_validator("target_modules")
     @classmethod
@@ -49,7 +174,71 @@ class ReportRequest(ReportingModel):
         unknown = sorted(set(values) - set(REPORT_MODULE_IDS))
         if unknown:
             raise ValueError(f"module ids must be within 2.1-2.5; got {unknown}")
+        if len(values) != len(set(values)):
+            raise ValueError("target module ids must be unique")
         return values
+
+    @model_validator(mode="after")
+    def operation_inputs_are_complete(self) -> "ReportRequest":
+        supplement_ids = [item.id for item in self.user_supplements]
+        if len(supplement_ids) != len(set(supplement_ids)):
+            raise ValueError("user supplement ids must be unique")
+        known_supplements = set(supplement_ids)
+        unknown_superseded = sorted(
+            {
+                superseded
+                for item in self.user_supplements
+                for superseded in item.supersedes
+            }
+            - known_supplements
+        )
+        if unknown_superseded:
+            raise ValueError(
+                f"supplements supersede unknown ids: {unknown_superseded}"
+            )
+        requested = set(self.target_modules)
+        all_modules = set(REPORT_MODULE_IDS)
+        if self.operation == "distill_template_skill" and requested:
+            raise ValueError("distill_template_skill does not accept target modules")
+        if self.operation == "full_report" and requested != all_modules:
+            raise ValueError("full_report requires exactly modules 2.1-2.5")
+        if self.operation == "module_report" and not requested:
+            raise ValueError("module_report requires at least one target module")
+        if self.operation == "module_report" and requested == all_modules:
+            raise ValueError("module_report must be a proper subset of modules 2.1-2.5")
+        existing_module_operations = {"aggregate_existing"}
+        if self.operation in existing_module_operations and requested != all_modules:
+            raise ValueError(f"{self.operation} requires exactly modules 2.1-2.5")
+        if self.operation == "render_existing" and self.source_markdown_ref is None:
+            raise ValueError("render_existing requires source_markdown_ref")
+        if self.operation != "render_existing" and self.source_markdown_ref is not None:
+            raise ValueError("source_markdown_ref is only valid for render_existing")
+        if self.operation not in existing_module_operations and self.source_module_refs is not None:
+            raise ValueError(
+                "source_module_refs is only valid for aggregate_existing"
+            )
+        if self.source_module_refs is not None:
+            if set(self.source_module_refs) != all_modules:
+                raise ValueError("source_module_refs requires exactly modules 2.1-2.5")
+            for module_id, path in self.source_module_refs.items():
+                if path.is_absolute() or ".." in path.parts:
+                    raise ValueError(
+                        f"source module {module_id} must stay inside the project workspace"
+                    )
+                if path.suffix.casefold() not in {".md", ".markdown", ".json"}:
+                    raise ValueError(
+                        f"source module {module_id} must be Markdown or a structured module JSON"
+                    )
+        if self.source_markdown_ref is not None:
+            if self.source_markdown_ref.is_absolute() or ".." in self.source_markdown_ref.parts:
+                raise ValueError("source_markdown_ref must stay inside the project workspace")
+            if self.source_markdown_ref.suffix.casefold() not in {".md", ".markdown"}:
+                raise ValueError("source_markdown_ref must be a Markdown file")
+        if self.output_filename is not None:
+            output = Path(self.output_filename)
+            if output.name != self.output_filename or output.suffix.casefold() != ".docx":
+                raise ValueError("output_filename must be one DOCX filename")
+        return self
 
 
 EvidenceDecisionAction = Literal["supplement", "draft", "skip", "stop"]
@@ -65,7 +254,7 @@ class EvidenceDecisionRequest(ReportingModel):
     )
     status: Literal["pending", "resolved"] = "pending"
     selected_action: EvidenceDecisionAction | None = None
-    user_notes: str | None = None
+    decision_note: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     resolved_at: datetime | None = None
 
@@ -92,11 +281,20 @@ class RevisionRequest(ReportingModel):
     target_module_ids: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(min_length=1)
     target_submodule_ids: list[str] = Field(default_factory=list)
     target_claim_ids: list[str] = Field(default_factory=list)
+    user_supplements: list[UserSupplement] = Field(
+        default_factory=list,
+        description="Scoped, stage-bound additions supplied while this revision run is resumed.",
+    )
     promote_to_skill: bool = False
     promote_skill_id: str | None = None
+    max_provider_attempts: int = Field(default=40, ge=1, le=1000)
+    max_total_tokens: int = Field(default=400_000, ge=1_000)
 
     @model_validator(mode="after")
     def targets_stay_in_selected_modules(self) -> "RevisionRequest":
+        supplement_ids = [item.id for item in self.user_supplements]
+        if len(supplement_ids) != len(set(supplement_ids)):
+            raise ValueError("revision user supplement ids must be unique")
         for submodule_id in self.target_submodule_ids:
             if resolve_submodule(submodule_id).module_id not in self.target_module_ids:
                 raise ValueError("revision submodule is outside selected modules")
@@ -231,60 +429,7 @@ class CoverageMatrix(ReportingModel):
         return self
 
 
-class ReviewIssue(ReportingModel):
-    id: str = Field(default_factory=lambda: f"issue-{uuid4().hex[:12]}", min_length=1)
-    module_id: str
-    submodule_id: str | None = None
-    claim_id: str | None = None
-    kind: str = Field(min_length=1)
-    message: str = Field(min_length=1)
-    severity: Literal["warning", "blocking"]
-    round: int = Field(default=0, ge=0)
-    status: Literal["open", "resolved"] = "open"
-    affected_claim_ids: list[str] = Field(default_factory=list)
-    evidence_refs: list[str] = Field(default_factory=list)
-    blocking_reason: str | None = None
-    resolution_criteria: list[str] = Field(default_factory=list)
-    owner_agent_id: str | None = None
-    resolved_by_agent_id: str | None = None
-    resolution_note: str | None = None
-    resolution_evidence_refs: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def blocking_issue_is_actionable_and_resolution_is_auditable(self) -> "ReviewIssue":
-        if self.severity == "blocking":
-            missing: list[str] = []
-            if not self.affected_claim_ids:
-                missing.append("affected_claim_ids")
-            if not self.evidence_refs:
-                missing.append("evidence_refs")
-            if not (self.blocking_reason or "").strip():
-                missing.append("blocking_reason")
-            if not self.resolution_criteria:
-                missing.append("resolution_criteria")
-            if not (self.owner_agent_id or "").strip():
-                missing.append("owner_agent_id")
-            if missing:
-                raise ValueError(
-                    "blocking review issue requires an actionable contract: " + ", ".join(missing)
-                )
-            if self.status == "resolved":
-                resolution_missing: list[str] = []
-                if not (self.resolved_by_agent_id or "").strip():
-                    resolution_missing.append("resolved_by_agent_id")
-                if not (self.resolution_note or "").strip():
-                    resolution_missing.append("resolution_note")
-                if not self.resolution_evidence_refs:
-                    resolution_missing.append("resolution_evidence_refs")
-                if resolution_missing:
-                    raise ValueError(
-                        "resolved blocking review issue requires closure evidence: "
-                        + ", ".join(resolution_missing)
-                    )
-        return self
-
-
 class OutputArtifact(ReportingModel):
-    kind: Literal["module", "review", "report", "run"]
+    kind: Literal["module", "review", "report", "run", "skill"]
     path: Path
     module_id: str | None = None

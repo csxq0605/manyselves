@@ -43,6 +43,32 @@ def _publish(root: Path, scope: str, content: str):
     return store.publish(candidate.id, evaluation.id, confirmed=True)
 
 
+def _publish_cross_module(root: Path, scope: str, content: str):
+    store = SkillGovernanceStore(root, scope=scope)
+    feedback = store.record_feedback(
+        skill_id="report-template-writing",
+        module_id="all",
+        feedback="统一全部模块的写作方法",
+        explicit_promotion_requested=True,
+        report_version_id="report-v1",
+    )
+    candidate = store.create_candidate(
+        feedback.id,
+        title="报告模板写作",
+        submodules=["all"],
+        proposed_content=content,
+        reason="跨模块复用",
+    )
+    evaluation = store.record_evaluation(
+        candidate.id,
+        baseline=0.5,
+        candidate_score=0.9,
+        regressions=[],
+        model="test",
+    )
+    return store.publish(candidate.id, evaluation.id, confirmed=True)
+
+
 def test_runtime_precedence_is_packaged_then_product_then_project(tmp_path: Path) -> None:
     product_root = tmp_path / "product-skills"
     project_root = tmp_path / "project-skills"
@@ -78,6 +104,20 @@ def test_agent_runner_loads_active_project_skill_for_later_runs(tmp_path: Path) 
     provenance = {item.skill_id: item for item in runner.skill_provenance()}
     assert provenance[active.skill_id].version == active.id
     assert provenance[active.skill_id].scope == "project"
+
+
+def test_cross_module_skill_is_routed_to_every_module_specialist(tmp_path: Path) -> None:
+    product_root = tmp_path / "product-skills"
+    active = _publish_cross_module(product_root, "product", "统一写作规则")
+    library = RuntimeSkillResolver.resolve(
+        ModuleSkillLibrary.packaged(),
+        product_root=product_root,
+        project_root=tmp_path / "project-skills",
+    )
+
+    for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5"):
+        routed = library.for_agent(f"module-{module_id}-specialist")
+        assert active.skill_id in {skill.id for skill in routed}
 
 
 def test_rollback_changes_new_runners_without_mutating_old_provenance(tmp_path: Path) -> None:

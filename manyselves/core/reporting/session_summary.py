@@ -23,7 +23,6 @@ class AgentSessionSummary(ReportingModel):
     objective: str = Field(min_length=1)
     input_refs: list[Path]
     output_refs: list[Path]
-    issue_refs: list[Path]
     prior_result_ref: Path | None = None
     message_count: int = Field(ge=0)
     tool_names: list[str]
@@ -39,7 +38,6 @@ class SessionSummarySkeleton(ReportingModel):
     session_id: str
     objective: str
     input_refs: list[Path]
-    issue_refs: list[Path]
     prior_result_ref: Path | None
     message_count: int
     tool_names: list[str]
@@ -73,7 +71,6 @@ class SessionSummaryBuilder:
         refs = self._validate_refs(
             [*envelope.input_refs, *envelope.context_summary_refs, *shared_artifacts]
         )
-        issue_refs = self._validate_refs(envelope.issue_refs)
         prior = (
             self._validate_refs([envelope.prior_result_ref]) if envelope.prior_result_ref else []
         )
@@ -96,7 +93,6 @@ class SessionSummaryBuilder:
             session_id=session_id,
             objective=envelope.objective,
             input_refs=refs,
-            issue_refs=issue_refs,
             prior_result_ref=prior[0] if prior else None,
             message_count=len(message_log),
             tool_names=tool_names,

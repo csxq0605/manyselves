@@ -30,6 +30,7 @@ class SourceLedger:
         self.workspace = workspace
         self.run_id = safe_run_id
         self.path = workspace / "Work/runs" / safe_run_id / "ledgers/sources.json"
+        self.content_root = workspace / "Work/runs" / safe_run_id / "sources"
         self._lock = _lock_for(self.path)
 
     def _load(self) -> list[SourceRecord]:
@@ -56,6 +57,20 @@ class SourceLedger:
             encoding="utf-8",
         )
         temporary.replace(self.path)
+
+    def _persist_content(self, source_id: str, content: str) -> Path:
+        if Path(source_id).name != source_id or not source_id:
+            raise ValueError("source id must be one safe path component")
+        path = self.content_root / f"{source_id}.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".txt.tmp")
+        temporary.write_text(content, encoding="utf-8")
+        temporary.replace(path)
+        return path.relative_to(self.workspace)
+
+    def content_ref(self, source_id: str) -> Path | None:
+        path = self.content_root / f"{Path(source_id).name}.txt"
+        return path.relative_to(self.workspace) if path.is_file() else None
 
     @staticmethod
     def _digest(content: str) -> str:
@@ -86,6 +101,7 @@ class SourceLedger:
                     and record.locator == locator
                     and record.content_sha256 == digest
                 ):
+                    self._persist_content(record.id, content)
                     return record
             record = SourceRecord(
                 id=self._next_id(records, SourceKind.LOCAL_REFERENCE),
@@ -96,6 +112,7 @@ class SourceLedger:
             )
             records.append(record)
             self._persist(records)
+            self._persist_content(record.id, content)
             return record
 
     def register_project(
@@ -110,6 +127,7 @@ class SourceLedger:
                 if record.id == evidence_id:
                     if record.locator != locator or record.content_sha256 != digest:
                         raise ValueError(f"conflicting project evidence id: {evidence_id}")
+                    self._persist_content(record.id, content)
                     return record
             record = SourceRecord(
                 id=evidence_id,
@@ -120,6 +138,7 @@ class SourceLedger:
             )
             records.append(record)
             self._persist(records)
+            self._persist_content(record.id, content)
             return record
 
     def register_web(
@@ -141,6 +160,7 @@ class SourceLedger:
                     and record.locator == url
                     and record.content_sha256 == digest
                 ):
+                    self._persist_content(record.id, content)
                     return record
             record = SourceRecord(
                 id=self._next_id(records, SourceKind.WEB),
@@ -155,4 +175,5 @@ class SourceLedger:
             )
             records.append(record)
             self._persist(records)
+            self._persist_content(record.id, content)
             return record

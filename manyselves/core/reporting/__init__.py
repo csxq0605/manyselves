@@ -9,7 +9,7 @@ from .models import (
     ParsedArtifact,
     ProjectManifest,
     ReportRequest,
-    ReviewIssue,
+    UserSupplement,
     SourceLocation,
 )
 
@@ -22,6 +22,6 @@ __all__ = [
     "ParsedArtifact",
     "ProjectManifest",
     "ReportRequest",
-    "ReviewIssue",
+    "UserSupplement",
     "SourceLocation",
 ]

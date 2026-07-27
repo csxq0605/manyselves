@@ -35,7 +35,6 @@ class MessageType(str, Enum):
     PEER_REPLY = "peer_reply"
     PROGRESS_NOTE = "progress_note"
     RESEARCH_NOTE_PUBLISHED = "research_note_published"
-    REVISION_REQUEST = "revision_request"
     BLOCKED_NOTICE = "blocked_notice"
     AGENT_RESULT = "agent_result"
 
@@ -112,6 +111,10 @@ class UserMessage(Message):
     agent_type: AgentId = AgentType.MAIN.value
     message_id: str | None = None
     source: str = "user"  # "user" | "system" | "main_agent" | "<agent_type>"
+    internal: bool = False
+    # Internal request policy. Reporting finalization can legitimately spend a
+    # long time generating one structured tool payload without emitting chunks.
+    provider_stream_idle_timeout_seconds: float | None = None
 
 
 class AgentResponse(Message):
@@ -123,6 +126,7 @@ class AgentResponse(Message):
     message_id: str | None = None
     streaming: bool = False  # True for stream chunks, False for final completion
     thinking: str | None = None
+    internal: bool = False
 
 
 class ToolCallMessage(Message):
@@ -355,6 +359,7 @@ class PeerReplyMessage(WorkflowMessage):
 class ProgressNoteMessage(WorkflowMessage):
     type: MessageType = MessageType.PROGRESS_NOTE
     note_kind: Literal["progress", "gap"] = "progress"
+    source_ids: list[str] = Field(default_factory=list)
 
 
 class ResearchNotePublishedMessage(WorkflowMessage):
@@ -362,15 +367,10 @@ class ResearchNotePublishedMessage(WorkflowMessage):
     note_id: str
 
 
-class RevisionRequestMessage(WorkflowMessage):
-    type: MessageType = MessageType.REVISION_REQUEST
-    issue_refs: list[str] = Field(default_factory=list)
-    requires_reply: bool = True
-
-
 class BlockedNoticeMessage(WorkflowMessage):
     type: MessageType = MessageType.BLOCKED_NOTICE
     reason: str
+    source_ids: list[str] = Field(default_factory=list)
 
 
 class AgentResultMessage(WorkflowMessage):

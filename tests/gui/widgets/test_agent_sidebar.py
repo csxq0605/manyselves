@@ -1,0 +1,58 @@
+from manyselves.gui.widgets.agent_sidebar import AgentSidebar
+
+
+def test_sidebar_lists_runtime_agents_and_emits_selection(qtbot):
+    sidebar = AgentSidebar()
+    qtbot.addWidget(sidebar)
+    selected: list[str] = []
+    sidebar.agent_selected.connect(selected.append)
+
+    runtime_id = "module-2.4-specialist--session-abcd1234"
+    sidebar.ensure_agent("main")
+    sidebar.ensure_agent(runtime_id, "thinking")
+
+    assert sidebar.agent_ids() == ["main", runtime_id]
+    assert sidebar._rows[runtime_id].name.text() == "Module 2.4 Specialist"
+    assert "Thinking" in sidebar._rows[runtime_id].status.text()
+
+    sidebar.select_agent(runtime_id)
+    assert selected[-1] == runtime_id
+
+
+def test_sidebar_updates_agent_runtime_status(qtbot):
+    sidebar = AgentSidebar()
+    qtbot.addWidget(sidebar)
+    runtime_id = "report-renderer--session-12345678"
+
+    sidebar.ensure_agent(runtime_id)
+    sidebar.set_agent_status(runtime_id, "running_tool")
+
+    assert sidebar._rows[runtime_id].name.text() == "Render"
+    assert "Using tool" in sidebar._rows[runtime_id].status.text()
+
+
+def test_sidebar_shows_and_clears_current_agent_task(qtbot):
+    sidebar = AgentSidebar()
+    qtbot.addWidget(sidebar)
+    runtime_id = "module-2.4-specialist--session-12345678"
+
+    sidebar.ensure_agent(runtime_id, "thinking")
+    sidebar.set_agent_task(runtime_id, "分析设备台账与缺失证据")
+
+    assert "分析设备台账" in sidebar._rows[runtime_id].status.text()
+    sidebar.set_agent_status(runtime_id, "idle")
+    assert "分析设备台账" not in sidebar._rows[runtime_id].status.text()
+
+
+def test_sidebar_can_switch_to_a_new_run_without_deleting_main(qtbot):
+    sidebar = AgentSidebar()
+    qtbot.addWidget(sidebar)
+    old_runtime = "module-2.4-specialist--session-old"
+    sidebar.ensure_agent("main")
+    sidebar.ensure_agent("report-workflow")
+    sidebar.ensure_agent(old_runtime)
+
+    sidebar.retain_agents({"main", "report-workflow"})
+
+    assert sidebar.agent_ids() == ["main", "report-workflow"]
+    assert old_runtime not in sidebar._rows
