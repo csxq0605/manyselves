@@ -312,7 +312,11 @@ class ReportingService:
         artifacts: list[OutputArtifact] = state.get("output_artifacts", [])
         try:
             output_paths = verify_current_run_outputs(
-                self.workspace, run_id, artifacts, execution_started_ns
+                self.workspace,
+                run_id,
+                artifacts,
+                execution_started_ns,
+                allow_existing_run_artifacts=resume,
             )
         except OutputVerificationError as exc:
             result = ReportingRunResult(

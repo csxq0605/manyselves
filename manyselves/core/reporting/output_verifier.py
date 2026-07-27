@@ -17,8 +17,11 @@ def verify_current_run_outputs(
     run_id: str,
     artifacts: list,
     started_ns: int,
+    *,
+    allow_existing_run_artifacts: bool = False,
 ) -> list[Path]:
     root = Path(workspace).resolve()
+    run_root = (root / "Work" / "runs" / run_id).resolve()
     paths: list[Path] = []
     for artifact in artifacts:
         raw = getattr(artifact, "path", artifact)
@@ -28,7 +31,10 @@ def verify_current_run_outputs(
             raise OutputVerificationError(f"output is outside workspace: {raw}")
         if not target.is_file() or target.stat().st_size == 0:
             raise OutputVerificationError(f"output is missing or empty: {raw}")
-        if target.stat().st_mtime_ns < started_ns:
+        inherited_same_run_artifact = (
+            allow_existing_run_artifacts and target.is_relative_to(run_root)
+        )
+        if target.stat().st_mtime_ns < started_ns and not inherited_same_run_artifact:
             raise OutputVerificationError(f"output is stale: {raw}")
         if target.suffix.casefold() == ".docx":
             try:
