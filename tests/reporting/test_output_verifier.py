@@ -67,3 +67,22 @@ def test_resume_verifier_still_rejects_stale_shared_output(tmp_path: Path) -> No
             started,
             allow_existing_run_artifacts=True,
         )
+
+
+def test_verifier_accepts_hash_validated_restored_delivery_output(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "Outputs/report.txt"
+    output.parent.mkdir(parents=True)
+    output.write_text("restored report", encoding="utf-8")
+    started = time.time_ns()
+
+    paths = verify_current_run_outputs(
+        tmp_path,
+        "run",
+        [output],
+        started,
+        allow_existing_artifacts=True,
+    )
+
+    assert paths == [output]

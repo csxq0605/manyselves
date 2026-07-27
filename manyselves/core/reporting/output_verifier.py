@@ -19,6 +19,7 @@ def verify_current_run_outputs(
     started_ns: int,
     *,
     allow_existing_run_artifacts: bool = False,
+    allow_existing_artifacts: bool = False,
 ) -> list[Path]:
     root = Path(workspace).resolve()
     run_root = (root / "Work" / "runs" / run_id).resolve()
@@ -34,7 +35,11 @@ def verify_current_run_outputs(
         inherited_same_run_artifact = (
             allow_existing_run_artifacts and target.is_relative_to(run_root)
         )
-        if target.stat().st_mtime_ns < started_ns and not inherited_same_run_artifact:
+        if (
+            target.stat().st_mtime_ns < started_ns
+            and not inherited_same_run_artifact
+            and not allow_existing_artifacts
+        ):
             raise OutputVerificationError(f"output is stale: {raw}")
         if target.suffix.casefold() == ".docx":
             try:

@@ -317,6 +317,7 @@ class ReportingService:
                 artifacts,
                 execution_started_ns,
                 allow_existing_run_artifacts=resume,
+                allow_existing_artifacts=bool(state.get("delivery_restored")),
             )
         except OutputVerificationError as exc:
             result = ReportingRunResult(

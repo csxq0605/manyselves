@@ -1754,6 +1754,10 @@ class ReportWorkflowRunner:
         state["report_version"] = version
         state["output_artifacts"] = artifacts
         state["delivery_completion_ref"] = completion_ref
+        # The completion record and receipt hashes above prove these artifacts
+        # belong to this exact run.  A later resume may therefore reuse them
+        # without pretending they were regenerated during the new invocation.
+        state["delivery_restored"] = True
 
     def _revision_checkpoint(
         self,
