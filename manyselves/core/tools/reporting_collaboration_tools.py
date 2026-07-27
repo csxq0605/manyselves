@@ -2153,7 +2153,7 @@ class SubmitResultTool(_ResultTool):
                 "submodule_ids": list(contract.required_submodule_ids)
             }
             existing_ids = [finding.id for finding in contract.required_findings]
-            prefix = f"M-{contract.module_id}-"
+            prefix = contract.finding_id_prefix
             if kind == "module_review_finding_submission":
                 normalized["findings"] = self._runtime_finding_ids(
                     normalized.get("findings", []),

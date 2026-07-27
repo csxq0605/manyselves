@@ -34,7 +34,7 @@ finding 必须定位一个固定 target_submodule_id，说明 observation、evid
 <submission_contract>
 只有会实质改变项目事实、风险判断、行动建议或交付可信度的问题使用 impact=blocking；其他仍有明确改进价值的问题使用 advisory。两者都要求作者逐项响应和你逐项 verdict。责任归属由 target_submodule_id 和工作流绑定，不要重复输出 owner、状态或关闭元数据。返工范围只能覆盖被点名的小节。
 
-只按固定 target_submodule_id 定位 finding；不要添加 schema 以外的定位字段。
+只按固定 target_submodule_id 定位 finding；finding id 由运行时分配，不要提交、猜测或添加 schema 以外的定位字段。
 </submission_contract>
 <deliverables>
 initial 提交 coverage 与 findings；recheck 提交 coverage、对全部 required_findings 的 verdicts，以及仅由本次修改引入的 new_findings。没有 finding 或全部 verdict resolved 时，完成状态由工作流根据合同推导。

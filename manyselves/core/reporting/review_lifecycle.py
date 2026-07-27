@@ -785,6 +785,8 @@ async def run_module_review(
             phase=phase,
             run_id=state["run_id"],
             module_id=module_id,
+            lifecycle_id=lifecycle_id,
+            review_round=review_round,
             subject_ref=subject_ref,
             subject_revision=current.revision,
             subject=module_content_view(current),
@@ -820,10 +822,7 @@ async def run_module_review(
             constraints=[
                 "coverage 记录实际检查范围，不是批准状态",
                 "finding 首次提出后不可改写；复审不得复述旧 finding",
-                (
-                    "finding id 必须以 "
-                    f"M-{module_id}-{lifecycle_id}-r{review_round}- 开头"
-                ),
+                "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
                 "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
                 (
                     "首轮必须覆盖 input 中全部 required_submodule_ids"

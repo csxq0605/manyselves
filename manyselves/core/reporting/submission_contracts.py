@@ -243,7 +243,7 @@ def _module_revision_example() -> dict[str, Any]:
         "unresolved_questions": [],
         "revision_responses": [
             {
-                "finding_id": "M-2.1-001",
+                "finding_id": "M-2.1-initial-r0-001",
                 "action": "implemented",
                 "summary": "已在 2.1.1 中统一对象称谓，并核对相关论断的证据边界。",
                 "changed_target_ids": ["2.1.1"],

@@ -256,6 +256,8 @@ async def test_review_submit_runtime_assigns_coverage_and_finding_id(
         phase="initial",
         run_id="run-1",
         module_id="2.1",
+        lifecycle_id="initial",
+        review_round=0,
         subject_ref="Work/runs/run-1/modules/2.1-r0.json",
         subject_revision=0,
         subject=ModuleContentView(
@@ -314,7 +316,9 @@ async def test_review_submit_runtime_assigns_coverage_and_finding_id(
         ).read_text(encoding="utf-8")
     )
     assert result["payload"]["coverage"] == {"submodule_ids": ["2.1.1"]}
-    assert result["payload"]["findings"][0]["id"] == "M-2.1-001"
+    assert result["payload"]["findings"][0]["id"] == (
+        "M-2.1-initial-r0-001"
+    )
 
 
 @pytest.mark.asyncio

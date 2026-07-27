@@ -214,6 +214,16 @@ class ModuleReviewInput(StrictModel):
     module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] = Field(
         description="Only module whose local content is in review."
     )
+    lifecycle_id: str = Field(
+        pattern=r"^[a-z0-9-]+$",
+        description=(
+            "Workflow-owned immutable module-review lifecycle, such as initial or cross-r0."
+        ),
+    )
+    review_round: int = Field(
+        ge=0,
+        description="Workflow-owned semantic review round within lifecycle_id.",
+    )
     subject_ref: str = Field(
         min_length=1,
         description="Exact current module artifact reviewed in this pass.",
@@ -262,6 +272,10 @@ class ModuleReviewInput(StrictModel):
 
     @model_validator(mode="after")
     def phase_fields_match(self) -> "ModuleReviewInput":
+        if self.phase == "initial" and self.review_round != 0:
+            raise ValueError("initial module review must use review_round zero")
+        if self.phase == "recheck" and self.review_round == 0:
+            raise ValueError("module recheck requires a positive review_round")
         if self.subject.module_id != self.module_id:
             raise ValueError("module review subject belongs to a different module")
         if self.subject.revision != self.subject_revision:
@@ -295,6 +309,12 @@ class ModuleReviewInput(StrictModel):
                     "module recheck requires exactly one author response per finding"
                 )
         return self
+
+    @property
+    def finding_id_prefix(self) -> str:
+        return (
+            f"M-{self.module_id}-{self.lifecycle_id}-r{self.review_round}-"
+        )
 
 
 class CrossReviewInput(StrictModel):
@@ -906,7 +926,7 @@ def _example_module(module_id: str = "2.1") -> dict[str, Any]:
 def _example_module_finding() -> dict[str, Any]:
     target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
     return {
-        "id": "M-2.1-001",
+        "id": "M-2.1-initial-r0-001",
         "target_submodule_id": target,
         "category": "analysis_depth",
         "impact": "advisory",
@@ -1020,6 +1040,8 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "phase": "initial",
         "run_id": "report-example",
         "module_id": "2.1",
+        "lifecycle_id": "initial",
+        "review_round": 0,
         "subject_ref": _EXAMPLE_MODULE_REFS["2.1"],
         "subject_revision": 0,
         "subject": _EXAMPLE_MODULES["2.1"],

@@ -7,7 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting.agentic_models import (
+    AgentResult,
     CROSS_REVIEW_DIMENSIONS,
     CrossReviewFindingSubmission,
     CrossReviewVerdictSubmission,
@@ -39,6 +41,7 @@ from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.versions import ReportVersion
 from manyselves.core.reporting.workflow import FullReportCheckpoint, ReportWorkflowRunner
+from manyselves.core.tools.reporting_collaboration_tools import SubmitResultTool
 
 
 def _artifact_hashes(root: Path, refs: list[str]) -> dict[str, str]:
@@ -230,6 +233,80 @@ class _ScriptedRunner:
         return ReportWorkflowRunner._final_revision_diff(previous, revised)
 
 
+class _ToolBackedModuleReviewRunner(_ScriptedRunner):
+    """Exercise the real submit-result normalization inside the lifecycle loop."""
+
+    def __init__(self, workspace: Path, patch: ModuleRevisionSubmission):
+        super().__init__(workspace, [])
+        self.patch = patch
+        self.bus = MessageBus()
+
+    async def _agent(
+        self,
+        agent_id,
+        envelope,
+        artifacts,
+        workflow_id,
+        *,
+        session_key=None,
+    ):
+        self.calls.append((agent_id, envelope.allowed_outputs[0], session_key))
+        if agent_id == "module-2.1-specialist":
+            return self.patch
+
+        assert agent_id == "evidence-auditor"
+        assert envelope.input_contract_ref is not None
+        if envelope.allowed_outputs == ["module_review_finding_submission"]:
+            payload = {
+                "kind": "module_review_finding_submission",
+                "findings": [
+                    {
+                        "target_submodule_id": envelope.target_submodule_ids[0],
+                        "category": "analysis_depth",
+                        "impact": "advisory",
+                        "observation": "当前建议缺少责任接口和可由原审查者复核的验收方法。",
+                        "evidence_refs": [artifacts[1]],
+                        "required_change": "在目标小节补充责任接口、执行动作和可验证验收方法。",
+                        "reviewer_checks": ["责任、动作和验收方法已经形成闭环"],
+                    }
+                ],
+            }
+        else:
+            payload = {
+                "kind": "module_review_verdict_submission",
+                "verdicts": [
+                    {
+                        "verdict": "resolved",
+                        "reason": "当前修订已经补充责任、执行动作和验收方法，可以关闭。",
+                        "evidence_refs": [artifacts[1]],
+                    }
+                ],
+                "new_findings": [],
+            }
+        tool = SubmitResultTool(
+            agent_id,
+            session_key or "session",
+            envelope.run_id,
+            envelope.task_id,
+            self.service.store,
+            self.bus,
+            workflow_id,
+            allowed_outputs=envelope.allowed_outputs,
+            revision=envelope.revision,
+            input_contract_kind=envelope.input_contract_kind,
+            input_contract_ref=envelope.input_contract_ref,
+        )
+        outcome = await tool(payload=payload)
+        assert outcome["status"] == "completed", outcome
+        result = AgentResult.model_validate_json(
+            (
+                self.service.workspace / outcome["result_path"]
+            ).read_text(encoding="utf-8")
+        )
+        assert result.payload is not None
+        return result.payload
+
+
 def test_preparation_resume_uses_hash_verified_run_snapshot(tmp_path: Path) -> None:
     service = _FakeService(tmp_path)
     runner = object.__new__(ReportWorkflowRunner)
@@ -264,6 +341,66 @@ def test_preparation_resume_uses_hash_verified_run_snapshot(tmp_path: Path) -> N
     )
     with pytest.raises(Exception, match="hash mismatch"):
         runner._restore_preparation_snapshot(restored)
+
+
+@pytest.mark.asyncio
+async def test_real_submit_result_ids_pass_module_review_lifecycle(
+    tmp_path: Path,
+) -> None:
+    module = _module("2.1")
+    target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
+    finding_id = "M-2.1-initial-r0-001"
+    patch = ModuleRevisionSubmission(
+        module_id="2.1",
+        base_revision=0,
+        revision=1,
+        submodule_narratives={
+            target: "### 修订\n\n已补充责任接口、执行动作和可验证验收方法。"
+        },
+        claims_upsert=[],
+        claim_ids_remove=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision_responses=[
+            {
+                "finding_id": finding_id,
+                "action": "implemented",
+                "summary": "已在目标小节补充责任接口、执行动作和验收方法。",
+                "changed_target_ids": [target],
+            }
+        ],
+    )
+    runner = _ToolBackedModuleReviewRunner(tmp_path, patch)
+
+    result = await run_module_review(
+        runner,
+        "2.1",
+        module,
+        {"run_id": "run-tool-backed"},
+        "workflow",
+        initial_scope={target},
+        lifecycle_id="initial",
+    )
+
+    assert result.revision == 1
+    finding_result = AgentResult.model_validate_json(
+        (
+            tmp_path
+            / "Work/runs/run-tool-backed/results/"
+            "module-2.1-initial-review-r0.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert finding_result.payload is not None
+    assert finding_result.payload.findings[0].id == finding_id
+    verdict_result = AgentResult.model_validate_json(
+        (
+            tmp_path
+            / "Work/runs/run-tool-backed/results/"
+            "module-2.1-initial-review-r1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert verdict_result.payload is not None
+    assert verdict_result.payload.verdicts[0].finding_id == finding_id
 
 
 @pytest.mark.asyncio

@@ -251,6 +251,8 @@ def test_module_review_tool_schema_omits_runtime_owned_fields(
         phase="initial",
         run_id=run_id,
         module_id="2.1",
+        lifecycle_id="initial",
+        review_round=0,
         subject_ref=f"Work/runs/{run_id}/modules/2.1-r0.json",
         subject_revision=0,
         subject=ModuleContentView(
