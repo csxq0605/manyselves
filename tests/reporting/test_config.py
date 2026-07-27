@@ -114,9 +114,13 @@ def test_packaged_agent_set_is_complete() -> None:
         "project-delivery",
         "product-skill-maintainer",
     }
-    assert agents["chief-editor"].max_tokens == 16384
+    assert agents["chief-editor"].max_tokens == 32768
+    assert agents["chief-editor"].max_turns == 28
     assert agents["module-2.4-specialist"].max_tokens == 12288
     assert agents["cross-module-reviewer"].max_tokens == 32768
+    assert agents["cross-module-reviewer"].max_turns == 28
+
+
 def test_packaged_identities_are_complete_scoped_and_corpus_agnostic() -> None:
     agents = load_packaged_agents()
     human_roles = {

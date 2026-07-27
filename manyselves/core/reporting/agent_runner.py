@@ -54,6 +54,8 @@ from .agentic_models import AgentResult, AgentRunStatus, TaskEnvelope
 from .capabilities import compile_agent_access, scoped_gateway
 from .config import AgentDefinition
 from .input_contracts import (
+    ChiefEditorInput,
+    ChiefRevisionInput,
     CrossReviewInput,
     FinalReviewInput,
     ModuleAuthoringInput,
@@ -87,6 +89,36 @@ REPORTING_AUDIT_AGENT_IDS = frozenset(
         "chief-editor-auditor",
     }
 )
+CHIEF_RESULT_PART_IDS = (
+    "assessment_background",
+    "findings_overview",
+    "regional_executive_summary",
+    "risk_panorama",
+    "dimension_risk_analysis",
+    "cross_module_analysis",
+    "data_gap_analysis",
+    "improvement_action_plan",
+    "new_factory_planning",
+    "capacity_expansion_plan",
+    "daily_power_management",
+    "emergency_compliance_management",
+)
+CHIEF_SECTION_RESULT_PART_IDS = {
+    "1.1": "assessment_background",
+    "1.2": "findings_overview",
+    "1.3": "regional_executive_summary",
+    "3.1.1": "risk_panorama",
+    "3.1.2": "dimension_risk_analysis",
+    "3.1.3": "cross_module_analysis",
+    "3.1.4": "data_gap_analysis",
+    "3.2": "improvement_action_plan",
+    "4.1": "new_factory_planning",
+    "4.2": "capacity_expansion_plan",
+    "4.3": "daily_power_management",
+    "4.4": "emergency_compliance_management",
+}
+
+
 class InspectImageTool(Tool):
     name = "inspect_image"
     description = "Inspect dimensions and format of one project-local image."
@@ -386,6 +418,8 @@ class ReportingAgentRunner:
             "module_review_input": ModuleReviewInput,
             "cross_review_input": CrossReviewInput,
             "final_review_input": FinalReviewInput,
+            "chief_editor_input": ChiefEditorInput,
+            "chief_revision_input": ChiefRevisionInput,
         }.get(envelope.input_contract_kind)
         if model is None:
             return None
@@ -625,10 +659,28 @@ class ReportingAgentRunner:
                     "template distillation template_ref is not one canonical "
                     "workspace file"
                 )
+        input_contract = self._input_contract(envelope)
         expected_result_part_ids = (
             list(template_inspection.required_part_ids)
             if template_inspection is not None
+            else [
+                CHIEF_SECTION_RESULT_PART_IDS[section_id]
+                for section_id in input_contract.target_section_ids
+            ]
+            if isinstance(input_contract, ChiefRevisionInput)
+            else list(CHIEF_RESULT_PART_IDS)
+            if "edited_report_submission" in envelope.allowed_outputs
             else envelope.target_submodule_ids
+        )
+        required_synthesis_input_ids = (
+            [item.id for item in input_contract.cross_synthesis_inputs]
+            if isinstance(input_contract, (ChiefEditorInput, ChiefRevisionInput))
+            else []
+        )
+        required_synthesis_table_types = (
+            ["risk_cluster_matrix", "action_dependency_matrix"]
+            if required_synthesis_input_ids
+            else []
         )
         available: dict[str, Tool] = {
             "search_project_evidence": SearchProjectEvidenceTool(
@@ -752,6 +804,8 @@ class ReportingAgentRunner:
                     {"module_submission", "module_revision_submission"}
                     & set(envelope.allowed_outputs)
                 ),
+                required_synthesis_input_ids=required_synthesis_input_ids,
+                required_synthesis_table_types=required_synthesis_table_types,
             ),
             "list_result_parts": ListResultPartsTool(
                 envelope.run_id,
@@ -763,6 +817,8 @@ class ReportingAgentRunner:
                     {"module_submission", "module_revision_submission"}
                     & set(envelope.allowed_outputs)
                 ),
+                required_synthesis_input_ids=required_synthesis_input_ids,
+                required_synthesis_table_types=required_synthesis_table_types,
             ),
             "report_blocked": ReportBlockedTool(
                 definition.id,
@@ -783,7 +839,6 @@ class ReportingAgentRunner:
                 raise ValueError(f"unsupported tool in {definition.id}: {name}")
             registry.register(available[name])
         if "submit_result" in definition.tools:
-            input_contract = self._input_contract(envelope)
             output_schemas = [
                 self._task_submission_schema(kind, input_contract)
                 for kind in envelope.allowed_outputs
@@ -1167,17 +1222,22 @@ class ReportingAgentRunner:
                         "</submission_correction>"
                     )
                 elif definition.id == "chief-editor":
+                    part_instruction = (
+                        "只补齐 list_result_parts 列出的目标修订章节"
+                        if envelope.input_contract_kind == "chief_revision_input"
+                        else "补齐 list_result_parts 列出的十二个固定章节"
+                    )
                     correction = (
                         "<submission_correction>\n"
                         "你刚才未完成 edited_report_submission。批准的五模块正文绝对不得压缩、"
-                        "摘要、改写或重新输出。先调用 list_result_parts；缺少的十二个固定章节"
-                        "字段必须分别用同名 part_id 调用 write_result_part 补齐。"
+                        f"摘要、改写或重新输出。先调用 list_result_parts；{part_instruction}，"
+                        "分别用同名 part_id 调用 write_result_part。"
                         "module_narratives 必须只提交五个精确标记 "
                         "[[APPROVED_MODULE:2.1]] 至 [[APPROVED_MODULE:2.5]]，长字段使用当前任务 "
                         "write_result_part 返回的 artifact_refs。随后立即调用 submit_result 提交 "
-                        "edited_report_submission；对每个 Cross synthesis_input 恰好提交一个 "
-                        "synthesis_disposition，并提交 risk_cluster_matrix 与 "
-                        "action_dependency_matrix，逐行填写 row_synthesis_input_ids。"
+                        "edited_report_submission；按 list_result_parts 返回的 "
+                        "required_synthesis_input_ids 逐项提交 synthesis_disposition，并提交 "
+                        "required_synthesis_table_types，逐行填写 row_synthesis_input_ids。"
                         "不得重新读取或搜索输入。\n"
                         "</submission_correction>"
                     )

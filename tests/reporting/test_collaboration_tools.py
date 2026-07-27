@@ -729,9 +729,23 @@ async def test_result_parts_report_missing_declared_ids(tmp_path: Path) -> None:
     )
     await writer(part_id="part-a", content="正文")
     listing = await ListResultPartsTool(
-        "run-1", "task", 0, store, ["part-a", "part-b"]
+        "run-1",
+        "task",
+        0,
+        store,
+        ["part-a", "part-b"],
+        required_synthesis_input_ids=["SI-001", "SI-002"],
+        required_synthesis_table_types=[
+            "risk_cluster_matrix",
+            "action_dependency_matrix",
+        ],
     )()
     assert listing["missing_part_ids"] == ["part-b"]
+    assert listing["required_synthesis_input_ids"] == ["SI-001", "SI-002"]
+    assert listing["required_synthesis_table_types"] == [
+        "risk_cluster_matrix",
+        "action_dependency_matrix",
+    ]
     assert listing["complete"] is False
 
 

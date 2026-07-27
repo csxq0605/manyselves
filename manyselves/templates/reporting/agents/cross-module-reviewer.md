@@ -5,7 +5,7 @@ model: inherit
 reads: [module_drafts, evidence_items, claim_ledger, source_ledger, review_findings]
 writes: [cross_findings, cross_synthesis_inputs, resolution_verdicts]
 tools: [search_project_evidence, open_project_source, open_reference, open_web_source, inspect_document, inspect_image, calculate, query_peer, reply_peer, report_blocked, submit_result]
-maxTurns: 16
+maxTurns: 28
 maxTokens: 32768
 effort: high
 memory: task

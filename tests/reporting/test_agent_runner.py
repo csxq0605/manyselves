@@ -14,6 +14,7 @@ from manyselves.core.reporting.agent_runner import InspectDocumentTool, Reportin
 from manyselves.core.reporting.agentic_models import AgentRunStatus, ModuleSubmission, TaskEnvelope
 from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.reporting.input_contracts import (
+    ChiefEditorInput,
     ModuleAuthoringInput,
     ModuleContentView,
     ModuleReviewInput,
@@ -396,6 +397,109 @@ def test_template_skill_submission_schema_and_tools_are_exposed_to_distiller(
     expected_parts = ("skill", "analysis", "synthesis", "visual", "rubric")
     assert registry.get("write_result_part").expected_part_ids == expected_parts
     assert registry.get("list_result_parts").expected_part_ids == expected_parts
+
+
+def test_chief_tools_expose_all_report_parts_and_cross_requirements(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-chief-tools"
+    modules = {}
+    for module_id, definition in REPORT_TAXONOMY.items():
+        submodule_id = next(iter(definition.submodules))
+        modules[module_id] = ModuleContentView(
+            module_id=module_id,
+            revision=0,
+            submodule_narratives={submodule_id: f"{module_id} 已批准正文"},
+            evidence_ids_by_submodule={submodule_id: []},
+        )
+    contract = ChiefEditorInput(
+        run_id=run_id,
+        approved_module_markers={
+            module_id: f"[[APPROVED_MODULE:{module_id}]]"
+            for module_id in REPORT_TAXONOMY
+        },
+        modules=modules,
+        cross_synthesis_inputs=[
+            {
+                "id": "SI-001",
+                "related_module_ids": ["2.1", "2.2"],
+                "cluster_type": "risk_cluster",
+                "root_causes": ["2.1 与 2.2 存在共同的系统边界约束"],
+                "propagation_steps": [
+                    "2.1 边界约束扩大局部异常影响",
+                    "2.2 环境压力进一步削弱运行裕度",
+                ],
+                "causal_chain": "2.1 的边界约束与 2.2 的环境压力叠加，会共同扩大异常影响。",
+                "decision_implication": "应按共同根因安排联合整改和管理优先级，并同步控制剩余风险。",
+                "action_dependencies": ["先确认 2.1 边界，再完成 2.2 整改"],
+                "joint_actions": ["由 2.1 与 2.2 责任方联合整改并复测"],
+                "verification_method": "通过联合核对供电边界、环境复测结果和异常事件记录完成闭环验证。",
+                "acceptance_criteria": ["2.1 与 2.2 的复测均达到关闭条件"],
+                "module_statement_refs": ["2.1.1.1", "2.2.1.1"],
+                "confidence_and_boundary": "当前关系有项目证据支持，阈值仍需连续数据确认。",
+                "target_report_section_ids": ["3.1.1", "3.1.3", "3.2"],
+                "evidence_refs": ["E-0001"],
+            }
+        ],
+        cross_review_completion_ref=(
+            f"Work/runs/{run_id}/reviews/cross-completion.json"
+        ),
+    )
+    contract_ref = f"Work/runs/{run_id}/context/chief-editor-input.json"
+    target = tmp_path / contract_ref
+    target.parent.mkdir(parents=True)
+    target.write_text(contract.model_dump_json(), encoding="utf-8")
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    envelope = TaskEnvelope(
+        task_id="chief-edit",
+        run_id=run_id,
+        agent_id="chief-editor",
+        objective="整合报告",
+        input_refs=[contract_ref],
+        allowed_outputs=["edited_report_submission"],
+        allowed_tools=[
+            "write_result_part",
+            "list_result_parts",
+            "submit_result",
+        ],
+        input_contract_kind="chief_editor_input",
+        input_contract_ref=contract_ref,
+    )
+
+    registry = runner._tools(
+        load_packaged_agents()["chief-editor"],
+        envelope,
+        "session-chief-tools",
+        "workflow-chief-tools",
+    )
+    expected_parts = (
+        "assessment_background",
+        "findings_overview",
+        "regional_executive_summary",
+        "risk_panorama",
+        "dimension_risk_analysis",
+        "cross_module_analysis",
+        "data_gap_analysis",
+        "improvement_action_plan",
+        "new_factory_planning",
+        "capacity_expansion_plan",
+        "daily_power_management",
+        "emergency_compliance_management",
+    )
+    writer = registry.get("write_result_part")
+    listing = registry.get("list_result_parts")
+    assert writer.expected_part_ids == expected_parts
+    assert listing.expected_part_ids == expected_parts
+    assert listing.required_synthesis_input_ids == ("SI-001",)
+    assert listing.required_synthesis_table_types == (
+        "risk_cluster_matrix",
+        "action_dependency_matrix",
+    )
 
 
 @pytest.mark.asyncio
@@ -1094,6 +1198,28 @@ def test_cross_reviewer_uses_long_reasoning_output_limit(tmp_path: Path) -> None
     )
 
     assert runner._loop_config(definition, envelope).max_tokens == 32768
+    assert runner._loop_config(definition, envelope).max_tool_iterations == 28
+
+
+def test_chief_editor_uses_long_synthesis_output_limit(tmp_path: Path) -> None:
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        ModuleReviewSubmissionProvider(),
+        AgentDefaults(max_tokens=8192),
+    )
+    definition = load_packaged_agents()["chief-editor"]
+    envelope = TaskEnvelope(
+        task_id="chief-edit",
+        run_id="run-chief-limit",
+        agent_id=definition.id,
+        objective="执行总编整合",
+        allowed_outputs=["edited_report_submission"],
+    )
+
+    config = runner._loop_config(definition, envelope)
+    assert config.max_tokens == 32768
+    assert config.max_tool_iterations == 28
 
 
 @pytest.mark.asyncio

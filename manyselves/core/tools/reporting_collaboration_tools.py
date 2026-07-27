@@ -2443,6 +2443,8 @@ class _ResultPartTool(Tool):
         store: ReportingStore,
         expected_part_ids: list[str] | None = None,
         evidence_binding_required: bool = False,
+        required_synthesis_input_ids: list[str] | None = None,
+        required_synthesis_table_types: list[str] | None = None,
     ):
         if Path(run_id).name != run_id or not run_id:
             raise ValueError("run_id must be a single safe path component")
@@ -2456,6 +2458,12 @@ class _ResultPartTool(Tool):
         self.store = store
         self.expected_part_ids = tuple(dict.fromkeys(expected_part_ids or ()))
         self.evidence_binding_required = evidence_binding_required
+        self.required_synthesis_input_ids = tuple(
+            dict.fromkeys(required_synthesis_input_ids or ())
+        )
+        self.required_synthesis_table_types = tuple(
+            dict.fromkeys(required_synthesis_table_types or ())
+        )
 
     @property
     def relative_root(self) -> Path:
@@ -2558,10 +2566,13 @@ class WriteResultPartTool(_ResultPartTool):
 
 class ListResultPartsTool(_ResultPartTool):
     name = "list_result_parts"
-    description = "List durable prose parts already saved for the active task revision."
+    description = (
+        "List durable prose parts and any required Cross synthesis ids/table types "
+        "for the active task revision."
+    )
 
     async def __call__(self) -> dict:
-        """List saved prose parts for restart or continuation."""
+        """List saved prose parts and structured synthesis requirements for continuation."""
         root = self.store.workspace / self.relative_root
         parts = []
         if root.is_dir():
@@ -2612,6 +2623,12 @@ class ListResultPartsTool(_ResultPartTool):
             "expected_part_ids": list(self.expected_part_ids),
             "missing_part_ids": missing_ids,
             "unbound_part_ids": unbound_ids,
+            "required_synthesis_input_ids": list(
+                self.required_synthesis_input_ids
+            ),
+            "required_synthesis_table_types": list(
+                self.required_synthesis_table_types
+            ),
             "complete": (
                 bool(self.expected_part_ids)
                 and not missing_ids

@@ -5,8 +5,8 @@ model: inherit
 reads: [module_drafts, claim_ledger, source_ledger, cross_synthesis_inputs, review_completions]
 writes: [report_state]
 tools: [open_artifact, search_text, query_peer, reply_peer, write_result_part, list_result_parts, report_blocked, submit_result]
-maxTurns: 20
-maxTokens: 16384
+maxTurns: 28
+maxTokens: 32768
 effort: high
 memory: task
 background: true
