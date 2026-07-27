@@ -1672,7 +1672,13 @@ async def run_final_review(
     phase = "initial"
     review_round = 0
     chief_revision_number = 0
-    progress_ref = f"Work/runs/{state['run_id']}/reviews/final-progress.json"
+    restart_round = state.get("final_review_restart_round")
+    if restart_round is not None:
+        review_round = int(restart_round)
+        chief_revision_number = int(restart_round)
+        progress_ref = f"Work/runs/{state['run_id']}/reviews/final-progress-r{review_round}.json"
+    else:
+        progress_ref = f"Work/runs/{state['run_id']}/reviews/final-progress.json"
 
     def save_progress(next_action: str) -> None:
         _write_model(

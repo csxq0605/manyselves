@@ -1066,6 +1066,63 @@ def test_chief_patch_inherits_cross_metadata_and_rebinds_changed_section() -> No
     ]
 
 
+@pytest.mark.asyncio
+async def test_explicit_final_review_restart_preserves_failed_progress(
+    tmp_path: Path,
+) -> None:
+    module_text = {module_id: _module(module_id).markdown for module_id in REPORT_TAXONOMY}
+    current = _edited(module_text)
+    stale_progress_ref = "Work/runs/run-final-restart/reviews/final-progress.json"
+    stale_progress = b'{"legacy_schema":true,"next_action":"revise"}\n'
+    stale_path = tmp_path / stale_progress_ref
+    stale_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_path.write_bytes(stale_progress)
+    runner = _ScriptedRunner(
+        tmp_path,
+        [
+            (
+                "chief-editor-auditor",
+                "final_review_finding_submission",
+                FinalReviewFindingSubmission(
+                    checked_section_ids=list(FINAL_AUDIT_SECTION_IDS),
+                    findings=[],
+                    residual_risks=[],
+                ),
+            )
+        ],
+    )
+    state = {
+        "run_id": "run-final-restart",
+        "resume": True,
+        "final_review_restart_round": 1,
+        "edited_report": current,
+        "module_submissions": {module_id: _module(module_id) for module_id in REPORT_TAXONOMY},
+        "cross_synthesis_inputs": [],
+    }
+
+    await run_final_review(
+        runner,
+        state,
+        "workflow",
+        chief_envelope=TaskEnvelope(
+            task_id="chief-edit",
+            run_id="run-final-restart",
+            agent_id="chief-editor",
+            objective="总编",
+            allowed_outputs=["edited_report_submission"],
+        ),
+        chief_session_key="chief-editor",
+        approved_module_text=module_text,
+        claims=[],
+        aggregate_mode=True,
+    )
+
+    assert stale_path.read_bytes() == stale_progress
+    assert (tmp_path / "Work/runs/run-final-restart/reviews/final-progress-r1.json").is_file()
+    assert (tmp_path / "Work/runs/run-final-restart/reviews/final-review-input-r1.json").is_file()
+    assert state["final_review_completion_ref"].endswith("reviews/final-completion.json")
+
+
 def test_resume_restores_latest_module_subjects_but_requires_fresh_reviews(
     tmp_path: Path,
 ) -> None:

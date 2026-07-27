@@ -114,6 +114,7 @@ class FullReportCheckpoint(StrictModel):
     chief_candidate_ref: str | None = None
     chief_editor_input_ref: str | None = None
     chief_editor_envelope_ref: str | None = None
+    final_review_restart_round: int | None = Field(default=None, ge=1)
     final_review_completion_ref: str | None = None
     delivery_completion_ref: str | None = None
     report_state_ref: str | None = None
@@ -122,12 +123,15 @@ class FullReportCheckpoint(StrictModel):
     error: str | None = None
     budget: dict | None = None
 
+
 class AgentWorkflowError(RuntimeError):
     pass
 
 
 class AgentWorkflowBlocked(AgentWorkflowError):
-    def __init__(self, agent_id: str, task_id: str, reason: str, artifact_refs: list[str] | None = None):
+    def __init__(
+        self, agent_id: str, task_id: str, reason: str, artifact_refs: list[str] | None = None
+    ):
         self.agent_id = agent_id
         self.task_id = task_id
         self.reason = reason
@@ -313,9 +317,7 @@ class ReportWorkflowRunner:
         required = [*refs.values(), TEMPLATE_SKILL_SOURCE]
         if not all((self.service.workspace / path).is_file() for path in required):
             return False
-        state["template_skill_refs"] = {
-            key: path.as_posix() for key, path in refs.items()
-        }
+        state["template_skill_refs"] = {key: path.as_posix() for key, path in refs.items()}
         state["template_skill_text"] = {
             key: (self.service.workspace / path).read_text(encoding="utf-8")
             for key, path in refs.items()
@@ -330,9 +332,7 @@ class ReportWorkflowRunner:
             "请先单独运行 operation=distill_template_skill"
         )
 
-    def _materialize_template_skill(
-        self, state: dict, submission: TemplateSkillSubmission
-    ) -> None:
+    def _materialize_template_skill(self, state: dict, submission: TemplateSkillSubmission) -> None:
         root = TEMPLATE_SKILL_ROOT
         files = {
             "SKILL.md": submission.skill_markdown,
@@ -419,10 +419,7 @@ class ReportWorkflowRunner:
                 "source": source,
                 "template_ref": snapshot_ref,
                 "template_sha256": hashlib.sha256(snapshot.read_bytes()).hexdigest(),
-                "inspection_ref": (
-                    f"Work/runs/{state['run_id']}/context/"
-                    "template-inspection.json"
-                ),
+                "inspection_ref": (f"Work/runs/{state['run_id']}/context/template-inspection.json"),
                 "producer": "template-distiller",
                 "task_id": envelope.task_id,
                 "skill_root": TEMPLATE_SKILL_ROOT.as_posix(),
@@ -490,18 +487,15 @@ class ReportWorkflowRunner:
 
         supplements = state["request"].user_supplements
         superseded = {
-            superseded_id
-            for supplement in supplements
-            for superseded_id in supplement.supersedes
+            superseded_id for supplement in supplements for superseded_id in supplement.supersedes
         }
         target_ids = target_ids or set()
         applicable = []
         for supplement in supplements:
             if supplement.id in superseded or stage not in supplement.stages:
                 continue
-            if (
-                supplement.scope != "run"
-                and not set(supplement.target_ids).intersection(target_ids)
+            if supplement.scope != "run" and not set(supplement.target_ids).intersection(
+                target_ids
             ):
                 continue
             applicable.append(supplement)
@@ -535,9 +529,7 @@ class ReportWorkflowRunner:
         try:
             await self.service._notice("正在整理项目资料并建立可追溯证据入口。")
             await self._prepare(state)
-            readiness = EvidenceReadinessPolicy.evaluate(
-                state["request"], state["coverage_matrix"]
-            )
+            readiness = EvidenceReadinessPolicy.evaluate(state["request"], state["coverage_matrix"])
             state["evidence_readiness"] = readiness
             if readiness.should_block:
                 self._checkpoint(
@@ -568,7 +560,7 @@ class ReportWorkflowRunner:
                 )
                 dispatch = self._build_module_dispatch(state, requested_modules)
                 await self.service._notice(
-                "固定模板写作 Skill 与模块知识上下文已加载，Main 已按固定模块契约直接分配专业任务。"
+                    "固定模板写作 Skill 与模块知识上下文已加载，Main 已按固定模块契约直接分配专业任务。"
                 )
             state["module_dispatch"] = dispatch
             self._write_handoff_contracts(state)
@@ -580,14 +572,14 @@ class ReportWorkflowRunner:
             )
             restored_submissions = dict(state.get("module_submissions", {}))
             pending_modules = tuple(
-                module_id for module_id in requested_modules if module_id not in restored_submissions
+                module_id
+                for module_id in requested_modules
+                if module_id not in restored_submissions
             )
             state["module_submissions"] = restored_submissions
             for module_id in pending_modules:
                 try:
-                    submission = await self._module_pipeline(
-                        module_id, state, workflow_id
-                    )
+                    submission = await self._module_pipeline(module_id, state, workflow_id)
                 except BaseException:
                     self._checkpoint(state, activity, "failed")
                     raise
@@ -608,9 +600,7 @@ class ReportWorkflowRunner:
                 return
             activity = "cross-module-review"
             if "cross_review_completion_ref" not in state:
-                await self.service._notice(
-                    "五个模块均已通过各自独立审查，开始跨模块一致性审查。"
-                )
+                await self.service._notice("五个模块均已通过各自独立审查，开始跨模块一致性审查。")
                 await self._cross_review(state, workflow_id)
                 self._checkpoint(state, activity, "completed")
             else:
@@ -626,9 +616,7 @@ class ReportWorkflowRunner:
                         "已恢复本 run 通过确定性校验的总编候选稿，直接继续独立全文审计。"
                     )
                 activity = "chief-editor-audit"
-                await self.service._notice(
-                    "总编成稿已形成，正在进行独立全文质量与交付就绪审计。"
-                )
+                await self.service._notice("总编成稿已形成，正在进行独立全文质量与交付就绪审计。")
                 await self._final_review_loop(
                     state,
                     workflow_id,
@@ -638,16 +626,12 @@ class ReportWorkflowRunner:
                     claims=[
                         claim
                         for module_id in REPORT_MODULE_IDS
-                        for claim in state["module_submissions"][
-                            module_id
-                        ].claims
+                        for claim in state["module_submissions"][module_id].claims
                     ],
                 )
                 self._checkpoint(state, activity, "completed")
             else:
-                await self.service._notice(
-                    "已恢复本 run 完成的总编成稿审计，直接进入确定性渲染。"
-                )
+                await self.service._notice("已恢复本 run 完成的总编成稿审计，直接进入确定性渲染。")
             activity = "delivery"
             if "delivery_completion_ref" not in state:
                 await self.service._notice("正文与引用已批准，正在使用交接包渲染核心生成 DOCX。")
@@ -683,8 +667,7 @@ class ReportWorkflowRunner:
         run_id = state["run_id"]
         workflow_id = f"aggregate-existing-report:{run_id}"
         configured_refs = request.source_module_refs or {
-            module_id: Path(f"Outputs/Modules/{module_id}.md")
-            for module_id in REPORT_MODULE_IDS
+            module_id: Path(f"Outputs/Modules/{module_id}.md") for module_id in REPORT_MODULE_IDS
         }
         module_refs: dict[str, str] = {}
         structured_modules: dict[str, ModuleSubmission] = {}
@@ -713,9 +696,7 @@ class ReportWorkflowRunner:
                 parts = relative.parts
                 if len(parts) >= 3 and parts[:2] == ("Work", "runs"):
                     source_run_id = parts[2]
-                    for record in SourceLedger(
-                        self.service.workspace, source_run_id
-                    ).records:
+                    for record in SourceLedger(self.service.workspace, source_run_id).records:
                         structured_sources[record.id] = record
             else:
                 markdown_modules[module_id] = source_text
@@ -725,31 +706,21 @@ class ReportWorkflowRunner:
                 "aggregate_existing must use five structured module JSON refs together; "
                 "mixing Markdown and JSON would drop evidence bindings"
             )
-        aggregate_validation_ref = (
-            f"Work/runs/{run_id}/reviews/aggregate-module-integrity.json"
-        )
-        aggregate_subject_ref = (
-            f"Work/runs/{run_id}/context/aggregate-source-manifest.json"
-        )
+        aggregate_validation_ref = f"Work/runs/{run_id}/reviews/aggregate-module-integrity.json"
+        aggregate_subject_ref = f"Work/runs/{run_id}/context/aggregate-source-manifest.json"
         self.service.store.write_json(
             aggregate_subject_ref,
             {
-                "source_format": (
-                    "structured_module" if structured_modules else "markdown"
-                ),
+                "source_format": ("structured_module" if structured_modules else "markdown"),
                 "module_refs": module_refs,
             },
         )
         shallow_signals: list[str] = []
-        aggregate_source_format = (
-            "structured_module" if structured_modules else "markdown"
-        )
+        aggregate_source_format = "structured_module" if structured_modules else "markdown"
         try:
             if structured_modules:
                 validate_module_markdown_consistency(structured_modules)
-                shallow_signals = find_shallow_submodules(
-                    structured_modules
-                )
+                shallow_signals = find_shallow_submodules(structured_modules)
             else:
                 validate_existing_markdown_modules(markdown_modules)
         except ValueError as exc:
@@ -770,9 +741,7 @@ class ReportWorkflowRunner:
                     passed=False,
                 ).model_dump(mode="json"),
             )
-            raise AgentWorkflowError(
-                f"已有模块汇总输入完整性校验未通过：{exc}"
-            ) from exc
+            raise AgentWorkflowError(f"已有模块汇总输入完整性校验未通过：{exc}") from exc
         self.service.store.write_json(
             aggregate_validation_ref,
             ValidationReport(
@@ -781,8 +750,7 @@ class ReportWorkflowRunner:
                 validator="aggregate-module-integrity/v1",
                 check_ids=["aggregate.five_modules_and_fixed_sections"],
                 observations=[
-                    f"possible_shallow_submodule:{submodule_id}"
-                    for submodule_id in shallow_signals
+                    f"possible_shallow_submodule:{submodule_id}" for submodule_id in shallow_signals
                 ],
                 passed=True,
             ).model_dump(mode="json"),
@@ -836,9 +804,9 @@ class ReportWorkflowRunner:
                         for module_id in REPORT_MODULE_IDS
                     },
                     markdown_modules={
-                        module_id: (
-                            self.service.workspace / module_refs[module_id]
-                        ).read_text(encoding="utf-8")
+                        module_id: (self.service.workspace / module_refs[module_id]).read_text(
+                            encoding="utf-8"
+                        )
                         for module_id in REPORT_MODULE_IDS
                     },
                 )
@@ -899,9 +867,7 @@ class ReportWorkflowRunner:
             if not isinstance(payload, EditedReportSubmission):
                 raise AgentWorkflowError("chief-editor returned the wrong payload type")
             if not structured_modules and (
-                payload.protected_claim_ids
-                or payload.tables
-                or payload.photo_ids
+                payload.protected_claim_ids or payload.tables or payload.photo_ids
             ):
                 raise AgentWorkflowError(
                     "markdown aggregate submission bypassed its input/output contract; "
@@ -942,9 +908,7 @@ class ReportWorkflowRunner:
             state["edited_report"] = payload
             self._aggregate_checkpoint(state, activity, "completed")
             activity = "aggregate-chief-editor-audit"
-            await self.service._notice(
-                "总编汇总稿已形成，正在进行独立全文质量与交付就绪审计。"
-            )
+            await self.service._notice("总编汇总稿已形成，正在进行独立全文质量与交付就绪审计。")
             await self._final_review_loop(
                 state,
                 workflow_id,
@@ -988,9 +952,7 @@ class ReportWorkflowRunner:
                     )
                 markdown += "\n\n" + ledger.source_index_markdown() + "\n"
             self._validate_final_report_structure(state, markdown, "aggregate-final")
-            self.service.store.write_text(
-                markdown_ref.as_posix(), markdown
-            )
+            self.service.store.write_text(markdown_ref.as_posix(), markdown)
             state["aggregate_markdown_ref"] = markdown_ref
             state["output_artifacts"] = [OutputArtifact(kind="report", path=markdown_ref)]
             self.service.store.write_json(
@@ -998,17 +960,11 @@ class ReportWorkflowRunner:
                 {
                     "producer": "chief-editor-auditor",
                     "consumer": "docx-renderer",
-                    "final_review_completion_ref": state[
-                        "final_review_completion_ref"
-                    ],
+                    "final_review_completion_ref": state["final_review_completion_ref"],
                     "input_module_refs": module_refs,
-                    "structured_module_refs": (
-                        module_refs if structured_modules else {}
-                    ),
+                    "structured_module_refs": (module_refs if structured_modules else {}),
                     "claim_ledger_ref": (
-                        f"Work/runs/{run_id}/ledgers/claims.json"
-                        if structured_modules
-                        else None
+                        f"Work/runs/{run_id}/ledgers/claims.json" if structured_modules else None
                     ),
                     "table_count": len(payload.tables),
                     "photo_ids": payload.photo_ids,
@@ -1026,9 +982,7 @@ class ReportWorkflowRunner:
             )
             raise
         except asyncio.CancelledError:
-            self._aggregate_checkpoint(
-                state, activity, "cancelled", "interrupted by user"
-            )
+            self._aggregate_checkpoint(state, activity, "cancelled", "interrupted by user")
             raise
         except Exception as exc:
             self._aggregate_checkpoint(state, activity, "failed", str(exc))
@@ -1115,9 +1069,7 @@ class ReportWorkflowRunner:
                     claims=[
                         claim
                         for module_id in REPORT_MODULE_IDS
-                        for claim in state["module_submissions"][
-                            module_id
-                        ].claims
+                        for claim in state["module_submissions"][module_id].claims
                     ],
                 )
                 self._revision_checkpoint(state, activity, "completed")
@@ -1184,13 +1136,11 @@ class ReportWorkflowRunner:
                 if claim.id in request.target_claim_ids
             }
             missing_claims = sorted(
-                set(request.target_claim_ids)
-                - {claim.id for claim in current.claims}
+                set(request.target_claim_ids) - {claim.id for claim in current.claims}
             )
             if missing_claims:
                 raise ValueError(
-                    f"revision target claims do not exist in module {module_id}: "
-                    f"{missing_claims}"
+                    f"revision target claims do not exist in module {module_id}: {missing_claims}"
                 )
         if not authorized_submodules:
             authorized_submodules = set(REPORT_TAXONOMY[module_id].submodules)
@@ -1215,21 +1165,15 @@ class ReportWorkflowRunner:
         diff = build_revision_diff(current, payload)
         changed_submodules = set(diff["changed_submodule_narratives"])
         claim_submodules = {
-            claim.id: claim.submodule_id
-            for claim in [*current.claims, *payload.claims]
+            claim.id: claim.submodule_id for claim in [*current.claims, *payload.claims]
         }
         unexpected_claims = sorted(
             claim_id
             for claim_id in diff["changed_claim_ids"]
             if claim_submodules.get(claim_id) not in authorized_submodules
-            or (
-                request.target_claim_ids
-                and claim_id not in request.target_claim_ids
-            )
+            or (request.target_claim_ids and claim_id not in request.target_claim_ids)
         )
-        unexpected_submodules = sorted(
-            changed_submodules - authorized_submodules
-        )
+        unexpected_submodules = sorted(changed_submodules - authorized_submodules)
         if unexpected_submodules or unexpected_claims:
             self._raise_scope_expansion(
                 state,
@@ -1240,8 +1184,7 @@ class ReportWorkflowRunner:
             )
 
         self.service.store.write_json(
-            f"Work/runs/{state['run_id']}/reviews/"
-            f"post-delivery-diff-{module_id}-r{revision}.json",
+            f"Work/runs/{state['run_id']}/reviews/post-delivery-diff-{module_id}-r{revision}.json",
             diff,
         )
         self.service.store.write_json(
@@ -1279,17 +1222,14 @@ class ReportWorkflowRunner:
             ),
             module_knowledge_refs=dict(state.get("module_knowledge_refs", {})),
             quality_context_ref=state.get("quality_context_ref"),
-            report_state_ref=(
-                "Work/report-state.json" if "edited_report" in state else None
-            ),
-            module_review_completion_refs=dict(
-                state.get("module_review_completion_refs", {})
-            ),
+            report_state_ref=("Work/report-state.json" if "edited_report" in state else None),
+            module_review_completion_refs=dict(state.get("module_review_completion_refs", {})),
             cross_review_completed="cross_review_completion_ref" in state,
             cross_review_completion_ref=state.get("cross_review_completion_ref"),
             chief_candidate_ref=state.get("chief_candidate_ref"),
             chief_editor_input_ref=state.get("chief_editor_input_ref"),
             chief_editor_envelope_ref=state.get("chief_editor_envelope_ref"),
+            final_review_restart_round=state.get("final_review_restart_round"),
             final_review_completed="final_review_completion_ref" in state,
             final_review_completion_ref=state.get("final_review_completion_ref"),
             delivery_completion_ref=state.get("delivery_completion_ref"),
@@ -1311,33 +1251,23 @@ class ReportWorkflowRunner:
         self.service.store.write_json(
             f"Work/runs/{state['run_id']}/workflow-state.json",
             {
-                "workflow_id": (
-                    f"aggregate-existing-report:{state['run_id']}"
-                ),
+                "workflow_id": (f"aggregate-existing-report:{state['run_id']}"),
                 "run_id": state["run_id"],
                 "operation": "aggregate_existing",
                 "activity": activity,
                 "status": status,
                 "report_state_ref": (
-                    "Work/report-state.json"
-                    if "edited_report" in state
-                    else None
+                    "Work/report-state.json" if "edited_report" in state else None
                 ),
                 "final_review_completed": "final_review_completion_ref" in state,
-                "final_review_completion_ref": state.get(
-                    "final_review_completion_ref"
-                ),
+                "final_review_completion_ref": state.get("final_review_completion_ref"),
                 "aggregate_markdown_ref": (
                     str(state["aggregate_markdown_ref"])
                     if state.get("aggregate_markdown_ref")
                     else None
                 ),
                 "error": error,
-                "budget": (
-                    self._budget.snapshot()
-                    if self._budget is not None
-                    else None
-                ),
+                "budget": (self._budget.snapshot() if self._budget is not None else None),
             },
         )
 
@@ -1381,9 +1311,7 @@ class ReportWorkflowRunner:
             _, path = read_ref(ref)
             actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
             if actual_sha256 != expected_sha256:
-                raise ValueError(
-                    f"review artifact hash mismatch after completion: {ref}"
-                )
+                raise ValueError(f"review artifact hash mismatch after completion: {ref}")
 
         lifecycle_kinds = {
             "module": {
@@ -1414,21 +1342,14 @@ class ReportWorkflowRunner:
         ) -> list[tuple[str, dict]]:
             values = payload.get(field, [])
             if not isinstance(values, list):
-                raise ValueError(
-                    f"review completion artifact has non-list {field}: {ref}"
-                )
+                raise ValueError(f"review completion artifact has non-list {field}: {ref}")
             identified = [
-                (value.get(id_field), value)
-                for value in values
-                if isinstance(value, dict)
+                (value.get(id_field), value) for value in values if isinstance(value, dict)
             ]
             if len(identified) != len(values) or any(
-                not isinstance(value_id, str) or not value_id
-                for value_id, _ in identified
+                not isinstance(value_id, str) or not value_id for value_id, _ in identified
             ):
-                raise ValueError(
-                    f"review completion artifact has invalid {field} ids: {ref}"
-                )
+                raise ValueError(f"review completion artifact has invalid {field} ids: {ref}")
             return identified
 
         expected_finding_kind = lifecycle_kinds[lifecycle]["finding"]
@@ -1447,9 +1368,7 @@ class ReportWorkflowRunner:
                 ref=ref,
             ):
                 if finding_id in findings_by_id:
-                    raise ValueError(
-                        "review completion contains duplicate immutable finding ids"
-                    )
+                    raise ValueError("review completion contains duplicate immutable finding ids")
                 findings_by_id[finding_id] = finding
                 if index > 0:
                     regression_findings_by_id[finding_id] = finding
@@ -1479,9 +1398,7 @@ class ReportWorkflowRunner:
                 ref=ref,
             ):
                 if finding_id in embedded_new_findings_by_id:
-                    raise ValueError(
-                        "review completion verdicts repeat a new immutable finding id"
-                    )
+                    raise ValueError("review completion verdicts repeat a new immutable finding id")
                 embedded_new_findings_by_id[finding_id] = finding
 
         if set(regression_findings_by_id) != set(embedded_new_findings_by_id):
@@ -1496,9 +1413,7 @@ class ReportWorkflowRunner:
         finding_ids = set(findings_by_id)
         resolved_ids = set(completion.resolved_finding_ids)
         if resolved_ids != finding_ids:
-            raise ValueError(
-                "review completion resolved ids do not equal all immutable findings"
-            )
+            raise ValueError("review completion resolved ids do not equal all immutable findings")
         if not finding_ids.issubset(verdict_ids):
             raise ValueError("review completion lacks reviewer verdicts for findings")
         return completion, artifacts
@@ -1536,10 +1451,7 @@ class ReportWorkflowRunner:
     def _restore_resume_state(self, state: dict, checkpoint: dict | None = None) -> None:
         run_id = state["run_id"]
         if checkpoint is None:
-            checkpoint_path = (
-                self.service.workspace
-                / f"Work/runs/{run_id}/workflow-state.json"
-            )
+            checkpoint_path = self.service.workspace / f"Work/runs/{run_id}/workflow-state.json"
             if not checkpoint_path.is_file():
                 return
             checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
@@ -1549,6 +1461,8 @@ class ReportWorkflowRunner:
             raise AgentWorkflowError(f"invalid resume checkpoint: {exc}") from exc
         if typed_checkpoint.run_id != run_id:
             raise AgentWorkflowError("resume checkpoint belongs to another run")
+        if typed_checkpoint.final_review_restart_round is not None:
+            state["final_review_restart_round"] = typed_checkpoint.final_review_restart_round
         run_prefix = f"Work/runs/{run_id}/"
 
         def require_run_ref(ref: str, *, label: str) -> str:
@@ -1557,24 +1471,17 @@ class ReportWorkflowRunner:
             path = (self.service.workspace / ref).resolve()
             run_root = (self.service.workspace / f"Work/runs/{run_id}").resolve()
             if not path.is_relative_to(run_root) or not path.is_file():
-                raise AgentWorkflowError(
-                    f"{label} is not a readable current-run artifact: {ref}"
-                )
+                raise AgentWorkflowError(f"{label} is not a readable current-run artifact: {ref}")
             return ref
 
         state["preparation_refs"] = dict(typed_checkpoint.preparation_refs)
         state["preparation_sha256"] = dict(typed_checkpoint.preparation_sha256)
-        dispatch_path = (
-            self.service.workspace
-            / f"Work/runs/{run_id}/workflow/module-dispatch.json"
-        )
+        dispatch_path = self.service.workspace / f"Work/runs/{run_id}/workflow/module-dispatch.json"
         if dispatch_path.is_file():
             state["module_dispatch"] = ModuleDispatchPlan.model_validate_json(
                 dispatch_path.read_text(encoding="utf-8")
             )
-            expected_dispatch_ref = dispatch_path.relative_to(
-                self.service.workspace
-            ).as_posix()
+            expected_dispatch_ref = dispatch_path.relative_to(self.service.workspace).as_posix()
             if typed_checkpoint.module_dispatch_ref != expected_dispatch_ref:
                 raise AgentWorkflowError(
                     "checkpoint does not identify the canonical current-run module dispatch"
@@ -1588,8 +1495,7 @@ class ReportWorkflowRunner:
                 for module_id, ref in typed_checkpoint.module_knowledge_refs.items()
             }
             missing_knowledge = sorted(
-                set(state["request"].target_modules)
-                - set(state["module_knowledge_refs"])
+                set(state["request"].target_modules) - set(state["module_knowledge_refs"])
             )
             if missing_knowledge:
                 raise AgentWorkflowError(
@@ -1614,13 +1520,10 @@ class ReportWorkflowRunner:
                     submission = ModuleSubmission.model_validate_json(
                         path.read_text(encoding="utf-8")
                     )
-                    unknown_sources = sorted(
-                        set(submission.source_ids) - known_source_ids
-                    )
+                    unknown_sources = sorted(set(submission.source_ids) - known_source_ids)
                     if unknown_sources:
                         raise ValueError(
-                            "module subject declares unregistered sources: "
-                            f"{unknown_sources}"
+                            f"module subject declares unregistered sources: {unknown_sources}"
                         )
                     ClaimLedger(claims=submission.claims, sources=source_records)
                 except (OSError, ValueError) as exc:
@@ -1628,19 +1531,12 @@ class ReportWorkflowRunner:
                     continue
                 valid.append(submission)
             if valid:
-                restored_subjects[module_id] = max(
-                    valid, key=lambda item: item.revision
-                )
-                for candidate in sorted(
-                    valid, key=lambda item: item.revision, reverse=True
-                ):
+                restored_subjects[module_id] = max(valid, key=lambda item: item.revision)
+                for candidate in sorted(valid, key=lambda item: item.revision, reverse=True):
                     subject_ref = (
-                        f"Work/runs/{run_id}/modules/"
-                        f"{module_id}-r{candidate.revision}.json"
+                        f"Work/runs/{run_id}/modules/{module_id}-r{candidate.revision}.json"
                     )
-                    completion_ref = typed_checkpoint.module_review_completion_refs.get(
-                        module_id
-                    )
+                    completion_ref = typed_checkpoint.module_review_completion_refs.get(module_id)
                     if not completion_ref:
                         continue
                     if not (self.service.workspace / completion_ref).is_file():
@@ -1658,9 +1554,7 @@ class ReportWorkflowRunner:
                             completion_ref=completion_ref,
                             lifecycle="module",
                             reviewer_agent_id="evidence-auditor",
-                            reviewer_session_key=(
-                                f"module-auditor-{module_id}-{lifecycle_id}"
-                            ),
+                            reviewer_session_key=(f"module-auditor-{module_id}-{lifecycle_id}"),
                             subject_refs=[subject_ref],
                         )
                     except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -1669,9 +1563,9 @@ class ReportWorkflowRunner:
                             f"completion is invalid: {completion_ref}: {exc}"
                         ) from exc
                     approved_subjects[module_id] = candidate
-                    state.setdefault("module_review_completion_refs", {})[
-                        module_id
-                    ] = completion_ref
+                    state.setdefault("module_review_completion_refs", {})[module_id] = (
+                        completion_ref
+                    )
                     self.service.store.write_text(
                         f"Outputs/Modules/{module_id}.md", candidate.markdown
                     )
@@ -1707,29 +1601,18 @@ class ReportWorkflowRunner:
                 f"completion is invalid: {cross_ref}: {exc}"
             ) from exc
         state["cross_review_completion_ref"] = cross_ref
-        state["cross_synthesis_inputs"] = self._latest_cross_synthesis(
-            cross_artifacts
-        )
+        state["cross_synthesis_inputs"] = self._latest_cross_synthesis(cross_artifacts)
 
-        canonical_chief_candidate = (
-            f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
-        )
-        canonical_chief_input = (
-            f"Work/runs/{run_id}/context/chief-editor-input.json"
-        )
-        canonical_chief_envelope = (
-            f"Work/runs/{run_id}/context/chief-editor-envelope.json"
-        )
+        canonical_chief_candidate = f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
+        canonical_chief_input = f"Work/runs/{run_id}/context/chief-editor-input.json"
+        canonical_chief_envelope = f"Work/runs/{run_id}/context/chief-editor-envelope.json"
         discovered_candidate_ref = typed_checkpoint.chief_candidate_ref
-        if (
-            discovered_candidate_ref is None
-            and all(
-                (self.service.workspace / ref).is_file()
-                for ref in (
-                    canonical_chief_candidate,
-                    canonical_chief_input,
-                    canonical_chief_envelope,
-                )
+        if discovered_candidate_ref is None and all(
+            (self.service.workspace / ref).is_file()
+            for ref in (
+                canonical_chief_candidate,
+                canonical_chief_input,
+                canonical_chief_envelope,
             )
         ):
             discovered_candidate_ref = canonical_chief_candidate
@@ -1752,8 +1635,7 @@ class ReportWorkflowRunner:
             )
             validate_final_report_markdown(self._canonical_markdown(candidate))
             envelope_ref = require_run_ref(
-                typed_checkpoint.chief_editor_envelope_ref
-                or canonical_chief_envelope,
+                typed_checkpoint.chief_editor_envelope_ref or canonical_chief_envelope,
                 label="chief editor envelope",
             )
             input_ref = require_run_ref(
@@ -1811,9 +1693,7 @@ class ReportWorkflowRunner:
             for module_id in REPORT_MODULE_IDS
         }
         state["final_review_completion_ref"] = final_ref
-        state["final_residual_risks"] = self._latest_final_residual_risks(
-            final_artifacts
-        )
+        state["final_residual_risks"] = self._latest_final_residual_risks(final_artifacts)
         self._restore_delivery_completion(state)
 
     def _restore_delivery_completion(self, state: dict) -> None:
@@ -1832,22 +1712,15 @@ class ReportWorkflowRunner:
         receipt_path = self.service.workspace / receipt_ref
         if not receipt_path.is_file():
             raise AgentWorkflowError("delivery completion references a missing receipt")
-        receipt = DeliveryReceipt.model_validate_json(
-            receipt_path.read_text(encoding="utf-8")
-        )
-        delivery_root = self._delivery_root(
-            self.service.workspace, run_id
-        ).resolve()
+        receipt = DeliveryReceipt.model_validate_json(receipt_path.read_text(encoding="utf-8"))
+        delivery_root = self._delivery_root(self.service.workspace, run_id).resolve()
         if not receipt.manifest_path.resolve().is_relative_to(delivery_root):
             return
         required_paths = {
             "final_docx": receipt.final_docx,
             "report_state": receipt.report_state,
             "manifest": receipt.manifest_path,
-            **{
-                f"module:{module_id}": path
-                for module_id, path in receipt.module_files.items()
-            },
+            **{f"module:{module_id}": path for module_id, path in receipt.module_files.items()},
         }
         for key, path in required_paths.items():
             resolved = Path(path).resolve()
@@ -1863,8 +1736,7 @@ class ReportWorkflowRunner:
         if version.run_id != run_id:
             raise AgentWorkflowError("delivery completion report version belongs to another run")
         artifacts = [
-            OutputArtifact.model_validate(item)
-            for item in payload.get("output_artifacts", [])
+            OutputArtifact.model_validate(item) for item in payload.get("output_artifacts", [])
         ]
         if not artifacts:
             raise AgentWorkflowError("delivery completion lacks output artifacts")
@@ -1897,20 +1769,14 @@ class ReportWorkflowRunner:
                 "run_id": state["run_id"],
                 "activity": activity,
                 "status": status,
-                "completed_revision_modules": sorted(
-                    state.get("completed_revision_modules", [])
-                ),
+                "completed_revision_modules": sorted(state.get("completed_revision_modules", [])),
                 "cross_review_completed": "cross_review_completion_ref" in state,
                 "module_review_completion_refs": dict(
                     state.get("module_review_completion_refs", {})
                 ),
-                "cross_review_completion_ref": state.get(
-                    "cross_review_completion_ref"
-                ),
+                "cross_review_completion_ref": state.get("cross_review_completion_ref"),
                 "final_review_completed": "final_review_completion_ref" in state,
-                "final_review_completion_ref": state.get(
-                    "final_review_completion_ref"
-                ),
+                "final_review_completion_ref": state.get("final_review_completion_ref"),
                 "error": error,
                 "budget": self._budget.snapshot() if self._budget is not None else None,
             },
@@ -1920,9 +1786,7 @@ class ReportWorkflowRunner:
         """Restore only subjects closed by the new review completion contract."""
 
         run_id = state["run_id"]
-        checkpoint_path = (
-            self.service.workspace / f"Work/runs/{run_id}/workflow-state.json"
-        )
+        checkpoint_path = self.service.workspace / f"Work/runs/{run_id}/workflow-state.json"
         if not checkpoint_path.is_file():
             return
         checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
@@ -1944,16 +1808,9 @@ class ReportWorkflowRunner:
                     continue
                 if candidate.revision > baseline.revision:
                     candidates.append(candidate)
-            for candidate in sorted(
-                candidates, key=lambda item: item.revision, reverse=True
-            ):
-                subject_ref = (
-                    f"Work/runs/{run_id}/modules/"
-                    f"{module_id}-r{candidate.revision}.json"
-                )
-                completion_ref = state.get("module_review_completion_refs", {}).get(
-                    module_id
-                )
+            for candidate in sorted(candidates, key=lambda item: item.revision, reverse=True):
+                subject_ref = f"Work/runs/{run_id}/modules/{module_id}-r{candidate.revision}.json"
+                completion_ref = state.get("module_review_completion_refs", {}).get(module_id)
                 if not completion_ref:
                     continue
                 completion_path = self.service.workspace / completion_ref
@@ -1972,9 +1829,7 @@ class ReportWorkflowRunner:
                         completion_ref=completion_ref,
                         lifecycle="module",
                         reviewer_agent_id="evidence-auditor",
-                        reviewer_session_key=(
-                            f"module-auditor-{module_id}-{lifecycle_id}"
-                        ),
+                        reviewer_session_key=(f"module-auditor-{module_id}-{lifecycle_id}"),
                         subject_refs=[subject_ref],
                     )
                 except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -1983,12 +1838,8 @@ class ReportWorkflowRunner:
                         f"completion is invalid: {completion_ref}: {exc}"
                     ) from exc
                 state["module_submissions"][module_id] = candidate
-                state.setdefault("module_review_completion_refs", {})[
-                    module_id
-                ] = completion_ref
-                self.service.store.write_text(
-                    f"Outputs/Modules/{module_id}.md", candidate.markdown
-                )
+                state.setdefault("module_review_completion_refs", {})[module_id] = completion_ref
+                self.service.store.write_text(f"Outputs/Modules/{module_id}.md", candidate.markdown)
                 restored.append(module_id)
                 break
         state["completed_revision_modules"] = restored
@@ -2019,9 +1870,7 @@ class ReportWorkflowRunner:
                 f"completion is invalid: {cross_ref}: {exc}"
             ) from exc
         state["cross_review_completion_ref"] = cross_ref
-        state["cross_synthesis_inputs"] = self._latest_cross_synthesis(
-            cross_artifacts
-        )
+        state["cross_synthesis_inputs"] = self._latest_cross_synthesis(cross_artifacts)
         final_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
         if not (self.service.workspace / final_ref).is_file():
             return
@@ -2036,9 +1885,9 @@ class ReportWorkflowRunner:
             if len(final_completion.subject_refs) != 1:
                 raise ValueError("final completion requires exactly one edited subject")
             edited = EditedReportSubmission.model_validate_json(
-                (
-                    self.service.workspace / final_completion.subject_refs[0]
-                ).read_text(encoding="utf-8")
+                (self.service.workspace / final_completion.subject_refs[0]).read_text(
+                    encoding="utf-8"
+                )
             )
             claims = [
                 claim
@@ -2057,9 +1906,7 @@ class ReportWorkflowRunner:
             ) from exc
         state["edited_report"] = edited
         state["final_review_completion_ref"] = final_ref
-        state["final_residual_risks"] = self._latest_final_residual_risks(
-            final_artifacts
-        )
+        state["final_residual_risks"] = self._latest_final_residual_risks(final_artifacts)
 
     async def _prepare(self, state: dict) -> None:
         # Preparation is immutable inside one run. A resumed run must never
@@ -2113,31 +1960,24 @@ class ReportWorkflowRunner:
             refs["photo_manifest"],
             {"assets": [item.model_dump(mode="json") for item in state["photo_assets"]]},
         )
-        self.service.store.write_json(
-            refs["mapping_gaps"], {"gaps": state["mapping_gaps"]}
-        )
+        self.service.store.write_json(refs["mapping_gaps"], {"gaps": state["mapping_gaps"]})
         self.service.store.write_json(
             refs["coverage"], state["coverage_matrix"].model_dump(mode="json")
         )
         state["preparation_refs"] = refs
         state["preparation_sha256"] = {
-            name: self._sha256(self.service.workspace / ref)
-            for name, ref in refs.items()
+            name: self._sha256(self.service.workspace / ref) for name, ref in refs.items()
         }
 
     def _restore_preparation_snapshot(self, state: dict) -> None:
         refs = self._preparation_refs(state["run_id"])
-        missing = [
-            ref for ref in refs.values() if not (self.service.workspace / ref).is_file()
-        ]
+        missing = [ref for ref in refs.values() if not (self.service.workspace / ref).is_file()]
         if missing:
             raise AgentWorkflowError(
-                "resume requires a complete immutable preparation snapshot; "
-                f"missing={missing}"
+                f"resume requires a complete immutable preparation snapshot; missing={missing}"
             )
         checkpoint_path = (
-            self.service.workspace
-            / f"Work/runs/{state['run_id']}/workflow-state.json"
+            self.service.workspace / f"Work/runs/{state['run_id']}/workflow-state.json"
         )
         checkpoint = FullReportCheckpoint.model_validate_json(
             checkpoint_path.read_text(encoding="utf-8")
@@ -2147,8 +1987,7 @@ class ReportWorkflowRunner:
                 "checkpoint preparation refs do not match this run's canonical snapshot"
             )
         actual_hashes = {
-            name: self._sha256(self.service.workspace / ref)
-            for name, ref in refs.items()
+            name: self._sha256(self.service.workspace / ref) for name, ref in refs.items()
         }
         if checkpoint.preparation_sha256 != actual_hashes:
             raise AgentWorkflowError(
@@ -2169,12 +2008,9 @@ class ReportWorkflowRunner:
         ]
         photo_payload = json.loads(photo_path.read_text(encoding="utf-8"))
         state["photo_assets"] = [
-            PhotoAsset.model_validate(item)
-            for item in photo_payload.get("assets", [])
+            PhotoAsset.model_validate(item) for item in photo_payload.get("assets", [])
         ]
-        state["mapping_gaps"] = json.loads(
-            gaps_path.read_text(encoding="utf-8")
-        ).get("gaps", [])
+        state["mapping_gaps"] = json.loads(gaps_path.read_text(encoding="utf-8")).get("gaps", [])
         state["coverage_matrix"] = CoverageMatrix.model_validate_json(
             coverage_path.read_text(encoding="utf-8")
         )
@@ -2189,14 +2025,15 @@ class ReportWorkflowRunner:
         request = state["request"]
         knowledge = KnowledgeContextBuilder(self.service.workspace, state["run_id"])
         if not self._load_template_skill(state):
-            raise AgentWorkflowError("fixed template-writing Skill must exist before module dispatch")
+            raise AgentWorkflowError(
+                "fixed template-writing Skill must exist before module dispatch"
+            )
         module_knowledge = {
             module_id: knowledge.build_module(module_id) for module_id in module_ids
         }
         quality_context = knowledge.build_quality()
         state["module_knowledge_refs"] = {
-            module_id: context.path.as_posix()
-            for module_id, context in module_knowledge.items()
+            module_id: context.path.as_posix() for module_id, context in module_knowledge.items()
         }
         state["quality_context_ref"] = quality_context.path.as_posix()
         preparation_refs = state["preparation_refs"]
@@ -2234,9 +2071,7 @@ class ReportWorkflowRunner:
                 inline_context=(
                     module_knowledge[module_id].text
                     + "\n\n"
-                    + self._template_skill_context(
-                        state, "core", "analysis", "visual", "rubric"
-                    )
+                    + self._template_skill_context(state, "core", "analysis", "visual", "rubric")
                 ),
             )
             for module_id in module_ids
@@ -2383,9 +2218,7 @@ class ReportWorkflowRunner:
         """Seed a revision with untouched durable parts from its parent revision."""
         if from_revision < 0 or to_revision <= from_revision:
             return []
-        draft_base = self.service.workspace / (
-            f"Work/runs/{run_id}/drafts/module-{module_id}"
-        )
+        draft_base = self.service.workspace / (f"Work/runs/{run_id}/drafts/module-{module_id}")
         source_root = draft_base / f"r{from_revision}"
         target_root = draft_base / f"r{to_revision}"
         if not source_root.is_dir():
@@ -2405,9 +2238,7 @@ class ReportWorkflowRunner:
     ) -> ModuleSubmission:
         specialist_id = f"module-{module_id}-specialist"
         planned = next(
-            item
-            for item in state["module_dispatch"].module_tasks
-            if item.agent_id == specialist_id
+            item for item in state["module_dispatch"].module_tasks if item.agent_id == specialist_id
         )
         resumed_payload = state.get("specialist_submissions", {}).get(module_id)
         revision = resumed_payload.revision if resumed_payload is not None else 0
@@ -2433,9 +2264,7 @@ class ReportWorkflowRunner:
                     *planned.constraints,
                     *state["request"].execution_requirements,
                     f"缺失证据策略={state['request'].missing_evidence_policy}",
-                    *self._evidence_policy_constraints(
-                        state["request"].missing_evidence_policy
-                    ),
+                    *self._evidence_policy_constraints(state["request"].missing_evidence_policy),
                     *self._user_supplement_constraints(
                         state,
                         stage="module_authoring",
@@ -2456,34 +2285,24 @@ class ReportWorkflowRunner:
                 f"Work/runs/{state['run_id']}/drafts/module-{module_id}/r{revision}"
             )
             saved_parts = sorted(path.stem for path in draft_root.glob("*.md"))
-            missing_parts = sorted(
-                set(REPORT_TAXONOMY[module_id].submodules) - set(saved_parts)
-            )
+            missing_parts = sorted(set(REPORT_TAXONOMY[module_id].submodules) - set(saved_parts))
             for part_id in saved_parts:
                 part_path = draft_root / f"{part_id}.md"
                 binding_path = draft_root / "_evidence" / f"{part_id}.json"
                 binding_ready = False
                 if binding_path.is_file():
                     try:
-                        binding = json.loads(
-                            binding_path.read_text(encoding="utf-8")
-                        )
+                        binding = json.loads(binding_path.read_text(encoding="utf-8"))
                     except (OSError, ValueError):
                         binding = None
-                    binding_ready = (
-                        isinstance(binding, dict)
-                        and isinstance(binding.get("evidence_ids"), list)
+                    binding_ready = isinstance(binding, dict) and isinstance(
+                        binding.get("evidence_ids"), list
                     )
-                if (
-                    not binding_ready
-                    or "[[CLAIM:" in part_path.read_text(encoding="utf-8")
-                ):
+                if not binding_ready or "[[CLAIM:" in part_path.read_text(encoding="utf-8"):
                     rewrite_part_ids.append(part_id)
             resume_part_constraints = [
-                "这是同一 run 的恢复任务；已有正文分段="
-                + (", ".join(saved_parts) or "无"),
-                "固定 taxonomy 尚缺正文分段="
-                + (", ".join(missing_parts) or "无"),
+                "这是同一 run 的恢复任务；已有正文分段=" + (", ".join(saved_parts) or "无"),
+                "固定 taxonomy 尚缺正文分段=" + (", ".join(missing_parts) or "无"),
                 "当前协议只接收 write_result_part 保存的读者可见正文和 evidence_ids。",
                 "先调用 list_result_parts；必须重写或补绑定的 part="
                 + (", ".join(rewrite_part_ids) or "无"),
@@ -2510,42 +2329,39 @@ class ReportWorkflowRunner:
             rewrite_part_ids=rewrite_part_ids,
         )
         module_input_path = self.service.store.write_json(
-            (
-                f"Work/runs/{state['run_id']}/context/"
-                f"module-authoring-{module_id}-r{revision}.json"
-            ),
+            (f"Work/runs/{state['run_id']}/context/module-authoring-{module_id}-r{revision}.json"),
             module_input.model_dump(mode="json"),
         )
-        module_input_ref = module_input_path.relative_to(
-            self.service.workspace
-        ).as_posix()
-        envelope = TaskEnvelope.model_validate(planned.model_copy(
-            update={
-                "task_id": f"module-{module_id}",
-                "run_id": state["run_id"],
-                "agent_id": specialist_id,
-                "allowed_outputs": ["module_submission"],
-                "allowed_tools": resume_allowed_tools,
-                "target_submodule_ids": (
-                    sorted(set(rewrite_part_ids) | set(missing_parts))
-                    if state.get("resume") and saved_parts
-                    else list(REPORT_TAXONOMY[module_id].submodules)
-                ),
-                "constraints": list(
-                    dict.fromkeys([*base_constraints, *resume_part_constraints])
-                ),
-                "revision": revision,
-                "input_refs": [
-                    module_input_ref,
-                    module_input.coverage_ref,
-                    module_input.evidence_ref,
-                    module_input.manifest_ref,
-                    module_input.knowledge_ref,
-                ],
-                "input_contract_kind": "module_authoring_input",
-                "input_contract_ref": module_input_ref,
-            }
-        ).model_dump(mode="python"))
+        module_input_ref = module_input_path.relative_to(self.service.workspace).as_posix()
+        envelope = TaskEnvelope.model_validate(
+            planned.model_copy(
+                update={
+                    "task_id": f"module-{module_id}",
+                    "run_id": state["run_id"],
+                    "agent_id": specialist_id,
+                    "allowed_outputs": ["module_submission"],
+                    "allowed_tools": resume_allowed_tools,
+                    "target_submodule_ids": (
+                        sorted(set(rewrite_part_ids) | set(missing_parts))
+                        if state.get("resume") and saved_parts
+                        else list(REPORT_TAXONOMY[module_id].submodules)
+                    ),
+                    "constraints": list(
+                        dict.fromkeys([*base_constraints, *resume_part_constraints])
+                    ),
+                    "revision": revision,
+                    "input_refs": [
+                        module_input_ref,
+                        module_input.coverage_ref,
+                        module_input.evidence_ref,
+                        module_input.manifest_ref,
+                        module_input.knowledge_ref,
+                    ],
+                    "input_contract_kind": "module_authoring_input",
+                    "input_contract_ref": module_input_ref,
+                }
+            ).model_dump(mode="python")
+        )
         if resumed_payload is not None:
             payload = resumed_payload
             await self.service._notice(
@@ -2560,9 +2376,7 @@ class ReportWorkflowRunner:
                 session_key=f"specialist-{module_id}",
             )
             if not isinstance(payload, ModuleSubmission) or payload.module_id != module_id:
-                raise AgentWorkflowError(
-                    f"{specialist_id} returned the wrong module payload"
-                )
+                raise AgentWorkflowError(f"{specialist_id} returned the wrong module payload")
             payload = ModuleSubmission.model_validate(payload.model_dump(mode="python"))
             self.service.store.write_json(
                 f"Work/runs/{state['run_id']}/modules/{module_id}-r{revision}.json",
@@ -2612,14 +2426,10 @@ class ReportWorkflowRunner:
             sources=SourceLedger(self.service.workspace, state["run_id"]).records,
         )
         claim_ledger_ref = f"Work/runs/{state['run_id']}/ledgers/claims.json"
-        self.service.store.write_json(
-            claim_ledger_ref, claim_ledger.model_dump(mode="json")
-        )
+        self.service.store.write_json(claim_ledger_ref, claim_ledger.model_dump(mode="json"))
         quality_context_ref = state.get("quality_context_ref")
         if quality_context_ref is None:
-            candidate = Path(
-                f"Work/runs/{state['run_id']}/context/report-quality-criteria.md"
-            )
+            candidate = Path(f"Work/runs/{state['run_id']}/context/report-quality-criteria.md")
             if (self.service.workspace / candidate).is_file():
                 quality_context_ref = candidate.as_posix()
         self._load_template_skill(state)
@@ -2631,13 +2441,10 @@ class ReportWorkflowRunner:
         editor_input = ChiefEditorInput(
             run_id=state["run_id"],
             approved_module_markers={
-                module_id: f"[[APPROVED_MODULE:{module_id}]]"
-                for module_id in REPORT_MODULE_IDS
+                module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_MODULE_IDS
             },
             modules={
-                module_id: module_content_view(
-                    state["module_submissions"][module_id]
-                )
+                module_id: module_content_view(state["module_submissions"][module_id])
                 for module_id in REPORT_MODULE_IDS
             },
             cross_synthesis_inputs=state["cross_synthesis_inputs"],
@@ -2647,9 +2454,7 @@ class ReportWorkflowRunner:
             f"Work/runs/{state['run_id']}/context/chief-editor-input.json",
             editor_input.model_dump(mode="json"),
         )
-        editor_input_ref = editor_input_path.relative_to(
-            self.service.workspace
-        ).as_posix()
+        editor_input_ref = editor_input_path.relative_to(self.service.workspace).as_posix()
         envelope = TaskEnvelope(
             task_id="chief-edit",
             run_id=state["run_id"],
@@ -2732,18 +2537,10 @@ class ReportWorkflowRunner:
         state["editor_quality_observations"] = validate_editor_quality(
             payload, state["module_submissions"]
         )
-        candidate_ref = (
-            f"Work/runs/{state['run_id']}/edited-revisions/chief-r0.json"
-        )
-        envelope_ref = (
-            f"Work/runs/{state['run_id']}/context/chief-editor-envelope.json"
-        )
-        self.service.store.write_json(
-            candidate_ref, payload.model_dump(mode="json")
-        )
-        self.service.store.write_json(
-            envelope_ref, envelope.model_dump(mode="json")
-        )
+        candidate_ref = f"Work/runs/{state['run_id']}/edited-revisions/chief-r0.json"
+        envelope_ref = f"Work/runs/{state['run_id']}/context/chief-editor-envelope.json"
+        self.service.store.write_json(candidate_ref, payload.model_dump(mode="json"))
+        self.service.store.write_json(envelope_ref, envelope.model_dump(mode="json"))
         state["edited_report"] = payload
         state["chief_editor_envelope"] = envelope
         state["chief_editor_session_key"] = "chief-editor"
@@ -2760,10 +2557,7 @@ class ReportWorkflowRunner:
             "1.1": edited.assessment_background,
             "1.2": edited.findings_overview,
             "1.3": edited.regional_executive_summary,
-            **{
-                module_id: edited.module_narratives[module_id]
-                for module_id in REPORT_MODULE_IDS
-            },
+            **{module_id: edited.module_narratives[module_id] for module_id in REPORT_MODULE_IDS},
             "3.1.1": edited.risk_panorama,
             "3.1.2": edited.dimension_risk_analysis,
             "3.1.3": edited.cross_module_analysis,
@@ -2855,9 +2649,7 @@ class ReportWorkflowRunner:
             f"Work/runs/{state['run_id']}/reviews/module-quality-"
             f"{module.module_id}-r{module.revision}-{phase}.json"
         )
-        canonical = compose_module_markdown(
-            module.module_id, module.submodule_narratives
-        )
+        canonical = compose_module_markdown(module.module_id, module.submodule_narratives)
         failure: ValidationFailure | None = None
         if module.markdown.strip() != canonical.strip():
             failure = ValidationFailure(
@@ -2865,21 +2657,17 @@ class ReportWorkflowRunner:
                 target_path="submodule_narratives",
                 message="rendered module Markdown differs from canonical narratives",
             )
-        shallow_signals = find_shallow_submodules(
-            {module.module_id: module}
-        )
+        shallow_signals = find_shallow_submodules({module.module_id: module})
         report = ValidationReport(
             run_id=state["run_id"],
             subject_ref=(
-                f"Work/runs/{state['run_id']}/modules/"
-                f"{module.module_id}-r{module.revision}.json"
+                f"Work/runs/{state['run_id']}/modules/{module.module_id}-r{module.revision}.json"
             ),
             validator="module-structure/v1",
             check_ids=["module.canonical_markdown"],
             failures=[failure] if failure else [],
             observations=[
-                f"possible_shallow_submodule:{submodule_id}"
-                for submodule_id in shallow_signals
+                f"possible_shallow_submodule:{submodule_id}" for submodule_id in shallow_signals
             ],
             passed=failure is None,
         )
@@ -2889,8 +2677,7 @@ class ReportWorkflowRunner:
         )
         if failure is not None:
             raise AgentWorkflowError(
-                f"模块 {module.module_id} 确定性完整性校验未通过："
-                f"{failure.message}"
+                f"模块 {module.module_id} 确定性完整性校验未通过：{failure.message}"
             )
         return validation_ref
 
@@ -2903,9 +2690,7 @@ class ReportWorkflowRunner:
             path = self.service.workspace / f"Outputs/Modules/{module_id}.md"
             exported[module_id] = path.read_text(encoding="utf-8") if path.is_file() else ""
         validation_ref = f"Work/runs/{state['run_id']}/reviews/module-export-integrity-{phase}.json"
-        subject_ref = (
-            f"Work/runs/{state['run_id']}/context/module-export-set-{phase}.json"
-        )
+        subject_ref = f"Work/runs/{state['run_id']}/context/module-export-set-{phase}.json"
         self.service.store.write_json(
             subject_ref,
             {
@@ -2917,8 +2702,7 @@ class ReportWorkflowRunner:
                     for module_id in REPORT_MODULE_IDS
                 },
                 "export_refs": {
-                    module_id: f"Outputs/Modules/{module_id}.md"
-                    for module_id in REPORT_MODULE_IDS
+                    module_id: f"Outputs/Modules/{module_id}.md" for module_id in REPORT_MODULE_IDS
                 },
             },
         )
@@ -2963,9 +2747,7 @@ class ReportWorkflowRunner:
         """Audit every fixed chapter after aggregation and before rendering."""
 
         validation_ref = f"Work/runs/{state['run_id']}/reviews/report-integrity-{phase}.json"
-        subject_ref = (
-            f"Work/runs/{state['run_id']}/validation/report-{phase}.md"
-        )
+        subject_ref = f"Work/runs/{state['run_id']}/validation/report-{phase}.md"
         self.service.store.write_text(subject_ref, markdown)
         try:
             signals = validate_final_report_markdown(markdown)
@@ -3008,9 +2790,7 @@ class ReportWorkflowRunner:
         )
 
     def _deliver(self, state: dict) -> None:
-        if (
-            "final_review_completion_ref" not in state
-        ):
+        if "final_review_completion_ref" not in state:
             raise AgentWorkflowError(
                 "delivery requires an independent final review completion record"
             )
@@ -3091,8 +2871,7 @@ class ReportWorkflowRunner:
         )
         selected_template, template_source = self.service.resolve_report_template()
         template_snapshot = (
-            self.service.workspace
-            / f"Work/runs/{state['run_id']}/templates/report_template.docx"
+            self.service.workspace / f"Work/runs/{state['run_id']}/templates/report_template.docx"
         )
         template_snapshot.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(selected_template, template_snapshot)
@@ -3107,9 +2886,7 @@ class ReportWorkflowRunner:
             {
                 "source": template_source,
                 "selected_path": selected_template_ref,
-                "snapshot_path": template_snapshot.relative_to(
-                    self.service.workspace
-                ).as_posix(),
+                "snapshot_path": template_snapshot.relative_to(self.service.workspace).as_posix(),
                 "sha256": template_sha256,
             },
         )
@@ -3223,21 +3000,15 @@ class ReportWorkflowRunner:
                     },
                     "edited_submission": edited_submission_path.relative_to(self.service.workspace),
                     "canonical_markdown": markdown_path.relative_to(self.service.workspace),
-                    "render_request": Path(
-                        f"Work/runs/{state['run_id']}/render-request.json"
-                    ),
+                    "render_request": Path(f"Work/runs/{state['run_id']}/render-request.json"),
                     "render_result": render_result_ref,
                     "handoff_contracts": Path(
                         f"Work/runs/{state['run_id']}/handoff-contracts.json"
                     ),
-                    "final_review_completion": Path(
-                        state["final_review_completion_ref"]
-                    ),
+                    "final_review_completion": Path(state["final_review_completion_ref"]),
                     **(
                         {
-                            "cross_review_completion": Path(
-                                state["cross_review_completion_ref"]
-                            ),
+                            "cross_review_completion": Path(state["cross_review_completion_ref"]),
                         }
                         if state.get("cross_review_completion_ref")
                         else {}
@@ -3264,9 +3035,7 @@ class ReportWorkflowRunner:
         state["report_version"] = version
         state["output_artifacts"] = self._delivery_output_artifacts(
             final_review_ref=state["final_review_completion_ref"],
-            delivery_manifest_ref=receipt.manifest_path.relative_to(
-                self.service.workspace
-            ),
+            delivery_manifest_ref=receipt.manifest_path.relative_to(self.service.workspace),
         )
         completion_ref = f"Work/runs/{state['run_id']}/delivery-completion.json"
         self.service.store.write_json(
@@ -3274,13 +3043,10 @@ class ReportWorkflowRunner:
             {
                 "run_id": state["run_id"],
                 "status": "completed",
-                "delivery_receipt_ref": receipt_path.relative_to(
-                    self.service.workspace
-                ).as_posix(),
+                "delivery_receipt_ref": receipt_path.relative_to(self.service.workspace).as_posix(),
                 "report_version_id": version.version_id,
                 "output_artifacts": [
-                    artifact.model_dump(mode="json")
-                    for artifact in state["output_artifacts"]
+                    artifact.model_dump(mode="json") for artifact in state["output_artifacts"]
                 ],
             },
         )
@@ -3308,9 +3074,7 @@ class ReportWorkflowRunner:
                 for module_id in REPORT_MODULE_IDS
             ),
             OutputArtifact(kind="review", path=Path(final_review_ref)),
-            OutputArtifact(
-                kind="report", path=Path("Outputs/Reports/配电安全专家咨询报告.md")
-            ),
+            OutputArtifact(kind="report", path=Path("Outputs/Reports/配电安全专家咨询报告.md")),
             OutputArtifact(kind="report", path=Path("Outputs/Reports/配电安全专家咨询报告.docx")),
             OutputArtifact(
                 kind="run",
@@ -3347,9 +3111,7 @@ class ReportWorkflowRunner:
             "",
             "### 1.3 各区域执行摘要",
             "",
-            section_body(
-                edited.regional_executive_summary
-            ),
+            section_body(edited.regional_executive_summary),
             "",
             "## 2. 评估内容描述",
         ]
@@ -3396,27 +3158,19 @@ class ReportWorkflowRunner:
                 "",
                 "### 4.1 新工厂建厂时规划建议",
                 "",
-                section_body(
-                    edited.new_factory_planning
-                ),
+                section_body(edited.new_factory_planning),
                 "",
                 "### 4.2 增容建议",
                 "",
-                section_body(
-                    edited.capacity_expansion_plan
-                ),
+                section_body(edited.capacity_expansion_plan),
                 "",
                 "### 4.3 日常用电管理建议",
                 "",
-                section_body(
-                    edited.daily_power_management
-                ),
+                section_body(edited.daily_power_management),
                 "",
                 "### 4.4 应急管理及合规性管理建议",
                 "",
-                section_body(
-                    edited.emergency_compliance_management
-                ),
+                section_body(edited.emergency_compliance_management),
                 "",
             ]
         )
