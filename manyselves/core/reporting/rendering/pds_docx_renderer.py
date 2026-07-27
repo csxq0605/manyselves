@@ -535,12 +535,17 @@ class PdsDocxRenderer:
             raise ValueError("rendered file is not Word/WPS-openable") from exc
         def semantic_text(value: str) -> str:
             value = value.strip()
+            # Remove inline Markdown before recognizing numbered/list prefixes.
+            # A protected line such as ``**1. 风险标题**`` is rendered as a
+            # numbered paragraph without the literal ``1.``.  Stripping the
+            # Markdown later leaves the source-side number behind and produces
+            # a false omission.
+            value = value.replace("**", "").replace("__", "").replace("`", "")
             value = re.sub(r"^#{1,6}\s*", "", value)
             value = re.sub(r"^>\s*", "", value)
             value = re.sub(r"^[•·]\s*", "", value)
             value = re.sub(r"^\d+\.\s+", "", value)
             value = re.sub(r"^(\d+(?:\.\d+)+)\.\s+", r"\1 ", value)
-            value = value.replace("**", "").replace("__", "").replace("`", "")
             value = re.sub(r"\[\[CLAIM:C-[^\]\s]+\]\]", "", value)
             value = re.sub(r"【([^】]+)】[:：]?", r"\1：", value)
             value = re.sub(r"\s*([：:])\s*", r"\1", value)

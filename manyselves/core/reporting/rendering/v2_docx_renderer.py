@@ -3316,7 +3316,10 @@ def clean_inline_marks(line: Any) -> str:
 def clean_bullet_item_text(value: Any) -> str:
     text = clean_inline_marks(value)
     text = re.sub(r"^[-*•➢]\s*", "", text).strip()
-    text = re.sub(r"^\d+\s*[.．、）)]\s*", "", text).strip()
+    # Only remove a real numbered-list marker.  Requiring whitespace after the
+    # delimiter preserves dotted section references such as ``2.2.2.1节`` at
+    # the start of a bullet instead of corrupting them to ``2.2.1节``.
+    text = re.sub(r"^\d+\s*[.．、）)]\s+", "", text).strip()
     return text
 
 

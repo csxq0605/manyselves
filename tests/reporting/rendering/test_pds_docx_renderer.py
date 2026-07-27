@@ -42,7 +42,7 @@ def _style_east_asia_font(style) -> str | None:
 def test_packaged_v2_core_matches_normalized_handoff_source() -> None:
     core = PackagedV2DocxCore(Path("unused-template.docx"))
     assert hashlib.sha256(core.source_path.read_bytes()).hexdigest() == (
-        "25798c35d270a2bfffa584b7a42918e50a44bcdfb73f9f9dfea785125de04fd2"
+        "22c71518733e243dae4f13a9858bfb05ffad17b6b7579242d328a2b825dac59e"
     )
 
 
@@ -205,6 +205,27 @@ def test_packaged_v2_core_uses_real_word_numbering_for_lists(tmp_path: Path) -> 
     assert 'w:startOverride w:val="3"' in numbering_xml
 
 
+def test_packaged_v2_core_preserves_dotted_section_references_in_bullets(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.docx"
+    Document().save(template)
+    markdown = """# 配电安全评估报告
+
+## 3. 改善建议
+
+- 2.2.2.1节红外热缺陷：整改后复测；
+- 2.3.2节/2.4.3.1节剩余电流异常：排查后复测。
+"""
+
+    _, data = PackagedV2DocxCore(template).render_approved_prose(markdown)
+
+    rendered = Document(io.BytesIO(data))
+    visible = {paragraph.text for paragraph in rendered.paragraphs}
+    assert "2.2.2.1节红外热缺陷：整改后复测；" in visible
+    assert "2.3.2节/2.4.3.1节剩余电流异常：排查后复测。" in visible
+
+
 def test_packaged_v2_core_constrains_table_geometry_to_page_body(tmp_path: Path) -> None:
     template = tmp_path / "template.docx"
     template_document = Document()
@@ -360,6 +381,35 @@ def test_renderer_uses_handoff_core_preserves_prose_and_adds_superscript_index_t
     second = renderer.render(_approved_report(photo), second_output)
     assert second.output_sha256 == result.output_sha256
     assert second_output.read_bytes() == output.read_bytes()
+
+
+def test_renderer_verifies_bold_numbered_protected_prose_after_v2_rendering(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.docx"
+    Document().save(template)
+    photo = tmp_path / "photo.png"
+    from PIL import Image
+
+    Image.new("RGB", (30, 20), color="red").save(photo)
+    report = _approved_report(photo).model_copy(
+        update={
+            "risk_panorama": (
+                "**1. 谐波环境下电容器组的并联谐振与过电流风险**\n\n"
+                "该风险标题及正文必须完整保留。"
+            )
+        }
+    )
+    output = tmp_path / "final.docx"
+
+    result = PdsDocxRenderer(PackagedV2DocxCore(template)).render(report, output)
+
+    assert result.protected_prose_verified is True
+    visible = "\n".join(
+        paragraph.text for paragraph in Document(output).paragraphs
+    )
+    assert "谐波环境下电容器组的并联谐振与过电流风险" in visible
+    assert "该风险标题及正文必须完整保留。" in visible
 
 
 def test_renderer_accepts_the_exact_citation_bound_delivery_markdown(
