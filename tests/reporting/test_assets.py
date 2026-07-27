@@ -6,6 +6,7 @@ from manyselves.core.reporting.agentic_models import (
     ClaimRecord,
     EditedReportSubmission,
     ModuleSubmission,
+    SynthesisTableSubmission,
     TableSubmission,
 )
 from manyselves.core.reporting.assets import (
@@ -394,11 +395,25 @@ def test_asset_assembler_builds_traceable_table_and_photo(tmp_path: Path) -> Non
                 claim_ids=[claim.id],
             )
         ],
+        synthesis_tables=[
+            SynthesisTableSubmission(
+                table_type="risk_cluster_matrix",
+                title="系统风险簇矩阵",
+                headers=["风险簇", "联合影响"],
+                rows=[["连接与保护边界", "可能扩大停电范围"]],
+                synthesis_input_ids=["SI-001"],
+                row_synthesis_input_ids=[["SI-001"]],
+                source_ids=["E-0001"],
+                claim_ids=[claim.id],
+            )
+        ],
     )
 
     tables, photos = ReportAssetAssembler(tmp_path).build([evidence], [asset], [claim], edited)
 
     assert tables[0].source_ids == ["E-0001"]
+    assert tables[1].title == "系统风险簇矩阵"
+    assert tables[1].claim_ids == [claim.id]
     assert photos[0].path == photo_path
     assert photos[0].source_id == "E-0001"
     assert photos[0].claim_ids == [claim.id]

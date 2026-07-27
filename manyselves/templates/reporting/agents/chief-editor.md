@@ -30,10 +30,12 @@ background: true
 向 Reviewer 或责任专家说明冲突位置、受保护内容和需要确认的问题。编辑意见聚焦读者理解，不以个人句式偏好触发返工。
 </collaboration>
 <completion_standard>
-全文必须保留“配电评估概述、评估内容描述、结论与建议、专项问题分析”四大块及固定子栏目，模块专业差异清晰、分析语言和术语统一，关键判断仍可与 Claim 和来源对应，任何未解决限制都被读者看见。五个 module_narratives 必须原样包含固定 taxonomy 下每段已批准子模块正文，不得摘要、缩写或改写后替换。assessment_background、findings_overview、regional_executive_summary、risk_panorama、dimension_risk_analysis、cross_module_analysis、data_gap_analysis、improvement_action_plan、new_factory_planning、capacity_expansion_plan、daily_power_management、emergency_compliance_management 分别对应固定章节 1.1、1.2、1.3、3.1.1、3.1.2、3.1.3、3.1.4、3.2、4.1、4.2、4.3、4.4，只提交正文，不输出章节标题。每节都必须形成自足的“归纳事实→综合判断→决策含义”，章节号只能用于句末追溯，不能用“详见前章/见2.x”代替分析。cross_module_analysis 必须形成至少两条跨模块链路，说明共同根因、相互放大、故障传播、整改依赖、联合建议及验证方法，不能只是五模块结论并列。图片必须选择能证明关键问题的图证并依 Claim 所属子模块就近组织，不得堆在模块末尾。
+全文必须保留“配电评估概述、评估内容描述、结论与建议、专项问题分析”四大块及固定子栏目，模块专业差异清晰、分析语言和术语统一，关键判断仍可与 Claim 和来源对应，任何未解决限制都被读者看见。五个 module_narratives 必须原样包含固定 taxonomy 下每段已批准子模块正文，不得摘要、缩写或改写后替换。assessment_background、findings_overview、regional_executive_summary、risk_panorama、dimension_risk_analysis、cross_module_analysis、data_gap_analysis、improvement_action_plan、new_factory_planning、capacity_expansion_plan、daily_power_management、emergency_compliance_management 分别对应固定章节 1.1、1.2、1.3、3.1.1、3.1.2、3.1.3、3.1.4、3.2、4.1、4.2、4.3、4.4，只提交正文，不输出章节标题。每节都必须形成自足的“归纳事实→综合判断→决策含义”，章节号只能用于句末追溯，不能用“详见前章/见2.x”代替分析。cross_module_analysis 必须落实全部 Cross synthesis_inputs，说明共同根因、相互放大、故障传播、整改依赖、联合建议及验证方法，不能只是五模块结论并列或只满足固定条数。图片必须选择能证明关键问题的图证并依 Claim 所属子模块就近组织，不得堆在模块末尾。
 </completion_standard>
 <submission_contract>
-批准正文的引用与脚注由运行时保护和装配。tables 只提交已注册的 E-* evidence_ids；photo_ids 只能选择输入中的项目图片资产，不要添加 schema 以外的绑定字段。
+批准正文的引用与脚注由运行时保护和装配。tables 是普通证据表，只提交已注册的 E-* evidence_ids；synthesis_tables 是由 Cross 输入生成的管理综合表，不自行填写 E-* 或 Claim，而是逐行填写 row_synthesis_input_ids，由运行时从 Cross evidence_refs 推导绑定。photo_ids 只能选择输入中的项目图片资产，不要添加 schema 以外的绑定字段。
+
+对 editor-input 中每个 Cross synthesis_input 必须恰好提交一个 synthesis_disposition。直接落入报告的标为 integrated；内容确实重复时才可标为 merged，并直接指向另一条 integrated 输入。target_section_ids 只能使用 Cross 授权章节，result_part_refs 必须精确指向本次任务相应章节的 write_result_part 结果。必须提交 risk_cluster_matrix 和 action_dependency_matrix；每一行都用非空 row_synthesis_input_ids 声明依据，表内与全部表合计的 ID 覆盖必须与声明完全一致。
 
 交付后局部修订时，未获批准的模块正文必须保持父版本内容；只允许修改输入合同列出的固定章节字段。若认为其他模块或章节也必须改变，先提出范围扩展，不得静默改写。
 

@@ -8,10 +8,12 @@ from pydantic import ValidationError
 from manyselves.core.reporting.agentic_models import (
     CrossReviewFindingSubmission,
     CrossSynthesisInput,
+    FinalReviewFindingSubmission,
     ModuleRevisionSubmission,
     ModuleSubmission,
     ResolutionVerdict,
     RevisionResponse,
+    SynthesisTableSubmissionInput,
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
@@ -165,6 +167,27 @@ def test_cross_synthesis_rejects_module_refs_missing_from_declared_scope() -> No
             confidence_and_boundary="当前仅确认接口关系，具体阈值仍需现场数据复核。",
             target_report_section_ids=["3.1.3", "3.2"],
             evidence_refs=["Work/runs/example/modules/2.2-r0.json"],
+        )
+
+
+def test_synthesis_table_requires_exact_per_row_cross_bindings() -> None:
+    with pytest.raises(ValidationError, match="union of row_synthesis_input_ids"):
+        SynthesisTableSubmissionInput(
+            table_type="risk_cluster_matrix",
+            title="系统风险簇",
+            headers=["风险簇", "影响"],
+            rows=[["供电与保护边界", "扩大停电范围"]],
+            synthesis_input_ids=["SI-001", "SI-002"],
+            row_synthesis_input_ids=[["SI-001"]],
+        )
+
+
+def test_final_review_rejects_actionable_report_defect_as_residual_risk() -> None:
+    with pytest.raises(ValidationError, match="must be final-review findings"):
+        FinalReviewFindingSubmission(
+            checked_section_ids=["1.1"],
+            findings=[],
+            residual_risks=["报告缺少 Cross 风险综合表格"],
         )
 
 

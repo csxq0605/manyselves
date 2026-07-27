@@ -37,6 +37,7 @@ from ..reporting.agentic_models import (
     ModuleRevisionSubmissionInput,
     ModuleSubmission,
     ModuleSubmissionInput,
+    SynthesisTableSubmission,
     TemplateSkillSubmission,
     TableSubmission,
     WorkflowDecisionSubmission,
@@ -518,6 +519,231 @@ class SubmitResultTool(_ResultTool):
                 )
             )
 
+        synthesis_inputs = (
+            contract.cross_synthesis_inputs
+            if isinstance(contract, (ChiefEditorInput, ChiefRevisionInput))
+            else []
+        )
+        synthesis_by_id = {item.id: item for item in synthesis_inputs}
+        expected_synthesis_ids = set(synthesis_by_id)
+        section_fields = {
+            "3.1.1": "risk_panorama",
+            "3.1.2": "dimension_risk_analysis",
+            "3.1.3": "cross_module_analysis",
+            "3.2": "improvement_action_plan",
+        }
+        raw_dispositions = materialized.get("synthesis_dispositions", [])
+        preserving_synthesis_dispositions = False
+        if not isinstance(raw_dispositions, list):
+            raise SubmissionValidationError(
+                "synthesis_dispositions must be a list",
+                field="synthesis_dispositions",
+                expected="one disposition for every Cross synthesis input",
+                received=raw_dispositions,
+            )
+        disposition_ids = [
+            item.get("synthesis_input_id")
+            for item in raw_dispositions
+            if isinstance(item, dict)
+        ]
+        if len(disposition_ids) != len(raw_dispositions):
+            raise SubmissionValidationError(
+                "every synthesis disposition must be an object with synthesis_input_id",
+                field="synthesis_dispositions",
+                received=raw_dispositions,
+            )
+        if isinstance(contract, ChiefRevisionInput) and not raw_dispositions:
+            if expected_synthesis_ids and (
+                set(contract.target_section_ids) & set(section_fields)
+            ):
+                raise SubmissionValidationError(
+                    "a synthesis-section revision must resubmit current dispositions",
+                    field="synthesis_dispositions",
+                    expected="one current-task disposition per Cross synthesis input",
+                    received=[],
+                )
+            subject = self._chief_revision_subject(contract)
+            materialized["synthesis_dispositions"] = [
+                item.model_dump(mode="python")
+                for item in subject.synthesis_dispositions
+            ]
+            preserving_synthesis_dispositions = True
+            disposition_ids = [
+                item.synthesis_input_id for item in subject.synthesis_dispositions
+            ]
+        if (
+            len(disposition_ids) != len(set(disposition_ids))
+            or set(disposition_ids) != expected_synthesis_ids
+        ):
+            raise SubmissionValidationError(
+                "chief synthesis dispositions must cover every Cross input exactly once",
+                field="synthesis_dispositions.synthesis_input_id",
+                expected=sorted(expected_synthesis_ids),
+                received=disposition_ids,
+            )
+        draft_root = (
+            Path("Work/runs")
+            / self.run_id
+            / "drafts"
+            / self.task_id
+            / f"r{self.revision}"
+        )
+        for index, raw in enumerate(materialized["synthesis_dispositions"]):
+            if not isinstance(raw, dict):
+                continue
+            synthesis_id = raw.get("synthesis_input_id")
+            target_sections = raw.get("target_section_ids", [])
+            if synthesis_id in synthesis_by_id and not set(target_sections).issubset(
+                set(synthesis_by_id[synthesis_id].target_report_section_ids)
+            ):
+                raise SubmissionValidationError(
+                    "synthesis disposition targets a section not authorized by Cross",
+                    field=f"synthesis_dispositions.{index}.target_section_ids",
+                    expected=synthesis_by_id[
+                        synthesis_id
+                    ].target_report_section_ids,
+                    received=target_sections,
+                )
+            refs = raw.get("result_part_refs", [])
+            expected_parts = {
+                section_fields[section_id]
+                for section_id in target_sections
+                if section_id in section_fields
+            }
+            actual_parts: set[str] = set()
+            for ref in refs:
+                if not isinstance(ref, str):
+                    continue
+                if preserving_synthesis_dispositions:
+                    actual_parts.add(Path(ref).stem)
+                    continue
+                path = Path(ref)
+                if path.parent != draft_root or path.suffix != ".md":
+                    raise SubmissionValidationError(
+                        "synthesis disposition uses a result part outside the active chief task",
+                        field=f"synthesis_dispositions.{index}.result_part_refs",
+                        expected=str(draft_root / "<section-part>.md"),
+                        received=refs,
+                    )
+                actual_parts.add(path.stem)
+            if actual_parts != expected_parts:
+                raise SubmissionValidationError(
+                    "synthesis disposition result parts do not match target sections",
+                    field=f"synthesis_dispositions.{index}.result_part_refs",
+                    expected=sorted(expected_parts),
+                    received=sorted(actual_parts),
+                )
+            merged_into = set(raw.get("merged_into_ids", []))
+            unknown_merged = sorted(merged_into - expected_synthesis_ids)
+            if unknown_merged:
+                raise SubmissionValidationError(
+                    "merged disposition references unknown synthesis ids",
+                    field=f"synthesis_dispositions.{index}.merged_into_ids",
+                    expected=sorted(expected_synthesis_ids),
+                    received=sorted(merged_into),
+                )
+
+        raw_synthesis_tables = materialized.pop("synthesis_tables", [])
+        if not isinstance(raw_synthesis_tables, list):
+            raise SubmissionValidationError(
+                "synthesis_tables must be a list",
+                field="synthesis_tables",
+                received=raw_synthesis_tables,
+            )
+        if isinstance(contract, ChiefRevisionInput) and not raw_synthesis_tables:
+            subject = self._chief_revision_subject(contract)
+            synthesis_tables = list(subject.synthesis_tables)
+        else:
+            synthesis_tables: list[SynthesisTableSubmission] = []
+            for index, raw_table in enumerate(raw_synthesis_tables):
+                if not isinstance(raw_table, dict):
+                    raise SubmissionValidationError(
+                        "synthesis table must be an object",
+                        field=f"synthesis_tables.{index}",
+                        received=raw_table,
+                    )
+                input_ids = list(raw_table.get("synthesis_input_ids", []))
+                row_input_ids = raw_table.get("row_synthesis_input_ids", [])
+                referenced_input_ids = {
+                    input_id
+                    for row_ids in row_input_ids
+                    if isinstance(row_ids, list)
+                    for input_id in row_ids
+                    if isinstance(input_id, str)
+                }
+                unknown = sorted(
+                    (set(input_ids) | referenced_input_ids) - expected_synthesis_ids
+                )
+                if unknown:
+                    raise SubmissionValidationError(
+                        "synthesis table references unknown Cross inputs",
+                        field=f"synthesis_tables.{index}.synthesis_input_ids",
+                        expected=sorted(expected_synthesis_ids),
+                        received=input_ids,
+                    )
+                source_ids = sorted(
+                    {
+                        ref
+                        for input_id in input_ids
+                        for ref in synthesis_by_id[input_id].evidence_refs
+                        if ref.startswith("E-")
+                    }
+                )
+                unknown_sources = sorted(set(source_ids) - known_evidence)
+                if unknown_sources:
+                    raise SubmissionValidationError(
+                        "synthesis table uses unregistered Cross evidence",
+                        field=f"synthesis_tables.{index}.synthesis_input_ids",
+                        expected=sorted(known_evidence),
+                        received=unknown_sources,
+                    )
+                claim_ids = sorted(
+                    claim.id
+                    for claim in claims
+                    if set(claim.source_ids) & set(source_ids)
+                )
+                if not source_ids or not claim_ids:
+                    raise SubmissionValidationError(
+                        "synthesis table Cross inputs require E-* evidence linked to approved Claims",
+                        field=f"synthesis_tables.{index}.synthesis_input_ids",
+                        expected="Cross inputs whose evidence_refs include approved E-* ids",
+                        received=input_ids,
+                    )
+                synthesis_tables.append(
+                    SynthesisTableSubmission.model_validate(
+                        {
+                            **raw_table,
+                            "claim_ids": claim_ids,
+                            "source_ids": source_ids,
+                        }
+                    )
+                )
+        if expected_synthesis_ids:
+            table_types = {table.table_type for table in synthesis_tables}
+            required_types = {
+                "risk_cluster_matrix",
+                "action_dependency_matrix",
+            }
+            if not required_types.issubset(table_types):
+                raise SubmissionValidationError(
+                    "chief report requires risk-cluster and action-dependency synthesis tables",
+                    field="synthesis_tables.table_type",
+                    expected=sorted(required_types),
+                    received=sorted(table_types),
+                )
+            covered_ids = {
+                input_id
+                for table in synthesis_tables
+                for input_id in table.synthesis_input_ids
+            }
+            if covered_ids != expected_synthesis_ids:
+                raise SubmissionValidationError(
+                    "synthesis tables must collectively cover every Cross input",
+                    field="synthesis_tables.synthesis_input_ids",
+                    expected=sorted(expected_synthesis_ids),
+                    received=sorted(covered_ids),
+                )
+
         if isinstance(contract, ChiefRevisionInput):
             subject = self._chief_revision_subject(contract)
             protected_claim_ids = list(subject.protected_claim_ids)
@@ -531,6 +757,9 @@ class SubmitResultTool(_ResultTool):
                 **materialized,
                 "protected_claim_ids": protected_claim_ids,
                 "tables": [table.model_dump(mode="python") for table in tables],
+                "synthesis_tables": [
+                    table.model_dump(mode="python") for table in synthesis_tables
+                ],
             }
         )
 
@@ -584,6 +813,8 @@ class SubmitResultTool(_ResultTool):
         path: tuple[str | int, ...] = (),
     ):
         if isinstance(value, str):
+            if "result_part_refs" in path:
+                return value
             if self._looks_like_text_artifact_ref(value):
                 return self._read_text_artifact_refs(
                     [value], separator="\n\n", path=path
@@ -1547,6 +1778,26 @@ class SubmitResultTool(_ResultTool):
                         for entry in payload.coverage
                     ],
                 )
+            known_evidence = {
+                source.id
+                for source in SourceLedger(self.store.workspace, self.run_id).records
+                if source.id.startswith("E-")
+            }
+            unknown_evidence = sorted(
+                {
+                    ref
+                    for synthesis in payload.synthesis_inputs
+                    for ref in synthesis.evidence_refs
+                    if ref.startswith("E-") and ref not in known_evidence
+                }
+            )
+            if unknown_evidence:
+                raise SubmissionValidationError(
+                    "Cross synthesis uses unregistered project evidence",
+                    field="synthesis_inputs.evidence_refs",
+                    expected=sorted(known_evidence),
+                    received=unknown_evidence,
+                )
             return
         if isinstance(contract, FinalReviewInput):
             required_sections = set(contract.required_section_ids)
@@ -1668,6 +1919,15 @@ class SubmitResultTool(_ResultTool):
                 "photo_ids",
                 "unresolved_editorial_issues",
             }
+            if not set(contract.target_section_ids) & {
+                "3.1.1",
+                "3.1.2",
+                "3.1.3",
+                "3.2",
+            }:
+                protected_fields.update(
+                    {"synthesis_dispositions", "synthesis_tables"}
+                )
             unexpected_fields = sorted(
                 field
                 for field in protected_fields

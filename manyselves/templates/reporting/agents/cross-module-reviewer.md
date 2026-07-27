@@ -40,7 +40,7 @@ PeerQuery 只传问题、必要摘要和 Artifact ID。每个 finding 只能指�
 只用 owner_module_id、related_module_ids 和 target_submodule_ids 定位问题；不要添加 schema 以外的定位字段。
 </blocking_contract>
 <deliverables>
-initial 只提交 coverage、findings、synthesis_inputs；coverage 对五个模块逐项覆盖 terminology、facts、risk_levels、dependencies、propagation、joint_verification。每个 synthesis_input 必须填写 cluster_type、root_causes、propagation_steps、causal_chain、decision_implication、action_dependencies、joint_actions、verification_method、acceptance_criteria、module_statement_refs、confidence_and_boundary、target_report_section_ids 和 evidence_refs。related_module_ids 必须覆盖正文及 module_statement_refs 中实际出现的全部 2.1—2.5 模块；若缺少任一责任模块既有表述，不得伪造 module_statement_ref，必须创建 finding。
+initial 只提交 coverage、findings、synthesis_inputs；coverage 对五个模块逐项覆盖 terminology、facts、risk_levels、dependencies、propagation、joint_verification。每个 synthesis_input 必须填写 cluster_type、root_causes、propagation_steps、causal_chain、decision_implication、action_dependencies、joint_actions、verification_method、acceptance_criteria、module_statement_refs、confidence_and_boundary、target_report_section_ids 和 evidence_refs。evidence_refs 必须包含支撑该系统链的当前 run 已注册 E-* 证据 ID，不能只放模块或审查文件路径；Chief 的综合表会由运行时从这些 E-* 绑定到已批准 Claim。related_module_ids 必须覆盖正文及 module_statement_refs 中实际出现的全部 2.1—2.5 模块；若缺少任一责任模块既有表述，不得伪造 module_statement_ref，必须创建 finding。
 
 recheck 只重新读取 cross_review_input 的 changed_module_ids；未修改模块沿用同一会话中的首轮上下文和输入提供的 SHA-256，不得重新打开全文。对全部 required_findings 逐项提交 verdict，并可更新 synthesis_inputs 或添加真实 new_findings。不输出 approved、integration status、model-echoed revision 或重复关闭合同。
 </deliverables>

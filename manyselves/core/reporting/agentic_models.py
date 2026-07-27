@@ -789,7 +789,10 @@ class CrossSynthesisInput(StrictModel):
     )
     evidence_refs: list[str] = Field(
         min_length=1,
-        description="Reviewed Claim, module, or source refs supporting the synthesis input.",
+        description=(
+            "Reviewed module/source refs supporting the synthesis input, including at "
+            "least one registered current-run E-* project-evidence id."
+        ),
     )
 
     @model_validator(mode="after")
@@ -827,6 +830,10 @@ class CrossSynthesisInput(StrictModel):
             raise ValueError(
                 "module_statement_refs must cover every related module: "
                 f"{missing_statements}"
+            )
+        if not any(ref.startswith("E-") for ref in self.evidence_refs):
+            raise ValueError(
+                "Cross synthesis input requires at least one E-* evidence ref"
             )
         return self
 
@@ -986,6 +993,7 @@ class FinalReviewFindingSubmission(StrictModel):
         ids = [finding.id for finding in self.findings]
         if len(ids) != len(set(ids)):
             raise ValueError("final review finding ids must be unique")
+        _validate_non_actionable_residual_risks(self.residual_risks)
         return self
 
 
@@ -1019,7 +1027,30 @@ class FinalReviewVerdictSubmission(StrictModel):
             raise ValueError("new final review finding ids must be unique")
         if set(verdict_ids) & set(finding_ids):
             raise ValueError("a prior final finding cannot also be submitted as new")
+        _validate_non_actionable_residual_risks(self.residual_risks)
         return self
+
+
+def _validate_non_actionable_residual_risks(values: list[str]) -> None:
+    report_defect_terms = (
+        "报告缺少",
+        "正文缺少",
+        "未纳入报告",
+        "未整合",
+        "未覆盖 Cross",
+        "未生成表格",
+        "表格缺失",
+        "未选择图片",
+        "图片缺失",
+    )
+    actionable = [
+        value for value in values if any(term in value for term in report_defect_terms)
+    ]
+    if actionable:
+        raise ValueError(
+            "actionable report omissions must be final-review findings, not residual_risks: "
+            f"{actionable}"
+        )
 
 
 FINAL_REPORT_SECTION_IDS = REPORT_FINAL_SECTION_IDS
@@ -1051,6 +1082,50 @@ class WorkflowDecisionSubmission(StrictModel):
     )
 
 
+class CrossSynthesisDisposition(StrictModel):
+    synthesis_input_id: str = Field(
+        min_length=1,
+        description="Exact Cross synthesis input accounted for by the chief editor.",
+    )
+    status: Literal["integrated", "merged"] = Field(
+        description="A supported Cross input must be integrated or explicitly merged."
+    )
+    target_section_ids: list[
+        Literal["3.1.1", "3.1.2", "3.1.3", "3.2"]
+    ] = Field(
+        min_length=1,
+        description="Final sections containing the resulting synthesis.",
+    )
+    result_part_refs: list[str] = Field(
+        min_length=1,
+        description="Current chief task result-part refs containing the synthesis.",
+    )
+    merged_into_ids: list[str] = Field(
+        default_factory=list,
+        description="Other synthesis ids whose report treatment absorbs this input.",
+    )
+    integration_summary: str = Field(
+        min_length=20,
+        description="How the Cross relationship appears in the named final sections.",
+    )
+
+    @model_validator(mode="after")
+    def merge_shape_matches_status(self) -> "CrossSynthesisDisposition":
+        if len(self.target_section_ids) != len(set(self.target_section_ids)):
+            raise ValueError("target_section_ids must be unique")
+        if len(self.result_part_refs) != len(set(self.result_part_refs)):
+            raise ValueError("result_part_refs must be unique")
+        if len(self.merged_into_ids) != len(set(self.merged_into_ids)):
+            raise ValueError("merged_into_ids must be unique")
+        if self.status == "integrated" and self.merged_into_ids:
+            raise ValueError("integrated disposition cannot declare merged_into_ids")
+        if self.status == "merged" and not self.merged_into_ids:
+            raise ValueError("merged disposition requires merged_into_ids")
+        if self.synthesis_input_id in self.merged_into_ids:
+            raise ValueError("a synthesis input cannot merge into itself")
+        return self
+
+
 class TableSubmission(StrictModel):
     title: str = Field(min_length=1)
     headers: list[str] = Field(min_length=1)
@@ -1063,6 +1138,53 @@ class TableSubmission(StrictModel):
         invalid = [index for index, row in enumerate(self.rows) if len(row) != len(self.headers)]
         if invalid:
             raise ValueError(f"table rows do not match header width: {invalid}")
+        return self
+
+
+class SynthesisTableSubmission(StrictModel):
+    table_type: Literal[
+        "risk_cluster_matrix",
+        "action_dependency_matrix",
+        "joint_acceptance_matrix",
+    ]
+    title: str = Field(min_length=1)
+    headers: list[str] = Field(min_length=1)
+    rows: list[list[str]] = Field(min_length=1)
+    synthesis_input_ids: list[str] = Field(min_length=1)
+    row_synthesis_input_ids: list[list[str]] = Field(
+        min_length=1,
+        description="Per-row Cross synthesis ids supporting that exact management row.",
+    )
+    source_ids: list[str] = Field(min_length=1)
+    claim_ids: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def traceable_rows(self) -> "SynthesisTableSubmission":
+        invalid = [index for index, row in enumerate(self.rows) if len(row) != len(self.headers)]
+        if invalid:
+            raise ValueError(f"synthesis table rows do not match header width: {invalid}")
+        if len(self.row_synthesis_input_ids) != len(self.rows):
+            raise ValueError("row_synthesis_input_ids must align one-to-one with rows")
+        if any(not ids for ids in self.row_synthesis_input_ids):
+            raise ValueError("every synthesis table row requires at least one Cross input")
+        row_ids = {
+            synthesis_id
+            for ids in self.row_synthesis_input_ids
+            for synthesis_id in ids
+        }
+        if row_ids != set(self.synthesis_input_ids):
+            raise ValueError(
+                "synthesis_input_ids must equal the union of row_synthesis_input_ids"
+            )
+        if any(len(ids) != len(set(ids)) for ids in self.row_synthesis_input_ids):
+            raise ValueError("row_synthesis_input_ids must be unique within each row")
+        for label, values in (
+            ("synthesis_input_ids", self.synthesis_input_ids),
+            ("source_ids", self.source_ids),
+            ("claim_ids", self.claim_ids),
+        ):
+            if len(values) != len(set(values)):
+                raise ValueError(f"{label} must be unique")
         return self
 
 
@@ -1090,6 +1212,51 @@ class TableSubmissionInput(StrictModel):
         return self
 
 
+class SynthesisTableSubmissionInput(StrictModel):
+    """Chief-authored management table derived only from reviewed Cross inputs."""
+
+    table_type: Literal[
+        "risk_cluster_matrix",
+        "action_dependency_matrix",
+        "joint_acceptance_matrix",
+    ] = Field(description="Fixed management synthesis-table purpose.")
+    title: str = Field(min_length=1)
+    headers: list[str] = Field(min_length=1)
+    rows: list[list[str]] = Field(min_length=1)
+    synthesis_input_ids: list[str] = Field(
+        min_length=1,
+        description="Cross synthesis inputs supporting every table row.",
+    )
+    row_synthesis_input_ids: list[list[str]] = Field(
+        min_length=1,
+        description="One non-empty list per row naming its exact Cross inputs.",
+    )
+
+    @model_validator(mode="after")
+    def valid_rows_and_inputs(self) -> "SynthesisTableSubmissionInput":
+        invalid = [index for index, row in enumerate(self.rows) if len(row) != len(self.headers)]
+        if invalid:
+            raise ValueError(f"synthesis table rows do not match header width: {invalid}")
+        if len(self.row_synthesis_input_ids) != len(self.rows):
+            raise ValueError("row_synthesis_input_ids must align one-to-one with rows")
+        if any(not ids for ids in self.row_synthesis_input_ids):
+            raise ValueError("every synthesis table row requires at least one Cross input")
+        row_ids = {
+            synthesis_id
+            for ids in self.row_synthesis_input_ids
+            for synthesis_id in ids
+        }
+        if row_ids != set(self.synthesis_input_ids):
+            raise ValueError(
+                "synthesis_input_ids must equal the union of row_synthesis_input_ids"
+            )
+        if len(self.synthesis_input_ids) != len(set(self.synthesis_input_ids)):
+            raise ValueError("synthesis_input_ids must be unique")
+        if any(len(ids) != len(set(ids)) for ids in self.row_synthesis_input_ids):
+            raise ValueError("row_synthesis_input_ids must be unique within each row")
+        return self
+
+
 class EditedReportSubmission(StrictModel):
     kind: Literal["edited_report_submission"] = "edited_report_submission"
     title: str = Field(min_length=1)
@@ -1108,6 +1275,10 @@ class EditedReportSubmission(StrictModel):
     emergency_compliance_management: str = Field(min_length=1)
     protected_claim_ids: list[str] = Field(default_factory=list)
     tables: list[TableSubmission] = Field(default_factory=list)
+    synthesis_dispositions: list[CrossSynthesisDisposition] = Field(
+        default_factory=list
+    )
+    synthesis_tables: list[SynthesisTableSubmission] = Field(default_factory=list)
     photo_ids: list[str] = Field(default_factory=list)
     unresolved_editorial_issues: list[str] = Field(default_factory=list)
     revision_responses: list[RevisionResponse] = Field(default_factory=list)
@@ -1136,6 +1307,35 @@ class EditedReportSubmission(StrictModel):
                 raise ValueError(
                     f"{field} must contain section body only, without numbered headings"
                 )
+        disposition_ids = [
+            item.synthesis_input_id for item in self.synthesis_dispositions
+        ]
+        if len(disposition_ids) != len(set(disposition_ids)):
+            raise ValueError("synthesis dispositions must be unique by input id")
+        dispositions_by_id = {
+            item.synthesis_input_id: item for item in self.synthesis_dispositions
+        }
+        for item in self.synthesis_dispositions:
+            if item.status != "merged":
+                continue
+            unknown = set(item.merged_into_ids) - set(dispositions_by_id)
+            if unknown:
+                raise ValueError(
+                    f"merged disposition references unknown synthesis ids: {sorted(unknown)}"
+                )
+            non_integrated = [
+                target_id
+                for target_id in item.merged_into_ids
+                if dispositions_by_id[target_id].status != "integrated"
+            ]
+            if non_integrated:
+                raise ValueError(
+                    "merged dispositions must point directly to integrated dispositions: "
+                    f"{non_integrated}"
+                )
+        table_types = [table.table_type for table in self.synthesis_tables]
+        if len(table_types) != len(set(table_types)):
+            raise ValueError("synthesis table types must be unique")
         return self
 
 
@@ -1201,6 +1401,12 @@ class EditedReportSubmissionInput(StrictModel):
     daily_power_management: str | TextArtifactRef
     emergency_compliance_management: str | TextArtifactRef
     tables: list[TableSubmissionInput] = Field(default_factory=list)
+    synthesis_dispositions: list[CrossSynthesisDisposition] = Field(
+        default_factory=list
+    )
+    synthesis_tables: list[SynthesisTableSubmissionInput] = Field(
+        default_factory=list
+    )
     photo_ids: list[str] = Field(default_factory=list)
     unresolved_editorial_issues: list[str] = Field(default_factory=list)
     revision_responses: list[RevisionResponse] = Field(default_factory=list)

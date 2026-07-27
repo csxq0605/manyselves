@@ -9,8 +9,10 @@ from pydantic import ValidationError
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.source_ledger import SourceLedger
-from manyselves.core.reporting.agentic_models import ModuleSubmission
+from manyselves.core.reporting.agentic_models import ClaimRecord, ModuleSubmission
+from manyselves.core.reporting.claim_ledger import ClaimLedger
 from manyselves.core.reporting.input_contracts import (
+    ChiefEditorInput,
     ModuleContentView,
     ModuleReviewInput,
     ValidationReport,
@@ -146,6 +148,77 @@ def _write_revision_contract(
             "cross_findings": [],
             "requested_changes": [],
         },
+    )
+    return contract_ref
+
+
+def _cross_synthesis_input() -> dict:
+    return {
+        "id": "SI-001",
+        "related_module_ids": ["2.1", "2.2"],
+        "cluster_type": "risk_cluster",
+        "root_causes": ["2.1 供电边界与 2.2 环境压力具有共同约束"],
+        "propagation_steps": [
+            "2.1 供电边界使局部异常更容易扩大",
+            "2.2 环境压力进一步削弱设备运行裕度",
+        ],
+        "causal_chain": "2.1 供电边界与 2.2 环境压力叠加后，会共同扩大故障影响范围。",
+        "decision_implication": "管理层需要按共同根因安排联合整改，而不能分别关闭表面问题。",
+        "action_dependencies": ["先确认 2.1 供电边界，再处理 2.2 环境压力"],
+        "joint_actions": ["由 2.1 与 2.2 责任方共同完成边界确认和整改复测"],
+        "verification_method": "联合核对供电边界、环境复测结果和异常事件记录。",
+        "acceptance_criteria": ["2.1 与 2.2 的复测记录均达到约定关闭条件"],
+        "module_statement_refs": ["2.1.1.1", "2.2.1.1"],
+        "confidence_and_boundary": "当前关系由现场证据支持，具体阈值仍需连续数据进一步确认。",
+        "target_report_section_ids": ["3.1.1", "3.1.3", "3.2"],
+        "evidence_refs": ["E-0001"],
+    }
+
+
+def _write_chief_contract_and_claim_ledger(workspace: Path) -> str:
+    ledger = SourceLedger(workspace, "run-1")
+    source = ledger.register_project(
+        "E-0001",
+        "系统边界证据",
+        "Inputs/system.txt",
+        "供电边界与环境压力存在关联。",
+    )
+    claim = ClaimRecord(
+        id="C-2.1-001",
+        module_id="2.1",
+        submodule_id=next(iter(REPORT_TAXONOMY["2.1"].submodules)),
+        text="供电边界可能扩大异常影响范围",
+        claim_type="risk_judgment",
+        source_ids=["E-0001"],
+    )
+    ReportingStore(workspace).write_json(
+        "Work/runs/run-1/ledgers/claims.json",
+        ClaimLedger(claims=[claim], sources=[source]).model_dump(mode="json"),
+    )
+    modules = {}
+    for module_id, definition in REPORT_TAXONOMY.items():
+        submodule_id = next(iter(definition.submodules))
+        modules[module_id] = ModuleContentView(
+            module_id=module_id,
+            revision=0,
+            submodule_narratives={submodule_id: f"{module_id} 已批准正文"},
+            evidence_ids_by_submodule={
+                submodule_id: ["E-0001"] if module_id == "2.1" else []
+            },
+        )
+    contract = ChiefEditorInput(
+        run_id="run-1",
+        approved_module_markers={
+            module_id: f"[[APPROVED_MODULE:{module_id}]]"
+            for module_id in REPORT_TAXONOMY
+        },
+        modules=modules,
+        cross_synthesis_inputs=[_cross_synthesis_input()],
+        cross_review_completion_ref="Work/runs/run-1/reviews/cross-completion.json",
+    )
+    contract_ref = "Work/runs/run-1/context/chief-editor-input.json"
+    ReportingStore(workspace).write_json(
+        contract_ref, contract.model_dump(mode="json")
     )
     return contract_ref
 
@@ -820,6 +893,118 @@ async def test_module_authoring_output_is_checked_against_visible_input_contract
     assert issue["received"] == {"module_id": "2.1", "revision": 0}
     assert issue["example"] == {"module_id": "2.1", "revision": 1}
     assert "Copy module_id and revision exactly" in issue["repair_instruction"]
+
+
+@pytest.mark.asyncio
+async def test_chief_submission_accounts_for_cross_inputs_and_derives_table_traceability(
+    tmp_path: Path,
+) -> None:
+    contract_ref = _write_chief_contract_and_claim_ledger(tmp_path)
+    task_id = "chief-edit"
+    part_ids = [
+        "risk_panorama",
+        "dimension_risk_analysis",
+        "cross_module_analysis",
+        "improvement_action_plan",
+    ]
+    writer = WriteResultPartTool(
+        "run-1",
+        task_id,
+        0,
+        ReportingStore(tmp_path),
+        part_ids,
+    )
+    refs = {}
+    for part_id in part_ids:
+        result = await writer(
+            part_id=part_id,
+            content=f"{part_id} 对 SI-001 的系统级整合正文。",
+        )
+        refs[part_id] = result["artifact_ref"]
+
+    payload = {
+        "kind": "edited_report_submission",
+        "title": "报告",
+        "assessment_background": "背景",
+        "findings_overview": "发现",
+        "regional_executive_summary": "摘要",
+        "module_narratives": {
+            module_id: f"[[APPROVED_MODULE:{module_id}]]"
+            for module_id in REPORT_TAXONOMY
+        },
+        "risk_panorama": refs["risk_panorama"],
+        "dimension_risk_analysis": refs["dimension_risk_analysis"],
+        "cross_module_analysis": refs["cross_module_analysis"],
+        "data_gap_analysis": "缺口",
+        "improvement_action_plan": refs["improvement_action_plan"],
+        "new_factory_planning": "新建",
+        "capacity_expansion_plan": "增容",
+        "daily_power_management": "日常",
+        "emergency_compliance_management": "应急",
+        "tables": [],
+        "synthesis_dispositions": [
+            {
+                "synthesis_input_id": "SI-001",
+                "status": "integrated",
+                "target_section_ids": ["3.1.1", "3.1.3", "3.2"],
+                "result_part_refs": [
+                    refs["risk_panorama"],
+                    refs["cross_module_analysis"],
+                    refs["improvement_action_plan"],
+                ],
+                "merged_into_ids": [],
+                "integration_summary": "该系统风险簇已进入风险全景、跨模块分析和行动计划。",
+            }
+        ],
+        "synthesis_tables": [
+            {
+                "table_type": "risk_cluster_matrix",
+                "title": "系统风险簇矩阵",
+                "headers": ["风险簇", "影响"],
+                "rows": [["供电边界与环境压力", "扩大异常影响范围"]],
+                "synthesis_input_ids": ["SI-001"],
+                "row_synthesis_input_ids": [["SI-001"]],
+            },
+            {
+                "table_type": "action_dependency_matrix",
+                "title": "联合行动依赖矩阵",
+                "headers": ["前置动作", "后续动作"],
+                "rows": [["确认供电边界", "完成环境整改与复测"]],
+                "synthesis_input_ids": ["SI-001"],
+                "row_synthesis_input_ids": [["SI-001"]],
+            },
+        ],
+        "photo_ids": [],
+        "unresolved_editorial_issues": [],
+        "revision_responses": [],
+    }
+    tool = _tool(
+        tmp_path,
+        task_id=task_id,
+        allowed_outputs=["edited_report_submission"],
+        input_contract_kind="chief_editor_input",
+        input_contract_ref=contract_ref,
+    )
+
+    incomplete = await tool(
+        payload={**payload, "synthesis_dispositions": []}
+    )
+    outcome = await tool(payload=payload)
+
+    assert incomplete["status"] == "correction_required"
+    assert incomplete["validation_errors"][0]["field"] == (
+        "synthesis_dispositions.synthesis_input_id"
+    )
+    assert outcome["status"] == "completed", outcome
+    result = json.loads(
+        (
+            tmp_path / "Work/runs/run-1/results/chief-edit.json"
+        ).read_text(encoding="utf-8")
+    )["payload"]
+    assert result["synthesis_dispositions"][0]["synthesis_input_id"] == "SI-001"
+    assert result["synthesis_tables"][0]["source_ids"] == ["E-0001"]
+    assert result["synthesis_tables"][0]["claim_ids"] == ["C-2.1-001"]
+    assert result["synthesis_tables"][0]["row_synthesis_input_ids"] == [["SI-001"]]
 
 
 @pytest.mark.asyncio

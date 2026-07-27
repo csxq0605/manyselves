@@ -1175,7 +1175,10 @@ class ReportingAgentRunner:
                         "module_narratives 必须只提交五个精确标记 "
                         "[[APPROVED_MODULE:2.1]] 至 [[APPROVED_MODULE:2.5]]，长字段使用当前任务 "
                         "write_result_part 返回的 artifact_refs。随后立即调用 submit_result 提交 "
-                        "edited_report_submission；不得重新读取或搜索输入。\n"
+                        "edited_report_submission；对每个 Cross synthesis_input 恰好提交一个 "
+                        "synthesis_disposition，并提交 risk_cluster_matrix 与 "
+                        "action_dependency_matrix，逐行填写 row_synthesis_input_ids。"
+                        "不得重新读取或搜索输入。\n"
                         "</submission_correction>"
                     )
                 elif definition.id.startswith("module-") and definition.id.endswith(

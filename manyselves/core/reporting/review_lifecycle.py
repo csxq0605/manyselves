@@ -1613,6 +1613,7 @@ async def _request_chief_revision(
         subject=edited_report_content_view(current),
         target_section_ids=sorted(target_sections),
         findings=list(pending.values()),
+        cross_synthesis_inputs=state.get("cross_synthesis_inputs", []),
     )
     revision_input_ref = _write_model(
         runner,
@@ -1664,8 +1665,13 @@ async def _request_chief_revision(
     unexpected_sections = sorted(
         set(diff["changed_section_ids"]) - target_sections
     )
+    allowed_contract_fields = {"revision_responses"}
+    if target_sections & {"3.1.1", "3.1.2", "3.1.3", "3.2"}:
+        allowed_contract_fields.update(
+            {"synthesis_dispositions", "synthesis_tables"}
+        )
     unexpected_contract = sorted(
-        set(diff["changed_contract_fields"]) - {"revision_responses"}
+        set(diff["changed_contract_fields"]) - allowed_contract_fields
     )
     if unexpected_sections or unexpected_contract:
         raise ReviewLifecycleError(
@@ -1899,6 +1905,7 @@ async def run_final_review(
             constraints=[
                 "只审查总编整合与最终交付质量，不重做模块或 Cross 专业审查",
                 "residual_risks 只记录无需内容修订的透明限制",
+                "报告正文缺失、Cross 未整合、综合表或图片缺失属于 actionable finding，禁止塞入 residual_risks",
                 (
                     "首轮 checked_section_ids 必须覆盖全部固定章节"
                     if phase == "initial"

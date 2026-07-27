@@ -86,6 +86,7 @@ def _cross_synthesis_inputs() -> list[dict]:
         "confidence_and_boundary": "当前关系由已批准模块判断支持，具体动作时限仍以现场复核为准。",
         "target_report_section_ids": ["3.1.1", "3.1.3", "3.2"],
         "evidence_refs": [
+            "E-0001",
             "Work/runs/run-x/modules/2.1-r0.json",
             "Work/runs/run-x/modules/2.3-r0.json",
         ],

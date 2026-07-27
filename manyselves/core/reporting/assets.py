@@ -478,6 +478,16 @@ class ReportAssetAssembler:
             )
             for table in edited.tables
         ]
+        tables.extend(
+            ReportTable(
+                title=table.title,
+                headers=table.headers,
+                rows=table.rows,
+                source_ids=table.source_ids,
+                claim_ids=table.claim_ids,
+            )
+            for table in edited.synthesis_tables
+        )
         report_photos: list[ReportPhoto] = []
         for photo_id in edited.photo_ids:
             asset = photo_by_id.get(photo_id)

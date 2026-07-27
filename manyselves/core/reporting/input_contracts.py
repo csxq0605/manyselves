@@ -108,6 +108,17 @@ def edited_report_content_view(
         }
         for table in subject.tables
     ]
+    payload["synthesis_tables"] = [
+        {
+            "table_type": table.table_type,
+            "title": table.title,
+            "headers": table.headers,
+            "rows": table.rows,
+            "synthesis_input_ids": table.synthesis_input_ids,
+            "row_synthesis_input_ids": table.row_synthesis_input_ids,
+        }
+        for table in subject.synthesis_tables
+    ]
     return EditedReportSubmissionInput.model_validate(payload)
 
 
@@ -477,6 +488,41 @@ class FinalReviewInput(StrictModel):
             responses = {response.finding_id for response in self.revision_responses}
             if not required or responses != required:
                 raise ValueError("final recheck requires one chief response per finding")
+        synthesis_ids = {item.id for item in self.cross_synthesis_inputs}
+        disposition_ids = [
+            item.synthesis_input_id for item in self.subject.synthesis_dispositions
+        ]
+        if (
+            len(disposition_ids) != len(set(disposition_ids))
+            or set(disposition_ids) != synthesis_ids
+        ):
+            raise ValueError(
+                "final review requires one chief disposition per Cross synthesis input"
+            )
+        if synthesis_ids:
+            table_types = {
+                table.table_type for table in self.subject.synthesis_tables
+            }
+            if not {
+                "risk_cluster_matrix",
+                "action_dependency_matrix",
+            }.issubset(table_types):
+                raise ValueError(
+                    "final review requires risk-cluster and action-dependency tables"
+                )
+            covered = {
+                synthesis_id
+                for table in self.subject.synthesis_tables
+                for synthesis_id in table.synthesis_input_ids
+            }
+            if covered != synthesis_ids:
+                raise ValueError(
+                    "final review synthesis tables must cover every Cross input"
+                )
+        elif self.subject.synthesis_tables:
+            raise ValueError(
+                "final review cannot receive synthesis tables without Cross inputs"
+            )
         return self
 
 
@@ -577,6 +623,9 @@ class ChiefRevisionInput(StrictModel):
     findings: list[FinalReviewFinding] = Field(
         min_length=1,
         description="Immutable final-review findings assigned to the chief editor.",
+    )
+    cross_synthesis_inputs: list[CrossSynthesisInput] = Field(
+        description="Original supported Cross inputs that remain mandatory during revision."
     )
 
 
@@ -1074,6 +1123,7 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "subject": _example_edited_report(),
         "target_section_ids": ["3.1.3"],
         "findings": [_example_final_finding()],
+        "cross_synthesis_inputs": [],
     },
     "chief_editor_input": {
         "kind": "chief_editor_input",
