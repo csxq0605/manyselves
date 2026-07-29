@@ -453,6 +453,13 @@ class PhotoAsset(ReportingModel):
         default=None,
         description="Original workbook DISPIMG/OOXML image key retained for provenance.",
     )
+    primary_evidence_id: str | None = Field(
+        default=None,
+        description=(
+            "Explicit EvidenceItem owner used for photo caption and placement when "
+            "one source image is associated with multiple evidence facts."
+        ),
+    )
 
 
 class EvidenceItem(ReportingModel):

@@ -8,6 +8,7 @@ from manyselves.core.reporting.agentic_models import (
     SourceRecord,
 )
 from manyselves.core.reporting.claim_ledger import CitationBindingError, ClaimLedger
+from manyselves.core.reporting.models import EvidenceItem, PhotoAsset, SourceLocation
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 
 
@@ -162,3 +163,66 @@ def test_citation_binding_replaces_stable_claim_marker() -> None:
 
     with pytest.raises(CitationBindingError, match="C-001"):
         ledger.bind_citations("正文没有 Claim 标记。")
+
+
+def test_source_index_lists_photo_caption_and_all_evidence_bindings() -> None:
+    evidence = [
+        EvidenceItem(
+            id=f"E-00{index}",
+            subject="文体中心配电房",
+            fact=f"{label}=NG",
+            source=SourceLocation(
+                file_id="F-1",
+                path=Path("Inputs/S4-4诊断工作用表.xlsx"),
+                sheet="配电房合规性",
+                cell=cell,
+            ),
+            module_id="2.2",
+            submodule_id="2.2.2.3",
+            photo_refs=["P-0005"],
+        )
+        for index, label, cell in (
+            (1, "门窗合规", "B6:C6"),
+            (2, "出口应急灯", "D6:E6"),
+            (3, "防鼠板", "F6:G6"),
+        )
+    ]
+    project_sources = [
+        SourceRecord(
+            id=item.id,
+            kind=SourceKind.PROJECT_EVIDENCE,
+            title=item.subject,
+            locator=(
+                f"{item.source.path.as_posix()}；工作表={item.source.sheet}；"
+                f"单元格={item.source.cell}"
+            ),
+        )
+        for item in evidence
+    ]
+    photo = PhotoAsset(
+        id="P-0005",
+        path=Path(
+            "Work/runs/report-test/assets/file-s44/P-0005.jpeg"
+        ),
+        sha256="abc",
+        media_type="image/jpeg",
+        source_member="xl/media/image5.jpeg",
+        source_image_id="ID_SOURCE",
+        primary_evidence_id="E-001",
+    )
+
+    markdown = ClaimLedger(
+        claims=[],
+        sources=project_sources,
+    ).source_index_markdown(
+        evidence_items=evidence,
+        photo_assets=[photo],
+    )
+
+    assert "### 图片证据 P-*" in markdown
+    assert "- P-0005：主说明=文体中心配电房：门窗合规=NG" in markdown
+    assert "主证据=E-001" in markdown
+    assert "E-002（文体中心配电房：出口应急灯=NG）" in markdown
+    assert "E-003（文体中心配电房：防鼠板=NG）" in markdown
+    assert "原始图片键=ID_SOURCE" in markdown
+    assert "文件=Work/runs/report-test/assets/file-s44/P-0005.jpeg" in markdown

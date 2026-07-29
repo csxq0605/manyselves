@@ -23,6 +23,7 @@ from .agent_runner import ReportingAgentRunner
 from .config import load_packaged_agents
 from .coverage import evaluate_coverage
 from .decisions import EvidenceDecisionStore
+from .evidence_readiness import ReportingBlockedError
 from .intake.adapters import IntakeAdapterRegistry
 from .intake.manifest import build_manifest
 from .intake.wps_images import canonicalize_photo_bindings, extract_wps_images
@@ -40,7 +41,6 @@ from .models import (
     UserSupplement,
 )
 from .output_verifier import OutputVerificationError, verify_current_run_outputs
-from .evidence_readiness import ReportingBlockedError
 from .rendering import PackagedV2DocxCore, PdsDocxRenderer, RenderRequest, RenderResult
 from .rendering.packaged_docx import verify_rendered_markdown
 from .store import ReportingStore
@@ -346,7 +346,6 @@ class ReportingService:
         """Render one approved project-local Markdown artifact without analysis Agents."""
 
         request: ReportRequest = state["request"]
-        run_id = state["run_id"]
         source_ref = request.source_markdown_ref
         if source_ref is None:
             raise ValueError("render_existing requires source_markdown_ref")
@@ -727,7 +726,14 @@ class ReportingService:
                 if manifest_file.purpose == "s4-4":
                     extracted = extract_wps_images(
                         input_path,
-                        output_dir=self.workspace / "Work" / "assets" / manifest_file.id,
+                        output_dir=(
+                            self.workspace
+                            / "Work"
+                            / "runs"
+                            / str(state["run_id"])
+                            / "assets"
+                            / manifest_file.id
+                        ),
                     )
                 mapped = mapper(input_path, file_id=manifest_file.id)
                 mapped_evidence = [
@@ -738,7 +744,7 @@ class ReportingService:
                     )
                     for item in mapped.evidence_items
                 ]
-                if extracted:
+                if manifest_file.purpose == "s4-4":
                     mapped_evidence, normalized_assets = canonicalize_photo_bindings(
                         mapped_evidence,
                         extracted,
@@ -810,10 +816,32 @@ class ReportingService:
             )
         # Runtime source tools and ClaimLedger use stable E-* identifiers. Mapper
         # internals may emit legacy ev-* ids, so normalize once at the boundary.
-        evidence = [
-            item.model_copy(update={"id": f"E-{index:04d}"})
-            for index, item in enumerate(evidence, start=1)
-        ]
+        evidence_id_map: dict[str, str] = {}
+        normalized_evidence: list[EvidenceItem] = []
+        for index, item in enumerate(evidence, start=1):
+            if item.id in evidence_id_map:
+                raise ValueError(f"duplicate pre-normalization evidence id: {item.id}")
+            normalized_id = f"E-{index:04d}"
+            evidence_id_map[item.id] = normalized_id
+            normalized_evidence.append(item.model_copy(update={"id": normalized_id}))
+        evidence = normalized_evidence
+        normalized_photo_assets: list[PhotoAsset] = []
+        for asset in photo_assets:
+            primary_evidence_id = asset.primary_evidence_id
+            if primary_evidence_id is None:
+                raise ValueError(f"photo {asset.id} is missing its primary evidence binding")
+            normalized_primary_id = evidence_id_map.get(primary_evidence_id)
+            if normalized_primary_id is None:
+                raise ValueError(
+                    f"photo {asset.id} references unknown primary evidence "
+                    f"{primary_evidence_id}"
+                )
+            normalized_photo_assets.append(
+                asset.model_copy(
+                    update={"primary_evidence_id": normalized_primary_id}
+                )
+            )
+        photo_assets = normalized_photo_assets
         state["evidence_items"] = evidence
         state["photo_assets"] = photo_assets
         state["mapping_gaps"] = mapping_gaps

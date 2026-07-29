@@ -7,10 +7,10 @@ stable markers, and binds explicit Claim markers to source footnotes.
 
 from __future__ import annotations
 
-from collections import Counter
-from urllib.parse import urlparse
-
 import re
+from collections import Counter
+from collections.abc import Sequence
+from urllib.parse import urlparse
 
 from pydantic import Field, model_validator
 
@@ -22,6 +22,7 @@ from .agentic_models import (
     SourceRecord,
     StrictModel,
 )
+from .models import EvidenceItem, PhotoAsset
 
 
 class CitationBindingError(ValueError):
@@ -103,7 +104,12 @@ class ClaimLedger(StrictModel):
             for index, claim in enumerate(cited_claims, start=1)
         ]
 
-    def source_index_markdown(self) -> str:
+    def source_index_markdown(
+        self,
+        *,
+        evidence_items: Sequence[EvidenceItem] = (),
+        photo_assets: Sequence[PhotoAsset] | None = None,
+    ) -> str:
         groups = (
             (SourceKind.PROJECT_EVIDENCE, "项目证据 E-*"),
             (SourceKind.LOCAL_REFERENCE, "本地参考 R-*"),
@@ -138,7 +144,92 @@ class ClaimLedger(StrictModel):
                     metadata.append(f"适用范围={source.scope_note}")
                 lines.append(f"- {source.id}：" + "；".join(metadata))
             lines.append("")
+            if kind == SourceKind.PROJECT_EVIDENCE and photo_assets is not None:
+                lines.extend(
+                    self._photo_evidence_index_lines(
+                        evidence_items,
+                        photo_assets,
+                        known_project_source_ids={
+                            source.id
+                            for source in self.sources
+                            if source.kind == SourceKind.PROJECT_EVIDENCE
+                        },
+                    )
+                )
         return "\n".join(lines).rstrip()
+
+    @classmethod
+    def _photo_evidence_index_lines(
+        cls,
+        evidence_items: Sequence[EvidenceItem],
+        photo_assets: Sequence[PhotoAsset],
+        *,
+        known_project_source_ids: set[str],
+    ) -> list[str]:
+        lines = ["### 图片证据 P-*", ""]
+        if not photo_assets:
+            return [*lines, "本报告未收录图片证据。", ""]
+
+        for photo in photo_assets:
+            linked = [
+                item for item in evidence_items if photo.id in item.photo_refs
+            ]
+            if not linked:
+                raise ValueError(
+                    f"photo {photo.id} cannot enter the source index without E-* evidence"
+                )
+            linked_ids = [item.id for item in linked]
+            noncanonical_ids = [
+                item_id for item_id in linked_ids if not item_id.startswith("E-")
+            ]
+            if noncanonical_ids:
+                raise ValueError(
+                    f"photo {photo.id} has noncanonical evidence ids: {noncanonical_ids}"
+                )
+            unregistered_ids = sorted(set(linked_ids) - known_project_source_ids)
+            if unregistered_ids:
+                raise ValueError(
+                    f"photo {photo.id} references unregistered project evidence: "
+                    f"{unregistered_ids}"
+                )
+            primary_id = photo.primary_evidence_id or linked_ids[0]
+            primary = [item for item in linked if item.id == primary_id]
+            if len(primary) != 1:
+                raise ValueError(
+                    f"photo {photo.id} primary evidence binding is invalid: {primary_id}"
+                )
+            primary_item = primary[0]
+            metadata = [
+                (
+                    "主说明="
+                    f"{cls._single_line(primary_item.subject)}："
+                    f"{cls._single_line(primary_item.fact)}"
+                ),
+                f"主证据={primary_id}",
+                "关联证据="
+                + "、".join(
+                    (
+                        f"{item.id}（{cls._single_line(item.subject)}："
+                        f"{cls._single_line(item.fact)}）"
+                    )
+                    for item in linked
+                ),
+            ]
+            if photo.source_image_id:
+                metadata.append(f"原始图片键={cls._single_line(photo.source_image_id)}")
+            metadata.extend(
+                [
+                    f"文件={photo.path.as_posix()}",
+                    f"OOXML来源={cls._single_line(photo.source_member)}",
+                ]
+            )
+            lines.append(f"- {photo.id}：" + "；".join(metadata))
+        lines.append("")
+        return lines
+
+    @staticmethod
+    def _single_line(value: object) -> str:
+        return re.sub(r"\s+", " ", str(value or "")).strip()
 
     def bind_citations(self, narrative: str) -> str:
         """Replace exact Claim markers with numeric citation tokens."""

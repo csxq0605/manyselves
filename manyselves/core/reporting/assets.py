@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import re
+from pathlib import Path
 
 from .agentic_models import ClaimRecord, EditedReportSubmission, ModuleSubmission
 from .models import EvidenceItem, PhotoAsset, SpecialTopicPlan
@@ -456,15 +455,25 @@ class ReportAssetAssembler:
                 "project photos require source-table evidence and a smallest submodule: "
                 f"{orphaned}"
             )
-        ambiguous = {
-            photo.id: [item.id for item in evidence_by_photo[photo.id]]
-            for photo in photos
-            if len(evidence_by_photo[photo.id]) != 1
-        }
-        if ambiguous:
+        invalid_primary_bindings = {}
+        for photo in photos:
+            candidates = evidence_by_photo[photo.id]
+            candidate_ids = [item.id for item in candidates]
+            primary_id = photo.primary_evidence_id
+            # Legacy immutable preparation snapshots predate the explicit
+            # field. They retain mapper/source-table evidence order, which is
+            # the compatibility fallback; new runs persist the chosen ID.
+            if primary_id is None:
+                continue
+            if candidate_ids.count(primary_id) != 1:
+                invalid_primary_bindings[photo.id] = {
+                    "primary_evidence_id": primary_id,
+                    "candidate_evidence_ids": candidate_ids,
+                }
+        if invalid_primary_bindings:
             raise ValueError(
-                "each project photo requires exactly one primary evidence binding: "
-                f"{ambiguous}"
+                "project photo primary evidence binding must reference exactly one "
+                f"candidate: {invalid_primary_bindings}"
             )
         return [photo.id for photo in photos]
 
@@ -502,10 +511,7 @@ class ReportAssetAssembler:
             path = (self.workspace / asset.path).resolve()
             if not path.is_relative_to(self.workspace) or not path.is_file():
                 raise ValueError(f"photo {photo_id} is not a project-local file")
-            candidates = sorted(
-                (item for item in evidence if photo_id in item.photo_refs),
-                key=lambda item: item.id,
-            )
+            candidates = [item for item in evidence if photo_id in item.photo_refs]
             bindings: list[tuple[EvidenceItem, list[str]]] = []
             for item in candidates:
                 if item.submodule_id is None:
@@ -523,7 +529,14 @@ class ReportAssetAssembler:
                 raise ValueError(
                     f"photo {photo_id} requires source-table evidence and a smallest submodule"
                 )
-            source, claim_ids = bindings[0]
+            if asset.primary_evidence_id is None:
+                source, claim_ids = bindings[0]
+            else:
+                source, claim_ids = next(
+                    binding
+                    for binding in bindings
+                    if binding[0].id == asset.primary_evidence_id
+                )
             if source.id not in evidence_by_id:
                 raise AssertionError("asset binding indexes are inconsistent")
             report_photos.append(

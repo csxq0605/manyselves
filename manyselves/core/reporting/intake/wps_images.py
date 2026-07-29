@@ -52,7 +52,7 @@ def extract_wps_images(
         output_dir.mkdir(parents=True, exist_ok=True)
         assets: dict[str, PhotoAsset] = {}
         pictures = images_root.findall(f".//{{{_DRAWING_NS}}}pic")
-        for picture in pictures:
+        for picture_index, picture in enumerate(pictures, start=1):
             properties = picture.find(f".//{{{_DRAWING_NS}}}cNvPr")
             blip = picture.find(f".//{{{_A_NS}}}blip")
             if properties is None or blip is None:
@@ -62,9 +62,11 @@ def extract_wps_images(
             member = targets.get(relationship_id)
             if not image_id or not member or member not in names:
                 continue
+            if image_id in assets:
+                raise ValueError(f"duplicate WPS image identifier: {image_id}")
             content = archive.read(member)
             suffix = PurePosixPath(member).suffix.casefold() or ".bin"
-            destination = output_dir / f"{image_id}{suffix}"
+            destination = output_dir / f"source-{picture_index:04d}{suffix}"
             destination.write_bytes(content)
             media_type = mimetypes.guess_type(destination.name)[0] or "application/octet-stream"
             assets[image_id] = PhotoAsset(
@@ -98,6 +100,18 @@ def canonicalize_photo_bindings(
     unknown = sorted(referenced - set(raw_to_canonical))
     if unknown:
         raise ValueError(f"evidence references unextractable workbook photos: {unknown}")
+    evidence_by_photo: dict[str, list[str]] = {}
+    for item in evidence:
+        for photo_id in item.photo_refs:
+            evidence_by_photo.setdefault(photo_id, []).append(item.id)
+    unbound = [
+        raw_id for raw_id in raw_to_canonical if not evidence_by_photo.get(raw_id)
+    ]
+    if unbound:
+        raise ValueError(
+            "each extracted photo requires source-table evidence and a smallest "
+            f"submodule: {unbound}"
+        )
     normalized_evidence = [
         item.model_copy(
             update={
@@ -108,13 +122,31 @@ def canonicalize_photo_bindings(
         )
         for item in evidence
     ]
-    normalized_assets = [
-        asset.model_copy(
-            update={
-                "id": raw_to_canonical[raw_id],
-                "source_image_id": raw_id,
-            }
+    planned_assets: list[tuple[str, PhotoAsset, str, Path]] = []
+    for raw_id, asset in assets.items():
+        canonical_id = raw_to_canonical[raw_id]
+        canonical_path = asset.path.with_name(
+            f"{canonical_id}{asset.path.suffix.casefold()}"
         )
-        for raw_id, asset in assets.items()
-    ]
+        if canonical_path != asset.path and canonical_path.exists():
+            raise FileExistsError(f"canonical photo path already exists: {canonical_path}")
+        planned_assets.append((raw_id, asset, canonical_id, canonical_path))
+
+    normalized_assets: list[PhotoAsset] = []
+    for raw_id, asset, canonical_id, canonical_path in planned_assets:
+        if canonical_path != asset.path:
+            asset.path.replace(canonical_path)
+        normalized_assets.append(
+            asset.model_copy(
+                update={
+                    "id": canonical_id,
+                    "path": canonical_path,
+                    "source_image_id": raw_id,
+                    # Mapper output follows source-table row/column order. Keep
+                    # every association, but make the first source occurrence
+                    # the explicit and persisted caption/placement owner.
+                    "primary_evidence_id": evidence_by_photo[raw_id][0],
+                }
+            )
+        )
     return normalized_evidence, normalized_assets

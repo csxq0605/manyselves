@@ -2,7 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.reporting.intake.wps_images import extract_wps_images
+from manyselves.core.reporting.intake.wps_images import (
+    canonicalize_photo_bindings,
+    extract_wps_images,
+)
 from manyselves.core.reporting.mappers.s2_1 import map_s2_1
 from manyselves.core.reporting.mappers.s4_4 import map_s4_4
 from manyselves.core.reporting.mappers.s4_6 import map_s4_6
@@ -47,6 +50,52 @@ def test_real_s4_4_keeps_measurement_photo_and_row_traceability(tmp_path: Path) 
     assert set(cable.photo_refs) <= set(assets)
     assert load_rate.value == pytest.approx(96.992)
     assert "过载" not in load_rate.fact
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_photos", "expected_references"),
+    (("success", 18, 20), ("test", 24, 24)),
+)
+def test_workspace_s4_4_photos_get_canonical_ids_and_explicit_primary_bindings(
+    tmp_path: Path,
+    scenario: str,
+    expected_photos: int,
+    expected_references: int,
+) -> None:
+    path = WORKSPACE_ROOT / scenario / "Inputs/S4-4诊断工作用表.xlsx"
+    if not path.is_file():
+        pytest.skip(f"{scenario}/Inputs is not available")
+
+    mapped = map_s4_4(path, file_id=f"{scenario}-s44-photo-bindings")
+    extracted = extract_wps_images(path, output_dir=tmp_path / scenario)
+    evidence, photos = canonicalize_photo_bindings(
+        mapped.evidence_items,
+        extracted,
+        start_index=1,
+    )
+    evidence_by_photo = {
+        photo.id: [
+            item.id
+            for item in evidence
+            if photo.id in item.photo_refs
+        ]
+        for photo in photos
+    }
+
+    assert len(photos) == expected_photos
+    assert sum(len(items) for items in evidence_by_photo.values()) == expected_references
+    assert [photo.id for photo in photos] == [
+        f"P-{index:04d}" for index in range(1, expected_photos + 1)
+    ]
+    assert all(
+        photo.primary_evidence_id == evidence_by_photo[photo.id][0]
+        for photo in photos
+    )
+    assert all(
+        photo.path.name == f"{photo.id}{photo.path.suffix}"
+        and photo.source_image_id in extracted
+        for photo in photos
+    )
 
 
 @requires_v2_handoff_workbooks
