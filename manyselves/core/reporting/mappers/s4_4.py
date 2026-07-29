@@ -157,7 +157,11 @@ def _map_low_voltage(
                     file_id=file_id,
                     path=path,
                     sheet=sheet.title,
-                    cell=f"J{row}:L{row}",
+                    cell=(
+                        f"C{row};J{row}:L{row}"
+                        if ratio is not None
+                        else f"J{row}:L{row}"
+                    ),
                     row=row,
                     column="J",
                     subject=subject,
@@ -323,6 +327,7 @@ def _map_total_distribution(
                 else _text(value)
             )
             fact = f"{label}={fact_value}"
+            ratio_uses_current = False
             if (
                 label == "实测剩余电流"
                 and numeric_value is not None
@@ -330,12 +335,17 @@ def _map_total_distribution(
                 and current
             ):
                 fact += f"；占运行电流={numeric_value / current * 100:.2f}%"
+                ratio_uses_current = True
             evidence.append(
                 make_evidence(
                     file_id=file_id,
                     path=path,
                     sheet=sheet.title,
-                    cell=f"{start_letter}{row}:{end_letter}{row}",
+                    cell=(
+                        f"C{row};{start_letter}{row}:{end_letter}{row}"
+                        if ratio_uses_current
+                        else f"{start_letter}{row}:{end_letter}{row}"
+                    ),
                     row=row,
                     column=start_letter,
                     subject=subject,
@@ -613,6 +623,32 @@ def _map_thermal(
     return evidence, gaps
 
 
+def _map_thermal_criteria(path: Path, file_id: str, sheet: Any) -> list:
+    """Keep the source workbook's embedded defect-classification graphic."""
+
+    photo_refs = dispimg_refs(sheet["J1"].value)
+    if not photo_refs:
+        return []
+    return [
+        make_evidence(
+            file_id=file_id,
+            path=path,
+            sheet=sheet.title,
+            cell="J1",
+            row=1,
+            column="J",
+            subject="红外热成像缺陷判定标准",
+            fact=(
+                "原始诊断表提供低压断路器触头、母线连接处，电缆终端头、"
+                "接线端子以及刀开关、熔断器连接处的缺陷等级判定图"
+            ),
+            module_id="2.2",
+            submodule_id="2.2.2.1",
+            photo_refs=photo_refs,
+        )
+    ]
+
+
 def _missing_sheet_gap(sheet: str, submodule_id: str) -> MappingGap:
     return MappingGap(
         code="missing_sheet",
@@ -657,6 +693,13 @@ def map_s4_4(path: Path, *, file_id: str) -> MappingResult:
         if "母线与桥架" in workbook.sheetnames:
             evidence.extend(_map_busbar(path, file_id, workbook["母线与桥架"]))
         if "红外热成像检测记录表" in workbook.sheetnames:
+            evidence.extend(
+                _map_thermal_criteria(
+                    path,
+                    file_id,
+                    workbook["红外热成像检测记录表"],
+                )
+            )
             thermal_evidence, thermal_gaps = _map_thermal(
                 path,
                 file_id,

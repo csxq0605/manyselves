@@ -1,6 +1,7 @@
 """Tests for agent loop processing engine."""
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -12,7 +13,12 @@ from manyselves.core.loops import agent_loop as agent_loop_module
 from manyselves.core.loops.agent_loop import (
     AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
     AgentLoop,
+    _canonical_failed_report_response,
+    _explicit_report_continuation_run_id,
+    _is_explicit_evidence_decision,
     _is_explicit_report_cancel_request,
+    _is_simple_report_continuation,
+    _requires_reporting_workflow_route,
 )
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMResponse, LLMStreamChunk, LLMToolCall
@@ -100,6 +106,540 @@ def test_report_cancel_requires_direct_end_user_instruction() -> None:
     assert not _is_explicit_report_cancel_request(
         UserMessage(content="不要取消当前报告任务", agent_type="main", source="user")
     )
+
+
+def test_failed_report_terminal_has_deterministic_non_restart_response() -> None:
+    message = UserMessage(
+        content=json.dumps(
+            {
+                "status": "failed",
+                "run_id": "report-real123",
+                "error": "chief audit failed",
+            }
+        ),
+        agent_type="main",
+        source="report-workflow",
+    )
+
+    response = _canonical_failed_report_response(message)
+
+    assert response is not None
+    assert "report-real123" in response
+    assert "chief audit failed" in response
+    assert "本轮没有启动新运行" in response
+
+
+@pytest.mark.asyncio
+async def test_failed_report_terminal_allows_grounded_main_explanation(
+    agent_loop, mock_provider
+) -> None:
+    explanation = (
+        "报告任务 report-real123 在总编审计阶段失败。"
+        "完整性检查发现标题层级不符合合同，因此本次没有交付文档；"
+        "你可以要求从原断点恢复。"
+    )
+
+    async def explain_failure(*args, **kwargs):
+        yield LLMStreamChunk(delta=explanation)
+        yield LLMStreamChunk(done=True)
+
+    mock_provider.chat_stream = explain_failure
+
+    await agent_loop._process_message(
+        UserMessage(
+            content=json.dumps(
+                {
+                    "status": "failed",
+                    "run_id": "report-real123",
+                    "error": "总编审计完整性检查发现标题层级不符合合同",
+                }
+            ),
+            agent_type="main",
+            source="report-workflow",
+        )
+    )
+
+    visible_responses = [
+        item
+        for item in agent_loop.bus._queue._queue
+        if isinstance(item, AgentResponse) and not item.internal
+    ]
+    assert [item.content for item in visible_responses] == [explanation]
+
+
+@pytest.mark.asyncio
+async def test_failed_report_terminal_rejects_fake_restart_claim(
+    agent_loop, mock_provider
+) -> None:
+    async def fake_restart(*args, **kwargs):
+        yield LLMStreamChunk(
+            delta="报告 report-real123 已失败，但新运行 report-fake999 已在后台启动。"
+        )
+        yield LLMStreamChunk(done=True)
+
+    mock_provider.chat_stream = fake_restart
+
+    await agent_loop._process_message(
+        UserMessage(
+            content=json.dumps(
+                {
+                    "status": "failed",
+                    "run_id": "report-real123",
+                    "error": "chief audit failed",
+                }
+            ),
+            agent_type="main",
+            source="report-workflow",
+        )
+    )
+
+    visible_responses = [
+        item
+        for item in agent_loop.bus._queue._queue
+        if isinstance(item, AgentResponse) and not item.internal
+    ]
+    assert visible_responses
+    assert all("report-fake999" not in item.content for item in visible_responses)
+    assert "report-real123 已失败" in visible_responses[-1].content
+    assert "本轮没有启动新运行" in visible_responses[-1].content
+
+
+@pytest.mark.asyncio
+async def test_failed_report_terminal_blocks_all_tools(agent_loop) -> None:
+    resume_tool = AsyncMock(return_value={"status": "running"})
+    agent_loop.tools.get = (
+        lambda name: resume_tool if name == "resume_reporting_workflow" else None
+    )
+    agent_loop._current_message = UserMessage(
+        content=json.dumps(
+            {
+                "status": "failed",
+                "run_id": "report-real123",
+                "error": "chief audit failed",
+            }
+        ),
+        agent_type="main",
+        source="report-workflow",
+    )
+    response = SimpleNamespace(
+        content="",
+        thinking=None,
+        tool_calls=[
+            LLMToolCall(
+                id="call-invalid-resume",
+                name="resume_reporting_workflow",
+                arguments={"run_id": "report-real123"},
+            )
+        ],
+        usage=None,
+    )
+
+    await agent_loop._handle_tool_calls(response, "msg-failed-terminal")
+
+    resume_tool.assert_not_awaited()
+    results = [
+        message
+        for message in agent_loop.bus._queue._queue
+        if isinstance(message, ToolResultMsg)
+        and message.tool_name == "resume_reporting_workflow"
+    ]
+    assert results
+    assert "explanation-only" in str(results[-1].error)
+
+
+def test_simple_report_continuation_excludes_new_facts() -> None:
+    assert _is_simple_report_continuation(
+        UserMessage(content="继续在断点处完成", agent_type="main", source="user")
+    )
+    assert _is_simple_report_continuation(
+        UserMessage(content="恢复这个报告", agent_type="main", source="user")
+    )
+    assert not _is_simple_report_continuation(
+        UserMessage(
+            content="继续，并把人工确认的温升数据补进去",
+            agent_type="main",
+            source="user",
+        )
+    )
+    assert (
+        _explicit_report_continuation_run_id(
+            UserMessage(
+                content="请恢复 report-f91bc1714d",
+                agent_type="main",
+                source="user",
+            )
+        )
+        == "report-f91bc1714d"
+    )
+    assert (
+        _explicit_report_continuation_run_id(
+            UserMessage(
+                content="恢复 report-f91bc1714d，并补充人工确认数据",
+                agent_type="main",
+                source="user",
+            )
+        )
+        is None
+    )
+    assert (
+        _explicit_report_continuation_run_id(
+            UserMessage(
+                content=(
+                    "Editor context: file\n"
+                    "Current file: Work/manifest.json\n"
+                    "This may or may not be related to the current task.\n"
+                    "请恢复 report-f91bc1714d"
+                ),
+                agent_type="main",
+                source="user",
+            )
+        )
+        == "report-f91bc1714d"
+    )
+
+
+def test_evidence_decision_requires_current_user_selection() -> None:
+    assert _is_explicit_evidence_decision(
+        UserMessage(
+            content="选择 draft，保留不确定性继续起草",
+            agent_type="main",
+            source="user",
+        ),
+        "draft",
+    )
+    assert not _is_explicit_evidence_decision(
+        UserMessage(
+            content='{"status":"needs_user_decision"}',
+            agent_type="main",
+            source="report-workflow",
+        ),
+        "draft",
+    )
+    assert not _is_explicit_evidence_decision(
+        UserMessage(
+            content="继续在断点处完成",
+            agent_type="main",
+            source="user",
+        ),
+        "draft",
+    )
+
+
+@pytest.mark.asyncio
+async def test_main_cannot_choose_evidence_decision_from_workflow_terminal(
+    agent_loop
+) -> None:
+    resume_tool = AsyncMock(return_value={"status": "running"})
+    agent_loop.tools.get = (
+        lambda name: resume_tool if name == "resume_reporting_workflow" else None
+    )
+    agent_loop._current_message = UserMessage(
+        content=json.dumps(
+            {
+                "status": "needs_user_decision",
+                "run_id": "report-real123",
+                "decision_id": "evidence-real123",
+            }
+        ),
+        agent_type="main",
+        source="report-workflow",
+    )
+    response = SimpleNamespace(
+        content="",
+        thinking=None,
+        tool_calls=[
+            LLMToolCall(
+                id="call-unauthorized-draft",
+                name="resume_reporting_workflow",
+                arguments={"decision_id": "evidence-real123", "action": "draft"},
+            )
+        ],
+        usage=None,
+    )
+
+    await agent_loop._handle_tool_calls(response, "msg-decision-terminal")
+
+    resume_tool.assert_not_awaited()
+    results = [
+        message
+        for message in agent_loop.bus._queue._queue
+        if isinstance(message, ToolResultMsg)
+        and message.tool_name == "resume_reporting_workflow"
+    ]
+    assert results
+    assert "explicitly select" in str(results[-1].error)
+
+
+def test_direct_report_operation_requires_workflow_route_before_file_reads() -> None:
+    assert _requires_reporting_workflow_route(
+        UserMessage(
+            content="根据 Inputs 中的内容，开始写作配电安全专家报告",
+            agent_type="main",
+            source="user",
+        )
+    )
+    assert _requires_reporting_workflow_route(
+        UserMessage(
+            content="重新生成完整报告",
+            agent_type="main",
+            source="user",
+        )
+    )
+    assert not _requires_reporting_workflow_route(
+        UserMessage(
+            content="调查这个报告为什么失败",
+            agent_type="main",
+            source="user",
+        )
+    )
+    assert not _requires_reporting_workflow_route(
+        UserMessage(
+            content="读取 Knowledge/说明.md",
+            agent_type="main",
+            source="user",
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_main_report_route_guard_rejects_preflight_file_read(agent_loop) -> None:
+    read_tool = AsyncMock(return_value={"content": "must not be read"})
+    agent_loop.tools.get = lambda name: read_tool if name == "read" else None
+    agent_loop._current_message = UserMessage(
+        content="根据 Inputs 中的内容，开始写作配电安全专家报告",
+        agent_type="main",
+        source="user",
+    )
+    response = SimpleNamespace(
+        content="",
+        thinking=None,
+        tool_calls=[
+            LLMToolCall(
+                id="call-preflight-read",
+                name="read",
+                arguments={"path": "Inputs", "recursive": True},
+            )
+        ],
+        usage=None,
+    )
+
+    await agent_loop._handle_tool_calls(response, "msg-report-route")
+
+    read_tool.assert_not_awaited()
+    results = [
+        message
+        for message in agent_loop.bus._queue._queue
+        if isinstance(message, ToolResultMsg) and message.tool_name == "read"
+    ]
+    assert results
+    assert "must be routed before project content is read" in str(results[-1].error)
+
+
+@pytest.mark.asyncio
+async def test_simple_continuation_resumes_latest_real_persisted_run_without_provider(
+    agent_loop, workspace, mock_provider
+) -> None:
+    run_id = "report-real123"
+    run_root = workspace / "Work" / "runs" / run_id
+    run_root.mkdir(parents=True)
+    (run_root / "request.json").write_text("{}", encoding="utf-8")
+    (run_root / "workflow-state.json").write_text(
+        json.dumps({"run_id": run_id, "status": "failed"}),
+        encoding="utf-8",
+    )
+    agent_loop._conversation_history.extend(
+        [
+            LLMMessage(
+                role="user",
+                content=json.dumps(
+                    {
+                        "status": "failed",
+                        "run_id": run_id,
+                        "error": "chief audit failed",
+                    }
+                ),
+            ),
+            LLMMessage(
+                role="assistant",
+                content=(
+                    "报告任务 report-fake999 已在后台启动。"
+                ),
+            ),
+        ]
+    )
+    resume_tool = AsyncMock(
+        return_value={
+            "status": "running",
+            "run_id": run_id,
+            "task_id": "task-resume",
+        }
+    )
+    agent_loop.tools.get = (
+        lambda name: resume_tool if name == "resume_reporting_workflow" else None
+    )
+
+    await agent_loop._process_message(
+        UserMessage(
+            content="继续在断点处完成",
+            agent_type="main",
+            source="user",
+        )
+    )
+
+    resume_tool.assert_awaited_once_with(run_id=run_id)
+    mock_provider.chat.assert_not_awaited()
+    responses = [
+        item
+        for item in agent_loop.bus._queue._queue
+        if isinstance(item, AgentResponse) and not item.streaming
+    ]
+    assert responses
+    assert run_id in responses[-1].content
+    assert "report-fake999" not in responses[-1].content
+
+
+@pytest.mark.asyncio
+async def test_explicit_continuation_resumes_named_persisted_run_without_history(
+    agent_loop, workspace
+) -> None:
+    run_id = "report-f91bc1714d"
+    run_root = workspace / "Work" / "runs" / run_id
+    run_root.mkdir(parents=True)
+    (run_root / "request.json").write_text("{}", encoding="utf-8")
+    (run_root / "workflow-state.json").write_text(
+        json.dumps({"run_id": run_id, "status": "failed"}),
+        encoding="utf-8",
+    )
+    resume_tool = AsyncMock(
+        return_value={"status": "running", "run_id": run_id, "task_id": "task-resume"}
+    )
+    agent_loop.tools.get = (
+        lambda name: resume_tool if name == "resume_reporting_workflow" else None
+    )
+
+    await agent_loop._process_message(
+        UserMessage(
+            content=f"请恢复 {run_id}",
+            agent_type="main",
+            source="user",
+        )
+    )
+
+    resume_tool.assert_awaited_once_with(run_id=run_id)
+
+
+@pytest.mark.asyncio
+async def test_editor_context_does_not_hide_explicit_resume_command(
+    agent_loop, workspace, mock_provider
+) -> None:
+    run_id = "report-f91bc1714d"
+    run_root = workspace / "Work" / "runs" / run_id
+    run_root.mkdir(parents=True)
+    (run_root / "request.json").write_text("{}", encoding="utf-8")
+    (run_root / "workflow-state.json").write_text(
+        json.dumps({"run_id": run_id, "status": "failed"}),
+        encoding="utf-8",
+    )
+    resume_tool = AsyncMock(
+        return_value={"status": "running", "run_id": run_id, "task_id": "task-resume"}
+    )
+    agent_loop.tools.get = (
+        lambda name: resume_tool if name == "resume_reporting_workflow" else None
+    )
+
+    await agent_loop._process_message(
+        UserMessage(
+            content=(
+                "Editor context: file\n"
+                "Current file: Work/manifest.json\n"
+                "This may or may not be related to the current task.\n"
+                f"请恢复 {run_id}"
+            ),
+            agent_type="main",
+            source="user",
+        )
+    )
+
+    resume_tool.assert_awaited_once_with(run_id=run_id)
+    mock_provider.chat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invalid_explicit_resume_never_falls_back_to_new_run(
+    agent_loop, mock_provider
+) -> None:
+    run_tool = AsyncMock(return_value={"status": "running", "run_id": "report-new"})
+    agent_loop.tools.get = (
+        lambda name: run_tool if name == "run_reporting_workflow" else None
+    )
+
+    await agent_loop._process_message(
+        UserMessage(
+            content="请恢复 report-missing",
+            agent_type="main",
+            source="user",
+        )
+    )
+
+    run_tool.assert_not_awaited()
+    mock_provider.chat.assert_not_awaited()
+    responses = [
+        item
+        for item in agent_loop.bus._queue._queue
+        if isinstance(item, AgentResponse) and not item.streaming
+    ]
+    assert responses
+    assert "不能从断点恢复" in responses[-1].content
+    assert "没有新建报告运行" in responses[-1].content
+
+
+@pytest.mark.asyncio
+async def test_bare_continue_without_real_terminal_never_starts_new_run(
+    agent_loop, mock_provider
+) -> None:
+    await agent_loop._process_message(
+        UserMessage(content="继续", agent_type="main", source="user")
+    )
+
+    mock_provider.chat.assert_not_awaited()
+    responses = [
+        item
+        for item in agent_loop.bus._queue._queue
+        if isinstance(item, AgentResponse) and not item.streaming
+    ]
+    assert responses
+    assert "没有新建报告运行" in responses[-1].content
+
+
+@pytest.mark.asyncio
+async def test_direct_report_request_cannot_publish_fake_start_without_tool_receipt(
+    agent_loop, mock_provider
+) -> None:
+    async def fake_start_without_tool(*args, **kwargs):
+        yield LLMStreamChunk(
+            delta="报告已启动，run_id=report-fake999。",
+        )
+        yield LLMStreamChunk(done=True)
+
+    mock_provider.chat_stream = fake_start_without_tool
+    agent_loop.tools.get.return_value = None
+
+    await agent_loop._process_message(
+        UserMessage(
+            content="开始生成配电安全评估报告",
+            agent_type="main",
+            source="user",
+        )
+    )
+
+    visible_responses = [
+        item
+        for item in agent_loop.bus._queue._queue
+        if isinstance(item, AgentResponse) and not item.internal
+    ]
+    assert visible_responses
+    assert all("report-fake999" not in item.content for item in visible_responses)
+    assert "没有启动、恢复或修订任何报告" in visible_responses[-1].content
 
 
 @pytest.mark.asyncio
@@ -296,6 +836,23 @@ async def test_stream_final_thinking_snapshot_is_not_published_as_second_thought
 
     assert [m.thinking for m in thinking_messages] == [thought]
     assert len(final_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_final_thinking_snapshot_is_not_duplicated_in_response(
+    agent_loop, mock_provider
+):
+    thought = "I should inspect the scoped regression."
+
+    async def stream_with_final_thinking_snapshot(*args, **kwargs):
+        yield LLMStreamChunk(thinking=thought)
+        yield LLMStreamChunk(done=True, thinking=thought)
+
+    mock_provider.chat_stream = stream_with_final_thinking_snapshot
+
+    response = await agent_loop._chat_followup([], None, None)
+
+    assert response.thinking == thought
 
 
 @pytest.mark.asyncio
@@ -565,8 +1122,14 @@ def test_large_tool_result_is_persisted_and_replaced_with_a_compact_reference(
         tool_call_id="call-large",
     )
 
-    assert len(result) < 8000
-    assert "full_result_ref" in result
+    compact = json.loads(result)
+    assert len(result) <= agent_loop.config.max_tool_result_chars
+    assert compact["full_result_ref"]
+    assert compact["preview_offset"] == 0
+    assert compact["preview_chars"] == compact["preview_end_offset"]
+    assert compact["next_offset"] == compact["preview_end_offset"]
+    assert compact["recommended_limit"] == 8000
+    assert "省略 limit 即按 8000 字符读取" in compact["instruction"]
     stored = workspace / ".manyselves/tool-results/main/call-large.json"
     assert stored.is_file()
     assert "evidence-" + ("x" * 20000) in stored.read_text(encoding="utf-8")

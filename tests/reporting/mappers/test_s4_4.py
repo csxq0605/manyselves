@@ -190,7 +190,7 @@ def test_s4_4_maps_residual_current_with_its_own_photo(tmp_path: Path) -> None:
     assert item.value == 46.8
     assert item.unit == "A"
     assert item.photo_refs == ["ID_RESIDUAL"]
-    assert item.source.cell == "J5:L5"
+    assert item.source.cell == "C5;J5:L5"
     assert "占运行电流=2.03%" in item.fact
 
 
@@ -282,6 +282,28 @@ def test_s4_4_routes_environment_and_operations_observations(tmp_path: Path) -> 
         for gap in result.gaps
         if gap.code == "missing_thermal_position"
     } == {("2.2", "2.2.2.1"), ("2.4", "2.4.4")}
+
+
+def test_s4_4_keeps_embedded_thermal_defect_criteria_image(tmp_path: Path) -> None:
+    path = tmp_path / "S4-4诊断工作用表.xlsx"
+    _write_s4_4(path)
+    workbook = load_workbook(path)
+    thermal = workbook.create_sheet("红外热成像检测记录表")
+    thermal["J1"] = '=DISPIMG("ID_THERMAL_CRITERIA",1)'
+    workbook.save(path)
+    workbook.close()
+
+    result = map_s4_4(path, file_id="file-s44")
+    criteria = next(
+        item
+        for item in result.evidence_items
+        if item.subject == "红外热成像缺陷判定标准"
+    )
+
+    assert criteria.source.sheet == "红外热成像检测记录表"
+    assert criteria.source.cell == "J1"
+    assert criteria.submodule_id == "2.2.2.1"
+    assert criteria.photo_refs == ["ID_THERMAL_CRITERIA"]
 
 
 def test_s4_4_maps_total_distribution_sheet(tmp_path: Path) -> None:

@@ -449,6 +449,10 @@ class PhotoAsset(ReportingModel):
     sha256: str = Field(min_length=1)
     media_type: str = Field(min_length=1)
     source_member: str = Field(min_length=1)
+    source_image_id: str | None = Field(
+        default=None,
+        description="Original workbook DISPIMG/OOXML image key retained for provenance.",
+    )
 
 
 class EvidenceItem(ReportingModel):

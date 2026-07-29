@@ -82,7 +82,14 @@ class PromptAssembler:
         input_contract_payload: str | None = None,
         submission_contract_payloads: dict[str, str] | None = None,
     ) -> str:
-        inputs = "\n".join(f"<input_ref>{escape(ref)}</input_ref>" for ref in envelope.input_refs)
+        inputs = "\n".join(
+            (
+                f"<input_ref delivery_mode="
+                f"{quoteattr(envelope.artifact_delivery_modes[ref])}>"
+                f"{escape(ref)}</input_ref>"
+            )
+            for ref in envelope.input_refs
+        )
         already_declared = set(envelope.input_refs) | set(envelope.context_summary_refs)
         if envelope.prior_result_ref:
             already_declared.add(envelope.prior_result_ref)
@@ -109,7 +116,8 @@ class PromptAssembler:
         input_contract = (
             (
                 f"<input_contract kind={quoteattr(envelope.input_contract_kind)} "
-                f"artifact_ref={quoteattr(envelope.input_contract_ref or '')}>"
+                f"artifact_ref={quoteattr(envelope.input_contract_ref or '')} "
+                'delivery_mode="inline">'
                 f"{escape(input_contract_payload or '')}"
                 "</input_contract>"
             )
@@ -121,12 +129,20 @@ class PromptAssembler:
             for value in envelope.allowed_tools
         )
         prior_result = (
-            f"<prior_result_ref>{escape(envelope.prior_result_ref)}</prior_result_ref>"
+            (
+                "<prior_result_ref delivery_mode="
+                f"{quoteattr(envelope.artifact_delivery_modes[envelope.prior_result_ref])}>"
+                f"{escape(envelope.prior_result_ref)}</prior_result_ref>"
+            )
             if envelope.prior_result_ref is not None
             else ""
         )
         summaries = "\n".join(
-            f'<context_summary_ref context_only="true">{escape(ref)}</context_summary_ref>'
+            (
+                '<context_summary_ref context_only="true" delivery_mode='
+                f"{quoteattr(envelope.artifact_delivery_modes[ref])}>"
+                f"{escape(ref)}</context_summary_ref>"
+            )
             for ref in envelope.context_summary_refs
         )
         inline_context = (

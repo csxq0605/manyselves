@@ -108,6 +108,8 @@ def test_packaged_template_distiller_requires_real_template_skill_submission() -
     assert "普通文字、计划、摘要、声明已完成都不是结果" in prompt
     assert "analysis-language" in prompt
     assert "跨章节原因、风险链、结论重组与行动包" in prompt
+    assert "这些样例属于 Skill，不得另建 Output Profile" in prompt
+    assert "不得重复 submit_result 的机器 JSON 样例" in prompt
 
 
 def test_system_prompt_rejects_malformed_identity_xml(tmp_path: Path) -> None:
@@ -189,6 +191,41 @@ def test_task_context_inlines_exact_input_and_complete_first_submit_example() ->
     submission = root.findtext("submission_contract") or ""
     assert "valid_example" in submission
     assert "top_level_fields" in submission
+
+
+def test_task_context_declares_artifact_delivery_modes() -> None:
+    contract_ref = "Work/runs/run-audit/reviews/input.json"
+    prior_ref = "Work/runs/run-audit/modules/2.1-r0.json"
+    summary_ref = "Work/runs/run-audit/context/summary.json"
+    envelope = TaskEnvelope(
+        task_id="audit-2.1-r1",
+        run_id="run-audit",
+        agent_id="evidence-auditor",
+        objective="复审模块 2.1",
+        input_refs=[contract_ref],
+        prior_result_ref=prior_ref,
+        context_summary_refs=[summary_ref],
+        artifact_delivery_modes={
+            contract_ref: "inline",
+            prior_ref: "hash_retained",
+            summary_ref: "reference",
+        },
+        input_contract_kind="module_review_input",
+        input_contract_ref=contract_ref,
+    )
+
+    root = ElementTree.fromstring(
+        PromptAssembler.task_message(
+            envelope,
+            [],
+            input_contract_payload='{"kind":"module_review_input"}',
+        )
+    )
+
+    assert root.find("input_ref").attrib["delivery_mode"] == "inline"
+    assert root.find("input_contract").attrib["delivery_mode"] == "inline"
+    assert root.find("prior_result_ref").attrib["delivery_mode"] == "hash_retained"
+    assert root.find("context_summary_ref").attrib["delivery_mode"] == "reference"
 
 
 def test_task_context_marks_session_summary_as_context_only() -> None:

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,6 +34,34 @@ class KnowledgeContextBuilder:
         "建议可执行性",
         "跨KU",
     )
+    REPORTING_RULE_TERMS = (
+        "报告知识库",
+        "报告模板",
+        "报告生成",
+        "报告写作",
+        "报告质量",
+        "章节结构",
+        "章节引言",
+        "结论段落生成",
+        "风险分析段落生成",
+        "建议段落生成",
+        "表格证据链",
+        "表格数据填充",
+        "图片规则",
+        "跨ku关联分析",
+        "第三章汇总",
+        "排版格式",
+        "篇幅要求",
+        "字数要求",
+        "交付文档",
+        "审稿规范",
+        "自动校验规则",
+        "内部黑盒",
+        "调用契约",
+        "客户问答边界",
+        "保密规则",
+    )
+    MAX_DOCUMENTS_PER_SUBMODULE = 3
 
     def __init__(self, workspace: Path, run_id: str):
         self.workspace = Path(workspace).resolve()
@@ -77,9 +107,46 @@ class KnowledgeContextBuilder:
         snippet = text[start : start + cls.MAX_SNIPPET_CHARS]
         return re.sub(r"\n{3,}", "\n\n", snippet).strip()
 
-    def _ranked(self, terms: tuple[str, ...], limit: int) -> list[ReferenceDocument]:
+    @classmethod
+    def _normalized_snippet_hash(cls, text: str) -> str:
+        normalized = unicodedata.normalize("NFKC", text)
+        normalized = re.sub(r"\s+", " ", normalized).strip().casefold()
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _domain_terms(cls) -> tuple[str, ...]:
+        return tuple(
+            value
+            for module in REPORT_TAXONOMY.values()
+            for submodule_id, submodule in module.submodules.items()
+            for value in (submodule_id, submodule.title)
+        )
+
+    @classmethod
+    def _is_reporting_only(cls, document: ReferenceDocument) -> bool:
+        identity = f"{document.title}\n{document.relative_path}".casefold()
+        if any(term.casefold() in identity for term in cls.REPORTING_RULE_TERMS):
+            return True
+        body = document.text.casefold()
+        has_reporting_rule = any(
+            term.casefold() in body for term in cls.REPORTING_RULE_TERMS
+        )
+        has_domain_content = any(term in document.text for term in cls._domain_terms())
+        return has_reporting_rule and not has_domain_content
+
+    def _ranked(
+        self,
+        terms: tuple[str, ...],
+        limit: int,
+        *,
+        professional_only: bool = False,
+    ) -> list[ReferenceDocument]:
         ranked = sorted(
-            ((self._score(document, terms), document) for document in self._load_documents()),
+            (
+                (self._score(document, terms), document)
+                for document in self._load_documents()
+                if not professional_only or not self._is_reporting_only(document)
+            ),
             key=lambda item: (-item[0], item[1].relative_path),
         )
         return [document for score, document in ranked if score > 0][:limit]
@@ -91,37 +158,74 @@ class KnowledgeContextBuilder:
 
     def build_module(self, module_id: str) -> KnowledgeContext:
         module = REPORT_TAXONOMY[module_id]
-        lines = [
+        header_lines = [
             f"# 模块 {module_id} 确定性知识上下文",
             "",
             "以下内容是可追溯的项目知识参考，不是模型认知边界，也不得作为客户现场事实。",
             "可结合模型已有专业知识解释机理、提出备选原因、比较方案和补充行业实践；涉及本项目是否存在、具体数值、设备状态或合规结论时仍必须依赖 E-* 项目证据。",
         ]
+        header = "\n".join(header_lines).strip()
+        submodule_count = len(module.submodules)
+        separator_reserve = 2 * submodule_count
+        per_submodule_chars = max(
+            240,
+            (self.MAX_MODULE_CHARS - len(header) - separator_reserve)
+            // submodule_count,
+        )
+        blocks: list[str] = []
         source_ids: list[str] = []
+        snippet_sources: dict[str, str] = {}
         for submodule_id, submodule in module.submodules.items():
             terms = (submodule_id, submodule.title)
-            documents = self._ranked(terms, 2)
-            lines.extend(["", f"## {submodule_id} {submodule.title}"])
+            documents = self._ranked(
+                terms,
+                self.MAX_DOCUMENTS_PER_SUBMODULE,
+                professional_only=True,
+            )
+            block_lines = [f"## {submodule_id} {submodule.title}"]
             if not documents:
-                lines.append(
+                block_lines.append(
                     "未检索到项目 Knowledge 匹配项；可使用模型专业知识继续分析，"
                     "但通用知识或假设不得写成客户现场事实。"
                 )
-                continue
-            for document in documents:
-                source_id = self._register(document)
-                source_ids.append(source_id)
-                snippet = self._snippet(document.text, terms)
-                lines.extend(
-                    [
-                        f"### {source_id} {document.title}",
-                        f"来源：{document.relative_path}",
-                        snippet,
-                    ]
+            else:
+                for document in documents:
+                    snippet = self._snippet(document.text, terms)
+                    if not snippet:
+                        continue
+                    source_id = self._register(document)
+                    snippet_hash = self._normalized_snippet_hash(snippet)
+                    existing_source = snippet_sources.get(snippet_hash)
+                    if existing_source is not None:
+                        entry = f"复用知识引用：{existing_source}（相同片段不重复注入）"
+                    else:
+                        entry_prefix = (
+                            f"### {source_id} {document.title}\n"
+                            f"来源：{document.relative_path}\n"
+                        )
+                        remaining = (
+                            per_submodule_chars
+                            - len("\n".join(block_lines))
+                            - len(entry_prefix)
+                            - 2
+                        )
+                        if remaining < 80:
+                            continue
+                        entry = entry_prefix + snippet[:remaining].rstrip()
+                        snippet_sources[snippet_hash] = source_id
+                    candidate = "\n".join([*block_lines, entry])
+                    if len(candidate) > per_submodule_chars:
+                        continue
+                    block_lines.append(entry)
+                    source_ids.append(existing_source or source_id)
+            if len(block_lines) == 1:
+                block_lines.append(
+                    "匹配项因本模块配额或去重规则未重复展开；可通过已列 R-* 引用追溯。"
                 )
-        text = "\n".join(lines).strip()
+            blocks.append("\n".join(block_lines))
+        text = "\n\n".join([header, *blocks]).strip()
         if len(text) > self.MAX_MODULE_CHARS:
-            text = text[: self.MAX_MODULE_CHARS].rsplit("\n", 1)[0] + "\n\n[知识上下文已按成本上限截断]"
+            raise ValueError("module Knowledge assembly exceeded its deterministic budget")
         path = self.store.write_text(
             f"Work/runs/{self.run_id}/context/module-{module_id}-knowledge.md",
             text + "\n",

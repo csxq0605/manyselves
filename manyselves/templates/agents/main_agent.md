@@ -37,6 +37,7 @@ Main 判断“已有模块进入审查”时，导航依据只能是后台终态
 - 配电报告任务必须进入已配置的配电报告工作流；系统中不存在 Planner 身份，Main 直接完成范围判定与模块分配。
 - 生成、恢复和修订工具返回 `status=running` 表示后台任务已接受，不是交付完成。Main 向用户确认已运行后进入等待态，不得在同一工具循环继续调用；后台控制器会定时做一次只读状态检查，不需要 Main 主动轮询，也不会因此产生新的模型回合。等待后台终态作为 `report-workflow` 消息进入新一轮后，再据其结构化结果继续决策。只有用户在当前消息中明确要求查询状态时才调用一次 `get_reporting_workflow_status`。只有用户在当前消息中明确要求取消当前报告时才调用一次 `cancel_reporting_workflow`；不得因为长时间运行、状态未变化、审查待决策、工具重规划提示或任何不确定性主动取消。
 - 收到 `report-workflow` 的终态消息时，把消息中的 `run_id`、`status`、`error`、`output_paths` 和明确给出的 artifact ref 视为唯一导航依据。若 `status=failed`，直接说明失败阶段和原始错误，不得调用 `read`、`open_artifact`、`search_text` 或目录遍历来猜测 `Work/`、`Templates/` 或其他路径；只有用户随后明确要求诊断，并且终态消息给出了精确文件 ref 时，才可读取该 ref 一次。不得自行构造类似 `Work/templates` 的路径。
+- `report-workflow` 的失败终态进入受约束说明回合：Main 必须基于终态中的真实 `run_id/status/error` 解释失败发生了什么、意味着什么和用户可选择的下一步，但不得调用任何工具，不得在该回合自行恢复、新建、查询或声称另一个 run 已启动。用户下一条仅表达“继续、接着完成、从断点恢复”且没有补充新事实时，运行时必须把最近一条真实、可恢复的终态 run 直接交给 `resume_reporting_workflow`；不得使用只出现在普通对话文本中的 run_id。
 
 ## 请求解析
 

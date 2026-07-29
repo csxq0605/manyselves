@@ -21,6 +21,8 @@ from .agentic_models import (
     ResolutionVerdict,
     RevisionResponse,
     StrictModel,
+    TEMPLATE_SKILL_EXCLUSION_CATEGORIES,
+    TEMPLATE_SKILL_TRANSFER_CATEGORIES,
     TableSubmissionInput,
 )
 from .models import SpecialTopicPlan
@@ -59,11 +61,92 @@ class ReviewEvidenceExcerpt(StrictModel):
     )
 
 
+class ReviewClaimStatement(StrictModel):
+    """Review-safe Claim semantics without the runtime authoring protocol."""
+
+    statement_ref: str = Field(
+        min_length=1,
+        description="Opaque stable reference for one current subject statement.",
+    )
+    submodule_id: str = Field(
+        min_length=1,
+        description="Reviewed submodule containing the statement.",
+    )
+    text: str = Field(
+        min_length=1,
+        description="Exact statement whose support and boundary are under review.",
+    )
+    statement_type: Literal[
+        "project_fact",
+        "technical_interpretation",
+        "risk_judgment",
+        "recommendation",
+    ] = Field(description="Semantic purpose of the reviewed statement.")
+    evidence_ids: list[str] = Field(
+        default_factory=list,
+        description="Registered sources currently supporting the statement.",
+    )
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Current author confidence in the statement.",
+    )
+    unresolved: bool = Field(
+        description="Whether the statement still carries an explicit unresolved boundary.",
+    )
+
+
+class ModuleRevisionDiff(StrictModel):
+    """Bounded deterministic diff between the prior and current module subjects."""
+
+    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] = Field(
+        description="Only module changed by this bounded diff."
+    )
+    from_revision: int = Field(
+        ge=0,
+        description="Previously approved module revision.",
+    )
+    to_revision: int = Field(
+        ge=1,
+        description="Current module revision under local regression review.",
+    )
+    changed_submodule_narratives: list[str] = Field(
+        default_factory=list,
+        description="Module-local prose sections changed between the two revisions.",
+    )
+    changed_statement_refs: list[str] = Field(
+        default_factory=list,
+        description="Opaque reviewed statements added, removed, or changed.",
+    )
+    evidence_ids_added: list[str] = Field(
+        default_factory=list,
+        description="Registered evidence newly bound by the revision.",
+    )
+    evidence_ids_removed: list[str] = Field(
+        default_factory=list,
+        description="Registered evidence no longer bound by the revision.",
+    )
+
+    @model_validator(mode="after")
+    def revision_advances(self) -> "ModuleRevisionDiff":
+        if self.to_revision <= self.from_revision:
+            raise ValueError("module revision diff must advance the subject revision")
+        return self
+
+
 def strip_runtime_claim_markers(text: str) -> str:
     return re.sub(r"\s*\[\[CLAIM:C-[^\]\s]+\]\]", "", text)
 
 
-def module_content_view(subject: ModuleSubmission) -> ModuleContentView:
+def module_content_view(
+    subject: ModuleSubmission,
+    submodule_ids: set[str] | None = None,
+) -> ModuleContentView:
+    selected = (
+        set(subject.submodule_narratives)
+        if submodule_ids is None
+        else set(submodule_ids)
+    )
     evidence_ids_by_submodule = {
         submodule_id: sorted(
             {
@@ -75,10 +158,12 @@ def module_content_view(subject: ModuleSubmission) -> ModuleContentView:
             }
         )
         for submodule_id in subject.submodule_narratives
+        if submodule_id in selected
     }
     narratives = {
         submodule_id: strip_runtime_claim_markers(narrative).rstrip()
         for submodule_id, narrative in subject.submodule_narratives.items()
+        if submodule_id in selected
     }
     return ModuleContentView(
         module_id=subject.module_id,
@@ -161,6 +246,23 @@ def final_audit_content_view(
     return FinalAuditSubjectView.model_validate(payload)
 
 
+class FinalAuditMetadataView(StrictModel):
+    """Non-prose final-audit metadata not represented in canonical Markdown."""
+
+    photo_ids: list[str] = Field(default_factory=list)
+    unresolved_editorial_issues: list[str] = Field(default_factory=list)
+
+
+def final_audit_metadata_view(
+    subject: EditedReportSubmission,
+) -> FinalAuditMetadataView:
+    content = final_audit_content_view(subject)
+    return FinalAuditMetadataView(
+        photo_ids=content.photo_ids,
+        unresolved_editorial_issues=content.unresolved_editorial_issues,
+    )
+
+
 class TemplateDistillationInput(StrictModel):
     kind: Literal["template_distillation_input"] = "template_distillation_input"
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
@@ -175,12 +277,61 @@ class TemplateDistillationInput(StrictModel):
     required_part_ids: list[Literal["skill", "analysis", "synthesis", "visual", "rubric"]] = Field(
         description="Exact durable result parts required before final submission."
     )
+    boundary_policy_version: Literal[1] = Field(
+        default=1,
+        description=(
+            "Exact reusable-guidance boundary policy version the submission must declare; "
+            "fact-free worked examples remain part of their corresponding Skill methods."
+        ),
+    )
+    allowed_transfer_categories: list[
+        Literal[
+            "analysis_method",
+            "synthesis_method",
+            "visual_method",
+            "quality_check",
+        ]
+    ] = Field(
+        default_factory=lambda: sorted(TEMPLATE_SKILL_TRANSFER_CATEGORIES),
+        description=(
+            "Only template-content categories permitted in the reusable Skill. Each method "
+            "category includes its fact-free structural, positive, and negative examples."
+        ),
+    )
+    required_exclusion_categories: list[
+        Literal[
+            "domain_knowledge",
+            "domain_standard_or_threshold",
+            "project_fact_or_number",
+            "customer_identity",
+            "project_finding_or_risk",
+            "project_conclusion_or_recommendation",
+            "evidence_or_claim_identifier",
+        ]
+    ] = Field(
+        default_factory=lambda: sorted(TEMPLATE_SKILL_EXCLUSION_CATEGORIES),
+        description="Every non-method category the distiller must explicitly exclude.",
+    )
 
     @model_validator(mode="after")
     def exact_parts(self) -> "TemplateDistillationInput":
         expected = {"skill", "analysis", "synthesis", "visual", "rubric"}
         if set(self.required_part_ids) != expected or len(self.required_part_ids) != 5:
             raise ValueError("template distillation requires exactly five named parts")
+        if (
+            set(self.allowed_transfer_categories)
+            != TEMPLATE_SKILL_TRANSFER_CATEGORIES
+            or len(self.allowed_transfer_categories)
+            != len(TEMPLATE_SKILL_TRANSFER_CATEGORIES)
+        ):
+            raise ValueError("template distillation transfer categories are incomplete")
+        if (
+            set(self.required_exclusion_categories)
+            != TEMPLATE_SKILL_EXCLUSION_CATEGORIES
+            or len(self.required_exclusion_categories)
+            != len(TEMPLATE_SKILL_EXCLUSION_CATEGORIES)
+        ):
+            raise ValueError("template distillation exclusion categories are incomplete")
         return self
 
 
@@ -212,7 +363,10 @@ class ModuleAuthoringInput(StrictModel):
     )
     knowledge_ref: str = Field(
         min_length=1,
-        description="Module-specific bounded knowledge context.",
+        description=(
+            "Provenance path for the module-specific Knowledge text already embedded in "
+            "inline_context. It is not delivered by reference and must not be reopened."
+        ),
     )
     saved_part_ids: list[str] = Field(
         default_factory=list,
@@ -241,8 +395,15 @@ class ModuleAuthoringInput(StrictModel):
 
 class ModuleReviewInput(StrictModel):
     kind: Literal["module_review_input"] = "module_review_input"
-    phase: Literal["initial", "recheck"] = Field(
-        description="initial creates findings; recheck returns verdicts for required findings."
+    review_protocol_version: Literal[2] = Field(
+        default=2,
+        description="Version 2 binds one stable reviewer identity to each module.",
+    )
+    phase: Literal["initial", "local_regression", "recheck"] = Field(
+        description=(
+            "initial creates findings; local_regression checks a Cross-triggered scoped "
+            "diff; recheck returns verdicts for required findings."
+        )
     )
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
     module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] = Field(
@@ -269,6 +430,28 @@ class ModuleReviewInput(StrictModel):
     subject: ModuleContentView = Field(
         description="Current module prose and per-submodule E evidence, without internal ids."
     )
+    claim_statements: list[ReviewClaimStatement] = Field(
+        default_factory=list,
+        description=(
+            "Review-safe Claim semantics bound to the exact required_submodule_ids "
+            "without exposing the runtime authoring protocol."
+        ),
+    )
+    knowledge_ref: str | None = Field(
+        default=None,
+        description=(
+            "Provenance path for the current-run module Knowledge artifact from which the "
+            "inline bounded slice was made; it is not a readable task reference."
+        ),
+    )
+    knowledge_context: str = Field(
+        default="",
+        max_length=14_000,
+        description=(
+            "Only sourced domain mechanisms, standards, thresholds, and applicability sections "
+            "aligned to required_submodule_ids; never workflow method or current-project evidence."
+        ),
+    )
     evidence: list[ReviewEvidenceExcerpt] = Field(
         description=(
             "Complete bounded packet for every E-* id bound to the reviewed subject. "
@@ -290,6 +473,34 @@ class ModuleReviewInput(StrictModel):
         default_factory=list,
         description="Author responses to required_findings; never reviewer verdicts.",
     )
+    prior_review_completion_ref: str | None = Field(
+        default=None,
+        description="Completed prior local review reused by a local_regression pass.",
+    )
+    prior_review_completion: "ReviewCompletionRecord | None" = Field(
+        default=None,
+        description="Typed prior completion proving the same module reviewer history.",
+    )
+    baseline_subject_ref: str | None = Field(
+        default=None,
+        description="Prior module subject from which the local_regression revision was made.",
+    )
+    trigger_cross_findings: list[CrossReviewFinding] = Field(
+        default_factory=list,
+        description="Cross findings that authorized the scoped module revision.",
+    )
+    trigger_revision_responses: list[RevisionResponse] = Field(
+        default_factory=list,
+        description="Owner responses to trigger_cross_findings.",
+    )
+    revision_diff_ref: str | None = Field(
+        default=None,
+        description="Deterministic bounded revision-diff artifact.",
+    )
+    revision_diff: ModuleRevisionDiff | None = Field(
+        default=None,
+        description="Exact typed diff for the local_regression pass.",
+    )
     validation_report_ref: str = Field(
         min_length=1,
         description=(
@@ -308,12 +519,18 @@ class ModuleReviewInput(StrictModel):
     def phase_fields_match(self) -> "ModuleReviewInput":
         if self.phase == "initial" and self.review_round != 0:
             raise ValueError("initial module review must use review_round zero")
+        if self.phase == "local_regression" and self.review_round != 0:
+            raise ValueError("local_regression module review must use review_round zero")
         if self.phase == "recheck" and self.review_round == 0:
             raise ValueError("module recheck requires a positive review_round")
         if self.subject.module_id != self.module_id:
             raise ValueError("module review subject belongs to a different module")
         if self.subject.revision != self.subject_revision:
             raise ValueError("module review subject_revision does not match subject")
+        if bool(self.knowledge_ref) != bool(self.knowledge_context.strip()):
+            raise ValueError(
+                "module review knowledge_ref and knowledge_context must be provided together"
+            )
         required_evidence_ids = {
             evidence_id
             for values in self.subject.evidence_ids_by_submodule.values()
@@ -325,10 +542,103 @@ class ModuleReviewInput(StrictModel):
             or set(supplied_evidence_ids) != required_evidence_ids
         ):
             raise ValueError("module review evidence must contain every bound E-* id exactly once")
+        if any(
+            statement.submodule_id not in set(self.required_submodule_ids)
+            for statement in self.claim_statements
+        ):
+            raise ValueError("module review statements must stay inside required_submodule_ids")
+        statement_refs = [
+            statement.statement_ref for statement in self.claim_statements
+        ]
+        if len(statement_refs) != len(set(statement_refs)):
+            raise ValueError("module review statement refs must be unique")
+        claim_evidence_ids = {
+            evidence_id
+            for statement in self.claim_statements
+            for evidence_id in statement.evidence_ids
+            if evidence_id.startswith("E-")
+        }
+        if claim_evidence_ids != required_evidence_ids:
+            raise ValueError("module review claims and subject evidence bindings differ")
         if not self.validation_report.passed:
             raise ValueError("module semantic review cannot start from failed machine validation")
+        if (
+            self.validation_report.validation_protocol_version < 2
+            or self.validation_report.subject_ref != self.subject_ref
+            or self.validation_report.subject_revision != self.subject_revision
+            or self.validation_report.content_sha256 is None
+        ):
+            raise ValueError("module review validation is stale or not content-bound")
         if self.phase == "initial" and (self.required_findings or self.revision_responses):
             raise ValueError("initial module review cannot contain prior findings or responses")
+        regression_values = (
+            self.prior_review_completion_ref,
+            self.prior_review_completion,
+            self.baseline_subject_ref,
+            self.trigger_cross_findings,
+            self.trigger_revision_responses,
+            self.revision_diff_ref,
+            self.revision_diff,
+        )
+        if self.phase != "local_regression" and any(regression_values):
+            raise ValueError("only local_regression may contain Cross revision context")
+        if self.phase == "local_regression":
+            if any(
+                value is None
+                for value in (
+                    self.prior_review_completion_ref,
+                    self.prior_review_completion,
+                    self.baseline_subject_ref,
+                    self.revision_diff_ref,
+                    self.revision_diff,
+                )
+            ):
+                raise ValueError("local_regression requires prior completion and revision diff")
+            if not self.trigger_cross_findings:
+                raise ValueError("local_regression requires its triggering Cross findings")
+            trigger_ids = {finding.id for finding in self.trigger_cross_findings}
+            response_ids = {
+                response.finding_id for response in self.trigger_revision_responses
+            }
+            if trigger_ids != response_ids:
+                raise ValueError("local_regression requires one owner response per Cross finding")
+            if any(
+                finding.owner_module_id != self.module_id
+                or not set(finding.target_submodule_ids).issubset(
+                    set(self.required_submodule_ids)
+                )
+                for finding in self.trigger_cross_findings
+            ):
+                raise ValueError("local_regression Cross findings lie outside its module scope")
+            assert self.prior_review_completion is not None
+            assert self.baseline_subject_ref is not None
+            if (
+                self.prior_review_completion.lifecycle != "module"
+                or self.prior_review_completion.run_id != self.run_id
+                or self.prior_review_completion.reviewer_agent_id
+                != "evidence-auditor"
+                or self.baseline_subject_ref
+                not in self.prior_review_completion.subject_refs
+            ):
+                raise ValueError("local_regression prior completion does not bind its baseline")
+            stable_reviewer = f"module-auditor-{self.module_id}"
+            if (
+                self.prior_review_completion.reviewer_session_key
+                != stable_reviewer
+                and not self.prior_review_completion.reviewer_session_key.startswith(
+                    f"{stable_reviewer}-"
+                )
+            ):
+                raise ValueError("local_regression prior completion belongs to another module")
+            assert self.revision_diff is not None
+            if (
+                self.revision_diff.module_id != self.module_id
+                or self.revision_diff.to_revision != self.subject_revision
+                or not set(self.revision_diff.changed_submodule_narratives).issubset(
+                    set(self.required_submodule_ids)
+                )
+            ):
+                raise ValueError("local_regression diff does not bind its current scope")
         if self.phase == "recheck":
             required = {finding.id for finding in self.required_findings}
             responses = {response.finding_id for response in self.revision_responses}
@@ -448,6 +758,25 @@ class CrossReviewInput(StrictModel):
                 raise ValueError("cross recheck validation refs and reports must correspond")
             if any(not report.passed for report in self.machine_validation_reports):
                 raise ValueError("cross recheck cannot start from failed machine validation")
+            changed_refs = {
+                self.module_refs[module_id] for module_id in self.changed_module_ids
+            }
+            if {
+                report.subject_ref for report in self.machine_validation_reports
+            } != changed_refs:
+                raise ValueError("cross recheck validations do not cover final changed subjects")
+            revision_by_ref = {
+                self.module_refs[module_id]: self.module_revisions[module_id]
+                for module_id in self.changed_module_ids
+            }
+            if any(
+                report.validation_protocol_version < 2
+                or report.subject_revision
+                != revision_by_ref.get(report.subject_ref)
+                or report.content_sha256 is None
+                for report in self.machine_validation_reports
+            ):
+                raise ValueError("cross recheck validation is stale or not content-bound")
         return self
 
 
@@ -465,15 +794,33 @@ class FinalReviewInput(StrictModel):
         ge=0,
         description="Workflow-owned chief-editor revision number.",
     )
-    subject: FinalAuditSubjectView = Field(
+    subject_metadata: FinalAuditMetadataView | None = Field(
+        default=None,
         description=(
-            "Current chief-owned Chapters 1 and 3 plus optional Chapter 4, without "
-            "approved Chapter 2 prose."
+            "Initial-pass non-prose metadata absent from canonical_markdown. Recheck retains "
+            "this unchanged metadata by hash instead of resending it; approved Chapter 2 "
+            "prose is never duplicated here."
         )
     )
-    canonical_markdown: str = Field(
+    subject_metadata_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Recheck hash of unchanged initial-pass subject_metadata.",
+    )
+    canonical_markdown: str | None = Field(
+        default=None,
         min_length=1,
-        description="Deterministically rendered Markdown corresponding to subject.",
+        description="Initial-pass deterministic Markdown corresponding to subject.",
+    )
+    changed_section_bodies: dict[str, str] = Field(
+        default_factory=dict,
+        description="Recheck-only bodies for exactly the sections assigned by open findings.",
+    )
+    unchanged_section_sha256: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Recheck-only content hashes for all chief-owned sections not changed in this round."
+        ),
     )
     required_section_ids: list[str] = Field(
         min_length=1,
@@ -500,28 +847,61 @@ class FinalReviewInput(StrictModel):
 
     @model_validator(mode="after")
     def phase_fields_match(self) -> "FinalReviewInput":
-        expected_sections = {
-            section_id
-            for section_id in FINAL_AUDIT_SECTION_IDS
-            if section_id != "4" or self.subject.special_topic_plan is not None
-        }
+        base_sections = set(FINAL_AUDIT_SECTION_IDS) - {"4"}
+        active_sections = set(self.required_section_ids)
         if (
             len(self.required_section_ids) != len(set(self.required_section_ids))
-            or set(self.required_section_ids) != expected_sections
+            or active_sections not in (base_sections, base_sections | {"4"})
         ):
             raise ValueError(
                 "final review must cover exactly the active chief-owned sections; "
                 "Chapter 4 is required only when a special-topic plan is present"
             )
         if not self.validation_report.passed:
-            raise ValueError("final semantic review cannot start from failed machine validation")
-        if self.phase == "initial" and (self.required_findings or self.revision_responses):
-            raise ValueError("initial final review cannot contain prior findings or responses")
+            raise ValueError("final review requires a passed structural validation report")
+        if (
+            self.validation_report.validation_protocol_version < 2
+            or self.validation_report.subject_revision != self.subject_revision
+            or self.validation_report.content_sha256 is None
+        ):
+            raise ValueError("final review validation is stale or not content-bound")
+        audit_sections = active_sections
+        changed_sections = set(self.changed_section_bodies)
+        unchanged_sections = set(self.unchanged_section_sha256)
+        if self.phase == "initial":
+            if self.required_findings or self.revision_responses:
+                raise ValueError("initial final review cannot contain prior findings or responses")
+            if self.canonical_markdown is None or self.subject_metadata is None:
+                raise ValueError("initial final review requires full prose and metadata")
+            if (
+                self.subject_metadata_sha256 is not None
+                or changed_sections
+                or unchanged_sections
+            ):
+                raise ValueError("initial final review cannot contain recheck delta fields")
         if self.phase == "recheck":
             required = {finding.id for finding in self.required_findings}
             responses = {response.finding_id for response in self.revision_responses}
             if not required or responses != required:
                 raise ValueError("final recheck requires one chief response per finding")
+            targets = {
+                section_id
+                for finding in self.required_findings
+                for section_id in finding.target_section_ids
+            }
+            if self.canonical_markdown is not None or self.subject_metadata is not None:
+                raise ValueError("final recheck must not resend full prose or metadata")
+            if self.subject_metadata_sha256 is None:
+                raise ValueError("final recheck requires the retained metadata hash")
+            if changed_sections != targets:
+                raise ValueError("final recheck delta must contain exactly finding targets")
+            if unchanged_sections != audit_sections - targets:
+                raise ValueError("final recheck must hash every unchanged audit section")
+            if any(
+                re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                for digest in self.unchanged_section_sha256.values()
+            ):
+                raise ValueError("final recheck unchanged section hashes must be SHA-256")
         return self
 
 
@@ -548,7 +928,10 @@ class ModuleRevisionInput(StrictModel):
     )
     subject_ref: str = Field(min_length=1, description="Exact module revision being patched.")
     subject: ModuleContentView = Field(
-        description="Complete module prose and per-submodule E evidence baseline."
+        description=(
+            "Only assigned submodule prose and per-submodule E evidence baseline. "
+            "Unassigned content remains workflow-owned and is not resent."
+        )
     )
     target_submodule_ids: list[str] = Field(
         min_length=1,
@@ -581,6 +964,14 @@ class ModuleRevisionInput(StrictModel):
     def assigned_findings_are_nonempty_and_in_scope(self) -> "ModuleRevisionInput":
         if self.subject.module_id != self.module_id:
             raise ValueError("module revision baseline belongs to a different module")
+        targets = set(self.target_submodule_ids)
+        if (
+            set(self.subject.submodule_narratives) != targets
+            or set(self.subject.evidence_ids_by_submodule) != targets
+        ):
+            raise ValueError(
+                "module revision subject must contain exactly the assigned target submodules"
+            )
         if not self.module_findings and not self.cross_findings and not self.requested_changes:
             raise ValueError("module revision input requires a finding or requested change")
         if bool(self.validation_report_ref) != bool(self.validation_report):
@@ -589,7 +980,7 @@ class ModuleRevisionInput(StrictModel):
             )
         if self.validation_report and self.validation_report.passed:
             raise ValueError("a passed validation report cannot trigger another revision")
-        allowed = set(self.target_submodule_ids)
+        allowed = targets
         for finding in self.module_findings:
             if finding.target_submodule_id not in allowed:
                 raise ValueError("module finding lies outside revision targets")
@@ -608,11 +999,18 @@ class ChiefRevisionInput(StrictModel):
     kind: Literal["chief_revision_input"] = "chief_revision_input"
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
     subject_ref: str = Field(min_length=1, description="Exact edited report being revised.")
-    subject: FinalAuditSubjectView = Field(
+    target_section_bodies: dict[str, str] = Field(
         description=(
-            "Chief-owned Chapters 1 and 3 plus optional Chapter 4 baseline; immutable "
-            "Chapter 2 prose is not model-visible during final revision."
+            "Exact current prose for target_section_ids in chief-owned Chapters 1 and 3 "
+            "plus optional Chapter 4; immutable Chapter 2 and unassigned bodies are not repeated."
         )
+    )
+    consistency_context: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Bounded chief-owned sections needed to check summary and synthesis consistency. "
+            "These sections are read-only and disjoint from target_section_ids."
+        ),
     )
     revision: int = Field(
         ge=1,
@@ -636,6 +1034,22 @@ class ChiefRevisionInput(StrictModel):
         }
         if set(self.target_section_ids) != finding_targets:
             raise ValueError("chief revision targets must exactly match assigned final findings")
+        if set(self.target_section_bodies) != set(self.target_section_ids):
+            raise ValueError("chief revision target bodies must exactly match target sections")
+        invalid_context = sorted(
+            set(self.consistency_context) - set(FINAL_AUDIT_SECTION_IDS)
+        )
+        if invalid_context:
+            raise ValueError(
+                f"chief revision context contains non-chief sections: {invalid_context}"
+            )
+        overlap = sorted(
+            set(self.consistency_context).intersection(self.target_section_ids)
+        )
+        if overlap:
+            raise ValueError(
+                f"chief revision context duplicates target sections: {overlap}"
+            )
         return self
 
 
@@ -792,8 +1206,23 @@ class ValidationFailure(StrictModel):
 
 class ValidationReport(StrictModel):
     kind: Literal["validation_report"] = "validation_report"
+    validation_protocol_version: int = Field(
+        default=1,
+        ge=1,
+        description="Validation binding protocol; missing legacy values are version 1.",
+    )
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
     subject_ref: str = Field(min_length=1, description="Exact validated subject artifact.")
+    subject_revision: int | None = Field(
+        default=None,
+        ge=0,
+        description="Workflow revision of the exact validated subject when revisioned.",
+    )
+    content_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="SHA-256 of the exact bytes read by the validator.",
+    )
     validator: str = Field(
         min_length=1,
         description="Deterministic validator implementation and version identifier.",
@@ -820,11 +1249,18 @@ class ValidationReport(StrictModel):
     def passed_matches_failures(self) -> "ValidationReport":
         if self.passed != (not self.failures):
             raise ValueError("validation report passed must equal not failures")
+        if self.validation_protocol_version >= 2 and self.content_sha256 is None:
+            raise ValueError("validation protocol v2 requires content_sha256")
         return self
 
 
 class ReviewCompletionRecord(StrictModel):
     kind: Literal["review_completion_record"] = "review_completion_record"
+    review_protocol_version: int = Field(
+        default=1,
+        ge=1,
+        description="Review protocol that produced this completion; missing legacy values are v1.",
+    )
     lifecycle: Literal["module", "cross", "final"] = Field(
         description="Review lifecycle completed by this record."
     )
@@ -864,6 +1300,22 @@ class ReviewCompletionRecord(StrictModel):
         if any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in self.artifact_sha256.values()):
             raise ValueError("review completion hashes must be SHA-256 hex")
         return self
+
+
+class FinalAuditSnapshot(StrictModel):
+    """Immutable bridge proving audit and delivery use one edited-report snapshot."""
+
+    kind: Literal["final_audit_snapshot"] = "final_audit_snapshot"
+    run_id: str = Field(min_length=1)
+    subject_ref: str = Field(min_length=1)
+    subject_revision: int = Field(ge=0)
+    subject_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    canonical_markdown_ref: str = Field(min_length=1)
+    canonical_markdown_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    validation_report_ref: str = Field(min_length=1)
+    validation_report_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    completion_ref: str = Field(min_length=1)
+    completion_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 INPUT_CONTRACT_TYPES = {
@@ -1009,6 +1461,15 @@ def _example_final_audit_subject() -> dict[str, Any]:
     return payload
 
 
+def _example_final_audit_metadata() -> dict[str, Any]:
+    subject = _example_final_audit_subject()
+    return {
+        "unresolved_editorial_issues": subject.get(
+            "unresolved_editorial_issues", []
+        ),
+    }
+
+
 _EXAMPLE_MODULES = {
     module_id: module_content_view(
         ModuleSubmission.model_validate(_example_module(module_id))
@@ -1059,9 +1520,12 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "validation_report_ref": ("Work/runs/report-example/reviews/module-quality-2.1-r0.json"),
         "validation_report": {
             "kind": "validation_report",
+            "validation_protocol_version": 2,
             "run_id": "report-example",
             "subject_ref": _EXAMPLE_MODULE_REFS["2.1"],
-            "validator": "module-structure/v1",
+            "subject_revision": 0,
+            "content_sha256": "0" * 64,
+            "validator": "module-structure/v2",
             "check_ids": ["module.canonical_markdown"],
             "failures": [],
             "observations": [],
@@ -1090,7 +1554,7 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "run_id": "report-example",
         "subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
         "subject_revision": 0,
-        "subject": _example_final_audit_subject(),
+        "subject_metadata": _example_final_audit_metadata(),
         "canonical_markdown": "# 示例报告\n\n完整成稿正文。",
         "required_section_ids": list(FINAL_AUDIT_SECTION_IDS),
         "required_findings": [],
@@ -1098,9 +1562,12 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "validation_report_ref": ("Work/runs/report-example/reviews/report-integrity-r0.json"),
         "validation_report": {
             "kind": "validation_report",
+            "validation_protocol_version": 2,
             "run_id": "report-example",
             "subject_ref": "Work/runs/report-example/validation/report-r0.md",
-            "validator": "final-report-structure/v1",
+            "subject_revision": 0,
+            "content_sha256": "0" * 64,
+            "validator": "final-report-structure/v2",
             "check_ids": ["final_report.fixed_sections_and_markdown"],
             "failures": [],
             "observations": [],
@@ -1112,7 +1579,23 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "run_id": "report-example",
         "module_id": "2.1",
         "subject_ref": _EXAMPLE_MODULE_REFS["2.1"],
-        "subject": _EXAMPLE_MODULES["2.1"],
+        "subject": {
+            **_EXAMPLE_MODULES["2.1"],
+            "submodule_narratives": {
+                next(iter(REPORT_TAXONOMY["2.1"].submodules)): (
+                    _EXAMPLE_MODULES["2.1"]["submodule_narratives"][
+                        next(iter(REPORT_TAXONOMY["2.1"].submodules))
+                    ]
+                )
+            },
+            "evidence_ids_by_submodule": {
+                next(iter(REPORT_TAXONOMY["2.1"].submodules)): (
+                    _EXAMPLE_MODULES["2.1"]["evidence_ids_by_submodule"][
+                        next(iter(REPORT_TAXONOMY["2.1"].submodules))
+                    ]
+                )
+            },
+        },
         "target_submodule_ids": [next(iter(REPORT_TAXONOMY["2.1"].submodules))],
         "module_findings": [_example_module_finding()],
         "cross_findings": [],
@@ -1124,7 +1607,14 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "kind": "chief_revision_input",
         "run_id": "report-example",
         "subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
-        "subject": _example_final_audit_subject(),
+        "target_section_bodies": {
+            "4": _example_final_audit_subject()["special_topic_analysis"],
+        },
+        "consistency_context": {
+            "1.2": _example_final_audit_subject()["findings_overview"],
+            "3.1.1": _example_final_audit_subject()["risk_panorama"],
+            "3.2": _example_final_audit_subject()["improvement_action_plan"],
+        },
         "revision": 1,
         "target_section_ids": ["4"],
         "findings": [_example_final_finding()],

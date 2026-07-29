@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
-from ..models import PhotoAsset
+from ..models import EvidenceItem, PhotoAsset
 
 _CELL_IMAGES = "xl/cellimages.xml"
 _CELL_IMAGE_RELS = "xl/_rels/cellimages.xml.rels"
@@ -73,5 +73,48 @@ def extract_wps_images(
                 sha256=hashlib.sha256(content).hexdigest(),
                 media_type=media_type,
                 source_member=member,
+                source_image_id=image_id,
             )
         return assets
+
+
+def canonicalize_photo_bindings(
+    evidence: list[EvidenceItem],
+    assets: dict[str, PhotoAsset],
+    *,
+    start_index: int,
+) -> tuple[list[EvidenceItem], list[PhotoAsset]]:
+    """Replace workbook-private image keys with ordered run-facing photo IDs."""
+
+    raw_to_canonical = {
+        raw_id: f"P-{start_index + offset:04d}"
+        for offset, raw_id in enumerate(assets)
+    }
+    referenced = {
+        photo_id
+        for item in evidence
+        for photo_id in item.photo_refs
+    }
+    unknown = sorted(referenced - set(raw_to_canonical))
+    if unknown:
+        raise ValueError(f"evidence references unextractable workbook photos: {unknown}")
+    normalized_evidence = [
+        item.model_copy(
+            update={
+                "photo_refs": [
+                    raw_to_canonical[photo_id] for photo_id in item.photo_refs
+                ]
+            }
+        )
+        for item in evidence
+    ]
+    normalized_assets = [
+        asset.model_copy(
+            update={
+                "id": raw_to_canonical[raw_id],
+                "source_image_id": raw_id,
+            }
+        )
+        for raw_id, asset in assets.items()
+    ]
+    return normalized_evidence, normalized_assets

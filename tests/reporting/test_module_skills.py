@@ -30,6 +30,18 @@ def test_auditor_receives_only_module_under_review() -> None:
     assert {skill.module_id for skill in skills} == {"2.2"}
 
 
+def test_auditor_receives_only_skills_for_required_submodules() -> None:
+    library = ModuleSkillLibrary.packaged()
+
+    skills = library.for_agent(
+        "evidence-auditor",
+        module_id="2.4",
+        submodule_ids={"2.4.2.2"},
+    )
+
+    assert {skill.id for skill in skills} == {"pds.module24.installation"}
+
+
 def test_routing_index_contains_metadata_without_skill_bodies() -> None:
     library = ModuleSkillLibrary.packaged()
 

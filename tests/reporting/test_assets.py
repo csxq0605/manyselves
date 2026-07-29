@@ -413,3 +413,74 @@ def test_asset_assembler_builds_traceable_table_and_photo(tmp_path: Path) -> Non
     assert photos[0].source_id == "E-0001"
     assert photos[0].claim_ids == [claim.id]
     assert photos[0].submodule_id == "2.4.2.3"
+
+
+def test_asset_assembler_requires_and_builds_every_source_table_photo(
+    tmp_path: Path,
+) -> None:
+    paths = [
+        tmp_path / "Work/assets/IMG-1.png",
+        tmp_path / "Work/assets/IMG-2.png",
+    ]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"image")
+    claim = _claim()
+    evidence = [
+        EvidenceItem(
+            id="E-0001",
+            subject="1A2 柜",
+            fact="连接点存在异常",
+            source=SourceLocation(
+                file_id="F-1",
+                path=Path("Inputs/check.xlsx"),
+                cell="A2",
+            ),
+            module_id="2.4",
+            submodule_id="2.4.2.3",
+            photo_refs=["IMG-1"],
+        ),
+        EvidenceItem(
+            id="E-0002",
+            subject="缺陷判定标准",
+            fact="原表包含判定标准图",
+            source=SourceLocation(
+                file_id="F-1",
+                path=Path("Inputs/check.xlsx"),
+                cell="J1",
+            ),
+            module_id="2.2",
+            submodule_id="2.2.2.1",
+            photo_refs=["IMG-2"],
+        ),
+    ]
+    assets = [
+        PhotoAsset(
+            id=f"IMG-{index}",
+            path=path.relative_to(tmp_path),
+            sha256=str(index),
+            media_type="image/png",
+            source_member=f"media/image{index}.png",
+        )
+        for index, path in enumerate(paths, start=1)
+    ]
+    edited = _edited(photo_ids=["IMG-1", "IMG-2"])
+
+    _, photos = ReportAssetAssembler(tmp_path).build(
+        evidence,
+        assets,
+        [claim],
+        edited,
+    )
+
+    assert [photo.id for photo in photos] == ["IMG-1", "IMG-2"]
+    assert photos[1].claim_ids == []
+    assert photos[1].submodule_id == "2.2.2.1"
+
+    with pytest.raises(ValueError, match="runtime-owned source-table photo set"):
+        ReportAssetAssembler(tmp_path).build(
+            evidence,
+            assets,
+            [claim],
+            edited.model_copy(update={"photo_ids": ["IMG-1"]}),
+        )

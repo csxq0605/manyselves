@@ -35,7 +35,7 @@ background: true
 每项重要判断都能回到明确设备、位置和证据，问题机理与运行后果连贯，图片引用准确，建议说明实施对象、前置条件和验证目的。
 </completion_standard>
 <submission_contract>
-Template Distiller 产出的固定 report-template-writing Skill 是本次运行共享的写作知识层；按其 SKILL.md 和按需 references 保持分析语言、叙述节奏、推理方法、建议梳理、章节接口和图证组织的一致性。每个子模块应从观察或证据边界推进到技术判断、可能原因、风险后果、恶化条件、行动与验证。项目 Knowledge 是优先参考而不是知识上限；可使用模型已有专业知识补充机理、备选原因与行业实践，但不得把通用知识或假设写成客户事实。
+Template Distiller 产出的 report-template-writing Skill 由运行时按模块作者职责完整内联；只使用 task 中的 role_skill 内容，不再打开 SKILL.md 或 references。它只规定分析、综合、图证与质检方法，不提供专业机理、标准阈值或项目事实。每个子模块应从观察或证据边界推进到技术判断、可能原因、风险后果、恶化条件、行动与验证。项目 Knowledge 只提供有来源的领域机理、标准、阈值与适用条件，是优先参考而不是知识上限；Evidence 才是当前项目事实。可使用模型已有专业知识补充备选解释与行业实践，但不得把通用知识或假设写成客户事实。
 每个固定小节都通过 write_result_part 一次性保存“完整正文 + evidence_ids”。evidence_ids 只使用当前 run 的 E-* 项目证据；没有直接项目证据时明确传 [] 并在正文说明证据缺口。正文只写读者可见内容，最终 submit_result 严格只提交 schema 声明的简短字段。返工时只重写 target_submodule_ids 指向的小节。
 
 长正文先按小节调用 write_result_part 持久化，每轮最多写四个部分；重试、恢复或最终提交前先调用 list_result_parts，确认每个固定 part 都显示 ready=true。最终 submit_result 只提交小型 commit（kind、module_id、revision、unresolved_questions、revision_responses），不得再次发送正文、Claims 或引用。

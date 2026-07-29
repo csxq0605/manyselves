@@ -32,6 +32,12 @@ SOURCE_PREFIX = {
     SourceKind.WEB: "W-",
 }
 
+SynthesisTableType = Literal[
+    "risk_cluster_matrix",
+    "action_dependency_matrix",
+    "joint_acceptance_matrix",
+]
+
 
 class TaskEnvelope(StrictModel):
     task_id: str = Field(min_length=1)
@@ -46,6 +52,18 @@ class TaskEnvelope(StrictModel):
     prior_result_ref: str | None = None
     context_summary_refs: list[str] = Field(default_factory=list)
     inline_context: str | None = Field(default=None, max_length=100_000)
+    artifact_delivery_modes: dict[
+        str, Literal["inline", "reference", "hash_retained"]
+    ] = Field(
+        default_factory=dict,
+        description=(
+            "One delivery mode per declared artifact. Inline artifacts are embedded in the "
+            "task and cannot be reopened; reference artifacts are readable; hash_retained "
+            "artifacts identify immutable prior state whose full finding/response contract "
+            "and current content hashes are carried by the inline input; correctness must not "
+            "depend on process-local conversation memory."
+        ),
+    )
     target_submodule_ids: list[str] = Field(default_factory=list)
     input_contract_kind: (
         Literal[
@@ -87,6 +105,29 @@ class TaskEnvelope(StrictModel):
             raise ValueError("input_contract_kind and input_contract_ref must be provided together")
         if self.input_contract_ref and self.input_contract_ref not in self.input_refs:
             raise ValueError("input_contract_ref must also appear in input_refs")
+        declared_refs = {
+            *self.input_refs,
+            *self.context_summary_refs,
+            *([self.prior_result_ref] if self.prior_result_ref else []),
+        }
+        unexpected_modes = sorted(set(self.artifact_delivery_modes) - declared_refs)
+        if unexpected_modes:
+            raise ValueError(
+                f"artifact delivery modes reference undeclared artifacts: {unexpected_modes}"
+            )
+        modes = dict(self.artifact_delivery_modes)
+        for ref in self.input_refs:
+            modes.setdefault(
+                ref,
+                "inline" if ref == self.input_contract_ref else "reference",
+            )
+        for ref in self.context_summary_refs:
+            modes.setdefault(ref, "reference")
+        if self.prior_result_ref:
+            modes.setdefault(self.prior_result_ref, "reference")
+        if self.input_contract_ref and modes[self.input_contract_ref] != "inline":
+            raise ValueError("input contract is embedded and must use inline delivery")
+        self.artifact_delivery_modes = modes
         return self
 
 
@@ -358,6 +399,96 @@ class ModuleDispatchPlan(StrictModel):
     rationale: str = Field(min_length=1)
 
 
+TEMPLATE_SKILL_TRANSFER_CATEGORIES = frozenset(
+    {
+        "analysis_method",
+        "synthesis_method",
+        "visual_method",
+        "quality_check",
+    }
+)
+TEMPLATE_SKILL_EXCLUSION_CATEGORIES = frozenset(
+    {
+        "domain_knowledge",
+        "domain_standard_or_threshold",
+        "project_fact_or_number",
+        "customer_identity",
+        "project_finding_or_risk",
+        "project_conclusion_or_recommendation",
+        "evidence_or_claim_identifier",
+    }
+)
+
+
+class TemplateSkillBoundaryManifest(StrictModel):
+    """Typed proof that template guidance was classified before Skill transfer.
+
+    Each allowed method category includes its fact-free worked examples and
+    output skeletons.  Those examples are teaching material inside the Skill,
+    not a separate output-profile artifact.
+    """
+
+    policy_version: Literal[1] = Field(
+        default=1,
+        description=(
+            "Version of the enforced reusable-guidance policy. Allowed methods include "
+            "fact-free worked examples and output skeletons inside the Skill."
+        ),
+    )
+    transferred_categories: list[
+        Literal[
+            "analysis_method",
+            "synthesis_method",
+            "visual_method",
+            "quality_check",
+        ]
+    ] = Field(
+        min_length=4,
+        description=(
+            "Exact reusable method categories transferred into the Template Skill; each "
+            "category may and should carry fact-free positive, negative, or structural examples."
+        ),
+    )
+    excluded_categories: list[
+        Literal[
+            "domain_knowledge",
+            "domain_standard_or_threshold",
+            "project_fact_or_number",
+            "customer_identity",
+            "project_finding_or_risk",
+            "project_conclusion_or_recommendation",
+            "evidence_or_claim_identifier",
+        ]
+    ] = Field(
+        min_length=7,
+        description="Exact non-method categories excluded from every Template Skill file.",
+    )
+    boundary_statement: str = Field(
+        min_length=80,
+        max_length=1_500,
+        description=(
+            "Concise declaration that only reusable method was transferred and every "
+            "excluded category must be sourced from Module Skill, Knowledge, or Evidence."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def exact_boundary_categories(self) -> "TemplateSkillBoundaryManifest":
+        if (
+            set(self.transferred_categories) != TEMPLATE_SKILL_TRANSFER_CATEGORIES
+            or len(self.transferred_categories) != len(TEMPLATE_SKILL_TRANSFER_CATEGORIES)
+        ):
+            raise ValueError(
+                "template Skill must transfer exactly the four reusable guidance categories"
+            )
+        if (
+            set(self.excluded_categories) != TEMPLATE_SKILL_EXCLUSION_CATEGORIES
+            or len(self.excluded_categories) != len(TEMPLATE_SKILL_EXCLUSION_CATEGORIES)
+        ):
+            raise ValueError("template Skill must exclude every non-method content category")
+        return self
+
+
 class TemplateSkillSubmission(StrictModel):
     """A run-scoped writing Skill distilled semantically by Main from a template."""
 
@@ -369,6 +500,12 @@ class TemplateSkillSubmission(StrictModel):
     synthesis_reference: str = Field(min_length=120, max_length=16_000)
     visual_organization_reference: str = Field(min_length=120, max_length=12_000)
     quality_rubric: str = Field(min_length=120, max_length=12_000)
+    boundary_manifest: TemplateSkillBoundaryManifest = Field(
+        description=(
+            "Typed reusable-guidance transfer declaration; allowed methods retain their "
+            "fact-free worked examples inside this Skill."
+        )
+    )
 
     @model_validator(mode="after")
     def skill_links_its_progressive_references(self) -> "TemplateSkillSubmission":
@@ -680,7 +817,6 @@ class FinalReviewFinding(StrictModel):
             "Current edited-report or trusted upstream artifact refs that reproduce the defect."
         ),
     )
-
     @model_validator(mode="after")
     def final_targets_use_fixed_sections(self) -> "FinalReviewFinding":
         invalid = sorted(set(self.target_section_ids) - set(FINAL_AUDIT_SECTION_IDS))
@@ -1228,6 +1364,12 @@ class TemplateSkillSubmissionInput(StrictModel):
     synthesis_reference: str | TextArtifactRef
     visual_organization_reference: str | TextArtifactRef
     quality_rubric: str | TextArtifactRef
+    boundary_manifest: TemplateSkillBoundaryManifest = Field(
+        description=(
+            "Typed reusable-guidance transfer declaration; allowed methods retain their "
+            "fact-free worked examples inside this Skill."
+        )
+    )
 
 
 class EditedReportSubmissionInput(StrictModel):

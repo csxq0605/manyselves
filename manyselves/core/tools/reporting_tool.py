@@ -213,6 +213,9 @@ class ReportingRunController:
         max_total_tokens: int | None = None,
         supplements: list[UserSupplement] | None = None,
     ) -> dict[str, Any]:
+        validate = getattr(self.service, "validate_resume_run", None)
+        if callable(validate):
+            validate(run_id)
         return self.start_operation(
             run_id,
             f"从检查点恢复 {run_id}",
@@ -283,14 +286,87 @@ class ReportingRunController:
 
     def status(self, run_id: str) -> dict[str, Any]:
         task_id = self._task_ids.get(run_id)
-        if task_id is None:
-            return {"status": "not_found", "run_id": run_id}
-        item = self.task_board.get_task(task_id, target_agent="report-workflow")
-        return {
-            "status": item.status.value if item is not None else "unknown",
-            "run_id": run_id,
-            "task_id": task_id,
+        if task_id is not None:
+            item = self.task_board.get_task(task_id, target_agent="report-workflow")
+            if item is not None:
+                return {
+                    "status": item.status.value,
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "active": run_id in self._tasks
+                    and not self._tasks[run_id].done(),
+                    "source": "live",
+                }
+        return self._persisted_status(run_id)
+
+    def _persisted_status(self, run_id: str) -> dict[str, Any]:
+        """Read durable run state when this controller did not create the task."""
+
+        if not run_id or Path(run_id).name != run_id:
+            return {"status": "not_found", "run_id": run_id, "source": "persisted"}
+        workspace = Path(self.service.workspace)
+        result_path = workspace / f"Work/runs/{run_id}.json"
+        run_root = workspace / "Work" / "runs" / run_id
+        checkpoint_path = run_root / "workflow-state.json"
+        request_exists = (run_root / "request.json").is_file() or (
+            run_root / "revision-request.json"
+        ).is_file()
+        result: dict[str, Any] = {}
+        checkpoint: dict[str, Any] = {}
+        try:
+            if result_path.is_file():
+                loaded = json.loads(result_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    result = loaded
+            if checkpoint_path.is_file():
+                loaded = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    checkpoint = loaded
+        except (OSError, json.JSONDecodeError) as exc:
+            return {
+                "status": "unknown",
+                "run_id": run_id,
+                "active": False,
+                "source": "persisted",
+                "error": f"persisted report state is unreadable: {exc}",
+            }
+        if not (result or checkpoint or request_exists):
+            return {
+                "status": "not_found",
+                "run_id": run_id,
+                "active": False,
+                "source": "persisted",
+            }
+
+        persisted_status = str(
+            result.get("status") or checkpoint.get("status") or "unknown"
+        )
+        resumable_statuses = {
+            "failed",
+            "cancelled",
+            "blocked",
+            "needs_decision",
+            "needs_user_decision",
+            "in_progress",
+            "running",
         }
+        interrupted = persisted_status in {"in_progress", "running"}
+        payload: dict[str, Any] = {
+            "status": "interrupted" if interrupted else persisted_status,
+            "persisted_status": persisted_status,
+            "run_id": run_id,
+            "active": False,
+            "source": "persisted",
+            "resumable": checkpoint_path.is_file()
+            and persisted_status in resumable_statuses,
+        }
+        if checkpoint.get("activity"):
+            payload["activity"] = checkpoint["activity"]
+        if result.get("error") or checkpoint.get("error"):
+            payload["error"] = result.get("error") or checkpoint.get("error")
+        if result.get("output_paths"):
+            payload["output_paths"] = result["output_paths"]
+        return payload
 
 
 class RunReportingWorkflowTool(Tool):

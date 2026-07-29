@@ -50,6 +50,7 @@ from ...interfaces.types import (
     ToolResult as ToolResultMsg,
 )
 from ...utils.agent_labels import get_agent_badge
+from ...utils.editor_context import user_visible_content
 from ..artifacts.gateway import ArtifactGateway, ArtifactGrant
 from ..tools.manifest_tool import ManifestManager, ManifestTool
 from ..tools.outcomes import (
@@ -91,19 +92,186 @@ _CANCEL_REPORT_REQUEST = re.compile(
     re.IGNORECASE,
 )
 
+_REPORT_ROUTE_OBJECT = re.compile(
+    r"(?:配电|安全评估|专家咨询)?报告"
+    r"|(?:模块\s*2\.[1-5]|2\.[1-5]\s*模块)"
+    r"|(?:模板(?:写作)?\s*(?:skill|技能))"
+    r"|(?:markdown|md)\s*(?:转|转换|生成|导出).{0,8}(?:word|docx)"
+    r"|(?:word|docx)\s*(?:报告|文件)",
+    re.IGNORECASE,
+)
+_REPORT_ROUTE_ACTION = re.compile(
+    r"开始|写作|撰写|编写|生成|重写|重新(?:分析|生成|写作|撰写)"
+    r"|汇总|合并|聚合|渲染|转换|转成|导出|蒸馏|学习|更新",
+    re.IGNORECASE,
+)
+_REPORT_ROUTE_DIAGNOSIS = re.compile(
+    r"为什么|为何|原因|失败|报错|错误|调查|诊断|排查|状态|进度",
+    re.IGNORECASE,
+)
+_REPORT_ROUTE_RESTART = re.compile(
+    r"重新(?:开始|分析|生成|写作|撰写|运行)|重跑|再(?:生成|写|跑)一次",
+    re.IGNORECASE,
+)
+_REPORT_ROUTE_FILE_TOOLS = frozenset(
+    {
+        "read",
+        "inspect_document",
+        "open_artifact",
+        "open_tool_result",
+        "search_text",
+        "parse_pdf",
+    }
+)
+_REPORTING_ENTRY_TOOLS = frozenset(
+    {
+        "run_reporting_workflow",
+        "resume_reporting_workflow",
+        "revise_reporting_workflow",
+    }
+)
+_SIMPLE_REPORT_CONTINUATION = re.compile(
+    r"^(?:请|麻烦|帮我)?"
+    r"(?:继续|接着|恢复)"
+    r"(?:在|从)?(?:这个|该|原(?:来的)?)?"
+    r"(?:报告|报告任务|任务|run|运行)?(?:的)?"
+    r"(?:断点|检查点)?(?:处)?"
+    r"(?:继续|完成|运行|执行)?"
+    r"[。！？!?\s]*$",
+    re.IGNORECASE,
+)
+_RESUMABLE_REPORT_STATUSES = frozenset(
+    {
+        "failed",
+        "cancelled",
+        "blocked",
+        "needs_decision",
+        "needs_user_decision",
+        "in_progress",
+        "running",
+        "interrupted",
+    }
+)
+_UNVERIFIED_REPORT_OPERATION_CLAIM = re.compile(
+    r"(?:已|已经|现已|正在|成功)(?:在后台)?"
+    r"(?:启动|恢复|运行|重启|重新启动)"
+    r"|(?:新(?:的)?\s*run|新运行).{0,20}(?:启动|运行)",
+    re.IGNORECASE,
+)
+_REPORT_RUN_ID = re.compile(r"\breport-[A-Za-z0-9_-]+\b")
+_EVIDENCE_DECISION_PATTERNS = {
+    "draft": re.compile(r"\bdraft\b|保留不确定性.{0,12}起草|按不确定性起草|继续起草", re.IGNORECASE),
+    "skip": re.compile(r"\bskip\b|跳过|保留目录.{0,12}未评估", re.IGNORECASE),
+    "stop": re.compile(r"\bstop\b|停止|终止", re.IGNORECASE),
+    "supplement": re.compile(r"\bsupplement\b|补充资料|补录|我补充", re.IGNORECASE),
+}
+
+
+def _direct_user_content(message: UserMessage | None) -> str:
+    """Return the user's command body without an editor-context wrapper."""
+
+    if message is None or str(getattr(message, "source", "user") or "user") != "user":
+        return ""
+    return user_visible_content(str(getattr(message, "content", "") or "")).strip()
+
 
 def _is_explicit_report_cancel_request(message: UserMessage | None) -> bool:
     """Return True only for a direct end-user instruction to cancel a report."""
 
-    if message is None or str(getattr(message, "source", "user") or "user") != "user":
+    content = _direct_user_content(message)
+    if not content:
         return False
-    content = str(getattr(message, "content", "") or "").strip()
     folded = content.casefold()
     if content == "/stop":
         return True
     if any(negation in folded for negation in _CANCEL_REPORT_NEGATIONS):
         return False
     return bool(_CANCEL_REPORT_REQUEST.search(content))
+
+
+def _requires_reporting_workflow_route(message: UserMessage | None) -> bool:
+    """Identify direct report operations that Main must route before reading files."""
+
+    content = _direct_user_content(message)
+    if not content:
+        return False
+    if _REPORT_ROUTE_DIAGNOSIS.search(content) and not _REPORT_ROUTE_RESTART.search(
+        content
+    ):
+        return False
+    return bool(
+        _REPORT_ROUTE_OBJECT.search(content) and _REPORT_ROUTE_ACTION.search(content)
+    )
+
+
+def _report_workflow_terminal_payload(
+    message: UserMessage | None,
+) -> dict[str, Any] | None:
+    """Decode a controller-owned terminal message without asking Main to infer it."""
+
+    if message is None or str(getattr(message, "source", "") or "") != "report-workflow":
+        return None
+    try:
+        payload = json.loads(str(getattr(message, "content", "") or ""))
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    run_id = str(payload.get("run_id", "") or "")
+    status = str(payload.get("status", "") or "")
+    if not run_id.startswith("report-") or not status:
+        return None
+    return payload
+
+
+def _canonical_failed_report_response(message: UserMessage | None) -> str | None:
+    """Return the non-agentic response for a failed workflow terminal event."""
+
+    payload = _report_workflow_terminal_payload(message)
+    if payload is None or payload.get("status") != "failed":
+        return None
+    run_id = str(payload["run_id"])
+    error = str(payload.get("error") or "未提供错误详情")
+    return (
+        f"报告任务 {run_id} 已失败：{error}\n\n"
+        f"本轮没有启动新运行。若要从已保存断点继续，请明确要求恢复 {run_id}。"
+    )
+
+
+def _is_simple_report_continuation(message: UserMessage | None) -> bool:
+    """Match only a continuation command that carries no new business facts."""
+
+    return bool(_SIMPLE_REPORT_CONTINUATION.fullmatch(_direct_user_content(message)))
+
+
+def _explicit_report_continuation_run_id(
+    message: UserMessage | None,
+) -> str | None:
+    """Return one explicitly named run for a short resume/continue instruction."""
+
+    content = _direct_user_content(message)
+    if not content:
+        return None
+    if not re.search(r"继续|接着|恢复|断点|检查点", content):
+        return None
+    run_ids = _REPORT_RUN_ID.findall(content)
+    if len(set(run_ids)) != 1 or len(content) > 120:
+        return None
+    if re.search(r"补充|新增|修改|改成|人工确认|事实|数据", content):
+        return None
+    return run_ids[0]
+
+
+def _is_explicit_evidence_decision(
+    message: UserMessage | None, action: str | None
+) -> bool:
+    """Require the current end-user message to select the evidence action."""
+
+    content = _direct_user_content(message)
+    pattern = _EVIDENCE_DECISION_PATTERNS.get(str(action or "").casefold())
+    if pattern is None or not content:
+        return False
+    return bool(pattern.search(content))
 
 
 @dataclass
@@ -380,6 +548,13 @@ class AgentLoop:
         usage_task_id: str | None = None,
         artifact_gateway: ArtifactGateway | None = None,
         before_provider_attempt: Callable[[], Awaitable[None]] | None = None,
+        provider_attempt_observer: (
+            Callable[
+                [list[LLMMessage], list[dict] | None, str, int],
+                Awaitable[None],
+            ]
+            | None
+        ) = None,
     ):
         """Initialize agent loop.
 
@@ -412,6 +587,8 @@ class AgentLoop:
         self._cached_system_prompt_signature: tuple[Any, ...] | None = None
 
         self._status = AgentStatus.IDLE
+        self._turn_complete_event = asyncio.Event()
+        self._turn_complete_event.set()
         self._running = False
         self._processing_task: asyncio.Task | None = None
         self._active_tool_task: asyncio.Task | None = None
@@ -433,9 +610,12 @@ class AgentLoop:
         self.usage_run_id = usage_run_id
         self.usage_task_id = usage_task_id
         self.before_provider_attempt = before_provider_attempt
+        self.provider_attempt_observer = provider_attempt_observer
         self._usage_totals = {"input_tokens": 0, "output_tokens": 0}
         self._last_usage_record: dict[str, Any] | None = None
         self._terminal_outcome: ToolOutcome | None = None
+        self._terminal_tool_name: str | None = None
+        self._buffered_main_response: str = ""
         self.artifact_gateway = artifact_gateway or ArtifactGateway(
             self.workspace,
             ArtifactGrant("main", "main", str(self.agent_type), "main"),
@@ -463,6 +643,18 @@ class AgentLoop:
     def status(self) -> AgentStatus:
         """Get current agent status."""
         return self._status
+
+    def reset_working_memory_for_typed_task(self) -> None:
+        """Keep the durable identity while dropping prior task prompt/history replay."""
+
+        if self._status not in {AgentStatus.IDLE, AgentStatus.ERROR}:
+            raise RuntimeError("cannot reset working memory while the Agent is active")
+        self._conversation_history = []
+
+    async def wait_until_turn_complete(self) -> None:
+        """Wait until the current queued provider/tool turn has fully finalized."""
+
+        await self._turn_complete_event.wait()
 
     async def start(self) -> None:
         """Start the agent loop."""
@@ -686,6 +878,7 @@ class AgentLoop:
                 getattr(message, "message_id", None),
             )
         elif response.content:
+            self._buffered_main_response = response.content
             self._conversation_history.append(
                 LLMMessage(role="assistant", content=response.content)
             )
@@ -868,6 +1061,285 @@ class AgentLoop:
             return f"[Task Summary]\n{summary}"
         return content
 
+    def _latest_persisted_resumable_report_run_id(self) -> str | None:
+        """Resolve the latest real terminal run mentioned in this conversation."""
+
+        for prior in reversed(self._conversation_history):
+            if prior.role != "user":
+                continue
+            try:
+                payload = json.loads(str(prior.content or ""))
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            run_id = str(payload.get("run_id", "") or "")
+            status = str(payload.get("status", "") or "")
+            if (
+                not run_id.startswith("report-")
+                or status not in _RESUMABLE_REPORT_STATUSES
+                or Path(run_id).name != run_id
+            ):
+                continue
+            run_root = self.workspace / "Work" / "runs" / run_id
+            has_request = (run_root / "request.json").is_file() or (
+                run_root / "revision-request.json"
+            ).is_file()
+            if has_request and (run_root / "workflow-state.json").is_file():
+                return run_id
+        return None
+
+    async def _resume_simple_report_continuation(
+        self, message: UserMessage
+    ) -> bool:
+        """Route a plain continuation directly to the persisted same-run resume tool."""
+
+        if self.agent_id != "main":
+            return False
+        explicit_run_id = _explicit_report_continuation_run_id(message)
+        simple_continuation = _is_simple_report_continuation(message)
+        if not simple_continuation and explicit_run_id is None:
+            return False
+        run_id = explicit_run_id or self._latest_persisted_resumable_report_run_id()
+        if run_id is None:
+            await self._publish_resume_rejection(
+                message,
+                "没有从当前消息或最近的真实工作流终态中找到可恢复的 run_id；"
+                "本轮没有新建报告运行。",
+            )
+            return True
+        run_root = self.workspace / "Work" / "runs" / run_id
+        has_request = (run_root / "request.json").is_file() or (
+            run_root / "revision-request.json"
+        ).is_file()
+        if not has_request or not (run_root / "workflow-state.json").is_file():
+            await self._publish_resume_rejection(
+                message,
+                f"报告任务 {run_id} 缺少持久化 request 或 workflow-state，"
+                "不能从断点恢复；本轮没有新建报告运行。",
+            )
+            return True
+        tool = self.tools.get("resume_reporting_workflow")
+        if tool is None:
+            await self._publish_resume_rejection(
+                message,
+                f"当前运行时没有提供 resume_reporting_workflow，无法恢复 {run_id}；"
+                "本轮没有新建报告运行。",
+            )
+            return True
+
+        arguments = {"run_id": run_id}
+        logger.info("Direct same-run resume route selected: {}", run_id)
+        await self._set_status(AgentStatus.RUNNING_TOOL)
+        await self.bus.publish(
+            ToolCallMessage(
+                agent_type=self.agent_type,
+                tool_name="resume_reporting_workflow",
+                arguments=arguments,
+            )
+        )
+        try:
+            result = await tool(**arguments)
+            outcome = normalize_tool_outcome(result, "resume_reporting_workflow")
+            await self.bus.publish(
+                ToolResultMsg(
+                    agent_type=self.agent_type,
+                    tool_name="resume_reporting_workflow",
+                    result=result,
+                    error=outcome.error if outcome.status != "ok" else None,
+                )
+            )
+            self._terminal_outcome = outcome
+            self._terminal_tool_name = "resume_reporting_workflow"
+            response = canonical_terminal_message(outcome)
+        except Exception as exc:
+            logger.error("Deterministic report resume failed for {}: {}", run_id, exc)
+            response = f"未能恢复报告任务 {run_id}：{exc}"
+            await self.bus.publish(
+                ToolResultMsg(
+                    agent_type=self.agent_type,
+                    tool_name="resume_reporting_workflow",
+                    result=None,
+                    error=str(exc),
+                )
+            )
+
+        self._conversation_history.append(LLMMessage(role="assistant", content=response))
+        await self.bus.publish(
+            AgentResponse(
+                agent_type=self.agent_type,
+                content=response,
+                message_id=message.message_id,
+                streaming=False,
+            )
+        )
+        await self._flush_manifest_if_needed()
+        await self._set_status(AgentStatus.IDLE)
+        return True
+
+    async def _publish_resume_rejection(
+        self, message: UserMessage, response: str
+    ) -> None:
+        """End an invalid resume instruction without falling back to new-run planning."""
+
+        self._conversation_history.append(LLMMessage(role="assistant", content=response))
+        await self.bus.publish(
+            AgentResponse(
+                agent_type=self.agent_type,
+                content=response,
+                message_id=message.message_id,
+                streaming=False,
+            )
+        )
+        await self._flush_manifest_if_needed()
+        await self._set_status(AgentStatus.IDLE)
+
+    def _must_buffer_main_report_route(self) -> bool:
+        """Keep unverified Main prose out of the UI until a workflow receipt exists."""
+
+        return self.agent_id == "main" and (
+            _requires_reporting_workflow_route(self._current_message)
+            or (
+                (_report_workflow_terminal_payload(self._current_message) or {}).get(
+                    "status"
+                )
+                == "failed"
+            )
+        )
+
+    @staticmethod
+    def _valid_failed_report_explanation(
+        payload: dict[str, Any], content: str
+    ) -> bool:
+        """Require a grounded explanation and forbid unsupported operation claims."""
+
+        text = str(content or "").strip()
+        run_id = str(payload.get("run_id", "") or "")
+        if not text or run_id not in text:
+            return False
+        if not re.search(r"失败|未通过|错误|异常|阻塞|未完成", text):
+            return False
+        if not re.search(r"原因|阶段|检查|校验|意味着|因此|未交付|下一步", text):
+            return False
+        if _UNVERIFIED_REPORT_OPERATION_CLAIM.search(text):
+            return False
+        mentioned_run_ids = set(re.findall(r"\breport-[A-Za-z0-9_-]+\b", text))
+        return not mentioned_run_ids.difference({run_id})
+
+    async def _enforce_failed_report_explanation(self, message: UserMessage) -> bool:
+        """Let Main explain a failure while denying navigation or workflow actions."""
+
+        payload = _report_workflow_terminal_payload(message)
+        if self.agent_id != "main" or payload is None or payload.get("status") != "failed":
+            return False
+
+        for attempt in range(0, self._REPORT_GUARD_MAX_RETRIES + 1):
+            candidate = self._buffered_main_response
+            if self._valid_failed_report_explanation(payload, candidate):
+                await self.bus.publish(
+                    AgentResponse(
+                        agent_type=self.agent_type,
+                        content=candidate,
+                        message_id=message.message_id,
+                        streaming=False,
+                    )
+                )
+                await self._flush_manifest_if_needed()
+                await self._set_status(AgentStatus.IDLE)
+                return True
+            if attempt >= self._REPORT_GUARD_MAX_RETRIES:
+                break
+            self._buffered_main_response = ""
+            await self.bus.publish(
+                SystemNotice(
+                    agent_type="main",
+                    content=(
+                        "失败说明包含未经回执的运行声明或未绑定真实 run_id，"
+                        f"正在要求 Main 重写（{attempt + 1}/"
+                        f"{self._REPORT_GUARD_MAX_RETRIES}）。"
+                    ),
+                )
+            )
+            await self._run_guard_round(
+                message,
+                (
+                    "只根据当前 report-workflow 终态中的 run_id、status 和 error，"
+                    "向用户解释失败发生了什么、意味着什么以及下一步可选择恢复原 run。"
+                    "本回合不得调用任何工具，不得声称已启动、正在运行或已经恢复，"
+                    "不得生成其他 run_id。回复必须明确写出真实 run_id。"
+                ),
+            )
+
+        fallback = _canonical_failed_report_response(message)
+        if fallback is None:
+            return False
+        self._conversation_history.append(LLMMessage(role="assistant", content=fallback))
+        await self.bus.publish(
+            AgentResponse(
+                agent_type=self.agent_type,
+                content=fallback,
+                message_id=message.message_id,
+                streaming=False,
+            )
+        )
+        await self._flush_manifest_if_needed()
+        await self._set_status(AgentStatus.IDLE)
+        return True
+
+    async def _enforce_main_reporting_route(self, message: UserMessage) -> bool:
+        """Require a real terminal workflow-tool receipt for direct report actions."""
+
+        if self.agent_id != "main" or not _requires_reporting_workflow_route(message):
+            return False
+        if (
+            self._terminal_outcome is not None
+            and self._terminal_tool_name in _REPORTING_ENTRY_TOOLS
+        ):
+            return False
+
+        reminder = (
+            "当前用户消息要求执行报告操作，但本轮尚无 run_reporting_workflow、"
+            "resume_reporting_workflow 或 revise_reporting_workflow 的真实工具回执。"
+            "不要声称任务已启动，不要编造 run_id；现在调用与该请求匹配的工作流工具。"
+        )
+        for attempt in range(1, self._REPORT_GUARD_MAX_RETRIES + 1):
+            await self.bus.publish(
+                SystemNotice(
+                    agent_type="main",
+                    content=(
+                        "报告操作尚未获得真实工作流回执，正在要求 Main 完成路由"
+                        f"（{attempt}/{self._REPORT_GUARD_MAX_RETRIES}）。"
+                    ),
+                )
+            )
+            await self._run_guard_round(message, reminder)
+            if (
+                self._terminal_outcome is not None
+                and self._terminal_tool_name in _REPORTING_ENTRY_TOOLS
+            ):
+                await self._flush_manifest_if_needed()
+                await self._set_status(AgentStatus.IDLE)
+                return True
+            if self._terminal_outcome is not None:
+                break
+
+        response = (
+            "本轮没有获得报告工作流工具的成功回执，因此没有启动、恢复或修订任何报告，"
+            "也没有生成有效 run_id。"
+        )
+        self._conversation_history.append(LLMMessage(role="assistant", content=response))
+        await self.bus.publish(
+            AgentResponse(
+                agent_type=self.agent_type,
+                content=response,
+                message_id=message.message_id,
+                streaming=False,
+            )
+        )
+        await self._flush_manifest_if_needed()
+        await self._set_status(AgentStatus.IDLE)
+        return True
+
     async def _publish_queue_update(self) -> None:
         queued = list(self._message_queue._queue)
         summaries = [
@@ -891,11 +1363,16 @@ class AgentLoop:
         Args:
             message: User message to process.
         """
+        # Keep direct test/debug invocations under the same routing policy as
+        # messages dequeued by _process_loop.
+        self._current_message = message
         await self._set_status(AgentStatus.THINKING)
 
         # Reset per-turn state: this message's turn has not yet been reported.
         self._turn_reported = False
         self._terminal_outcome = None
+        self._terminal_tool_name = None
+        self._buffered_main_response = ""
         self._report_retries = 0
         self._main_block_retries = 0
         self._progress_monitor = _ProgressMonitor()
@@ -938,6 +1415,9 @@ class AgentLoop:
             # Add user message to conversation history
             self._conversation_history.append(LLMMessage(role="user", content=content))
 
+            if await self._resume_simple_report_continuation(message):
+                return
+
             # Build messages — system prompt always first, conversation history follows
             messages = await self._build_messages()
 
@@ -971,6 +1451,7 @@ class AgentLoop:
                     ),
                 )
                 accumulated_content = response.content
+                self._buffered_main_response = accumulated_content
                 accumulated_tool_calls = response.tool_calls
                 accumulated_thinking = response.thinking
                 if (
@@ -1095,6 +1576,12 @@ class AgentLoop:
                 await self._handle_tool_calls(response, message.message_id)
                 if self._cancel_event.is_set():
                     return
+
+            if await self._enforce_failed_report_explanation(message):
+                return
+
+            if await self._enforce_main_reporting_route(message):
+                return
 
             if self._terminal_outcome is not None:
                 await self._flush_manifest_if_needed()
@@ -1246,21 +1733,34 @@ class AgentLoop:
                 async for chunk in stream:
                     if chunk.delta:
                         accumulated_content += chunk.delta
-                        await self.bus.publish(
-                            AgentResponse(
-                                agent_type=self.agent_type,
-                                content=chunk.delta,
-                                message_id=user_message_id,
-                                streaming=True,
+                        if not self._must_buffer_main_report_route():
+                            await self.bus.publish(
+                                AgentResponse(
+                                    agent_type=self.agent_type,
+                                    content=chunk.delta,
+                                    message_id=user_message_id,
+                                    streaming=True,
+                                )
                             )
-                        )
 
                     if chunk.tool_calls:
                         accumulated_tool_calls = chunk.tool_calls
 
                     if chunk.thinking:
-                        accumulated_thinking += chunk.thinking
-                        if not chunk.done:
+                        if chunk.done:
+                            # Some streaming providers repeat the complete thinking
+                            # snapshot in the terminal chunk after already emitting
+                            # every thinking delta.  Treat it as a snapshot, not a
+                            # second delta, while still accepting providers that only
+                            # expose thinking at completion.
+                            if not accumulated_thinking:
+                                accumulated_thinking = chunk.thinking
+                            elif chunk.thinking.startswith(accumulated_thinking):
+                                accumulated_thinking = chunk.thinking
+                            elif not accumulated_thinking.endswith(chunk.thinking):
+                                accumulated_thinking += chunk.thinking
+                        else:
+                            accumulated_thinking += chunk.thinking
                             await self.bus.publish(
                                 AgentResponse(
                                     agent_type=self.agent_type,
@@ -1337,6 +1837,13 @@ class AgentLoop:
             attempts += 1
             if self.before_provider_attempt is not None:
                 await self.before_provider_attempt()
+            if self.provider_attempt_observer is not None:
+                await self.provider_attempt_observer(
+                    messages,
+                    tool_definitions,
+                    phase,
+                    attempts,
+                )
             try:
                 response = await self._chat_followup(
                     messages,
@@ -1488,6 +1995,49 @@ class AgentLoop:
                             "cancel a report while replanning or handling workflow messages"
                         )
 
+                    if (
+                        self.agent_id == "main"
+                        and tool_call.name == "resume_reporting_workflow"
+                        and tool_call.arguments.get("decision_id") is not None
+                        and not _is_explicit_evidence_decision(
+                            self._current_message,
+                            str(tool_call.arguments.get("action") or ""),
+                        )
+                    ):
+                        raise PermissionError(
+                            "Evidence-decision resume requires the current end-user "
+                            "message to explicitly select the submitted action. Main may "
+                            "explain supplement/draft/skip/stop options but may not choose "
+                            "one from a report-workflow terminal or guard re-prompt."
+                        )
+
+                    if (
+                        self.agent_id == "main"
+                        and tool_call.name in _REPORT_ROUTE_FILE_TOOLS
+                        and _requires_reporting_workflow_route(self._current_message)
+                    ):
+                        raise PermissionError(
+                            "This direct report operation must be routed before project "
+                            "content is read. Select the explicit operation and call "
+                            "run_reporting_workflow once (or the matching resume/revise "
+                            "tool for an existing run); do not traverse Inputs, Knowledge, "
+                            "Templates, Work, or tool-result artifacts from Main."
+                        )
+
+                    terminal_payload = _report_workflow_terminal_payload(
+                        self._current_message
+                    )
+                    if (
+                        self.agent_id == "main"
+                        and terminal_payload is not None
+                        and terminal_payload.get("status") == "failed"
+                    ):
+                        raise PermissionError(
+                            "A failed report-workflow terminal turn is explanation-only. "
+                            "Do not call files, status, run, resume, revise, cancel, or any "
+                            "other tool until the user sends a new instruction."
+                        )
+
                     required_args = _tool_required_args(self.tools, tool_call.name, tool)
 
                     # Detect truncated tool calls: output hit max_tokens before arguments were complete
@@ -1567,6 +2117,7 @@ class AgentLoop:
 
                     if outcome.terminal:
                         self._terminal_outcome = outcome
+                        self._terminal_tool_name = tool_call.name
 
                 except asyncio.CancelledError:
                     if not self._cancel_event.is_set():
@@ -1776,16 +2327,18 @@ class AgentLoop:
                 )
             )
         elif response.content and not self._turn_reported:
+            self._buffered_main_response = response.content
             current_messages.append(LLMMessage(role="assistant", content=response.content))
-            # Publish final content to GUI (it was generated inside the tool loop)
-            await self.bus.publish(
-                AgentResponse(
-                    agent_type=self.agent_type,
-                    content=response.content,
-                    message_id=user_message_id,
-                    streaming=False,
+            if not self._must_buffer_main_report_route():
+                # Publish final content to GUI (it was generated inside the tool loop)
+                await self.bus.publish(
+                    AgentResponse(
+                        agent_type=self.agent_type,
+                        content=response.content,
+                        message_id=user_message_id,
+                        streaming=False,
+                    )
                 )
-            )
 
         # Save conversation history — strip the system prompt (index 0)
         self._conversation_history = [m for m in current_messages if m.role != "system"]
@@ -1959,15 +2512,30 @@ class AgentLoop:
         )
         legacy_target.parent.mkdir(parents=True, exist_ok=True)
         legacy_target.write_text(rendered, encoding="utf-8")
-        preview_chars = max(256, max_chars - 512)
-        compact = {
-            "truncated": True,
-            "tool": tool_name,
-            "full_result_ref": opaque_ref,
-            "original_chars": len(rendered),
-            "preview": rendered[:preview_chars],
-        }
-        return json.dumps(compact, ensure_ascii=False)
+        preview_chars = max(0, max_chars - 1024)
+        while True:
+            preview = rendered[:preview_chars]
+            compact = {
+                "truncated": True,
+                "tool": tool_name,
+                "full_result_ref": opaque_ref,
+                "original_chars": len(rendered),
+                "preview_offset": 0,
+                "preview_chars": len(preview),
+                "preview_end_offset": len(preview),
+                "next_offset": len(preview),
+                "recommended_limit": 8000,
+                "instruction": (
+                    "如需剩余内容，调用 open_tool_result，ref 使用 full_result_ref，"
+                    "offset 使用 next_offset，省略 limit 即按 8000 字符读取；"
+                    "不得从 offset=0 重读 preview。"
+                ),
+                "preview": preview,
+            }
+            encoded = json.dumps(compact, ensure_ascii=False)
+            if len(encoded) <= max_chars or preview_chars == 0:
+                return encoded
+            preview_chars = max(0, preview_chars - (len(encoded) - max_chars))
 
     async def _set_status(self, status: AgentStatus) -> None:
         """Set agent status and notify GUI via bus.
@@ -1976,6 +2544,10 @@ class AgentLoop:
             status: New agent status.
         """
         self._status = status
+        if status in {AgentStatus.IDLE, AgentStatus.ERROR}:
+            self._turn_complete_event.set()
+        else:
+            self._turn_complete_event.clear()
 
         # In debug mode, use DEBUG_MODE status
         display_status = AgentStatus.DEBUG_MODE if self._debug_mode else status
