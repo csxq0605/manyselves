@@ -65,10 +65,12 @@ from .models import (
     ProjectManifest,
     RevisionRequest,
     ScopeExpansionRequest,
+    SpecialTopicPlan,
 )
 from .module_skills import ModuleSkillLibrary
 from .rendering.handoff_docx import PackagedV2DocxCore
 from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
+from .rendering.source_index_docx_renderer import SourceIndexDocxRenderer
 from .rendering.contracts import RenderRequest, RenderResult
 from .evidence_readiness import EvidenceReadinessPolicy, ReportingBlockedError
 from .research.project_evidence import project_evidence_locator
@@ -83,6 +85,7 @@ from .review_lifecycle import (
 from .revision_diff import build_revision_diff
 from .session_summary import SessionSummaryStore
 from .source_ledger import SourceLedger
+from .special_topics import load_special_topic_plan
 from .taxonomy import REPORT_TAXONOMY, compose_module_markdown, resolve_submodule
 from .versions import ReportVersion, ReportVersionStore, SkillProvenance
 
@@ -772,9 +775,33 @@ class ReportWorkflowRunner:
                 "不启动模块专家、单模块审计或跨模块审查。"
             )
             self._require_template_skill(state)
-            await self.service._notice(
-                "已从 Work/report-template-writing 加载 Skill；总编不会读取或蒸馏模板 DOCX。"
-            )
+            special_topic_plan = load_special_topic_plan(self.service.workspace)
+            special_topic_input_refs: list[str] = []
+            special_topic_inline_context = ""
+            if special_topic_plan is not None:
+                special_topic_plan_path = self.service.store.write_json(
+                    f"Work/runs/{run_id}/context/special-topic-plan.json",
+                    special_topic_plan.model_dump(mode="json"),
+                )
+                special_topic_knowledge = KnowledgeContextBuilder(
+                    self.service.workspace, run_id
+                ).build_special_topics(special_topic_plan)
+                state["special_topic_plan"] = special_topic_plan
+                state["special_topic_plan_ref"] = (
+                    special_topic_plan_path.relative_to(self.service.workspace).as_posix()
+                )
+                state["special_topic_knowledge_ref"] = (
+                    special_topic_knowledge.path.as_posix()
+                )
+                special_topic_input_refs.append(special_topic_knowledge.path.as_posix())
+                special_topic_inline_context = "\n\n" + special_topic_knowledge.text
+                await self.service._notice(
+                    "已从 Inputs 的非空专项问题分析 Markdown 固化第四章标题与要求。"
+                )
+            else:
+                await self.service._notice(
+                    "Inputs 未提供非空专项问题分析 Markdown，本次报告省略第四章。"
+                )
             if structured_modules:
                 editor_input = AggregateEditorInput(
                     run_id=run_id,
@@ -783,6 +810,7 @@ class ReportWorkflowRunner:
                         module_id: f"[[APPROVED_MODULE:{module_id}]]"
                         for module_id in REPORT_MODULE_IDS
                     },
+                    special_topic_plan=special_topic_plan,
                     structured_modules={
                         module_id: module_content_view(module)
                         for module_id, module in structured_modules.items()
@@ -803,6 +831,7 @@ class ReportWorkflowRunner:
                         module_id: f"[[APPROVED_MODULE:{module_id}]]"
                         for module_id in REPORT_MODULE_IDS
                     },
+                    special_topic_plan=special_topic_plan,
                     markdown_modules={
                         module_id: (self.service.workspace / module_refs[module_id]).read_text(
                             encoding="utf-8"
@@ -827,21 +856,31 @@ class ReportWorkflowRunner:
                 ),
                 input_refs=[
                     *editor_input_refs,
+                    *special_topic_input_refs,
                 ],
                 constraints=[
-                    "输入是已完成的分块报告；不得重新检索项目证据，但必须在完整保留原文基础上进行跨模块联合分析",
+                    "输入是已完成的分块报告；不得重新检索项目证据，必须完整保留原文并只按当前实际章节汇总",
                     "不得创造、删除或改变分块报告中的事实、数值、风险等级和建议语义",
                     "必须保留且仅汇总 2.1、2.2、2.3、2.4、2.5 五个模块",
                     "每个 module_narrative 必须包含对应 [[APPROVED_MODULE:2.x]] 标记，可在标记前后增加短过渡；不得重新输出或改写原文，工作流会确定性嵌回批准正文",
                     "aggregate-editor-input.json 是唯一模块内容读取入口；一次使用 160000 字符完整读取，只有明确返回 next_offset 时才继续，禁止搜索或重新打开原始模块文件",
-                    "总编按四大块固定结构新增 assessment_background、findings_overview、regional_executive_summary、risk_panorama、dimension_risk_analysis、cross_module_analysis、data_gap_analysis、improvement_action_plan、new_factory_planning、capacity_expansion_plan、daily_power_management、emergency_compliance_management；十二个长字段分别使用同名 part_id 的 write_result_part 持久化。只提交各节正文，不输出章节标题",
+                    "总编始终形成第一至第三章；只有 special_topic_plan 存在时才形成第四章 special_topic_analysis",
                     "五个 module_narratives 只提交精确 APPROVED_MODULE 标记，禁止为省 token 压缩批准正文",
                     "任何综合节都必须自足地给出归纳事实、综合判断和决策含义；章节号只能作为句末追溯，不得用‘详见第二章’‘见2.x’或模块编号清单代替汇总分析",
                     "regional_executive_summary 必须按真实区域或责任边界归纳重点、优先行动与验证状态；没有区域划分证据时必须明确边界，禁止编造区域名称",
-                    "dimension_risk_analysis 必须逐一比较五个专业维度的主导风险、相互作用和管理含义；data_gap_analysis 必须归并重复缺口并说明它影响哪些判断和补证优先级；improvement_action_plan 必须按依赖顺序列出责任接口、行动、验收指标和剩余风险",
-                    "专项问题分析四节必须分别形成新建规划、增容决策、日常用电管理、应急与合规管理的自足分析；只能综合当前项目批准事实和明确标注的通用工程原则，禁止迁移专家优化版的具体问题、判断、结论或建议",
+                    "dimension_risk_analysis 必须逐一比较五个专业维度的主导风险和管理含义；data_gap_analysis 必须归并重复缺口并说明它影响哪些判断和补证优先级；improvement_action_plan 必须列出责任接口、行动、验收指标和剩余风险",
+                    *(
+                        [
+                            "special_topic_analysis 必须严格按 special_topic_plan 的顺序输出全部且仅输出对应的 ### 4.n 子标题；逐节满足 Inputs 中的简要要求，并形成自足分析",
+                            "专项分析可使用已内联的项目 Knowledge 和模型世界知识补充机理、方案权衡与行业实践；必须区分当前项目事实、可追溯参考和通用专业判断，禁止把通用知识写成客户事实",
+                        ]
+                        if special_topic_plan is not None
+                        else [
+                            "special_topic_plan 为空；禁止提交 special_topic_analysis，最终 Markdown 和 DOCX 必须完全省略第四章"
+                        ]
+                    ),
                     "Template Distiller 产出的固定模板写作 Skill 已在 inline_context 中提供；按其风格、叙述、思考和质量量表整合，不复制模板客户事实",
-                    "可使用模型世界知识解释模块联系、机制、整改依赖和行业实践；不得把通用知识写成当前项目事实",
+                    "可使用模型世界知识解释技术机制、方案权衡和行业实践；不得把通用知识写成当前项目事实",
                     (
                         "运行时自动保护结构化模块的引用绑定；总编只提交 schema 声明字段。"
                         "表格只声明 E-* evidence_ids，图片只能沿用输入资产"
@@ -855,7 +894,8 @@ class ReportWorkflowRunner:
                 input_contract_ref=editor_input_refs[0],
                 inline_context=self._template_skill_context(
                     state, "core", "analysis", "synthesis", "visual", "rubric"
-                ),
+                )
+                + special_topic_inline_context,
             )
             payload = await self._agent(
                 "chief-editor",
@@ -923,6 +963,8 @@ class ReportWorkflowRunner:
             payload = state["edited_report"]
             filename = request.output_filename or "配电安全专家咨询报告.docx"
             markdown_ref = Path("Outputs/Reports") / f"{Path(filename).stem}.md"
+            source_index_ref = Path("Outputs/Reports/证据与来源索引.md")
+            source_index_docx_ref = Path("Outputs/Reports/证据与来源索引.docx")
             markdown = self._canonical_markdown(payload)
             if ledger is not None:
                 markdown = ledger.bind_citations(markdown)
@@ -943,18 +985,41 @@ class ReportWorkflowRunner:
                         )
                     table_markdown = "\n".join(table_lines)
                     chapter_four = "\n## 4. 专项问题分析"
-                    if chapter_four not in markdown:
-                        raise AgentWorkflowError("总报告缺少第4章，无法放置结构化表格")
-                    markdown = markdown.replace(
-                        chapter_four,
-                        f"\n{table_markdown}\n{chapter_four}",
-                        1,
-                    )
-                markdown += "\n\n" + ledger.source_index_markdown() + "\n"
+                    if chapter_four in markdown:
+                        markdown = markdown.replace(
+                            chapter_four,
+                            f"\n{table_markdown}\n{chapter_four}",
+                            1,
+                        )
+                    else:
+                        markdown = markdown.rstrip() + f"\n{table_markdown}\n"
             self._validate_final_report_structure(state, markdown, "aggregate-final")
             self.service.store.write_text(markdown_ref.as_posix(), markdown)
+            source_index_markdown = (
+                ledger.source_index_markdown()
+                if ledger is not None
+                else (
+                    "## 证据与来源索引\n\n"
+                    "本次汇总输入为既有 Markdown 模块，未携带可验证的结构化 Claim/来源账本；"
+                    "因此未生成脚注对应关系或 E-*/R-*/W-* 来源明细。\n"
+                )
+            )
+            self.service.store.write_text(
+                source_index_ref.as_posix(),
+                source_index_markdown.rstrip() + "\n",
+            )
+            SourceIndexDocxRenderer.render(
+                source_index_markdown.rstrip() + "\n",
+                self.service.workspace / source_index_docx_ref,
+            )
             state["aggregate_markdown_ref"] = markdown_ref
-            state["output_artifacts"] = [OutputArtifact(kind="report", path=markdown_ref)]
+            state["source_index_ref"] = source_index_ref
+            state["source_index_docx_ref"] = source_index_docx_ref
+            state["output_artifacts"] = [
+                OutputArtifact(kind="report", path=markdown_ref),
+                OutputArtifact(kind="report", path=source_index_ref),
+                OutputArtifact(kind="report", path=source_index_docx_ref),
+            ]
             self.service.store.write_json(
                 f"Work/runs/{run_id}/aggregation-handoff.json",
                 {
@@ -969,6 +1034,8 @@ class ReportWorkflowRunner:
                     "table_count": len(payload.tables),
                     "photo_ids": payload.photo_ids,
                     "output_markdown_ref": markdown_ref.as_posix(),
+                    "source_index_ref": source_index_ref.as_posix(),
+                    "source_index_docx_ref": source_index_docx_ref.as_posix(),
                 },
             )
             self._aggregate_checkpoint(state, activity, "completed")
@@ -1633,7 +1700,10 @@ class ReportWorkflowRunner:
             state["editor_quality_observations"] = validate_editor_quality(
                 candidate, approved_subjects
             )
-            validate_final_report_markdown(self._canonical_markdown(candidate))
+            validate_final_report_markdown(
+                self._canonical_markdown(candidate),
+                candidate.special_topic_plan,
+            )
             envelope_ref = require_run_ref(
                 typed_checkpoint.chief_editor_envelope_ref or canonical_chief_envelope,
                 label="chief editor envelope",
@@ -1681,7 +1751,10 @@ class ReportWorkflowRunner:
             state["editor_quality_observations"] = validate_editor_quality(
                 edited, approved_subjects
             )
-            validate_final_report_markdown(self._canonical_markdown(edited))
+            validate_final_report_markdown(
+                self._canonical_markdown(edited),
+                edited.special_topic_plan,
+            )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             raise AgentWorkflowError(
                 "refusing to replay final review because its current-run "
@@ -1902,7 +1975,10 @@ class ReportWorkflowRunner:
             state["editor_quality_observations"] = validate_editor_quality(
                 edited, state["module_submissions"]
             )
-            validate_final_report_markdown(self._canonical_markdown(edited))
+            validate_final_report_markdown(
+                self._canonical_markdown(edited),
+                edited.special_topic_plan,
+            )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             raise AgentWorkflowError(
                 "refusing to replay final revision because its current-run "
@@ -1923,6 +1999,10 @@ class ReportWorkflowRunner:
             await self.service._parse_artifacts(state)
             await self.service._normalize_evidence(state)
             await self.service._evaluate_coverage(state)
+            if state["request"].operation == "full_report":
+                special_topic_plan = load_special_topic_plan(self.service.workspace)
+                if special_topic_plan is not None:
+                    state["special_topic_plan"] = special_topic_plan
             self._persist_preparation_snapshot(state)
         ledger = SourceLedger(self.service.workspace, state["run_id"])
         for item in state.get("evidence_items", []):
@@ -1941,18 +2021,29 @@ class ReportWorkflowRunner:
     def _sha256(path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
-    def _preparation_refs(self, run_id: str) -> dict[str, str]:
+    def _preparation_refs(
+        self,
+        run_id: str,
+        *,
+        include_special_topics: bool = False,
+    ) -> dict[str, str]:
         root = f"Work/runs/{run_id}/preparation"
-        return {
+        refs = {
             "manifest": f"{root}/manifest.json",
             "evidence": f"{root}/evidence.jsonl",
             "photo_manifest": f"{root}/photo-manifest.json",
             "mapping_gaps": f"{root}/mapping-gaps.json",
             "coverage": f"{root}/coverage.json",
         }
+        if include_special_topics:
+            refs["special_topic_plan"] = f"{root}/special-topic-plan.json"
+        return refs
 
     def _persist_preparation_snapshot(self, state: dict) -> None:
-        refs = self._preparation_refs(state["run_id"])
+        refs = self._preparation_refs(
+            state["run_id"],
+            include_special_topics="special_topic_plan" in state,
+        )
         self.service.store.write_json(
             refs["manifest"], state["project_manifest"].model_dump(mode="json")
         )
@@ -1968,24 +2059,32 @@ class ReportWorkflowRunner:
         self.service.store.write_json(
             refs["coverage"], state["coverage_matrix"].model_dump(mode="json")
         )
+        if "special_topic_plan" in refs:
+            self.service.store.write_json(
+                refs["special_topic_plan"],
+                state["special_topic_plan"].model_dump(mode="json"),
+            )
         state["preparation_refs"] = refs
         state["preparation_sha256"] = {
             name: self._sha256(self.service.workspace / ref) for name, ref in refs.items()
         }
 
     def _restore_preparation_snapshot(self, state: dict) -> None:
-        refs = self._preparation_refs(state["run_id"])
-        missing = [ref for ref in refs.values() if not (self.service.workspace / ref).is_file()]
-        if missing:
-            raise AgentWorkflowError(
-                f"resume requires a complete immutable preparation snapshot; missing={missing}"
-            )
         checkpoint_path = (
             self.service.workspace / f"Work/runs/{state['run_id']}/workflow-state.json"
         )
         checkpoint = FullReportCheckpoint.model_validate_json(
             checkpoint_path.read_text(encoding="utf-8")
         )
+        refs = self._preparation_refs(
+            state["run_id"],
+            include_special_topics="special_topic_plan" in checkpoint.preparation_refs,
+        )
+        missing = [ref for ref in refs.values() if not (self.service.workspace / ref).is_file()]
+        if missing:
+            raise AgentWorkflowError(
+                f"resume requires a complete immutable preparation snapshot; missing={missing}"
+            )
         if checkpoint.preparation_refs != refs:
             raise AgentWorkflowError(
                 "checkpoint preparation refs do not match this run's canonical snapshot"
@@ -2018,6 +2117,11 @@ class ReportWorkflowRunner:
         state["coverage_matrix"] = CoverageMatrix.model_validate_json(
             coverage_path.read_text(encoding="utf-8")
         )
+        if "special_topic_plan" in refs:
+            special_topic_path = self.service.workspace / refs["special_topic_plan"]
+            state["special_topic_plan"] = SpecialTopicPlan.model_validate_json(
+                special_topic_path.read_text(encoding="utf-8")
+            )
         state["preparation_refs"] = refs
         state["preparation_sha256"] = actual_hashes
 
@@ -2165,7 +2269,8 @@ class ReportWorkflowRunner:
                     "exactly modules 2.1-2.5",
                     "all fixed submodule ids and titles retained",
                     "every approved submodule narrative is deterministically preserved verbatim",
-                    "cross_module_analysis connects at least four modules with causal links and joint verification",
+                    "only the currently defined Chapter 1 and Chapter 3 sections are authored",
+                    "dynamic Chapter 4 headings and requirements exactly match the immutable Inputs plan",
                     "approved Claim semantics protected",
                     "approved Claim markers preserved exactly once",
                 ],
@@ -2180,9 +2285,9 @@ class ReportWorkflowRunner:
                     "ReviewCompletionRecord"
                 ),
                 "content_checks": [
-                    "all fixed final sections checked",
+                    "all currently defined final sections checked",
                     "approved module prose and Claim semantics retained",
-                    "cross-module conclusions implemented without contradiction",
+                    "only current report sections are reviewed; deleted legacy sections are not reconstructed",
                     "citation, table, image, action, and residual-risk presentation ready for delivery",
                     "every finding triggers scoped chief-editor response and original-reviewer verdict",
                 ],
@@ -2420,6 +2525,18 @@ class ReportWorkflowRunner:
         await run_cross_review(self, state, workflow_id)
 
     async def _chief_edit(self, state: dict, workflow_id: str) -> None:
+        special_topic_plan: SpecialTopicPlan | None = state.get("special_topic_plan")
+        special_topic_input_refs: list[str] = []
+        special_topic_context = ""
+        if special_topic_plan is not None:
+            special_topic_knowledge = KnowledgeContextBuilder(
+                self.service.workspace, state["run_id"]
+            ).build_special_topics(special_topic_plan)
+            state["special_topic_knowledge_ref"] = (
+                special_topic_knowledge.path.as_posix()
+            )
+            special_topic_input_refs.append(special_topic_knowledge.path.as_posix())
+            special_topic_context = special_topic_knowledge.text
         claims = [
             claim
             for module_id in REPORT_MODULE_IDS
@@ -2451,8 +2568,8 @@ class ReportWorkflowRunner:
                 module_id: module_content_view(state["module_submissions"][module_id])
                 for module_id in REPORT_MODULE_IDS
             },
-            cross_synthesis_inputs=state["cross_synthesis_inputs"],
             cross_review_completion_ref=state["cross_review_completion_ref"],
+            special_topic_plan=special_topic_plan,
         )
         editor_input_path = self.service.store.write_json(
             f"Work/runs/{state['run_id']}/context/chief-editor-input.json",
@@ -2470,6 +2587,7 @@ class ReportWorkflowRunner:
                 f"Work/runs/{state['run_id']}/ledgers/sources.json",
                 state["preparation_refs"]["evidence"],
                 state["preparation_refs"]["photo_manifest"],
+                *special_topic_input_refs,
             ],
             constraints=[
                 "不得改变批准事实、数值、风险等级和来源语义",
@@ -2479,17 +2597,32 @@ class ReportWorkflowRunner:
                 "每个 module_narrative 必须逐一保留该模块全部固定 submodule_id 和标题，不得压缩为核心发现摘要",
                 "每个已批准子模块正文必须原样包含在所属 module_narrative 中；总编只能增加章节引言、过渡、交叉引用和综合判断，不能删除或缩写专家正文",
                 "为避免重复输出和截断，每个 module_narrative 使用对应 [[APPROVED_MODULE:2.x]] 标记作为正文基线，可在标记前后增加短过渡；工作流会确定性嵌回批准正文",
-                f"{editor_input_ref} 是唯一模块正文与跨模块审查读取入口；一次完整读取，不得再打开 Outputs/Modules 或 Outputs/Reviews 重读",
-                "必须对 chief-editor-input 中每个 Cross synthesis_input 恰好提交一个 synthesis_disposition；只能 integrated，或明确 merged 到另一条 integrated 输入",
-                "每个 disposition 的 target_section_ids 只能取 Cross 授权章节，result_part_refs 必须指向本次 chief task 对应章节的 write_result_part 结果",
-                "必须提交 risk_cluster_matrix 与 action_dependency_matrix 两类 synthesis_tables；每行用 row_synthesis_input_ids 绑定其精确 Cross 输入，所有表合计覆盖全部输入",
-                "cross_module_analysis 必须落实全部 Cross synthesis_inputs 的因果/风险传播链，并提出有依赖顺序和验收方式的联合建议，不能只满足固定条数",
-                "按四大块固定结构分别提交 assessment_background、findings_overview、regional_executive_summary、risk_panorama、dimension_risk_analysis、cross_module_analysis、data_gap_analysis、improvement_action_plan、new_factory_planning、capacity_expansion_plan、daily_power_management、emergency_compliance_management；只写各节正文，禁止自带章节标题",
-                "十二个综合章节必须分别使用同名 part_id 的 write_result_part 持久化",
+                f"{editor_input_ref} 是唯一总编输入入口；一次完整读取，不得再打开 Outputs/Modules 或 Outputs/Reviews 重读",
+                "不得恢复已删除的“跨领域关联风险”模块，也不得提交旧版 synthesis_dispositions 或 synthesis_tables 元数据",
+                "始终提交 assessment_background、findings_overview、regional_executive_summary、risk_panorama、dimension_risk_analysis、data_gap_analysis、improvement_action_plan；仅当 special_topic_plan 存在时提交 special_topic_analysis",
+                "固定综合字段只写正文、禁止自带章节标题",
+                *(
+                    [
+                        "special_topic_analysis 必须严格按 special_topic_plan 输出全部且仅输出 ### 4.n 标题及其正文",
+                        "八个综合章节必须分别使用同名 part_id 的 write_result_part 持久化",
+                    ]
+                    if special_topic_plan is not None
+                    else [
+                        "special_topic_plan 为空；禁止提交 special_topic_analysis，最终 Markdown 和 DOCX 必须完全省略第四章",
+                        "七个固定综合章节必须分别使用同名 part_id 的 write_result_part 持久化",
+                    ]
+                ),
                 "任何综合节都必须自足地包含归纳事实、综合判断和决策含义；模块号只能用于句末追溯，禁止用‘详见第二章’‘见2.x’或模块编号清单代替分析",
                 "regional_executive_summary 必须按真实区域或责任边界归纳重点、优先行动与验证状态；没有区域划分证据时必须明确边界，禁止编造区域名称",
-                "dimension_risk_analysis 必须比较五个维度的主导风险、相互放大和决策含义；data_gap_analysis 必须归并重复缺口并说明结论影响与补证优先级；improvement_action_plan 必须按整改依赖给出责任接口、动作、验收指标和剩余风险",
-                "专项问题分析四节必须分别形成新建规划、增容决策、日常用电管理、应急与合规管理的自足分析；禁止迁移专家优化版的具体项目内容",
+                "dimension_risk_analysis 必须比较五个维度的主导风险和决策含义；data_gap_analysis 必须归并重复缺口并说明结论影响与补证优先级；improvement_action_plan 必须给出责任接口、动作、验收指标和剩余风险",
+                *(
+                    [
+                        "第四章不设固定主题；逐节执行 Inputs 专项问题计划中的简要要求，标题、顺序和数量不得自行增删",
+                        "专项问题分析可使用已内联的项目 Knowledge 和模型世界知识补充机理、备选解释、方案权衡、行业实践与验证方法；必须把通用判断与当前项目事实明确区分",
+                    ]
+                    if special_topic_plan is not None
+                    else []
+                ),
                 *self._user_supplement_constraints(
                     state,
                     stage="chief_edit",
@@ -2497,7 +2630,7 @@ class ReportWorkflowRunner:
                         *REPORT_MODULE_IDS,
                     },
                 ),
-                "risk_panorama 必须按共同根因和传播能力组织风险簇，不得重复五章摘要",
+                "risk_panorama 必须归纳实际主要风险及其判断依据，不得重复五章摘要",
                 "图片选择必须服务于问题证明并依 Claim 对应子模块就近组织；同类多图形成图证组，不得统一堆到模块末尾",
                 "质量参考文件只用于结构和写作质量检查，不得据此创造客户事实",
                 "项目 Knowledge 是优先参考而非认知边界；可使用模型世界知识解释机制、备选原因、方案权衡和行业实践，但必须与客户事实明确区分",
@@ -2516,6 +2649,7 @@ class ReportWorkflowRunner:
                 text
                 for text in (
                     quality_context_text,
+                    special_topic_context,
                     self._template_skill_context(
                         state, "core", "analysis", "synthesis", "visual", "rubric"
                     ),
@@ -2564,13 +2698,9 @@ class ReportWorkflowRunner:
             **{module_id: edited.module_narratives[module_id] for module_id in REPORT_MODULE_IDS},
             "3.1.1": edited.risk_panorama,
             "3.1.2": edited.dimension_risk_analysis,
-            "3.1.3": edited.cross_module_analysis,
-            "3.1.4": edited.data_gap_analysis,
+            "3.1.3": edited.data_gap_analysis,
             "3.2": edited.improvement_action_plan,
-            "4.1": edited.new_factory_planning,
-            "4.2": edited.capacity_expansion_plan,
-            "4.3": edited.daily_power_management,
-            "4.4": edited.emergency_compliance_management,
+            "4": edited.special_topic_analysis,
         }
 
     @classmethod
@@ -2593,13 +2723,9 @@ class ReportWorkflowRunner:
             "module_narratives",
             "risk_panorama",
             "dimension_risk_analysis",
-            "cross_module_analysis",
             "data_gap_analysis",
             "improvement_action_plan",
-            "new_factory_planning",
-            "capacity_expansion_plan",
-            "daily_power_management",
-            "emergency_compliance_management",
+            "special_topic_analysis",
         }
         before = previous.model_dump(mode="json")
         after = revised.model_dump(mode="json")
@@ -2754,7 +2880,13 @@ class ReportWorkflowRunner:
         subject_ref = f"Work/runs/{state['run_id']}/validation/report-{phase}.md"
         self.service.store.write_text(subject_ref, markdown)
         try:
-            signals = validate_final_report_markdown(markdown)
+            edited = state.get("edited_report")
+            plan = (
+                edited.special_topic_plan
+                if isinstance(edited, EditedReportSubmission)
+                else state.get("special_topic_plan")
+            )
+            signals = validate_final_report_markdown(markdown, plan)
         except ValueError as exc:
             self.service.store.write_json(
                 validation_ref,
@@ -2853,15 +2985,12 @@ class ReportWorkflowRunner:
             findings_overview=edited.findings_overview,
             regional_executive_summary=edited.regional_executive_summary,
             module_narratives=dict(edited.module_narratives),
-            cross_module_analysis=edited.cross_module_analysis,
             risk_panorama=edited.risk_panorama,
             dimension_risk_analysis=edited.dimension_risk_analysis,
             data_gap_analysis=edited.data_gap_analysis,
             improvement_action_plan=edited.improvement_action_plan,
-            new_factory_planning=edited.new_factory_planning,
-            capacity_expansion_plan=edited.capacity_expansion_plan,
-            daily_power_management=edited.daily_power_management,
-            emergency_compliance_management=edited.emergency_compliance_management,
+            special_topic_plan=edited.special_topic_plan,
+            special_topic_analysis=edited.special_topic_analysis,
             ledger=ledger,
             tables=tables,
             photos=photos,
@@ -2872,6 +3001,17 @@ class ReportWorkflowRunner:
         delivery_markdown = ledger.bind_citations(canonical_markdown)
         markdown_path = self.service.store.write_text(
             "Outputs/Reports/配电安全专家咨询报告.md", delivery_markdown
+        )
+        source_index_path = self.service.store.write_text(
+            "Outputs/Reports/证据与来源索引.md",
+            ledger.source_index_markdown().rstrip() + "\n",
+        )
+        source_index_docx_path = (
+            self.service.workspace / "Outputs/Reports/证据与来源索引.docx"
+        )
+        SourceIndexDocxRenderer.render(
+            ledger.source_index_markdown().rstrip() + "\n",
+            source_index_docx_path,
         )
         selected_template, template_source = self.service.resolve_report_template()
         template_snapshot = (
@@ -2943,6 +3083,8 @@ class ReportWorkflowRunner:
                 },
                 final_docx=output,
                 report_state=self.service.workspace / "Work/report-state.json",
+                source_index=source_index_path,
+                source_index_docx=source_index_docx_path,
             )
         )
         receipt_path = self.service.store.write_json(
@@ -3004,6 +3146,10 @@ class ReportWorkflowRunner:
                     },
                     "edited_submission": edited_submission_path.relative_to(self.service.workspace),
                     "canonical_markdown": markdown_path.relative_to(self.service.workspace),
+                    "source_index": source_index_path.relative_to(self.service.workspace),
+                    "source_index_docx": source_index_docx_path.relative_to(
+                        self.service.workspace
+                    ),
                     "render_request": Path(f"Work/runs/{state['run_id']}/render-request.json"),
                     "render_result": render_result_ref,
                     "handoff_contracts": Path(
@@ -3080,6 +3226,8 @@ class ReportWorkflowRunner:
             OutputArtifact(kind="review", path=Path(final_review_ref)),
             OutputArtifact(kind="report", path=Path("Outputs/Reports/配电安全专家咨询报告.md")),
             OutputArtifact(kind="report", path=Path("Outputs/Reports/配电安全专家咨询报告.docx")),
+            OutputArtifact(kind="report", path=Path("Outputs/Reports/证据与来源索引.md")),
+            OutputArtifact(kind="report", path=Path("Outputs/Reports/证据与来源索引.docx")),
             OutputArtifact(
                 kind="run",
                 path=delivery_manifest_ref,
@@ -3146,11 +3294,7 @@ class ReportWorkflowRunner:
                 "",
                 section_body(edited.dimension_risk_analysis),
                 "",
-                "#### 3.1.3 跨领域关联风险",
-                "",
-                section_body(edited.cross_module_analysis),
-                "",
-                "#### 3.1.4 数据缺口分析",
+                "#### 3.1.3 数据缺口分析",
                 "",
                 section_body(edited.data_gap_analysis),
                 "",
@@ -3158,26 +3302,17 @@ class ReportWorkflowRunner:
                 "",
                 section_body(edited.improvement_action_plan),
                 "",
-                "## 4. 专项问题分析",
-                "",
-                "### 4.1 新工厂建厂时规划建议",
-                "",
-                section_body(edited.new_factory_planning),
-                "",
-                "### 4.2 增容建议",
-                "",
-                section_body(edited.capacity_expansion_plan),
-                "",
-                "### 4.3 日常用电管理建议",
-                "",
-                section_body(edited.daily_power_management),
-                "",
-                "### 4.4 应急管理及合规性管理建议",
-                "",
-                section_body(edited.emergency_compliance_management),
-                "",
             ]
         )
+        if edited.special_topic_plan is not None:
+            sections.extend(
+                [
+                    "## 4. 专项问题分析",
+                    "",
+                    (edited.special_topic_analysis or "").strip(),
+                    "",
+                ]
+            )
         if edited.tables:
             for table in edited.tables:
                 sections.extend(["", table.title, ""])

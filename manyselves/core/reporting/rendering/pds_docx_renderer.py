@@ -18,7 +18,7 @@ from pydantic import Field, field_validator, model_validator
 
 from ..agentic_models import StrictModel
 from ..claim_ledger import ClaimLedger
-from ..models import REPORT_MODULE_IDS
+from ..models import REPORT_MODULE_IDS, SpecialTopicPlan
 from ..taxonomy import REPORT_TAXONOMY
 from .handoff_docx import HandoffDocxCore
 from .packaged_docx import _expected_markdown_fragments
@@ -60,15 +60,12 @@ class ApprovedReport(StrictModel):
     findings_overview: str = Field(min_length=1)
     regional_executive_summary: str = Field(min_length=1)
     module_narratives: dict[str, str]
-    cross_module_analysis: str = Field(min_length=1)
     risk_panorama: str = Field(min_length=1)
     dimension_risk_analysis: str = Field(min_length=1)
     data_gap_analysis: str = Field(min_length=1)
     improvement_action_plan: str = Field(min_length=1)
-    new_factory_planning: str = Field(min_length=1)
-    capacity_expansion_plan: str = Field(min_length=1)
-    daily_power_management: str = Field(min_length=1)
-    emergency_compliance_management: str = Field(min_length=1)
+    special_topic_plan: SpecialTopicPlan | None = None
+    special_topic_analysis: str | None = Field(default=None, min_length=1)
     ledger: ClaimLedger
     tables: list[ReportTable] = Field(default_factory=list)
     photos: list[ReportPhoto] = Field(default_factory=list)
@@ -84,6 +81,13 @@ class ApprovedReport(StrictModel):
 
     @model_validator(mode="after")
     def assets_are_traceable(self) -> "ApprovedReport":
+        if (self.special_topic_plan is None) != (self.special_topic_analysis is None):
+            raise ValueError(
+                "special_topic_plan and special_topic_analysis must either both be present "
+                "or both be absent"
+            )
+        if self.special_topic_plan is not None and self.special_topic_analysis is not None:
+            self.special_topic_plan.validate_analysis(self.special_topic_analysis)
         claim_modules = {claim.module_id for claim in self.ledger.claims}
         if claim_modules != set(REPORT_MODULE_IDS):
             raise ValueError("approved report claim ledger requires exactly modules 2.1-2.5")
@@ -161,7 +165,6 @@ class PdsDocxRenderer:
         self._ensure_title(document, report.title)
         self._materialize_citations(document)
         self._materialize_photos(document, report)
-        self._style_source_index(document)
         document.core_properties.created = _FIXED_DOCX_TIME
         document.core_properties.modified = _FIXED_DOCX_TIME
         document.core_properties.last_printed = _FIXED_DOCX_TIME
@@ -259,11 +262,7 @@ class PdsDocxRenderer:
                 "",
                 report.dimension_risk_analysis,
                 "",
-                "#### 3.1.3 跨领域关联风险",
-                "",
-                report.cross_module_analysis,
-                "",
-                "#### 3.1.4 数据缺口分析",
+                "#### 3.1.3 数据缺口分析",
                 "",
                 report.data_gap_analysis
                 or "\n".join(f"- {text}" for text in unresolved_claims),
@@ -272,26 +271,17 @@ class PdsDocxRenderer:
                 "",
                 report.improvement_action_plan,
                 "",
-                "## 4. 专项问题分析",
-                "",
-                "### 4.1 新工厂建厂时规划建议",
-                "",
-                report.new_factory_planning,
-                "",
-                "### 4.2 增容建议",
-                "",
-                report.capacity_expansion_plan,
-                "",
-                "### 4.3 日常用电管理建议",
-                "",
-                report.daily_power_management,
-                "",
-                "### 4.4 应急管理及合规性管理建议",
-                "",
-                report.emergency_compliance_management,
-                "",
             ]
         )
+        if report.special_topic_plan is not None:
+            lines.extend(
+                [
+                    "## 4. 专项问题分析",
+                    "",
+                    report.special_topic_analysis or "",
+                    "",
+                ]
+            )
         if report.tables:
             for table in report.tables:
                 source_note = "、".join(table.source_ids)
@@ -303,15 +293,6 @@ class PdsDocxRenderer:
                         "",
                     ]
                 )
-        source_index = report.ledger.source_index_markdown()
-        source_index = re.sub(
-            r"^##\s+(?:4\.\s+)?证据与来源索引$",
-            "证据与来源索引",
-            source_index,
-            flags=re.MULTILINE,
-        )
-        source_index = re.sub(r"^###\s+", "", source_index, flags=re.MULTILINE)
-        lines.append(source_index)
         return "\n".join(lines)
 
     @staticmethod
@@ -498,19 +479,6 @@ class PdsDocxRenderer:
             index = scan
 
     @staticmethod
-    def _style_source_index(document: Document) -> None:
-        for paragraph in document.paragraphs:
-            if paragraph.text == "证据与来源索引":
-                paragraph.style = "Heading 1"
-            elif paragraph.text in {
-                "脚注对应关系",
-                "项目证据 E-*",
-                "本地参考 R-*",
-                "网络来源 W-*",
-            }:
-                paragraph.style = "Heading 2"
-
-    @staticmethod
     def _canonical_docx(data: bytes) -> bytes:
         source = io.BytesIO(data)
         target = io.BytesIO()
@@ -568,11 +536,12 @@ class PdsDocxRenderer:
             report.findings_overview,
             report.risk_panorama,
             report.dimension_risk_analysis,
-            report.cross_module_analysis,
             report.data_gap_analysis,
             report.improvement_action_plan,
             *report.module_narratives.values(),
         ]
+        if report.special_topic_analysis is not None:
+            protected.append(report.special_topic_analysis)
         missing = [
             fragment
             for value in protected

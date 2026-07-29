@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 
 from .agentic_models import ClaimRecord, EditedReportSubmission, ModuleSubmission
-from .models import EvidenceItem, PhotoAsset
+from .models import EvidenceItem, PhotoAsset, SpecialTopicPlan
 from .rendering.pds_docx_renderer import ReportPhoto, ReportTable
 from .taxonomy import REPORT_TAXONOMY, compose_module_markdown
 
@@ -197,6 +197,7 @@ def validate_existing_markdown_modules(source_modules: dict[str, str]) -> None:
 
 def validate_final_report_markdown(
     markdown: str,
+    special_topic_plan: SpecialTopicPlan | None = None,
 ) -> dict[str, list[str]]:
     """Enforce structure and return non-binding semantic observations."""
 
@@ -214,22 +215,38 @@ def validate_final_report_markdown(
             title = f"{submodule_id} {submodule.title}"
             expected.append((title, 4))
             leaves.add(title)
+    if special_topic_plan is not None:
+        special_topic_titles = [
+            f"{section.section_id} {section.title}"
+            for section in special_topic_plan.sections
+        ]
+    else:
+        special_topic_titles = []
     tail = [
         ("3. 结论与建议", 2),
         ("3.1 风险/问题汇总与概览", 3),
         ("3.1.1 风险全景图", 4),
         ("3.1.2 各维度风险分析", 4),
-        ("3.1.3 跨领域关联风险", 4),
-        ("3.1.4 数据缺口分析", 4),
+        ("3.1.3 数据缺口分析", 4),
         ("3.2 改善行动速查表", 3),
-        ("4. 专项问题分析", 2),
-        ("4.1 新工厂建厂时规划建议", 3),
-        ("4.2 增容建议", 3),
-        ("4.3 日常用电管理建议", 3),
-        ("4.4 应急管理及合规性管理建议", 3),
     ]
+    if special_topic_plan is not None:
+        tail.extend(
+            [
+                ("4. 专项问题分析", 2),
+                *((title, 3) for title in special_topic_titles),
+            ]
+        )
     expected.extend(tail)
-    leaves.update(title for title, _ in [*tail[2:7], *tail[8:]])
+    leaves.update(
+        {
+            "3.1.1 风险全景图",
+            "3.1.2 各维度风险分析",
+            "3.1.3 数据缺口分析",
+            "3.2 改善行动速查表",
+        }
+    )
+    leaves.update(special_topic_titles)
 
     lines = markdown.splitlines()
     parsed: list[tuple[int, str, int]] = []
@@ -251,6 +268,11 @@ def validate_final_report_markdown(
     ]
     if unexpected_numbered:
         errors.append(f"unexpected numbered headings={unexpected_numbered}")
+    if special_topic_plan is None and any(
+        title == "4. 专项问题分析" or re.match(r"^4\.[1-9][0-9]*\s+", title)
+        for _level, title, _line_number in parsed
+    ):
+        errors.append("Chapter 4 must be absent when no non-empty special-topic plan exists")
     positions: list[int] = []
     for title, expected_level in expected:
         occurrences = by_title.get(title, [])
@@ -327,23 +349,6 @@ def editor_quality_observations(edited: EditedReportSubmission) -> list[str]:
     """Return heuristic reviewer signals without accepting or rejecting prose."""
 
     observations: list[str] = []
-    analysis = edited.cross_module_analysis
-    if len(_normalized_prose(analysis)) < 240:
-        observations.append("cross_module_analysis:length_below_240")
-    mentioned = {module_id for module_id in REPORT_TAXONOMY if module_id in analysis}
-    if len(mentioned) < 4:
-        observations.append("cross_module_analysis:fewer_than_four_module_refs")
-    relation_hits = sum(
-        analysis.count(term)
-        for term in ("导致", "进而", "叠加", "耦合", "共同", "放大", "传播", "依赖")
-    )
-    if relation_hits < 3:
-        observations.append("cross_module_analysis:few_relation_terms")
-    if not any(term in analysis for term in ("建议", "优先", "联合整改", "组合实施")):
-        observations.append("cross_module_analysis:no_joint_action_term")
-    if not any(term in analysis for term in ("验收", "复核", "指标", "验证")):
-        observations.append("cross_module_analysis:no_verification_term")
-
     sections = {
         "assessment_background": edited.assessment_background,
         "findings_overview": edited.findings_overview,
@@ -352,10 +357,6 @@ def editor_quality_observations(edited: EditedReportSubmission) -> list[str]:
         "dimension_risk_analysis": edited.dimension_risk_analysis,
         "data_gap_analysis": edited.data_gap_analysis,
         "improvement_action_plan": edited.improvement_action_plan,
-        "new_factory_planning": edited.new_factory_planning,
-        "capacity_expansion_plan": edited.capacity_expansion_plan,
-        "daily_power_management": edited.daily_power_management,
-        "emergency_compliance_management": edited.emergency_compliance_management,
     }
     minimum_lengths = {
         "assessment_background": 160,
@@ -365,11 +366,12 @@ def editor_quality_observations(edited: EditedReportSubmission) -> list[str]:
         "dimension_risk_analysis": 420,
         "data_gap_analysis": 220,
         "improvement_action_plan": 320,
-        "new_factory_planning": 260,
-        "capacity_expansion_plan": 260,
-        "daily_power_management": 260,
-        "emergency_compliance_management": 260,
     }
+    if edited.special_topic_plan is not None and edited.special_topic_analysis is not None:
+        sections["special_topic_analysis"] = edited.special_topic_analysis
+        minimum_lengths["special_topic_analysis"] = (
+            260 * len(edited.special_topic_plan.sections)
+        )
     observations.extend(
         f"{name}:length_below_guideline"
         for name, minimum in minimum_lengths.items()
@@ -401,28 +403,6 @@ def editor_quality_observations(edited: EditedReportSubmission) -> list[str]:
         if not any(term in edited.improvement_action_plan for term in terms)
     )
 
-    special_requirements = {
-        "new_factory_planning": (
-            ("规划", "设计", "预留"),
-            ("校核", "验收", "验证"),
-        ),
-        "capacity_expansion_plan": (
-            ("增容", "容量", "负荷"),
-            ("校核", "方案", "验收"),
-        ),
-        "daily_power_management": (
-            ("巡检", "监测", "台账", "维护"),
-            ("责任", "闭环", "复测", "指标"),
-        ),
-        "emergency_compliance_management": (
-            ("应急", "合规", "演练", "危险能量"),
-            ("责任", "验证", "记录", "复盘"),
-        ),
-    }
-    for field, groups in special_requirements.items():
-        text = sections[field]
-        if any(not any(term in text for term in group) for group in groups):
-            observations.append(f"{field}:missing_section_specific_action_term")
     return observations
 
 
@@ -478,16 +458,6 @@ class ReportAssetAssembler:
             )
             for table in edited.tables
         ]
-        tables.extend(
-            ReportTable(
-                title=table.title,
-                headers=table.headers,
-                rows=table.rows,
-                source_ids=table.source_ids,
-                claim_ids=table.claim_ids,
-            )
-            for table in edited.synthesis_tables
-        )
         report_photos: list[ReportPhoto] = []
         for photo_id in edited.photo_ids:
             asset = photo_by_id.get(photo_id)

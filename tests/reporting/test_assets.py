@@ -6,7 +6,6 @@ from manyselves.core.reporting.agentic_models import (
     ClaimRecord,
     EditedReportSubmission,
     ModuleSubmission,
-    SynthesisTableSubmission,
     TableSubmission,
 )
 from manyselves.core.reporting.assets import (
@@ -51,15 +50,6 @@ def _edited(**updates) -> EditedReportSubmission:
         "module_narratives": {
             module_id: f"模块 {module_id} 正文" for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5")
         },
-        "cross_module_analysis": (
-            "链路一：2.1 系统架构约束会导致 2.3 保护配合边界收窄，并通过故障传播放大停电范围；"
-            "建议联合复核供电方式与定值，以选择性试验作为验收。"
-            "链路二：2.2 环境工况与 2.4 设备状态叠加，会进而增加绝缘劣化和误动作概率，"
-            "并依赖 2.5 运维策略共同控制；建议组合实施在线监测、专项排查和维护闭环，"
-            "以趋势指标、保护动作记录和整改复测作为验证。"
-            "两条链路共同说明，单独处理设备表象而不调整系统边界、保护策略和运维机制，"
-            "仍会保留风险传播通道，因此应按共同根因和整改依赖确定优先级，并持续跟踪联合指标和关闭条件。"
-        ),
         "risk_panorama": synthesis,
         "dimension_risk_analysis": (
             synthesis
@@ -71,11 +61,21 @@ def _edited(**updates) -> EditedReportSubmission:
         "improvement_action_plan": (
             synthesis + "由责任部门牵头，按依赖和优先级分阶段实施，并以指标、复测和验收关闭。"
         ),
-        "new_factory_planning": synthesis + "规划设计时预留容量，并完成校核和验收验证。",
-        "capacity_expansion_plan": synthesis + "增容方案应结合负荷与容量校核并完成验收。",
-        "daily_power_management": synthesis + "通过责任台账、巡检监测、维护复测和闭环指标持续管理。",
-        "emergency_compliance_management": (
-            synthesis + "应急合规由责任人组织演练、危险能量控制、验证记录和复盘。"
+        "special_topic_plan": {
+            "source_ref": "Inputs/专项问题分析.md",
+            "source_sha256": "0" * 64,
+            "sections": [
+                {
+                    "section_id": "4.1",
+                    "title": "动态专项问题",
+                    "requirement": "分析项目边界、可选方案和验证方法。",
+                }
+            ],
+        },
+        "special_topic_analysis": (
+            "### 4.1 动态专项问题\n\n"
+            + synthesis
+            + "结合项目边界比较可选方案，并说明验证方法。"
         ),
     }
     values.update(updates)
@@ -333,6 +333,16 @@ def test_editor_quality_reports_short_risk_panorama_as_non_binding_observation()
     assert "risk_panorama:length_below_guideline" in observations
 
 
+def test_editor_quality_skips_optional_special_topic_gate_when_plan_is_absent() -> None:
+    edited = _quality_edited().model_copy(
+        update={"special_topic_plan": None, "special_topic_analysis": None}
+    )
+
+    observations = validate_editor_quality(edited, _approved_modules())
+
+    assert not any(item.startswith("special_topic_analysis:") for item in observations)
+
+
 def test_editor_quality_reports_pointer_only_sections_without_rejecting() -> None:
     edited = _quality_edited().model_copy(
         update={
@@ -343,10 +353,9 @@ def test_editor_quality_reports_pointer_only_sections_without_rejecting() -> Non
             "dimension_risk_analysis": "各维度风险判断见第二章。",
             "data_gap_analysis": "数据缺口见各模块证据限定。",
             "improvement_action_plan": "整改建议见各模块原文。",
-            "new_factory_planning": "新建规划建议见前文。",
-            "capacity_expansion_plan": "增容建议见前文。",
-            "daily_power_management": "日常管理建议见前文。",
-            "emergency_compliance_management": "应急合规建议见前文。",
+            "special_topic_analysis": (
+                "### 4.1 动态专项问题\n\n专项分析建议见前文。"
+            ),
         }
     )
 
@@ -395,25 +404,11 @@ def test_asset_assembler_builds_traceable_table_and_photo(tmp_path: Path) -> Non
                 claim_ids=[claim.id],
             )
         ],
-        synthesis_tables=[
-            SynthesisTableSubmission(
-                table_type="risk_cluster_matrix",
-                title="系统风险簇矩阵",
-                headers=["风险簇", "联合影响"],
-                rows=[["连接与保护边界", "可能扩大停电范围"]],
-                synthesis_input_ids=["SI-001"],
-                row_synthesis_input_ids=[["SI-001"]],
-                source_ids=["E-0001"],
-                claim_ids=[claim.id],
-            )
-        ],
     )
 
     tables, photos = ReportAssetAssembler(tmp_path).build([evidence], [asset], [claim], edited)
 
     assert tables[0].source_ids == ["E-0001"]
-    assert tables[1].title == "系统风险簇矩阵"
-    assert tables[1].claim_ids == [claim.id]
     assert photos[0].path == photo_path
     assert photos[0].source_id == "E-0001"
     assert photos[0].claim_ids == [claim.id]

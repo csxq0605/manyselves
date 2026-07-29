@@ -145,14 +145,9 @@ HEADINGS: list[tuple[str, str, int]] = [
     ("3.1", "风险/问题汇总与概览", 2),
     ("3.1.1", "风险全景图", 3),
     ("3.1.2", "各维度风险分析", 3),
-    ("3.1.3", "跨领域关联风险", 3),
-    ("3.1.4", "数据缺口分析", 3),
+    ("3.1.3", "数据缺口分析", 3),
     ("3.2", "改善行动速查表", 2),
     ("4", "专项问题分析", 1),
-    ("4.1", "新工厂建厂时规划建议", 2),
-    ("4.2", "增容建议", 2),
-    ("4.3", "日常用电管理建议", 2),
-    ("4.4", "应急管理及合规性管理建议", 2),
 ]
 
 
@@ -241,7 +236,6 @@ TOC_PAGE_HINTS = {
     "3.1.1": "40",
     "3.1.2": "40",
     "3.1.3": "41",
-    "3.1.4": "41",
     "3.2": "42",
     "4": "43",
     "4.1": "43",
@@ -1061,6 +1055,11 @@ def parse_heading(line: str) -> tuple[str, str, int] | None:
         if number in HEADING_BY_NUMBER:
             title, level = HEADING_BY_NUMBER[number]
             return number, title, level
+        if (
+            number.startswith("4.")
+            and re.match(r"^#{1,6}\s*", line.strip())
+        ):
+            return number, match.group(2).strip(), 2
     top_level_match = re.match(r"^([1234])\.\s+(.+)$", clean)
     if top_level_match:
         number = top_level_match.group(1)
@@ -1069,7 +1068,7 @@ def parse_heading(line: str) -> tuple[str, str, int] | None:
             return number, expected[0], expected[1]
     normalized = normalize_heading_title(strip_number_prefix(clean))
     by_title = HEADING_BY_TITLE.get(normalized)
-    if by_title and by_title[0] in {"3.1.1", "3.1.2", "3.1.3", "3.1.4"}:
+    if by_title and by_title[0] in {"3.1.1", "3.1.2", "3.1.3"}:
         if not re.match(r"^#{1,6}\s*", line.strip()):
             return None
     return by_title
@@ -3647,7 +3646,6 @@ def chapter3_summary_text(model: dict[str, Any], issues: list[dict[str, Any]], a
         [item for item in issues if _v2_status(item) in {"NG", "数据冲突"}],
         key=lambda item: v2_priority_rank(item),
     )[:top_risk_count]
-    links = v2_cross_links(issues)
     lines = [
         "#### 3.1.1 风险全景图",
         f"本次评估共覆盖{total}个检测项，其中：OK {counts.get('OK', 0)}项、一般 {counts.get('一般', 0)}项、NG {ng_count}项、数据缺失 {counts.get('数据缺失', 0) + counts.get('待核实', 0)}项、数据异常 {counts.get('数据冲突', 0)}项。",
@@ -3659,11 +3657,6 @@ def chapter3_summary_text(model: dict[str, Any], issues: list[dict[str, Any]], a
         lines.append(f"{index}. {v2_issue_sentence(issue)}")
     if not urgent:
         lines.append("1. 本次未识别到明确NG项，建议跟踪一般项和数据缺口。")
-    if links:
-        lines.extend(["", "跨领域关联风险："])
-        for link_id, title, _logic, _advice in links:
-            lines.append(f"• {link_id}：{title}，建议统筹处理。")
-
     lines.extend(["", "#### 3.1.2 各维度风险分析"])
     for prefix, title in [
         ("2.1", "系统架构"),
@@ -3686,20 +3679,8 @@ def chapter3_summary_text(model: dict[str, Any], issues: list[dict[str, Any]], a
             lines.append("• 本维度未识别到明确异常，建议按常规周期复核。")
         lines.append("")
 
-    if len(links) > 3:
-        lines.append("#### 3.1.3 跨领域关联风险")
-        lines.append("本次评估发现以下跨领域关联风险，独立评估时可能被低估，建议统筹处理：")
-        for link_id, title, logic, advice in links:
-            lines.extend([
-                f"{link_id}：{title}",
-                f"【关联逻辑】{logic}",
-                f"【叠加效应】单项问题分别整改时可能无法消除根因，风险会在运行条件变化后被放大。",
-                f"【统筹建议】{advice}",
-            ])
-        lines.append("")
-
     if policy_bool("chapter_3_policy", "include_data_gap_analysis", True):
-        lines.extend(["", "#### 3.1.4 数据缺口分析"])
+        lines.extend(["", "#### 3.1.3 数据缺口分析"])
         missing_items = [item for item in issues if _v2_status(item) in {"数据缺失", "待核实"}]
         if missing_items:
             lines.append("本次评估中以下数据项尚未收到，建议按优先级补充：")
@@ -3854,13 +3835,6 @@ def v2_cross_link_records(issues: list[dict[str, Any]]) -> list[dict[str, str]]:
     return records
 
 
-def v2_cross_links(issues: list[dict[str, Any]]) -> list[tuple[str, str, str, str]]:
-    return [
-        (record["id"], record["title"], record["logic"], record["advice"])
-        for record in v2_cross_link_records(issues)
-    ]
-
-
 def v2_cross_link_map(issues: list[dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
     link_map: dict[str, list[dict[str, str]]] = {}
     for record in v2_cross_link_records(issues):
@@ -3923,17 +3897,13 @@ def v2_action_section(model: dict[str, Any]) -> str:
 
 
 def v2_special_analysis_lines(model: dict[str, Any]) -> list[str]:
-    """Keep the fixed fourth block even for the legacy structured-model path."""
+    """Render the optional legacy special-analysis block only when supplied."""
 
     supplied = model.get("special_analysis") or {}
-    if not isinstance(supplied, dict):
-        supplied = {}
-    defaults = {
-        "4.1": "本节应基于当前项目已批准的负荷边界、供电可靠性、保护配置、设备环境和运维能力，明确新建项目在方案、设计、预留、校核与验收阶段需要关闭的条件；现有资料不足以支持的参数不得假定为已确认。",
-        "4.2": "增容决策应先核实负荷曲线、变压器及线路容量、短路电流水平、保护选择性、电能质量和转供条件，再比较可实施方案、停电窗口与验收指标；缺少动态数据时仅形成待校核方案。",
-        "4.3": "日常用电管理应把巡检、监测、维护、缺陷台账、异常升级、整改复测和责任复核串成闭环，并以趋势数据与关闭记录验证执行有效性，不能以制度文件存在代替现场执行证据。",
-        "4.4": "应急与合规管理应覆盖场景识别、响应责任、危险能量控制、演练记录、事件复盘和法规符合性证据；对未验证的执行状态保留边界，并把补证与整改纳入同一关闭流程。",
-    }
+    if not isinstance(supplied, dict) or not any(
+        clean_text(value) for value in supplied.values()
+    ):
+        return []
     titles = {
         "4.1": "新工厂建厂时规划建议",
         "4.2": "增容建议",
@@ -3942,11 +3912,14 @@ def v2_special_analysis_lines(model: dict[str, Any]) -> list[str]:
     }
     lines = ["", "## 4. 专项问题分析", ""]
     for number, title in titles.items():
+        body = clean_text(supplied.get(number))
+        if not body:
+            continue
         lines.extend(
             [
                 f"### {number} {title}",
                 "",
-                clean_text(supplied.get(number)) or defaults[number],
+                body,
                 "",
             ]
         )

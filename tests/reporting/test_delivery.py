@@ -16,12 +16,21 @@ def _package(tmp_path: Path) -> DeliveryPackage:
     Document().save(final)
     state = tmp_path / "report-state.json"
     state.write_text('{"approved": true}', encoding="utf-8")
+    source_index = tmp_path / "证据与来源索引.md"
+    source_index.write_text("## 证据与来源索引\n\n- E-001：测试来源\n", encoding="utf-8")
+    source_index_docx = tmp_path / "证据与来源索引.docx"
+    source_index_document = Document()
+    source_index_document.add_heading("证据与来源索引", level=1)
+    source_index_document.add_paragraph("E-001：测试来源")
+    source_index_document.save(source_index_docx)
     return DeliveryPackage(
         report_id="report-001",
         version="v1",
         module_files=modules,
         final_docx=final,
         report_state=state,
+        source_index=source_index,
+        source_index_docx=source_index_docx,
     )
 
 
@@ -34,6 +43,10 @@ def test_delivery_publishes_complete_five_module_package_atomically(tmp_path: Pa
     assert receipt.final_docx.is_file()
     assert set(receipt.module_files) == {"2.1", "2.2", "2.3", "2.4", "2.5"}
     assert Document(receipt.final_docx)
+    assert receipt.source_index.read_text(encoding="utf-8").startswith(
+        "## 证据与来源索引"
+    )
+    assert Document(receipt.source_index_docx).paragraphs[0].text == "证据与来源索引"
     assert receipt.manifest_path.is_file()
 
 

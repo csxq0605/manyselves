@@ -10,6 +10,10 @@ from .pds_docx_renderer import (
     ReportPhoto,
     ReportTable,
 )
+from .source_index_docx_renderer import (
+    SourceIndexDocxRenderer,
+    SourceIndexRenderResult,
+)
 
 __all__ = [
     "ApprovedReport",
@@ -22,4 +26,6 @@ __all__ = [
     "ReportTable",
     "RenderRequest",
     "RenderResult",
+    "SourceIndexDocxRenderer",
+    "SourceIndexRenderResult",
 ]

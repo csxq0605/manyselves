@@ -35,6 +35,20 @@ from manyselves.core.tools.reporting_collaboration_tools import (
 )
 
 
+def _special_topic_plan() -> dict:
+    return {
+        "source_ref": "Inputs/专项问题分析.md",
+        "source_sha256": "0" * 64,
+        "sections": [
+            {
+                "section_id": "4.1",
+                "title": "动态专项问题",
+                "requirement": "分析项目边界、方案条件和验证方法。",
+            }
+        ],
+    }
+
+
 def _tool(
     workspace: Path,
     *,
@@ -174,7 +188,7 @@ def _cross_synthesis_input() -> dict:
         "acceptance_criteria": ["2.1 与 2.2 的复测记录均达到约定关闭条件"],
         "module_statement_refs": ["2.1.1.1", "2.2.1.1"],
         "confidence_and_boundary": "当前关系由现场证据支持，具体阈值仍需连续数据进一步确认。",
-        "target_report_section_ids": ["3.1.1", "3.1.3", "3.2"],
+        "target_report_section_ids": ["3.1.1", "3.1.2", "3.2"],
         "evidence_refs": ["E-0001"],
     }
 
@@ -214,8 +228,8 @@ def _write_chief_contract_and_claim_ledger(workspace: Path) -> str:
             module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_TAXONOMY
         },
         modules=modules,
-        cross_synthesis_inputs=[_cross_synthesis_input()],
         cross_review_completion_ref="Work/runs/run-1/reviews/cross-completion.json",
+        special_topic_plan=_special_topic_plan(),
     )
     contract_ref = "Work/runs/run-1/context/chief-editor-input.json"
     ReportingStore(workspace).write_json(contract_ref, contract.model_dump(mode="json"))
@@ -888,7 +902,7 @@ async def test_module_authoring_output_is_checked_against_visible_input_contract
 
 
 @pytest.mark.asyncio
-async def test_chief_submission_accounts_for_cross_inputs_and_derives_table_traceability(
+async def test_chief_submission_rejects_deleted_cross_fields_and_traces_regular_tables(
     tmp_path: Path,
 ) -> None:
     contract_ref = _write_chief_contract_and_claim_ledger(tmp_path)
@@ -896,7 +910,6 @@ async def test_chief_submission_accounts_for_cross_inputs_and_derives_table_trac
     part_ids = [
         "risk_panorama",
         "dimension_risk_analysis",
-        "cross_module_analysis",
         "improvement_action_plan",
     ]
     writer = WriteResultPartTool(
@@ -910,7 +923,7 @@ async def test_chief_submission_accounts_for_cross_inputs_and_derives_table_trac
     for part_id in part_ids:
         result = await writer(
             part_id=part_id,
-            content=f"{part_id} 对 SI-001 的系统级整合正文。",
+            content=f"{part_id} 当前实际章节正文。",
         )
         refs[part_id] = result["artifact_ref"]
 
@@ -925,44 +938,18 @@ async def test_chief_submission_accounts_for_cross_inputs_and_derives_table_trac
         },
         "risk_panorama": refs["risk_panorama"],
         "dimension_risk_analysis": refs["dimension_risk_analysis"],
-        "cross_module_analysis": refs["cross_module_analysis"],
         "data_gap_analysis": "缺口",
         "improvement_action_plan": refs["improvement_action_plan"],
-        "new_factory_planning": "新建",
-        "capacity_expansion_plan": "增容",
-        "daily_power_management": "日常",
-        "emergency_compliance_management": "应急",
-        "tables": [],
-        "synthesis_dispositions": [
+        "special_topic_analysis": (
+            "### 4.1 动态专项问题\n\n"
+            "说明项目事实边界、方案条件和验证方法，通用知识不作为客户事实。"
+        ),
+        "tables": [
             {
-                "synthesis_input_id": "SI-001",
-                "status": "integrated",
-                "target_section_ids": ["3.1.1", "3.1.3", "3.2"],
-                "result_part_refs": [
-                    refs["risk_panorama"],
-                    refs["cross_module_analysis"],
-                    refs["improvement_action_plan"],
-                ],
-                "merged_into_ids": [],
-                "integration_summary": "该系统风险簇已进入风险全景、跨模块分析和行动计划。",
-            }
-        ],
-        "synthesis_tables": [
-            {
-                "table_type": "risk_cluster_matrix",
-                "title": "系统风险簇矩阵",
-                "headers": ["风险簇", "影响"],
-                "rows": [["供电边界与环境压力", "扩大异常影响范围"]],
-                "synthesis_input_ids": ["SI-001"],
-                "row_synthesis_input_ids": [["SI-001"]],
-            },
-            {
-                "table_type": "action_dependency_matrix",
-                "title": "联合行动依赖矩阵",
-                "headers": ["前置动作", "后续动作"],
-                "rows": [["确认供电边界", "完成环境整改与复测"]],
-                "synthesis_input_ids": ["SI-001"],
-                "row_synthesis_input_ids": [["SI-001"]],
+                "title": "证据表",
+                "headers": ["对象", "判断"],
+                "rows": [["供电边界", "需要复核"]],
+                "evidence_ids": ["E-0001"],
             },
         ],
         "photo_ids": [],
@@ -977,21 +964,19 @@ async def test_chief_submission_accounts_for_cross_inputs_and_derives_table_trac
         input_contract_ref=contract_ref,
     )
 
-    incomplete = await tool(payload={**payload, "synthesis_dispositions": []})
+    legacy = await tool(payload={**payload, "synthesis_dispositions": []})
     outcome = await tool(payload=payload)
 
-    assert incomplete["status"] == "correction_required"
-    assert incomplete["validation_errors"][0]["field"] == (
-        "synthesis_dispositions.synthesis_input_id"
-    )
+    assert legacy["status"] == "correction_required"
+    assert legacy["validation_errors"][0]["field"] == "synthesis_dispositions"
     assert outcome["status"] == "completed", outcome
     result = json.loads(
         (tmp_path / "Work/runs/run-1/results/chief-edit.json").read_text(encoding="utf-8")
     )["payload"]
-    assert result["synthesis_dispositions"][0]["synthesis_input_id"] == "SI-001"
-    assert result["synthesis_tables"][0]["source_ids"] == ["E-0001"]
-    assert result["synthesis_tables"][0]["claim_ids"] == ["C-2.1-001"]
-    assert result["synthesis_tables"][0]["row_synthesis_input_ids"] == [["SI-001"]]
+    assert "synthesis_dispositions" not in result
+    assert "synthesis_tables" not in result
+    assert result["tables"][0]["source_ids"] == ["E-0001"]
+    assert result["tables"][0]["claim_ids"] == ["C-2.1-001"]
 
 
 @pytest.mark.asyncio
@@ -1008,13 +993,13 @@ async def test_chief_revision_commit_is_compact_and_reads_only_assigned_parts(
         },
         risk_panorama="风险全景原文",
         dimension_risk_analysis="维度分析原文",
-        cross_module_analysis="跨模块分析原文",
         data_gap_analysis="数据缺口原文",
         improvement_action_plan="行动计划原文",
-        new_factory_planning="新建规划原文",
-        capacity_expansion_plan="增容规划原文",
-        daily_power_management="日常管理原文",
-        emergency_compliance_management="应急合规原文",
+        special_topic_plan=_special_topic_plan(),
+        special_topic_analysis=(
+            "### 4.1 动态专项问题\n\n"
+            "原专项分析已说明项目边界、方案条件和验证方法。"
+        ),
         photo_ids=["P-001"],
         unresolved_editorial_issues=["保留的透明限制"],
     )
@@ -1022,10 +1007,10 @@ async def test_chief_revision_commit_is_compact_and_reads_only_assigned_parts(
     contract_ref = "Work/runs/run-1/reviews/chief-revision-input-r1.json"
     finding = {
         "id": "F-001",
-        "target_section_ids": ["3.1.3"],
+        "target_section_ids": ["3.1.2"],
         "target_changes": [
             {
-                "target_section_id": "3.1.3",
+                "target_section_id": "3.1.2",
                 "required_change": "在该小节补充明确的行动依赖顺序和联合验收方法。",
                 "reviewer_checks": ["行动依赖和联合验收都已形成可核对闭环"],
             }
@@ -1042,9 +1027,8 @@ async def test_chief_revision_commit_is_compact_and_reads_only_assigned_parts(
         subject_ref=subject_ref,
         subject=final_audit_content_view(baseline),
         revision=1,
-        target_section_ids=["3.1.3"],
+        target_section_ids=["3.1.2"],
         findings=[finding],
-        cross_synthesis_inputs=[],
     )
     store.write_json(contract_ref, contract.model_dump(mode="json"))
     writer = WriteResultPartTool(
@@ -1052,11 +1036,11 @@ async def test_chief_revision_commit_is_compact_and_reads_only_assigned_parts(
         "chief-edit-r1",
         1,
         store,
-        ["cross_module_analysis"],
+        ["dimension_risk_analysis"],
     )
     await writer(
-        part_id="cross_module_analysis",
-        content="修订后的跨模块分析，明确前置动作、责任接口和联合验收。",
+        part_id="dimension_risk_analysis",
+        content="修订后的维度综合分析，明确前置动作、责任接口和联合验收。",
     )
     tool = _tool(
         tmp_path,
@@ -1076,7 +1060,7 @@ async def test_chief_revision_commit_is_compact_and_reads_only_assigned_parts(
                     "finding_id": "F-001",
                     "action": "implemented",
                     "summary": "已在指定小节补充行动依赖、责任接口和联合验收。",
-                    "changed_target_ids": ["3.1.3"],
+                    "changed_target_ids": ["3.1.2"],
                 }
             ],
         }
@@ -1095,7 +1079,7 @@ async def test_chief_revision_commit_is_compact_and_reads_only_assigned_parts(
         "revision_responses",
     }
     assert result["section_bodies"] == {
-        "3.1.3": "修订后的跨模块分析，明确前置动作、责任接口和联合验收。"
+        "3.1.2": "修订后的维度综合分析，明确前置动作、责任接口和联合验收。"
     }
     assert "module_narratives" not in result
     assert "synthesis_dispositions" not in result
@@ -1114,6 +1098,7 @@ async def test_markdown_aggregate_contract_rejects_unverified_bindings_without_c
             "run_id": "run-1",
             "source_format": "markdown",
             "approved_module_markers": markers,
+            "special_topic_plan": _special_topic_plan(),
             "structured_modules": {},
             "markdown_modules": {
                 module_id: f"模块 {module_id} 正文" for module_id in REPORT_TAXONOMY
@@ -1127,15 +1112,14 @@ async def test_markdown_aggregate_contract_rejects_unverified_bindings_without_c
         "findings_overview": "发现",
         "regional_executive_summary": "摘要",
         "module_narratives": markers,
-        "cross_module_analysis": "关联",
         "risk_panorama": "风险",
         "dimension_risk_analysis": "维度",
         "data_gap_analysis": "缺口",
         "improvement_action_plan": "行动",
-        "new_factory_planning": "新建",
-        "capacity_expansion_plan": "增容",
-        "daily_power_management": "日常",
-        "emergency_compliance_management": "应急",
+        "special_topic_analysis": (
+            "### 4.1 动态专项问题\n\n"
+            "说明项目边界、方案条件和验证方法。"
+        ),
         "protected_claim_ids": ["C-invented"],
         "tables": [],
         "photo_ids": [],

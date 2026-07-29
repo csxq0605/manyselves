@@ -234,28 +234,7 @@ def _apply_chief_patch(
         CHIEF_SECTION_RESULT_PART_IDS[section_id]: body
         for section_id, body in patch.section_bodies.items()
     }
-    patched_part_refs = {
-        CHIEF_SECTION_RESULT_PART_IDS[section_id]: ref
-        for section_id, ref in patch.section_part_refs.items()
-    }
-    dispositions = []
-    for disposition in baseline.synthesis_dispositions:
-        refs_by_part = {Path(ref).stem: ref for ref in disposition.result_part_refs}
-        for section_id in disposition.target_section_ids:
-            part_id = CHIEF_SECTION_RESULT_PART_IDS[section_id]
-            if section_id in target_section_ids:
-                refs_by_part[part_id] = patched_part_refs[part_id]
-        ordered_refs = [
-            refs_by_part[CHIEF_SECTION_RESULT_PART_IDS[section_id]]
-            for section_id in disposition.target_section_ids
-        ]
-        dispositions.append(disposition.model_copy(update={"result_part_refs": ordered_refs}))
-    updates.update(
-        {
-            "synthesis_dispositions": dispositions,
-            "revision_responses": list(patch.revision_responses),
-        }
-    )
+    updates["revision_responses"] = list(patch.revision_responses)
     payload = baseline.model_dump(mode="python")
     payload.update(updates)
     return EditedReportSubmission.model_validate(payload)
@@ -392,6 +371,20 @@ def _validate_verdicts(
             f"missing={sorted(required_ids - verdict_ids)}; "
             f"unexpected={sorted(verdict_ids - required_ids)}"
         )
+
+
+def _validate_final_findings(
+    findings: list[FinalReviewFinding],
+    allowed_section_ids: set[str],
+) -> None:
+    _unique_ids((finding.id for finding in findings), label="final-review findings")
+    for finding in findings:
+        invalid = sorted(set(finding.target_section_ids) - allowed_section_ids)
+        if invalid:
+            raise ReviewLifecycleError(
+                "final-review finding targets an inactive report section: "
+                f"finding={finding.id}; sections={invalid}"
+            )
 
 
 async def _main_exception_decision(
@@ -1573,7 +1566,6 @@ async def _request_chief_revision(
         revision=revision_number,
         target_section_ids=sorted(target_sections),
         findings=list(pending.values()),
-        cross_synthesis_inputs=state.get("cross_synthesis_inputs", []),
     )
     revision_input_ref = _write_model(
         runner,
@@ -1583,7 +1575,7 @@ async def _request_chief_revision(
     revision_envelope = chief_envelope.model_copy(
         update={
             "task_id": f"chief-edit-r{revision_number}",
-            "objective": "按 final review findings 仅修订指定的第一、三、四章小节。",
+            "objective": "按 final review findings 仅修订指定的实际总编小节。",
             "input_refs": [
                 revision_input_ref,
                 *chief_envelope.input_refs,
@@ -1597,7 +1589,7 @@ async def _request_chief_revision(
             "constraints": [
                 *chief_envelope.constraints,
                 "只为 target_section_ids 调用 write_result_part 并提交 chief_revision_submission 小补丁",
-                "不得提交全文、第二章、Cross dispositions、表格、图片或其他元数据；运行时确定性继承",
+                "不得提交全文、第二章、表格、图片或其他元数据；运行时确定性继承",
                 "revision_responses 必须逐项且仅覆盖 assigned finding ids",
                 "不得让工作流替你补写响应、章节或引用",
             ],
@@ -1623,8 +1615,6 @@ async def _request_chief_revision(
     diff = runner._final_revision_diff(current, revised_report)
     unexpected_sections = sorted(set(diff["changed_section_ids"]) - target_sections)
     allowed_contract_fields = {"revision_responses"}
-    if target_sections & {"3.1.1", "3.1.2", "3.1.3", "3.2"}:
-        allowed_contract_fields.add("synthesis_dispositions")
     unexpected_contract = sorted(set(diff["changed_contract_fields"]) - allowed_contract_fields)
     if unexpected_sections or unexpected_contract:
         raise ReviewLifecycleError(
@@ -1797,6 +1787,16 @@ async def run_final_review(
             save_progress("review")
 
     while True:
+        required_audit_sections = tuple(
+            section_id
+            for section_id in FINAL_AUDIT_SECTION_IDS
+            if section_id != "4" or current.special_topic_plan is not None
+        )
+        audited_chapters = (
+            "第一、三、四章"
+            if current.special_topic_plan is not None
+            else "第一、三章"
+        )
         subject_ref = _write_model(
             runner,
             (f"Work/runs/{state['run_id']}/edited-revisions/chief-r{review_round}.json"),
@@ -1820,10 +1820,9 @@ async def run_final_review(
             subject_revision=review_round,
             subject=final_audit_content_view(current),
             canonical_markdown=_final_audit_markdown(strip_runtime_claim_markers(canonical)),
-            required_section_ids=list(FINAL_AUDIT_SECTION_IDS),
+            required_section_ids=list(required_audit_sections),
             required_findings=list(pending.values()) if phase == "recheck" else [],
             revision_responses=responses if phase == "recheck" else [],
-            cross_synthesis_inputs=state.get("cross_synthesis_inputs", []),
             validation_report_ref=integrity_ref,
             validation_report=validation_report,
         )
@@ -1842,18 +1841,21 @@ async def run_final_review(
             run_id=state["run_id"],
             agent_id="chief-editor-auditor",
             objective=(
-                "独立审查当前成稿第一、三、四章的保真、综合、可追溯、可执行和交付质量。"
+                f"独立审查当前成稿{audited_chapters}的保真、综合、可追溯、可执行和交付质量。"
                 if phase == "initial"
-                else "由原 final reviewer 逐项判断 required_findings 是否关闭并检查第一、三、四章回归。"
+                else (
+                    "由原 final reviewer 逐项判断 required_findings 是否关闭并检查"
+                    f"{audited_chapters}回归。"
+                )
             ),
             input_refs=[input_ref, integrity_ref],
             constraints=[
-                "只审查第一、三、四章的总编整合与最终交付质量，不重做模块或 Cross 专业审查",
+                f"只审查{audited_chapters}当前实际存在的小节及最终交付质量，不重做模块或 Cross 专业审查",
                 "第二章由模块审查和运行时保真校验负责，不属于本阶段内容、覆盖范围或 finding target",
                 "residual_risks 只记录无需内容修订的透明限制",
-                "报告正文缺失、Cross 未整合、综合表或图片缺失属于 actionable finding，禁止塞入 residual_risks",
+                "当前实际章节正文、必要表格或图片缺失属于 actionable finding，禁止塞入 residual_risks",
                 (
-                    "首轮 checked_section_ids 必须精确覆盖第一、三、四章的固定审计小节"
+                    f"首轮 checked_section_ids 必须精确覆盖{audited_chapters}的实际审计小节"
                     if phase == "initial"
                     else "verdicts 必须逐项且仅覆盖 required_findings；new_findings 只允许真实回归"
                 ),
@@ -1861,7 +1863,7 @@ async def run_final_review(
                     state,
                     stage="final_review",
                     target_ids={
-                        *FINAL_AUDIT_SECTION_IDS,
+                        *required_audit_sections,
                         *(claim.id for claim in claims),
                     },
                 ),
@@ -1886,10 +1888,11 @@ async def run_final_review(
         if phase == "initial":
             if not isinstance(result, FinalReviewFindingSubmission):
                 raise ReviewLifecycleError("final reviewer returned the wrong initial type")
-            if set(result.checked_section_ids) != set(FINAL_AUDIT_SECTION_IDS):
+            if set(result.checked_section_ids) != set(required_audit_sections):
                 raise ReviewLifecycleError(
                     "initial final review did not cover every chief-owned audit section"
                 )
+            _validate_final_findings(result.findings, set(required_audit_sections))
             finding_ref = _write_immutable_model(
                 runner,
                 f"Work/runs/{state['run_id']}/reviews/final-findings-r{review_round}.json",
@@ -1901,7 +1904,12 @@ async def run_final_review(
         else:
             if not isinstance(result, FinalReviewVerdictSubmission):
                 raise ReviewLifecycleError("final reviewer returned the wrong recheck type")
+            if set(result.checked_section_ids) != set(required_audit_sections):
+                raise ReviewLifecycleError(
+                    "final recheck did not cover every active chief-owned audit section"
+                )
             _validate_verdicts(result.verdicts, set(pending))
+            _validate_final_findings(result.new_findings, set(required_audit_sections))
             verdict_ref = _write_immutable_model(
                 runner,
                 f"Work/runs/{state['run_id']}/reviews/final-verdicts-r{review_round}.json",

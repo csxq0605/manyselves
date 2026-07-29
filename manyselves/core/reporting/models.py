@@ -1,5 +1,6 @@
 """Typed carriers shared by the power-distribution reporting workflow."""
 
+import re
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
@@ -23,12 +24,8 @@ REPORT_FINAL_SECTION_IDS = (
     "3.1.1",
     "3.1.2",
     "3.1.3",
-    "3.1.4",
     "3.2",
-    "4.1",
-    "4.2",
-    "4.3",
-    "4.4",
+    "4",
 )
 REPORT_FINAL_AUDIT_SECTION_IDS = (
     "1.1",
@@ -37,12 +34,8 @@ REPORT_FINAL_AUDIT_SECTION_IDS = (
     "3.1.1",
     "3.1.2",
     "3.1.3",
-    "3.1.4",
     "3.2",
-    "4.1",
-    "4.2",
-    "4.3",
-    "4.4",
+    "4",
 )
 CHIEF_SECTION_RESULT_PART_IDS = {
     "1.1": "assessment_background",
@@ -50,13 +43,9 @@ CHIEF_SECTION_RESULT_PART_IDS = {
     "1.3": "regional_executive_summary",
     "3.1.1": "risk_panorama",
     "3.1.2": "dimension_risk_analysis",
-    "3.1.3": "cross_module_analysis",
-    "3.1.4": "data_gap_analysis",
+    "3.1.3": "data_gap_analysis",
     "3.2": "improvement_action_plan",
-    "4.1": "new_factory_planning",
-    "4.2": "capacity_expansion_plan",
-    "4.3": "daily_power_management",
-    "4.4": "emergency_compliance_management",
+    "4": "special_topic_analysis",
 }
 CHIEF_RESULT_PART_IDS = tuple(CHIEF_SECTION_RESULT_PART_IDS.values())
 ReportOperation = Literal[
@@ -72,6 +61,104 @@ class ReportingModel(BaseModel):
     """Strict base model for persisted workflow state."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+class SpecialTopicSectionRequirement(ReportingModel):
+    """One runtime-numbered Chapter 4 subsection requested by the user input."""
+
+    section_id: str = Field(
+        pattern=r"^4\.[1-9][0-9]*$",
+        description="Runtime-assigned sequential Chapter 4 subsection id.",
+    )
+    title: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Exact visible subsection title parsed from the Inputs plan.",
+    )
+    requirement: str = Field(
+        min_length=1,
+        max_length=20_000,
+        description="User-authored brief writing requirement for this subsection.",
+    )
+
+
+class SpecialTopicPlan(ReportingModel):
+    """Immutable provenance and writing requirements for the dynamic fourth chapter."""
+
+    source_ref: Path = Field(
+        description="Relative path of the one standalone Inputs Markdown source."
+    )
+    source_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+        description="Immutable SHA-256 of the source Markdown bytes.",
+    )
+    sections: list[SpecialTopicSectionRequirement] = Field(
+        min_length=1,
+        max_length=30,
+        description="Ordered dynamic Chapter 4 subsection titles and requirements.",
+    )
+
+    @field_validator("source_ref", mode="before")
+    @classmethod
+    def source_must_be_an_inputs_markdown(cls, value: Any) -> Any:
+        path = Path(value)
+        if (
+            path.is_absolute()
+            or not path.parts
+            or path.parts[0] != "Inputs"
+            or path.suffix.casefold() != ".md"
+            or ".." in path.parts
+        ):
+            raise ValueError("special-topic source must be a relative Markdown path under Inputs")
+        return path.as_posix()
+
+    @model_validator(mode="after")
+    def section_ids_and_titles_are_unique_and_ordered(self) -> "SpecialTopicPlan":
+        expected_ids = [f"4.{index}" for index in range(1, len(self.sections) + 1)]
+        actual_ids = [section.section_id for section in self.sections]
+        if actual_ids != expected_ids:
+            raise ValueError(
+                "special-topic section ids must be sequential in source order: "
+                f"expected={expected_ids}, actual={actual_ids}"
+            )
+        titles = [section.title for section in self.sections]
+        if len(titles) != len(set(titles)):
+            raise ValueError("special-topic section titles must be unique")
+        return self
+
+    def validate_analysis(self, markdown: str) -> None:
+        """Require the Chief to write every requested subsection exactly once."""
+
+        parsed = [
+            (len(match.group(1)), match.group(2).strip(), line_number)
+            for line_number, line in enumerate(markdown.splitlines())
+            if (match := re.match(r"^(#{1,6})\s+(.+?)\s*$", line))
+        ]
+        expected = [
+            (3, f"{section.section_id} {section.title}")
+            for section in self.sections
+        ]
+        actual_numbered = [
+            (level, title, line_number)
+            for level, title, line_number in parsed
+            if re.match(r"^4(?:\.\d+)*\.?\s+", title)
+        ]
+        if [(level, title) for level, title, _ in actual_numbered] != expected:
+            raise ValueError(
+                "special_topic_analysis headings must exactly match the Inputs plan: "
+                f"expected={expected}, actual="
+                f"{[(level, title) for level, title, _ in actual_numbered]}"
+            )
+        lines = markdown.splitlines()
+        for index, (_level, title, start) in enumerate(actual_numbered):
+            end = (
+                actual_numbered[index + 1][2]
+                if index + 1 < len(actual_numbered)
+                else len(lines)
+            )
+            body = "\n".join(lines[start + 1 : end]).strip()
+            if len(re.sub(r"\s+", "", body)) < 20:
+                raise ValueError(f"special-topic section has no substantive body: {title}")
 
 
 class SourceLocation(ReportingModel):

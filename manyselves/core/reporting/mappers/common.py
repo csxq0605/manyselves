@@ -15,6 +15,8 @@ class MappingGap(ReportingModel):
     message: str
     sheet: str | None = None
     cell: str | None = None
+    module_id: str | None = None
+    submodule_id: str | None = None
 
 
 class MappingResult(ReportingModel):

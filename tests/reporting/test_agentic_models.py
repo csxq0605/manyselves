@@ -8,13 +8,13 @@ from pydantic import ValidationError
 from manyselves.core.reporting.agentic_models import (
     CrossReviewFindingSubmission,
     CrossSynthesisInput,
+    EditedReportSubmission,
     FinalReviewFinding,
     FinalReviewFindingSubmission,
     ModuleRevisionSubmission,
     ModuleSubmission,
     ResolutionVerdict,
     RevisionResponse,
-    SynthesisTableSubmissionInput,
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
@@ -165,21 +165,32 @@ def test_cross_synthesis_rejects_module_refs_missing_from_declared_scope() -> No
             acceptance_criteria=["告警、处置和关闭记录可以完整追溯"],
             module_statement_refs=["2.2.1", "2.3.1", "2.5.1"],
             confidence_and_boundary="当前仅确认接口关系，具体阈值仍需现场数据复核。",
-            target_report_section_ids=["3.1.3", "3.2"],
+            target_report_section_ids=["3.1.2", "3.2"],
             evidence_refs=["Work/runs/example/modules/2.2-r0.json"],
         )
 
 
-def test_synthesis_table_requires_exact_per_row_cross_bindings() -> None:
-    with pytest.raises(ValidationError, match="union of row_synthesis_input_ids"):
-        SynthesisTableSubmissionInput(
-            table_type="risk_cluster_matrix",
-            title="系统风险簇",
-            headers=["风险簇", "影响"],
-            rows=[["供电与保护边界", "扩大停电范围"]],
-            synthesis_input_ids=["SI-001", "SI-002"],
-            row_synthesis_input_ids=[["SI-001"]],
-        )
+def test_edited_report_drops_deleted_cross_module_metadata_from_old_checkpoints() -> None:
+    payload = {
+        "title": "报告",
+        "assessment_background": "背景",
+        "findings_overview": "发现",
+        "regional_executive_summary": "摘要",
+        "module_narratives": {
+            module_id: f"{module_id} 已批准正文" for module_id in REPORT_TAXONOMY
+        },
+        "risk_panorama": "风险全景",
+        "dimension_risk_analysis": "维度风险分析",
+        "data_gap_analysis": "数据缺口分析",
+        "improvement_action_plan": "改善行动",
+        "synthesis_dispositions": [],
+        "synthesis_tables": [],
+    }
+
+    edited = EditedReportSubmission.model_validate(payload)
+
+    assert "synthesis_dispositions" not in edited.model_dump()
+    assert "synthesis_tables" not in edited.model_dump()
 
 
 def test_final_review_rejects_actionable_report_defect_as_residual_risk() -> None:
@@ -194,20 +205,20 @@ def test_final_review_rejects_actionable_report_defect_as_residual_risk() -> Non
 def test_final_finding_rejects_chapter_two_and_requires_per_target_changes() -> None:
     base = {
         "id": "F-001",
-        "target_section_ids": ["3.1.3"],
+        "target_section_ids": ["3.1.2"],
         "target_changes": [
             {
-                "target_section_id": "3.1.3",
+                "target_section_id": "3.1.2",
                 "required_change": "在该小节补充行动依赖顺序和可验证的联合验收方法。",
                 "reviewer_checks": ["行动依赖、责任接口和联合验收均可核对"],
             }
         ],
         "category": "synthesis",
         "impact": "blocking",
-        "observation": "当前跨模块分析没有形成行动依赖和联合验收闭环。",
+        "observation": "当前维度风险分析没有清楚说明各维度判断及其管理含义。",
         "evidence_refs": ["Work/runs/run-1/edited-revisions/chief-r0.json"],
     }
-    assert FinalReviewFinding.model_validate(base).target_section_ids == ["3.1.3"]
+    assert FinalReviewFinding.model_validate(base).target_section_ids == ["3.1.2"]
 
     with pytest.raises(ValidationError, match="invalid section"):
         FinalReviewFinding.model_validate(
@@ -226,7 +237,7 @@ def test_final_finding_rejects_chapter_two_and_requires_per_target_changes() -> 
         FinalReviewFinding.model_validate(
             {
                 **base,
-                "target_section_ids": ["3.1.3", "3.2"],
+                "target_section_ids": ["3.1.2", "3.2"],
             }
         )
 

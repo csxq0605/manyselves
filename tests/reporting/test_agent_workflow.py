@@ -16,7 +16,6 @@ from manyselves.core.reporting.agentic_models import (
     ChiefRevisionSubmission,
     CrossReviewFindingSubmission,
     CrossReviewVerdictSubmission,
-    CrossSynthesisDisposition,
     EditedReportSubmission,
     FinalReviewFindingSubmission,
     FinalReviewVerdictSubmission,
@@ -33,7 +32,12 @@ from manyselves.core.reporting.input_contracts import (
     ReviewCompletionRecord,
     ValidationReport,
 )
-from manyselves.core.reporting.models import CoverageMatrix, ProjectManifest
+from manyselves.core.reporting.assets import validate_final_report_markdown
+from manyselves.core.reporting.models import (
+    CoverageMatrix,
+    ProjectManifest,
+    SpecialTopicPlan,
+)
 from manyselves.core.reporting.review_lifecycle import (
     ReviewLifecycleError,
     _apply_chief_patch,
@@ -50,6 +54,20 @@ from manyselves.core.tools.reporting_collaboration_tools import SubmitResultTool
 
 def _artifact_hashes(root: Path, refs: list[str]) -> dict[str, str]:
     return {ref: hashlib.sha256((root / ref).read_bytes()).hexdigest() for ref in refs}
+
+
+def _special_topic_plan() -> SpecialTopicPlan:
+    return SpecialTopicPlan(
+        source_ref="Inputs/专项问题分析.md",
+        source_sha256="0" * 64,
+        sections=[
+            {
+                "section_id": "4.1",
+                "title": "动态专项问题",
+                "requirement": "分析项目边界、方案条件和验证方法。",
+            }
+        ],
+    )
 
 
 def _module(module_id: str, revision: int = 0) -> ModuleSubmission:
@@ -87,7 +105,7 @@ def _cross_synthesis_inputs() -> list[dict]:
         "acceptance_criteria": ["保护动作顺序正确且恢复时间满足批准目标"],
         "module_statement_refs": ["2.1.1", "2.3.1"],
         "confidence_and_boundary": "当前关系由已批准模块判断支持，具体动作时限仍以现场复核为准。",
-        "target_report_section_ids": ["3.1.1", "3.1.3", "3.2"],
+        "target_report_section_ids": ["3.1.1", "3.1.2", "3.2"],
         "evidence_refs": [
             "E-0001",
             "Work/runs/run-x/modules/2.1-r0.json",
@@ -109,7 +127,10 @@ def _cross_synthesis_inputs() -> list[dict]:
 
 
 def _edited(
-    module_text: dict[str, str], *, responses: list | None = None
+    module_text: dict[str, str],
+    *,
+    responses: list | None = None,
+    include_special_topics: bool = True,
 ) -> EditedReportSubmission:
     synthesis = (
         "综合当前证据，明确责任、优先顺序、依赖关系、风险影响、验证指标、验收方式和剩余边界。" * 24
@@ -120,12 +141,6 @@ def _edited(
         findings_overview=synthesis,
         regional_executive_summary=synthesis,
         module_narratives=module_text,
-        cross_module_analysis=(
-            "2.1 系统架构与 2.2 工况共同制约 2.3 保护和 2.4 设备状态，"
-            "并依赖 2.5 运维形成联合整改、复核指标和验收闭环。"
-            + "说明跨模块对象、作用机制、风险传播、行动依赖和联合验收。"
-            * 10
-        ),
         risk_panorama=synthesis,
         dimension_risk_analysis=(
             synthesis + "系统架构、电能质量、保护、设备和运维之间存在共同、叠加、依赖和传播关系。"
@@ -134,11 +149,15 @@ def _edited(
         improvement_action_plan=(
             synthesis + "责任部门牵头，按依赖优先实施，以指标、复测和验收关闭。"
         ),
-        new_factory_planning=synthesis + "新建规划设计应预留条件并完成校核和验收验证。",
-        capacity_expansion_plan=synthesis + "增容方案应结合负荷和容量完成校核与验收。",
-        daily_power_management=synthesis + "责任台账通过巡检监测、维护复测和闭环指标持续管理。",
-        emergency_compliance_management=(
-            synthesis + "应急合规需要责任人组织演练、危险能量控制、验证记录和复盘。"
+        special_topic_plan=(_special_topic_plan() if include_special_topics else None),
+        special_topic_analysis=(
+            (
+                "### 4.1 动态专项问题\n\n"
+                + synthesis
+                + "结合项目边界比较方案条件，并明确验证方法和知识适用限制。"
+            )
+            if include_special_topics
+            else None
         ),
         protected_claim_ids=[],
         tables=[],
@@ -315,6 +334,7 @@ def test_preparation_resume_uses_hash_verified_run_snapshot(tmp_path: Path) -> N
         "photo_assets": [],
         "mapping_gaps": [],
         "coverage_matrix": CoverageMatrix(entries={}),
+        "special_topic_plan": _special_topic_plan(),
     }
     runner._persist_preparation_snapshot(state)
     service.store.write_json(
@@ -889,30 +909,30 @@ async def test_final_review_uses_chief_response_then_original_auditor_verdict(
     current = _edited(module_text)
     finding = {
         "id": "F-001",
-        "target_section_ids": ["3.1.3"],
+        "target_section_ids": ["3.1.2"],
         "category": "synthesis",
         "impact": "blocking",
         "observation": "跨领域章节缺少行动依赖和联合验收，无法支持实施排序。",
         "evidence_refs": ["Work/runs/run-f/edited-revisions/chief-r0.json"],
         "target_changes": [
             {
-                "target_section_id": "3.1.3",
-                "required_change": "在 3.1.3 补充行动依赖顺序和联合验收。",
+                "target_section_id": "3.1.2",
+                "required_change": "在 3.1.2 补充行动依赖顺序和联合验收。",
                 "reviewer_checks": ["核对行动依赖和联合验收是否明确且不改变模块事实"],
             }
         ],
     }
     revised = current.model_copy(
         update={
-            "cross_module_analysis": (
-                current.cross_module_analysis + " 明确先完成前置核查，再联合验收并记录剩余风险。"
+            "dimension_risk_analysis": (
+                current.dimension_risk_analysis + " 明确先完成前置核查，再联合验收并记录剩余风险。"
             ),
             "revision_responses": [
                 RevisionResponse(
                     finding_id="F-001",
                     action="implemented",
-                    summary="已在 3.1.3 补充前置顺序、联合验收和剩余风险记录。",
-                    changed_target_ids=["3.1.3"],
+                    summary="已在 3.1.2 补充前置顺序、联合验收和剩余风险记录。",
+                    changed_target_ids=["3.1.2"],
                 )
             ],
         }
@@ -938,11 +958,11 @@ async def test_final_review_uses_chief_response_then_original_auditor_verdict(
                     base_subject_ref=("Work/runs/run-f/edited-revisions/chief-r0.json"),
                     revision=1,
                     section_bodies={
-                        "3.1.3": revised.cross_module_analysis,
+                        "3.1.2": revised.dimension_risk_analysis,
                     },
                     section_part_refs={
-                        "3.1.3": (
-                            "Work/runs/run-f/drafts/chief-edit-r1/r1/cross_module_analysis.md"
+                        "3.1.2": (
+                            "Work/runs/run-f/drafts/chief-edit-r1/r1/dimension_risk_analysis.md"
                         ),
                     },
                     revision_responses=revised.revision_responses,
@@ -959,7 +979,7 @@ async def test_final_review_uses_chief_response_then_original_auditor_verdict(
                         {
                             "finding_id": "F-001",
                             "verdict": "resolved",
-                            "reason": "当前 3.1.3 已明确实施依赖和联合验收，问题关闭。",
+                            "reason": "当前 3.1.2 已明确实施依赖和联合验收，问题关闭。",
                             "evidence_refs": ["Work/runs/run-f/edited-revisions/chief-r1.json"],
                         }
                     ],
@@ -1000,6 +1020,9 @@ async def test_final_review_uses_chief_response_then_original_auditor_verdict(
         )
     )
     assert final_input["required_section_ids"] == list(FINAL_AUDIT_SECTION_IDS)
+    assert "cross_synthesis_inputs" not in final_input
+    assert "synthesis_dispositions" not in final_input["subject"]
+    assert "synthesis_tables" not in final_input["subject"]
     assert "module_narratives" not in final_input["subject"]
     assert "\n## 2. 评估内容描述" not in final_input["canonical_markdown"]
     auditor_sessions = [call[2] for call in runner.calls if call[0] == "chief-editor-auditor"]
@@ -1009,24 +1032,142 @@ async def test_final_review_uses_chief_response_then_original_auditor_verdict(
     ]
 
 
-def test_chief_patch_inherits_cross_metadata_and_rebinds_changed_section() -> None:
+@pytest.mark.asyncio
+async def test_final_review_omits_chapter_four_from_contract_when_plan_is_absent(
+    tmp_path: Path,
+) -> None:
+    module_text = {module_id: _module(module_id).markdown for module_id in REPORT_TAXONOMY}
+    current = _edited(module_text, include_special_topics=False)
+    active_sections = [
+        section_id for section_id in FINAL_AUDIT_SECTION_IDS if section_id != "4"
+    ]
+    runner = _ScriptedRunner(
+        tmp_path,
+        [
+            (
+                "chief-editor-auditor",
+                "final_review_finding_submission",
+                FinalReviewFindingSubmission(
+                    checked_section_ids=active_sections,
+                    findings=[],
+                    residual_risks=[],
+                ),
+            ),
+        ],
+    )
+    state = {
+        "run_id": "run-no-special",
+        "edited_report": current,
+        "module_submissions": {
+            module_id: _module(module_id) for module_id in REPORT_TAXONOMY
+        },
+        "cross_synthesis_inputs": [],
+    }
+
+    await run_final_review(
+        runner,
+        state,
+        "workflow",
+        chief_envelope=TaskEnvelope(
+            task_id="chief-edit",
+            run_id="run-no-special",
+            agent_id="chief-editor",
+            objective="总编",
+            allowed_outputs=["edited_report_submission"],
+        ),
+        chief_session_key="chief-editor",
+        approved_module_text=module_text,
+        claims=[],
+        aggregate_mode=True,
+    )
+
+    input_data = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-no-special/reviews/final-review-input-r0.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert input_data["required_section_ids"] == active_sections
+    assert "\n## 4." not in input_data["canonical_markdown"]
+    assert state["final_review_completion_ref"].endswith("reviews/final-completion.json")
+
+
+@pytest.mark.asyncio
+async def test_final_review_rejects_chapter_four_finding_when_plan_is_absent(
+    tmp_path: Path,
+) -> None:
+    module_text = {module_id: _module(module_id).markdown for module_id in REPORT_TAXONOMY}
+    current = _edited(module_text, include_special_topics=False)
+    active_sections = [
+        section_id for section_id in FINAL_AUDIT_SECTION_IDS if section_id != "4"
+    ]
+    runner = _ScriptedRunner(
+        tmp_path,
+        [
+            (
+                "chief-editor-auditor",
+                "final_review_finding_submission",
+                FinalReviewFindingSubmission(
+                    checked_section_ids=active_sections,
+                    findings=[
+                        {
+                            "id": "F-INACTIVE-4",
+                            "target_section_ids": ["4"],
+                            "target_changes": [
+                                {
+                                    "target_section_id": "4",
+                                    "required_change": (
+                                        "不得为不存在的专项计划补写第四章内容，必须保持实际报告范围。"
+                                    ),
+                                    "reviewer_checks": ["确认报告保持没有第四章"],
+                                }
+                            ],
+                            "category": "scope",
+                            "impact": "blocking",
+                            "observation": "审计结果错误地把未启用的第四章当成当前报告范围。",
+                            "evidence_refs": [
+                                "Work/runs/run-no-special/edited-revisions/chief-r0.json"
+                            ],
+                        }
+                    ],
+                    residual_risks=[],
+                ),
+            ),
+        ],
+    )
+    state = {
+        "run_id": "run-no-special",
+        "edited_report": current,
+        "module_submissions": {
+            module_id: _module(module_id) for module_id in REPORT_TAXONOMY
+        },
+        "cross_synthesis_inputs": [],
+    }
+
+    with pytest.raises(ReviewLifecycleError, match="inactive report section"):
+        await run_final_review(
+            runner,
+            state,
+            "workflow",
+            chief_envelope=TaskEnvelope(
+                task_id="chief-edit",
+                run_id="run-no-special",
+                agent_id="chief-editor",
+                objective="总编",
+                allowed_outputs=["edited_report_submission"],
+            ),
+            chief_session_key="chief-editor",
+            approved_module_text=module_text,
+            claims=[],
+            aggregate_mode=True,
+        )
+
+
+def test_chief_patch_preserves_current_metadata_without_deleted_cross_fields() -> None:
     current = _edited(
         {module_id: _module(module_id).markdown for module_id in REPORT_TAXONOMY}
     ).model_copy(
         update={
-            "synthesis_dispositions": [
-                CrossSynthesisDisposition(
-                    synthesis_input_id="SI-001",
-                    status="integrated",
-                    target_section_ids=["3.1.1", "3.1.3"],
-                    result_part_refs=[
-                        "Work/runs/run-f/drafts/chief-edit/r0/risk_panorama.md",
-                        "Work/runs/run-f/drafts/chief-edit/r0/cross_module_analysis.md",
-                    ],
-                    merged_into_ids=[],
-                    integration_summary="该输入已进入风险全景与跨模块分析，形成联合决策依据。",
-                )
-            ],
             "photo_ids": ["P-001"],
             "unresolved_editorial_issues": ["保留的透明限制"],
         }
@@ -1034,16 +1175,16 @@ def test_chief_patch_inherits_cross_metadata_and_rebinds_changed_section() -> No
     patch = ChiefRevisionSubmission(
         base_subject_ref="Work/runs/run-f/edited-revisions/chief-r0.json",
         revision=1,
-        section_bodies={"3.1.3": "修订后的跨模块分析正文"},
+        section_bodies={"3.1.2": "修订后的维度综合分析正文"},
         section_part_refs={
-            "3.1.3": ("Work/runs/run-f/drafts/chief-edit-r1/r1/cross_module_analysis.md")
+            "3.1.2": ("Work/runs/run-f/drafts/chief-edit-r1/r1/dimension_risk_analysis.md")
         },
         revision_responses=[
             RevisionResponse(
                 finding_id="F-001",
                 action="implemented",
                 summary="已按最终审查要求修订跨模块分析，并完整保留所有未分配章节和元数据。",
-                changed_target_ids=["3.1.3"],
+                changed_target_ids=["3.1.2"],
             )
         ],
     )
@@ -1051,19 +1192,17 @@ def test_chief_patch_inherits_cross_metadata_and_rebinds_changed_section() -> No
     revised = _apply_chief_patch(
         current,
         patch,
-        target_section_ids={"3.1.3"},
+        target_section_ids={"3.1.2"},
         required_finding_ids={"F-001"},
     )
 
-    assert revised.cross_module_analysis == "修订后的跨模块分析正文"
+    assert revised.dimension_risk_analysis == "修订后的维度综合分析正文"
     assert revised.risk_panorama == current.risk_panorama
     assert revised.module_narratives == current.module_narratives
     assert revised.photo_ids == ["P-001"]
     assert revised.unresolved_editorial_issues == ["保留的透明限制"]
-    assert revised.synthesis_dispositions[0].result_part_refs == [
-        "Work/runs/run-f/drafts/chief-edit/r0/risk_panorama.md",
-        "Work/runs/run-f/drafts/chief-edit-r1/r1/cross_module_analysis.md",
-    ]
+    assert "synthesis_dispositions" not in revised.model_dump()
+    assert "synthesis_tables" not in revised.model_dump()
 
 
 @pytest.mark.asyncio
@@ -1177,6 +1316,10 @@ def test_delivery_artifacts_reference_current_final_review_completion() -> None:
     assert all(
         artifact.path.as_posix() != "Outputs/Reviews/full-review.json" for artifact in artifacts
     )
+    assert any(
+        artifact.path.as_posix() == "Outputs/Reports/证据与来源索引.docx"
+        for artifact in artifacts
+    )
 
 
 def test_delivery_root_is_scoped_to_the_owning_run(tmp_path: Path) -> None:
@@ -1198,9 +1341,13 @@ def test_restore_delivery_rejects_obsolete_review_output_declaration(
     modules_dir.mkdir(parents=True)
     final_docx = delivery_dir / "report.docx"
     report_state = delivery_dir / "report-state.json"
+    source_index = delivery_dir / "证据与来源索引.md"
+    source_index_docx = delivery_dir / "证据与来源索引.docx"
     manifest = delivery_dir / "delivery-manifest.json"
     final_docx.write_bytes(b"docx")
     report_state.write_text("{}", encoding="utf-8")
+    source_index.write_text("## 证据与来源索引", encoding="utf-8")
+    source_index_docx.write_bytes(b"docx")
     manifest.write_text("{}", encoding="utf-8")
     module_files = {}
     for module_id in REPORT_TAXONOMY:
@@ -1210,6 +1357,8 @@ def test_restore_delivery_rejects_obsolete_review_output_declaration(
     hashes = {
         "final_docx": runner._sha256(final_docx),
         "report_state": runner._sha256(report_state),
+        "source_index": runner._sha256(source_index),
+        "source_index_docx": runner._sha256(source_index_docx),
         "manifest": runner._sha256(manifest),
         **{f"module:{module_id}": runner._sha256(path) for module_id, path in module_files.items()},
     }
@@ -1223,7 +1372,9 @@ def test_restore_delivery_rejects_obsolete_review_output_declaration(
             "module_files": {
                 module_id: path.as_posix() for module_id, path in module_files.items()
             },
-            "report_state": report_state.as_posix(),
+                "report_state": report_state.as_posix(),
+                "source_index": source_index.as_posix(),
+                "source_index_docx": source_index_docx.as_posix(),
             "manifest_path": manifest.as_posix(),
             "artifact_sha256": hashes,
         },
@@ -1708,8 +1859,34 @@ def test_canonical_markdown_uses_only_current_fixed_sections() -> None:
     modules = {module_id: _module(module_id).markdown for module_id in REPORT_TAXONOMY}
     markdown = ReportWorkflowRunner._canonical_markdown(_edited(modules))
     assert "### 1.1 评估背景" in markdown
-    assert "#### 3.1.3 跨领域关联风险" in markdown
-    assert "### 4.4 应急管理及合规性管理建议" in markdown
+    assert "#### 3.1.3 跨领域关联风险" not in markdown
+    assert "#### 3.1.3 数据缺口分析" in markdown
+    assert "### 4.1 动态专项问题" in markdown
+
+    legacy_structure = markdown.replace(
+        "#### 3.1.3 数据缺口分析",
+        "#### 3.1.3 跨领域关联风险\n\n旧模块正文\n\n#### 3.1.4 数据缺口分析",
+    )
+    with pytest.raises(ValueError, match="unexpected numbered headings"):
+        validate_final_report_markdown(legacy_structure, _special_topic_plan())
+
+
+def test_canonical_markdown_omits_chapter_four_without_special_topic_plan() -> None:
+    modules = {module_id: _module(module_id).markdown for module_id in REPORT_TAXONOMY}
+
+    markdown = ReportWorkflowRunner._canonical_markdown(
+        _edited(modules, include_special_topics=False)
+    )
+
+    assert "## 4. 专项问题分析" not in markdown
+    assert "### 4." not in markdown
+    validate_final_report_markdown(markdown, None)
+
+    with pytest.raises(ValueError, match="Chapter 4 must be absent"):
+        validate_final_report_markdown(
+            markdown + "\n## 4. 专项问题分析\n\n### 4.1 擅自增加\n\n正文足够长以触发结构检查。",
+            None,
+        )
 
 
 def test_review_protocol_rejects_verdicts_that_guess_missing_finding_ids() -> None:

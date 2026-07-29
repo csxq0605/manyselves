@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -10,6 +11,10 @@ from docx import Document
 
 class OutputVerificationError(ValueError):
     pass
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def verify_current_run_outputs(
@@ -65,4 +70,52 @@ def verify_current_run_outputs(
         delivered = delivered.resolve() if delivered.is_absolute() else (root / delivered).resolve()
         if not delivered.is_file() or not delivered.is_relative_to(root):
             raise OutputVerificationError("delivery receipt points to an invalid artifact")
+        source_index = Path(receipt["source_index"])
+        source_index = (
+            source_index.resolve()
+            if source_index.is_absolute()
+            else (root / source_index).resolve()
+        )
+        if (
+            not source_index.is_file()
+            or not source_index.is_relative_to(root)
+            or "source_index" not in manifest_data.get("artifacts", {})
+        ):
+            raise OutputVerificationError(
+                "delivery receipt is missing the separate source-index artifact"
+            )
+        source_index_docx = Path(receipt["source_index_docx"])
+        source_index_docx = (
+            source_index_docx.resolve()
+            if source_index_docx.is_absolute()
+            else (root / source_index_docx).resolve()
+        )
+        if (
+            not source_index_docx.is_file()
+            or not source_index_docx.is_relative_to(root)
+            or "source_index_docx" not in manifest_data.get("artifacts", {})
+        ):
+            raise OutputVerificationError(
+                "delivery receipt is missing the source-index DOCX companion"
+            )
+        try:
+            Document(source_index_docx)
+        except Exception as exc:
+            raise OutputVerificationError("source-index DOCX companion is invalid") from exc
+        artifact_hashes = manifest_data.get("artifacts", {})
+        delivered_artifacts = {
+            "final_docx": delivered,
+            "source_index": source_index,
+            "source_index_docx": source_index_docx,
+        }
+        mismatched = [
+            name
+            for name, path in delivered_artifacts.items()
+            if artifact_hashes.get(name) != _sha256(path)
+        ]
+        if mismatched:
+            raise OutputVerificationError(
+                "delivery manifest hash does not match delivered artifact: "
+                f"{mismatched}"
+            )
     return paths

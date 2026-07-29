@@ -12,7 +12,6 @@ from pydantic import Field, TypeAdapter, model_validator
 from .agentic_models import (
     FINAL_AUDIT_SECTION_IDS,
     CrossReviewFinding,
-    CrossSynthesisDisposition,
     CrossSynthesisInput,
     EditedReportSubmission,
     EditedReportSubmissionInput,
@@ -22,9 +21,9 @@ from .agentic_models import (
     ResolutionVerdict,
     RevisionResponse,
     StrictModel,
-    SynthesisTableSubmissionInput,
     TableSubmissionInput,
 )
+from .models import SpecialTopicPlan
 from .submission_contracts import FIELD_GUIDANCE
 from .taxonomy import REPORT_TAXONOMY
 
@@ -95,6 +94,9 @@ def edited_report_content_view(
 ) -> EditedReportSubmissionInput:
     payload = subject.model_dump(mode="python")
     payload.pop("protected_claim_ids", None)
+    payload.pop("special_topic_plan", None)
+    payload.pop("synthesis_dispositions", None)
+    payload.pop("synthesis_tables", None)
     payload["module_narratives"] = {
         module_id: strip_runtime_claim_markers(narrative).rstrip()
         for module_id, narrative in subject.module_narratives.items()
@@ -110,22 +112,11 @@ def edited_report_content_view(
         }
         for table in subject.tables
     ]
-    payload["synthesis_tables"] = [
-        {
-            "table_type": table.table_type,
-            "title": table.title,
-            "headers": table.headers,
-            "rows": table.rows,
-            "synthesis_input_ids": table.synthesis_input_ids,
-            "row_synthesis_input_ids": table.row_synthesis_input_ids,
-        }
-        for table in subject.synthesis_tables
-    ]
     return EditedReportSubmissionInput.model_validate(payload)
 
 
 class FinalAuditSubjectView(StrictModel):
-    """Chief-owned Chapter 1, 3, and 4 content without approved Chapter 2 prose."""
+    """Chief-owned Chapters 1 and 3 plus optional Chapter 4, without Chapter 2 prose."""
 
     title: str = Field(min_length=1)
     assessment_background: str = Field(min_length=1)
@@ -133,27 +124,40 @@ class FinalAuditSubjectView(StrictModel):
     regional_executive_summary: str = Field(min_length=1)
     risk_panorama: str = Field(min_length=1)
     dimension_risk_analysis: str = Field(min_length=1)
-    cross_module_analysis: str = Field(min_length=1)
     data_gap_analysis: str = Field(min_length=1)
     improvement_action_plan: str = Field(min_length=1)
-    new_factory_planning: str = Field(min_length=1)
-    capacity_expansion_plan: str = Field(min_length=1)
-    daily_power_management: str = Field(min_length=1)
-    emergency_compliance_management: str = Field(min_length=1)
+    special_topic_plan: SpecialTopicPlan | None = None
+    special_topic_analysis: str | None = Field(default=None, min_length=1)
     tables: list[TableSubmissionInput] = Field(default_factory=list)
-    synthesis_dispositions: list[CrossSynthesisDisposition] = Field(default_factory=list)
-    synthesis_tables: list[SynthesisTableSubmissionInput] = Field(default_factory=list)
     photo_ids: list[str] = Field(default_factory=list)
     unresolved_editorial_issues: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def optional_special_topic_fields_match(self) -> "FinalAuditSubjectView":
+        if (self.special_topic_plan is None) != (self.special_topic_analysis is None):
+            raise ValueError(
+                "special_topic_plan and special_topic_analysis must either both be present "
+                "or both be absent"
+            )
+        if self.special_topic_plan is not None and self.special_topic_analysis is not None:
+            self.special_topic_plan.validate_analysis(self.special_topic_analysis)
+        return self
 
 
 def final_audit_content_view(
     subject: EditedReportSubmission,
 ) -> FinalAuditSubjectView:
-    payload = edited_report_content_view(subject).model_dump(mode="python")
-    payload.pop("kind", None)
-    payload.pop("module_narratives", None)
-    payload.pop("revision_responses", None)
+    payload = subject.model_dump(mode="python")
+    for field in (
+        "kind",
+        "module_narratives",
+        "protected_claim_ids",
+        "synthesis_dispositions",
+        "synthesis_tables",
+        "revision_responses",
+    ):
+        payload.pop(field, None)
+    payload["tables"] = edited_report_content_view(subject).tables
     return FinalAuditSubjectView.model_validate(payload)
 
 
@@ -463,7 +467,8 @@ class FinalReviewInput(StrictModel):
     )
     subject: FinalAuditSubjectView = Field(
         description=(
-            "Current chief-owned Chapter 1, 3, and 4 content without approved Chapter 2 prose."
+            "Current chief-owned Chapters 1 and 3 plus optional Chapter 4, without "
+            "approved Chapter 2 prose."
         )
     )
     canonical_markdown: str = Field(
@@ -472,7 +477,10 @@ class FinalReviewInput(StrictModel):
     )
     required_section_ids: list[str] = Field(
         min_length=1,
-        description="Fixed final-report sections that the reviewer must cover.",
+        description=(
+            "Active final-report sections that the reviewer must cover. Chapter 4 is "
+            "included only when subject.special_topic_plan is present."
+        ),
     )
     required_findings: list[FinalReviewFinding] = Field(
         default_factory=list,
@@ -481,10 +489,6 @@ class FinalReviewInput(StrictModel):
     revision_responses: list[RevisionResponse] = Field(
         default_factory=list,
         description="Chief-editor responses to required_findings.",
-    )
-    cross_synthesis_inputs: list[CrossSynthesisInput] = Field(
-        default_factory=list,
-        description="Cross-reviewer-supported synthesis inputs available to final review.",
     )
     validation_report_ref: str = Field(
         min_length=1,
@@ -496,9 +500,18 @@ class FinalReviewInput(StrictModel):
 
     @model_validator(mode="after")
     def phase_fields_match(self) -> "FinalReviewInput":
-        if set(self.required_section_ids) != set(FINAL_AUDIT_SECTION_IDS):
+        expected_sections = {
+            section_id
+            for section_id in FINAL_AUDIT_SECTION_IDS
+            if section_id != "4" or self.subject.special_topic_plan is not None
+        }
+        if (
+            len(self.required_section_ids) != len(set(self.required_section_ids))
+            or set(self.required_section_ids) != expected_sections
+        ):
             raise ValueError(
-                "final review must cover exactly chief-owned Chapter 1, 3, and 4 sections"
+                "final review must cover exactly the active chief-owned sections; "
+                "Chapter 4 is required only when a special-topic plan is present"
             )
         if not self.validation_report.passed:
             raise ValueError("final semantic review cannot start from failed machine validation")
@@ -509,31 +522,6 @@ class FinalReviewInput(StrictModel):
             responses = {response.finding_id for response in self.revision_responses}
             if not required or responses != required:
                 raise ValueError("final recheck requires one chief response per finding")
-        synthesis_ids = {item.id for item in self.cross_synthesis_inputs}
-        disposition_ids = [item.synthesis_input_id for item in self.subject.synthesis_dispositions]
-        if (
-            len(disposition_ids) != len(set(disposition_ids))
-            or set(disposition_ids) != synthesis_ids
-        ):
-            raise ValueError(
-                "final review requires one chief disposition per Cross synthesis input"
-            )
-        if synthesis_ids:
-            table_types = {table.table_type for table in self.subject.synthesis_tables}
-            if not {
-                "risk_cluster_matrix",
-                "action_dependency_matrix",
-            }.issubset(table_types):
-                raise ValueError("final review requires risk-cluster and action-dependency tables")
-            covered = {
-                synthesis_id
-                for table in self.subject.synthesis_tables
-                for synthesis_id in table.synthesis_input_ids
-            }
-            if covered != synthesis_ids:
-                raise ValueError("final review synthesis tables must cover every Cross input")
-        elif self.subject.synthesis_tables:
-            raise ValueError("final review cannot receive synthesis tables without Cross inputs")
         return self
 
 
@@ -622,8 +610,8 @@ class ChiefRevisionInput(StrictModel):
     subject_ref: str = Field(min_length=1, description="Exact edited report being revised.")
     subject: FinalAuditSubjectView = Field(
         description=(
-            "Chief-owned Chapter 1, 3, and 4 baseline only; immutable Chapter 2 prose "
-            "is not model-visible during final revision."
+            "Chief-owned Chapters 1 and 3 plus optional Chapter 4 baseline; immutable "
+            "Chapter 2 prose is not model-visible during final revision."
         )
     )
     revision: int = Field(
@@ -638,10 +626,6 @@ class ChiefRevisionInput(StrictModel):
         min_length=1,
         description="Immutable final-review findings assigned to the chief editor.",
     )
-    cross_synthesis_inputs: list[CrossSynthesisInput] = Field(
-        description="Original supported Cross inputs that remain mandatory during revision."
-    )
-
     @model_validator(mode="after")
     def findings_and_targets_match(self) -> "ChiefRevisionInput":
         invalid = sorted(set(self.target_section_ids) - set(FINAL_AUDIT_SECTION_IDS))
@@ -664,12 +648,16 @@ class ChiefEditorInput(StrictModel):
     modules: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], ModuleContentView] = Field(
         description="Five module subjects closed by module review."
     )
-    cross_synthesis_inputs: list[CrossSynthesisInput] = Field(
-        description="Cross-reviewer-supported relationships available for chief synthesis."
-    )
     cross_review_completion_ref: str = Field(
         min_length=1,
         description="Current-run record proving the Cross lifecycle completed.",
+    )
+    special_topic_plan: SpecialTopicPlan | None = Field(
+        default=None,
+        description=(
+            "Optional immutable Chapter 4 plan. None means Inputs has no non-empty "
+            "standalone special-topic Markdown and the report must omit Chapter 4."
+        )
     )
 
     @model_validator(mode="after")
@@ -693,6 +681,13 @@ class AggregateEditorInput(StrictModel):
     )
     approved_module_markers: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str] = Field(
         description="Exact marker tokens used for deterministic module-prose insertion."
+    )
+    special_topic_plan: SpecialTopicPlan | None = Field(
+        default=None,
+        description=(
+            "Optional immutable Chapter 4 plan parsed from Inputs. None requires the "
+            "aggregate report to omit Chapter 4."
+        ),
     )
     structured_modules: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], ModuleContentView] = Field(
         default_factory=dict,
@@ -951,18 +946,32 @@ def _example_cross_finding() -> dict[str, Any]:
 def _example_final_finding() -> dict[str, Any]:
     return {
         "id": "F-001",
-        "target_section_ids": ["3.1.3"],
+        "target_section_ids": ["4"],
         "target_changes": [
             {
-                "target_section_id": "3.1.3",
-                "required_change": ("在本节形成有证据边界的因果链、行动依赖和联合验证。"),
-                "reviewer_checks": ["综合内容不改变模块事实且形成可执行的联合判断"],
+                "target_section_id": "4",
+                "required_change": ("按 Inputs 专项计划补齐目标小节的分析、建议与验证边界。"),
+                "reviewer_checks": ["第四章标题与要求匹配且通用知识未冒充项目事实"],
             }
         ],
-        "category": "synthesis",
+        "category": "special_topic",
         "impact": "blocking",
-        "observation": "跨领域关联风险只罗列模块名称，没有形成已支持的因果或依赖链。",
+        "observation": "第四章虽保留了动态标题，但没有落实 Inputs 对专项分析的简要要求。",
         "evidence_refs": ["Work/runs/report-example/edited-revisions/chief-r0.json"],
+    }
+
+
+def _example_special_topic_plan() -> dict[str, Any]:
+    return {
+        "source_ref": "Inputs/专项问题分析.md",
+        "source_sha256": "0" * 64,
+        "sections": [
+            {
+                "section_id": "4.1",
+                "title": "动态专项问题",
+                "requirement": "结合项目证据说明判断边界、可选方案、实施条件和验证方法。",
+            }
+        ],
     }
 
 
@@ -976,15 +985,15 @@ def _example_edited_report() -> dict[str, Any]:
         "module_narratives": {
             module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_TAXONOMY
         },
-        "cross_module_analysis": "说明已支持的跨模块关系和联合验证。",
-        "risk_panorama": "按共同根因和传播能力组织风险。",
+        "risk_panorama": "归纳当前模块成果支持的主要风险及其判断依据。",
         "dimension_risk_analysis": "比较五个维度的风险和管理含义。",
         "data_gap_analysis": "说明缺口、判断影响和补证优先级。",
         "improvement_action_plan": "列出责任、依赖、行动、验收和剩余风险。",
-        "new_factory_planning": "新建规划专项分析。",
-        "capacity_expansion_plan": "增容决策专项分析。",
-        "daily_power_management": "日常用电管理专项分析。",
-        "emergency_compliance_management": "应急与合规专项分析。",
+        "special_topic_plan": _example_special_topic_plan(),
+        "special_topic_analysis": (
+            "### 4.1 动态专项问题\n\n"
+            "结合项目证据边界分析可选方案、实施条件和验证方法，并明确通用知识并非客户事实。"
+        ),
         "tables": [],
         "photo_ids": [],
         "unresolved_editorial_issues": [],
@@ -1083,23 +1092,9 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "subject_revision": 0,
         "subject": _example_final_audit_subject(),
         "canonical_markdown": "# 示例报告\n\n完整成稿正文。",
-        "required_section_ids": [
-            "1.1",
-            "1.2",
-            "1.3",
-            "3.1.1",
-            "3.1.2",
-            "3.1.3",
-            "3.1.4",
-            "3.2",
-            "4.1",
-            "4.2",
-            "4.3",
-            "4.4",
-        ],
+        "required_section_ids": list(FINAL_AUDIT_SECTION_IDS),
         "required_findings": [],
         "revision_responses": [],
-        "cross_synthesis_inputs": [],
         "validation_report_ref": ("Work/runs/report-example/reviews/report-integrity-r0.json"),
         "validation_report": {
             "kind": "validation_report",
@@ -1131,23 +1126,23 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
         "subject": _example_final_audit_subject(),
         "revision": 1,
-        "target_section_ids": ["3.1.3"],
+        "target_section_ids": ["4"],
         "findings": [_example_final_finding()],
-        "cross_synthesis_inputs": [],
     },
     "chief_editor_input": {
         "kind": "chief_editor_input",
         "run_id": "report-example",
         "approved_module_markers": _EXAMPLE_MARKERS,
         "modules": _EXAMPLE_MODULES,
-        "cross_synthesis_inputs": [],
         "cross_review_completion_ref": ("Work/runs/report-example/reviews/cross-completion.json"),
+        "special_topic_plan": _example_special_topic_plan(),
     },
     "aggregate_editor_input": {
         "kind": "aggregate_editor_input",
         "run_id": "report-example",
         "source_format": "structured_module",
         "approved_module_markers": _EXAMPLE_MARKERS,
+        "special_topic_plan": _example_special_topic_plan(),
         "structured_modules": _EXAMPLE_MODULES,
         "markdown_modules": {},
     },

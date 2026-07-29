@@ -30,7 +30,6 @@ FIELD_GUIDANCE: dict[str, str] = {
     "assessment_background": "Final report section 1.1 body; facts must remain traceable to approved inputs.",
     "base_subject_ref": "Exact current edited-report artifact that the compact chief patch applies to.",
     "base_revision": "Exact prior module revision to which an explicit module patch applies.",
-    "capacity_expansion_plan": "Final report section 4.2 body covering evidence-bounded capacity-expansion decisions.",
     "category": "Stable defect or review-dimension category defined by the active stage contract.",
     "causal_chain": "Evidence-bounded causal, dependency, or propagation chain connecting reviewed modules.",
     "cluster_type": "System-level relationship class used to prove portfolio completeness.",
@@ -56,14 +55,11 @@ FIELD_GUIDANCE: dict[str, str] = {
     "constraints": "Task-specific rules; they narrow work but do not redefine the submission schema.",
     "context_summary_refs": "Context-only summaries; never treat them as authoritative subject artifacts.",
     "coverage": "Structured record of what the reviewer actually checked in the current pass.",
-    "cross_module_analysis": "Final report section 3.1.3 body synthesizing supported relationships and dependencies.",
-    "daily_power_management": "Final report section 4.3 body for routine power-management decisions and controls.",
-    "data_gap_analysis": "Final report section 3.1.4 body explaining evidence gaps, impact, and collection priority.",
+    "data_gap_analysis": "Final report section 3.1.3 body explaining evidence gaps, impact, and collection priority.",
     "decision": "Main exception decision for escalated findings only.",
     "decision_implication": "Why a supported cross-module relationship changes priority, sequencing, or residual risk.",
     "description": "Human-readable contract or Skill description matching the submitted content.",
     "dimension_risk_analysis": "Final report section 3.1.2 body comparing risk dimensions and interactions.",
-    "emergency_compliance_management": "Final report section 4.4 body for emergency and compliance management.",
     "evidence_refs": "Existing current-run artifact or source refs that reproduce the submitted statement or verdict.",
     "expected_values": "Exact terms or values used by an explicitly declared machine predicate.",
     "finding_id": "Stable prior finding id copied exactly; do not restate or rename its contract.",
@@ -82,7 +78,6 @@ FIELD_GUIDANCE: dict[str, str] = {
     "module_narratives": "Map containing exactly one complete approved narrative for each fixed report module.",
     "module_tasks": "Exactly one typed task envelope for each requested specialist.",
     "name": "Exact registered name required by the active artifact contract.",
-    "new_factory_planning": "Final report section 4.1 body for evidence-bounded new-factory planning.",
     "new_findings": "Only genuinely new regression findings; never repeat required prior findings here.",
     "objective": "Concrete work objective for the assigned Agent and current stage.",
     "observation": "Concrete current-subject defect, including its location and material consequence.",
@@ -130,11 +125,15 @@ FIELD_GUIDANCE: dict[str, str] = {
     "section_part_refs": "Runtime-owned map from each changed section id to its current-task result-part ref.",
     "summary": "Concise stage-specific explanation of the submitted action or author response.",
     "synthesis_inputs": "Supported Cross relationships for chief synthesis that need no further module writeback.",
-    "synthesis_dispositions": "Exactly one integrated or merged chief disposition for every Cross synthesis input.",
-    "synthesis_input_ids": "Exact Cross synthesis ids supporting a management synthesis table.",
-    "row_synthesis_input_ids": "One non-empty Cross synthesis id list per management-table row; its union must equal synthesis_input_ids.",
-    "synthesis_tables": "Management synthesis tables derived from reviewed Cross inputs rather than invented evidence.",
     "synthesis_reference": "Durable template-derived synthesis-method guidance.",
+    "special_topic_analysis": (
+        "Optional dynamic Chapter 4 body. Submit it only when the active input contract "
+        "contains special_topic_plan; headings, order, and count must exactly match that plan."
+    ),
+    "special_topic_plan": (
+        "Optional runtime-owned immutable Chapter 4 titles and brief requirements. It is "
+        "absent when Inputs has no matching Markdown or that file is empty."
+    ),
     "tables": "Traceable tables selected for the final report; provide only registered E-* evidence_ids and runtime derives internal bindings.",
     "target_paths": "Explicit structured subject paths inspected by a machine predicate.",
     "target_section_ids": "Fixed final-report sections where the chief editor must act.",
@@ -286,7 +285,7 @@ def _template_skill_example() -> dict[str, Any]:
         ),
         "analysis_language_reference": "分析语言应区分项目事实、技术解释、风险判断和建议，并明确不确定性。"
         * 3,
-        "synthesis_reference": "综合应说明共同根因、传播路径、行动依赖、责任接口和联合验收。" * 3,
+        "synthesis_reference": "综合应忠实归纳实际发现、判断依据、行动重点和验收方式。" * 3,
         "visual_organization_reference": "表格和图片必须服务于具体论断，保持来源绑定并避免装饰性视觉。"
         * 3,
         "quality_rubric": "检查完整性、事实边界、推理深度、跨模块一致性、可执行性和可追溯性。" * 3,
@@ -302,18 +301,15 @@ def _edited_report_example() -> dict[str, Any]:
         "findings_overview": "归纳已批准模块中的主要发现，不改变其事实与风险语义。",
         "regional_executive_summary": "当前证据未定义地理区域，按责任边界归纳优先事项。",
         "module_narratives": modules,
-        "cross_module_analysis": "综合已审查的模块关系、行动依赖与联合验证。",
-        "risk_panorama": "按共同根因和传播能力组织风险全景。",
+        "risk_panorama": "归纳当前模块成果支持的主要风险及其判断依据。",
         "dimension_risk_analysis": "比较五个专业维度的主导风险和管理含义。",
         "data_gap_analysis": "归并证据缺口并说明其判断影响和补证优先级。",
         "improvement_action_plan": "按依赖顺序列出责任接口、行动、验收指标和剩余风险。",
-        "new_factory_planning": "在证据边界内分析新建规划问题。",
-        "capacity_expansion_plan": "在证据边界内分析增容决策问题。",
-        "daily_power_management": "在证据边界内分析日常用电管理问题。",
-        "emergency_compliance_management": "在证据边界内分析应急与合规管理问题。",
+        "special_topic_analysis": (
+            "### 4.1 动态专项问题\n\n"
+            "依据 Inputs 简要要求，在项目事实边界内形成判断、建议和验证方法。"
+        ),
         "tables": [],
-        "synthesis_dispositions": [],
-        "synthesis_tables": [],
         "photo_ids": [],
         "unresolved_editorial_issues": [],
         "revision_responses": [],
@@ -330,7 +326,7 @@ def _chief_revision_example() -> dict[str, Any]:
                 "finding_id": "F-001",
                 "action": "implemented",
                 "summary": "已按最终审查要求修订目标小节，未改动第二章和其他未分配字段。",
-                "changed_target_ids": ["3.1.3"],
+                "changed_target_ids": ["4"],
             }
         ],
     }

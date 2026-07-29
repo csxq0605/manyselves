@@ -805,6 +805,10 @@ class ReportingService:
     async def _evaluate_coverage(self, state: dict) -> None:
         request: ReportRequest = state["request"]
         evidence: list[EvidenceItem] = state.get("evidence_items", [])
-        coverage = evaluate_coverage(request, evidence)
+        coverage = evaluate_coverage(
+            request,
+            evidence,
+            mapping_gaps=state.get("mapping_gaps", []),
+        )
         state["coverage_matrix"] = coverage
         self.store.write_json("Work/coverage.json", coverage.model_dump(mode="json"))

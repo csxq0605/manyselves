@@ -22,6 +22,8 @@ class DeliveryPackage(StrictModel):
     module_files: dict[str, Path]
     final_docx: Path
     report_state: Path
+    source_index: Path
+    source_index_docx: Path
 
     @field_validator("module_files")
     @classmethod
@@ -37,6 +39,8 @@ class DeliveryReceipt(StrictModel):
     final_docx: Path
     module_files: dict[str, Path]
     report_state: Path
+    source_index: Path
+    source_index_docx: Path
     manifest_path: Path
     artifact_sha256: dict[str, str]
 
@@ -66,12 +70,18 @@ class ProjectDelivery:
                 copied_modules[module_id] = target
             final_target = staging / "配电安全专家咨询报告.docx"
             state_target = staging / "report-state.json"
+            source_index_target = staging / "证据与来源索引.md"
+            source_index_docx_target = staging / "证据与来源索引.docx"
             shutil.copyfile(package.final_docx, final_target)
             shutil.copyfile(package.report_state, state_target)
+            shutil.copyfile(package.source_index, source_index_target)
+            shutil.copyfile(package.source_index_docx, source_index_docx_target)
 
             hashes = {
                 "final_docx": self._sha256(final_target),
                 "report_state": self._sha256(state_target),
+                "source_index": self._sha256(source_index_target),
+                "source_index_docx": self._sha256(source_index_docx_target),
                 **{
                     f"module:{module_id}": self._sha256(path)
                     for module_id, path in copied_modules.items()
@@ -103,6 +113,8 @@ class ProjectDelivery:
                 for module_id in REPORT_MODULE_IDS
             },
             report_state=destination / state_target.name,
+            source_index=destination / source_index_target.name,
+            source_index_docx=destination / source_index_docx_target.name,
             manifest_path=destination / manifest_path.name,
             artifact_sha256=hashes,
         )
@@ -115,11 +127,20 @@ class ProjectDelivery:
         manifest_path = destination / "delivery-manifest.json"
         final_docx = destination / "配电安全专家咨询报告.docx"
         report_state = destination / "report-state.json"
+        source_index = destination / "证据与来源索引.md"
+        source_index_docx = destination / "证据与来源索引.docx"
         module_files = {
             module_id: destination / "modules" / f"{module_id}.md"
             for module_id in REPORT_MODULE_IDS
         }
-        required = [manifest_path, final_docx, report_state, *module_files.values()]
+        required = [
+            manifest_path,
+            final_docx,
+            report_state,
+            source_index,
+            source_index_docx,
+            *module_files.values(),
+        ]
         missing = [str(path) for path in required if not path.is_file()]
         if missing:
             raise ValueError(
@@ -130,6 +151,8 @@ class ProjectDelivery:
         expected_hashes = {
             "final_docx": self._sha256(package.final_docx),
             "report_state": self._sha256(package.report_state),
+            "source_index": self._sha256(package.source_index),
+            "source_index_docx": self._sha256(package.source_index_docx),
             **{
                 f"module:{module_id}": self._sha256(package.module_files[module_id])
                 for module_id in REPORT_MODULE_IDS
@@ -138,6 +161,8 @@ class ProjectDelivery:
         actual_hashes = {
             "final_docx": self._sha256(final_docx),
             "report_state": self._sha256(report_state),
+            "source_index": self._sha256(source_index),
+            "source_index_docx": self._sha256(source_index_docx),
             **{
                 f"module:{module_id}": self._sha256(module_files[module_id])
                 for module_id in REPORT_MODULE_IDS
@@ -161,6 +186,8 @@ class ProjectDelivery:
             final_docx=final_docx,
             module_files=module_files,
             report_state=report_state,
+            source_index=source_index,
+            source_index_docx=source_index_docx,
             manifest_path=manifest_path,
             artifact_sha256={
                 **actual_hashes,
@@ -172,16 +199,30 @@ class ProjectDelivery:
     def _validate_inputs(package: DeliveryPackage) -> None:
         if set(package.module_files) != set(REPORT_MODULE_IDS):
             raise ValueError("delivery requires exactly modules 2.1-2.5")
-        paths = [*package.module_files.values(), package.final_docx, package.report_state]
+        paths = [
+            *package.module_files.values(),
+            package.final_docx,
+            package.report_state,
+            package.source_index,
+            package.source_index_docx,
+        ]
         missing = [str(path) for path in paths if not Path(path).is_file()]
         if missing:
             raise FileNotFoundError(f"delivery artifacts missing: {missing}")
         if package.final_docx.suffix.lower() != ".docx":
             raise ValueError("final report must be a .docx file")
+        if package.source_index.suffix.lower() != ".md":
+            raise ValueError("source index must be a Markdown file")
+        if package.source_index_docx.suffix.lower() != ".docx":
+            raise ValueError("source index companion must be a .docx file")
         try:
             Document(package.final_docx)
         except Exception as exc:
             raise ValueError("final report is not Word/WPS-openable") from exc
+        try:
+            Document(package.source_index_docx)
+        except Exception as exc:
+            raise ValueError("source index companion is not Word/WPS-openable") from exc
         try:
             state = json.loads(package.report_state.read_text(encoding="utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:

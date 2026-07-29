@@ -1,8 +1,10 @@
 import json
+import hashlib
 import time
 from pathlib import Path
 
 import pytest
+from docx import Document
 
 from manyselves.core.reporting.output_verifier import (
     OutputVerificationError,
@@ -86,3 +88,60 @@ def test_verifier_accepts_hash_validated_restored_delivery_output(
     )
 
     assert paths == [output]
+
+
+def test_verifier_checks_source_index_markdown_and_docx_delivery_hashes(
+    tmp_path: Path,
+) -> None:
+    delivery = tmp_path / "Outputs/Reports/run"
+    delivery.mkdir(parents=True)
+    final_docx = delivery / "配电安全专家咨询报告.docx"
+    source_index = delivery / "证据与来源索引.md"
+    source_index_docx = delivery / "证据与来源索引.docx"
+    Document().save(final_docx)
+    source_index.write_text("## 证据与来源索引\n", encoding="utf-8")
+    Document().save(source_index_docx)
+    artifacts = {
+        "final_docx": hashlib.sha256(final_docx.read_bytes()).hexdigest(),
+        "source_index": hashlib.sha256(source_index.read_bytes()).hexdigest(),
+        "source_index_docx": hashlib.sha256(source_index_docx.read_bytes()).hexdigest(),
+    }
+    manifest = delivery / "delivery-manifest.json"
+    manifest.write_text(
+        json.dumps({"version": "run", "artifacts": artifacts}),
+        encoding="utf-8",
+    )
+    receipt = tmp_path / "Work/runs/run/delivery-receipt.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        json.dumps(
+            {
+                "success": True,
+                "manifest_path": str(manifest),
+                "final_docx": str(final_docx),
+                "source_index": str(source_index),
+                "source_index_docx": str(source_index_docx),
+            }
+        ),
+        encoding="utf-8",
+    )
+    started = time.time_ns()
+
+    paths = verify_current_run_outputs(
+        tmp_path,
+        "run",
+        [final_docx, source_index, source_index_docx],
+        started,
+        allow_existing_artifacts=True,
+    )
+    assert paths == [final_docx, source_index, source_index_docx]
+
+    source_index.write_text("tampered", encoding="utf-8")
+    with pytest.raises(OutputVerificationError, match="manifest hash"):
+        verify_current_run_outputs(
+            tmp_path,
+            "run",
+            [final_docx, source_index, source_index_docx],
+            started,
+            allow_existing_artifacts=True,
+        )

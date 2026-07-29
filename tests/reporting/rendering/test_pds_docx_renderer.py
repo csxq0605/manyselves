@@ -42,7 +42,7 @@ def _style_east_asia_font(style) -> str | None:
 def test_packaged_v2_core_matches_normalized_handoff_source() -> None:
     core = PackagedV2DocxCore(Path("unused-template.docx"))
     assert hashlib.sha256(core.source_path.read_bytes()).hexdigest() == (
-        "22c71518733e243dae4f13a9858bfb05ffad17b6b7579242d328a2b825dac59e"
+        "7452a2f263c7dc1e23b694877d094c32acad902c1d723c6911b8ae0aab2fbb61"
     )
 
 
@@ -312,15 +312,25 @@ def _approved_report(photo_path: Path) -> ApprovedReport:
         findings_overview="总编形成的健康度总览保持不变。",
         regional_executive_summary="总编形成的区域摘要保持不变。",
         module_narratives=narratives,
-        cross_module_analysis="总编形成的跨模块联合分析保持不变。",
         risk_panorama="总编形成的风险全景保持不变。",
         dimension_risk_analysis="总编形成的维度风险分析保持不变。",
         data_gap_analysis="总编形成的数据缺口分析保持不变。",
         improvement_action_plan="总编形成的改善行动计划保持不变。",
-        new_factory_planning="总编形成的新工厂规划建议保持不变。",
-        capacity_expansion_plan="总编形成的扩容建议保持不变。",
-        daily_power_management="总编形成的日常用电管理建议保持不变。",
-        emergency_compliance_management="总编形成的应急合规建议保持不变。",
+        special_topic_plan={
+            "source_ref": "Inputs/专项问题分析.md",
+            "source_sha256": "0" * 64,
+            "sections": [
+                {
+                    "section_id": "4.1",
+                    "title": "动态专项问题",
+                    "requirement": "分析项目边界、方案条件和验证方法。",
+                }
+            ],
+        },
+        special_topic_analysis=(
+            "### 4.1 动态专项问题\n\n"
+            "总编形成的动态专项分析保持不变，并说明项目边界、方案条件和验证方法。"
+        ),
         ledger=ClaimLedger(claims=claims, sources=[source]),
         tables=[
             ReportTable(
@@ -344,7 +354,7 @@ def _approved_report(photo_path: Path) -> ApprovedReport:
     )
 
 
-def test_renderer_uses_handoff_core_preserves_prose_and_adds_superscript_index_table_photo(
+def test_renderer_preserves_prose_and_keeps_source_index_outside_docx(
     tmp_path: Path,
 ) -> None:
     template = tmp_path / "template.docx"
@@ -368,9 +378,9 @@ def test_renderer_uses_handoff_core_preserves_prose_and_adds_superscript_index_t
     assert "模块 2.4 的专家自然分析保留原样。" in all_text
     assert "配电安全专家咨询报告" in all_text
     assert "总编形成的风险全景保持不变。" in all_text
-    assert "总编形成的跨模块联合分析保持不变。" in all_text
-    assert "项目证据 E-*" in all_text
-    assert "Inputs/设备.xlsx；工作表=问题；单元格=A2:F2；图片=IMG-1" in all_text
+    assert "总编形成的动态专项分析保持不变" in all_text
+    assert "项目证据 E-*" not in all_text
+    assert "Inputs/设备.xlsx；工作表=问题；单元格=A2:F2；图片=IMG-1" not in all_text
     assert any(
         run.font.superscript and run.text == "1" for p in rendered.paragraphs for run in p.runs
     )
@@ -381,6 +391,24 @@ def test_renderer_uses_handoff_core_preserves_prose_and_adds_superscript_index_t
     second = renderer.render(_approved_report(photo), second_output)
     assert second.output_sha256 == result.output_sha256
     assert second_output.read_bytes() == output.read_bytes()
+
+
+def test_renderer_omits_chapter_four_when_special_topic_plan_is_absent(
+    tmp_path: Path,
+) -> None:
+    photo = tmp_path / "photo.png"
+    from PIL import Image
+
+    Image.new("RGB", (30, 20), color="red").save(photo)
+    payload = _approved_report(photo).model_dump(mode="python")
+    payload["special_topic_plan"] = None
+    payload["special_topic_analysis"] = None
+    report = ApprovedReport.model_validate(payload)
+
+    markdown = PdsDocxRenderer._compose_markdown(report)
+
+    assert "## 4. 专项问题分析" not in markdown
+    assert "### 4." not in markdown
 
 
 def test_renderer_verifies_bold_numbered_protected_prose_after_v2_rendering(

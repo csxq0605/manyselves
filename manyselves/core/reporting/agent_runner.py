@@ -54,6 +54,7 @@ from .agentic_models import AgentResult, AgentRunStatus, TaskEnvelope
 from .capabilities import compile_agent_access, scoped_gateway
 from .config import AgentDefinition
 from .input_contracts import (
+    AggregateEditorInput,
     ChiefEditorInput,
     ChiefRevisionInput,
     CrossReviewInput,
@@ -378,6 +379,7 @@ class ReportingAgentRunner:
             "cross_review_input": CrossReviewInput,
             "final_review_input": FinalReviewInput,
             "chief_editor_input": ChiefEditorInput,
+            "aggregate_editor_input": AggregateEditorInput,
             "chief_revision_input": ChiefRevisionInput,
         }.get(envelope.input_contract_kind)
         if model is None:
@@ -595,20 +597,22 @@ class ReportingAgentRunner:
                 for section_id in input_contract.target_section_ids
             ]
             if isinstance(input_contract, ChiefRevisionInput)
-            else list(CHIEF_RESULT_PART_IDS)
+            else [
+                part_id
+                for part_id in CHIEF_RESULT_PART_IDS
+                if (
+                    part_id != "special_topic_analysis"
+                    or not isinstance(
+                        input_contract, (ChiefEditorInput, AggregateEditorInput)
+                    )
+                    or input_contract.special_topic_plan is not None
+                )
+            ]
             if "edited_report_submission" in envelope.allowed_outputs
             else envelope.target_submodule_ids
         )
-        required_synthesis_input_ids = (
-            [item.id for item in input_contract.cross_synthesis_inputs]
-            if isinstance(input_contract, ChiefEditorInput)
-            else []
-        )
-        required_synthesis_table_types = (
-            ["risk_cluster_matrix", "action_dependency_matrix"]
-            if required_synthesis_input_ids
-            else []
-        )
+        required_synthesis_input_ids: list[str] = []
+        required_synthesis_table_types: list[str] = []
         available: dict[str, Tool] = {
             "search_project_evidence": SearchProjectEvidenceTool(
                 self.workspace,
@@ -1135,9 +1139,8 @@ class ReportingAgentRunner:
                         "Cross dispositions、表格、图片或未决问题"
                         if envelope.input_contract_kind == "chief_revision_input"
                         else (
-                            "提交 edited_report_submission；按 list_result_parts 返回的 "
-                            "required_synthesis_input_ids 逐项提交 synthesis_disposition，并提交 "
-                            "required_synthesis_table_types，逐行填写 row_synthesis_input_ids"
+                            "提交 edited_report_submission；只提交当前合同声明的实际章节字段，"
+                            "不要恢复已删除的跨领域风险模块或其旧版综合元数据"
                         )
                     )
                     module_instruction = (

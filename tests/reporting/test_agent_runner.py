@@ -212,6 +212,8 @@ def test_module_authoring_schema_and_example_use_current_identity(
     target = tmp_path / contract_ref
     target.parent.mkdir(parents=True)
     target.write_text(contract.model_dump_json(), encoding="utf-8")
+    contract_payload = json.loads(target.read_text(encoding="utf-8"))
+    assert "cross_synthesis_inputs" not in contract_payload
     runner = ReportingAgentRunner(
         tmp_path,
         MessageBus(),
@@ -401,7 +403,7 @@ def test_template_skill_submission_schema_and_tools_are_exposed_to_distiller(
     assert registry.get("list_result_parts").expected_part_ids == expected_parts
 
 
-def test_chief_tools_expose_all_report_parts_and_cross_requirements(
+def test_chief_tools_expose_only_current_report_parts(
     tmp_path: Path,
 ) -> None:
     run_id = "run-chief-tools"
@@ -421,31 +423,20 @@ def test_chief_tools_expose_all_report_parts_and_cross_requirements(
             for module_id in REPORT_TAXONOMY
         },
         modules=modules,
-        cross_synthesis_inputs=[
-            {
-                "id": "SI-001",
-                "related_module_ids": ["2.1", "2.2"],
-                "cluster_type": "risk_cluster",
-                "root_causes": ["2.1 与 2.2 存在共同的系统边界约束"],
-                "propagation_steps": [
-                    "2.1 边界约束扩大局部异常影响",
-                    "2.2 环境压力进一步削弱运行裕度",
-                ],
-                "causal_chain": "2.1 的边界约束与 2.2 的环境压力叠加，会共同扩大异常影响。",
-                "decision_implication": "应按共同根因安排联合整改和管理优先级，并同步控制剩余风险。",
-                "action_dependencies": ["先确认 2.1 边界，再完成 2.2 整改"],
-                "joint_actions": ["由 2.1 与 2.2 责任方联合整改并复测"],
-                "verification_method": "通过联合核对供电边界、环境复测结果和异常事件记录完成闭环验证。",
-                "acceptance_criteria": ["2.1 与 2.2 的复测均达到关闭条件"],
-                "module_statement_refs": ["2.1.1.1", "2.2.1.1"],
-                "confidence_and_boundary": "当前关系有项目证据支持，阈值仍需连续数据确认。",
-                "target_report_section_ids": ["3.1.1", "3.1.3", "3.2"],
-                "evidence_refs": ["E-0001"],
-            }
-        ],
         cross_review_completion_ref=(
             f"Work/runs/{run_id}/reviews/cross-completion.json"
         ),
+        special_topic_plan={
+            "source_ref": "Inputs/专项问题分析.md",
+            "source_sha256": "0" * 64,
+            "sections": [
+                {
+                    "section_id": "4.1",
+                    "title": "动态专项问题",
+                    "requirement": "分析项目边界、方案条件和验证方法。",
+                }
+            ],
+        },
     )
     contract_ref = f"Work/runs/{run_id}/context/chief-editor-input.json"
     target = tmp_path / contract_ref
@@ -485,23 +476,16 @@ def test_chief_tools_expose_all_report_parts_and_cross_requirements(
         "regional_executive_summary",
         "risk_panorama",
         "dimension_risk_analysis",
-        "cross_module_analysis",
         "data_gap_analysis",
         "improvement_action_plan",
-        "new_factory_planning",
-        "capacity_expansion_plan",
-        "daily_power_management",
-        "emergency_compliance_management",
+        "special_topic_analysis",
     )
     writer = registry.get("write_result_part")
     listing = registry.get("list_result_parts")
     assert writer.expected_part_ids == expected_parts
     assert listing.expected_part_ids == expected_parts
-    assert listing.required_synthesis_input_ids == ("SI-001",)
-    assert listing.required_synthesis_table_types == (
-        "risk_cluster_matrix",
-        "action_dependency_matrix",
-    )
+    assert listing.required_synthesis_input_ids == ()
+    assert listing.required_synthesis_table_types == ()
 
 
 @pytest.mark.asyncio

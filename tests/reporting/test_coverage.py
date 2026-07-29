@@ -69,3 +69,77 @@ def test_block_policy_marks_missing_submodules_blocked() -> None:
 
     assert coverage.entries["2.4"].status is CoverageStatus.BLOCKED
     assert coverage.entries["2.4"].submodules["2.4.1.1"].status is CoverageStatus.BLOCKED
+
+
+def test_targeted_mapping_gap_prevents_false_ready_status() -> None:
+    request = ReportRequest(
+        operation="module_report",
+        instruction="生成 2.4",
+        target_modules=["2.4"],
+    )
+    partial = _evidence("ev-partial", "2.4", "2.4.4")
+
+    coverage = evaluate_coverage(
+        request,
+        [partial],
+        mapping_gaps=[
+            {
+                "code": "incomplete_thermal_context",
+                "message": "红外实测温度缺少配电房或柜号上下文",
+                "module_id": "2.4",
+                "submodule_id": "2.4.4",
+            }
+        ],
+    )
+
+    thermal = coverage.entries["2.4"].submodules["2.4.4"]
+    assert thermal.status is CoverageStatus.PENDING
+    assert thermal.evidence_ids == ["ev-partial"]
+    assert thermal.gaps == ["红外实测温度缺少配电房或柜号上下文"]
+    assert coverage.entries["2.4"].evidence_ids == ["ev-partial"]
+
+
+def test_unclassified_mapping_gap_prevents_module_false_ready() -> None:
+    request = ReportRequest(
+        operation="module_report",
+        instruction="生成 2.4",
+        target_modules=["2.4"],
+    )
+    evidence = [
+        _evidence(f"ev-{index}", "2.4", submodule_id)
+        for index, submodule_id in enumerate(
+            (
+                "2.4.1.1",
+                "2.4.1.2",
+                "2.4.1.3",
+                "2.4.1.4",
+                "2.4.2.1",
+                "2.4.2.2",
+                "2.4.2.3",
+                "2.4.2.4",
+                "2.4.2.5",
+                "2.4.2.6",
+                "2.4.3.1",
+                "2.4.3.2",
+                "2.4.3.3",
+                "2.4.4",
+            ),
+            start=1,
+        )
+    ]
+
+    coverage = evaluate_coverage(
+        request,
+        evidence,
+        mapping_gaps=[
+            {
+                "code": "unrouted_document",
+                "message": "收资项未匹配报告子模块",
+            }
+        ],
+    )
+
+    module = coverage.entries["2.4"]
+    assert all(entry.status is CoverageStatus.READY for entry in module.submodules.values())
+    assert module.status is CoverageStatus.PENDING
+    assert module.gaps == ["收资项未匹配报告子模块"]
