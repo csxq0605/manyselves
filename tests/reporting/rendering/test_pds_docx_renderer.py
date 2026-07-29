@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,19 @@ def test_report_embedding_removes_module_heading_after_editor_transition() -> No
     assert "## 2.5 运维管理与风险管控" not in embedded
     assert "以下为运维模块的批准正文。" in embedded
     assert "#### 2.5.1 SOP/EOP" in embedded
+
+
+def test_report_embedding_does_not_mistake_first_submodule_for_module_heading() -> None:
+    narrative = (
+        "#### 2.5.1 SOP/EOP\n\n完整分析正文。\n\n"
+        "#### 2.5.2 图纸资料\n\n图纸分析正文。"
+    )
+
+    embedded = PdsDocxRenderer._strip_leading_module_heading(narrative, "2.5")
+
+    assert embedded == narrative
+    assert embedded.count("#### 2.5.1 SOP/EOP") == 1
+    assert embedded.count("#### 2.5.2 图纸资料") == 1
 
 
 def test_packaged_v2_core_removes_markdown_markers_and_uses_one_label_style(
@@ -473,6 +487,48 @@ def test_renderer_accepts_the_exact_citation_bound_delivery_markdown(
     )
 
 
+def test_delivery_markdown_places_structured_tables_once(
+    tmp_path: Path,
+) -> None:
+    photo = tmp_path / "photo.png"
+    from PIL import Image
+
+    Image.new("RGB", (30, 20), color="red").save(photo)
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "fixtures/report-730c5d83f6-table-placement.json"
+        ).read_text(encoding="utf-8")
+    )
+    report = _approved_report(photo).model_copy(
+        update={
+            "risk_panorama": fixture["risk_panorama"],
+            "improvement_action_plan": fixture["improvement_action_plan"],
+            "tables": [
+                ReportTable(
+                    **table,
+                    source_ids=["E-001"],
+                    claim_ids=["C-004"],
+                )
+                for table in fixture["tables"]
+            ],
+        }
+    )
+
+    markdown = PdsDocxRenderer._compose_markdown(report)
+
+    assert markdown.count("\n风险簇矩阵（来源：E-001）\n") == 1
+    assert markdown.count("\n行动依赖矩阵（来源：E-001）\n") == 1
+    assert markdown.count("2A2变压器单一故障点") == 1
+    assert markdown.count("2A2连续负荷监测") == 1
+    assert markdown.index("## 4. 专项问题分析") < markdown.index(
+        "2A2变压器单一故障点"
+    )
+    assert markdown.index("2A2变压器单一故障点") < markdown.index(
+        "2A2连续负荷监测"
+    )
+
+
 def test_photo_token_is_placed_inside_linked_submodule() -> None:
     first, second = list(REPORT_TAXONOMY["2.4"].submodules)[:2]
     narrative = f"### {first} 第一项\n\n第一项分析。\n\n### {second} 第二项\n\n第二项分析。"
@@ -491,7 +547,7 @@ def test_photo_token_is_placed_inside_linked_submodule() -> None:
     assert placed.index("[[PHOTO:IMG-1]]") < placed.index(f"### {second}")
 
 
-def test_multiple_adjacent_photos_become_a_two_column_evidence_group(
+def test_multiple_adjacent_photos_become_a_submodule_evidence_summary_table(
     tmp_path: Path,
 ) -> None:
     from PIL import Image
@@ -514,9 +570,86 @@ def test_multiple_adjacent_photos_become_a_two_column_evidence_group(
 
     assert len(document.tables) == 1
     assert len(document.inline_shapes) == 2
-    assert "IMG-1" in document.tables[0].cell(0, 0).text
-    assert "IMG-2" in document.tables[0].cell(0, 1).text
+    assert document.tables[0].cell(0, 0).text == "原表对应内容"
+    assert document.tables[0].cell(0, 1).text == "图证"
+    assert "1A2 柜现场状态" in document.tables[0].cell(1, 0).text
+    assert "原表图证" in document.tables[0].cell(1, 1).text
+    assert "IMG-1" not in document.tables[0].cell(1, 1).text
+    assert "第二幅图证" in document.tables[0].cell(2, 0).text
+    assert "原表图证" in document.tables[0].cell(2, 1).text
+    assert "IMG-2" not in document.tables[0].cell(2, 1).text
     assert all("[[PHOTO:" not in paragraph.text for paragraph in document.paragraphs)
+
+
+def test_large_photo_set_is_split_into_page_safe_summary_tables(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image
+
+    photos = []
+    for index in range(5):
+        path = tmp_path / f"portrait-{index}.png"
+        Image.new("RGB", (300, 600), color=(index * 20, 0, 0)).save(path)
+        photos.append(
+            _approved_report(path).photos[0].model_copy(
+                update={
+                    "id": f"IMG-{index + 1}",
+                    "path": path,
+                    "caption": f"第 {index + 1} 幅图证",
+                }
+            )
+        )
+    report = _approved_report(photos[0].path).model_copy(update={"photos": photos})
+    document = Document()
+    for photo in photos:
+        document.add_paragraph(f"[[PHOTO:{photo.id}]]")
+    document.add_paragraph("后续分析。")
+
+    PdsDocxRenderer._materialize_photos(document, report)
+
+    assert len(document.tables) == 3
+    assert [len(table.rows) - 1 for table in document.tables] == [2, 2, 1]
+    assert len(document.inline_shapes) == 5
+    assert sum(
+        paragraph.text == "原表图证汇总（续）"
+        for paragraph in document.paragraphs
+    ) == 2
+    assert all(
+        shape.height <= Cm(7.0)
+        for shape in document.inline_shapes
+    )
+    assert all("[[PHOTO:" not in paragraph.text for paragraph in document.paragraphs)
+
+
+def test_photo_without_claim_still_routes_by_smallest_submodule(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image
+
+    photo_path = tmp_path / "criteria.png"
+    Image.new("RGB", (120, 30), color="white").save(photo_path)
+    report = _approved_report(photo_path)
+    photo = report.photos[0].model_copy(
+        update={
+            "claim_ids": [],
+            "submodule_id": "2.2.2.1",
+            "caption": "原表红外缺陷判定标准",
+        }
+    )
+    narratives = dict(report.module_narratives)
+    narratives["2.2"] = (
+        "### 2.2.2.1 低压配电设备发热情况\n\n发热分析。\n\n"
+        "### 2.2.2.2 高压配电设备局放情况\n\n局放分析。"
+    )
+    report = report.model_copy(
+        update={"photos": [photo], "module_narratives": narratives}
+    )
+
+    markdown = PdsDocxRenderer._compose_markdown(report)
+
+    assert markdown.index("[[PHOTO:IMG-1]]") < markdown.index(
+        "### 2.2.2.2 高压配电设备局放情况"
+    )
 
 
 def test_renderer_rejects_untraceable_table() -> None:

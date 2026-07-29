@@ -24,7 +24,10 @@ FIELD_GUIDANCE: dict[str, str] = {
     "agent_id": "Canonical responsibility Agent id assigned by the workflow.",
     "allowed_outputs": "Submission kinds this task is permitted to return.",
     "allowed_tools": "Tool names available to the assigned Agent for this task.",
-    "analysis_language_reference": "Durable text for the template-derived analysis-language guidance.",
+    "analysis_language_reference": (
+        "Durable template-derived analysis-language guidance, including fact-free "
+        "positive and negative structured-writing examples."
+    ),
     "artifact_ids": "Persisted artifact identifiers produced or affected by the action.",
     "artifact_refs": "Current-task durable text-part refs to materialize in listed order.",
     "assessment_background": "Final report section 1.1 body; facts must remain traceable to approved inputs.",
@@ -82,14 +85,20 @@ FIELD_GUIDANCE: dict[str, str] = {
     "objective": "Concrete work objective for the assigned Agent and current stage.",
     "observation": "Concrete current-subject defect, including its location and material consequence.",
     "owner_module_id": "Single responsibility module that must perform a Cross-directed writeback.",
-    "photo_ids": "Current-run photo asset ids selected because they prove a specific approved Claim.",
+    "photo_ids": (
+        "Runtime-owned current-run source-table photo ids; the workflow deterministically "
+        "injects the complete set and the author should submit an empty list."
+    ),
     "pending_correction_ref": (
         "Current-run correction state with the last raw submission candidate and exact "
         "validation errors for same-run recovery."
     ),
     "prior_result_ref": "Immediate prior subject or result version used as the revision baseline.",
     "protected_claim_ids": "Runtime-owned set of approved internal Claims; the chief editor never submits this field.",
-    "quality_rubric": "Durable template-derived report quality rubric without copied project facts.",
+    "quality_rubric": (
+        "Durable template-derived report quality rubric with fact-free failure and revision "
+        "examples, without copied project facts."
+    ),
     "rationale": "Evidence-based explanation for the plan or exception decision.",
     "reason": "Reviewer-owned explanation for a verdict or workflow-owned failure result.",
     "regional_executive_summary": "Final report section 1.3 body grouped only by evidenced regions or responsibilities.",
@@ -289,6 +298,29 @@ def _template_skill_example() -> dict[str, Any]:
         "visual_organization_reference": "表格和图片必须服务于具体论断，保持来源绑定并避免装饰性视觉。"
         * 3,
         "quality_rubric": "检查完整性、事实边界、推理深度、跨模块一致性、可执行性和可追溯性。" * 3,
+        "boundary_manifest": {
+            "policy_version": 1,
+            "transferred_categories": [
+                "analysis_method",
+                "synthesis_method",
+                "visual_method",
+                "quality_check",
+            ],
+            "excluded_categories": [
+                "domain_knowledge",
+                "domain_standard_or_threshold",
+                "project_fact_or_number",
+                "customer_identity",
+                "project_finding_or_risk",
+                "project_conclusion_or_recommendation",
+                "evidence_or_claim_identifier",
+            ],
+            "boundary_statement": (
+                "本 Skill 只保留可跨项目复用的分析、综合、图证组织和质量检查方法；"
+                "专业机理、标准阈值、客户事实、项目判断及证据标识均未迁移，"
+                "必须分别由模块 Skill、Knowledge 或当前运行 Evidence 提供。"
+            ),
+        },
     }
 
 

@@ -9,23 +9,33 @@ import tempfile
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
-
 from docx import Document
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Pt
+from PIL import Image, ImageOps
 from pydantic import Field, field_validator, model_validator
 
 from ..agentic_models import StrictModel
 from ..claim_ledger import ClaimLedger
 from ..models import REPORT_MODULE_IDS, SpecialTopicPlan
-from ..taxonomy import REPORT_TAXONOMY
+from ..report_markdown import (
+    CanonicalMarkdownTable,
+    CanonicalReportContent,
+    compose_canonical_markdown,
+    markdown_table,
+    strip_leading_module_heading,
+)
+from ..taxonomy import REPORT_TAXONOMY, resolve_submodule
 from .handoff_docx import HandoffDocxCore
 from .packaged_docx import _expected_markdown_fragments
 
 _CITATION_TOKEN = re.compile(r"\[\[CITE:(\d+)\]\]")
 _PHOTO_TOKEN = re.compile(r"^\[\[PHOTO:([^]]+)\]\]$")
 _FIXED_DOCX_TIME = datetime(2000, 1, 1, tzinfo=UTC)
+_PHOTOS_PER_SUMMARY_TABLE = 2
+_PHOTO_MAX_WIDTH_CM = 8.2
+_PHOTO_MAX_HEIGHT_CM = 7.0
 
 
 class ReportTable(StrictModel):
@@ -50,7 +60,7 @@ class ReportPhoto(StrictModel):
     path: Path
     caption: str = Field(min_length=1)
     source_id: str = Field(pattern=r"^E-")
-    claim_ids: list[str] = Field(min_length=1)
+    claim_ids: list[str] = Field(default_factory=list)
     submodule_id: str | None = None
 
 
@@ -109,7 +119,7 @@ class ApprovedReport(StrictModel):
                     raise ValueError(
                         f"photo {photo.id} references unknown submodule {photo.submodule_id}"
                     )
-                if not any(
+                if photo.claim_ids and not any(
                     claims_by_id[claim_id].submodule_id == photo.submodule_id
                     for claim_id in photo.claim_ids
                 ):
@@ -204,127 +214,54 @@ class PdsDocxRenderer:
         unresolved_claims = [
             claim.text for claim in report.ledger.claims if claim.unresolved
         ]
-        lines = [
-            f"# {report.title}",
-            "",
-            "## 1. 配电评估概述",
-            "",
-            "### 1.1 评估背景",
-            "",
-            report.assessment_background,
-            "",
-            "### 1.2 健康度总览",
-            "",
-            report.findings_overview,
-            "",
-            "### 1.3 各区域执行摘要",
-            "",
-            report.regional_executive_summary,
-            "",
-            "## 2. 评估内容描述",
-            "",
-        ]
-        claims_by_id = {claim.id: claim for claim in report.ledger.claims}
+        module_narratives: dict[str, str] = {}
         for module_id in REPORT_MODULE_IDS:
-            module = REPORT_TAXONOMY[module_id]
             module_photos = [
                 photo
                 for photo in report.photos
-                if any(
-                    claims_by_id[claim_id].module_id == module_id
-                    for claim_id in photo.claim_ids
+                if (
+                    photo.submodule_id is not None
+                    and resolve_submodule(photo.submodule_id).module_id == module_id
                 )
             ]
-            lines.extend(
-                [
-                    f"### {module_id} {module.title}",
-                    "",
-                    PdsDocxRenderer._place_photo_tokens(
-                        PdsDocxRenderer._strip_leading_module_heading(
-                            report.module_narratives[module_id], module_id
-                        ),
-                        module_photos,
-                    ),
-                    "",
-                ]
+            module_narratives[module_id] = PdsDocxRenderer._place_photo_tokens(
+                strip_leading_module_heading(
+                    report.module_narratives[module_id],
+                    module_id,
+                ),
+                module_photos,
             )
-        lines.extend(
-            [
-                "## 3. 结论与建议",
-                "",
-                "### 3.1 风险/问题汇总与概览",
-                "",
-                "#### 3.1.1 风险全景图",
-                "",
-                report.risk_panorama,
-                "",
-                "#### 3.1.2 各维度风险分析",
-                "",
-                report.dimension_risk_analysis,
-                "",
-                "#### 3.1.3 数据缺口分析",
-                "",
-                report.data_gap_analysis
+        return compose_canonical_markdown(
+            CanonicalReportContent(
+                title=report.title,
+                assessment_background=report.assessment_background,
+                findings_overview=report.findings_overview,
+                regional_executive_summary=report.regional_executive_summary,
+                module_narratives=module_narratives,
+                risk_panorama=report.risk_panorama,
+                dimension_risk_analysis=report.dimension_risk_analysis,
+                data_gap_analysis=report.data_gap_analysis
                 or "\n".join(f"- {text}" for text in unresolved_claims),
-                "",
-                "### 3.2 改善行动速查表",
-                "",
-                report.improvement_action_plan,
-                "",
-            ]
-        )
-        if report.special_topic_plan is not None:
-            lines.extend(
-                [
-                    "## 4. 专项问题分析",
-                    "",
-                    report.special_topic_analysis or "",
-                    "",
-                ]
+                improvement_action_plan=report.improvement_action_plan,
+                special_topic_plan=report.special_topic_plan,
+                special_topic_analysis=report.special_topic_analysis,
+                tables=[
+                    CanonicalMarkdownTable(
+                        title=table.title,
+                        headers=table.headers,
+                        rows=table.rows,
+                        source_ids=table.source_ids,
+                    )
+                    for table in report.tables
+                ],
             )
-        if report.tables:
-            for table in report.tables:
-                source_note = "、".join(table.source_ids)
-                lines.extend(
-                    [
-                        f"{table.title}（来源：{source_note}）",
-                        "",
-                        PdsDocxRenderer._markdown_table(table),
-                        "",
-                    ]
-                )
-        return "\n".join(lines)
+        )
 
     @staticmethod
     def _strip_leading_module_heading(narrative: str, module_id: str) -> str:
         """Remove the canonical module heading even after an editor transition."""
 
-        lines = narrative.splitlines()
-        module_heading = next(
-            (
-                index
-                for index, line in enumerate(lines)
-                if re.match(
-                    rf"^#{{1,6}}\s+{re.escape(module_id)}(?:\.|\s|$)",
-                    line.strip(),
-                )
-            ),
-            None,
-        )
-        if module_heading is None:
-            return narrative
-        del lines[module_heading]
-        while module_heading < len(lines) and not lines[module_heading].strip():
-            del lines[module_heading]
-        lines = [
-            (
-                "#" + line
-                if index >= module_heading and re.match(r"^#{1,5}\s+", line)
-                else line
-            )
-            for index, line in enumerate(lines)
-        ]
-        return "\n".join(lines)
+        return strip_leading_module_heading(narrative, module_id)
 
     @staticmethod
     def _place_photo_tokens(narrative: str, photos: list[ReportPhoto]) -> str:
@@ -374,15 +311,14 @@ class PdsDocxRenderer:
 
     @staticmethod
     def _markdown_table(table: ReportTable) -> str:
-        def cell(value: Any) -> str:
-            return str(value).replace("|", "\\|").replace("\n", " ")
-
-        lines = [
-            "| " + " | ".join(cell(value) for value in table.headers) + " |",
-            "| " + " | ".join("---" for _ in table.headers) + " |",
-        ]
-        lines.extend("| " + " | ".join(cell(value) for value in row) + " |" for row in table.rows)
-        return "\n".join(lines)
+        return markdown_table(
+            CanonicalMarkdownTable(
+                title=table.title,
+                headers=table.headers,
+                rows=table.rows,
+                source_ids=table.source_ids,
+            )
+        )
 
     @staticmethod
     def _materialize_citations(document: Document) -> None:
@@ -449,34 +385,61 @@ class PdsDocxRenderer:
             for photo in selected:
                 if not photo.path.is_file():
                     raise FileNotFoundError(f"report photo not found: {photo.path}")
-            if len(selected) == 1:
-                paragraph = marker_paragraphs[0]
-                paragraph.clear()
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                paragraph.add_run().add_picture(str(selected[0].path), width=Cm(12.0))
-                paragraph.add_run(
-                    f"\n图 {selected[0].id}：{selected[0].caption}"
-                    f"（来源 {selected[0].source_id}）"
-                )
-                index = scan
-                continue
-
-            table = document.add_table(rows=(len(selected) + 1) // 2, cols=2)
-            table.autofit = False
-            for photo_index, photo in enumerate(selected):
-                cell = table.cell(photo_index // 2, photo_index % 2)
-                paragraph = cell.paragraphs[0]
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                paragraph.add_run().add_picture(str(photo.path), width=Cm(5.5))
-                paragraph.add_run(
-                    f"\n图 {photo.id}：{photo.caption}（来源 {photo.source_id}）"
-                )
-            marker_paragraphs[0]._p.addprevious(table._tbl)
+            for batch_start in range(0, len(selected), _PHOTOS_PER_SUMMARY_TABLE):
+                batch = selected[
+                    batch_start : batch_start + _PHOTOS_PER_SUMMARY_TABLE
+                ]
+                if batch_start:
+                    continuation = document.add_paragraph()
+                    continuation.add_run("原表图证汇总（续）").bold = True
+                    marker_paragraphs[0]._p.addprevious(continuation._p)
+                table = document.add_table(rows=len(batch) + 1, cols=2)
+                table.autofit = False
+                if "Table Grid" in [style.name for style in document.styles]:
+                    table.style = "Table Grid"
+                headers = table.rows[0].cells
+                headers[0].text = "原表对应内容"
+                headers[1].text = "图证"
+                for header in headers:
+                    header.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    for run in header.paragraphs[0].runs:
+                        run.bold = True
+                    header.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for photo_index, photo in enumerate(batch, start=1):
+                    detail_cell, image_cell = table.rows[photo_index].cells
+                    detail_cell.width = Cm(6.0)
+                    image_cell.width = Cm(9.0)
+                    detail_cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    image_cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    detail = detail_cell.paragraphs[0]
+                    detail.add_run(photo.caption).bold = True
+                    detail.add_run(f"\n来源：{photo.source_id}")
+                    image = image_cell.paragraphs[0]
+                    image.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    image.add_run().add_picture(
+                        str(photo.path),
+                        **PdsDocxRenderer._photo_fit_dimensions(photo.path),
+                    )
+                    image.add_run("\n原表图证")
+                marker_paragraphs[0]._p.addprevious(table._tbl)
             for paragraph in marker_paragraphs:
                 parent = paragraph._p.getparent()
                 if parent is not None:
                     parent.remove(paragraph._p)
             index = scan
+
+    @staticmethod
+    def _photo_fit_dimensions(path: Path) -> dict[str, object]:
+        with Image.open(path) as source:
+            image = ImageOps.exif_transpose(source)
+            pixel_width, pixel_height = image.size
+        if pixel_width <= 0 or pixel_height <= 0:
+            return {"width": Cm(_PHOTO_MAX_WIDTH_CM)}
+        aspect = pixel_width / pixel_height
+        box_aspect = _PHOTO_MAX_WIDTH_CM / _PHOTO_MAX_HEIGHT_CM
+        if aspect >= box_aspect:
+            return {"width": Cm(_PHOTO_MAX_WIDTH_CM)}
+        return {"height": Cm(_PHOTO_MAX_HEIGHT_CM)}
 
     @staticmethod
     def _canonical_docx(data: bytes) -> bytes:

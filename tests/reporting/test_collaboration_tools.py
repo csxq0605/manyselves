@@ -18,7 +18,6 @@ from manyselves.core.reporting.input_contracts import (
     ModuleContentView,
     ModuleReviewInput,
     ValidationReport,
-    final_audit_content_view,
     module_content_view,
 )
 from manyselves.core.reporting.source_ledger import SourceLedger
@@ -149,7 +148,9 @@ def _write_revision_contract(
             "run_id": "run-1",
             "module_id": "2.1",
             "subject_ref": "Work/runs/run-1/modules/2.1-r0.json",
-            "subject": module_content_view(subject_model).model_dump(mode="json"),
+            "subject": module_content_view(
+                subject_model, set(target_submodule_ids)
+            ).model_dump(mode="json"),
             "target_submodule_ids": target_submodule_ids,
             "module_findings": [
                 {
@@ -282,9 +283,12 @@ async def test_review_submit_runtime_assigns_coverage_and_finding_id(
         required_submodule_ids=["2.1.1"],
         validation_report_ref="Work/runs/run-1/validations/2.1.json",
         validation_report=ValidationReport(
+            validation_protocol_version=2,
             run_id="run-1",
             subject_ref="Work/runs/run-1/modules/2.1-r0.json",
-            validator="test/v1",
+            subject_revision=0,
+            content_sha256="0" * 64,
+            validator="test/v2",
             check_ids=["structure"],
             passed=True,
         ),
@@ -726,17 +730,9 @@ async def test_result_parts_report_missing_declared_ids(tmp_path: Path) -> None:
         store,
         ["part-a", "part-b"],
         required_synthesis_input_ids=["SI-001", "SI-002"],
-        required_synthesis_table_types=[
-            "risk_cluster_matrix",
-            "action_dependency_matrix",
-        ],
     )()
     assert listing["missing_part_ids"] == ["part-b"]
     assert listing["required_synthesis_input_ids"] == ["SI-001", "SI-002"]
-    assert listing["required_synthesis_table_types"] == [
-        "risk_cluster_matrix",
-        "action_dependency_matrix",
-    ]
     assert listing["complete"] is False
 
 
@@ -1017,7 +1013,7 @@ async def test_chief_revision_commit_is_compact_and_reads_only_assigned_parts(
         ],
         "category": "synthesis",
         "impact": "blocking",
-        "observation": "当前跨模块分析缺少行动依赖顺序和联合验收闭环。",
+        "observation": "当前维度综合分析缺少行动依赖顺序和联合验收闭环。",
         "evidence_refs": [subject_ref],
     }
     store = ReportingStore(tmp_path)
@@ -1025,7 +1021,14 @@ async def test_chief_revision_commit_is_compact_and_reads_only_assigned_parts(
     contract = ChiefRevisionInput(
         run_id="run-1",
         subject_ref=subject_ref,
-        subject=final_audit_content_view(baseline),
+        target_section_bodies={"3.1.2": baseline.dimension_risk_analysis},
+        consistency_context={
+            "1.1": baseline.assessment_background,
+            "1.2": baseline.findings_overview,
+            "1.3": baseline.regional_executive_summary,
+            "3.1.1": baseline.risk_panorama,
+            "3.2": baseline.improvement_action_plan,
+        },
         revision=1,
         target_section_ids=["3.1.2"],
         findings=[finding],

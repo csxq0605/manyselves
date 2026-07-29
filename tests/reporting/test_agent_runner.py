@@ -22,7 +22,7 @@ from manyselves.core.reporting.input_contracts import (
     ValidationReport,
 )
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY, compose_module_markdown
-from manyselves.core.reporting.workflow import ReportingNeedsDecisionError, ReportingRunBudget
+from manyselves.core.reporting.workflow import ReportingRunBudget
 from manyselves.core.usage_ledger import UsageLedger
 from manyselves.interfaces.types import (
     AgentResultMessage,
@@ -267,9 +267,12 @@ def test_module_review_tool_schema_omits_runtime_owned_fields(
         required_submodule_ids=["2.1.1"],
         validation_report_ref=f"Work/runs/{run_id}/validations/2.1.json",
         validation_report=ValidationReport(
+            validation_protocol_version=2,
             run_id=run_id,
             subject_ref=f"Work/runs/{run_id}/modules/2.1-r0.json",
-            validator="test/v1",
+            subject_revision=0,
+            content_sha256="0" * 64,
+            validator="test/v2",
             check_ids=["structure"],
             passed=True,
         ),
@@ -485,7 +488,6 @@ def test_chief_tools_expose_only_current_report_parts(
     assert writer.expected_part_ids == expected_parts
     assert listing.expected_part_ids == expected_parts
     assert listing.required_synthesis_input_ids == ()
-    assert listing.required_synthesis_table_types == ()
 
 
 @pytest.mark.asyncio
@@ -840,6 +842,30 @@ class TemplateSkillCorrectionProvider(LLMProvider):
                                 "synthesis_reference": ref("synthesis"),
                                 "visual_organization_reference": ref("visual"),
                                 "quality_rubric": ref("rubric"),
+                                "boundary_manifest": {
+                                    "policy_version": 1,
+                                    "transferred_categories": [
+                                        "analysis_method",
+                                        "synthesis_method",
+                                        "visual_method",
+                                        "quality_check",
+                                    ],
+                                    "excluded_categories": [
+                                        "domain_knowledge",
+                                        "domain_standard_or_threshold",
+                                        "project_fact_or_number",
+                                        "customer_identity",
+                                        "project_finding_or_risk",
+                                        "project_conclusion_or_recommendation",
+                                        "evidence_or_claim_identifier",
+                                    ],
+                                    "boundary_statement": (
+                                        "本 Skill 只迁移分析、综合、图证组织和质量检查方法；"
+                                        "专业知识、标准阈值、客户与项目事实、风险结论、建议和"
+                                        "证据标识均被排除，分别由模块 Skill、Knowledge 或"
+                                        "当前运行 Evidence 提供。"
+                                    ),
+                                },
                             }
                         },
                     )
@@ -1247,6 +1273,74 @@ async def test_final_auditor_open_artifact_honors_requested_page_size(
 
 
 @pytest.mark.asyncio
+async def test_artifact_delivery_modes_enforce_tool_read_boundary(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-delivery-modes"
+    contract_ref = f"Work/runs/{run_id}/context/authoring.json"
+    prior_ref = f"Work/runs/{run_id}/modules/2.4-r0.json"
+    summary_ref = f"Work/runs/{run_id}/context/session-summary.json"
+    for ref, content in (
+        (
+            contract_ref,
+            ModuleAuthoringInput(
+                run_id=run_id,
+                module_id="2.4",
+                revision=0,
+                required_submodule_ids=list(REPORT_TAXONOMY["2.4"].submodules),
+                coverage_ref="coverage.json",
+                evidence_ref="evidence.jsonl",
+                manifest_ref="manifest.json",
+                knowledge_ref="knowledge.md",
+            ).model_dump_json(),
+        ),
+        (prior_ref, '{"revision":0}'),
+        (summary_ref, '{"summary":"retained context"}'),
+    ):
+        target = tmp_path / ref
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    definition = load_packaged_agents()["module-2.4-specialist"]
+    envelope = TaskEnvelope(
+        task_id="module-2.4-revision-r1",
+        run_id=run_id,
+        agent_id=definition.id,
+        objective="执行定向修订",
+        input_refs=[contract_ref],
+        allowed_outputs=["module_submission"],
+        prior_result_ref=prior_ref,
+        context_summary_refs=[summary_ref],
+        artifact_delivery_modes={
+            contract_ref: "inline",
+            prior_ref: "hash_retained",
+            summary_ref: "reference",
+        },
+        input_contract_kind="module_authoring_input",
+        input_contract_ref=contract_ref,
+    )
+    registry = runner._tools(
+        definition,
+        envelope,
+        "session-delivery-modes",
+        "workflow-delivery-modes",
+    )
+    opener = registry.get("open_artifact")
+
+    assert opener is not None
+    assert "retained context" in (await opener(ref=summary_ref))["content"]
+    with pytest.raises(PermissionError, match="not delivered by reference"):
+        await opener(ref=contract_ref)
+    with pytest.raises(PermissionError, match="not delivered by reference"):
+        await opener(ref=prior_ref)
+
+
+@pytest.mark.asyncio
 async def test_reporting_identity_keeps_one_stable_session_across_workflow_turns(
     tmp_path: Path,
 ) -> None:
@@ -1301,6 +1395,61 @@ async def test_reporting_identity_keeps_one_stable_session_across_workflow_turns
         assert identity["first_task_id"] == "module-2.1"
         assert identity["last_revision"] == 1
         assert identity["status"] == "waiting"
+        manifests = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(
+                (
+                    tmp_path
+                    / "Work/runs/run-stable-identity/context-manifests"
+                ).glob("module-2.1-r*-session-*.json")
+            )
+        ]
+        assert [item["revision"] for item in manifests] == [0, 1]
+        assert manifests[0]["session_id"] == manifests[1]["session_id"]
+        first_components = {
+            item["kind"]: item for item in manifests[0]["prompt_components"]
+        }
+        second_components = {
+            item["kind"]: item for item in manifests[1]["prompt_components"]
+        }
+        assert first_components["system_prompt"]["repeated_content"] is False
+        assert second_components["system_prompt"]["repeated_content"] is True
+        assert second_components["task_message"]["repeated_content"] is False
+        assert {
+            submodule_id
+            for skill in manifests[1]["module_skills"]
+            for submodule_id in skill["submodules"]
+        }.issubset(set(REPORT_TAXONOMY["2.1"].submodules))
+        assert all("content" not in item for item in manifests[1]["prompt_components"])
+        provider_manifests = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(
+                (
+                    tmp_path
+                    / "Work/runs/run-stable-identity/context-manifests/provider-calls"
+                ).glob("module-2.1-r*-session-*.json")
+            )
+        ]
+        assert len(provider_manifests) == 4
+        assert [item["provider_call_index"] for item in provider_manifests] == [1, 2, 1, 2]
+        assert [item["phase"] for item in provider_manifests] == [
+            "initial",
+            "tool_followup",
+            "initial",
+            "tool_followup",
+        ]
+        assert all(item["attempt"] == 1 for item in provider_manifests)
+        assert all(len(item["request_sha256"]) == 64 for item in provider_manifests)
+        assert [
+            item["message_count"]
+            for item in provider_manifests
+            if item["phase"] == "initial"
+        ] == [2, 2]
+        assert all(
+            "content" not in message
+            for manifest in provider_manifests
+            for message in manifest["messages"]
+        )
     finally:
         await runner.close_workflow("workflow-stable-identity")
         bus.shutdown()

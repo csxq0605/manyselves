@@ -61,7 +61,7 @@ def test_real_s4_6_marks_prior_assessment_as_confirmation_required() -> None:
 
 @pytest.mark.parametrize(
     ("scenario", "expected_evidence", "expected_gaps"),
-    (("success", 315, 7), ("test", 239, 6)),
+    (("success", 316, 7), ("test", 240, 6)),
 )
 def test_workspace_input_scenarios_have_no_silently_unrouted_evidence(
     scenario: str,

@@ -25,7 +25,7 @@ from .coverage import evaluate_coverage
 from .decisions import EvidenceDecisionStore
 from .intake.adapters import IntakeAdapterRegistry
 from .intake.manifest import build_manifest
-from .intake.wps_images import extract_wps_images
+from .intake.wps_images import canonicalize_photo_bindings, extract_wps_images
 from .mappers import map_s2_1, map_s4_4, map_s4_6
 from .models import (
     EvidenceDecisionAction,
@@ -527,37 +527,9 @@ class ReportingService:
     ) -> ReportingRunResult:
         """Resume a checkpoint and synchronize any newly supplied user facts."""
 
-        if Path(run_id).name != run_id or not run_id:
-            raise ValueError("run_id must be a single safe path component")
-        result_path = self.workspace / f"Work/runs/{run_id}.json"
-        request_path = self.workspace / f"Work/runs/{run_id}/request.json"
-        revision_path = self.workspace / f"Work/runs/{run_id}/revision-request.json"
-        checkpoint_path = self.workspace / f"Work/runs/{run_id}/workflow-state.json"
-        if not (request_path.is_file() or revision_path.is_file()):
-            raise FileNotFoundError(f"report run is not resumable: {run_id}")
-        previous = (
-            ReportingRunResult.model_validate_json(result_path.read_text(encoding="utf-8"))
-            if result_path.is_file()
-            else None
+        _result_path, request_path, revision_path, _checkpoint_path, _previous = (
+            self.validate_resume_run(run_id)
         )
-        budget_stopped = (
-            previous is not None
-            and previous.status == "needs_decision"
-            and "预算" in str(previous.error or "")
-        )
-        checkpoint_resumable = (
-            checkpoint_path.is_file()
-            and (
-                previous is None
-                or previous.status
-                in {"failed", "cancelled", "in_progress", "needs_decision", "blocked"}
-            )
-        )
-        if not (budget_stopped or checkpoint_resumable):
-            raise ValueError(
-                "only a blocked, decision-stopped, crashed, failed, or cancelled run with a persisted checkpoint "
-                "can use run resume"
-            )
         await self._notice(f"正在从已保存检查点恢复报告流程 {run_id}。")
         if request_path.is_file():
             request = ReportRequest.model_validate_json(request_path.read_text(encoding="utf-8"))
@@ -641,6 +613,50 @@ class ReportingService:
             resumed_revision, run_id=run_id, resume=True
         )
 
+    def validate_resume_run(
+        self, run_id: str
+    ) -> tuple[Path, Path, Path, Path, ReportingRunResult | None]:
+        """Validate a same-run resume before a background task is announced."""
+
+        if Path(run_id).name != run_id or not run_id:
+            raise ValueError("run_id must be a single safe path component")
+        result_path = self.workspace / f"Work/runs/{run_id}.json"
+        request_path = self.workspace / f"Work/runs/{run_id}/request.json"
+        revision_path = self.workspace / f"Work/runs/{run_id}/revision-request.json"
+        checkpoint_path = self.workspace / f"Work/runs/{run_id}/workflow-state.json"
+        if not (request_path.is_file() or revision_path.is_file()):
+            raise FileNotFoundError(f"report run is not resumable: {run_id}")
+        previous = (
+            ReportingRunResult.model_validate_json(result_path.read_text(encoding="utf-8"))
+            if result_path.is_file()
+            else None
+        )
+        budget_stopped = (
+            previous is not None
+            and previous.status == "needs_decision"
+            and "预算" in str(previous.error or "")
+        )
+        checkpoint_resumable = (
+            checkpoint_path.is_file()
+            and (
+                previous is None
+                or previous.status
+                in {"failed", "cancelled", "in_progress", "needs_decision", "blocked"}
+            )
+        )
+        if not (budget_stopped or checkpoint_resumable):
+            raise ValueError(
+                "only a blocked, decision-stopped, crashed, failed, or cancelled run with a persisted checkpoint "
+                "can use run resume"
+            )
+        return (
+            result_path,
+            request_path,
+            revision_path,
+            checkpoint_path,
+            previous,
+        )
+
     async def revise(
         self, request: RevisionRequest, *, run_id: str | None = None
     ) -> ReportingRunResult:
@@ -707,24 +723,34 @@ class ReportingService:
                 continue
             input_path = self.workspace / manifest_file.path
             try:
+                extracted: dict[str, PhotoAsset] = {}
                 if manifest_file.purpose == "s4-4":
                     extracted = extract_wps_images(
                         input_path,
                         output_dir=self.workspace / "Work" / "assets" / manifest_file.id,
                     )
-                    photo_assets.extend(
-                        asset.model_copy(update={"path": asset.path.relative_to(self.workspace)})
-                        for asset in extracted.values()
-                    )
                 mapped = mapper(input_path, file_id=manifest_file.id)
-                evidence.extend(
+                mapped_evidence = [
                     item.model_copy(
                         update={
                             "source": item.source.model_copy(update={"path": manifest_file.path})
                         }
                     )
                     for item in mapped.evidence_items
-                )
+                ]
+                if extracted:
+                    mapped_evidence, normalized_assets = canonicalize_photo_bindings(
+                        mapped_evidence,
+                        extracted,
+                        start_index=len(photo_assets) + 1,
+                    )
+                    photo_assets.extend(
+                        asset.model_copy(
+                            update={"path": asset.path.relative_to(self.workspace)}
+                        )
+                        for asset in normalized_assets
+                    )
+                evidence.extend(mapped_evidence)
                 mapping_gaps.extend(
                     {
                         "file_id": manifest_file.id,

@@ -2,6 +2,7 @@ import json
 
 from manyselves.core.reporting.models import SpecialTopicPlan
 from manyselves.core.reporting.research.knowledge_context import KnowledgeContextBuilder
+from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 
 
 def test_knowledge_context_is_taxonomy_aligned_and_registers_local_sources(tmp_path) -> None:
@@ -62,3 +63,53 @@ def test_special_topic_knowledge_uses_dynamic_titles_and_keeps_world_knowledge_b
     assert "可使用模型已有专业知识" in context.text
     assert "不是客户现场事实" in context.text
     assert context.source_ids == ("R-001",)
+
+
+def test_module_knowledge_deduplicates_snippets_and_excludes_report_rules(
+    tmp_path,
+) -> None:
+    knowledge = tmp_path / "Knowledge"
+    knowledge.mkdir(parents=True)
+    professional = (
+        "# 2.1.3 配网自动化、备用电源自动切换\n"
+        "自动切换应核验逻辑、闭锁条件、动作时序和定期试验记录。"
+    )
+    (knowledge / "professional-a.md").write_text(professional, encoding="utf-8")
+    (knowledge / "professional-b.md").write_text(professional, encoding="utf-8")
+    (knowledge / "报告模板.md").write_text(
+        "报告模板要求在 2.1.3 配网自动化、备用电源自动切换章节使用固定句式。",
+        encoding="utf-8",
+    )
+
+    context = KnowledgeContextBuilder(tmp_path, "run-dedupe").build_module("2.1")
+
+    assert context.text.count("自动切换应核验逻辑、闭锁条件") == 1
+    assert "报告模板要求" not in context.text
+    assert "报告模板.md" not in context.text
+
+
+def test_large_module_knowledge_preserves_every_submodule_with_bounded_quota(
+    tmp_path,
+) -> None:
+    knowledge = tmp_path / "Knowledge"
+    knowledge.mkdir(parents=True)
+    module = REPORT_TAXONOMY["2.4"]
+    content = "\n\n".join(
+        (
+            f"# {submodule_id} {submodule.title}\n"
+            f"{submodule.title} 的专业核查需记录对象、状态、机理、风险后果和验证条件。"
+            + f" 专业补充说明{index}。" * 30
+        )
+        for index, (submodule_id, submodule) in enumerate(
+            module.submodules.items(),
+            start=1,
+        )
+    )
+    (knowledge / "equipment-reference.md").write_text(content, encoding="utf-8")
+
+    context = KnowledgeContextBuilder(tmp_path, "run-large").build_module("2.4")
+
+    assert len(context.text) <= KnowledgeContextBuilder.MAX_MODULE_CHARS
+    for submodule_id, submodule in module.submodules.items():
+        assert f"## {submodule_id} {submodule.title}" in context.text
+    assert "## 2.4.4" in context.text

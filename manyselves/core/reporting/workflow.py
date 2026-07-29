@@ -17,19 +17,14 @@ from ..usage_ledger import UsageLedger
 from .agent_runner import ReportingAgentRunner
 from .agentic_models import (
     AgentRunStatus,
-    CrossReviewFindingSubmission,
-    CrossReviewVerdictSubmission,
     CrossSynthesisInput,
     EditedReportSubmission,
     FINAL_REPORT_SECTION_IDS,
-    FinalReviewFindingSubmission,
-    FinalReviewVerdictSubmission,
     ModuleDispatchPlan,
-    ModuleReviewFindingSubmission,
-    ModuleReviewVerdictSubmission,
     ModuleSubmission,
     StrictModel,
     TaskEnvelope,
+    TemplateSkillBoundaryManifest,
     TemplateSkillSubmission,
 )
 from .assets import (
@@ -48,6 +43,7 @@ from .delivery import DeliveryPackage, DeliveryReceipt, ProjectDelivery
 from .input_contracts import (
     AggregateEditorInput,
     ChiefEditorInput,
+    FinalAuditSnapshot,
     ModuleAuthoringInput,
     RequestedModuleChange,
     ReviewCompletionRecord,
@@ -72,9 +68,13 @@ from .rendering.handoff_docx import PackagedV2DocxCore
 from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
 from .rendering.source_index_docx_renderer import SourceIndexDocxRenderer
 from .rendering.contracts import RenderRequest, RenderResult
+from .report_markdown import (
+    CanonicalMarkdownTable,
+    CanonicalReportContent,
+    compose_canonical_markdown,
+)
 from .evidence_readiness import EvidenceReadinessPolicy, ReportingBlockedError
 from .research.project_evidence import project_evidence_locator
-from .research.evidence_memory import EvidenceResearchMemory
 from .research.knowledge_context import KnowledgeContextBuilder
 from .review_lifecycle import (
     request_module_revision,
@@ -119,6 +119,7 @@ class FullReportCheckpoint(StrictModel):
     chief_editor_envelope_ref: str | None = None
     final_review_restart_round: int | None = Field(default=None, ge=1)
     final_review_completion_ref: str | None = None
+    final_audit_snapshot_ref: str | None = None
     delivery_completion_ref: str | None = None
     report_state_ref: str | None = None
     cross_review_completed: bool = False
@@ -317,14 +318,40 @@ class ReportWorkflowRunner:
             "visual": root / "references/visual-organization.md",
             "rubric": root / "references/quality-rubric.md",
         }
-        required = [*refs.values(), TEMPLATE_SKILL_SOURCE]
+        boundary_ref = TEMPLATE_SKILL_ROOT / "boundary.json"
+        required = [*refs.values(), boundary_ref, TEMPLATE_SKILL_SOURCE]
         if not all((self.service.workspace / path).is_file() for path in required):
+            return False
+        try:
+            boundary = TemplateSkillBoundaryManifest.model_validate_json(
+                (self.service.workspace / boundary_ref).read_text(encoding="utf-8")
+            )
+            source_payload = json.loads(
+                (self.service.workspace / TEMPLATE_SKILL_SOURCE).read_text(
+                    encoding="utf-8"
+                )
+            )
+            expected_hashes = {
+                path.relative_to(TEMPLATE_SKILL_ROOT).as_posix(): self._sha256(
+                    self.service.workspace / path
+                )
+                for path in [*refs.values(), boundary_ref]
+            }
+            if (
+                source_payload.get("boundary_policy_version")
+                != boundary.policy_version
+                or source_payload.get("boundary_ref") != boundary_ref.as_posix()
+                or source_payload.get("artifact_sha256") != expected_hashes
+            ):
+                return False
+        except (OSError, ValueError, AttributeError):
             return False
         state["template_skill_refs"] = {key: path.as_posix() for key, path in refs.items()}
         state["template_skill_text"] = {
             key: (self.service.workspace / path).read_text(encoding="utf-8")
             for key, path in refs.items()
         }
+        state["template_skill_boundary"] = boundary
         return True
 
     def _require_template_skill(self, state: dict) -> None:
@@ -346,7 +373,14 @@ class ReportWorkflowRunner:
         }
         for relative, content in files.items():
             self.service.store.write_text((root / relative).as_posix(), content.strip() + "\n")
-        if not all((self.service.workspace / root / relative).is_file() for relative in files):
+        self.service.store.write_json(
+            (root / "boundary.json").as_posix(),
+            submission.boundary_manifest.model_dump(mode="json"),
+        )
+        if not all(
+            (self.service.workspace / root / relative).is_file()
+            for relative in (*files, "boundary.json")
+        ):
             raise AgentWorkflowError("Template Distiller did not materialize the complete Skill")
 
     async def _distill_template_skill(self, state: dict, workflow_id: str) -> None:
@@ -391,8 +425,12 @@ class ReportWorkflowRunner:
                 "synthesis_reference 要说明如何跨章节合并重复发现、建立共同原因与风险链、重组结论、形成有责任人/时序/验收依据的行动包",
                 "visual_organization_reference 要说明图片和表格在论证中的功能、放置位置、正文引导、图注、交叉引用及禁止的装饰性用法",
                 "quality_rubric 要逐项定义可观察的通过标准、失败表现和修改动作，覆盖分析深度、结论组织、建议闭环、章节联动、图证叙事与事实边界",
+                "模板中用于教模型如何形成目标正文、综合段落、表格或图证叙事的结构化输出样例必须保留在对应 Skill reference 中；先用占位符去除项目事实，再写成正例、反例或输出骨架，不另建 Output Profile",
+                "这些 Skill 样例描述报告内容应如何组织，不得重复 submit_result 的 JSON 字段样例；机器提交形状只服从当前任务 submission schema",
+                "提交 boundary_manifest：transferred_categories 必须精确等于 input 的 allowed_transfer_categories，excluded_categories 必须精确等于 required_exclusion_categories；四类可复用方法包含其去事实化结构样例",
                 "只迁移写作能力，不复制模板项目事实、具体数值、客户名称或原结论",
                 "专家优化版只在本任务中作为一次性 Skill 蒸馏源；不得把其中的具体问题、风险判断、分析结论、建议内容、证据编号或项目措辞写入任何 Skill 文件",
+                "不得迁移专业机理、标准名称、适用条件或带单位阈值；它们属于 Knowledge，不属于模板 Skill",
                 "禁止把五份长文本直接塞入 submit_result：先分别调用 write_result_part，part_id 固定为 skill、analysis、synthesis、visual、rubric；最终 submit_result 的对应字段只提交 artifact_refs",
             ],
             allowed_outputs=["template_skill_submission"],
@@ -426,6 +464,28 @@ class ReportWorkflowRunner:
                 "producer": "template-distiller",
                 "task_id": envelope.task_id,
                 "skill_root": TEMPLATE_SKILL_ROOT.as_posix(),
+                "boundary_policy_version": payload.boundary_manifest.policy_version,
+                "boundary_ref": (TEMPLATE_SKILL_ROOT / "boundary.json").as_posix(),
+                "boundary_sha256": hashlib.sha256(
+                    (
+                        self.service.workspace
+                        / TEMPLATE_SKILL_ROOT
+                        / "boundary.json"
+                    ).read_bytes()
+                ).hexdigest(),
+                "artifact_sha256": {
+                    path.relative_to(TEMPLATE_SKILL_ROOT).as_posix(): self._sha256(
+                        self.service.workspace / path
+                    )
+                    for path in (
+                        TEMPLATE_SKILL_ROOT / "SKILL.md",
+                        TEMPLATE_SKILL_ROOT / "references/analysis-language.md",
+                        TEMPLATE_SKILL_ROOT / "references/synthesis.md",
+                        TEMPLATE_SKILL_ROOT / "references/visual-organization.md",
+                        TEMPLATE_SKILL_ROOT / "references/quality-rubric.md",
+                        TEMPLATE_SKILL_ROOT / "boundary.json",
+                    )
+                },
             },
         )
         self._require_template_skill(state)
@@ -459,6 +519,7 @@ class ReportWorkflowRunner:
                     "references/synthesis.md",
                     "references/visual-organization.md",
                     "references/quality-rubric.md",
+                    "boundary.json",
                     "source.json",
                 )
             ]
@@ -477,7 +538,69 @@ class ReportWorkflowRunner:
     @staticmethod
     def _template_skill_context(state: dict, *parts: str) -> str:
         texts = state.get("template_skill_text", {})
-        return "\n\n".join(texts[part] for part in parts if texts.get(part))
+        return "\n\n".join(
+            (
+                f'<template_skill_part name="{part}" delivery_mode="inline">\n'
+                f"{texts[part]}\n"
+                "</template_skill_part>"
+            )
+            for part in parts
+            if texts.get(part)
+        )
+
+    @staticmethod
+    def _domain_knowledge_context(text: str, provenance_ref: str) -> str:
+        """Label sourced domain Knowledge separately from methods and project Evidence."""
+
+        return (
+            f'<domain_knowledge delivery_mode="inline" provenance_ref="{provenance_ref}" '
+            'project_fact_authority="false">\n'
+            f"{text}\n"
+            "</domain_knowledge>"
+        )
+
+    @classmethod
+    def _role_skill_context(
+        cls,
+        state: dict,
+        role: str,
+        *,
+        target_section_ids: set[str] | None = None,
+    ) -> str:
+        """Project only the distilled template parts owned by one workflow role."""
+
+        role_parts = {
+            "module-author": ("core", "analysis", "visual", "rubric"),
+            "module-auditor": ("rubric",),
+            "cross-reviewer": ("synthesis", "rubric"),
+            "chief-editor": ("core", "analysis", "synthesis", "visual", "rubric"),
+            "final-auditor": ("rubric",),
+        }
+        if role == "chief-revision":
+            targets = set(target_section_ids or ())
+            if not targets:
+                raise ValueError("chief revision Skill routing requires target sections")
+            selected = {"rubric"}
+            if any(section_id.startswith("3.") for section_id in targets):
+                selected.add("synthesis")
+            if any(section_id.startswith(("1.", "4.")) for section_id in targets):
+                selected.add("analysis")
+            role_parts[role] = tuple(
+                part
+                for part in ("analysis", "synthesis", "rubric")
+                if part in selected
+            )
+        elif role not in role_parts:
+            raise ValueError(f"unknown reporting role skill: {role}")
+        content = cls._template_skill_context(state, *role_parts[role])
+        if not content:
+            return ""
+        parts = ",".join(role_parts[role])
+        return (
+            f'<role_skill role="{role}" template_parts="{parts}">\n'
+            f"{content}\n"
+            "</role_skill>"
+        )
 
     @staticmethod
     def _user_supplement_constraints(
@@ -719,7 +842,6 @@ class ReportWorkflowRunner:
             },
         )
         shallow_signals: list[str] = []
-        aggregate_source_format = "structured_module" if structured_modules else "markdown"
         try:
             if structured_modules:
                 validate_module_markdown_consistency(structured_modules)
@@ -863,7 +985,7 @@ class ReportWorkflowRunner:
                     "不得创造、删除或改变分块报告中的事实、数值、风险等级和建议语义",
                     "必须保留且仅汇总 2.1、2.2、2.3、2.4、2.5 五个模块",
                     "每个 module_narrative 必须包含对应 [[APPROVED_MODULE:2.x]] 标记，可在标记前后增加短过渡；不得重新输出或改写原文，工作流会确定性嵌回批准正文",
-                    "aggregate-editor-input.json 是唯一模块内容读取入口；一次使用 160000 字符完整读取，只有明确返回 next_offset 时才继续，禁止搜索或重新打开原始模块文件",
+                    "aggregate-editor-input 已完整内联在 input_contract 中，是唯一模块内容入口；直接使用该内容，禁止调用 open_artifact/search_text 重读合同或原始模块文件",
                     "总编始终形成第一至第三章；只有 special_topic_plan 存在时才形成第四章 special_topic_analysis",
                     "五个 module_narratives 只提交精确 APPROVED_MODULE 标记，禁止为省 token 压缩批准正文",
                     "任何综合节都必须自足地给出归纳事实、综合判断和决策含义；章节号只能作为句末追溯，不得用‘详见第二章’‘见2.x’或模块编号清单代替汇总分析",
@@ -892,10 +1014,14 @@ class ReportWorkflowRunner:
                 allowed_outputs=["edited_report_submission"],
                 input_contract_kind="aggregate_editor_input",
                 input_contract_ref=editor_input_refs[0],
-                inline_context=self._template_skill_context(
-                    state, "core", "analysis", "synthesis", "visual", "rubric"
-                )
-                + special_topic_inline_context,
+                inline_context="\n\n".join(
+                    text
+                    for text in (
+                        self._role_skill_context(state, "chief-editor"),
+                        special_topic_inline_context,
+                    )
+                    if text
+                ),
             )
             payload = await self._agent(
                 "chief-editor",
@@ -968,31 +1094,6 @@ class ReportWorkflowRunner:
             markdown = self._canonical_markdown(payload)
             if ledger is not None:
                 markdown = ledger.bind_citations(markdown)
-                if payload.tables:
-                    table_lines = ["", "**结构化表格**", ""]
-                    for table in payload.tables:
-                        table_lines.extend(
-                            [
-                                f"**{table.title}**",
-                                "",
-                                "| " + " | ".join(table.headers) + " |",
-                                "| " + " | ".join("---" for _ in table.headers) + " |",
-                                *("| " + " | ".join(row) + " |" for row in table.rows),
-                                "",
-                                "来源：" + "、".join(table.source_ids),
-                                "",
-                            ]
-                        )
-                    table_markdown = "\n".join(table_lines)
-                    chapter_four = "\n## 4. 专项问题分析"
-                    if chapter_four in markdown:
-                        markdown = markdown.replace(
-                            chapter_four,
-                            f"\n{table_markdown}\n{chapter_four}",
-                            1,
-                        )
-                    else:
-                        markdown = markdown.rstrip() + f"\n{table_markdown}\n"
             self._validate_final_report_structure(state, markdown, "aggregate-final")
             self.service.store.write_text(markdown_ref.as_posix(), markdown)
             source_index_markdown = (
@@ -1156,9 +1257,6 @@ class ReportWorkflowRunner:
         finally:
             await self.agent_runner.close_workflow(workflow_id)
 
-    def _context_refs(self, state: dict, agent_id: str) -> list[str]:
-        return list(state.get("revision_context_by_agent", {}).get(agent_id, []))
-
     def _raise_scope_expansion(
         self,
         state: dict,
@@ -1299,6 +1397,7 @@ class ReportWorkflowRunner:
             final_review_restart_round=state.get("final_review_restart_round"),
             final_review_completed="final_review_completion_ref" in state,
             final_review_completion_ref=state.get("final_review_completion_ref"),
+            final_audit_snapshot_ref=state.get("final_audit_snapshot_ref"),
             delivery_completion_ref=state.get("delivery_completion_ref"),
             error=error,
             budget=self._budget.snapshot() if self._budget is not None else None,
@@ -1328,6 +1427,7 @@ class ReportWorkflowRunner:
                 ),
                 "final_review_completed": "final_review_completion_ref" in state,
                 "final_review_completion_ref": state.get("final_review_completion_ref"),
+                "final_audit_snapshot_ref": state.get("final_audit_snapshot_ref"),
                 "aggregate_markdown_ref": (
                     str(state["aggregate_markdown_ref"])
                     if state.get("aggregate_markdown_ref")
@@ -1345,7 +1445,7 @@ class ReportWorkflowRunner:
         completion_ref: str,
         lifecycle: str,
         reviewer_agent_id: str,
-        reviewer_session_key: str,
+        reviewer_session_key: str | set[str],
         subject_refs: list[str] | None = None,
     ) -> tuple[ReviewCompletionRecord, list[object]]:
         """Load one exact current-protocol completion and all referenced artifacts."""
@@ -1363,11 +1463,16 @@ class ReportWorkflowRunner:
 
         raw, _ = read_ref(completion_ref)
         completion = ReviewCompletionRecord.model_validate(raw)
+        reviewer_session_matches = (
+            completion.reviewer_session_key == reviewer_session_key
+            if isinstance(reviewer_session_key, str)
+            else completion.reviewer_session_key in reviewer_session_key
+        )
         if (
             completion.lifecycle != lifecycle
             or completion.run_id != run_id
             or completion.reviewer_agent_id != reviewer_agent_id
-            or completion.reviewer_session_key != reviewer_session_key
+            or not reviewer_session_matches
         ):
             raise ValueError("review completion identity does not match the active lifecycle")
         if subject_refs is not None and completion.subject_refs != subject_refs:
@@ -1486,6 +1591,20 @@ class ReportWorkflowRunner:
         return completion, artifacts
 
     @staticmethod
+    def _module_reviewer_session_keys(
+        module_id: str,
+        lifecycle_id: str,
+    ) -> set[str]:
+        """Accept stable v2 identities and exact legacy v1 lifecycle identities."""
+
+        stable = f"module-auditor-{module_id}"
+        return {
+            stable,
+            f"{stable}-initial",
+            f"{stable}-{lifecycle_id}",
+        }
+
+    @staticmethod
     def _latest_cross_synthesis(artifacts: list[object]) -> list:
         synthesis = []
         for artifact in artifacts:
@@ -1568,12 +1687,6 @@ class ReportWorkflowRunner:
                 raise AgentWorkflowError(
                     f"checkpoint lacks module knowledge refs: {missing_knowledge}"
                 )
-            if typed_checkpoint.quality_context_ref is None:
-                raise AgentWorkflowError("checkpoint lacks the chief quality context ref")
-            state["quality_context_ref"] = require_run_ref(
-                typed_checkpoint.quality_context_ref,
-                label="chief quality context",
-            )
         source_records = SourceLedger(self.service.workspace, run_id).records
         known_source_ids = {source.id for source in source_records}
         restored_subjects: dict[str, ModuleSubmission] = {}
@@ -1621,7 +1734,10 @@ class ReportWorkflowRunner:
                             completion_ref=completion_ref,
                             lifecycle="module",
                             reviewer_agent_id="evidence-auditor",
-                            reviewer_session_key=(f"module-auditor-{module_id}-{lifecycle_id}"),
+                            reviewer_session_key=self._module_reviewer_session_keys(
+                                module_id,
+                                lifecycle_id,
+                            ),
                             subject_refs=[subject_ref],
                         )
                     except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -1766,6 +1882,9 @@ class ReportWorkflowRunner:
             for module_id in REPORT_MODULE_IDS
         }
         state["final_review_completion_ref"] = final_ref
+        snapshot_ref = f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
+        if (self.service.workspace / snapshot_ref).is_file():
+            state["final_audit_snapshot_ref"] = snapshot_ref
         state["final_residual_risks"] = self._latest_final_residual_risks(final_artifacts)
         self._restore_delivery_completion(state)
 
@@ -1906,7 +2025,10 @@ class ReportWorkflowRunner:
                         completion_ref=completion_ref,
                         lifecycle="module",
                         reviewer_agent_id="evidence-auditor",
-                        reviewer_session_key=(f"module-auditor-{module_id}-{lifecycle_id}"),
+                        reviewer_session_key=self._module_reviewer_session_keys(
+                            module_id,
+                            lifecycle_id,
+                        ),
                         subject_refs=[subject_ref],
                     )
                 except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -1986,6 +2108,9 @@ class ReportWorkflowRunner:
             ) from exc
         state["edited_report"] = edited
         state["final_review_completion_ref"] = final_ref
+        snapshot_ref = f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
+        if (self.service.workspace / snapshot_ref).is_file():
+            state["final_audit_snapshot_ref"] = snapshot_ref
         state["final_residual_risks"] = self._latest_final_residual_risks(final_artifacts)
 
     async def _prepare(self, state: dict) -> None:
@@ -2139,11 +2264,9 @@ class ReportWorkflowRunner:
         module_knowledge = {
             module_id: knowledge.build_module(module_id) for module_id in module_ids
         }
-        quality_context = knowledge.build_quality()
         state["module_knowledge_refs"] = {
             module_id: context.path.as_posix() for module_id, context in module_knowledge.items()
         }
-        state["quality_context_ref"] = quality_context.path.as_posix()
         preparation_refs = state["preparation_refs"]
         tasks = [
             TaskEnvelope(
@@ -2155,7 +2278,6 @@ class ReportWorkflowRunner:
                     preparation_refs["coverage"],
                     preparation_refs["evidence"],
                     preparation_refs["manifest"],
-                    module_knowledge[module_id].path.as_posix(),
                 ],
                 constraints=[
                     f"仅分析目标模块 {module_id}",
@@ -2177,9 +2299,12 @@ class ReportWorkflowRunner:
                 allowed_outputs=["module_submission"],
                 target_submodule_ids=list(REPORT_TAXONOMY[module_id].submodules),
                 inline_context=(
-                    module_knowledge[module_id].text
+                    self._domain_knowledge_context(
+                        module_knowledge[module_id].text,
+                        module_knowledge[module_id].path.as_posix(),
+                    )
                     + "\n\n"
-                    + self._template_skill_context(state, "core", "analysis", "visual", "rubric")
+                    + self._role_skill_context(state, "module-author")
                 ),
             )
             for module_id in module_ids
@@ -2202,12 +2327,21 @@ class ReportWorkflowRunner:
             {
                 "stage": "template-skill-read",
                 "producer": "separate template-distiller action",
-                "consumer": "module specialists, cross-module reviewer, chief editor",
-                "input": "Work/report-template-writing/SKILL.md + progressive references",
-                "output": "fixed Skill context attached to writing tasks",
+                "consumer": (
+                    "module specialists/auditors, cross-module reviewer, chief editor, "
+                    "final auditor"
+                ),
+                "input": (
+                    "hash-verified Work/report-template-writing files projected by role "
+                    "and embedded once in task inline_context"
+                ),
+                "output": (
+                    "role-scoped reusable Skill guidance, including fact-free worked examples; "
+                    "downstream references are not opened"
+                ),
                 "content_checks": [
-                    "semantic style, narrative, reasoning, synthesis, and visual guidance",
-                    "no project facts copied from the template",
+                    "only analysis, synthesis, visual, and quality-check methods",
+                    "no domain knowledge, standards/thresholds, project facts, or identifiers",
                     "writing run never reads or distills the template DOCX",
                 ],
             },
@@ -2263,7 +2397,10 @@ class ReportWorkflowRunner:
                 "stage": "synthesis",
                 "producer": "chief-editor",
                 "consumer": "main-agent",
-                "input": "ChiefEditorInput + ClaimLedger + SourceLedger",
+                "input": (
+                    "ChiefEditorInput + project Evidence/photo manifest; Claim/Source ledgers "
+                    "remain runtime-only"
+                ),
                 "output": "EditedReportSubmission + canonical Markdown",
                 "content_checks": [
                     "exactly modules 2.1-2.5",
@@ -2464,7 +2601,6 @@ class ReportWorkflowRunner:
                         module_input.coverage_ref,
                         module_input.evidence_ref,
                         module_input.manifest_ref,
-                        module_input.knowledge_ref,
                     ],
                     "input_contract_kind": "module_authoring_input",
                     "input_contract_ref": module_input_ref,
@@ -2547,18 +2683,11 @@ class ReportWorkflowRunner:
             sources=SourceLedger(self.service.workspace, state["run_id"]).records,
         )
         claim_ledger_ref = f"Work/runs/{state['run_id']}/ledgers/claims.json"
-        self.service.store.write_json(claim_ledger_ref, claim_ledger.model_dump(mode="json"))
-        quality_context_ref = state.get("quality_context_ref")
-        if quality_context_ref is None:
-            candidate = Path(f"Work/runs/{state['run_id']}/context/report-quality-criteria.md")
-            if (self.service.workspace / candidate).is_file():
-                quality_context_ref = candidate.as_posix()
-        self._load_template_skill(state)
-        quality_context_text = ""
-        if quality_context_ref and (self.service.workspace / quality_context_ref).is_file():
-            quality_context_text = (self.service.workspace / quality_context_ref).read_text(
-                encoding="utf-8"
-            )
+        self.service.store.write_json(
+            claim_ledger_ref,
+            claim_ledger.model_dump(mode="json"),
+        )
+        self._require_template_skill(state)
         editor_input = ChiefEditorInput(
             run_id=state["run_id"],
             approved_module_markers={
@@ -2583,8 +2712,6 @@ class ReportWorkflowRunner:
             objective="整合已批准五模块，形成自然、丰富、有专业差异且可溯源的完整报告。",
             input_refs=[
                 editor_input_ref,
-                claim_ledger_ref,
-                f"Work/runs/{state['run_id']}/ledgers/sources.json",
                 state["preparation_refs"]["evidence"],
                 state["preparation_refs"]["photo_manifest"],
                 *special_topic_input_refs,
@@ -2592,12 +2719,13 @@ class ReportWorkflowRunner:
             constraints=[
                 "不得改变批准事实、数值、风险等级和来源语义",
                 "批准正文的引用与脚注由运行时保护和装配，总编只提交 schema 声明字段",
+                "protected_claim_ids 由 submit_result 根据运行时已批准模块确定性注入；不得自行提交、打开或重传 Claim/Source ledger",
                 "正文不得套用统一的事实-证据-风险模板",
-                "tables 只提交可追溯的 E-* evidence_ids；内部绑定由运行时推导，photo_ids 只选项目资产",
+                "tables 只提交可追溯的 E-* evidence_ids；photo_ids 提交空数组，运行时将原始表图片全量绑定到 Evidence 所属最小子模块",
                 "每个 module_narrative 必须逐一保留该模块全部固定 submodule_id 和标题，不得压缩为核心发现摘要",
                 "每个已批准子模块正文必须原样包含在所属 module_narrative 中；总编只能增加章节引言、过渡、交叉引用和综合判断，不能删除或缩写专家正文",
                 "为避免重复输出和截断，每个 module_narrative 使用对应 [[APPROVED_MODULE:2.x]] 标记作为正文基线，可在标记前后增加短过渡；工作流会确定性嵌回批准正文",
-                f"{editor_input_ref} 是唯一总编输入入口；一次完整读取，不得再打开 Outputs/Modules 或 Outputs/Reviews 重读",
+                "chief-editor-input 已完整内联在 input_contract 中，是唯一模块正文入口；不得再打开 Outputs/Modules、Outputs/Reviews 或该合同路径重读",
                 "不得恢复已删除的“跨领域关联风险”模块，也不得提交旧版 synthesis_dispositions 或 synthesis_tables 元数据",
                 "始终提交 assessment_background、findings_overview、regional_executive_summary、risk_panorama、dimension_risk_analysis、data_gap_analysis、improvement_action_plan；仅当 special_topic_plan 存在时提交 special_topic_analysis",
                 "固定综合字段只写正文、禁止自带章节标题",
@@ -2631,9 +2759,9 @@ class ReportWorkflowRunner:
                     },
                 ),
                 "risk_panorama 必须归纳实际主要风险及其判断依据，不得重复五章摘要",
-                "图片选择必须服务于问题证明并依 Claim 对应子模块就近组织；同类多图形成图证组，不得统一堆到模块末尾",
-                "质量参考文件只用于结构和写作质量检查，不得据此创造客户事实",
-                "项目 Knowledge 是优先参考而非认知边界；可使用模型世界知识解释机制、备选原因、方案权衡和行业实践，但必须与客户事实明确区分",
+                "原始表图片由运行时确定性全量装配为最小子模块图证汇总表；不得筛选、遗漏或自行放置",
+                "写作质量只按已内联的模板 Skill quality-rubric 检查，不得从 Knowledge 补充报告规则",
+                "已批准模块正文与当前 Evidence 是项目事实入口；可使用模型世界知识解释机制和方案权衡，但不得新增或改写客户事实",
                 *(
                     ["这是同一 run 的恢复任务；先调用 list_result_parts 并复用已保存分段"]
                     if state.get("resume")
@@ -2644,15 +2772,11 @@ class ReportWorkflowRunner:
             allowed_outputs=["edited_report_submission"],
             input_contract_kind="chief_editor_input",
             input_contract_ref=editor_input_ref,
-            context_summary_refs=self._context_refs(state, "chief-editor"),
             inline_context="\n\n".join(
                 text
                 for text in (
-                    quality_context_text,
                     special_topic_context,
-                    self._template_skill_context(
-                        state, "core", "analysis", "synthesis", "visual", "rubric"
-                    ),
+                    self._role_skill_context(state, "chief-editor"),
                 )
                 if text
             ),
@@ -2671,6 +2795,14 @@ class ReportWorkflowRunner:
             for module_id in REPORT_MODULE_IDS
         }
         payload = expand_approved_module_markers(payload, approved_module_text)
+        payload = payload.model_copy(
+            update={
+                "photo_ids": ReportAssetAssembler.runtime_photo_ids(
+                    state.get("evidence_items", []),
+                    state.get("photo_assets", []),
+                )
+            }
+        )
         validate_editor_protection(payload, claims)
         state["editor_quality_observations"] = validate_editor_quality(
             payload, state["module_submissions"]
@@ -2779,6 +2911,15 @@ class ReportWorkflowRunner:
             f"Work/runs/{state['run_id']}/reviews/module-quality-"
             f"{module.module_id}-r{module.revision}-{phase}.json"
         )
+        subject_ref = (
+            f"Work/runs/{state['run_id']}/modules/"
+            f"{module.module_id}-r{module.revision}.json"
+        )
+        subject_path = self.service.workspace / subject_ref
+        if not subject_path.is_file():
+            raise AgentWorkflowError(
+                f"模块确定性校验缺少待校验实体：{subject_ref}"
+            )
         canonical = compose_module_markdown(module.module_id, module.submodule_narratives)
         failure: ValidationFailure | None = None
         if module.markdown.strip() != canonical.strip():
@@ -2789,11 +2930,12 @@ class ReportWorkflowRunner:
             )
         shallow_signals = find_shallow_submodules({module.module_id: module})
         report = ValidationReport(
+            validation_protocol_version=2,
             run_id=state["run_id"],
-            subject_ref=(
-                f"Work/runs/{state['run_id']}/modules/{module.module_id}-r{module.revision}.json"
-            ),
-            validator="module-structure/v1",
+            subject_ref=subject_ref,
+            subject_revision=module.revision,
+            content_sha256=hashlib.sha256(subject_path.read_bytes()).hexdigest(),
+            validator="module-structure/v2",
             check_ids=["module.canonical_markdown"],
             failures=[failure] if failure else [],
             observations=[
@@ -2879,6 +3021,16 @@ class ReportWorkflowRunner:
         validation_ref = f"Work/runs/{state['run_id']}/reviews/report-integrity-{phase}.json"
         subject_ref = f"Work/runs/{state['run_id']}/validation/report-{phase}.md"
         self.service.store.write_text(subject_ref, markdown)
+        content_sha256 = hashlib.sha256(
+            (self.service.workspace / subject_ref).read_bytes()
+        ).hexdigest()
+        revision_text = phase.removeprefix("chief-candidate-r")
+        subject_revision = (
+            int(revision_text)
+            if phase.startswith("chief-candidate-r") and revision_text.isdigit()
+            else None
+        )
+        check_ids = ["final_report.fixed_sections_and_markdown"]
         try:
             edited = state.get("edited_report")
             plan = (
@@ -2891,13 +3043,16 @@ class ReportWorkflowRunner:
             self.service.store.write_json(
                 validation_ref,
                 ValidationReport(
+                    validation_protocol_version=2,
                     run_id=state["run_id"],
                     subject_ref=subject_ref,
-                    validator="final-report-structure/v1",
-                    check_ids=["final_report.fixed_sections_and_markdown"],
+                    subject_revision=subject_revision,
+                    content_sha256=content_sha256,
+                    validator="final-report-structure/v2",
+                    check_ids=check_ids,
                     failures=[
                         ValidationFailure(
-                            check_id="final_report.fixed_sections_and_markdown",
+                            check_id=check_ids[0],
                             target_path="markdown",
                             message=str(exc),
                         )
@@ -2909,10 +3064,13 @@ class ReportWorkflowRunner:
         self.service.store.write_json(
             validation_ref,
             ValidationReport(
+                validation_protocol_version=2,
                 run_id=state["run_id"],
                 subject_ref=subject_ref,
-                validator="final-report-structure/v1",
-                check_ids=["final_report.fixed_sections_and_markdown"],
+                subject_revision=subject_revision,
+                content_sha256=content_sha256,
+                validator="final-report-structure/v2",
+                check_ids=check_ids,
                 observations=[
                     *state.get("editor_quality_observations", []),
                     *(
@@ -2925,14 +3083,197 @@ class ReportWorkflowRunner:
             ).model_dump(mode="json"),
         )
 
+    def _validated_final_audit_subject(
+        self,
+        state: dict,
+    ) -> tuple[EditedReportSubmission, str]:
+        """Load the exact audited subject and bind its canonical prose to delivery."""
+
+        run_id = state["run_id"]
+        completion_ref = state["final_review_completion_ref"]
+        completion, _ = self._load_current_review_completion(
+            run_id=run_id,
+            completion_ref=completion_ref,
+            lifecycle="final",
+            reviewer_agent_id="chief-editor-auditor",
+            reviewer_session_key="chief-editor-auditor",
+        )
+        if len(completion.subject_refs) != 1:
+            raise AgentWorkflowError("final audit completion must bind exactly one subject")
+        subject_ref = completion.subject_refs[0]
+        subject_path = self.service.workspace / subject_ref
+        audited = EditedReportSubmission.model_validate_json(
+            subject_path.read_text(encoding="utf-8")
+        )
+        subject_revision_match = re.search(r"chief-r(\d+)\.json$", subject_ref)
+        subject_revision = (
+            int(subject_revision_match.group(1))
+            if subject_revision_match is not None
+            else 0
+        )
+        snapshot_ref = (
+            f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
+        )
+        snapshot_path = self.service.workspace / snapshot_ref
+        if not snapshot_path.is_file():
+            # Legacy same-run recovery: the final completion already binds the
+            # exact edited JSON. Reconstruct only its deterministic Markdown
+            # projection; no provider or reviewer call is repeated.
+            _, canonical = self._delivery_projection(state, audited)
+            validate_final_report_markdown(canonical)
+            canonical_ref = (
+                f"Work/runs/{run_id}/validation/report-final-audit-legacy.md"
+            )
+            validation_ref = (
+                f"Work/runs/{run_id}/reviews/report-integrity-final-audit-legacy.json"
+            )
+            canonical_path = self.service.store.write_text(canonical_ref, canonical)
+            canonical_sha256 = hashlib.sha256(canonical_path.read_bytes()).hexdigest()
+            validation_path = self.service.store.write_json(
+                validation_ref,
+                ValidationReport(
+                    validation_protocol_version=2,
+                    run_id=run_id,
+                    subject_ref=canonical_ref,
+                    subject_revision=subject_revision,
+                    content_sha256=canonical_sha256,
+                    validator="final-audit-legacy-snapshot/v2",
+                    check_ids=["final_report.fixed_sections_and_markdown"],
+                    passed=True,
+                ).model_dump(mode="json"),
+            )
+            snapshot_path = self.service.store.write_json(
+                snapshot_ref,
+                FinalAuditSnapshot(
+                    run_id=run_id,
+                    subject_ref=subject_ref,
+                    subject_revision=subject_revision,
+                    subject_sha256=hashlib.sha256(
+                        subject_path.read_bytes()
+                    ).hexdigest(),
+                    canonical_markdown_ref=canonical_ref,
+                    canonical_markdown_sha256=canonical_sha256,
+                    validation_report_ref=validation_ref,
+                    validation_report_sha256=hashlib.sha256(
+                        validation_path.read_bytes()
+                    ).hexdigest(),
+                    completion_ref=completion_ref,
+                    completion_sha256=hashlib.sha256(
+                        (self.service.workspace / completion_ref).read_bytes()
+                    ).hexdigest(),
+                ).model_dump(mode="json"),
+            )
+        snapshot = FinalAuditSnapshot.model_validate_json(
+            snapshot_path.read_text(encoding="utf-8")
+        )
+        expected_refs = {
+            snapshot.subject_ref: snapshot.subject_sha256,
+            snapshot.canonical_markdown_ref: snapshot.canonical_markdown_sha256,
+            snapshot.validation_report_ref: snapshot.validation_report_sha256,
+            snapshot.completion_ref: snapshot.completion_sha256,
+        }
+        run_root = (self.service.workspace / f"Work/runs/{run_id}").resolve()
+        for ref, expected_sha256 in expected_refs.items():
+            path = (self.service.workspace / ref).resolve()
+            if (
+                not path.is_relative_to(run_root)
+                or not path.is_file()
+                or hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha256
+            ):
+                raise AgentWorkflowError(
+                    f"final audit snapshot artifact changed before delivery: {ref}"
+                )
+        if (
+            snapshot.run_id != run_id
+            or snapshot.subject_ref != subject_ref
+            or snapshot.completion_ref != completion_ref
+            or snapshot.subject_revision != subject_revision
+        ):
+            raise AgentWorkflowError("final audit snapshot identity is stale")
+        validation = ValidationReport.model_validate_json(
+            (
+                self.service.workspace / snapshot.validation_report_ref
+            ).read_text(encoding="utf-8")
+        )
+        if (
+            not validation.passed
+            or validation.subject_ref != snapshot.canonical_markdown_ref
+            or validation.subject_revision != snapshot.subject_revision
+            or validation.content_sha256 != snapshot.canonical_markdown_sha256
+        ):
+            raise AgentWorkflowError("final audit snapshot validation binding is stale")
+        _, audited_canonical = self._delivery_projection(state, audited)
+        snapshot_canonical = (
+            self.service.workspace / snapshot.canonical_markdown_ref
+        ).read_text(encoding="utf-8")
+        if audited_canonical != snapshot_canonical:
+            raise AgentWorkflowError(
+                "delivery subject differs from the final audited canonical snapshot"
+            )
+        current = state.get("edited_report")
+        if (
+            current is not None
+            and current.model_dump(mode="json") != audited.model_dump(mode="json")
+        ):
+            raise AgentWorkflowError(
+                "in-memory edited report changed after final audit completion"
+            )
+        state["final_audit_snapshot_ref"] = snapshot_ref
+        return audited, snapshot_ref
+
+    def _delivery_projection(
+        self,
+        state: dict,
+        edited: EditedReportSubmission,
+        claims: list | None = None,
+    ) -> tuple[ApprovedReport, str]:
+        """Build the exact citation-bound Markdown later passed to the DOCX renderer."""
+
+        if claims is None:
+            claims = [
+                claim
+                for module in state.get("module_submissions", {}).values()
+                for claim in module.claims
+            ]
+        ledger = ClaimLedger(
+            claims=claims,
+            sources=SourceLedger(self.service.workspace, state["run_id"]).records,
+        )
+        tables, photos = ReportAssetAssembler(self.service.workspace).build(
+            state.get("evidence_items", []),
+            state.get("photo_assets", []),
+            claims,
+            edited,
+        )
+        report = ApprovedReport(
+            title=edited.title,
+            assessment_background=edited.assessment_background,
+            findings_overview=edited.findings_overview,
+            regional_executive_summary=edited.regional_executive_summary,
+            module_narratives=dict(edited.module_narratives),
+            risk_panorama=edited.risk_panorama,
+            dimension_risk_analysis=edited.dimension_risk_analysis,
+            data_gap_analysis=edited.data_gap_analysis,
+            improvement_action_plan=edited.improvement_action_plan,
+            special_topic_plan=edited.special_topic_plan,
+            special_topic_analysis=edited.special_topic_analysis,
+            ledger=ledger,
+            tables=tables,
+            photos=photos,
+        )
+        return report, ledger.bind_citations(PdsDocxRenderer._compose_markdown(report))
+
     def _deliver(self, state: dict) -> None:
         if "final_review_completion_ref" not in state:
             raise AgentWorkflowError(
                 "delivery requires an independent final review completion record"
             )
+        edited, final_audit_snapshot_ref = self._validated_final_audit_subject(
+            state
+        )
         self._validate_module_exports(state, "delivery")
         self._write_handoff_contracts(state)
-        edited: EditedReportSubmission = state["edited_report"]
+        state["edited_report"] = edited
         claims = [
             claim
             for module_id in REPORT_MODULE_IDS
@@ -2973,32 +3314,13 @@ class ReportWorkflowRunner:
             f"Work/runs/{state['run_id']}/photo-manifest.json",
             {"assets": [asset.model_dump(mode="json") for asset in state.get("photo_assets", [])]},
         )
-        tables, photos = ReportAssetAssembler(self.service.workspace).build(
-            state.get("evidence_items", []),
-            state.get("photo_assets", []),
-            claims,
+        report, delivery_markdown = self._delivery_projection(
+            state,
             edited,
-        )
-        report = ApprovedReport(
-            title=edited.title,
-            assessment_background=edited.assessment_background,
-            findings_overview=edited.findings_overview,
-            regional_executive_summary=edited.regional_executive_summary,
-            module_narratives=dict(edited.module_narratives),
-            risk_panorama=edited.risk_panorama,
-            dimension_risk_analysis=edited.dimension_risk_analysis,
-            data_gap_analysis=edited.data_gap_analysis,
-            improvement_action_plan=edited.improvement_action_plan,
-            special_topic_plan=edited.special_topic_plan,
-            special_topic_analysis=edited.special_topic_analysis,
-            ledger=ledger,
-            tables=tables,
-            photos=photos,
+            claims,
         )
         self.service.store.write_json("Work/report-state.json", report.model_dump(mode="json"))
-        canonical_markdown = PdsDocxRenderer._compose_markdown(report)
-        self._validate_final_report_structure(state, canonical_markdown, "delivery-final")
-        delivery_markdown = ledger.bind_citations(canonical_markdown)
+        self._validate_final_report_structure(state, delivery_markdown, "delivery-final")
         markdown_path = self.service.store.write_text(
             "Outputs/Reports/配电安全专家咨询报告.md", delivery_markdown
         )
@@ -3156,6 +3478,7 @@ class ReportWorkflowRunner:
                         f"Work/runs/{state['run_id']}/handoff-contracts.json"
                     ),
                     "final_review_completion": Path(state["final_review_completion_ref"]),
+                    "final_audit_snapshot": Path(final_audit_snapshot_ref),
                     **(
                         {
                             "cross_review_completion": Path(state["cross_review_completion_ref"]),
@@ -3195,6 +3518,7 @@ class ReportWorkflowRunner:
                 "status": "completed",
                 "delivery_receipt_ref": receipt_path.relative_to(self.service.workspace).as_posix(),
                 "report_version_id": version.version_id,
+                "final_audit_snapshot_ref": final_audit_snapshot_ref,
                 "output_artifacts": [
                     artifact.model_dump(mode="json") for artifact in state["output_artifacts"]
                 ],
@@ -3238,85 +3562,27 @@ class ReportWorkflowRunner:
     def _canonical_markdown(edited: EditedReportSubmission) -> str:
         """Adapt approved synthesis to the fixed four-block Render contract."""
 
-        def section_body(value: str) -> str:
-            """Keep prose and tables while the workflow exclusively owns headings."""
-
-            return "\n".join(
-                line
-                for line in value.splitlines()
-                if not re.match(r"^#{1,6}\s+", line.strip())
-                and line.strip() not in {"---", "***", "___"}
-            ).strip()
-
-        sections = [
-            f"# {edited.title}",
-            "",
-            "## 1. 配电评估概述",
-            "",
-            "### 1.1 评估背景",
-            "",
-            section_body(edited.assessment_background),
-            "",
-            "### 1.2 健康度总览",
-            "",
-            section_body(edited.findings_overview),
-            "",
-            "### 1.3 各区域执行摘要",
-            "",
-            section_body(edited.regional_executive_summary),
-            "",
-            "## 2. 评估内容描述",
-        ]
-        for module_id in REPORT_MODULE_IDS:
-            definition = REPORT_TAXONOMY[module_id]
-            sections.extend(
-                [
-                    "",
-                    f"### {module_id} {definition.title}",
-                    "",
-                    PdsDocxRenderer._strip_leading_module_heading(
-                        edited.module_narratives[module_id], module_id
-                    ).strip(),
-                ]
+        return compose_canonical_markdown(
+            CanonicalReportContent(
+                title=edited.title,
+                assessment_background=edited.assessment_background,
+                findings_overview=edited.findings_overview,
+                regional_executive_summary=edited.regional_executive_summary,
+                module_narratives=dict(edited.module_narratives),
+                risk_panorama=edited.risk_panorama,
+                dimension_risk_analysis=edited.dimension_risk_analysis,
+                data_gap_analysis=edited.data_gap_analysis,
+                improvement_action_plan=edited.improvement_action_plan,
+                special_topic_plan=edited.special_topic_plan,
+                special_topic_analysis=edited.special_topic_analysis,
+                tables=[
+                    CanonicalMarkdownTable(
+                        title=table.title,
+                        headers=table.headers,
+                        rows=table.rows,
+                        source_ids=table.source_ids,
+                    )
+                    for table in edited.tables
+                ],
             )
-        sections.extend(
-            [
-                "",
-                "## 3. 结论与建议",
-                "",
-                "### 3.1 风险/问题汇总与概览",
-                "",
-                "#### 3.1.1 风险全景图",
-                "",
-                section_body(edited.risk_panorama),
-                "",
-                "#### 3.1.2 各维度风险分析",
-                "",
-                section_body(edited.dimension_risk_analysis),
-                "",
-                "#### 3.1.3 数据缺口分析",
-                "",
-                section_body(edited.data_gap_analysis),
-                "",
-                "### 3.2 改善行动速查表",
-                "",
-                section_body(edited.improvement_action_plan),
-                "",
-            ]
         )
-        if edited.special_topic_plan is not None:
-            sections.extend(
-                [
-                    "## 4. 专项问题分析",
-                    "",
-                    (edited.special_topic_analysis or "").strip(),
-                    "",
-                ]
-            )
-        if edited.tables:
-            for table in edited.tables:
-                sections.extend(["", table.title, ""])
-                sections.append("| " + " | ".join(table.headers) + " |")
-                sections.append("| " + " | ".join("---" for _ in table.headers) + " |")
-                sections.extend("| " + " | ".join(row) + " |" for row in table.rows)
-        return "\n".join(sections)

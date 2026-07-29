@@ -1,6 +1,7 @@
 """Non-blocking Main/report lifecycle tests."""
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,84 @@ async def test_background_report_returns_immediately_and_reports_completion(tmp_
     bus.shutdown()
     processor.cancel()
     await asyncio.gather(processor, return_exceptions=True)
+
+
+def test_status_falls_back_to_persisted_failed_run_after_restart(tmp_path: Path) -> None:
+    run_id = "report-persisted"
+    run_root = tmp_path / "Work" / "runs" / run_id
+    run_root.mkdir(parents=True)
+    (run_root / "request.json").write_text("{}", encoding="utf-8")
+    (run_root / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "status": "failed",
+                "activity": "chief-editor-audit",
+                "error": "integrity failed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "Work" / "runs" / f"{run_id}.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "status": "failed",
+                "error": "integrity failed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    controller = ReportingRunController(
+        _ControlledService(tmp_path), MessageBus(), TaskBoard()  # type: ignore[arg-type]
+    )
+
+    status = controller.status(run_id)
+
+    assert status == {
+        "status": "failed",
+        "persisted_status": "failed",
+        "run_id": run_id,
+        "active": False,
+        "source": "persisted",
+        "resumable": True,
+        "activity": "chief-editor-audit",
+        "error": "integrity failed",
+    }
+
+
+def test_stale_persisted_running_state_is_reported_as_interrupted(tmp_path: Path) -> None:
+    run_id = "report-interrupted"
+    run_root = tmp_path / "Work" / "runs" / run_id
+    run_root.mkdir(parents=True)
+    (run_root / "request.json").write_text("{}", encoding="utf-8")
+    (run_root / "workflow-state.json").write_text(
+        json.dumps({"run_id": run_id, "status": "in_progress"}),
+        encoding="utf-8",
+    )
+    controller = ReportingRunController(
+        _ControlledService(tmp_path), MessageBus(), TaskBoard()  # type: ignore[arg-type]
+    )
+
+    status = controller.status(run_id)
+
+    assert status["status"] == "interrupted"
+    assert status["persisted_status"] == "in_progress"
+    assert status["active"] is False
+    assert status["resumable"] is True
+
+
+def test_unknown_run_remains_not_found_after_persisted_lookup(tmp_path: Path) -> None:
+    controller = ReportingRunController(
+        _ControlledService(tmp_path), MessageBus(), TaskBoard()  # type: ignore[arg-type]
+    )
+
+    assert controller.status("report-missing") == {
+        "status": "not_found",
+        "run_id": "report-missing",
+        "active": False,
+        "source": "persisted",
+    }
 
 
 @pytest.mark.asyncio

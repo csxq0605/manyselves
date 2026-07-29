@@ -355,19 +355,274 @@ class ReportingAgentRunner:
         match = re.search(r"2\.[1-5]", envelope.task_id)
         return match.group(0) if match is not None else None
 
-    def _system_prompt(self, definition: AgentDefinition, envelope: TaskEnvelope) -> str:
+    def _selected_module_skills(
+        self,
+        definition: AgentDefinition,
+        envelope: TaskEnvelope,
+    ):
         module_id: str | None = None
         if definition.id == "evidence-auditor":
             match = re.search(r"2\.[1-5]", envelope.task_id)
             if match is None:
                 raise ValueError("evidence-auditor task must identify one fixed module")
             module_id = match.group(0)
-        skills = self.module_skills.for_agent(definition.id, module_id=module_id)
+        return self.module_skills.for_agent(
+            definition.id,
+            module_id=module_id,
+            submodule_ids=(
+                set(envelope.target_submodule_ids)
+                if definition.id == "evidence-auditor"
+                else None
+            ),
+        )
+
+    def _system_prompt(self, definition: AgentDefinition, envelope: TaskEnvelope) -> str:
+        skills = self._selected_module_skills(definition, envelope)
         return PromptAssembler.system_prompt(
             definition,
             module_skills=skills,
             module_skill_index=None,
         )
+
+    @staticmethod
+    def _sha256_text(value: str) -> str:
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    def _write_context_manifest(
+        self,
+        *,
+        definition: AgentDefinition,
+        envelope: TaskEnvelope,
+        identity_key: str,
+        session_id: str,
+        system_prompt: str,
+        task_message: str,
+        input_contract_payload: str | None,
+        shared_artifacts: list[str],
+    ) -> Path:
+        """Persist content-free context provenance for one provider dispatch."""
+
+        root = f"Work/runs/{envelope.run_id}/context-manifests"
+        index_ref = f"{root}/hash-index.json"
+        index_path = self.workspace / index_ref
+        hash_index = (
+            json.loads(index_path.read_text(encoding="utf-8"))
+            if index_path.is_file()
+            else {}
+        )
+        safe_task_id = re.sub(r"[^A-Za-z0-9_.-]", "_", envelope.task_id)
+        task_sha256 = self._sha256_text(task_message)
+        manifest_ref = (
+            f"{root}/{safe_task_id}-r{envelope.revision}-{session_id}-"
+            f"{task_sha256[:12]}.json"
+        )
+
+        def component(kind: str, value: str) -> dict:
+            digest = self._sha256_text(value)
+            occurrence = f"{manifest_ref}#{kind}"
+            first = hash_index.setdefault(digest, occurrence)
+            return {
+                "kind": kind,
+                "chars": len(value),
+                "sha256": digest,
+                "first_occurrence": first,
+                "repeated_content": first != occurrence,
+            }
+
+        declared_modes = envelope.artifact_delivery_modes
+        artifact_entries: list[dict] = []
+        declared_refs = [
+            *envelope.input_refs,
+            *envelope.context_summary_refs,
+            *([envelope.prior_result_ref] if envelope.prior_result_ref else []),
+            *shared_artifacts,
+        ]
+        for ref in dict.fromkeys(declared_refs):
+            mode = declared_modes.get(ref, "reference")
+            entry = {
+                "ref": ref,
+                "delivery_mode": mode,
+                "bytes": None,
+                "sha256": None,
+                "first_occurrence": None,
+                "repeated_content": False,
+            }
+            if not ref.startswith("artifact:v1:"):
+                path = (self.workspace / ref).resolve()
+                if path.is_relative_to(self.workspace) and path.is_file():
+                    payload = path.read_bytes()
+                    digest = hashlib.sha256(payload).hexdigest()
+                    occurrence = f"{manifest_ref}#artifact:{ref}"
+                    first = hash_index.setdefault(digest, occurrence)
+                    entry.update(
+                        {
+                            "bytes": len(payload),
+                            "sha256": digest,
+                            "first_occurrence": first,
+                            "repeated_content": first != occurrence,
+                        }
+                    )
+            artifact_entries.append(entry)
+
+        prompt_components = [
+            component("system_prompt", system_prompt),
+            component("task_message", task_message),
+        ]
+        if envelope.inline_context:
+            prompt_components.append(
+                component("inline_context", envelope.inline_context)
+            )
+        if input_contract_payload is not None:
+            prompt_components.append(
+                component("input_contract", input_contract_payload)
+            )
+        selected_skills = self._selected_module_skills(definition, envelope)
+        manifest = {
+            "context_manifest_version": 1,
+            "run_id": envelope.run_id,
+            "task_id": envelope.task_id,
+            "revision": envelope.revision,
+            "agent_id": definition.id,
+            "identity_key": identity_key,
+            "session_id": session_id,
+            "input_contract_kind": envelope.input_contract_kind,
+            "target_submodule_ids": envelope.target_submodule_ids,
+            "prompt_components": prompt_components,
+            "artifacts": artifact_entries,
+            "module_skills": [
+                {
+                    "skill_id": skill.id,
+                    "version": skill.version,
+                    "scope": skill.scope,
+                    "sha256": skill.sha256,
+                    "submodules": list(skill.submodules),
+                }
+                for skill in selected_skills
+            ],
+            "delivery_mode_counts": {
+                mode: sum(
+                    entry["delivery_mode"] == mode
+                    for entry in artifact_entries
+                )
+                for mode in ("inline", "reference", "hash_retained")
+            },
+        }
+        self.store.write_json(index_ref, hash_index)
+        return self.store.write_json(manifest_ref, manifest)
+
+    def _write_provider_call_manifest(
+        self,
+        *,
+        definition: AgentDefinition,
+        envelope: TaskEnvelope,
+        identity_key: str,
+        session_id: str,
+        messages: list,
+        tool_definitions: list[dict] | None,
+        phase: str,
+        attempt: int,
+        call_index: int,
+    ) -> Path:
+        """Persist the exact content hashes for one actual provider request."""
+
+        root = f"Work/runs/{envelope.run_id}/context-manifests"
+        index_ref = f"{root}/provider-hash-index.json"
+        index_path = self.workspace / index_ref
+        hash_index = (
+            json.loads(index_path.read_text(encoding="utf-8"))
+            if index_path.is_file()
+            else {}
+        )
+        safe_task_id = re.sub(r"[^A-Za-z0-9_.-]", "_", envelope.task_id)
+        safe_phase = re.sub(r"[^A-Za-z0-9_.-]", "_", phase)
+        manifest_ref = (
+            f"{root}/provider-calls/{safe_task_id}-r{envelope.revision}-"
+            f"{session_id}-c{call_index:04d}-{safe_phase}-a{attempt}.json"
+        )
+
+        def component(kind: str, value: str, *, index: int | None = None) -> dict:
+            digest = self._sha256_text(value)
+            occurrence = f"{manifest_ref}#{kind}"
+            first = hash_index.setdefault(digest, occurrence)
+            result = {
+                "kind": kind,
+                "chars": len(value),
+                "sha256": digest,
+                "first_occurrence": first,
+                "repeated_content": first != occurrence,
+            }
+            if index is not None:
+                result["index"] = index
+            return result
+
+        message_components: list[dict] = []
+        serialized_messages: list[dict] = []
+        for index, message in enumerate(messages):
+            payload = (
+                message.model_dump(mode="json")
+                if hasattr(message, "model_dump")
+                else {
+                    "role": getattr(message, "role", None),
+                    "content": getattr(message, "content", None),
+                    "tool_calls": getattr(message, "tool_calls", None),
+                    "tool_call_id": getattr(message, "tool_call_id", None),
+                    "is_tool_result": getattr(message, "is_tool_result", False),
+                }
+            )
+            serialized = json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+            item = component(
+                f"message:{getattr(message, 'role', 'unknown')}",
+                serialized,
+                index=index,
+            )
+            item["role"] = getattr(message, "role", "unknown")
+            item["is_tool_result"] = bool(
+                getattr(message, "is_tool_result", False)
+            )
+            message_components.append(item)
+            serialized_messages.append(payload)
+
+        serialized_tools = json.dumps(
+            tool_definitions or [],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        serialized_request = json.dumps(
+            {
+                "messages": serialized_messages,
+                "tools": tool_definitions or [],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        manifest = {
+            "provider_context_manifest_version": 1,
+            "run_id": envelope.run_id,
+            "task_id": envelope.task_id,
+            "revision": envelope.revision,
+            "agent_id": definition.id,
+            "identity_key": identity_key,
+            "session_id": session_id,
+            "provider_call_index": call_index,
+            "phase": phase,
+            "attempt": attempt,
+            "message_count": len(messages),
+            "messages": message_components,
+            "tool_definitions": component("tool_definitions", serialized_tools),
+            "request_sha256": self._sha256_text(serialized_request),
+        }
+        self.store.write_json(index_ref, hash_index)
+        return self.store.write_json(manifest_ref, manifest)
 
     def _input_contract(self, envelope: TaskEnvelope):
         if not envelope.input_contract_kind or not envelope.input_contract_ref:
@@ -388,6 +643,21 @@ class ReportingAgentRunner:
         if not path.is_relative_to(self.workspace) or not path.is_file():
             return None
         return model.model_validate_json(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _reference_artifacts(envelope: TaskEnvelope) -> list[str]:
+        """Expose only artifacts explicitly delivered by reference to model tools."""
+
+        declared = [
+            *envelope.input_refs,
+            *envelope.context_summary_refs,
+            *([envelope.prior_result_ref] if envelope.prior_result_ref else []),
+        ]
+        return [
+            ref
+            for ref in dict.fromkeys(declared)
+            if envelope.artifact_delivery_modes.get(ref) == "reference"
+        ]
 
     @staticmethod
     def _task_submission_schema(kind: str, contract) -> dict:
@@ -538,14 +808,18 @@ class ReportingAgentRunner:
             agent_id=definition.id,
             session_id=session_id,
         )
+        declared_modes = envelope.artifact_delivery_modes
+        reference_shared_artifacts = [
+            ref
+            for ref in (shared_artifacts or [])
+            if ref not in declared_modes or declared_modes[ref] == "reference"
+        ]
         access = compile_agent_access(
             definition,
             envelope,
             [
-                *envelope.input_refs,
-                *envelope.context_summary_refs,
-                *([envelope.prior_result_ref] if envelope.prior_result_ref else []),
-                *(shared_artifacts or []),
+                *self._reference_artifacts(envelope),
+                *reference_shared_artifacts,
             ],
             gateway=gateway,
         )
@@ -612,7 +886,6 @@ class ReportingAgentRunner:
             else envelope.target_submodule_ids
         )
         required_synthesis_input_ids: list[str] = []
-        required_synthesis_table_types: list[str] = []
         available: dict[str, Tool] = {
             "search_project_evidence": SearchProjectEvidenceTool(
                 self.workspace,
@@ -685,9 +958,14 @@ class ReportingAgentRunner:
                     }
                     else 8000
                 ),
+                allowed_refs=access.readable_refs,
             ),
             "open_tool_result": OpenToolResultTool(gateway),
-            "search_text": SearchTextTool(gateway, research_guard),
+            "search_text": SearchTextTool(
+                gateway,
+                research_guard,
+                allowed_refs=access.readable_refs,
+            ),
             "calculate": CalculateTool(),
             "publish_research_note": PublishResearchNoteTool(
                 self.workspace,
@@ -733,7 +1011,6 @@ class ReportingAgentRunner:
                     & set(envelope.allowed_outputs)
                 ),
                 required_synthesis_input_ids=required_synthesis_input_ids,
-                required_synthesis_table_types=required_synthesis_table_types,
             ),
             "list_result_parts": ListResultPartsTool(
                 envelope.run_id,
@@ -746,7 +1023,6 @@ class ReportingAgentRunner:
                     & set(envelope.allowed_outputs)
                 ),
                 required_synthesis_input_ids=required_synthesis_input_ids,
-                required_synthesis_table_types=required_synthesis_table_types,
             ),
             "report_blocked": ReportBlockedTool(
                 definition.id,
@@ -825,7 +1101,7 @@ class ReportingAgentRunner:
             ]
         )
         module_id = self._reporting_module_id(definition, envelope)
-        if module_id is not None:
+        if module_id is not None and definition.id != "evidence-auditor":
             memory_ref = (
                 EvidenceResearchMemory(self.workspace, envelope.run_id, module_id)
                 .ensure()
@@ -850,6 +1126,7 @@ class ReportingAgentRunner:
             agent_id=definition.id,
             session_id=(cached[1] if cached is not None else "pending"),
         )
+        system_prompt = self._system_prompt(definition, envelope)
         if cached is None:
             identity_digest = hashlib.sha256(
                 f"{workflow_id}:{identity_key}".encode("utf-8")
@@ -878,7 +1155,7 @@ class ReportingAgentRunner:
                 bus=self.bus,
                 config=config,
                 llm_provider=self.llm_provider,
-                system_prompt=self._system_prompt(definition, envelope),
+                system_prompt=system_prompt,
                 usage_run_id=envelope.run_id,
                 usage_task_id=envelope.task_id,
                 artifact_gateway=gateway,
@@ -893,9 +1170,15 @@ class ReportingAgentRunner:
             await loop.start()
         else:
             loop, session_id, runtime_id = cached
+            # A durable role identity is not a license to replay every prior task
+            # prompt. Each reporting transition carries a complete typed input
+            # contract, so start the new task with clean provider working memory.
+            # Tool follow-ups and continuation slices inside this run() call still
+            # share the same conversation.
+            loop.reset_working_memory_for_typed_task()
             loop.config = self._loop_config(definition, envelope)
             loop.artifact_gateway = gateway
-            loop._system_prompt_override = self._system_prompt(definition, envelope)
+            loop._system_prompt_override = system_prompt
             loop.tools = self._tools(
                 definition,
                 envelope,
@@ -911,6 +1194,40 @@ class ReportingAgentRunner:
                 if self._provider_attempt_guard is None
                 else lambda: self._provider_attempt_guard(definition.id, envelope.task_id)
             )
+        safe_task_id = re.sub(r"[^A-Za-z0-9_.-]", "_", envelope.task_id)
+        provider_call_root = (
+            self.workspace
+            / f"Work/runs/{envelope.run_id}/context-manifests/provider-calls"
+        )
+        provider_call_index = len(
+            list(
+                provider_call_root.glob(
+                    f"{safe_task_id}-r{envelope.revision}-{session_id}-c*.json"
+                )
+            )
+        )
+
+        async def record_provider_context(
+            messages: list,
+            tool_definitions: list[dict] | None,
+            phase: str,
+            attempt: int,
+        ) -> None:
+            nonlocal provider_call_index
+            provider_call_index += 1
+            self._write_provider_call_manifest(
+                definition=definition,
+                envelope=envelope,
+                identity_key=identity_key,
+                session_id=session_id,
+                messages=messages,
+                tool_definitions=tool_definitions,
+                phase=phase,
+                attempt=attempt,
+                call_index=provider_call_index,
+            )
+
+        loop.provider_attempt_observer = record_provider_context
         self._record_identity(
             workflow_id=workflow_id,
             envelope=envelope,
@@ -939,6 +1256,16 @@ class ReportingAgentRunner:
                 )
                 for kind in envelope.allowed_outputs
             },
+        )
+        self._write_context_manifest(
+            definition=definition,
+            envelope=envelope,
+            identity_key=identity_key,
+            session_id=session_id,
+            system_prompt=system_prompt,
+            task_message=task_message,
+            input_contract_payload=input_contract_payload,
+            shared_artifacts=shared_artifacts,
         )
 
         async def wait_result() -> AgentResult:
@@ -1124,8 +1451,8 @@ class ReportingAgentRunner:
                         "你刚才错误地用普通文字结束。现在不得解释或重读模板。立即调用 "
                         "write_result_part，分别写入 skill、analysis、synthesis、visual、rubric；"
                         "然后调用 submit_result 提交 template_skill_submission，五个长文本字段"
-                        "只使用 write_result_part 返回的 artifact_ref。只有 submit_result 工具"
-                        "成功才可结束。\n"
+                        "只使用 write_result_part 返回的 artifact_ref，并按 input contract "
+                        "补齐 boundary_manifest。只有 submit_result 工具成功才可结束。\n"
                         "</submission_correction>"
                     )
                 elif definition.id == "chief-editor":
@@ -1231,6 +1558,7 @@ class ReportingAgentRunner:
                 error=str(exc),
             )
             raise
+        await loop.wait_until_turn_complete()
         self._save_conversation_trace(
             loop, envelope, runtime_id, session_id, status=result.status.value
         )

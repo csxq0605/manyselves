@@ -42,16 +42,19 @@ from .assets import (
 from .input_contracts import (
     ChiefRevisionInput,
     CrossReviewInput,
+    FinalAuditSnapshot,
     FinalReviewInput,
     ModuleReviewInput,
+    ModuleRevisionDiff,
     ModuleRevisionInput,
     RequestedModuleChange,
+    ReviewClaimStatement,
     ReviewCompletionRecord,
     ReviewEvidenceExcerpt,
     ValidationFailure,
     ValidationReport,
     WorkflowExceptionInput,
-    final_audit_content_view,
+    final_audit_metadata_view,
     module_content_view,
     strip_runtime_claim_markers,
 )
@@ -68,6 +71,34 @@ class ReviewLifecycleError(RuntimeError):
     """A deterministic review-protocol failure that requires code or model correction."""
 
 
+def _require_validation_binding(
+    runner: "ReportWorkflowRunner",
+    report: ValidationReport,
+    *,
+    subject_ref: str,
+    subject_revision: int,
+) -> None:
+    """Require one v2 validation report to bind the exact persisted subject bytes."""
+
+    subject_path = runner.service.workspace / subject_ref
+    try:
+        content_sha256 = hashlib.sha256(subject_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ReviewLifecycleError(
+            f"validated subject is unreadable: {subject_ref}"
+        ) from exc
+    if (
+        report.validation_protocol_version < 2
+        or report.subject_ref != subject_ref
+        or report.subject_revision != subject_revision
+        or report.content_sha256 != content_sha256
+    ):
+        raise ReviewLifecycleError(
+            "validation report does not bind the exact final subject; "
+            f"subject_ref={subject_ref}; subject_revision={subject_revision}"
+        )
+
+
 class ModuleReviewProgress(StrictModel):
     run_id: str
     module_id: str
@@ -81,6 +112,20 @@ class ModuleReviewProgress(StrictModel):
     review_round: int = 0
     phase: str = "initial"
     scope: list[str] = Field(default_factory=list)
+    reviewer_session_key: str | None = None
+    review_protocol_version: int = 1
+
+
+class ModuleLocalRegressionContext(StrictModel):
+    """Cross-triggered context needed for a scoped local regression review."""
+
+    prior_review_completion_ref: str
+    prior_review_completion: ReviewCompletionRecord
+    baseline_subject_ref: str
+    trigger_cross_findings: list[CrossReviewFinding] = Field(min_length=1)
+    trigger_revision_responses: list[RevisionResponse] = Field(min_length=1)
+    revision_diff_ref: str
+    revision_diff: ModuleRevisionDiff
 
 
 class CrossReviewProgress(StrictModel):
@@ -252,6 +297,34 @@ def _final_audit_markdown(canonical_markdown: str) -> str:
     return canonical_markdown[:start] + canonical_markdown[end:]
 
 
+def _final_audit_section_bodies(
+    subject: EditedReportSubmission,
+) -> dict[str, str]:
+    """Return the fixed chief-owned section bodies without repeating Chapter 2."""
+
+    return {
+        section_id: strip_runtime_claim_markers(
+            getattr(subject, CHIEF_SECTION_RESULT_PART_IDS[section_id]) or ""
+        ).rstrip()
+        for section_id in FINAL_AUDIT_SECTION_IDS
+        if section_id != "4" or subject.special_topic_plan is not None
+    }
+
+
+def _text_sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _model_sha256(model: StrictModel) -> str:
+    payload = json.dumps(
+        model.model_dump(mode="json"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return _text_sha256(payload)
+
+
 def _apply_module_patch(
     baseline: ModuleSubmission,
     patch: ModuleRevisionSubmission,
@@ -325,6 +398,7 @@ def _module_review_evidence_packet(
     runner: "ReportWorkflowRunner",
     subject: ModuleSubmission,
     run_id: str,
+    submodule_ids: set[str],
 ) -> list[ReviewEvidenceExcerpt]:
     """Attach cited E-* evidence once so review does not become a retrieval loop."""
 
@@ -334,6 +408,7 @@ def _module_review_evidence_packet(
         {
             source_id
             for claim in subject.claims
+            if claim.submodule_id in submodule_ids
             for source_id in claim.source_ids
             if source_id.startswith("E-")
         }
@@ -358,6 +433,90 @@ def _module_review_evidence_packet(
             )
         )
     return packet
+
+
+def _module_review_knowledge_packet(
+    runner: "ReportWorkflowRunner",
+    state: dict,
+    module_id: str,
+    submodule_ids: set[str],
+) -> tuple[str | None, str]:
+    """Return only taxonomy sections relevant to the current module-review scope."""
+
+    knowledge_ref = state.get("module_knowledge_refs", {}).get(module_id)
+    if not knowledge_ref:
+        return None, ""
+    path = runner.service.workspace / knowledge_ref
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ReviewLifecycleError(
+            f"module review Knowledge is unreadable: {knowledge_ref}"
+        ) from exc
+
+    selected: list[str] = []
+    current_selected = True
+    for line in text.splitlines():
+        match = re.match(r"^##\s+(2\.[1-5](?:\.\d+)+)\b", line)
+        if match:
+            current_selected = match.group(1) in submodule_ids
+        if current_selected:
+            selected.append(line)
+    bounded = "\n".join(selected).strip()
+    if len(bounded) > 14_000:
+        bounded = (
+            bounded[:14_000].rsplit("\n", 1)[0]
+            + "\n\n[审计知识上下文已按成本上限截断]"
+        )
+    return knowledge_ref, bounded
+
+
+def _module_reviewer_session_key(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    module_id: str,
+    lifecycle_id: str,
+    progress: ModuleReviewProgress | None,
+    regression_context: ModuleLocalRegressionContext | None,
+) -> str:
+    """Reuse the module's original reviewer while preserving legacy resumes."""
+
+    stable = f"module-auditor-{module_id}"
+    def require_module_identity(value: str) -> str:
+        if value != stable and not value.startswith(f"{stable}-"):
+            raise ReviewLifecycleError(
+                f"module review progress belongs to another reviewer: {value}"
+            )
+        return value
+
+    if regression_context is not None:
+        return require_module_identity(
+            regression_context.prior_review_completion.reviewer_session_key
+        )
+    if progress is not None and progress.reviewer_session_key:
+        return require_module_identity(progress.reviewer_session_key)
+    registry_path = (
+        runner.service.workspace
+        / f"Work/runs/{state['run_id']}/agent-identities.json"
+    )
+    if not registry_path.is_file():
+        return stable
+    try:
+        identities = json.loads(
+            registry_path.read_text(encoding="utf-8")
+        ).get("identities", {})
+    except (OSError, ValueError, AttributeError):
+        return stable
+    if stable in identities:
+        return stable
+    current_legacy = f"{stable}-{lifecycle_id}"
+    if progress is not None and current_legacy in identities:
+        return current_legacy
+    initial_legacy = f"{stable}-initial"
+    if initial_legacy in identities:
+        return initial_legacy
+    return stable
 
 
 def _validate_verdicts(
@@ -522,7 +681,7 @@ async def request_module_revision(
         subject_ref=(
             f"Work/runs/{state['run_id']}/modules/{subject.module_id}-r{subject.revision}.json"
         ),
-        subject=module_content_view(subject),
+        subject=module_content_view(subject, targets),
         target_submodule_ids=sorted(targets),
         module_findings=module_findings,
         cross_findings=cross_findings,
@@ -541,9 +700,7 @@ async def request_module_revision(
     subject_path = runner.service.workspace / revision_input.subject_ref
     if not subject_path.is_file():
         _write_model(runner, revision_input.subject_ref, subject)
-    input_refs = [input_ref, revision_input.subject_ref]
-    if validation_ref:
-        input_refs.append(validation_ref)
+    input_refs = [input_ref]
     specialist_id = f"module-{subject.module_id}-specialist"
     envelope = TaskEnvelope(
         task_id=f"module-{subject.module_id}-revision-r{subject.revision + 1}",
@@ -575,13 +732,14 @@ async def request_module_revision(
         allowed_outputs=["module_revision_submission"],
         revision=subject.revision + 1,
         prior_result_ref=revision_input.subject_ref,
+        artifact_delivery_modes={
+            input_ref: "inline",
+            revision_input.subject_ref: "hash_retained",
+        },
         target_submodule_ids=sorted(targets),
         input_contract_kind="module_revision_input",
         input_contract_ref=input_ref,
-        context_summary_refs=runner._context_refs(state, specialist_id),
-        inline_context=runner._template_skill_context(
-            state, "core", "analysis", "visual", "rubric"
-        ),
+        inline_context=runner._role_skill_context(state, "module-author"),
     )
     patch = await runner._agent(
         specialist_id,
@@ -628,6 +786,7 @@ def _module_review_completion(
 ) -> str:
     refs = [subject_ref, *finding_refs, *verdict_refs]
     completion = ReviewCompletionRecord(
+        review_protocol_version=2,
         lifecycle="module",
         run_id=state["run_id"],
         reviewer_agent_id="evidence-auditor",
@@ -660,6 +819,7 @@ async def run_module_review(
     *,
     initial_scope: set[str],
     lifecycle_id: str,
+    regression_context: ModuleLocalRegressionContext | None = None,
 ) -> ModuleSubmission:
     """Run module-local finding/response/verdict closure with one reviewer session."""
 
@@ -667,7 +827,6 @@ async def run_module_review(
         raise ReviewLifecycleError("module review payload belongs to a different module")
     if not re.fullmatch(r"[a-z0-9-]+", lifecycle_id):
         raise ReviewLifecycleError("module review lifecycle_id is not a safe component")
-    reviewer_session_key = f"module-auditor-{module_id}-{lifecycle_id}"
     current = payload
     pending: dict[str, ModuleReviewFinding] = {}
     responses: list[RevisionResponse] = []
@@ -675,7 +834,7 @@ async def run_module_review(
     verdict_refs: list[str] = []
     resolved_ids: set[str] = set()
     review_round = 0
-    phase = "initial"
+    phase = "local_regression" if regression_context is not None else "initial"
     scope = set(initial_scope)
     review_root = f"Work/runs/{state['run_id']}/reviews/module/{lifecycle_id}/{module_id}"
     progress_ref = f"{review_root}/progress.json"
@@ -697,11 +856,21 @@ async def run_module_review(
                 review_round=review_round,
                 phase=phase,
                 scope=sorted(scope),
+                reviewer_session_key=reviewer_session_key,
+                review_protocol_version=2,
             ),
         )
 
     progress = (
         _load_progress(runner, progress_ref, ModuleReviewProgress) if state.get("resume") else None
+    )
+    reviewer_session_key = _module_reviewer_session_key(
+        runner,
+        state=state,
+        module_id=module_id,
+        lifecycle_id=lifecycle_id,
+        progress=progress,
+        regression_context=regression_context,
     )
     if progress is not None and progress.next_action != "completed":
         if progress.run_id != state["run_id"] or progress.module_id != module_id:
@@ -782,6 +951,18 @@ async def run_module_review(
         validation_report = ValidationReport.model_validate_json(
             (runner.service.workspace / signal_ref).read_text(encoding="utf-8")
         )
+        _require_validation_binding(
+            runner,
+            validation_report,
+            subject_ref=subject_ref,
+            subject_revision=current.revision,
+        )
+        knowledge_ref, knowledge_context = _module_review_knowledge_packet(
+            runner,
+            state,
+            module_id,
+            scope,
+        )
         review_input = ModuleReviewInput(
             phase=phase,
             run_id=state["run_id"],
@@ -790,11 +971,69 @@ async def run_module_review(
             review_round=review_round,
             subject_ref=subject_ref,
             subject_revision=current.revision,
-            subject=module_content_view(current),
-            evidence=_module_review_evidence_packet(runner, current, state["run_id"]),
+            subject=module_content_view(current, scope),
+            claim_statements=[
+                ReviewClaimStatement(
+                    statement_ref=(
+                        "statement-"
+                        + hashlib.sha256(claim.id.encode("utf-8")).hexdigest()[:12]
+                    ),
+                    submodule_id=claim.submodule_id,
+                    text=claim.text,
+                    statement_type=claim.claim_type,
+                    evidence_ids=claim.source_ids,
+                    confidence=claim.confidence,
+                    unresolved=claim.unresolved,
+                )
+                for claim in current.claims
+                if claim.submodule_id in scope
+            ],
+            knowledge_ref=knowledge_ref,
+            knowledge_context=knowledge_context,
+            evidence=_module_review_evidence_packet(
+                runner,
+                current,
+                state["run_id"],
+                scope,
+            ),
             required_submodule_ids=sorted(scope),
             required_findings=list(pending.values()) if phase == "recheck" else [],
             revision_responses=responses if phase == "recheck" else [],
+            prior_review_completion_ref=(
+                regression_context.prior_review_completion_ref
+                if phase == "local_regression" and regression_context is not None
+                else None
+            ),
+            prior_review_completion=(
+                regression_context.prior_review_completion
+                if phase == "local_regression" and regression_context is not None
+                else None
+            ),
+            baseline_subject_ref=(
+                regression_context.baseline_subject_ref
+                if phase == "local_regression" and regression_context is not None
+                else None
+            ),
+            trigger_cross_findings=(
+                regression_context.trigger_cross_findings
+                if phase == "local_regression" and regression_context is not None
+                else []
+            ),
+            trigger_revision_responses=(
+                regression_context.trigger_revision_responses
+                if phase == "local_regression" and regression_context is not None
+                else []
+            ),
+            revision_diff_ref=(
+                regression_context.revision_diff_ref
+                if phase == "local_regression" and regression_context is not None
+                else None
+            ),
+            revision_diff=(
+                regression_context.revision_diff
+                if phase == "local_regression" and regression_context is not None
+                else None
+            ),
             validation_report_ref=signal_ref,
             validation_report=validation_report,
         )
@@ -805,7 +1044,7 @@ async def run_module_review(
         )
         output_kind = (
             "module_review_finding_submission"
-            if phase == "initial"
+            if phase in {"initial", "local_regression"}
             else "module_review_verdict_submission"
         )
         envelope = TaskEnvelope(
@@ -815,9 +1054,17 @@ async def run_module_review(
             objective=(
                 f"审查模块 {module_id} 的当前正文、Claim 与证据边界。"
                 if phase == "initial"
-                else f"只对模块 {module_id} 的 required_findings 返回逐项 verdict，并检查修改回归。"
+                else (
+                    f"由模块 {module_id} 的原审查者仅检查 Cross 回改范围、diff、"
+                    "Claim 与证据回归。"
+                    if phase == "local_regression"
+                    else (
+                        f"只对模块 {module_id} 的 required_findings 返回逐项 verdict，"
+                        "并检查修改回归。"
+                    )
+                )
             ),
-            input_refs=[input_ref, subject_ref, signal_ref],
+            input_refs=[input_ref],
             constraints=[
                 "coverage 记录实际检查范围，不是批准状态",
                 "finding 首次提出后不可改写；复审不得复述旧 finding",
@@ -825,8 +1072,16 @@ async def run_module_review(
                 "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
                 (
                     "首轮必须覆盖 input 中全部 required_submodule_ids"
-                    if phase == "initial"
+                    if phase in {"initial", "local_regression"}
                     else "verdicts 必须逐项且仅覆盖 required_findings；new_findings 只允许真实回归"
+                ),
+                *(
+                    [
+                        "这是原模块审查者的 local_regression，不得重新审查未修改小节",
+                        "只根据 prior completion、Cross finding/作者响应、revision diff、目标 Claim/证据和当前 validation 提出真实回归 finding",
+                    ]
+                    if phase == "local_regression"
+                    else []
                 ),
                 *runner._user_supplement_constraints(
                     state,
@@ -841,10 +1096,18 @@ async def run_module_review(
             allowed_outputs=[output_kind],
             revision=review_round,
             prior_result_ref=finding_refs[-1] if finding_refs else None,
+            artifact_delivery_modes={
+                input_ref: "inline",
+                **(
+                    {finding_refs[-1]: "hash_retained"}
+                    if finding_refs
+                    else {}
+                ),
+            },
             target_submodule_ids=sorted(scope),
             input_contract_kind="module_review_input",
             input_contract_ref=input_ref,
-            context_summary_refs=runner._context_refs(state, "evidence-auditor"),
+            inline_context=runner._role_skill_context(state, "module-auditor"),
             allowed_tools=["submit_result"],
         )
         result = await runner._agent(
@@ -854,7 +1117,7 @@ async def run_module_review(
             workflow_id,
             session_key=reviewer_session_key,
         )
-        if phase == "initial":
+        if phase in {"initial", "local_regression"}:
             if not isinstance(result, ModuleReviewFindingSubmission):
                 raise ReviewLifecycleError("module auditor returned the wrong initial type")
             if not scope.issubset(set(result.coverage.submodule_ids)):
@@ -1011,6 +1274,13 @@ def _run_cross_machine_checks(
     subject_ref: str,
     findings: list[CrossReviewFinding],
 ) -> str:
+    subject_path = runner.service.workspace / subject_ref
+    try:
+        content_sha256 = hashlib.sha256(subject_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ReviewLifecycleError(
+            f"Cross machine-check subject is unreadable: {subject_ref}"
+        ) from exc
     failures: list[ValidationFailure] = []
     check_ids: list[str] = []
     for finding in findings:
@@ -1063,9 +1333,12 @@ def _run_cross_machine_checks(
                             )
                         )
     report = ValidationReport(
+        validation_protocol_version=2,
         run_id=state["run_id"],
         subject_ref=subject_ref,
-        validator="explicit-cross-predicates-v1",
+        subject_revision=subject.revision,
+        content_sha256=content_sha256,
+        validator="explicit-cross-predicates/v2",
         check_ids=check_ids,
         failures=failures,
         passed=not failures,
@@ -1181,6 +1454,37 @@ async def run_cross_review(
             if module_id in revised_owner_ids:
                 continue
             current = modules[module_id]
+            reviewed_baseline = current
+            baseline_subject_ref = (
+                f"Work/runs/{state['run_id']}/modules/"
+                f"{module_id}-r{reviewed_baseline.revision}.json"
+            )
+            prior_completion_ref = state.get(
+                "module_review_completion_refs",
+                {},
+            ).get(module_id)
+            if not prior_completion_ref:
+                raise ReviewLifecycleError(
+                    f"Cross local regression requires prior module review: {module_id}"
+                )
+            try:
+                prior_completion = ReviewCompletionRecord.model_validate_json(
+                    (
+                        runner.service.workspace / prior_completion_ref
+                    ).read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError) as exc:
+                raise ReviewLifecycleError(
+                    f"Cross local regression prior completion is unreadable: {module_id}"
+                ) from exc
+            if (
+                prior_completion.lifecycle != "module"
+                or prior_completion.run_id != state["run_id"]
+                or baseline_subject_ref not in prior_completion.subject_refs
+            ):
+                raise ReviewLifecycleError(
+                    f"Cross local regression prior completion does not bind {module_id}"
+                )
             validation_ref: str | None = None
             machine_attempts = 0
             machine_failure_fingerprints: dict[tuple, int] = {}
@@ -1283,12 +1587,35 @@ async def run_cross_review(
             state["module_submissions"][module_id] = revised
             state.setdefault("specialist_submissions", {})[module_id] = revised
             responses_by_module[module_id] = revised.revision_responses
-            machine_refs.append(validation_ref)
             local_scope = {
                 target_id
                 for finding in grouped[module_id]
                 for target_id in finding.target_submodule_ids
             }
+            local_diff_ref = (
+                f"Work/runs/{state['run_id']}/reviews/module/cross-r{review_round}/"
+                f"{module_id}/trigger-diff-r{revised.revision}.json"
+            )
+            raw_local_diff = build_revision_diff(reviewed_baseline, revised)
+            local_diff = ModuleRevisionDiff(
+                module_id=raw_local_diff["module_id"],
+                from_revision=raw_local_diff["from_revision"],
+                to_revision=raw_local_diff["to_revision"],
+                changed_submodule_narratives=raw_local_diff[
+                    "changed_submodule_narratives"
+                ],
+                changed_statement_refs=[
+                    "statement-"
+                    + hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+                    for value in raw_local_diff["changed_claim_ids"]
+                ],
+                evidence_ids_added=raw_local_diff["source_ids_added"],
+                evidence_ids_removed=raw_local_diff["source_ids_removed"],
+            )
+            runner.service.store.write_json(
+                local_diff_ref,
+                local_diff.model_dump(mode="json"),
+            )
             local_reviewed = await run_module_review(
                 runner,
                 module_id,
@@ -1297,9 +1624,47 @@ async def run_cross_review(
                 workflow_id,
                 initial_scope=local_scope,
                 lifecycle_id=f"cross-r{review_round}",
+                regression_context=ModuleLocalRegressionContext(
+                    prior_review_completion_ref=prior_completion_ref,
+                    prior_review_completion=prior_completion,
+                    baseline_subject_ref=baseline_subject_ref,
+                    trigger_cross_findings=grouped[module_id],
+                    trigger_revision_responses=revised.revision_responses,
+                    revision_diff_ref=local_diff_ref,
+                    revision_diff=local_diff,
+                ),
             )
             modules[module_id] = local_reviewed
             state["module_submissions"][module_id] = local_reviewed
+            state.setdefault("specialist_submissions", {})[module_id] = local_reviewed
+            final_subject_ref = (
+                f"Work/runs/{state['run_id']}/modules/"
+                f"{module_id}-r{local_reviewed.revision}.json"
+            )
+            validation_ref = _run_cross_machine_checks(
+                runner,
+                state=state,
+                subject=local_reviewed,
+                subject_ref=final_subject_ref,
+                findings=grouped[module_id],
+            )
+            final_validation = ValidationReport.model_validate_json(
+                (runner.service.workspace / validation_ref).read_text(encoding="utf-8")
+            )
+            _require_validation_binding(
+                runner,
+                final_validation,
+                subject_ref=final_subject_ref,
+                subject_revision=local_reviewed.revision,
+            )
+            if not final_validation.passed:
+                raise ReviewLifecycleError(
+                    "Cross machine validation failed after the module-local regression "
+                    "review; the workflow stopped before Cross recheck without starting "
+                    "another author revision. "
+                    f"module={module_id}; validation_ref={validation_ref}"
+                )
+            machine_refs.append(validation_ref)
             local_review_refs[module_id] = state["module_review_completion_refs"][module_id]
             revised_owner_ids.add(module_id)
             save_progress("revise")
@@ -1333,6 +1698,21 @@ async def run_cross_review(
                 for module_id in set(REPORT_TAXONOMY) - changed_module_ids
             }
         )
+        machine_validation_reports: list[ValidationReport] = []
+        if phase == "recheck":
+            for validation_ref in machine_refs:
+                report = ValidationReport.model_validate_json(
+                    (runner.service.workspace / validation_ref).read_text(encoding="utf-8")
+                )
+                _require_validation_binding(
+                    runner,
+                    report,
+                    subject_ref=report.subject_ref,
+                    subject_revision=report.subject_revision
+                    if report.subject_revision is not None
+                    else -1,
+                )
+                machine_validation_reports.append(report)
         cross_input = CrossReviewInput(
             phase=phase,
             run_id=state["run_id"],
@@ -1351,16 +1731,7 @@ async def run_cross_review(
             local_regression_review_refs=local_review_refs if phase == "recheck" else {},
             prior_synthesis_inputs=prior_synthesis if phase == "recheck" else [],
             machine_validation_refs=machine_refs if phase == "recheck" else [],
-            machine_validation_reports=(
-                [
-                    ValidationReport.model_validate_json(
-                        (runner.service.workspace / ref).read_text(encoding="utf-8")
-                    )
-                    for ref in machine_refs
-                ]
-                if phase == "recheck"
-                else []
-            ),
+            machine_validation_reports=machine_validation_reports,
         )
         input_ref = _write_model(
             runner,
@@ -1381,17 +1752,15 @@ async def run_cross_review(
                 if phase == "initial"
                 else "由原 Cross reviewer 逐项判断 required_findings 是否关闭并检查接口回归。"
             ),
-            input_refs=[
-                input_ref,
-                *(module_refs[module_id] for module_id in sorted(changed_module_ids)),
-            ],
+            input_refs=[input_ref],
             constraints=[
                 "coverage 只记录审查范围，不含 integrated 或 approved 状态",
                 "findings 只包含必须写回责任模块的问题",
                 "synthesis_inputs 只包含无需模块返工、可供总编综合的已支持关系",
                 (
-                    "recheck 只重新读取 changed_module_ids；未修改模块使用同一会话"
-                    "已保留上下文和 SHA-256，不得重新打开全文"
+                    "recheck 只接收 changed_module_ids 的当前正文；未修改模块由首轮"
+                    "不可变 finding/synthesis 输入及当前 SHA-256 证明保持不变，"
+                    "不得依赖或要求进程内对话记忆"
                 ),
                 "不得审查单模块局部写作质量",
                 (
@@ -1411,12 +1780,18 @@ async def run_cross_review(
             allowed_outputs=[output_kind],
             revision=review_round,
             prior_result_ref=finding_refs[-1] if finding_refs else None,
+            artifact_delivery_modes={
+                input_ref: "inline",
+                **(
+                    {finding_refs[-1]: "hash_retained"}
+                    if finding_refs
+                    else {}
+                ),
+            },
             input_contract_kind="cross_review_input",
             input_contract_ref=input_ref,
-            context_summary_refs=runner._context_refs(state, "cross-module-reviewer"),
-            inline_context=runner._template_skill_context(
-                state, "core", "analysis", "synthesis", "rubric"
-            ),
+            inline_context=runner._role_skill_context(state, "cross-reviewer"),
+            allowed_tools=["submit_result"],
         )
         result = await runner._agent(
             "cross-module-reviewer",
@@ -1559,10 +1934,27 @@ async def _request_chief_revision(
     target_sections = {
         section_id for finding in pending.values() for section_id in finding.target_section_ids
     }
+    consistency_section_ids = {"1.1", "1.2", "1.3"}
+    if any(section_id.startswith(("3.", "4.")) for section_id in target_sections):
+        consistency_section_ids.update({"3.1.1", "3.1.3", "3.2"})
+    consistency_section_ids.difference_update(target_sections)
     revision_input = ChiefRevisionInput(
         run_id=state["run_id"],
         subject_ref=current_ref,
-        subject=final_audit_content_view(current),
+        target_section_bodies={
+            section_id: getattr(
+                current,
+                CHIEF_SECTION_RESULT_PART_IDS[section_id],
+            )
+            for section_id in sorted(target_sections)
+        },
+        consistency_context={
+            section_id: getattr(
+                current,
+                CHIEF_SECTION_RESULT_PART_IDS[section_id],
+            )
+            for section_id in sorted(consistency_section_ids)
+        },
         revision=revision_number,
         target_section_ids=sorted(target_sections),
         findings=list(pending.values()),
@@ -1572,28 +1964,54 @@ async def _request_chief_revision(
         (f"Work/runs/{state['run_id']}/reviews/chief-revision-input-r{revision_number}.json"),
         revision_input,
     )
-    revision_envelope = chief_envelope.model_copy(
-        update={
-            "task_id": f"chief-edit-r{revision_number}",
-            "objective": "按 final review findings 仅修订指定的实际总编小节。",
-            "input_refs": [
-                revision_input_ref,
-                *chief_envelope.input_refs,
-            ],
-            "allowed_outputs": ["chief_revision_submission"],
-            "revision": revision_number,
-            "prior_result_ref": current_ref,
-            "target_submodule_ids": [],
-            "input_contract_kind": "chief_revision_input",
-            "input_contract_ref": revision_input_ref,
-            "constraints": [
-                *chief_envelope.constraints,
-                "只为 target_section_ids 调用 write_result_part 并提交 chief_revision_submission 小补丁",
-                "不得提交全文、第二章、表格、图片或其他元数据；运行时确定性继承",
-                "revision_responses 必须逐项且仅覆盖 assigned finding ids",
-                "不得让工作流替你补写响应、章节或引用",
-            ],
-        }
+    revision_context = runner._role_skill_context(
+        state,
+        "chief-revision",
+        target_section_ids=target_sections,
+    )
+    revision_envelope = TaskEnvelope.model_validate(
+        chief_envelope.model_copy(
+            update={
+                "task_id": f"chief-edit-r{revision_number}",
+                "objective": "按 final review findings 仅修订指定的实际总编小节。",
+                "input_refs": [revision_input_ref],
+                "allowed_outputs": ["chief_revision_submission"],
+                "allowed_tools": [
+                    "write_result_part",
+                    "list_result_parts",
+                    "submit_result",
+                ],
+                "revision": revision_number,
+                "prior_result_ref": current_ref,
+                "artifact_delivery_modes": {
+                    revision_input_ref: "inline",
+                    current_ref: "hash_retained",
+                },
+                "target_submodule_ids": [],
+                "input_contract_kind": "chief_revision_input",
+                "input_contract_ref": revision_input_ref,
+                "constraints": [
+                    "只为 target_section_ids 调用 write_result_part 并提交 chief_revision_submission 小补丁",
+                    "不得提交全文、第二章、表格、图片或其他元数据；运行时确定性继承",
+                    "revision_responses 必须逐项且仅覆盖 assigned finding ids",
+                    "不得让工作流替你补写响应、章节或引用",
+                    (
+                        "章节 ID 与 part_id 的固定映射为："
+                        + "；".join(
+                            f"{section_id} -> {CHIEF_SECTION_RESULT_PART_IDS[section_id]}"
+                            for section_id in sorted(target_sections)
+                        )
+                    ),
+                    *runner._user_supplement_constraints(
+                        state,
+                        stage="chief_edit",
+                        target_ids=target_sections,
+                    ),
+                ],
+                "context_summary_refs": [],
+                "inline_context": revision_context,
+            },
+        ).model_dump(mode="python")
     )
     revised = await runner._agent(
         "chief-editor",
@@ -1802,7 +2220,7 @@ async def run_final_review(
             (f"Work/runs/{state['run_id']}/edited-revisions/chief-r{review_round}.json"),
             current,
         )
-        canonical = runner._canonical_markdown(current)
+        _, canonical = runner._delivery_projection(state, current, claims)
         runner._validate_final_report_structure(
             state, canonical, f"chief-candidate-r{review_round}"
         )
@@ -1813,13 +2231,57 @@ async def run_final_review(
         validation_report = ValidationReport.model_validate_json(
             (runner.service.workspace / integrity_ref).read_text(encoding="utf-8")
         )
+        _require_validation_binding(
+            runner,
+            validation_report,
+            subject_ref=(
+                f"Work/runs/{state['run_id']}/validation/"
+                f"report-chief-candidate-r{review_round}.md"
+            ),
+            subject_revision=review_round,
+        )
+        metadata = final_audit_metadata_view(current)
+        audit_bodies = _final_audit_section_bodies(current)
+        recheck_targets = (
+            {
+                section_id
+                for finding in pending.values()
+                for section_id in finding.target_section_ids
+            }
+            if phase == "recheck"
+            else set()
+        )
         review_input = FinalReviewInput(
             phase=phase,
             run_id=state["run_id"],
             subject_ref=subject_ref,
             subject_revision=review_round,
-            subject=final_audit_content_view(current),
-            canonical_markdown=_final_audit_markdown(strip_runtime_claim_markers(canonical)),
+            subject_metadata=metadata if phase == "initial" else None,
+            subject_metadata_sha256=(
+                _model_sha256(metadata) if phase == "recheck" else None
+            ),
+            canonical_markdown=(
+                _final_audit_markdown(strip_runtime_claim_markers(canonical))
+                if phase == "initial"
+                else None
+            ),
+            changed_section_bodies=(
+                {
+                    section_id: audit_bodies[section_id]
+                    for section_id in sorted(recheck_targets)
+                }
+                if phase == "recheck"
+                else {}
+            ),
+            unchanged_section_sha256=(
+                {
+                    section_id: _text_sha256(body)
+                    for section_id, body in audit_bodies.items()
+                    if section_id not in recheck_targets
+                }
+                if phase == "recheck"
+                else {}
+            ),
             required_section_ids=list(required_audit_sections),
             required_findings=list(pending.values()) if phase == "recheck" else [],
             revision_responses=responses if phase == "recheck" else [],
@@ -1848,7 +2310,7 @@ async def run_final_review(
                     f"{audited_chapters}回归。"
                 )
             ),
-            input_refs=[input_ref, integrity_ref],
+            input_refs=[input_ref],
             constraints=[
                 f"只审查{audited_chapters}当前实际存在的小节及最终交付质量，不重做模块或 Cross 专业审查",
                 "第二章由模块审查和运行时保真校验负责，不属于本阶段内容、覆盖范围或 finding target",
@@ -1871,12 +2333,18 @@ async def run_final_review(
             allowed_outputs=[output_kind],
             revision=review_round,
             prior_result_ref=finding_refs[-1] if finding_refs else None,
+            artifact_delivery_modes={
+                input_ref: "inline",
+                **(
+                    {finding_refs[-1]: "hash_retained"}
+                    if finding_refs
+                    else {}
+                ),
+            },
             input_contract_kind="final_review_input",
             input_contract_ref=input_ref,
-            context_summary_refs=runner._context_refs(state, "chief-editor-auditor"),
-            inline_context=runner._template_skill_context(
-                state, "core", "synthesis", "visual", "rubric"
-            ),
+            inline_context=runner._role_skill_context(state, "final-auditor"),
+            allowed_tools=["submit_result"],
         )
         result = await runner._agent(
             "chief-editor-auditor",
@@ -1983,8 +2451,34 @@ async def run_final_review(
                 f"Work/runs/{state['run_id']}/reviews/final-completion.json",
                 completion,
             )
+            canonical_ref = validation_report.subject_ref
+            snapshot_ref = _write_immutable_model(
+                runner,
+                f"Work/runs/{state['run_id']}/reviews/final-audit-snapshot.json",
+                FinalAuditSnapshot(
+                    run_id=state["run_id"],
+                    subject_ref=subject_ref,
+                    subject_revision=review_round,
+                    subject_sha256=hashlib.sha256(
+                        (runner.service.workspace / subject_ref).read_bytes()
+                    ).hexdigest(),
+                    canonical_markdown_ref=canonical_ref,
+                    canonical_markdown_sha256=hashlib.sha256(
+                        (runner.service.workspace / canonical_ref).read_bytes()
+                    ).hexdigest(),
+                    validation_report_ref=integrity_ref,
+                    validation_report_sha256=hashlib.sha256(
+                        (runner.service.workspace / integrity_ref).read_bytes()
+                    ).hexdigest(),
+                    completion_ref=completion_ref,
+                    completion_sha256=hashlib.sha256(
+                        (runner.service.workspace / completion_ref).read_bytes()
+                    ).hexdigest(),
+                ),
+            )
             state["edited_report"] = current
             state["final_review_completion_ref"] = completion_ref
+            state["final_audit_snapshot_ref"] = snapshot_ref
             state["final_residual_risks"] = residual_risks
             save_progress("completed")
             return

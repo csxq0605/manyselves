@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from manyselves.core.tools.artifact_tools import OpenArtifactTool, SearchTextTool
+from manyselves.core.tools.artifact_tools import (
+    OpenArtifactTool,
+    OpenToolResultTool,
+    SearchTextTool,
+)
 
 
 class _Gateway:
@@ -28,6 +32,9 @@ class _Gateway:
         context_lines: int,
     ) -> dict:
         return {"ref": ref, "query": query}
+
+    def open_internal(self, ref: str, *, offset: int, limit: int):
+        return self.open(ref, offset=offset, limit=limit)
 
 
 @pytest.mark.asyncio
@@ -99,3 +106,14 @@ async def test_open_artifact_can_read_a_complete_audit_bundle_in_one_call() -> N
 
     assert page["limit"] == 160_000
     assert gateway.open_calls == [("cross-review-input.json", 0, 160_000)]
+
+
+@pytest.mark.asyncio
+async def test_open_tool_result_starts_with_8000_character_page_by_default() -> None:
+    gateway = _Gateway()
+    tool = OpenToolResultTool(gateway)  # type: ignore[arg-type]
+
+    page = await tool("tool-result-ref", offset=5488)
+
+    assert page["limit"] == 8000
+    assert gateway.open_calls == [("tool-result-ref", 5488, 8000)]

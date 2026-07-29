@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import unicodedata
 from copy import deepcopy
 from html import escape
 from pathlib import Path
@@ -1299,6 +1300,112 @@ class SubmitResultTool(_ResultTool):
                 ),
             )
 
+    @staticmethod
+    def _validate_template_skill_boundary(
+        payload: TemplateSkillSubmission,
+        contract: TemplateDistillationInput,
+        source_text: str,
+    ) -> None:
+        manifest = payload.boundary_manifest
+        if manifest.policy_version != contract.boundary_policy_version:
+            raise SubmissionValidationError(
+                "template Skill boundary policy differs from the input contract",
+                field="boundary_manifest.policy_version",
+                expected=str(contract.boundary_policy_version),
+                received=manifest.policy_version,
+            )
+        SubmitResultTool._require_exact_ids(
+            set(manifest.transferred_categories),
+            set(contract.allowed_transfer_categories),
+            "template Skill transfer categories",
+            field="boundary_manifest.transferred_categories",
+        )
+        SubmitResultTool._require_exact_ids(
+            set(manifest.excluded_categories),
+            set(contract.required_exclusion_categories),
+            "template Skill exclusion categories",
+            field="boundary_manifest.excluded_categories",
+        )
+        skill_text = "\n".join(
+            (
+                payload.skill_markdown,
+                payload.analysis_language_reference,
+                payload.synthesis_reference,
+                payload.visual_organization_reference,
+                payload.quality_rubric,
+            )
+        )
+        identifier = re.search(
+            r"(?<![A-Za-z0-9])(?:E|C|SI)-[A-Za-z0-9][A-Za-z0-9_.-]*",
+            skill_text,
+        )
+        if identifier is not None:
+            raise SubmissionValidationError(
+                "template Skill contains a project evidence, Claim, or synthesis identifier",
+                field="$template_skill_content",
+                expected=(
+                    "reusable guidance or fact-free worked examples with no concrete "
+                    "E-*, C-*, or SI-* identifier"
+                ),
+                received=identifier.group(0),
+            )
+        threshold = re.search(
+            r"(?<![\w.])\d+(?:\.\d+)?\s*(?:%|kV|V|A|kW|MW|kVA|MVA|Hz|Ω|℃|°C|mm2|mm²)(?![\w])",
+            skill_text,
+            flags=re.IGNORECASE,
+        )
+        if threshold is not None:
+            raise SubmissionValidationError(
+                "template Skill contains a concrete domain number or threshold",
+                field="$template_skill_content",
+                expected=(
+                    "reusable guidance or placeholder examples; source domain thresholds "
+                    "belong to Knowledge"
+                ),
+                received=threshold.group(0),
+            )
+        standard = re.search(
+            r"(?<![\w/])(?:GB(?:/T)?|DL/T|IEC|IEEE|ISO|NFPA|EN)"
+            r"\s*[-:：]?\s*\d{2,}(?:[.-]\d+)*(?!\w)",
+            skill_text,
+            flags=re.IGNORECASE,
+        )
+        if standard is not None:
+            raise SubmissionValidationError(
+                "template Skill contains a concrete domain standard identifier",
+                field="$template_skill_content",
+                expected=(
+                    "reusable guidance or placeholder examples; standards and applicability "
+                    "belong to Knowledge"
+                ),
+                received=standard.group(0),
+            )
+
+        def normalized(value: str) -> str:
+            return re.sub(
+                r"\s+",
+                "",
+                unicodedata.normalize("NFKC", value),
+            ).casefold()
+
+        normalized_source = normalized(source_text)
+        copied = next(
+            (
+                segment.strip()
+                for segment in re.split(r"[。！？.!?\n]+", skill_text)
+                if len(normalized(segment)) >= 36
+                and normalized(segment) in normalized_source
+            ),
+            None,
+        )
+        if copied is not None:
+            raise SubmissionValidationError(
+                "template Skill copies a long source sentence instead of abstracting a method",
+                field="$template_skill_content",
+                expected="new method-level wording with no long verbatim source sentence",
+                received=copied[:240],
+            )
+
     def _validate_against_input_contract(self, payload) -> None:
         contract = self._load_input_contract()
         if contract is None:
@@ -1345,6 +1452,11 @@ class SubmitResultTool(_ResultTool):
                         "Skill payload."
                     ),
                 )
+            self._validate_template_skill_boundary(
+                payload,
+                contract,
+                str(cached["text"]),
+            )
             return
         if isinstance(contract, ModuleAuthoringInput):
             if not isinstance(payload, ModuleSubmission):
@@ -1703,7 +1815,10 @@ class SubmitResultTool(_ResultTool):
                 else contract.structured_modules
             )
             if source_modules:
-                ledger_path = self.store.workspace / f"Work/runs/{self.run_id}/ledgers/claims.json"
+                ledger_path = (
+                    self.store.workspace
+                    / f"Work/runs/{self.run_id}/ledgers/claims.json"
+                )
                 expected_claim_ids = (
                     {
                         claim.id
@@ -2134,7 +2249,6 @@ class _ResultPartTool(Tool):
         expected_part_ids: list[str] | None = None,
         evidence_binding_required: bool = False,
         required_synthesis_input_ids: list[str] | None = None,
-        required_synthesis_table_types: list[str] | None = None,
     ):
         if Path(run_id).name != run_id or not run_id:
             raise ValueError("run_id must be a single safe path component")
@@ -2149,9 +2263,6 @@ class _ResultPartTool(Tool):
         self.expected_part_ids = tuple(dict.fromkeys(expected_part_ids or ()))
         self.evidence_binding_required = evidence_binding_required
         self.required_synthesis_input_ids = tuple(dict.fromkeys(required_synthesis_input_ids or ()))
-        self.required_synthesis_table_types = tuple(
-            dict.fromkeys(required_synthesis_table_types or ())
-        )
 
     @property
     def relative_root(self) -> Path:
@@ -2296,7 +2407,6 @@ class ListResultPartsTool(_ResultPartTool):
             "missing_part_ids": missing_ids,
             "unbound_part_ids": unbound_ids,
             "required_synthesis_input_ids": list(self.required_synthesis_input_ids),
-            "required_synthesis_table_types": list(self.required_synthesis_table_types),
             "complete": (bool(self.expected_part_ids) and not missing_ids and not unbound_ids),
         }
 

@@ -1,0 +1,25 @@
+{
+  "provenance": {
+    "run_id": "report-730c5d83f6",
+    "source_artifact": "Work/report-versions/report-730c5d83f6/artifacts/06-edited_submission.json",
+    "purpose": "Small no-model regression for duplicate handwritten and structured tables."
+  },
+  "risk_panorama": "本次评估按共同根因和传播能力组织风险全景。\n\n**表：风险簇矩阵**\n\n| 风险簇 | 核心根因 | 综合输入 |\n| --- | --- | --- |\n| 2A2变压器单一故障点 | 高负荷、谐波、剩余电流与保护边界叠加 | SI-1 |",
+  "improvement_action_plan": "以下按整改依赖关系组织行动方案，明确责任接口、动作、时序、验收指标和剩余风险。\n\n**表：行动依赖矩阵**\n\n| 行动 | 时间阶段 | 前置依赖 | 综合输入 | 验收标准 |\n| --- | --- | --- | --- | --- |\n| 2A2连续负荷监测 | 立即 | 无 | SI-1 | 连续不少于7天监测报告 |",
+  "tables": [
+    {
+      "title": "风险簇矩阵",
+      "headers": ["风险簇", "核心根因", "综合输入"],
+      "rows": [
+        ["2A2变压器单一故障点", "高负荷、谐波、剩余电流与保护边界叠加", "SI-1"]
+      ]
+    },
+    {
+      "title": "行动依赖矩阵",
+      "headers": ["行动", "时间阶段", "前置依赖", "综合输入", "验收标准"],
+      "rows": [
+        ["2A2连续负荷监测", "立即", "无", "SI-1", "连续不少于7天监测报告"]
+      ]
+    }
+  ]
+}

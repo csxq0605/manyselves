@@ -14,6 +14,7 @@ from manyselves.core.reporting.agentic_models import (
     FINAL_REPORT_SECTION_IDS,
     AgentResult,
     ChiefRevisionSubmission,
+    ClaimRecord,
     CrossReviewFindingSubmission,
     CrossReviewVerdictSubmission,
     EditedReportSubmission,
@@ -25,6 +26,7 @@ from manyselves.core.reporting.agentic_models import (
     ModuleSubmission,
     ResolutionVerdict,
     RevisionResponse,
+    TableSubmission,
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
@@ -38,9 +40,11 @@ from manyselves.core.reporting.models import (
     ProjectManifest,
     SpecialTopicPlan,
 )
+from manyselves.core.reporting.prompts import PromptAssembler
 from manyselves.core.reporting.review_lifecycle import (
     ReviewLifecycleError,
     _apply_chief_patch,
+    _require_validation_binding,
     run_cross_review,
     run_final_review,
     run_module_review,
@@ -48,7 +52,11 @@ from manyselves.core.reporting.review_lifecycle import (
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.versions import ReportVersion
-from manyselves.core.reporting.workflow import FullReportCheckpoint, ReportWorkflowRunner
+from manyselves.core.reporting.workflow import (
+    AgentWorkflowError,
+    FullReportCheckpoint,
+    ReportWorkflowRunner,
+)
 from manyselves.core.tools.reporting_collaboration_tools import SubmitResultTool
 
 
@@ -182,6 +190,7 @@ class _ScriptedRunner:
         self.service = _FakeService(workspace)
         self.scripted = list(scripted)
         self.calls: list[tuple[str, str, str | None]] = []
+        self.envelopes: list[TaskEnvelope] = []
 
     async def _agent(
         self,
@@ -196,9 +205,14 @@ class _ScriptedRunner:
         assert agent_id == expected_agent
         assert envelope.allowed_outputs == [expected_output]
         self.calls.append((agent_id, expected_output, session_key))
+        self.envelopes.append(envelope)
         return result
 
     def _validate_module_structure(self, state, module, phase):
+        subject_ref = (
+            f"Work/runs/{state['run_id']}/modules/"
+            f"{module.module_id}-r{module.revision}.json"
+        )
         ref = (
             f"Work/runs/{state['run_id']}/reviews/"
             f"module-quality-{module.module_id}-r{module.revision}-{phase}.json"
@@ -206,12 +220,14 @@ class _ScriptedRunner:
         self.service.store.write_json(
             ref,
             ValidationReport(
+                validation_protocol_version=2,
                 run_id=state["run_id"],
-                subject_ref=(
-                    f"Work/runs/{state['run_id']}/modules/"
-                    f"{module.module_id}-r{module.revision}.json"
-                ),
-                validator="test-module-structure/v1",
+                subject_ref=subject_ref,
+                subject_revision=module.revision,
+                content_sha256=hashlib.sha256(
+                    (self.service.workspace / subject_ref).read_bytes()
+                ).hexdigest(),
+                validator="test-module-structure/v2",
                 check_ids=["module.canonical_markdown"],
                 passed=True,
             ).model_dump(mode="json"),
@@ -231,16 +247,38 @@ class _ScriptedRunner:
         return ""
 
     @staticmethod
+    def _role_skill_context(state, role, **kwargs):
+        return ""
+
+    @staticmethod
     def _canonical_markdown(edited):
         return ReportWorkflowRunner._canonical_markdown(edited)
 
+    def _delivery_projection(self, state, edited, claims=None):
+        if claims == []:
+            return None, ReportWorkflowRunner._canonical_markdown(edited)
+        return ReportWorkflowRunner._delivery_projection(self, state, edited, claims)
+
     def _validate_final_report_structure(self, state, markdown, phase):
+        subject_ref = f"Work/runs/{state['run_id']}/validation/report-{phase}.md"
+        self.service.store.write_text(subject_ref, markdown)
+        revision_text = phase.removeprefix("chief-candidate-r")
+        subject_revision = (
+            int(revision_text)
+            if phase.startswith("chief-candidate-r") and revision_text.isdigit()
+            else None
+        )
         self.service.store.write_json(
             f"Work/runs/{state['run_id']}/reviews/report-integrity-{phase}.json",
             ValidationReport(
+                validation_protocol_version=2,
                 run_id=state["run_id"],
-                subject_ref=(f"Work/runs/{state['run_id']}/validation/report-{phase}.md"),
-                validator="test-final-report-structure/v1",
+                subject_ref=subject_ref,
+                subject_revision=subject_revision,
+                content_sha256=hashlib.sha256(
+                    (self.service.workspace / subject_ref).read_bytes()
+                ).hexdigest(),
+                validator="test-final-report-structure/v2",
                 check_ids=["final_report.fixed_sections_and_markdown"],
                 passed=True,
             ).model_dump(mode="json"),
@@ -269,6 +307,7 @@ class _ToolBackedModuleReviewRunner(_ScriptedRunner):
         session_key=None,
     ):
         self.calls.append((agent_id, envelope.allowed_outputs[0], session_key))
+        self.envelopes.append(envelope)
         if agent_id == "module-2.1-specialist":
             return self.patch
 
@@ -283,7 +322,7 @@ class _ToolBackedModuleReviewRunner(_ScriptedRunner):
                         "category": "analysis_depth",
                         "impact": "advisory",
                         "observation": "当前建议缺少责任接口和可由原审查者复核的验收方法。",
-                        "evidence_refs": [artifacts[1]],
+                        "evidence_refs": [envelope.input_contract_ref],
                         "required_change": "在目标小节补充责任接口、执行动作和可验证验收方法。",
                         "reviewer_checks": ["责任、动作和验收方法已经形成闭环"],
                     }
@@ -296,7 +335,7 @@ class _ToolBackedModuleReviewRunner(_ScriptedRunner):
                     {
                         "verdict": "resolved",
                         "reason": "当前修订已经补充责任、执行动作和验收方法，可以关闭。",
-                        "evidence_refs": [artifacts[1]],
+                        "evidence_refs": [envelope.input_contract_ref],
                     }
                 ],
                 "new_findings": [],
@@ -491,8 +530,8 @@ async def test_module_review_requires_author_response_and_original_reviewer_verd
     assert result.revision == 1
     reviewer_calls = [call for call in runner.calls if call[0] == "evidence-auditor"]
     assert [call[2] for call in reviewer_calls] == [
-        "module-auditor-2.1-initial",
-        "module-auditor-2.1-initial",
+        "module-auditor-2.1",
+        "module-auditor-2.1",
     ]
     completion = ReviewCompletionRecord.model_validate_json(
         (tmp_path / state["module_review_completion_refs"]["2.1"]).read_text(encoding="utf-8")
@@ -599,6 +638,77 @@ async def test_module_review_resume_continues_after_persisted_findings_without_r
 
 
 @pytest.mark.asyncio
+async def test_module_review_resume_reuses_legacy_lifecycle_identity(
+    tmp_path: Path,
+) -> None:
+    module = _module("2.1")
+    target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
+    store = ReportingStore(tmp_path)
+    store.write_json(
+        "Work/runs/run-legacy-review/reviews/module/initial/2.1/progress.json",
+        {
+            "run_id": "run-legacy-review",
+            "module_id": "2.1",
+            "next_action": "review",
+            "current": module.model_dump(mode="json"),
+            "pending": [],
+            "responses": [],
+            "finding_refs": [],
+            "verdict_refs": [],
+            "resolved_ids": [],
+            "review_round": 0,
+            "phase": "initial",
+            "scope": [target],
+        },
+    )
+    store.write_json(
+        "Work/runs/run-legacy-review/agent-identities.json",
+        {
+            "workflow_id": "workflow",
+            "created_by": "main",
+            "identities": {
+                "module-auditor-2.1-initial": {
+                    "agent_id": "evidence-auditor",
+                }
+            },
+        },
+    )
+    runner = _ScriptedRunner(
+        tmp_path,
+        [
+            (
+                "evidence-auditor",
+                "module_review_finding_submission",
+                ModuleReviewFindingSubmission(
+                    coverage={"submodule_ids": [target]},
+                    findings=[],
+                ),
+            )
+        ],
+    )
+
+    await run_module_review(
+        runner,
+        "2.1",
+        module,
+        {"run_id": "run-legacy-review", "resume": True},
+        "workflow",
+        initial_scope={target},
+        lifecycle_id="initial",
+    )
+
+    assert runner.calls[0][2] == "module-auditor-2.1-initial"
+    completion = ReviewCompletionRecord.model_validate_json(
+        (
+            tmp_path
+            / "Work/runs/run-legacy-review/reviews/module/initial/2.1/completion-r0.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert completion.review_protocol_version == 2
+    assert completion.reviewer_session_key == "module-auditor-2.1-initial"
+
+
+@pytest.mark.asyncio
 async def test_module_review_lifecycles_use_disjoint_immutable_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -659,6 +769,8 @@ async def test_module_review_lifecycles_use_disjoint_immutable_artifacts(
     assert "/module/cross-r0/2.1/" in regression_ref
     assert (tmp_path / initial_ref).read_bytes() == initial_bytes
     assert (tmp_path / regression_ref).is_file()
+    assert initial.calls[0][2] == "module-auditor-2.1"
+    assert regression.calls[0][2] == "module-auditor-2.1"
 
 
 @pytest.mark.asyncio
@@ -829,6 +941,40 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
             }
         ],
     )
+    local_finding_id = "M-2.3-cross-r0-r0-REGRESSION"
+    local_finding = {
+        "id": local_finding_id,
+        "target_submodule_id": target,
+        "category": "regression",
+        "impact": "blocking",
+        "observation": "Cross 回改写入了依赖和联合验收，但未明确验收记录的责任接口。",
+        "evidence_refs": ["Work/runs/run-x/modules/2.3-r1.json"],
+        "required_change": "补充联合验收记录的责任接口，并保持 Cross 已要求的依赖、顺序和验收内容。",
+        "reviewer_checks": ["核对责任接口与原 Cross 回改内容同时保留"],
+    }
+    local_patch = ModuleRevisionSubmission(
+        module_id="2.3",
+        base_revision=1,
+        revision=2,
+        submodule_narratives={
+            target: (
+                "### 修订\n\n已写入依赖对象、作用机制、实施顺序和联合验收，"
+                "并由供配电与保护责任人共同签署验收记录。"
+            )
+        },
+        claims_upsert=[],
+        claim_ids_remove=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision_responses=[
+            {
+                "finding_id": local_finding_id,
+                "action": "implemented",
+                "summary": "已补充联合验收记录的责任接口，并保留 Cross 回改内容。",
+                "changed_target_ids": [target],
+            }
+        ],
+    )
     runner = _ScriptedRunner(
         tmp_path,
         [
@@ -847,7 +993,24 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
                 "module_review_finding_submission",
                 ModuleReviewFindingSubmission(
                     coverage={"submodule_ids": [target]},
-                    findings=[],
+                    findings=[local_finding],
+                ),
+            ),
+            ("module-2.3-specialist", "module_revision_submission", local_patch),
+            (
+                "evidence-auditor",
+                "module_review_verdict_submission",
+                ModuleReviewVerdictSubmission(
+                    coverage={"submodule_ids": [target]},
+                    verdicts=[
+                        {
+                            "finding_id": local_finding_id,
+                            "verdict": "resolved",
+                            "reason": "责任接口已补充，且 Cross 要求的依赖、顺序与联合验收均保留。",
+                            "evidence_refs": ["Work/runs/run-x/modules/2.3-r2.json"],
+                        }
+                    ],
+                    new_findings=[],
                 ),
             ),
             (
@@ -860,7 +1023,7 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
                             "finding_id": "X-005",
                             "verdict": "resolved",
                             "reason": "责任模块已写入依赖机制、顺序和联合验收，接口问题关闭。",
-                            "evidence_refs": ["Work/runs/run-x/modules/2.3-r1.json"],
+                            "evidence_refs": ["Work/runs/run-x/modules/2.3-r2.json"],
                         }
                     ],
                     new_findings=[],
@@ -869,22 +1032,114 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
             ),
         ],
     )
-    state = {"run_id": "run-x", "module_submissions": modules}
+    knowledge_ref = "Work/runs/run-x/context/module-2.3-knowledge.md"
+    other_target = next(
+        submodule_id
+        for submodule_id in REPORT_TAXONOMY["2.3"].submodules
+        if submodule_id != target
+    )
+    runner.service.store.write_text(
+        knowledge_ref,
+        (
+            "# 模块 2.3 确定性知识上下文\n\n"
+            "项目 Knowledge 只提供方法和标准背景。\n\n"
+            f"## {target} 目标知识\n\nTARGET-KNOWLEDGE\n\n"
+            f"## {other_target} 无关知识\n\nUNRELATED-KNOWLEDGE\n"
+        ),
+    )
+    state = {
+        "run_id": "run-x",
+        "module_submissions": modules,
+        "module_knowledge_refs": {"2.3": knowledge_ref},
+    }
     for module_id, module in modules.items():
         runner.service.store.write_json(
             f"Work/runs/run-x/modules/{module_id}-r0.json",
             module.model_dump(mode="json"),
         )
+    baseline_ref = "Work/runs/run-x/modules/2.3-r0.json"
+    prior_completion_ref = (
+        "Work/runs/run-x/reviews/module/initial/2.3/completion-r0.json"
+    )
+    runner.service.store.write_json(
+        prior_completion_ref,
+        ReviewCompletionRecord(
+            review_protocol_version=2,
+            lifecycle="module",
+            run_id="run-x",
+            reviewer_agent_id="evidence-auditor",
+            reviewer_session_key="module-auditor-2.3",
+            subject_refs=[baseline_ref],
+            finding_refs=[],
+            verdict_refs=[],
+            resolved_finding_ids=[],
+            artifact_sha256=_artifact_hashes(tmp_path, [baseline_ref]),
+        ).model_dump(mode="json"),
+    )
+    state["module_review_completion_refs"] = {"2.3": prior_completion_ref}
     await run_cross_review(runner, state, "workflow")
     agents = [call[0] for call in runner.calls]
     assert agents == [
         "cross-module-reviewer",
         "module-2.3-specialist",
         "evidence-auditor",
+        "module-2.3-specialist",
+        "evidence-auditor",
         "cross-module-reviewer",
     ]
     cross_sessions = [call[2] for call in runner.calls if call[0] == "cross-module-reviewer"]
     assert cross_sessions == ["cross-module-reviewer", "cross-module-reviewer"]
+    auditor_sessions = [call[2] for call in runner.calls if call[0] == "evidence-auditor"]
+    assert auditor_sessions == ["module-auditor-2.3", "module-auditor-2.3"]
+    cross_envelopes = [
+        envelope
+        for envelope in runner.envelopes
+        if envelope.agent_id == "cross-module-reviewer"
+    ]
+    assert cross_envelopes
+    assert all(envelope.allowed_tools == ["submit_result"] for envelope in cross_envelopes)
+    assert all(
+        envelope.input_refs == [envelope.input_contract_ref]
+        for envelope in cross_envelopes
+    )
+    local_audit_envelopes = [
+        envelope
+        for envelope in runner.envelopes
+        if envelope.agent_id == "evidence-auditor"
+    ]
+    assert local_audit_envelopes
+    assert all(
+        envelope.input_refs == [envelope.input_contract_ref]
+        and envelope.allowed_tools == ["submit_result"]
+        for envelope in local_audit_envelopes
+    )
+    local_input = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-x/reviews/module/cross-r0/2.3/input-r0.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert local_input["review_protocol_version"] == 2
+    assert local_input["phase"] == "local_regression"
+    assert local_input["prior_review_completion_ref"] == prior_completion_ref
+    assert local_input["baseline_subject_ref"] == baseline_ref
+    assert [item["id"] for item in local_input["trigger_cross_findings"]] == [
+        "X-005"
+    ]
+    assert [
+        item["finding_id"] for item in local_input["trigger_revision_responses"]
+    ] == ["X-005"]
+    assert set(local_input["subject"]["submodule_narratives"]) == {target}
+    assert [
+        statement["text"] for statement in local_input["claim_statements"]
+    ] == ["该模块已批准一个用于跨模块关系验证的边界判断。"]
+    assert local_input["claim_statements"][0]["statement_ref"].startswith(
+        "statement-"
+    )
+    assert local_input["knowledge_ref"] == knowledge_ref
+    assert "TARGET-KNOWLEDGE" in local_input["knowledge_context"]
+    assert "UNRELATED-KNOWLEDGE" not in local_input["knowledge_context"]
+    assert local_input["revision_diff"]["changed_submodule_narratives"] == [target]
     recheck_input = json.loads(
         (tmp_path / "Work/runs/run-x/reviews/cross-review-input-r1.json").read_text(
             encoding="utf-8"
@@ -898,6 +1153,13 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
         "2.4",
         "2.5",
     }
+    [machine_report] = recheck_input["machine_validation_reports"]
+    assert machine_report["validation_protocol_version"] == 2
+    assert machine_report["subject_ref"].endswith("/modules/2.3-r2.json")
+    assert machine_report["subject_revision"] == 2
+    assert machine_report["content_sha256"] == hashlib.sha256(
+        (tmp_path / machine_report["subject_ref"]).read_bytes()
+    ).hexdigest()
     assert state["cross_review_completion_ref"].endswith("reviews/cross-completion.json")
 
 
@@ -989,10 +1251,35 @@ async def test_final_review_uses_chief_response_then_original_auditor_verdict(
             ),
         ],
     )
+    delivery_claims = [
+        ClaimRecord(
+            id=f"C-{module_id.replace('.', '')}-001",
+            module_id=module_id,
+            submodule_id=next(iter(REPORT_TAXONOMY[module_id].submodules)),
+            text=f"{module_id} 测试结论",
+            claim_type="recommendation",
+            footnote_required=False,
+        )
+        for module_id in REPORT_TAXONOMY
+    ]
+    current = current.model_copy(
+        update={
+            "protected_claim_ids": [claim.id for claim in delivery_claims],
+        }
+    )
     state = {
         "run_id": "run-f",
         "edited_report": current,
-        "module_submissions": {module_id: _module(module_id) for module_id in REPORT_TAXONOMY},
+        "module_submissions": {
+            module_id: _module(module_id).model_copy(
+                update={
+                    "claims": [
+                        claim for claim in delivery_claims if claim.module_id == module_id
+                    ]
+                }
+            )
+            for module_id in REPORT_TAXONOMY
+        },
         "cross_synthesis_inputs": [],
     }
     await run_final_review(
@@ -1008,28 +1295,136 @@ async def test_final_review_uses_chief_response_then_original_auditor_verdict(
         ),
         chief_session_key="chief-editor",
         approved_module_text=module_text,
-        claims=[],
+        claims=delivery_claims,
         aggregate_mode=True,
     )
     assert state["final_review_completion_ref"].endswith("reviews/final-completion.json")
     assert state["edited_report"].module_narratives == current.module_narratives
     assert state["edited_report"].photo_ids == current.photo_ids
+    chief_revision_envelope = next(
+        envelope
+        for envelope in runner.envelopes
+        if envelope.allowed_outputs == ["chief_revision_submission"]
+    )
+    assert chief_revision_envelope.context_summary_refs == []
+    assert chief_revision_envelope.artifact_delivery_modes == {
+        chief_revision_envelope.input_contract_ref: "inline",
+        chief_revision_envelope.prior_result_ref: "hash_retained",
+    }
+    chief_revision_prompt = PromptAssembler.task_message(
+        chief_revision_envelope,
+        [],
+        input_contract_payload=(
+            tmp_path / chief_revision_envelope.input_contract_ref
+        ).read_text(encoding="utf-8"),
+    )
+    assert 'delivery_mode="inline"' in chief_revision_prompt
+    assert 'delivery_mode="hash_retained"' in chief_revision_prompt
+    snapshot_ref = state["final_audit_snapshot_ref"]
+    snapshot = json.loads(
+        (tmp_path / snapshot_ref).read_text(encoding="utf-8")
+    )
+    assert snapshot["subject_ref"].endswith("/edited-revisions/chief-r1.json")
+    assert snapshot["canonical_markdown_ref"].endswith(
+        "/validation/report-chief-candidate-r1.md"
+    )
+    delivery_validator = object.__new__(ReportWorkflowRunner)
+    delivery_validator.service = runner.service
+    audited, validated_snapshot_ref = (
+        delivery_validator._validated_final_audit_subject(state)
+    )
+    assert audited == state["edited_report"]
+    assert validated_snapshot_ref == snapshot_ref
+    tampered_state = {
+        **state,
+        "edited_report": state["edited_report"].model_copy(
+            update={"title": "审计后被静默修改的标题"}
+        ),
+    }
+    with pytest.raises(AgentWorkflowError, match="changed after final audit"):
+        delivery_validator._validated_final_audit_subject(tampered_state)
     final_input = json.loads(
         (tmp_path / "Work/runs/run-f/reviews/final-review-input-r0.json").read_text(
             encoding="utf-8"
         )
     )
     assert final_input["required_section_ids"] == list(FINAL_AUDIT_SECTION_IDS)
-    assert "cross_synthesis_inputs" not in final_input
-    assert "synthesis_dispositions" not in final_input["subject"]
-    assert "synthesis_tables" not in final_input["subject"]
-    assert "module_narratives" not in final_input["subject"]
+    assert "subject" not in final_input
+    assert set(final_input["subject_metadata"]) == {
+        "photo_ids",
+        "unresolved_editorial_issues",
+    }
     assert "\n## 2. 评估内容描述" not in final_input["canonical_markdown"]
+    recheck_input = json.loads(
+        (tmp_path / "Work/runs/run-f/reviews/final-review-input-r1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert recheck_input["canonical_markdown"] is None
+    assert recheck_input["subject_metadata"] is None
+    assert "cross_synthesis_inputs" not in recheck_input
+    assert set(recheck_input["changed_section_bodies"]) == {"3.1.2"}
+    assert (
+        set(recheck_input["unchanged_section_sha256"])
+        == set(FINAL_AUDIT_SECTION_IDS) - {"3.1.2"}
+    )
+    assert len(recheck_input["subject_metadata_sha256"]) == 64
     auditor_sessions = [call[2] for call in runner.calls if call[0] == "chief-editor-auditor"]
     assert auditor_sessions == [
         "chief-editor-auditor",
         "chief-editor-auditor",
     ]
+    final_audit_envelopes = [
+        envelope
+        for envelope in runner.envelopes
+        if envelope.agent_id == "chief-editor-auditor"
+    ]
+    assert final_audit_envelopes
+    assert all(
+        envelope.input_refs == [envelope.input_contract_ref]
+        and envelope.allowed_tools == ["submit_result"]
+        for envelope in final_audit_envelopes
+    )
+    assert final_audit_envelopes[1].artifact_delivery_modes[
+        final_audit_envelopes[1].prior_result_ref
+    ] == "hash_retained"
+    chief_revision_envelope = next(
+        envelope
+        for envelope in runner.envelopes
+        if envelope.agent_id == "chief-editor"
+    )
+    assert chief_revision_envelope.input_refs == [
+        chief_revision_envelope.input_contract_ref
+    ]
+    assert chief_revision_envelope.allowed_tools == [
+        "write_result_part",
+        "list_result_parts",
+        "submit_result",
+    ]
+    assert not any(
+        "必须提交 risk_cluster_matrix" in constraint
+        for constraint in chief_revision_envelope.constraints
+    )
+    assert any(
+        "3.1.2 -> dimension_risk_analysis" in constraint
+        for constraint in chief_revision_envelope.constraints
+    )
+    chief_revision_input = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-f/reviews/chief-revision-input-r1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert set(chief_revision_input["target_section_bodies"]) == {"3.1.2"}
+    assert "3.1.2" not in chief_revision_input["consistency_context"]
+    assert set(chief_revision_input["consistency_context"]) == {
+        "1.1",
+        "1.2",
+        "1.3",
+        "3.1.1",
+        "3.1.3",
+        "3.2",
+    }
 
 
 @pytest.mark.asyncio
@@ -1566,10 +1961,15 @@ def test_resume_restores_exact_current_protocol_review_completions(
         service.store.write_json(
             completion_ref,
             ReviewCompletionRecord(
+                review_protocol_version=(2 if module_id == "2.1" else 1),
                 lifecycle="module",
                 run_id=run_id,
                 reviewer_agent_id="evidence-auditor",
-                reviewer_session_key=f"module-auditor-{module_id}-initial",
+                reviewer_session_key=(
+                    f"module-auditor-{module_id}"
+                    if module_id == "2.1"
+                    else f"module-auditor-{module_id}-initial"
+                ),
                 subject_refs=[subject_ref],
                 finding_refs=[finding_ref],
                 verdict_refs=[],
@@ -1889,6 +2289,104 @@ def test_canonical_markdown_omits_chapter_four_without_special_topic_plan() -> N
         )
 
 
+def test_role_skill_context_does_not_send_authoring_guidance_to_final_auditor() -> None:
+    state = {
+        "template_skill_text": {
+            "core": "CORE-AUTHOR",
+            "analysis": "ANALYSIS-AUTHOR",
+            "synthesis": "SYNTHESIS-AUTHOR",
+            "visual": "VISUAL-AUTHOR",
+            "rubric": "AUDIT-RUBRIC",
+        }
+    }
+
+    final_context = ReportWorkflowRunner._role_skill_context(
+        state, "final-auditor"
+    )
+    cross_context = ReportWorkflowRunner._role_skill_context(
+        state, "cross-reviewer"
+    )
+
+    assert "AUDIT-RUBRIC" in final_context
+    assert "AUTHOR" not in final_context
+    assert "SYNTHESIS-AUTHOR" in cross_context
+    assert "CORE-AUTHOR" not in cross_context
+    assert 'role="final-auditor"' in final_context
+
+
+def test_canonical_markdown_places_structured_tables_once(
+    tmp_path: Path,
+) -> None:
+    modules = {module_id: _module(module_id).markdown for module_id in REPORT_TAXONOMY}
+    edited = _edited(modules).model_copy(
+        update={
+            "risk_panorama": (
+                "风险全景正文保留。\n\n"
+                "**表：风险簇矩阵**\n\n"
+                "| 风险簇 | 旧列 |\n"
+                "| --- | --- |\n"
+                "| 内嵌旧风险行 | 不应交付 |"
+            ),
+            "improvement_action_plan": (
+                "行动计划正文保留。\n\n"
+                "**表：行动依赖矩阵**\n\n"
+                "| 行动 | 旧列 |\n"
+                "| --- | --- |\n"
+                "| 内嵌旧行动行 | 不应交付 |"
+            ),
+            "tables": [
+                TableSubmission(
+                    title="风险簇矩阵",
+                    headers=["风险簇", "共同根因", "传播能力", "综合输入"],
+                    rows=[["结构化风险行", "共同失效边界", "跨模块传播", "SI-001"]],
+                    source_ids=["E-0001"],
+                    claim_ids=["C-2.1-001"],
+                ),
+                TableSubmission(
+                    title="行动依赖矩阵",
+                    headers=["行动", "前置依赖", "综合输入", "验收标准"],
+                    rows=[["结构化行动行", "先完成边界确认", "SI-001", "闭环"]],
+                    source_ids=["E-0001"],
+                    claim_ids=["C-2.1-001"],
+                ),
+            ],
+        }
+    )
+
+    markdown = ReportWorkflowRunner._canonical_markdown(edited)
+
+    assert markdown.count("\n风险簇矩阵（来源：E-0001）\n") == 1
+    assert markdown.count("\n行动依赖矩阵（来源：E-0001）\n") == 1
+    assert "内嵌旧风险行" not in markdown
+    assert "内嵌旧行动行" not in markdown
+    assert "| 风险簇 | 共同根因 | 传播能力 | 综合输入 |" in markdown
+    assert "| 行动 | 前置依赖 | 综合输入 | 验收标准 |" in markdown
+    assert markdown.index("## 4. 专项问题分析") < markdown.index("结构化风险行")
+    assert markdown.index("结构化风险行") < markdown.index("结构化行动行")
+
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = _FakeService(tmp_path)
+    state = {
+        "run_id": "run-table-gate",
+        "edited_report": edited,
+    }
+    runner._validate_final_report_structure(
+        state,
+        markdown,
+        "chief-candidate-r0",
+    )
+    validation = ValidationReport.model_validate_json(
+        (
+            runner.service.workspace
+            / "Work/runs/run-table-gate/reviews/"
+            "report-integrity-chief-candidate-r0.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert validation.validation_protocol_version == 2
+    assert validation.subject_revision == 0
+    assert validation.passed
+
+
 def test_review_protocol_rejects_verdicts_that_guess_missing_finding_ids() -> None:
     from manyselves.core.reporting.review_lifecycle import _validate_verdicts
 
@@ -1903,4 +2401,29 @@ def test_review_protocol_rejects_verdicts_that_guess_missing_finding_ids() -> No
                 )
             ],
             {"M-001"},
+        )
+
+
+def test_validation_binding_rejects_stale_subject_bytes(tmp_path: Path) -> None:
+    runner = _ScriptedRunner(tmp_path, [])
+    subject_ref = "Work/runs/run-stale/modules/2.1-r1.json"
+    runner.service.store.write_text(subject_ref, "original")
+    report = ValidationReport(
+        validation_protocol_version=2,
+        run_id="run-stale",
+        subject_ref=subject_ref,
+        subject_revision=1,
+        content_sha256=hashlib.sha256(b"original").hexdigest(),
+        validator="test/v2",
+        check_ids=["content"],
+        passed=True,
+    )
+    runner.service.store.write_text(subject_ref, "changed-after-validation")
+
+    with pytest.raises(ReviewLifecycleError, match="exact final subject"):
+        _require_validation_binding(
+            runner,
+            report,
+            subject_ref=subject_ref,
+            subject_revision=1,
         )

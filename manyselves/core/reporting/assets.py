@@ -437,6 +437,37 @@ class ReportAssetAssembler:
     def __init__(self, workspace: Path):
         self.workspace = Path(workspace).resolve()
 
+    @staticmethod
+    def runtime_photo_ids(
+        evidence: list[EvidenceItem],
+        photos: list[PhotoAsset],
+    ) -> list[str]:
+        """Return every source-table photo in manifest order or reject an orphan."""
+
+        evidence_by_photo: dict[str, list[EvidenceItem]] = {}
+        for item in evidence:
+            if item.submodule_id is None:
+                continue
+            for photo_id in item.photo_refs:
+                evidence_by_photo.setdefault(photo_id, []).append(item)
+        orphaned = [photo.id for photo in photos if photo.id not in evidence_by_photo]
+        if orphaned:
+            raise ValueError(
+                "project photos require source-table evidence and a smallest submodule: "
+                f"{orphaned}"
+            )
+        ambiguous = {
+            photo.id: [item.id for item in evidence_by_photo[photo.id]]
+            for photo in photos
+            if len(evidence_by_photo[photo.id]) != 1
+        }
+        if ambiguous:
+            raise ValueError(
+                "each project photo requires exactly one primary evidence binding: "
+                f"{ambiguous}"
+            )
+        return [photo.id for photo in photos]
+
     def build(
         self,
         evidence: list[EvidenceItem],
@@ -459,7 +490,12 @@ class ReportAssetAssembler:
             for table in edited.tables
         ]
         report_photos: list[ReportPhoto] = []
-        for photo_id in edited.photo_ids:
+        runtime_photo_ids = self.runtime_photo_ids(evidence, photos)
+        if edited.photo_ids != runtime_photo_ids:
+            raise ValueError(
+                "edited report photo_ids must equal the runtime-owned source-table photo set"
+            )
+        for photo_id in runtime_photo_ids:
             asset = photo_by_id.get(photo_id)
             if asset is None:
                 raise ValueError(f"editor selected unknown photo {photo_id}")
@@ -472,19 +508,23 @@ class ReportAssetAssembler:
             )
             bindings: list[tuple[EvidenceItem, list[str]]] = []
             for item in candidates:
+                if item.submodule_id is None:
+                    continue
                 linked_claim_ids = sorted(
                     claim.id for claim in claims if item.id in claim.source_ids
                 )
-                if linked_claim_ids:
-                    bindings.append((item, linked_claim_ids))
+                matching_claim_ids = [
+                    claim_id
+                    for claim_id in linked_claim_ids
+                    if claim_by_id[claim_id].submodule_id == item.submodule_id
+                ]
+                bindings.append((item, matching_claim_ids))
             if not bindings:
                 raise ValueError(
-                    f"photo {photo_id} requires evidence and at least one linked claim"
+                    f"photo {photo_id} requires source-table evidence and a smallest submodule"
                 )
             source, claim_ids = bindings[0]
-            if source.id not in evidence_by_id or any(
-                claim_id not in claim_by_id for claim_id in claim_ids
-            ):
+            if source.id not in evidence_by_id:
                 raise AssertionError("asset binding indexes are inconsistent")
             report_photos.append(
                 ReportPhoto(

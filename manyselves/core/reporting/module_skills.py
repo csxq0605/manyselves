@@ -114,7 +114,13 @@ class ModuleSkillLibrary:
             )
         return cls(tuple(skills))
 
-    def for_agent(self, agent_id: str, *, module_id: str | None = None) -> list[ModuleSkill]:
+    def for_agent(
+        self,
+        agent_id: str,
+        *,
+        module_id: str | None = None,
+        submodule_ids: set[str] | None = None,
+    ) -> list[ModuleSkill]:
         match = self._SPECIALIST.fullmatch(agent_id)
         if match:
             module_id = match.group(1)
@@ -124,11 +130,18 @@ class ModuleSkillLibrary:
             raise ConfigurationError(
                 f"{agent_id}: a fixed module_id is required for module Skill routing"
             )
-        return [
+        skills = [
             skill
             for skill in self._skills
             if skill.module_id in {module_id, "all"}
         ]
+        if agent_id == "evidence-auditor" and submodule_ids:
+            skills = [
+                skill
+                for skill in skills
+                if set(skill.submodules).intersection(submodule_ids)
+            ]
+        return skills
 
     def index_text(self) -> str:
         """Return metadata only for routing diagnostics without instruction leakage."""
