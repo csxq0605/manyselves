@@ -13,6 +13,10 @@ from .models import (
     PhotoAsset,
     SpecialTopicPlan,
 )
+from .module_collaboration import (
+    ModuleDiscoverySubmission,
+    ModuleInterfaceResponseSubmission,
+)
 from .taxonomy import REPORT_TAXONOMY, compose_module_markdown, resolve_submodule
 
 
@@ -355,8 +359,11 @@ class ModuleRevisionSubmission(StrictModel):
         description="Complete unresolved-question set for the resulting module.",
     )
     revision_responses: list[RevisionResponse] = Field(
-        min_length=1,
-        description="Exactly one author response for every assigned finding id.",
+        default_factory=list,
+        description=(
+            "Exactly one author response for every assigned finding id. Empty only "
+            "when a failed deterministic preflight is the sole revision trigger."
+        ),
     )
 
     @model_validator(mode="after")
@@ -384,10 +391,16 @@ class ModuleRevisionSubmission(StrictModel):
             if response.action == "implemented"
             for target_id in response.changed_target_ids
         }
-        if implemented_targets != set(self.submodule_narratives):
+        if self.revision_responses and implemented_targets != set(
+            self.submodule_narratives
+        ):
             raise ValueError(
                 "module revision narratives must equal the targets declared by "
                 "implemented revision responses"
+            )
+        if not self.revision_responses and not self.submodule_narratives:
+            raise ValueError(
+                "machine-only module revision must replace at least one target narrative"
             )
         return self
 
@@ -1321,7 +1334,7 @@ class ModuleRevisionSubmissionInput(StrictModel):
     base_revision: int = Field(ge=0)
     revision: int = Field(ge=1)
     unresolved_questions: list[str] = Field(default_factory=list)
-    revision_responses: list[RevisionResponse] = Field(min_length=1)
+    revision_responses: list[RevisionResponse] = Field(default_factory=list)
 
 
 class ChiefRevisionSubmission(StrictModel):
@@ -1416,6 +1429,8 @@ Submission = Annotated[
     | WorkflowDecisionSubmission
     | ChiefRevisionSubmission
     | EditedReportSubmission
+    | ModuleDiscoverySubmission
+    | ModuleInterfaceResponseSubmission
     | SkillEvolutionSubmission,
     Field(discriminator="kind"),
 ]
@@ -1434,6 +1449,8 @@ SubmissionInput = Annotated[
     | FinalReviewVerdictSubmission
     | WorkflowDecisionSubmission
     | EditedReportSubmissionInput
+    | ModuleDiscoverySubmission
+    | ModuleInterfaceResponseSubmission
     | SkillEvolutionSubmission,
     Field(discriminator="kind"),
 ]
@@ -1452,6 +1469,8 @@ SUBMISSION_INPUT_TYPES: dict[str, type[BaseModel]] = {
     "final_review_verdict_submission": FinalReviewVerdictSubmission,
     "workflow_decision_submission": WorkflowDecisionSubmission,
     "edited_report_submission": EditedReportSubmissionInput,
+    "module_discovery_submission": ModuleDiscoverySubmission,
+    "module_interface_response_submission": ModuleInterfaceResponseSubmission,
     "skill_evolution_submission": SkillEvolutionSubmission,
 }
 

@@ -1111,6 +1111,135 @@ def test_format_tool_result_string(agent_loop):
     assert result == "plain text"
 
 
+@pytest.mark.asyncio
+async def test_successful_batch_result_parts_compact_each_large_content_in_provider_history(
+    agent_loop,
+):
+    first_content = "第一部分正文。" * 80
+    second_content = "第二部分正文。" * 80
+    batch_tool = AsyncMock(
+        return_value={
+            "status": "completed",
+            "parts": [
+                {
+                    "part_id": "part-a",
+                    "artifact_ref": "Work/runs/run/result-parts/part-a.md",
+                },
+                {
+                    "part_id": "part-b",
+                    "artifact_ref": "Work/runs/run/result-parts/part-b.md",
+                },
+            ],
+        }
+    )
+    agent_loop.tools.get = (
+        lambda name: batch_tool if name == "write_result_parts" else None
+    )
+    agent_loop._chat_with_retries = AsyncMock(
+        return_value=SimpleNamespace(
+            content="批量正文已持久化。",
+            tool_calls=[],
+            thinking=None,
+        )
+    )
+    response = SimpleNamespace(
+        content="",
+        thinking=None,
+        tool_calls=[
+            LLMToolCall(
+                id="call-batch-result-parts",
+                name="write_result_parts",
+                arguments={
+                    "parts": [
+                        {"part_id": "part-a", "content": first_content},
+                        {"part_id": "part-b", "content": second_content},
+                    ]
+                },
+            )
+        ],
+        usage=None,
+    )
+
+    await agent_loop._handle_tool_calls(response, "msg-batch-result-parts")
+
+    assistant_call = next(
+        message
+        for message in agent_loop._conversation_history
+        if message.role == "assistant" and message.tool_calls
+    ).tool_calls[0]
+    compacted_parts = assistant_call.arguments["parts"]
+    assert all(
+        part["content"].startswith("<persisted_result_part sha256=")
+        for part in compacted_parts
+    )
+    assert first_content not in compacted_parts[0]["content"]
+    assert second_content not in compacted_parts[1]["content"]
+    assert (
+        "artifact_ref=Work/runs/run/result-parts/part-a.md"
+        in compacted_parts[0]["content"]
+    )
+    assert (
+        "artifact_ref=Work/runs/run/result-parts/part-b.md"
+        in compacted_parts[1]["content"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_batch_result_parts_keep_original_content_for_provider_repair(
+    agent_loop,
+):
+    first_content = "需要保留的第一部分错误上下文。" * 60
+    second_content = "需要保留的第二部分错误上下文。" * 60
+    batch_tool = AsyncMock(
+        return_value={
+            "status": "error",
+            "error": "part-b violates the current result-part contract",
+        }
+    )
+    agent_loop.tools.get = (
+        lambda name: batch_tool if name == "write_result_parts" else None
+    )
+    agent_loop._chat_with_retries = AsyncMock(
+        return_value=SimpleNamespace(
+            content="我会根据错误修复批量参数。",
+            tool_calls=[],
+            thinking=None,
+        )
+    )
+    response = SimpleNamespace(
+        content="",
+        thinking=None,
+        tool_calls=[
+            LLMToolCall(
+                id="call-failed-batch-result-parts",
+                name="write_result_parts",
+                arguments={
+                    "parts": [
+                        {"part_id": "part-a", "content": first_content},
+                        {"part_id": "part-b", "content": second_content},
+                    ]
+                },
+            )
+        ],
+        usage=None,
+    )
+
+    await agent_loop._handle_tool_calls(response, "msg-failed-batch-result-parts")
+
+    assistant_call = next(
+        message
+        for message in agent_loop._conversation_history
+        if message.role == "assistant" and message.tool_calls
+    ).tool_calls[0]
+    assert assistant_call.arguments["parts"][0]["content"] == first_content
+    assert assistant_call.arguments["parts"][1]["content"] == second_content
+    assert any(
+        "part-b violates the current result-part contract" in message.content
+        for message in agent_loop._conversation_history
+        if message.is_tool_result
+    )
+
+
 def test_large_tool_result_is_persisted_and_replaced_with_a_compact_reference(
     agent_loop, workspace
 ):
@@ -1130,9 +1259,10 @@ def test_large_tool_result_is_persisted_and_replaced_with_a_compact_reference(
     assert compact["next_offset"] == compact["preview_end_offset"]
     assert compact["recommended_limit"] == 8000
     assert "省略 limit 即按 8000 字符读取" in compact["instruction"]
-    stored = workspace / ".manyselves/tool-results/main/call-large.json"
-    assert stored.is_file()
-    assert "evidence-" + ("x" * 20000) in stored.read_text(encoding="utf-8")
+    stored = list((workspace / ".manyselves/artifacts/tool-result").glob("*.txt"))
+    assert len(stored) == 1
+    assert "evidence-" + ("x" * 20000) in stored[0].read_text(encoding="utf-8")
+    assert not (workspace / ".manyselves/tool-results").exists()
 
 
 def test_working_memory_compaction_persists_removed_transcript(agent_loop, workspace):
@@ -1147,20 +1277,40 @@ def test_working_memory_compaction_persists_removed_transcript(agent_loop, works
 
     assert len(compacted) < len(messages) + 1
     checkpoints = list(
-        (workspace / ".manyselves/context-checkpoints/main").glob("*.json")
+        (workspace / ".manyselves/artifacts/context-checkpoint").glob("*.txt")
     )
     assert len(checkpoints) == 1
     assert "original task" in checkpoints[0].read_text(encoding="utf-8")
     assert "checkpoint_ref=artifact:v1:" in compacted[1].content
+    assert not (workspace / ".manyselves/context-checkpoints").exists()
 
 
 def test_token_usage_ledger_prefers_provider_usage(agent_loop, workspace):
     agent_loop.usage_run_id = "run-usage"
     agent_loop.usage_task_id = "task-usage"
+    agent_loop.usage_context_manifest_ref = (
+        "Work/runs/run-usage/context-manifests/provider-calls/"
+        "task-usage-r0-session-c0001-initial-a1.json"
+    )
     messages = [LLMMessage(role="user", content="x" * 10000)]
     response = SimpleNamespace(
         content="done",
-        usage={"input_tokens": 123, "output_tokens": 17},
+        tool_calls=[],
+        request_metrics={
+            "representation": "test_provider_payload_v1",
+            "request_fingerprint": "a" * 64,
+            "message_fingerprint": "b" * 64,
+            "tool_schema_fingerprint": "c" * 64,
+            "request_chars": 777,
+            "message_chars": 555,
+            "tool_schema_chars": 111,
+        },
+        usage={
+            "input_tokens": 123,
+            "output_tokens": 17,
+            "prompt_tokens_details": {"cached_tokens": 40},
+            "cache_creation_input_tokens": 3,
+        },
     )
 
     record = agent_loop._record_token_usage(
@@ -1169,11 +1319,36 @@ def test_token_usage_ledger_prefers_provider_usage(agent_loop, workspace):
         phase="initial",
         status="success",
         error=None,
+        tool_definitions=[
+            {
+                "name": "submit_result",
+                "input_schema": {"type": "object", "properties": {}},
+            }
+        ],
+        duration_ms=25,
     )
 
     assert record["usage_source"] == "provider"
     assert record["input_tokens"] == 123
     assert record["output_tokens"] == 17
+    assert record["cached_input_tokens"] == 40
+    assert record["cache_write_input_tokens"] == 3
+    assert record["uncached_input_tokens"] == 80
+    assert (
+        record["provider_call_id"]
+        == "task-usage-r0-session-c0001-initial-a1"
+    )
+    assert record["duration_ms"] == 25
+    assert record["request_metric_source"] == "provider_adapter_payload"
+    assert record["provider_request_representation"] == "test_provider_payload_v1"
+    assert record["request_fingerprint"] == "a" * 64
+    assert record["message_fingerprint"] == "b" * 64
+    assert record["tool_schema_fingerprint"] == "c" * 64
+    assert record["request_chars"] == 777
+    assert record["message_chars"] == 555
+    assert record["tool_schema_chars"] == 111
+    assert len(record["pre_adapter_request_fingerprint"]) == 64
+    assert record["provider"] == agent_loop.llm_provider.__class__.__name__
     ledger = workspace / ".manyselves/usage/run-usage.jsonl"
     assert ledger.is_file()
     assert '"task_id": "task-usage"' in ledger.read_text(encoding="utf-8")
@@ -1192,6 +1367,39 @@ def test_token_usage_ledger_marks_length_fallback_as_estimated(agent_loop):
 
     assert record["usage_source"] == "estimated"
     assert record["input_tokens"] > 0
+
+
+def test_estimated_output_usage_counts_long_tool_call_arguments(agent_loop):
+    long_content = "完整报告正文。" * 1000
+    response = SimpleNamespace(
+        content="",
+        thinking=None,
+        tool_calls=[
+            LLMToolCall(
+                id="write-long-batch",
+                name="write_result_parts",
+                arguments={
+                    "parts": [
+                        {"part_id": "part-a", "content": long_content}
+                    ]
+                },
+            )
+        ],
+        usage=None,
+        request_metrics=None,
+    )
+
+    record = agent_loop._record_token_usage(
+        [LLMMessage(role="user", content="write the report")],
+        response,
+        phase="initial",
+        status="success",
+        error=None,
+    )
+
+    assert record["usage_source"] == "estimated"
+    assert record["output_tokens"] >= int(len(long_content) * 0.25)
+    assert record["total_tokens"] > record["input_tokens"]
 
 
 def test_progress_monitor_requests_replan_after_repeated_identical_results():
@@ -1329,6 +1537,148 @@ async def test_tool_followup_streams_thinking_chunks(
         for msg in published
         if isinstance(msg, AgentResponse) and msg.thinking
     ] == ["checking result"]
+
+
+@pytest.mark.asyncio
+async def test_successful_result_part_replaces_persisted_prose_in_followup_history(
+    workspace, config, mock_provider, mock_prompt_loader
+):
+    full_content = "完整模块正文。" * 400
+    observed_messages: list[list[LLMMessage]] = []
+
+    async def write_part(**kwargs):
+        assert kwargs["content"] == full_content
+        return {
+            "status": "created",
+            "part_id": kwargs["part_id"],
+            "characters": len(kwargs["content"]),
+            "artifact_ref": "Work/runs/run-1/drafts/module-2.1/r0/2.1.1.md",
+        }
+
+    async def unsupported_stream(*args, **kwargs):
+        raise NotImplementedError
+
+    async def followup_chat(messages, **kwargs):
+        observed_messages.append(messages)
+        return LLMResponse(
+            content="done",
+            tool_calls=[],
+            usage={"input_tokens": 20, "output_tokens": 2},
+        )
+
+    mock_provider.chat_stream = unsupported_stream
+    mock_provider.chat = AsyncMock(side_effect=followup_chat)
+    tools = MagicMock()
+    tools.get.return_value = write_part
+    tools.get_definitions.return_value = []
+    loop = AgentLoop(
+        agent_type=AgentType.THEORY,
+        workspace=workspace,
+        tools=tools,
+        bus=MessageBus(),
+        config=config,
+        llm_provider=mock_provider,
+        prompt_loader=mock_prompt_loader,
+        loop_manager=None,
+    )
+    original_call = LLMToolCall(
+        id="call-write-part",
+        name="write_result_part",
+        arguments={
+            "part_id": "2.1.1",
+            "content": full_content,
+            "evidence_ids": [],
+        },
+    )
+
+    await loop._handle_tool_calls(
+        SimpleNamespace(
+            content="",
+            thinking=None,
+            tool_calls=[original_call],
+            usage=None,
+        ),
+        "msg-1",
+    )
+
+    assert observed_messages
+    persisted_call = next(
+        message.tool_calls[0]
+        for message in observed_messages[0]
+        if message.tool_calls
+    )
+    assert full_content not in persisted_call.arguments["content"]
+    assert "persisted_result_part" in persisted_call.arguments["content"]
+    assert "artifact_ref=Work/runs/run-1/drafts/module-2.1/r0/2.1.1.md" in (
+        persisted_call.arguments["content"]
+    )
+    assert persisted_call.arguments["evidence_ids"] == []
+    assert original_call.arguments["content"] == full_content
+
+
+@pytest.mark.asyncio
+async def test_failed_result_part_keeps_original_arguments_for_correction(
+    workspace, config, mock_provider, mock_prompt_loader
+):
+    full_content = "待修正正文。" * 400
+    observed_messages: list[list[LLMMessage]] = []
+
+    async def write_part(**kwargs):
+        raise ValueError("unknown evidence id")
+
+    async def unsupported_stream(*args, **kwargs):
+        raise NotImplementedError
+
+    async def followup_chat(messages, **kwargs):
+        observed_messages.append(messages)
+        return LLMResponse(
+            content="done",
+            tool_calls=[],
+            usage={"input_tokens": 20, "output_tokens": 2},
+        )
+
+    mock_provider.chat_stream = unsupported_stream
+    mock_provider.chat = AsyncMock(side_effect=followup_chat)
+    tools = MagicMock()
+    tools.get.return_value = write_part
+    tools.get_definitions.return_value = []
+    loop = AgentLoop(
+        agent_type=AgentType.THEORY,
+        workspace=workspace,
+        tools=tools,
+        bus=MessageBus(),
+        config=config,
+        llm_provider=mock_provider,
+        prompt_loader=mock_prompt_loader,
+        loop_manager=None,
+    )
+
+    await loop._handle_tool_calls(
+        SimpleNamespace(
+            content="",
+            thinking=None,
+            tool_calls=[
+                LLMToolCall(
+                    id="call-write-part",
+                    name="write_result_part",
+                    arguments={
+                        "part_id": "2.1.1",
+                        "content": full_content,
+                        "evidence_ids": ["E-missing"],
+                    },
+                )
+            ],
+            usage=None,
+        ),
+        "msg-1",
+    )
+
+    persisted_call = next(
+        message.tool_calls[0]
+        for message in observed_messages[0]
+        if message.tool_calls
+    )
+    assert persisted_call.arguments["content"] == full_content
 
 
 @pytest.mark.asyncio

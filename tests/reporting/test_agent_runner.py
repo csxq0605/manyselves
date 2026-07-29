@@ -1,6 +1,8 @@
 import asyncio
+import gzip
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from docx import Document
@@ -9,8 +11,18 @@ from PIL import Image
 
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.bus import MessageBus
-from manyselves.core.providers.base import LLMProvider, LLMResponse, LLMToolCall
-from manyselves.core.reporting.agent_runner import InspectDocumentTool, ReportingAgentRunner
+from manyselves.core.providers.base import (
+    LLMProvider,
+    LLMResponse,
+    LLMToolCall,
+    Message as LLMMessage,
+    build_provider_request_metrics,
+)
+from manyselves.core.reporting.agent_runner import (
+    InspectDocumentTool,
+    ReportingAgentRunner,
+    load_conversation_trace,
+)
 from manyselves.core.reporting.agentic_models import AgentRunStatus, ModuleSubmission, TaskEnvelope
 from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.reporting.input_contracts import (
@@ -100,6 +112,42 @@ class DirectSubmissionProvider(LLMProvider):
                 )
             ],
         )
+
+
+class MeasuredDirectSubmissionProvider(DirectSubmissionProvider):
+    async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        response = await super().chat(
+            messages,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        response.request_metrics = build_provider_request_metrics(
+            {
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": message.role,
+                        "content": message.content,
+                        "tool_calls": [
+                            {
+                                "id": call.id,
+                                "name": call.name,
+                                "arguments": call.arguments,
+                            }
+                            for call in (message.tool_calls or [])
+                        ],
+                        "tool_call_id": message.tool_call_id,
+                    }
+                    for message in messages
+                ],
+                "tools": tools or [],
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            },
+            representation="scripted_provider_payload_v1",
+        )
+        return response
 
 
 class MaxTokensThenDirectSubmissionProvider(DirectSubmissionProvider):
@@ -194,6 +242,81 @@ def test_submit_result_exposes_only_the_role_output_schema(tmp_path: Path) -> No
     )
 
 
+def test_provider_manifest_distinguishes_pre_adapter_and_provider_payload(
+    tmp_path: Path,
+) -> None:
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    definition = load_packaged_agents()["module-2.1-specialist"]
+    envelope = TaskEnvelope(
+        task_id="module-2.1",
+        run_id="run-provider-manifest",
+        agent_id=definition.id,
+        objective="分析 2.1",
+        allowed_outputs=["module_submission"],
+    )
+    manifest_path = runner._write_provider_call_manifest(
+        definition=definition,
+        envelope=envelope,
+        identity_key=definition.id,
+        session_id="session-manifest",
+        messages=[LLMMessage(role="user", content="task")],
+        tool_definitions=[
+            {
+                "name": "submit_result",
+                "description": "submit",
+                "input_schema": {"type": "object"},
+            }
+        ],
+        phase="initial",
+        attempt=1,
+        call_index=1,
+    )
+    before = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert before["provider_context_manifest_version"] == 2
+    assert before["request_sha256_scope"] == "agent_pre_adapter"
+    assert before["provider_payload_status"] == "pending"
+    assert before["provider_payload"] is None
+
+    relative = manifest_path.relative_to(tmp_path).as_posix()
+    runner._finalize_provider_call_manifest(
+        {
+            "context_manifest_ref": relative,
+            "provider_call_id": manifest_path.stem,
+            "request_metric_source": "provider_adapter_payload",
+            "provider_request_representation": "test_provider_payload_v1",
+            "request_fingerprint": "a" * 64,
+            "message_fingerprint": "b" * 64,
+            "tool_schema_fingerprint": "c" * 64,
+            "request_chars": 700,
+            "message_chars": 500,
+            "tool_schema_chars": 100,
+            "status": "success",
+            "usage_source": "provider",
+        }
+    )
+    after = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert after["provider_payload_status"] == "observed"
+    assert after["provider_payload"] == {
+        "representation": "test_provider_payload_v1",
+        "request_sha256": "a" * 64,
+        "message_sha256": "b" * 64,
+        "tool_schema_sha256": "c" * 64,
+        "request_chars": 700,
+        "message_chars": 500,
+        "tool_schema_chars": 100,
+    }
+    assert after["pre_adapter_request"]["request_sha256"] == before[
+        "request_sha256"
+    ]
+
+
 def test_module_authoring_schema_and_example_use_current_identity(
     tmp_path: Path,
 ) -> None:
@@ -238,11 +361,110 @@ def test_module_authoring_schema_and_example_use_current_identity(
         "workflow-module-schema",
     )
     payload = registry._schema_cache["submit_result"]["properties"]["payload"]
+    writer_schema = registry._schema_cache["write_result_part"]
+    batch_schema = registry._schema_cache["write_result_parts"]
 
     assert payload["properties"]["module_id"]["const"] == "2.4"
     assert payload["properties"]["revision"]["const"] == 3
     assert payload["examples"][0]["module_id"] == "2.4"
     assert payload["examples"][0]["revision"] == 3
+    expected_part_ids = list(REPORT_TAXONOMY["2.4"].submodules)
+    assert writer_schema["properties"]["part_id"]["enum"] == expected_part_ids
+    assert writer_schema["required"] == ["part_id", "content", "evidence_ids"]
+    assert writer_schema["additionalProperties"] is False
+    assert batch_schema["properties"]["parts"]["maxItems"] == 4
+    assert (
+        batch_schema["properties"]["parts"]["items"]["properties"]["part_id"]["enum"]
+        == expected_part_ids
+    )
+    assert (
+        batch_schema["properties"]["parts"]["items"]["required"]
+        == ["part_id", "content", "evidence_ids"]
+    )
+
+
+def test_wave_two_submission_schema_is_bound_to_exact_sparse_inbox(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-wave-two-schema"
+    inbox_ref = (
+        f"Work/runs/{run_id}/collaboration/inboxes/module-2.3.json"
+    )
+    inbox_path = tmp_path / inbox_ref
+    inbox_path.parent.mkdir(parents=True)
+    inbox_path.write_text(
+        json.dumps(
+            {
+                "kind": "module_interface_inbox",
+                "run_id": run_id,
+                "module_id": "2.3",
+                "requests": [
+                    {
+                        "request_id": "IF-2.1-2.3-001",
+                        "requester_module_id": "2.1",
+                        "target_module_id": "2.3",
+                        "question": "保护边界是否覆盖当前场景？",
+                        "needed_for": "形成联合验收边界。",
+                    },
+                    {
+                        "request_id": "IF-2.2-2.3-001",
+                        "requester_module_id": "2.2",
+                        "target_module_id": "2.3",
+                        "question": "控制接口是否需要保护闭锁？",
+                        "needed_for": "形成接口风险结论。",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    envelope = TaskEnvelope(
+        task_id="module-interface-response-2.3",
+        run_id=run_id,
+        agent_id="module-2.3-specialist",
+        objective="批量回答接口请求",
+        input_refs=[inbox_ref],
+        allowed_outputs=["module_interface_response_submission"],
+    )
+
+    registry = runner._tools(
+        load_packaged_agents()["module-2.3-specialist"],
+        envelope,
+        "session-wave-two-schema",
+        "workflow-wave-two-schema",
+    )
+    payload = registry._schema_cache["submit_result"]["properties"][
+        "payload"
+    ]
+    dispositions = payload["properties"]["dispositions"]
+    request_id = payload["$defs"]["InterfaceDisposition"]["properties"][
+        "request_id"
+    ]
+
+    assert payload["properties"]["module_id"]["const"] == "2.3"
+    assert dispositions["minItems"] == 2
+    assert dispositions["maxItems"] == 2
+    assert request_id["enum"] == [
+        "IF-2.1-2.3-001",
+        "IF-2.2-2.3-001",
+    ]
+
+    wrong = json.loads(inbox_path.read_text(encoding="utf-8"))
+    wrong["run_id"] = "another-run"
+    inbox_path.write_text(json.dumps(wrong), encoding="utf-8")
+    with pytest.raises(ValueError, match="current-run|active module"):
+        runner._tools(
+            load_packaged_agents()["module-2.3-specialist"],
+            envelope,
+            "session-wave-two-wrong-run",
+            "workflow-wave-two-wrong-run",
+        )
 
 
 def test_module_review_tool_schema_omits_runtime_owned_fields(
@@ -312,6 +534,8 @@ def test_module_review_tool_schema_omits_runtime_owned_fields(
     finding = payload["$defs"]["ModuleReviewFinding"]
     assert "id" not in finding["properties"]
     assert finding["properties"]["target_submodule_id"]["enum"] == ["2.1.1"]
+    assert registry.get("write_result_part") is None
+    assert registry.get("write_result_parts") is None
 
 
 def test_all_audit_roles_override_the_90_second_provider_idle_default(
@@ -386,6 +610,7 @@ def test_template_skill_submission_schema_and_tools_are_exposed_to_distiller(
     assert set(registry.get_all()) == {
         "inspect_document",
         "write_result_part",
+        "write_result_parts",
         "list_result_parts",
         "submit_result",
         "report_blocked",
@@ -403,7 +628,19 @@ def test_template_skill_submission_schema_and_tools_are_exposed_to_distiller(
     )
     expected_parts = ("skill", "analysis", "synthesis", "visual", "rubric")
     assert registry.get("write_result_part").expected_part_ids == expected_parts
+    assert registry.get("write_result_parts").expected_part_ids == expected_parts
+    assert registry.get("write_result_parts").max_batch_size == 8
     assert registry.get("list_result_parts").expected_part_ids == expected_parts
+    writer_schema = registry._schema_cache["write_result_part"]
+    batch_schema = registry._schema_cache["write_result_parts"]
+    assert writer_schema["properties"]["part_id"]["enum"] == list(expected_parts)
+    assert "evidence_ids" not in writer_schema["properties"]
+    assert writer_schema["required"] == ["part_id", "content"]
+    assert batch_schema["properties"]["parts"]["maxItems"] == 8
+    assert (
+        "evidence_ids"
+        not in batch_schema["properties"]["parts"]["items"]["properties"]
+    )
 
 
 def test_chief_tools_expose_only_current_report_parts(
@@ -484,10 +721,22 @@ def test_chief_tools_expose_only_current_report_parts(
         "special_topic_analysis",
     )
     writer = registry.get("write_result_part")
+    batch_writer = registry.get("write_result_parts")
     listing = registry.get("list_result_parts")
     assert writer.expected_part_ids == expected_parts
+    assert batch_writer.expected_part_ids == expected_parts
+    assert batch_writer.max_batch_size == 8
     assert listing.expected_part_ids == expected_parts
     assert listing.required_synthesis_input_ids == ()
+    writer_schema = registry._schema_cache["write_result_part"]
+    batch_schema = registry._schema_cache["write_result_parts"]
+    assert writer_schema["properties"]["part_id"]["enum"] == list(expected_parts)
+    assert "evidence_ids" not in writer_schema["properties"]
+    assert batch_schema["properties"]["parts"]["maxItems"] == 8
+    assert (
+        batch_schema["properties"]["parts"]["items"]["properties"]["part_id"]["enum"]
+        == list(expected_parts)
+    )
 
 
 @pytest.mark.asyncio
@@ -1069,7 +1318,7 @@ async def test_reporting_agent_runner_uses_real_isolated_loop_and_can_finish_wit
             workflow_messages.append(message)
 
     bus.subscribe(UserMessage, capture_workflow_message)
-    provider = DirectSubmissionProvider()
+    provider = MeasuredDirectSubmissionProvider()
     agents = load_packaged_agents()
     runner = ReportingAgentRunner(
         tmp_path, bus, provider, AgentDefaults(max_tool_iterations=5), timeout=5
@@ -1107,6 +1356,12 @@ async def test_reporting_agent_runner_uses_real_isolated_loop_and_can_finish_wit
     assert "剩余电流大于 10A" not in provider.system_prompts[0]
     assert provider.max_tokens_seen == [32768, 32768]
     assert (tmp_path / "Work/runs/run-test/results/module-2.1.json").is_file()
+    conversation_blobs = [
+        path
+        for path in (tmp_path / "Work/content/sha256").glob("*/*/*")
+        if path.is_file()
+    ]
+    assert len(conversation_blobs) == 1
     summaries = list((tmp_path / "Work/runs/run-test/session-summaries").glob("*.json"))
     assert len(summaries) == 1
     summary = json.loads(summaries[0].read_text(encoding="utf-8"))
@@ -1121,6 +1376,48 @@ async def test_reporting_agent_runner_uses_real_isolated_loop_and_can_finish_wit
     ]
     assert len(usage_rows) == 2
     assert all(row["status"] == "success" for row in usage_rows)
+    assert all(
+        row["context_manifest_ref"]
+        and (tmp_path / row["context_manifest_ref"]).is_file()
+        for row in usage_rows
+    )
+    assert all(
+        row["provider_call_id"] == Path(row["context_manifest_ref"]).stem
+        for row in usage_rows
+    )
+    assert len({row["provider_call_id"] for row in usage_rows}) == len(usage_rows)
+    assert all(
+        json.loads(
+            (tmp_path / row["context_manifest_ref"]).read_text(encoding="utf-8")
+        )["provider_call_id"]
+        == row["provider_call_id"]
+        for row in usage_rows
+    )
+    assert all(
+        row["uncached_input_tokens"]
+        == max(
+            0,
+            row["input_tokens"]
+            - row["cached_input_tokens"]
+            - row["cache_write_input_tokens"],
+        )
+        for row in usage_rows
+    )
+    assert all(
+        row["request_metric_source"] == "provider_adapter_payload"
+        for row in usage_rows
+    )
+    for row in usage_rows:
+        provider_manifest = json.loads(
+            (tmp_path / row["context_manifest_ref"]).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert provider_manifest["provider_payload_status"] == "observed"
+        assert (
+            provider_manifest["provider_payload"]["request_sha256"]
+            == row["request_fingerprint"]
+        )
 
 
 @pytest.mark.asyncio
@@ -1998,3 +2295,61 @@ async def test_reporting_agent_runner_recovers_string_payload_with_concrete_feed
     assert result.payload.module_id == "2.1"
     assert provider.calls == 3
     assert provider.correction
+
+
+def test_conversation_trace_is_a_small_manifest_for_compressed_cas_content(
+    tmp_path: Path,
+) -> None:
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    envelope = TaskEnvelope(
+        task_id="module-2.1",
+        run_id="run-compressed-trace",
+        agent_id="module-2.1-specialist",
+        objective="测试对话压缩",
+        allowed_outputs=["module_submission"],
+    )
+    long_content = "重复的长对话正文。" * 2000
+    loop = SimpleNamespace(
+        _conversation_history=[
+            LLMMessage(role="user", content=long_content),
+            LLMMessage(role="assistant", content="已处理。"),
+        ]
+    )
+
+    manifest_path = runner._save_conversation_trace(
+        loop,
+        envelope,
+        "module-2.1-specialist--session-test",
+        "session-test",
+        status="waiting",
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["manifest_version"] == 2
+    assert manifest["encoding"] == "gzip+json"
+    assert (
+        manifest["transcript_semantics"]
+        == "provider_working_history_compacted_v1"
+    )
+    assert manifest["forensic_exact_tool_arguments"] is False
+    assert "messages" not in manifest
+    assert manifest["compressed_bytes"] < manifest["uncompressed_bytes"]
+    transcript = tmp_path / manifest["transcript_ref"]
+    decoded = json.loads(gzip.decompress(transcript.read_bytes()))
+    assert decoded["messages"][0]["content"] == long_content
+    assert decoded["status"] == "waiting"
+    assert load_conversation_trace(tmp_path, manifest_path) == decoded
+
+    legacy = tmp_path / "Work/runs/run-compressed-trace/legacy.json"
+    legacy.write_text(
+        json.dumps({"status": "completed", "messages": [{"role": "user"}]}),
+        encoding="utf-8",
+    )
+    assert load_conversation_trace(tmp_path, legacy)["messages"] == [
+        {"role": "user"}
+    ]

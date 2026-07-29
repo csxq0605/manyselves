@@ -11,11 +11,73 @@ from typing import Any
 from loguru import logger
 from openai import AsyncOpenAI
 
-from .base import LLMProvider, LLMResponse, LLMStreamChunk, LLMToolCall, Message
+from .base import (
+    LLMProvider,
+    LLMResponse,
+    LLMStreamChunk,
+    LLMToolCall,
+    Message,
+    build_provider_request_metrics,
+)
 from .defaults import DEFAULT_API_BASES
 
 
 OPENAI_STREAM_IDLE_TIMEOUT_SECONDS = 300.0
+
+
+def _value(source: Any, name: str, default: Any = None) -> Any:
+    if isinstance(source, dict):
+        return source.get(name, default)
+    return getattr(source, name, default)
+
+
+def _normalized_openai_usage(raw_usage: Any) -> dict[str, int] | None:
+    """Normalize OpenAI and compatible usage to inclusive input-token semantics."""
+
+    if raw_usage is None:
+        return None
+    raw_input = _value(
+        raw_usage,
+        "prompt_tokens",
+        _value(raw_usage, "input_tokens"),
+    )
+    raw_output = _value(
+        raw_usage,
+        "completion_tokens",
+        _value(raw_usage, "output_tokens"),
+    )
+    if raw_input is None and raw_output is None:
+        return None
+    details = _value(raw_usage, "prompt_tokens_details", {}) or {}
+    cached = int(
+        _value(
+            raw_usage,
+            "cache_read_input_tokens",
+            _value(
+                raw_usage,
+                "cached_input_tokens",
+                _value(details, "cached_tokens", 0),
+            ),
+        )
+        or 0
+    )
+    cache_write = int(
+        _value(
+            raw_usage,
+            "cache_creation_input_tokens",
+            _value(raw_usage, "cache_write_input_tokens", 0),
+        )
+        or 0
+    )
+    input_tokens = max(int(raw_input or 0), cached + cache_write)
+    output_tokens = int(raw_output or 0)
+    return {
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached,
+        "cache_write_input_tokens": cache_write,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+    }
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -139,6 +201,10 @@ class OpenAICompatProvider(LLMProvider):
         if tools:
             params["tools"] = self._convert_tools(tools)
             params["tool_choice"] = "auto"
+        request_metrics = build_provider_request_metrics(
+            params,
+            representation="openai_chat_completions_payload_v1",
+        )
 
         logger.debug("Sending {} request: model={}, messages={}", self.provider_type, self.model, len(messages))
 
@@ -168,12 +234,9 @@ class OpenAICompatProvider(LLMProvider):
         return LLMResponse(
             content=content,
             tool_calls=tool_calls,
-            usage={
-                "input_tokens": response.usage.prompt_tokens if response.usage else 0,
-                "output_tokens": response.usage.completion_tokens if response.usage else 0,
-                "total_tokens": response.usage.total_tokens if response.usage else 0,
-            },
+            usage=_normalized_openai_usage(response.usage),
             stop_reason=getattr(response.choices[0], "finish_reason", None),
+            request_metrics=request_metrics,
         )
 
     def _convert_tools(self, tools: list[dict]) -> list[dict]:
@@ -214,11 +277,16 @@ class OpenAICompatProvider(LLMProvider):
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
 
         if tools:
             params["tools"] = self._convert_tools(tools)
             params["tool_choice"] = "auto"
+        request_metrics = build_provider_request_metrics(
+            params,
+            representation="openai_chat_completions_stream_payload_v1",
+        )
 
         idle_timeout = (
             OPENAI_STREAM_IDLE_TIMEOUT_SECONDS
@@ -236,6 +304,9 @@ class OpenAICompatProvider(LLMProvider):
         # For tool calls, accumulate the arguments string fragments across chunks
         # and only parse JSON at the end.
         accumulated_tool_calls: dict[int, dict[str, Any]] = {}  # index -> {id, name, args_buffer}
+        final_tool_calls: list[LLMToolCall] | None = None
+        final_usage: dict[str, int] | None = None
+        stop_reason: str | None = None
 
         try:
             response = await self.client.chat.completions.create(**params)
@@ -259,6 +330,11 @@ class OpenAICompatProvider(LLMProvider):
                         "provider stream idle timeout: no application chunk for "
                         f"{idle_timeout:g}s"
                     ) from exc
+                chunk_usage = _normalized_openai_usage(
+                    getattr(chunk, "usage", None)
+                )
+                if chunk_usage is not None:
+                    final_usage = chunk_usage
                 delta = chunk.choices[0].delta if chunk.choices else None
 
                 # Text delta
@@ -287,6 +363,7 @@ class OpenAICompatProvider(LLMProvider):
                 # Check if stream is done
                 if chunk.choices and chunk.choices[0].finish_reason is not None:
                     # Build final tool calls from accumulated data
+                    stop_reason = chunk.choices[0].finish_reason
                     final_tool_calls = None
                     if accumulated_tool_calls:
                         final_tool_calls = []
@@ -307,13 +384,14 @@ class OpenAICompatProvider(LLMProvider):
                                     name=entry["name"],
                                     arguments=args,
                                 ))
-                    yield LLMStreamChunk(
-                        delta=None,
-                        done=True,
-                        tool_calls=final_tool_calls,
-                        stop_reason=chunk.choices[0].finish_reason,
-                    )
-                    return
+            yield LLMStreamChunk(
+                delta=None,
+                done=True,
+                tool_calls=final_tool_calls,
+                usage=final_usage,
+                stop_reason=stop_reason,
+                request_metrics=request_metrics,
+            )
 
         except Exception as e:
             logger.error("{} streaming error: {}", self.provider_type, e)

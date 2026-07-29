@@ -2289,12 +2289,27 @@ class WriteResultPartTool(_ResultPartTool):
             content: One non-empty prose part of at most 48000 characters.
             evidence_ids: For module prose, current-run E-* ids supporting this whole fixed submodule; use [] to record an explicit evidence gap.
         """
+        normalized_evidence_ids = self._validate_part(part_id, content, evidence_ids)
+        return self._persist_part(part_id, content, normalized_evidence_ids)
+
+    def _validate_part(
+        self,
+        part_id: str,
+        content: str,
+        evidence_ids: list[str] | None,
+    ) -> list[str] | None:
+        """Validate one part completely without changing durable state."""
+
+        if not isinstance(part_id, str):
+            raise ValueError("part_id must be a string")
         if not re.fullmatch(r"[A-Za-z0-9._-]+", part_id or ""):
             raise ValueError("part_id may contain only letters, digits, dot, underscore, and dash")
         if self.expected_part_ids and part_id not in self.expected_part_ids:
             raise ValueError(
                 f"part_id must be one of the fixed task parts: {list(self.expected_part_ids)}"
             )
+        if not isinstance(content, str):
+            raise ValueError("result part content must be a string")
         if not content.strip() or len(content) > 48_000:
             raise ValueError("result part must contain 1-48000 characters")
         if self.evidence_binding_required:
@@ -2327,6 +2342,16 @@ class WriteResultPartTool(_ResultPartTool):
                 )
         elif evidence_ids is not None:
             raise ValueError("evidence_ids is only valid for module result parts")
+        return list(evidence_ids) if evidence_ids is not None else None
+
+    def _persist_part(
+        self,
+        part_id: str,
+        content: str,
+        evidence_ids: list[str] | None,
+    ) -> dict:
+        """Persist one already validated part using atomic file replacement."""
+
         relative = self.relative_root / f"{part_id}.md"
         target = self.store.workspace / relative
         previous = target.read_text(encoding="utf-8") if target.is_file() else None
@@ -2354,6 +2379,71 @@ class WriteResultPartTool(_ResultPartTool):
                 if self.evidence_binding_required
                 else {"artifact_ref": relative.as_posix()}
             ),
+        }
+
+
+class WriteResultPartsTool(WriteResultPartTool):
+    name = "write_result_parts"
+    description = (
+        "Persist a bounded batch of durable report prose parts. The complete batch is "
+        "validated before any part is written; use the single-part tool for compatibility "
+        "or one-off recovery."
+    )
+
+    def __init__(self, *args, max_batch_size: int, **kwargs):
+        super().__init__(*args, **kwargs)
+        if max_batch_size < 1:
+            raise ValueError("max_batch_size must be positive")
+        self.max_batch_size = max_batch_size
+
+    async def __call__(self, parts: list[dict]) -> dict:
+        """Write a validation-atomic batch of resumable prose parts.
+
+        Args:
+            parts: One to max_batch_size objects containing part_id, content, and module-only evidence_ids.
+        """
+
+        if not isinstance(parts, list):
+            raise ValueError("parts must be a list")
+        if not parts or len(parts) > self.max_batch_size:
+            raise ValueError(
+                f"parts must contain 1-{self.max_batch_size} result part objects"
+            )
+
+        allowed_fields = {"part_id", "content", "evidence_ids"}
+        validated: list[tuple[str, str, list[str] | None]] = []
+        seen_part_ids: set[str] = set()
+        for index, part in enumerate(parts):
+            if not isinstance(part, dict):
+                raise ValueError(f"parts[{index}] must be an object")
+            unknown_fields = sorted(set(part) - allowed_fields)
+            if unknown_fields:
+                raise ValueError(
+                    f"parts[{index}] contains unsupported fields: {unknown_fields}"
+                )
+            if "part_id" not in part or "content" not in part:
+                raise ValueError(f"parts[{index}] requires part_id and content")
+            part_id = part["part_id"]
+            content = part["content"]
+            evidence_ids = part.get("evidence_ids")
+            if isinstance(part_id, str) and part_id in seen_part_ids:
+                raise ValueError(f"batch contains duplicate part_id: {part_id}")
+            normalized_evidence_ids = self._validate_part(
+                part_id,
+                content,
+                evidence_ids,
+            )
+            seen_part_ids.add(part_id)
+            validated.append((part_id, content, normalized_evidence_ids))
+
+        results = [
+            self._persist_part(part_id, content, evidence_ids)
+            for part_id, content, evidence_ids in validated
+        ]
+        return {
+            "status": "completed",
+            "count": len(results),
+            "parts": results,
         }
 
 

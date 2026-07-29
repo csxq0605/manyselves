@@ -1,8 +1,54 @@
 """LLM Provider base classes and interfaces."""
 
+import hashlib
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
+
+
+def build_provider_request_metrics(
+    payload: dict[str, Any],
+    *,
+    representation: str,
+    message_keys: tuple[str, ...] = ("messages", "system"),
+    tool_key: str = "tools",
+) -> dict[str, Any]:
+    """Hash the canonical provider-adapter payload without retaining its content."""
+
+    def canonical(value: Any) -> str:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+
+    message_payload = {
+        key: payload[key]
+        for key in message_keys
+        if key in payload
+    }
+    tool_payload = payload.get(tool_key, [])
+    serialized_request = canonical(payload)
+    serialized_messages = canonical(message_payload)
+    serialized_tools = canonical(tool_payload)
+    return {
+        "representation": representation,
+        "request_fingerprint": hashlib.sha256(
+            serialized_request.encode("utf-8")
+        ).hexdigest(),
+        "message_fingerprint": hashlib.sha256(
+            serialized_messages.encode("utf-8")
+        ).hexdigest(),
+        "tool_schema_fingerprint": hashlib.sha256(
+            serialized_tools.encode("utf-8")
+        ).hexdigest(),
+        "request_chars": len(serialized_request),
+        "message_chars": len(serialized_messages),
+        "tool_schema_chars": len(serialized_tools),
+    }
 
 
 @dataclass
@@ -52,6 +98,7 @@ class LLMResponse:
     streaming: bool = False  # Whether this is a streaming chunk
     thinking: str | None = None  # DeepSeek extended thinking
     stop_reason: str | None = None  # Provider terminal reason (for example max_tokens)
+    request_metrics: dict[str, Any] | None = None  # Canonical payload hashes/chars passed to SDK
 
 
 @dataclass
@@ -64,6 +111,7 @@ class LLMStreamChunk:
     thinking: str | None = None  # DeepSeek extended thinking
     usage: dict[str, int] | None = None  # Provider usage, normally on the final chunk
     stop_reason: str | None = None  # Provider terminal reason
+    request_metrics: dict[str, Any] | None = None  # Present on the terminal chunk
 
 
 class LLMProvider(ABC):

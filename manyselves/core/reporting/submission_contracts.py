@@ -177,6 +177,16 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
         "Write each assigned changed submodule with write_result_part and evidence_ids.",
         "The final commit contains only the fields declared by this schema; runtime derives the scoped patch.",
     ],
+    "module_discovery_submission": [
+        "Wave 1 must cover each of the other four modules exactly once.",
+        "Every request_id must encode the requester and target and be unique in the current run.",
+        "Only request or conflict coverage may emit InterfaceRequest records.",
+    ],
+    "module_interface_response_submission": [
+        "Wave 2 is only for modules with non-empty incoming request inboxes.",
+        "Return exactly one answered or explicitly unresolved disposition per incoming request_id.",
+        "Never answer a request addressed to another module or invent a request_id.",
+    ],
     "module_review_finding_submission": [
         "Identify findings only by fixed target_submodule_id.",
     ],
@@ -207,6 +217,12 @@ KIND_SUMMARIES: dict[str, str] = {
     ),
     "module_revision_submission": (
         "A small in-scope revision commit for already saved result parts and author responses."
+    ),
+    "module_discovery_submission": (
+        "Wave 1 module research and exhaustive peer-interface discovery before final authoring."
+    ),
+    "module_interface_response_submission": (
+        "Wave 2 batched answers or explicit unresolved boundaries for one module's actual inbox."
     ),
     "template_skill_submission": (
         "A project-scoped writing Skill distilled from the template without copying project facts."
@@ -367,6 +383,59 @@ def _chief_revision_example() -> dict[str, Any]:
 KIND_EXAMPLES: dict[str, dict[str, Any]] = {
     "module_submission": _module_example(),
     "module_revision_submission": _module_revision_example(),
+    "module_discovery_submission": {
+        "kind": "module_discovery_submission",
+        "module_id": "2.1",
+        "discovery_summary": "已识别本模块证据边界以及一个需要模块 2.3 回答的接口问题。",
+        "evidence_ids": ["E-0001"],
+        "interface_coverage": [
+            {
+                "target_module_id": "2.2",
+                "status": "not_applicable",
+                "rationale": "当前发现不依赖该模块责任边界。",
+            },
+            {
+                "target_module_id": "2.3",
+                "status": "request",
+                "rationale": "最终风险判断需要确认保护接口条件。",
+            },
+            {
+                "target_module_id": "2.4",
+                "status": "offer",
+                "rationale": "可向该模块提供本模块已确认的负荷边界。",
+            },
+            {
+                "target_module_id": "2.5",
+                "status": "not_applicable",
+                "rationale": "当前发现不涉及该模块。",
+            },
+        ],
+        "requests": [
+            {
+                "request_id": "IF-2.1-2.3-001",
+                "requester_module_id": "2.1",
+                "target_module_id": "2.3",
+                "question": "保护配置是否覆盖当前识别的运行边界？",
+                "needed_for": "确定风险机理、行动依赖和联合验收边界。",
+                "evidence_ids": ["E-0001"],
+                "blocking": True,
+            }
+        ],
+    },
+    "module_interface_response_submission": {
+        "kind": "module_interface_response_submission",
+        "module_id": "2.3",
+        "dispositions": [
+            {
+                "request_id": "IF-2.1-2.3-001",
+                "status": "answered",
+                "answer": "现有配置覆盖正常边界，但异常工况仍需联合验证。",
+                "evidence_ids": ["E-0002"],
+                "conditions": ["以当前整定版本为准"],
+                "residual_uncertainty": "异常工况缺少联动试验记录。",
+            }
+        ],
+    },
     "template_skill_submission": _template_skill_example(),
     "edited_report_submission": _edited_report_example(),
     "chief_revision_submission": _chief_revision_example(),
