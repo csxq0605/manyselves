@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import threading
+from collections import Counter
 from typing import Awaitable, Callable, TypeVar
 
 from loguru import logger
@@ -21,6 +22,7 @@ class MessageBus:
         self._subscribers_lock = threading.Lock()
         self._queue: asyncio.Queue[Message] = asyncio.Queue()
         self._shutdown = False
+        self._published_counts: Counter[str] = Counter()
 
     async def publish(self, message: Message) -> None:
         """Publish a message to all subscribers.
@@ -29,7 +31,12 @@ class MessageBus:
             message: Message to publish.
         """
         await self._queue.put(message)
-        logger.debug("Published message: {}", message.type)
+        message_type = str(message.type)
+        self._published_counts[message_type] += 1
+        # Provider streams can legitimately publish tens of thousands of
+        # AgentResponse deltas during a long report. Per-message diagnostics are
+        # TRACE-level; DEBUG retains one aggregate summary at shutdown.
+        logger.trace("Published message: {}", message.type)
 
     async def process_queue(self) -> None:
         """Process messages from queue and notify subscribers."""
@@ -124,4 +131,11 @@ class MessageBus:
 
     def shutdown(self) -> None:
         """Signal the processing loop to exit."""
+        if self._shutdown:
+            return
         self._shutdown = True
+        if self._published_counts:
+            logger.debug(
+                "Message bus shutdown; published counts: {}",
+                dict(sorted(self._published_counts.items())),
+            )
