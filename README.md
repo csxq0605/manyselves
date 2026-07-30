@@ -111,9 +111,9 @@ agents:
 
 ## Bundled capability: power-distribution reports
 
-The included team coordinates evidence intake, five sequentially gated report modules,
-responsibility audit, cross-module review, Chief Editor integration, governed
-Skill evolution, and template-backed DOCX delivery.
+The included team coordinates evidence intake, three-wave collaboration across five
+report modules, responsibility audit, cross-module review, Chief Editor integration,
+governed Skill evolution, and template-backed DOCX delivery.
 
 Customer facts go in `Inputs/`; project standards and interpretation references
 go in `Knowledge/`. The workflow recognizes the three core workbooks, WPS
@@ -125,13 +125,14 @@ evidence decisions, loaded Skill versions, review findings, and report versions
 remain auditable. Knowledge and web sources can support interpretation but never
 become customer-site facts.
 
-The five fixed modules 2.1–2.5 run in a fixed order. Each module completes
-drafting, responsibility audit, targeted revision, and recheck before the next
-module starts; all five then pass cross review and complete-document composition.
-Missing evidence can `ask`, `block`, `skip`, or `draft`; durable decisions survive
-process restarts. A post-delivery revision restores a baseline, reruns only the
-responsible module, rechecks the full report, and publishes an immutable child
-version.
+For a full report, modules 2.1–2.5 first complete two bounded collaboration waves,
+then draft concurrently. Their responsibility audits, targeted revisions, and
+same-reviewer rechecks currently run in fixed module order; all five must complete
+before cross review and complete-document composition. Missing evidence defaults
+to an uncertainty-marked `draft`; `ask`, `block`, and `skip` remain explicit
+policies, and durable decisions survive process restarts. A post-delivery revision
+restores a baseline, reruns only the responsible module, rechecks the full report,
+and publishes an immutable child version.
 
 Typical project output:
 
