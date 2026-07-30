@@ -276,7 +276,7 @@ class ReportRequest(ReportingModel):
         default_factory=list,
         description="Scoped, stage-bound, superseding current-run user inputs.",
     )
-    missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "ask"
+    missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "draft"
     max_provider_attempts: int = Field(default=80, ge=1, le=1000)
     max_total_tokens: int = Field(default=800_000, ge=1_000)
 
@@ -452,6 +452,13 @@ class PhotoAsset(ReportingModel):
     source_image_id: str | None = Field(
         default=None,
         description="Original workbook DISPIMG/OOXML image key retained for provenance.",
+    )
+    primary_evidence_id: str | None = Field(
+        default=None,
+        description=(
+            "Explicit EvidenceItem owner used for photo caption and placement when "
+            "one source image is associated with multiple evidence facts."
+        ),
     )
 
 

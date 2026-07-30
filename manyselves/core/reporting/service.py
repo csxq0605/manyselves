@@ -23,6 +23,7 @@ from .agent_runner import ReportingAgentRunner
 from .config import load_packaged_agents
 from .coverage import evaluate_coverage
 from .decisions import EvidenceDecisionStore
+from .evidence_readiness import ReportingBlockedError
 from .intake.adapters import IntakeAdapterRegistry
 from .intake.manifest import build_manifest
 from .intake.wps_images import canonicalize_photo_bindings, extract_wps_images
@@ -40,7 +41,6 @@ from .models import (
     UserSupplement,
 )
 from .output_verifier import OutputVerificationError, verify_current_run_outputs
-from .evidence_readiness import ReportingBlockedError
 from .rendering import PackagedV2DocxCore, PdsDocxRenderer, RenderRequest, RenderResult
 from .rendering.packaged_docx import verify_rendered_markdown
 from .store import ReportingStore
@@ -346,7 +346,6 @@ class ReportingService:
         """Render one approved project-local Markdown artifact without analysis Agents."""
 
         request: ReportRequest = state["request"]
-        run_id = state["run_id"]
         source_ref = request.source_markdown_ref
         if source_ref is None:
             raise ValueError("render_existing requires source_markdown_ref")
@@ -466,11 +465,60 @@ class ReportingService:
     ) -> ReportingRunResult:
         if not decision_id:
             raise ValueError("decision_id is required")
-        decision = self.decisions.resolve(decision_id, action)
-        request_path = self.workspace / f"Work/runs/{decision.run_id}/request.json"
+        current = self.decisions.load(decision_id)
+        if action not in current.allowed_actions:
+            raise ValueError(f"action is not allowed for evidence decision: {action}")
+        if current.status == "resolved" and current.selected_action != action:
+            raise ValueError(
+                f"evidence decision already resolved as {current.selected_action}: "
+                f"{decision_id}"
+            )
+        if current.status not in {"pending", "resolved"}:
+            raise ValueError(f"evidence decision cannot be resumed: {decision_id}")
+        if supplements and action != "supplement":
+            raise ValueError("supplements are only valid with action=supplement")
+        typed_supplements = [
+            UserSupplement.model_validate(item) for item in (supplements or [])
+        ]
+        request_path = self.workspace / f"Work/runs/{current.run_id}/request.json"
         if not request_path.is_file():
-            raise FileNotFoundError(f"report request is missing for run: {decision.run_id}")
+            raise FileNotFoundError(f"report request is missing for run: {current.run_id}")
         request = ReportRequest.model_validate_json(request_path.read_text(encoding="utf-8"))
+        resumed_request: ReportRequest | None = None
+        if action != "stop":
+            resumed_request = ReportRequest.model_validate(
+                {
+                    **request.model_dump(mode="json"),
+                    "missing_evidence_policy": (
+                        "ask" if action == "supplement" else action
+                    ),
+                    "user_supplements": [
+                        *request.user_supplements,
+                        *typed_supplements,
+                    ],
+                }
+            )
+
+        if current.status == "resolved":
+            result_path = self.workspace / f"Work/runs/{current.run_id}.json"
+            previous = (
+                ReportingRunResult.model_validate_json(
+                    result_path.read_text(encoding="utf-8")
+                )
+                if result_path.is_file()
+                else None
+            )
+            if previous is not None and previous.status != "needs_user_decision":
+                raise ValueError(
+                    f"evidence decision is already applied; resume the run by run_id: "
+                    f"{current.run_id}"
+                )
+            decision = current
+        else:
+            # All request and supplement validation must finish before the durable
+            # decision is consumed. If a process crashes after this point, a retry
+            # with the same action reconciles the partially applied decision.
+            decision = self.decisions.resolve(decision_id, action)
         self.store.write_json(
             f"Work/runs/{decision.run_id}/evidence-choice.json",
             decision.model_dump(mode="json"),
@@ -485,21 +533,7 @@ class ReportingService:
             self._save_run(result)
             await self._notice("用户选择停止；本次报告保持未完成，未生成成功交付成果。")
             return result
-        resumed_request = request.model_copy(
-            update={
-                "missing_evidence_policy": "ask" if action == "supplement" else action,
-                "user_supplements": [
-                    *request.user_supplements,
-                    *(
-                        UserSupplement.model_validate(item)
-                        for item in (supplements or [])
-                    ),
-                ],
-            }
-        )
-        resumed_request = ReportRequest.model_validate(
-            resumed_request.model_dump(mode="json")
-        )
+        assert resumed_request is not None
         self.store.write_json(
             f"Work/runs/{decision.run_id}/request.json",
             resumed_request.model_dump(mode="json"),
@@ -727,7 +761,14 @@ class ReportingService:
                 if manifest_file.purpose == "s4-4":
                     extracted = extract_wps_images(
                         input_path,
-                        output_dir=self.workspace / "Work" / "assets" / manifest_file.id,
+                        output_dir=(
+                            self.workspace
+                            / "Work"
+                            / "runs"
+                            / str(state["run_id"])
+                            / "assets"
+                            / manifest_file.id
+                        ),
                     )
                 mapped = mapper(input_path, file_id=manifest_file.id)
                 mapped_evidence = [
@@ -738,7 +779,7 @@ class ReportingService:
                     )
                     for item in mapped.evidence_items
                 ]
-                if extracted:
+                if manifest_file.purpose == "s4-4":
                     mapped_evidence, normalized_assets = canonicalize_photo_bindings(
                         mapped_evidence,
                         extracted,
@@ -810,10 +851,32 @@ class ReportingService:
             )
         # Runtime source tools and ClaimLedger use stable E-* identifiers. Mapper
         # internals may emit legacy ev-* ids, so normalize once at the boundary.
-        evidence = [
-            item.model_copy(update={"id": f"E-{index:04d}"})
-            for index, item in enumerate(evidence, start=1)
-        ]
+        evidence_id_map: dict[str, str] = {}
+        normalized_evidence: list[EvidenceItem] = []
+        for index, item in enumerate(evidence, start=1):
+            if item.id in evidence_id_map:
+                raise ValueError(f"duplicate pre-normalization evidence id: {item.id}")
+            normalized_id = f"E-{index:04d}"
+            evidence_id_map[item.id] = normalized_id
+            normalized_evidence.append(item.model_copy(update={"id": normalized_id}))
+        evidence = normalized_evidence
+        normalized_photo_assets: list[PhotoAsset] = []
+        for asset in photo_assets:
+            primary_evidence_id = asset.primary_evidence_id
+            if primary_evidence_id is None:
+                raise ValueError(f"photo {asset.id} is missing its primary evidence binding")
+            normalized_primary_id = evidence_id_map.get(primary_evidence_id)
+            if normalized_primary_id is None:
+                raise ValueError(
+                    f"photo {asset.id} references unknown primary evidence "
+                    f"{primary_evidence_id}"
+                )
+            normalized_photo_assets.append(
+                asset.model_copy(
+                    update={"primary_evidence_id": normalized_primary_id}
+                )
+            )
+        photo_assets = normalized_photo_assets
         state["evidence_items"] = evidence
         state["photo_assets"] = photo_assets
         state["mapping_gaps"] = mapping_gaps
