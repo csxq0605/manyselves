@@ -544,6 +544,34 @@ def test_reporting_tool_rejects_missing_provider(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reporting_tool_defaults_new_report_to_draft_policy(
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, ReportRequest] = {}
+
+    class CapturingController:
+        def start(self, request: ReportRequest) -> dict:
+            captured["request"] = request
+            return {"status": "running", "run_id": "report-default-draft"}
+
+    tool = RunReportingWorkflowTool(
+        workspace=tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+        controller=CapturingController(),  # type: ignore[arg-type]
+    )
+
+    payload = await tool(
+        instruction="从 Inputs 生成完整报告",
+        operation="full_report",
+    )
+
+    assert payload["status"] == "running"
+    assert captured["request"].missing_evidence_policy == "draft"
+
+
+@pytest.mark.asyncio
 async def test_service_returns_resumable_decision_before_calling_provider_when_evidence_requires_confirmation(
     tmp_path: Path,
 ) -> None:
@@ -996,6 +1024,95 @@ async def test_draft_and_skip_resume_same_run_with_explicit_policy(
         (tmp_path / f"Work/runs/{pending.run_id}/evidence-choice.json").read_text(encoding="utf-8")
     )
     assert choice["selected_action"] == action
+
+
+@pytest.mark.asyncio
+async def test_invalid_draft_supplement_does_not_consume_evidence_decision(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    pending = await service.run(
+        ReportRequest(
+            operation="module_report",
+            instruction="生成设备模块",
+            target_modules=["2.4"],
+            missing_evidence_policy="ask",
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="supplements are only valid with action=supplement",
+    ):
+        await service.resume(
+            pending.decision_id,
+            "draft",
+            ["按 draft 继续"],  # type: ignore[list-item]
+        )
+
+    decision = service.decisions.load(pending.decision_id)
+    assert decision.status == "pending"
+    assert decision.selected_action is None
+    request = ReportRequest.model_validate_json(
+        (
+            tmp_path / f"Work/runs/{pending.run_id}/request.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert request.missing_evidence_policy == "ask"
+    assert not (
+        tmp_path / f"Work/runs/{pending.run_id}/evidence-choice.json"
+    ).exists()
+
+
+@pytest.mark.asyncio
+async def test_resolved_draft_decision_reconciles_stale_ask_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    pending = await service.run(
+        ReportRequest(
+            operation="module_report",
+            instruction="生成设备模块",
+            target_modules=["2.4"],
+            missing_evidence_policy="ask",
+        )
+    )
+    service.decisions.resolve(pending.decision_id, "draft")
+    seen: dict[str, str] = {}
+
+    async def completed(self, state: dict) -> None:
+        seen["policy"] = state["request"].missing_evidence_policy
+        output = self.service.workspace / "Outputs/Reports/reconciled.txt"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("verified report output", encoding="utf-8")
+        state["output_artifacts"] = [
+            OutputArtifact(kind="report", path=output.relative_to(self.service.workspace))
+        ]
+
+    monkeypatch.setattr(ReportWorkflowRunner, "run", completed)
+
+    result = await service.resume(pending.decision_id, "draft")
+
+    assert result.run_id == pending.run_id
+    assert result.status == "completed"
+    assert seen["policy"] == "draft"
+    request = ReportRequest.model_validate_json(
+        (
+            tmp_path / f"Work/runs/{pending.run_id}/request.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert request.missing_evidence_policy == "draft"
 
 
 @pytest.mark.asyncio

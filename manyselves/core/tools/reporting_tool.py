@@ -410,7 +410,7 @@ class RunReportingWorkflowTool(Tool):
         source_markdown_ref: str | None = None,
         output_filename: str | None = None,
         execution_requirements: list[str] | None = None,
-        missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "ask",
+        missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "draft",
         cost_control_mode: CostControlMode = "observe",
         max_provider_attempts: int = 80,
         max_total_tokens: int = 800000,
@@ -428,6 +428,9 @@ class RunReportingWorkflowTool(Tool):
             output_filename: Optional DOCX filename beneath Outputs/Reports.
             execution_requirements: Turn-specific requirements such as deep reasoning.
             missing_evidence_policy: How to handle submodules without customer evidence.
+                Defaults to draft so generation continues with explicit
+                incomplete/uncertain markers. Use ask only when the user explicitly
+                requests an evidence-confirmation pause.
             cost_control_mode: Observe, warn, or pause only after a completed stage/checkpoint.
             max_provider_attempts: Provider-attempt window for cost observation or boundary pause.
             max_total_tokens: Token window for cost observation or boundary pause.

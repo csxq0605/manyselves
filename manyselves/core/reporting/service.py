@@ -508,11 +508,60 @@ class ReportingService:
     ) -> ReportingRunResult:
         if not decision_id:
             raise ValueError("decision_id is required")
-        decision = self.decisions.resolve(decision_id, action)
-        request_path = self.workspace / f"Work/runs/{decision.run_id}/request.json"
+        current = self.decisions.load(decision_id)
+        if action not in current.allowed_actions:
+            raise ValueError(f"action is not allowed for evidence decision: {action}")
+        if current.status == "resolved" and current.selected_action != action:
+            raise ValueError(
+                f"evidence decision already resolved as {current.selected_action}: "
+                f"{decision_id}"
+            )
+        if current.status not in {"pending", "resolved"}:
+            raise ValueError(f"evidence decision cannot be resumed: {decision_id}")
+        if supplements and action != "supplement":
+            raise ValueError("supplements are only valid with action=supplement")
+        typed_supplements = [
+            UserSupplement.model_validate(item) for item in (supplements or [])
+        ]
+        request_path = self.workspace / f"Work/runs/{current.run_id}/request.json"
         if not request_path.is_file():
-            raise FileNotFoundError(f"report request is missing for run: {decision.run_id}")
+            raise FileNotFoundError(f"report request is missing for run: {current.run_id}")
         request = ReportRequest.model_validate_json(request_path.read_text(encoding="utf-8"))
+        resumed_request: ReportRequest | None = None
+        if action != "stop":
+            resumed_request = ReportRequest.model_validate(
+                {
+                    **request.model_dump(mode="json"),
+                    "missing_evidence_policy": (
+                        "ask" if action == "supplement" else action
+                    ),
+                    "user_supplements": [
+                        *request.user_supplements,
+                        *typed_supplements,
+                    ],
+                }
+            )
+
+        if current.status == "resolved":
+            result_path = self.workspace / f"Work/runs/{current.run_id}.json"
+            previous = (
+                ReportingRunResult.model_validate_json(
+                    result_path.read_text(encoding="utf-8")
+                )
+                if result_path.is_file()
+                else None
+            )
+            if previous is not None and previous.status != "needs_user_decision":
+                raise ValueError(
+                    f"evidence decision is already applied; resume the run by run_id: "
+                    f"{current.run_id}"
+                )
+            decision = current
+        else:
+            # All request and supplement validation must finish before the durable
+            # decision is consumed. If a process crashes after this point, a retry
+            # with the same action reconciles the partially applied decision.
+            decision = self.decisions.resolve(decision_id, action)
         self.store.write_json(
             f"Work/runs/{decision.run_id}/evidence-choice.json",
             decision.model_dump(mode="json"),
@@ -527,21 +576,7 @@ class ReportingService:
             self._save_run(result)
             await self._notice("用户选择停止；本次报告保持未完成，未生成成功交付成果。")
             return result
-        resumed_request = request.model_copy(
-            update={
-                "missing_evidence_policy": "ask" if action == "supplement" else action,
-                "user_supplements": [
-                    *request.user_supplements,
-                    *(
-                        UserSupplement.model_validate(item)
-                        for item in (supplements or [])
-                    ),
-                ],
-            }
-        )
-        resumed_request = ReportRequest.model_validate(
-            resumed_request.model_dump(mode="json")
-        )
+        assert resumed_request is not None
         self.store.write_json(
             f"Work/runs/{decision.run_id}/request.json",
             resumed_request.model_dump(mode="json"),

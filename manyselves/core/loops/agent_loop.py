@@ -162,7 +162,11 @@ _UNVERIFIED_REPORT_OPERATION_CLAIM = re.compile(
 )
 _REPORT_RUN_ID = re.compile(r"\breport-[A-Za-z0-9_-]+\b")
 _EVIDENCE_DECISION_PATTERNS = {
-    "draft": re.compile(r"\bdraft\b|保留不确定性.{0,12}起草|按不确定性起草|继续起草", re.IGNORECASE),
+    "draft": re.compile(
+        r"(?<![A-Za-z0-9_])draft(?![A-Za-z0-9_])"
+        r"|保留不确定性.{0,12}起草|按不确定性起草|继续起草",
+        re.IGNORECASE,
+    ),
     "skip": re.compile(r"\bskip\b|跳过|保留目录.{0,12}未评估", re.IGNORECASE),
     "stop": re.compile(r"\bstop\b|停止|终止", re.IGNORECASE),
     "supplement": re.compile(r"\bsupplement\b|补充资料|补录|我补充", re.IGNORECASE),

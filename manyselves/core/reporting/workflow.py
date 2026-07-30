@@ -3938,7 +3938,10 @@ class ReportWorkflowRunner:
     @staticmethod
     def _evidence_policy_constraints(policy: str) -> list[str]:
         if policy == "draft":
-            return ["缺少客户证据的内容必须明确标注待核实或不确定性，禁止写成已确认项目事实"]
+            return [
+                "缺少客户证据的内容必须明确标注“资料不完整、待核实、低置信度”或等价限制，"
+                "禁止写成已确认项目事实；不得因此跳过固定模块或子模块"
+            ]
         if policy == "skip":
             return ["必须保留固定报告目录；缺少客户证据的子模块仅标注“未评估”，不得给出专业结论"]
         return []
