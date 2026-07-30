@@ -11,8 +11,8 @@ from manyselves.core.reporting.agentic_models import (
 from manyselves.core.reporting.assets import (
     ReportAssetAssembler,
     find_shallow_submodules,
-    validate_editor_quality,
     validate_editor_protection,
+    validate_editor_quality,
     validate_existing_markdown_modules,
     validate_module_markdown_consistency,
 )
@@ -484,3 +484,82 @@ def test_asset_assembler_requires_and_builds_every_source_table_photo(
             [claim],
             edited.model_copy(update={"photo_ids": ["IMG-1"]}),
         )
+
+
+def test_asset_assembler_rejects_unknown_explicit_primary_photo_evidence(
+    tmp_path: Path,
+) -> None:
+    photo_path = tmp_path / "Work/assets/P-0001.png"
+    photo_path.parent.mkdir(parents=True)
+    photo_path.write_bytes(b"image")
+    evidence = [
+        EvidenceItem(
+            id=f"E-000{index}",
+            subject=f"对象 {index}",
+            fact="检查结果=NG",
+            source=SourceLocation(
+                file_id="F-1",
+                path=Path("Inputs/check.xlsx"),
+                cell=f"A{index}",
+            ),
+            module_id="2.4",
+            submodule_id="2.4.2.1",
+            photo_refs=["P-0001"],
+        )
+        for index in (1, 2)
+    ]
+    asset = PhotoAsset(
+        id="P-0001",
+        path=photo_path.relative_to(tmp_path),
+        sha256="abc",
+        media_type="image/png",
+        source_member="media/image1.png",
+        source_image_id="ID_SOURCE",
+        primary_evidence_id="E-9999",
+    )
+
+    with pytest.raises(ValueError, match="primary evidence binding"):
+        ReportAssetAssembler.runtime_photo_ids(evidence, [asset])
+
+
+def test_asset_assembler_uses_explicit_primary_binding_for_reused_photo(
+    tmp_path: Path,
+) -> None:
+    photo_path = tmp_path / "Work/assets/P-0001.png"
+    photo_path.parent.mkdir(parents=True)
+    photo_path.write_bytes(b"image")
+    evidence = [
+        EvidenceItem(
+            id=f"E-000{index}",
+            subject=f"对象 {index}",
+            fact=f"检查结果 {index}=NG",
+            source=SourceLocation(
+                file_id="F-1",
+                path=Path("Inputs/check.xlsx"),
+                cell=f"A{index}:B{index}",
+            ),
+            module_id="2.4",
+            submodule_id="2.4.2.1",
+            photo_refs=["P-0001"],
+        )
+        for index in (1, 2)
+    ]
+    asset = PhotoAsset(
+        id="P-0001",
+        path=photo_path.relative_to(tmp_path),
+        sha256="abc",
+        media_type="image/png",
+        source_member="media/image1.png",
+        source_image_id="ID_SOURCE",
+        primary_evidence_id="E-0002",
+    )
+
+    _, photos = ReportAssetAssembler(tmp_path).build(
+        evidence,
+        [asset],
+        [],
+        _edited(photo_ids=["P-0001"]),
+    )
+
+    assert photos[0].source_id == "E-0002"
+    assert photos[0].caption == "对象 2：检查结果 2=NG"

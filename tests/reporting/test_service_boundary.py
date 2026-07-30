@@ -9,11 +9,17 @@ from docx import Document
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.decisions import EvidenceDecisionStore
+from manyselves.core.reporting.mappers.common import MappingResult
 from manyselves.core.reporting.models import (
     EvidenceDecisionRequest,
+    EvidenceItem,
+    ManifestFile,
     OutputArtifact,
+    PhotoAsset,
+    ProjectManifest,
     ReportRequest,
     RevisionRequest,
+    SourceLocation,
     UserSupplement,
 )
 from manyselves.core.reporting.revisions import RevisionCoordinator
@@ -38,6 +44,103 @@ class TemplateResolutionProvider(LLMProvider):
 
     async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
         raise AssertionError("template resolution must not call the provider")
+
+
+@pytest.mark.asyncio
+async def test_evidence_normalization_scopes_canonical_photos_to_run_and_remaps_primary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = tmp_path / "Inputs/S4-4诊断工作用表.xlsx"
+    input_path.parent.mkdir(parents=True)
+    input_path.write_bytes(b"fixture")
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    manifest_file = ManifestFile(
+        id="file-s44",
+        path=input_path.relative_to(tmp_path),
+        sha256="abc",
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        purpose="s4-4",
+    )
+    state = {
+        "run_id": "report-photo-bindings",
+        "project_manifest": ProjectManifest(files=[manifest_file]),
+        "parsed_artifacts": [],
+    }
+    evidence = [
+        EvidenceItem(
+            id=f"ev-source-{index}",
+            subject=f"检查项 {index}",
+            fact=f"结果 {index}=NG",
+            source=SourceLocation(
+                file_id=manifest_file.id,
+                path=manifest_file.path,
+                sheet="配电房合规性",
+                cell=f"{column}6:{photo_column}6",
+            ),
+            module_id="2.2",
+            submodule_id="2.2.2.3",
+            photo_refs=["ID_SHARED"],
+        )
+        for index, column, photo_column in (
+            (1, "B", "C"),
+            (2, "D", "E"),
+        )
+    ]
+    observed_output_dirs: list[Path] = []
+
+    def fake_extract(_path: Path, *, output_dir: Path) -> dict[str, PhotoAsset]:
+        observed_output_dirs.append(output_dir)
+        output_dir.mkdir(parents=True)
+        source_path = output_dir / "source-0001.jpeg"
+        source_path.write_bytes(b"image")
+        return {
+            "ID_SHARED": PhotoAsset(
+                id="ID_SHARED",
+                path=source_path,
+                sha256="def",
+                media_type="image/jpeg",
+                source_member="xl/media/image1.jpeg",
+                source_image_id="ID_SHARED",
+            )
+        }
+
+    monkeypatch.setattr(
+        "manyselves.core.reporting.service.extract_wps_images",
+        fake_extract,
+    )
+    monkeypatch.setattr(
+        "manyselves.core.reporting.service.map_s4_4",
+        lambda *_args, **_kwargs: MappingResult(evidence_items=evidence, gaps=[]),
+    )
+
+    await service._normalize_evidence(state)
+
+    expected_root = (
+        tmp_path
+        / "Work/runs/report-photo-bindings/assets/file-s44"
+    )
+    assert observed_output_dirs == [expected_root]
+    assert [item.id for item in state["evidence_items"]] == ["E-0001", "E-0002"]
+    assert [item.photo_refs for item in state["evidence_items"]] == [
+        ["P-0001"],
+        ["P-0001"],
+    ]
+    assert len(state["photo_assets"]) == 1
+    photo = state["photo_assets"][0]
+    assert photo.id == "P-0001"
+    assert photo.path == Path(
+        "Work/runs/report-photo-bindings/assets/file-s44/P-0001.jpeg"
+    )
+    assert photo.source_image_id == "ID_SHARED"
+    assert photo.primary_evidence_id == "E-0001"
 
 
 @pytest.mark.asyncio
@@ -346,6 +449,34 @@ def test_reporting_tool_rejects_missing_provider(tmp_path: Path) -> None:
             task_board=TaskBoard(),
             llm_provider=None,  # type: ignore[arg-type]
         )
+
+
+@pytest.mark.asyncio
+async def test_reporting_tool_defaults_new_report_to_draft_policy(
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, ReportRequest] = {}
+
+    class CapturingController:
+        def start(self, request: ReportRequest) -> dict:
+            captured["request"] = request
+            return {"status": "running", "run_id": "report-default-draft"}
+
+    tool = RunReportingWorkflowTool(
+        workspace=tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+        controller=CapturingController(),  # type: ignore[arg-type]
+    )
+
+    payload = await tool(
+        instruction="从 Inputs 生成完整报告",
+        operation="full_report",
+    )
+
+    assert payload["status"] == "running"
+    assert captured["request"].missing_evidence_policy == "draft"
 
 
 @pytest.mark.asyncio
@@ -799,6 +930,95 @@ async def test_draft_and_skip_resume_same_run_with_explicit_policy(
         (tmp_path / f"Work/runs/{pending.run_id}/evidence-choice.json").read_text(encoding="utf-8")
     )
     assert choice["selected_action"] == action
+
+
+@pytest.mark.asyncio
+async def test_invalid_draft_supplement_does_not_consume_evidence_decision(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    pending = await service.run(
+        ReportRequest(
+            operation="module_report",
+            instruction="生成设备模块",
+            target_modules=["2.4"],
+            missing_evidence_policy="ask",
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="supplements are only valid with action=supplement",
+    ):
+        await service.resume(
+            pending.decision_id,
+            "draft",
+            ["按 draft 继续"],  # type: ignore[list-item]
+        )
+
+    decision = service.decisions.load(pending.decision_id)
+    assert decision.status == "pending"
+    assert decision.selected_action is None
+    request = ReportRequest.model_validate_json(
+        (
+            tmp_path / f"Work/runs/{pending.run_id}/request.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert request.missing_evidence_policy == "ask"
+    assert not (
+        tmp_path / f"Work/runs/{pending.run_id}/evidence-choice.json"
+    ).exists()
+
+
+@pytest.mark.asyncio
+async def test_resolved_draft_decision_reconciles_stale_ask_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    pending = await service.run(
+        ReportRequest(
+            operation="module_report",
+            instruction="生成设备模块",
+            target_modules=["2.4"],
+            missing_evidence_policy="ask",
+        )
+    )
+    service.decisions.resolve(pending.decision_id, "draft")
+    seen: dict[str, str] = {}
+
+    async def completed(self, state: dict) -> None:
+        seen["policy"] = state["request"].missing_evidence_policy
+        output = self.service.workspace / "Outputs/Reports/reconciled.txt"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("verified report output", encoding="utf-8")
+        state["output_artifacts"] = [
+            OutputArtifact(kind="report", path=output.relative_to(self.service.workspace))
+        ]
+
+    monkeypatch.setattr(ReportWorkflowRunner, "run", completed)
+
+    result = await service.resume(pending.decision_id, "draft")
+
+    assert result.run_id == pending.run_id
+    assert result.status == "completed"
+    assert seen["policy"] == "draft"
+    request = ReportRequest.model_validate_json(
+        (
+            tmp_path / f"Work/runs/{pending.run_id}/request.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert request.missing_evidence_policy == "draft"
 
 
 @pytest.mark.asyncio

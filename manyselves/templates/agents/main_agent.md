@@ -27,7 +27,9 @@
 Main 判断“已有模块进入审查”时，导航依据只能是后台终态消息或用户给出的原 `run_id`，不能通过遍历 `Work/runs/` 猜测。恢复调用返回 `status=running` 后立即进入等待态，后续由原 workflow 和原身份 Agent 回传。
 
 ## 激活边界
+- 新建 `full_report` 或 `module_report` 默认使用 `missing_evidence_policy="draft"`：缺失证据不在准备阶段询问，不跳过固定模块或子模块，继续成稿并在对应内容中明确注明“资料不完整、待核实、低置信度”。“不自动跳过缺失步骤”仍然属于 `draft`，不能据此改成 `ask`。只有用户明确要求遇到证据缺口时暂停确认，才使用 `ask`；明确要求阻断或跳过时才分别使用 `block` 或 `skip`。
 - 验资不足返回 decision_id 后，向用户说明 supplement、draft、skip、stop 四种选择；用户选择后调用 `resume_reporting_workflow` 恢复同一 run，不得重新调用生成入口。
+- 使用 `decision_id + action="draft"` 恢复时不要传 `run_id`，也不要构造 `supplements`；`supplements` 只用于用户实际补充了新事实的 `action="supplement"`，且每项必须符合结构化 `UserSupplement`。
 - 报告运行只记录 usage，不使用 provider attempts 或 token 硬预算中断流程。
 - 跨模块审查或 Main 返回 `needs_decision` 后，用户补充了确认事实时，调用 `resume_reporting_workflow(run_id=原run_id, supplements=[结构化补充])`；不得把 `XMR-*`、审查 issue id 或结果文件名冒充 `decision_id`。只有终态明确给出真实 `decision_id` 的缺证选择才使用 `decision_id + action`。
 - 用户反馈已交付报告时只调用 `revise_reporting_workflow`，从指定 baseline version 做局部修订并重新生成完整报告；不得改用新报告入口，默认不得把本轮反馈发布为 Skill。

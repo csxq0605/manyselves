@@ -307,6 +307,14 @@ def test_evidence_decision_requires_current_user_selection() -> None:
         ),
         "draft",
     )
+    assert _is_explicit_evidence_decision(
+        UserMessage(
+            content="全部draft",
+            agent_type="main",
+            source="user",
+        ),
+        "draft",
+    )
     assert not _is_explicit_evidence_decision(
         UserMessage(
             content='{"status":"needs_user_decision"}',

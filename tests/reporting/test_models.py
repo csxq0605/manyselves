@@ -27,6 +27,10 @@ def test_report_request_keeps_run_requirements_separate_from_scope() -> None:
     assert request.target_modules == ["2.4"]
     assert request.operation == "module_report"
     assert request.execution_requirements == ["deep_reasoning"]
+    assert request.missing_evidence_policy == "draft"
+    draft_constraints = ReportWorkflowRunner._evidence_policy_constraints("draft")
+    assert "资料不完整、待核实、低置信度" in draft_constraints[0]
+    assert "不得因此跳过固定模块或子模块" in draft_constraints[0]
 
 
 def test_render_existing_requires_project_relative_markdown() -> None:

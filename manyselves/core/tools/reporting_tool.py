@@ -407,7 +407,7 @@ class RunReportingWorkflowTool(Tool):
         source_markdown_ref: str | None = None,
         output_filename: str | None = None,
         execution_requirements: list[str] | None = None,
-        missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "ask",
+        missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "draft",
         max_provider_attempts: int = 80,
         max_total_tokens: int = 800000,
     ) -> dict[str, Any]:
@@ -424,6 +424,9 @@ class RunReportingWorkflowTool(Tool):
             output_filename: Optional DOCX filename beneath Outputs/Reports.
             execution_requirements: Turn-specific requirements such as deep reasoning.
             missing_evidence_policy: How to handle submodules without customer evidence.
+                Defaults to draft so generation continues with explicit
+                incomplete/uncertain markers. Use ask only when the user explicitly
+                requests an evidence-confirmation pause.
             max_provider_attempts: Deprecated telemetry reference; never stops the run.
             max_total_tokens: Deprecated telemetry reference; never stops the run.
         """

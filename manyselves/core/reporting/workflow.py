@@ -16,10 +16,10 @@ from pydantic import Field
 from ..usage_ledger import UsageLedger
 from .agent_runner import ReportingAgentRunner
 from .agentic_models import (
+    FINAL_REPORT_SECTION_IDS,
     AgentRunStatus,
     CrossSynthesisInput,
     EditedReportSubmission,
-    FINAL_REPORT_SECTION_IDS,
     ModuleDispatchPlan,
     ModuleSubmission,
     StrictModel,
@@ -40,6 +40,7 @@ from .assets import (
 )
 from .claim_ledger import ClaimLedger
 from .delivery import DeliveryPackage, DeliveryReceipt, ProjectDelivery
+from .evidence_readiness import EvidenceReadinessPolicy, ReportingBlockedError
 from .input_contracts import (
     AggregateEditorInput,
     ChiefEditorInput,
@@ -64,18 +65,17 @@ from .models import (
     SpecialTopicPlan,
 )
 from .module_skills import ModuleSkillLibrary
+from .rendering.contracts import RenderRequest, RenderResult
 from .rendering.handoff_docx import PackagedV2DocxCore
 from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
 from .rendering.source_index_docx_renderer import SourceIndexDocxRenderer
-from .rendering.contracts import RenderRequest, RenderResult
 from .report_markdown import (
     CanonicalMarkdownTable,
     CanonicalReportContent,
     compose_canonical_markdown,
 )
-from .evidence_readiness import EvidenceReadinessPolicy, ReportingBlockedError
-from .research.project_evidence import project_evidence_locator
 from .research.knowledge_context import KnowledgeContextBuilder
+from .research.project_evidence import project_evidence_locator
 from .review_lifecycle import (
     request_module_revision,
     run_cross_review,
@@ -1097,7 +1097,10 @@ class ReportWorkflowRunner:
             self._validate_final_report_structure(state, markdown, "aggregate-final")
             self.service.store.write_text(markdown_ref.as_posix(), markdown)
             source_index_markdown = (
-                ledger.source_index_markdown()
+                ledger.source_index_markdown(
+                    evidence_items=state.get("evidence_items", []),
+                    photo_assets=state.get("photo_assets", []),
+                )
                 if ledger is not None
                 else (
                     "## 证据与来源索引\n\n"
@@ -2449,7 +2452,10 @@ class ReportWorkflowRunner:
     @staticmethod
     def _evidence_policy_constraints(policy: str) -> list[str]:
         if policy == "draft":
-            return ["缺少客户证据的内容必须明确标注待核实或不确定性，禁止写成已确认项目事实"]
+            return [
+                "缺少客户证据的内容必须明确标注“资料不完整、待核实、低置信度”或等价限制，"
+                "禁止写成已确认项目事实；不得因此跳过固定模块或子模块"
+            ]
         if policy == "skip":
             return ["必须保留固定报告目录；缺少客户证据的子模块仅标注“未评估”，不得给出专业结论"]
         return []
@@ -3324,15 +3330,19 @@ class ReportWorkflowRunner:
         markdown_path = self.service.store.write_text(
             "Outputs/Reports/配电安全专家咨询报告.md", delivery_markdown
         )
+        source_index_markdown = ledger.source_index_markdown(
+            evidence_items=state.get("evidence_items", []),
+            photo_assets=state.get("photo_assets", []),
+        )
         source_index_path = self.service.store.write_text(
             "Outputs/Reports/证据与来源索引.md",
-            ledger.source_index_markdown().rstrip() + "\n",
+            source_index_markdown.rstrip() + "\n",
         )
         source_index_docx_path = (
             self.service.workspace / "Outputs/Reports/证据与来源索引.docx"
         )
         SourceIndexDocxRenderer.render(
-            ledger.source_index_markdown().rstrip() + "\n",
+            source_index_markdown.rstrip() + "\n",
             source_index_docx_path,
         )
         selected_template, template_source = self.service.resolve_report_template()

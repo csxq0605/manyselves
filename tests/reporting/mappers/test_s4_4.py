@@ -401,6 +401,7 @@ def test_s4_4_maps_total_distribution_sheet(tmp_path: Path) -> None:
     residual = next(item for item in total_items if item.submodule_id == "2.4.3.1")
     assert residual.value == 12.5
     assert residual.photo_refs == ["ID_TOTAL_RESIDUAL"]
+    assert residual.source.cell == "C3;I3:K3"
     assert any(
         item.submodule_id == "2.2.1.1"
         and item.fact == "谐波=2.3%"
