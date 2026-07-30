@@ -1,6 +1,8 @@
 """Tests for async message bus."""
 
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -145,6 +147,34 @@ async def test_publish_queues_message(bus):
     msg = UserMessage(content="Queued")
     await bus.publish(msg)
     assert not bus._queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_publish_logs_hot_path_at_trace_and_shutdown_summarizes_once(
+    bus,
+    monkeypatch,
+):
+    trace = Mock()
+    debug = Mock()
+    monkeypatch.setattr(
+        "manyselves.core.loops.bus.logger",
+        SimpleNamespace(trace=trace, debug=debug),
+    )
+    msg = UserMessage(content="Queued")
+
+    await bus.publish(msg)
+
+    trace.assert_called_once_with("Published message: {}", msg.type)
+    debug.assert_not_called()
+    assert bus._published_counts == {str(msg.type): 1}
+
+    bus.shutdown()
+    bus.shutdown()
+
+    debug.assert_called_once_with(
+        "Message bus shutdown; published counts: {}",
+        {str(msg.type): 1},
+    )
 
 
 @pytest.mark.asyncio

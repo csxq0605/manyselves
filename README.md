@@ -111,7 +111,7 @@ agents:
 
 ## Bundled capability: power-distribution reports
 
-The included team coordinates evidence intake, five parallel report modules,
+The included team coordinates evidence intake, five sequentially gated report modules,
 responsibility audit, cross-module review, Chief Editor integration, governed
 Skill evolution, and template-backed DOCX delivery.
 
@@ -125,11 +125,13 @@ evidence decisions, loaded Skill versions, review findings, and report versions
 remain auditable. Knowledge and web sources can support interpretation but never
 become customer-site facts.
 
-The five fixed modules 2.1–2.5 draft in parallel, then pass responsibility audit,
-cross review, and complete-document composition. Missing evidence can `ask`,
-`block`, `skip`, or `draft`; durable decisions survive process restarts. A
-post-delivery revision restores a baseline, reruns only the responsible module,
-rechecks the full report, and publishes an immutable child version.
+The five fixed modules 2.1–2.5 run in a fixed order. Each module completes
+drafting, responsibility audit, targeted revision, and recheck before the next
+module starts; all five then pass cross review and complete-document composition.
+Missing evidence can `ask`, `block`, `skip`, or `draft`; durable decisions survive
+process restarts. A post-delivery revision restores a baseline, reruns only the
+responsible module, rechecks the full report, and publishes an immutable child
+version.
 
 Typical project output:
 
