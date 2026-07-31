@@ -134,6 +134,19 @@ def test_freeze_checker_rejects_missing_or_invalid_baseline(tmp_path: Path) -> N
     assert invalid.returncode == 2
 
 
+def test_freeze_checker_rejects_symbolic_or_abbreviated_baseline(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path / "repo", {"manyselves/core/sample.py": "before\n"})
+    baseline_file = repo / "core-freeze-base.txt"
+    baseline_file.write_text("HEAD\n", encoding="utf-8")
+
+    symbolic = run_checker(repo, "--base-file", str(baseline_file))
+    baseline_file.write_text(git_head(repo)[:12] + "\n", encoding="utf-8")
+    abbreviated = run_checker(repo, "--base-file", str(baseline_file))
+
+    assert symbolic.returncode == 2
+    assert abbreviated.returncode == 2
+
+
 def test_freeze_checker_initializes_baseline_once(tmp_path: Path) -> None:
     repo = init_repo(tmp_path / "repo", {"manyselves/core/sample.py": "before\n"})
     baseline_file = repo / "core-freeze-base.txt"

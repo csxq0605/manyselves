@@ -34,7 +34,8 @@ def _read_baseline(path: Path) -> str | None:
     if not baseline or "\n" in baseline:
         return None
     result = _git("rev-parse", "--verify", f"{baseline}^{{commit}}")
-    return baseline if result.returncode == 0 else None
+    resolved_commit = result.stdout.strip()
+    return baseline if result.returncode == 0 and resolved_commit == baseline else None
 
 
 def initialize(path: Path) -> int:
