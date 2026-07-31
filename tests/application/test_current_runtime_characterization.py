@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +18,72 @@ from manyselves.core.project_structure import ensure_project_structure
 from manyselves.interfaces.types import UserMessage
 
 CHECKER = Path(__file__).resolve().parents[2] / "scripts" / "check_phase1_core_freeze.py"
+REPO_ROOT = CHECKER.parent.parent
+PARITY_CSV = REPO_ROOT / "docs" / "phase1" / "feature-parity.csv"
+PARITY_HEADER = [
+    "id",
+    "module",
+    "feature",
+    "legacy_evidence",
+    "api_or_bridge",
+    "react_evidence",
+    "browser_test",
+    "electron_test",
+    "status",
+    "reviewer",
+    "rationale",
+]
+REQUIRED_PARITY_FAMILIES = {
+    "PROJECT",
+    "FILE",
+    "EDITOR",
+    "PREVIEW",
+    "PYTHON",
+    "CONV",
+    "MESSAGE",
+    "AGENT",
+    "TOOL",
+    "TASK",
+    "CONFIG",
+    "REPORT",
+    "DESKTOP",
+    "RECOVERY",
+    "DEPLOY",
+}
+REQUIRED_PARITY_IDS = {
+    "FILE-007",
+    "FILE-008",
+    "FILE-009",
+    "FILE-010",
+    "FILE-011",
+    "EDITOR-006",
+    "EDITOR-007",
+    "EDITOR-008",
+    "PREVIEW-006",
+    "PREVIEW-007",
+    "PREVIEW-008",
+    "PREVIEW-009",
+    "PREVIEW-010",
+    "CONV-006",
+    "MESSAGE-006",
+    "AGENT-006",
+    "AGENT-007",
+    "AGENT-008",
+    "AGENT-009",
+    "AGENT-010",
+    "AGENT-011",
+    "REPORT-004",
+    "REPORT-005",
+    "REPORT-006",
+    "REPORT-007",
+    "REPORT-008",
+    "REPORT-009",
+    "DESKTOP-005",
+    "DESKTOP-006",
+    "DEPLOY-001",
+    "DEPLOY-002",
+}
+EVIDENCE_PATH = re.compile(r"(?:manyselves|tests|docs)/[A-Za-z0-9_./-]+")
 
 
 async def _append_async(messages: list[UserMessage], message: UserMessage) -> None:
@@ -58,6 +126,36 @@ def test_project_startup_uses_canonical_structure(tmp_path: Path) -> None:
     assert {"Inputs", "Knowledge", "Templates", "Work", "Outputs"} <= {
         child.name for child in tmp_path.iterdir()
     }
+
+
+def test_feature_parity_matrix_is_a_complete_planned_inventory() -> None:
+    with PARITY_CSV.open(encoding="utf-8", newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+        rows = list(reader)
+
+    assert reader.fieldnames == PARITY_HEADER
+    assert rows
+    assert all(row["id"] and row["feature"] for row in rows)
+    assert len({row["id"] for row in rows}) == len(rows)
+    assert REQUIRED_PARITY_FAMILIES <= {row["module"] for row in rows}
+    assert REQUIRED_PARITY_IDS <= {row["id"] for row in rows}
+    assert all(
+        row["status"] == "planned" and row["legacy_evidence"] and row["rationale"]
+        for row in rows
+    )
+
+    for row in rows:
+        cited_paths = EVIDENCE_PATH.findall(row["legacy_evidence"])
+        assert cited_paths, f"{row['id']} has no repository evidence path"
+        assert all((REPO_ROOT / path).is_file() for path in cited_paths)
+
+    deploy_rows = {row["id"]: row for row in rows if row["module"] == "DEPLOY"}
+    assert "2026-07-31-manyselves-phase1-05-electron-deployment.md" in deploy_rows[
+        "DEPLOY-001"
+    ]["legacy_evidence"]
+    assert "2026-07-31-manyselves-phase1-05-electron-deployment.md" in deploy_rows[
+        "DEPLOY-002"
+    ]["legacy_evidence"]
 
 
 def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
