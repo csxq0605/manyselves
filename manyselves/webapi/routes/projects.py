@@ -148,11 +148,19 @@ async def activate_project(
             registry.restore_active(previous_state[0])
             settings.initial_project_id = previous_state[1]
 
+        def reconcile_activation(workspace) -> None:
+            actual_project_id = workspace.name
+            if registry.project_root(actual_project_id) != workspace.resolve():
+                raise InvalidProjectId()
+            registry.restore_active(actual_project_id)
+            settings.initial_project_id = actual_project_id
+
         return await facade.activate_workspace(
             lease_token=lease_token,
             resolve_workspace=resolve_workspace,
             commit=commit_activation,
             rollback=rollback_activation,
+            reconcile=reconcile_activation,
         )
     except (
         ControlLeaseRequired,

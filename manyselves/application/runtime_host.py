@@ -171,7 +171,13 @@ class RuntimeHost:
                 self._bind_manager(replacement, resolved_workspace)
                 await replacement.start()
             except BaseException as replacement_error:
-                await self._discard_bound_manager()
+                cleanup_error = await self._discard_bound_manager()
+                if cleanup_error is not None:
+                    self._state = _LifecycleState.FAILED
+                    replacement_error.add_note(
+                        f"Replacement cleanup did not finish: {cleanup_error!r}"
+                    )
+                    raise replacement_error from cleanup_error
                 if previous_workspace is not None:
                     try:
                         restored = self._loop_manager_factory(
@@ -182,11 +188,17 @@ class RuntimeHost:
                         self._bind_manager(restored, previous_workspace)
                         await restored.start()
                     except BaseException as restore_error:
-                        await self._discard_bound_manager()
+                        restore_cleanup_error = await self._discard_bound_manager()
                         self._state = _LifecycleState.FAILED
                         replacement_error.add_note(
                             f"Previous workspace restoration failed: {restore_error!r}"
                         )
+                        if restore_cleanup_error is not None:
+                            replacement_error.add_note(
+                                "Restoration cleanup did not finish: "
+                                f"{restore_cleanup_error!r}"
+                            )
+                            raise replacement_error from restore_cleanup_error
                         raise replacement_error from restore_error
                     self._state = _LifecycleState.READY
                 raise replacement_error
@@ -194,22 +206,29 @@ class RuntimeHost:
             self._state = _LifecycleState.READY
             logger.info("Activated runtime workspace: {}", resolved_workspace)
 
+    async def mark_failed(self) -> None:
+        """Make an owned runtime unavailable without discarding cleanup ownership."""
+        async with self._lifecycle_lock:
+            if self._state is not _LifecycleState.STOPPED:
+                self._state = _LifecycleState.FAILED
+
     def _bind_manager(self, manager: LoopManager | None, workspace: Path | None) -> None:
         """Change host/backend manager ownership together without an await boundary."""
         self._loop_manager = manager
         self._workspace = workspace
         self.backend.set_loop_manager(manager)
 
-    async def _discard_bound_manager(self) -> None:
-        """Stop and clear the currently tracked candidate without masking its failure."""
+    async def _discard_bound_manager(self) -> BaseException | None:
+        """Clear a candidate only after stop confirms that it no longer owns work."""
         manager = self._loop_manager
         try:
             if manager is not None:
                 await manager.stop()
-        except BaseException:
+        except BaseException as error:
             logger.exception("Runtime loop candidate cleanup failed")
-        finally:
-            self._bind_manager(None, None)
+            return error
+        self._bind_manager(None, None)
+        return None
 
     async def _stop_locked(self) -> None:
         """Stop an active lifecycle while the lifecycle lock is held."""

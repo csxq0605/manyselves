@@ -75,6 +75,8 @@ class PreviewService:
         archive_member_limit: int = 2_000,
         sheet_limit: int = 100,
         cell_character_limit: int = 4_096,
+        csv_record_byte_limit: int = 256 * 1024,
+        csv_field_limit: int = 10_000,
     ) -> None:
         if min(
             max_preview_bytes,
@@ -85,6 +87,8 @@ class PreviewService:
             archive_member_limit,
             sheet_limit,
             cell_character_limit,
+            csv_record_byte_limit,
+            csv_field_limit,
         ) <= 0:
             raise ValueError("Preview limits must be positive")
         self._files = files
@@ -96,6 +100,8 @@ class PreviewService:
         self._archive_member_limit = archive_member_limit
         self._sheet_limit = sheet_limit
         self._cell_character_limit = cell_character_limit
+        self._csv_record_byte_limit = csv_record_byte_limit
+        self._csv_field_limit = csv_field_limit
 
     def preview(self, relative_path: str, *, content_url: str) -> dict[str, Any]:
         """Convenience synchronous capture and parse for non-HTTP callers."""
@@ -217,13 +223,18 @@ class PreviewService:
         portable_path: str,
     ) -> dict[str, Any]:
         if suffix == ".csv":
+            _validate_csv_records(
+                raw,
+                record_byte_limit=self._csv_record_byte_limit,
+                field_limit=self._csv_field_limit,
+            )
             text = self._decode_utf8(raw)
             row_count = 0
             column_count = 0
             rows: list[list[str]] = []
             cells_truncated = False
             try:
-                for row in csv.reader(io.StringIO(text)):
+                for row in csv.reader(io.StringIO(text), strict=True):
                     row_count += 1
                     column_count = max(column_count, len(row))
                     if len(rows) < self._row_limit:
@@ -524,6 +535,59 @@ def _sanitize_svg_node(node: ElementTree.Element) -> ElementTree.Element | None:
 def _cell_text(value: Any, limit: int) -> tuple[str, bool]:
     text = "" if value is None else str(value)
     return _bounded_text(text, limit), len(text) > limit
+
+
+def _validate_csv_records(
+    raw: bytes,
+    *,
+    record_byte_limit: int,
+    field_limit: int,
+) -> None:
+    """Reject oversized logical CSV records before ``csv.reader`` can allocate them."""
+    record_bytes = 0
+    field_count = 1
+    in_quotes = False
+    at_field_start = True
+    after_quote = False
+    index = 0
+    while index < len(raw):
+        value = raw[index]
+        record_bytes += 1
+        if record_bytes > record_byte_limit:
+            raise PreviewTooLarge()
+        if value == ord('"'):
+            if in_quotes:
+                if index + 1 < len(raw) and raw[index + 1] == ord('"'):
+                    record_bytes += 1
+                    if record_bytes > record_byte_limit:
+                        raise PreviewTooLarge()
+                    index += 2
+                    continue
+                in_quotes = False
+                after_quote = True
+            elif at_field_start:
+                in_quotes = True
+                at_field_start = False
+            else:
+                raise InvalidPreviewDocument()
+        elif value == ord(",") and not in_quotes:
+            field_count += 1
+            if field_count > field_limit:
+                raise PreviewTooLarge()
+            at_field_start = True
+            after_quote = False
+        elif value in {ord("\r"), ord("\n")} and not in_quotes:
+            record_bytes = 0
+            field_count = 1
+            at_field_start = True
+            after_quote = False
+        elif not in_quotes:
+            if after_quote:
+                raise InvalidPreviewDocument()
+            at_field_start = False
+        index += 1
+    if in_quotes:
+        raise InvalidPreviewDocument()
 
 
 def _bounded_text(value: str, limit: int) -> str:

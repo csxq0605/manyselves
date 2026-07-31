@@ -26,4 +26,6 @@ class WebSettings(BaseSettings):
     preview_archive_member_limit: int = 2_000
     preview_sheet_limit: int = 100
     preview_cell_character_limit: int = 4_096
+    preview_csv_record_byte_limit: int = 256 * 1024
+    preview_csv_field_limit: int = 10_000
     file_tree_entry_limit: int = 20_000

@@ -11,6 +11,7 @@ import pytest
 from pydantic import SecretStr
 
 from manyselves.application.preview_service import PreviewService
+from manyselves.application.workspace_files import WorkspaceFiles
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.routes import files as file_routes
@@ -24,6 +25,7 @@ class SwitchableRuntimeHost:
         self.is_ready = False
         self.workspace: Path | None = None
         self.statuses = {"main": "idle"}
+        self.failed_calls = 0
         self.loop_manager = SimpleNamespace(
             get_all_agent_statuses=lambda: dict(self.statuses),
             get_agent_session_id=lambda agent_id: None,
@@ -37,6 +39,10 @@ class SwitchableRuntimeHost:
         self.workspace = Path(workspace).resolve()
 
     async def stop(self) -> None:
+        self.is_ready = False
+
+    async def mark_failed(self) -> None:
+        self.failed_calls += 1
         self.is_ready = False
 
 
@@ -170,6 +176,80 @@ async def test_project_activation_commit_failure_restores_host_and_registry(api)
     assert host.workspace == (root / "p1").resolve()
     assert registry.active_project_id == "p1"
     assert host.app.state.web_settings.initial_project_id == "p1"
+
+
+@pytest.mark.asyncio
+async def test_activation_reconciles_new_project_when_runtime_rollback_restores_it(api) -> None:
+    """A failed switch-back that restores the new runtime must retain matching app state."""
+    client, host, root = api
+    headers = await acquire_controller(client)
+    await client.post("/api/v1/projects", headers=headers, json={"projectId": "p2"})
+    registry = host.app.state.project_registry
+    original_activate = registry.activate
+    original_switch = host.switch_workspace
+
+    def fail_commit(project_id: str):
+        original_activate(project_id)
+        raise RuntimeError("injected registry commit failure")
+
+    async def restore_new_after_switch_back_failure(workspace: Path) -> None:
+        if workspace == (root / "p1").resolve() and host.workspace == (root / "p2").resolve():
+            host.is_ready = True
+            raise RuntimeError("old workspace restart failed")
+        await original_switch(workspace)
+
+    registry.activate = fail_commit
+    host.switch_workspace = restore_new_after_switch_back_failure
+
+    response = await client.post("/api/v1/projects/p2/activate", headers=headers)
+
+    assert response.status_code == 500
+    assert host.is_ready is True
+    assert host.workspace == (root / "p2").resolve()
+    assert registry.active_project_id == "p2"
+    assert host.app.state.web_settings.initial_project_id == "p2"
+    assert host.failed_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_activation_marks_runtime_failed_when_new_state_cannot_reconcile(api) -> None:
+    """A ready runtime must become unavailable if persistence cannot match its workspace."""
+    client, host, root = api
+    headers = await acquire_controller(client)
+    await client.post("/api/v1/projects", headers=headers, json={"projectId": "p2"})
+    registry = host.app.state.project_registry
+    original_activate = registry.activate
+    original_restore = registry.restore_active
+    original_switch = host.switch_workspace
+
+    def fail_commit(project_id: str):
+        original_activate(project_id)
+        raise RuntimeError("injected registry commit failure")
+
+    def fail_new_reconciliation(project_id: str):
+        if project_id == "p2":
+            raise RuntimeError("persistence unavailable")
+        return original_restore(project_id)
+
+    async def restore_new_after_switch_back_failure(workspace: Path) -> None:
+        if workspace == (root / "p1").resolve() and host.workspace == (root / "p2").resolve():
+            host.is_ready = True
+            raise RuntimeError("old workspace restart failed")
+        await original_switch(workspace)
+
+    registry.activate = fail_commit
+    registry.restore_active = fail_new_reconciliation
+    host.switch_workspace = restore_new_after_switch_back_failure
+
+    response = await client.post("/api/v1/projects/p2/activate", headers=headers)
+
+    assert response.status_code == 500
+    assert host.is_ready is False
+    assert host.workspace == (root / "p2").resolve()
+    assert host.loop_manager is not None
+    assert registry.active_project_id == "p2"
+    assert host.app.state.web_settings.initial_project_id == "p1"
+    assert host.failed_calls == 1
 
 
 @pytest.mark.asyncio
@@ -338,6 +418,34 @@ async def test_http_rename_and_delete_reject_stale_revisions_without_side_effect
     assert deleted.status_code == 409
     assert deleted.json()["error"]["code"] == "FILE_REVISION_CONFLICT"
     assert current.json()["content"] == "two"
+
+
+@pytest.mark.asyncio
+async def test_tree_revision_scan_runs_off_event_loop_under_read_transaction(
+    api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tree hashing must use a worker thread while retaining facade mutation serialization."""
+    client, host, root = api
+    (root / "p1" / "Inputs" / "nested").mkdir()
+    (root / "p1" / "Inputs" / "nested" / "a.txt").write_text("a", encoding="utf-8")
+    facade = host.app.state.runtime_facade
+    event_loop_thread = threading.get_ident()
+    observations: list[tuple[int, bool]] = []
+    original_list_tree = WorkspaceFiles.list_tree
+
+    def observed_list_tree(files: WorkspaceFiles, path: str = ""):
+        observations.append((threading.get_ident(), facade._mutation_lock.locked()))  # noqa: SLF001
+        return original_list_tree(files, path)
+
+    monkeypatch.setattr(WorkspaceFiles, "list_tree", observed_list_tree)
+
+    response = await client.get("/api/v1/projects/p1/files/tree")
+
+    assert response.status_code == 200
+    assert len(observations) == 1
+    assert observations[0][0] != event_loop_thread
+    assert observations[0][1] is True
 
 
 @pytest.mark.asyncio

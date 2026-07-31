@@ -83,6 +83,8 @@ def _preview_service(request: Request, files: WorkspaceFiles) -> PreviewService:
         archive_member_limit=settings.preview_archive_member_limit,
         sheet_limit=settings.preview_sheet_limit,
         cell_character_limit=settings.preview_cell_character_limit,
+        csv_record_byte_limit=settings.preview_csv_record_byte_limit,
+        csv_field_limit=settings.preview_csv_field_limit,
     )
 
 
@@ -158,7 +160,8 @@ async def file_tree(
     files = _file_service(request, project_id)
     try:
         async with request.app.state.runtime_facade.read_transaction():
-            return FileTreeResponse(entries=[_entry_response(item) for item in files.list_tree(path)])
+            entries = await asyncio.to_thread(files.list_tree, path)
+            return FileTreeResponse(entries=[_entry_response(item) for item in entries])
     except WorkspaceFileError as error:
         raise _file_error(error) from error
 

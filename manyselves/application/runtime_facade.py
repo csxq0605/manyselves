@@ -134,6 +134,7 @@ class RuntimeFacade:
         resolve_workspace: Callable[[], Path],
         commit: Callable[[], ActivationResponseT],
         rollback: Callable[[], None],
+        reconcile: Callable[[Path], None],
     ) -> ActivationResponseT:
         """Resolve, switch, and commit project state as one serialized transaction."""
         async with self._mutation_lock:
@@ -148,10 +149,6 @@ class RuntimeFacade:
             try:
                 return commit()
             except BaseException as commit_error:
-                try:
-                    rollback()
-                except BaseException as rollback_error:
-                    commit_error.add_note(f"Activation state rollback failed: {rollback_error!r}")
                 if previous_workspace is not None:
                     try:
                         await self._host.switch_workspace(previous_workspace)
@@ -159,6 +156,23 @@ class RuntimeFacade:
                         commit_error.add_note(
                             f"Activation runtime rollback failed: {host_rollback_error!r}"
                         )
+                actual_workspace = self._host.workspace
+                if self._host.is_ready and actual_workspace == previous_workspace:
+                    try:
+                        rollback()
+                    except BaseException as rollback_error:
+                        commit_error.add_note(
+                            f"Activation state rollback failed: {rollback_error!r}"
+                        )
+                        await self._host.mark_failed()
+                elif self._host.is_ready and actual_workspace is not None:
+                    try:
+                        reconcile(actual_workspace)
+                    except BaseException as reconcile_error:
+                        commit_error.add_note(
+                            f"Activation state reconciliation failed: {reconcile_error!r}"
+                        )
+                        await self._host.mark_failed()
                 raise
 
     async def send_user_message(self, command: SendMessageCommand) -> AcceptedCommand:

@@ -106,6 +106,13 @@ class OpenDownload:
     revision: str
 
 
+@dataclass(frozen=True, slots=True)
+class _TreeNode:
+    kind: str
+    stat: os.stat_result
+    revision: str
+
+
 class WorkspaceFiles:
     """Perform filesystem access only after canonical project-root validation."""
 
@@ -286,18 +293,7 @@ class WorkspaceFiles:
             raise WorkspaceEntryNotFound()
         if not root.is_dir():
             raise WorkspaceEntryTypeError()
-        entries: list[FileEntry] = []
-        pending = [root]
-        while pending:
-            directory = pending.pop()
-            for child in sorted(directory.iterdir(), key=lambda item: item.name.casefold()):
-                if child.is_symlink():
-                    continue
-                entries.append(self.entry(self.relative(child)))
-                if len(entries) > self.max_tree_entries:
-                    raise WorkspaceTreeTooLarge()
-                if child.is_dir():
-                    pending.append(child)
+        _, entries = self._scan_directory(root, include_entries=True)
         return entries
 
     def file_path(self, relative_path: str) -> Path:
@@ -366,21 +362,87 @@ class WorkspaceFiles:
                 return _revision_stream(stream)
         if not path.is_dir():
             raise WorkspaceEntryTypeError()
-        digest = hashlib.sha256(b"directory-v1\0")
-        descendants = sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix())
-        if len(descendants) > self.max_tree_entries:
-            raise WorkspaceTreeTooLarge()
-        for child in descendants:
-            relative = child.relative_to(path).as_posix().encode("utf-8")
-            if child.is_symlink():
-                digest.update(b"L\0" + relative + b"\0" + os.readlink(child).encode("utf-8"))
-            elif child.is_dir():
-                digest.update(b"D\0" + relative + b"\0")
-            elif child.is_file():
-                digest.update(b"F\0" + relative + b"\0")
-                with child.open("rb") as stream:
-                    digest.update(bytes.fromhex(_revision_stream(stream)))
-        return digest.hexdigest()
+        revision, _ = self._scan_directory(path, include_entries=False)
+        return revision
+
+    def _scan_directory(
+        self,
+        root: Path,
+        *,
+        include_entries: bool,
+    ) -> tuple[str, list[FileEntry]]:
+        """Hash a tree bottom-up, reusing every child digest exactly once."""
+        nodes: dict[Path, _TreeNode] = {}
+        children_by_directory: dict[Path, list[Path]] = {}
+        entry_paths: list[Path] = []
+        pending: list[tuple[Path, bool]] = [(root, False)]
+        entry_count = 0
+        while pending:
+            directory, expanded = pending.pop()
+            if not expanded:
+                children = sorted(
+                    directory.iterdir(),
+                    key=lambda item: (item.name.casefold(), item.name),
+                )
+                children_by_directory[directory] = children
+                pending.append((directory, True))
+                child_directories: list[Path] = []
+                for child in children:
+                    entry_count += 1
+                    if entry_count > self.max_tree_entries:
+                        raise WorkspaceTreeTooLarge()
+                    stat = child.lstat()
+                    if child.is_symlink():
+                        nodes[child] = _TreeNode(
+                            kind="symlink",
+                            stat=stat,
+                            revision=_revision(os.fsencode(os.readlink(child))),
+                        )
+                    elif child.is_dir():
+                        nodes[child] = _TreeNode(kind="directory", stat=stat, revision="")
+                        entry_paths.append(child)
+                        child_directories.append(child)
+                    elif child.is_file():
+                        with child.open("rb") as stream:
+                            revision = _revision_stream(stream)
+                        nodes[child] = _TreeNode(kind="file", stat=stat, revision=revision)
+                        entry_paths.append(child)
+                pending.extend((child, False) for child in reversed(child_directories))
+                continue
+
+            digest = hashlib.sha256(b"directory-v2\0")
+            for child in children_by_directory[directory]:
+                node = nodes.get(child)
+                if node is None:
+                    continue
+                digest.update(node.kind[0].upper().encode("ascii"))
+                digest.update(b"\0" + child.name.encode("utf-8") + b"\0")
+                digest.update(bytes.fromhex(node.revision))
+            directory_revision = digest.hexdigest()
+            if directory == root:
+                root_revision = directory_revision
+            else:
+                node = nodes[directory]
+                nodes[directory] = _TreeNode(
+                    kind=node.kind,
+                    stat=node.stat,
+                    revision=directory_revision,
+                )
+
+        if not include_entries:
+            return root_revision, []
+        entries = [
+            FileEntry(
+                path=self.relative(path),
+                name=path.name,
+                kind=nodes[path].kind,
+                size=None if nodes[path].kind == "directory" else nodes[path].stat.st_size,
+                modified_at=_modified_at(nodes[path].stat.st_mtime),
+                revision=nodes[path].revision,
+            )
+            for path in entry_paths
+        ]
+        return root_revision, entries
 
 
 def _revision(raw: bytes) -> str:

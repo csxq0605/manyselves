@@ -57,12 +57,14 @@ class _FakeLoopManager:
         start_entered: asyncio.Event | None = None,
         start_release: asyncio.Event | None = None,
         stop_failures: int = 0,
+        stop_errors: list[BaseException | None] | None = None,
     ) -> None:
         self.events = events
         self.start_error = start_error
         self.start_entered = start_entered
         self.start_release = start_release
         self.stop_failures = stop_failures
+        self.stop_errors = [] if stop_errors is None else list(stop_errors)
         self.stop_calls = 0
         self.running = False
 
@@ -73,16 +75,21 @@ class _FakeLoopManager:
         if self.start_release is not None:
             await self.start_release.wait()
         if self.start_error is not None:
+            self.running = True
             raise self.start_error
         self.running = True
 
     async def stop(self) -> None:
         self.stop_calls += 1
         self.events.append("loops:stop")
-        self.running = False
+        if self.stop_errors:
+            error = self.stop_errors.pop(0)
+            if error is not None:
+                raise error
         if self.stop_failures > 0:
             self.stop_failures -= 1
             raise RuntimeError("loop cleanup failed")
+        self.running = False
 
 
 class _FakeBackend:
@@ -103,6 +110,7 @@ def _host(
     cancellation_only_bus: bool = False,
     stop_failures: int = 0,
     start_errors: list[BaseException | None] | None = None,
+    stop_errors: list[list[BaseException | None]] | None = None,
 ) -> tuple[RuntimeHost, _FakeBus, _FakeBackend, list[_FakeLoopManager]]:
     config = _FakeConfigManager(valid=valid_config)
     bus = _CancellationOnlyBus(events) if cancellation_only_bus else _FakeBus(events)
@@ -126,6 +134,7 @@ def _host(
             start_entered=start_entered,
             start_release=start_release,
             stop_failures=stop_failures,
+            stop_errors=None if stop_errors is None else stop_errors[len(created)],
         )
         created.append(manager)
         return cast(LoopManager, manager)
@@ -573,6 +582,43 @@ async def test_switch_workspace_rollback_cancellation_cleans_candidate_and_stops
     assert created[2].stop_calls == 1
 
     await host.stop()
+    assert bus.shutdown_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cleanup_error",
+    [RuntimeError("candidate cleanup failed"), asyncio.CancelledError()],
+    ids=["failure", "cancellation"],
+)
+async def test_switch_workspace_retains_candidate_when_cleanup_does_not_finish(
+    tmp_path: Path,
+    cleanup_error: BaseException,
+) -> None:
+    """A possibly-running candidate must remain owned until stop can retry cleanup."""
+    host, bus, backend, created = _host(
+        [],
+        start_errors=[None, RuntimeError("replacement failed")],
+        stop_errors=[[], [cleanup_error, None]],
+    )
+    await host.start(tmp_path / "first")
+
+    with pytest.raises(RuntimeError, match="replacement failed"):
+        await host.switch_workspace(tmp_path / "second")
+
+    assert host.is_ready is False
+    assert host.workspace == (tmp_path / "second").resolve()
+    assert len(created) == 2
+    assert host.loop_manager is created[1]
+    assert backend.loop_manager is created[1]
+    assert created[1].running is True
+    assert created[1].stop_calls == 1
+    assert bus.shutdown_calls == 0
+
+    await host.stop()
+
+    assert created[1].stop_calls == 2
+    assert created[1].running is False
     assert bus.shutdown_calls == 1
 
 

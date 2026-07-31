@@ -151,6 +151,44 @@ def test_directory_revision_is_deterministic_and_changes_with_descendants(
     assert not (workspace_files.project_root / "Inputs" / "folder").exists()
 
 
+def test_list_tree_hashes_each_nested_file_once(
+    workspace_files: WorkspaceFiles,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Directory revisions must reuse child digests instead of rescanning every subtree."""
+    tree = workspace_files.project_root / "Inputs" / "tree"
+    (tree / "child" / "deep").mkdir(parents=True)
+    (tree / "one.txt").write_text("one", encoding="utf-8")
+    (tree / "child" / "two.txt").write_text("two", encoding="utf-8")
+    (tree / "child" / "deep" / "three.txt").write_text("three", encoding="utf-8")
+    original_open = Path.open
+    hash_opens: dict[str, int] = {}
+
+    def counted_open(path: Path, *args, **kwargs):
+        mode = args[0] if args else kwargs.get("mode", "r")
+        if mode == "rb" and path.is_relative_to(tree):
+            relative = path.relative_to(tree).as_posix()
+            hash_opens[relative] = hash_opens.get(relative, 0) + 1
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", counted_open)
+
+    entries = workspace_files.list_tree("Inputs/tree")
+
+    assert {entry.path for entry in entries} == {
+        "Inputs/tree/one.txt",
+        "Inputs/tree/child",
+        "Inputs/tree/child/two.txt",
+        "Inputs/tree/child/deep",
+        "Inputs/tree/child/deep/three.txt",
+    }
+    assert hash_opens == {
+        "one.txt": 1,
+        "child/two.txt": 1,
+        "child/deep/three.txt": 1,
+    }
+
+
 @pytest.mark.asyncio
 async def test_interrupted_upload_cleans_temp_and_destination(
     workspace_files: WorkspaceFiles,
@@ -338,6 +376,73 @@ def test_csv_preview_streams_counts_and_bounds_cells(workspace_files: WorkspaceF
     assert sheet["rows"][0][0] == "x" * 16
     assert all(len(cell) <= 16 for row in sheet["rows"] for cell in row)
     assert sheet["truncated"] is True
+
+
+def test_csv_preflight_rejects_delimiter_amplification_before_reader_materialization(
+    workspace_files: WorkspaceFiles,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A large physical row with excessive fields must never reach csv.reader."""
+    adversarial = ("x," * 500_000) + "end\n"
+    (workspace_files.project_root / "Inputs" / "adversarial.csv").write_text(
+        adversarial,
+        encoding="utf-8",
+    )
+    reader_called = False
+
+    def forbidden_reader(*args, **kwargs):
+        nonlocal reader_called
+        reader_called = True
+        raise AssertionError("csv.reader must not receive an oversized record")
+
+    monkeypatch.setattr("manyselves.application.preview_service.csv.reader", forbidden_reader)
+
+    with pytest.raises(PreviewTooLarge):
+        PreviewService(
+            workspace_files,
+            max_preview_bytes=2 * 1024 * 1024,
+            csv_record_byte_limit=256 * 1024,
+            csv_field_limit=64,
+        ).preview("Inputs/adversarial.csv", content_url="/content/adversarial.csv")
+
+    assert reader_called is False
+
+
+def test_csv_preflight_handles_quoted_multiline_and_malformed_records(
+    workspace_files: WorkspaceFiles,
+) -> None:
+    """Quoted delimiters are fields, multiline records stay bounded, and bad quotes fail."""
+    inputs = workspace_files.project_root / "Inputs"
+    (inputs / "quoted.csv").write_text('"a,b",c\n"x\ny",z\n', encoding="utf-8")
+    (inputs / "oversized-multiline.csv").write_text(
+        '"' + ("long-line\n" * 8) + '",z\n',
+        encoding="utf-8",
+    )
+    (inputs / "malformed.csv").write_text('"unterminated\n', encoding="utf-8")
+    (inputs / "mid-field-quote.csv").write_text(
+        'prefix",x"\n',
+        encoding="utf-8",
+    )
+    service = PreviewService(
+        workspace_files,
+        max_preview_bytes=4096,
+        csv_record_byte_limit=32,
+        csv_field_limit=2,
+    )
+
+    quoted = service.preview("Inputs/quoted.csv", content_url="/content/quoted.csv")
+
+    assert quoted["sheets"][0]["rowCount"] == 2
+    assert quoted["sheets"][0]["columnCount"] == 2
+    with pytest.raises(PreviewTooLarge):
+        service.preview(
+            "Inputs/oversized-multiline.csv",
+            content_url="/content/oversized-multiline.csv",
+        )
+    with pytest.raises(InvalidPreviewDocument):
+        service.preview("Inputs/malformed.csv", content_url="/content/malformed.csv")
+    with pytest.raises(InvalidPreviewDocument):
+        service.preview("Inputs/mid-field-quote.csv", content_url="/content/mid-field-quote.csv")
 
 
 def test_spreadsheet_preview_caps_sheets_and_archive_members(
