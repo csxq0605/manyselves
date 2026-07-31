@@ -78,10 +78,40 @@ REQUIRED_PARITY_IDS = {
     "REPORT-007",
     "REPORT-008",
     "REPORT-009",
+    "REPORT-010",
     "DESKTOP-005",
     "DESKTOP-006",
+    "DESKTOP-007",
     "DEPLOY-001",
     "DEPLOY-002",
+    "DEPLOY-003",
+}
+REQUIRED_PARITY_EVIDENCE = {
+    "REPORT-010": (
+        "tests/reporting/test_delivery.py::test_delivery_publishes_complete_five_module_package_atomically",
+    ),
+    "DEPLOY-001": (
+        "docs/superpowers/plans/2026-07-31-manyselves-phase1-05-electron-deployment.md",
+        "Task 1 Hardened Electron Shell",
+    ),
+    "DEPLOY-002": (
+        "docs/superpowers/plans/2026-07-31-manyselves-phase1-05-electron-deployment.md",
+        "Task 4 Build Nginx Web Image and Compose Topology",
+    ),
+    "DEPLOY-003": (
+        "docs/superpowers/plans/2026-07-31-manyselves-phase1-05-electron-deployment.md",
+        "Task 5 Add Backup Restore Operations Packaging and Gate D",
+    ),
+    "DESKTOP-005": ("manyselves/gui/main_window.py:MainWindow._on_new_window",),
+    "DESKTOP-006": (
+        "manyselves/gui/main_window.py:MainWindow._on_new_file _on_new_folder and _on_open_folder",
+    ),
+    "DESKTOP-007": ("manyselves/gui/main_window.py:MainWindow._on_open_file",),
+}
+REQUIRED_PARITY_FEATURE_TERMS = {
+    "DESKTOP-005": ("unsupported", "multi-window"),
+    "DESKTOP-006": ("native", "file", "folder"),
+    "DESKTOP-007": ("unsupported", "open-file"),
 }
 EVIDENCE_PATH = re.compile(r"(?:manyselves|tests|docs)/[A-Za-z0-9_./-]+")
 
@@ -149,13 +179,12 @@ def test_feature_parity_matrix_is_a_complete_planned_inventory() -> None:
         assert cited_paths, f"{row['id']} has no repository evidence path"
         assert all((REPO_ROOT / path).is_file() for path in cited_paths)
 
-    deploy_rows = {row["id"]: row for row in rows if row["module"] == "DEPLOY"}
-    assert "2026-07-31-manyselves-phase1-05-electron-deployment.md" in deploy_rows[
-        "DEPLOY-001"
-    ]["legacy_evidence"]
-    assert "2026-07-31-manyselves-phase1-05-electron-deployment.md" in deploy_rows[
-        "DEPLOY-002"
-    ]["legacy_evidence"]
+    rows_by_id = {row["id"]: row for row in rows}
+    for capability_id, anchors in REQUIRED_PARITY_EVIDENCE.items():
+        assert all(anchor in rows_by_id[capability_id]["legacy_evidence"] for anchor in anchors)
+    for capability_id, terms in REQUIRED_PARITY_FEATURE_TERMS.items():
+        feature = rows_by_id[capability_id]["feature"].lower()
+        assert all(term in feature for term in terms)
 
 
 def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
