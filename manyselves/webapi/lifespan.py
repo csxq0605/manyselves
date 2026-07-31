@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from loguru import logger
 
 from ..application.control import ControlLeaseService
+from ..application.project_registry import ProjectRegistry
 from ..application.runtime_facade import RuntimeFacade
 from .dependencies import resolve_runtime_host
 from .settings import WebSettings
@@ -36,7 +37,10 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.runtime_host = host
         app.state.runtime_facade = facade
         app.state.event_broker = None
-        await host.start(settings.data_root / settings.initial_project_id)
+        registry = ProjectRegistry(settings.data_root, settings.initial_project_id)
+        registry.ensure_initial()
+        app.state.project_registry = registry
+        await host.start(registry.project_root(settings.initial_project_id))
     except BaseException:
         try:
             if host is not None:

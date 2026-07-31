@@ -5,11 +5,12 @@ from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 from uuid import UUID
 
 from .control import ControlLeaseService
-from .errors import CommandIdConflictError, RuntimeNotReadyError
+from .errors import CommandIdConflictError, RuntimeBusyError, RuntimeNotReadyError
 from .legacy_runtime_adapter import LegacyRuntimeAdapter
 from .models import (
     AcceptedCommand,
@@ -115,6 +116,25 @@ class RuntimeFacade:
         """Serialize one coherent read with every runtime mutation."""
         async with self._mutation_lock:
             yield
+
+    @asynccontextmanager
+    async def mutation_transaction(self, lease_token: str) -> AsyncIterator[None]:
+        """Serialize an application mutation and require the current controller."""
+        async with self._mutation_lock:
+            self.leases.require(lease_token)
+            if not self._host.is_ready:
+                raise RuntimeNotReadyError()
+            yield
+
+    async def activate_workspace(self, workspace: Path, lease_token: str) -> None:
+        """Switch an idle runtime to a project under the shared mutation lock."""
+        async with self._mutation_lock:
+            self.leases.require(lease_token)
+            if not self._host.is_ready:
+                raise RuntimeNotReadyError()
+            if any(status != "idle" for status in self.snapshot().agent_statuses.values()):
+                raise RuntimeBusyError()
+            await self._host.switch_workspace(workspace)
 
     async def send_user_message(self, command: SendMessageCommand) -> AcceptedCommand:
         """Send one message after control, readiness, and idempotency checks."""

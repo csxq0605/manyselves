@@ -25,3 +25,12 @@ class CommandIdConflictError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("Command ID was already used with different command data")
+
+
+class RuntimeBusyError(RuntimeError):
+    """A workspace mutation requires every runtime agent to be idle."""
+
+    code = "RUNTIME_BUSY"
+
+    def __init__(self) -> None:
+        super().__init__("Runtime agents must be idle before activating a project")

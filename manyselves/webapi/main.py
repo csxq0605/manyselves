@@ -21,7 +21,9 @@ from .errors import (
 from .lifespan import application_lifespan
 from .routes.bootstrap import router as bootstrap_router
 from .routes.control import router as control_router
+from .routes.files import router as files_router
 from .routes.health import router as health_router
+from .routes.projects import router as projects_router
 from .settings import WebSettings
 
 API_PREFIX = "/api/v1"
@@ -68,6 +70,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.state.runtime_host = None
     app.state.runtime_facade = None
     app.state.event_broker = None
+    app.state.project_registry = None
     app.state.lifecycle_lock = asyncio.Lock()
     app.state.lifecycle_active = False
     app.add_exception_handler(ApiError, api_error_handler)
@@ -94,6 +97,8 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.include_router(health_router, prefix=API_PREFIX)
     app.include_router(bootstrap_router, prefix=API_PREFIX)
     app.include_router(control_router, prefix=API_PREFIX)
+    app.include_router(projects_router, prefix=API_PREFIX)
+    app.include_router(files_router, prefix=API_PREFIX)
     return app
 
 

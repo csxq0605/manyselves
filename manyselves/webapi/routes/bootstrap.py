@@ -13,10 +13,11 @@ async def bootstrap(request: Request) -> BootstrapSnapshot:
     settings = request.app.state.web_settings
     async with facade.read_transaction():
         runtime = facade.snapshot()
-        project_path = settings.data_root / settings.initial_project_id
+        registry = request.app.state.project_registry
+        runtime = runtime.model_copy(update={"workspace": registry.active_project_id})
         return BootstrapSnapshot(
             runtime=runtime,
-            project=ProjectSnapshot(id=settings.initial_project_id, path=str(project_path)),
+            project=ProjectSnapshot(id=registry.active_project_id),
             conversations=[],
             agents=runtime.agent_statuses,
             settings=BootstrapSettings(

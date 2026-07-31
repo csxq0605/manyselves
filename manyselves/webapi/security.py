@@ -43,3 +43,17 @@ def require_deployment_access(
             message="Bearer access token is invalid",
             retryable=False,
         )
+
+
+def require_control_lease_header(
+    lease_token: str | None = Header(default=None, alias="X-Control-Lease-Token"),
+) -> str:
+    """Require a non-empty controller token; the facade validates it under its lock."""
+    if not lease_token:
+        raise ApiError(
+            status_code=status.HTTP_423_LOCKED,
+            code="CONTROL_LEASE_REQUIRED",
+            message="A valid runtime control lease is required",
+            retryable=False,
+        )
+    return lease_token

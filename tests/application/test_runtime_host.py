@@ -64,6 +64,7 @@ class _FakeLoopManager:
         self.start_release = start_release
         self.stop_failures = stop_failures
         self.stop_calls = 0
+        self.running = False
 
     async def start(self) -> None:
         self.events.append("loops:start")
@@ -73,10 +74,12 @@ class _FakeLoopManager:
             await self.start_release.wait()
         if self.start_error is not None:
             raise self.start_error
+        self.running = True
 
     async def stop(self) -> None:
         self.stop_calls += 1
         self.events.append("loops:stop")
+        self.running = False
         if self.stop_failures > 0:
             self.stop_failures -= 1
             raise RuntimeError("loop cleanup failed")
@@ -99,6 +102,7 @@ def _host(
     start_release: asyncio.Event | None = None,
     cancellation_only_bus: bool = False,
     stop_failures: int = 0,
+    start_errors: list[Exception | None] | None = None,
 ) -> tuple[RuntimeHost, _FakeBus, _FakeBackend, list[_FakeLoopManager]]:
     config = _FakeConfigManager(valid=valid_config)
     bus = _CancellationOnlyBus(events) if cancellation_only_bus else _FakeBus(events)
@@ -113,9 +117,12 @@ def _host(
         assert workspace.is_absolute()
         assert config_manager is config
         assert message_bus is bus
+        manager_start_error = start_error
+        if start_errors is not None:
+            manager_start_error = start_errors[len(created)]
         manager = _FakeLoopManager(
             events,
-            start_error=start_error,
+            start_error=manager_start_error,
             start_entered=start_entered,
             start_release=start_release,
             stop_failures=stop_failures,
@@ -438,6 +445,60 @@ async def test_stop_cancels_blocked_owned_bus_task_but_not_unrelated_work(
     assert unrelated_cancelled is False
     unrelated_release.set()
     await unrelated_task
+
+
+@pytest.mark.asyncio
+async def test_switch_workspace_replaces_only_loops_and_keeps_bus_running(
+    tmp_path: Path,
+) -> None:
+    """Project activation must not consume the process-local host or start a second bus."""
+    events: list[str] = []
+    host, bus, backend, created = _host(events)
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    await host.start(first)
+
+    await host.switch_workspace(second)
+
+    assert host.workspace == second.resolve()
+    assert host.is_ready is True
+    assert len(created) == 2
+    assert created[0].stop_calls == 1
+    assert created[0].running is False
+    assert created[1].running is True
+    assert host.loop_manager is created[1]
+    assert backend.loop_manager is created[1]
+    assert events.count("bus:start") == 1
+    assert bus.shutdown_calls == 0
+    await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_switch_workspace_failure_restores_coherent_previous_runtime(
+    tmp_path: Path,
+) -> None:
+    """A failed activation must not split host workspace from backend loop ownership."""
+    events: list[str] = []
+    host, bus, backend, created = _host(
+        events,
+        start_errors=[None, RuntimeError("new workspace failed"), None],
+    )
+    first = tmp_path / "first"
+    await host.start(first)
+
+    with pytest.raises(RuntimeError, match="new workspace failed"):
+        await host.switch_workspace(tmp_path / "second")
+
+    assert host.is_ready is True
+    assert host.workspace == first.resolve()
+    assert len(created) == 3
+    assert [manager.running for manager in created] == [False, False, True]
+    assert created[1].stop_calls == 1
+    assert host.loop_manager is created[2]
+    assert backend.loop_manager is created[2]
+    assert events.count("bus:start") == 1
+    assert bus.shutdown_calls == 0
+    await host.stop()
 
 
 @pytest.mark.asyncio

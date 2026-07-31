@@ -16,3 +16,11 @@ class WebSettings(BaseSettings):
     sse_replay_capacity: int = 2000
     sse_client_queue_capacity: int = 500
     control_lease_seconds: int = 60
+    upload_size_limit_bytes: int = 100 * 1024 * 1024
+    text_file_size_limit_bytes: int = 2 * 1024 * 1024
+    preview_size_limit_bytes: int = 8 * 1024 * 1024
+    preview_archive_expanded_limit_bytes: int = 32 * 1024 * 1024
+    preview_row_limit: int = 200
+    preview_column_limit: int = 100
+    preview_block_limit: int = 500
+    file_tree_entry_limit: int = 20_000

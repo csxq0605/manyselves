@@ -136,6 +136,54 @@ class RuntimeHost:
         async with self._lifecycle_lock:
             await self._stop_locked()
 
+    async def switch_workspace(self, workspace: Path) -> None:
+        """Replace workspace loops transactionally while retaining the single bus task."""
+        async with self._lifecycle_lock:
+            if self._state is not _LifecycleState.READY or self._loop_manager is None:
+                raise RuntimeStartupError("RUNTIME_NOT_READY", "Runtime is not ready")
+
+            resolved_workspace = Path(workspace).resolve()
+            if resolved_workspace == self._workspace:
+                return
+
+            previous_workspace = self._workspace
+            previous_manager = self._loop_manager
+            self._state = _LifecycleState.STARTING
+            await previous_manager.stop()
+
+            replacement: LoopManager | None = None
+            try:
+                self._project_logging_initializer(resolved_workspace)
+                self._project_structure_initializer(resolved_workspace)
+                replacement = self._loop_manager_factory(
+                    resolved_workspace,
+                    self.config_manager,
+                    self.bus,
+                )
+                self.backend.set_loop_manager(replacement)
+                await replacement.start()
+            except BaseException:
+                if replacement is not None:
+                    with suppress(BaseException):
+                        await replacement.stop()
+                if previous_workspace is not None:
+                    restored = self._loop_manager_factory(
+                        previous_workspace,
+                        self.config_manager,
+                        self.bus,
+                    )
+                    self.backend.set_loop_manager(restored)
+                    await restored.start()
+                    self._loop_manager = restored
+                    self._workspace = previous_workspace
+                    self._state = _LifecycleState.READY
+                raise
+
+            self._loop_manager = replacement
+            self._workspace = resolved_workspace
+            self._state = _LifecycleState.READY
+            logger.info("Activated runtime workspace: {}", resolved_workspace)
+
     async def _stop_locked(self) -> None:
         """Stop an active lifecycle while the lifecycle lock is held."""
         if self._state is _LifecycleState.STOPPED:

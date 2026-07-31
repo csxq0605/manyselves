@@ -11,7 +11,6 @@ class ProjectSnapshot(BaseModel):
     """The project selected for the process-local runtime."""
 
     id: str
-    path: str
 
 
 class BootstrapSettings(BaseModel):
