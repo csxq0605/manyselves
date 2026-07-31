@@ -9,6 +9,7 @@ from pydantic import SecretStr
 
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
+from manyselves.webapi.schemas.control import LeaseAcquireRequest, LeaseResponse, LeaseTokenRequest
 from manyselves.webapi.settings import WebSettings
 
 
@@ -125,3 +126,130 @@ async def test_heartbeat_and_release_require_the_issued_lease_token(
     assert heartbeated.json()["leaseToken"] == lease_token
     assert released.status_code == 204
     assert next_client.status_code == 201
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "issue_code", "issue_location"),
+    [
+        ({}, "missing", ["body", "clientId"]),
+        ({"clientId": 1}, "string_type", ["body", "clientId"]),
+    ],
+)
+async def test_request_validation_errors_use_the_error_envelope(
+    authed_client: httpx.AsyncClient,
+    payload: dict[str, object],
+    issue_code: str,
+    issue_location: list[str],
+) -> None:
+    """Default FastAPI validation JSON would violate the stable API error contract."""
+    response = await authed_client.post(
+        "/api/v1/control/lease",
+        headers={"X-Request-ID": "request-validation"},
+        json=payload,
+    )
+
+    assert response.status_code == 422
+    assert response.headers["x-request-id"] == "request-validation"
+    assert response.json() == {
+        "error": {
+            "code": "REQUEST_VALIDATION_FAILED",
+            "message": "Request validation failed",
+            "retryable": False,
+            "details": {
+                "issues": [{"code": issue_code, "location": issue_location}],
+            },
+        },
+        "requestId": "request-validation",
+    }
+
+
+@pytest.mark.asyncio
+async def test_malformed_json_uses_the_error_envelope(authed_client: httpx.AsyncClient) -> None:
+    """A JSON parser failure must not fall back to FastAPI's `detail` response."""
+    response = await authed_client.post(
+        "/api/v1/control/lease",
+        headers={"Content-Type": "application/json", "X-Request-ID": "request-json"},
+        content="{",
+    )
+
+    body = response.json()
+    assert response.status_code == 422
+    assert response.headers["x-request-id"] == "request-json"
+    assert body["requestId"] == "request-json"
+    assert body["error"]["code"] == "REQUEST_VALIDATION_FAILED"
+    assert body["error"]["details"] == {
+        "issues": [{"code": "json_invalid", "location": ["body", 1]}]
+    }
+
+
+@pytest.mark.asyncio
+async def test_http_errors_use_the_error_envelope(async_client: httpx.AsyncClient) -> None:
+    """Default Starlette 404 JSON would omit the API error code and request ID body."""
+    response = await async_client.get(
+        "/api/v1/no-such-route", headers={"X-Request-ID": "request-not-found"}
+    )
+
+    assert response.status_code == 404
+    assert response.headers["x-request-id"] == "request-not-found"
+    assert response.json() == {
+        "error": {
+            "code": "HTTP_NOT_FOUND",
+            "message": "The requested resource was not found",
+            "retryable": False,
+            "details": {},
+        },
+        "requestId": "request-not-found",
+    }
+
+
+@pytest.mark.asyncio
+async def test_internal_errors_use_a_non_secret_error_envelope(tmp_path: Path) -> None:
+    """An unexpected exception must not leak implementation text through the API."""
+    app = create_app(
+        WebSettings(
+            data_root=tmp_path,
+            initial_project_id="project-1",
+            access_token=SecretStr("test-token"),
+        )
+    )
+
+    @app.get("/api/v1/test/internal-error")
+    async def internal_error() -> None:
+        raise RuntimeError("secret implementation detail")
+
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/api/v1/test/internal-error", headers={"X-Request-ID": "request-internal"}
+        )
+
+    assert response.status_code == 500
+    assert response.headers["x-request-id"] == "request-internal"
+    assert response.json() == {
+        "error": {
+            "code": "INTERNAL_ERROR",
+            "message": "An unexpected server error occurred",
+            "retryable": False,
+            "details": {},
+        },
+        "requestId": "request-internal",
+    }
+
+
+def test_lease_tokens_are_excluded_from_schema_representations() -> None:
+    """Pydantic representations must not expose bearer-like lease credentials in logs."""
+    secret = "lease-token-that-must-not-appear"
+
+    acquire = LeaseAcquireRequest(clientId="c-1", leaseToken=secret)
+    token_request = LeaseTokenRequest(leaseToken=secret)
+    response = LeaseResponse(
+        clientId="c-1",
+        actorId="c-1",
+        leaseToken=secret,
+        expiresAt="2026-08-01T00:00:00Z",
+    )
+
+    assert secret not in repr(acquire)
+    assert secret not in repr(token_request)
+    assert secret not in repr(response)

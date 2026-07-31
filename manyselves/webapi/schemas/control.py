@@ -18,13 +18,13 @@ class LeaseAcquireRequest(_CamelCaseModel):
 
     client_id: str = Field(alias="clientId", min_length=1)
     actor_id: str | None = Field(default=None, alias="actorId", min_length=1)
-    lease_token: str | None = Field(default=None, alias="leaseToken")
+    lease_token: str | None = Field(default=None, alias="leaseToken", repr=False)
 
 
 class LeaseTokenRequest(_CamelCaseModel):
     """Supply a lease token for heartbeat and release actions."""
 
-    lease_token: str = Field(default="", alias="leaseToken")
+    lease_token: str = Field(default="", alias="leaseToken", repr=False)
 
 
 class LeaseResponse(_CamelCaseModel):
@@ -32,7 +32,7 @@ class LeaseResponse(_CamelCaseModel):
 
     client_id: str = Field(alias="clientId")
     actor_id: str = Field(alias="actorId")
-    lease_token: str = Field(alias="leaseToken")
+    lease_token: str = Field(alias="leaseToken", repr=False)
     expires_at: datetime = Field(alias="expiresAt")
 
     @classmethod

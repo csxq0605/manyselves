@@ -5,11 +5,19 @@ from collections.abc import Callable
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
-from .errors import ApiError, api_error_handler
+from .errors import (
+    ApiError,
+    api_error_handler,
+    http_error_handler,
+    internal_error_handler,
+    request_validation_error_handler,
+)
 from .lifespan import application_lifespan
 from .routes.bootstrap import router as bootstrap_router
 from .routes.control import router as control_router
@@ -63,6 +71,9 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.state.lifecycle_lock = asyncio.Lock()
     app.state.lifecycle_active = False
     app.add_exception_handler(ApiError, api_error_handler)
+    app.add_exception_handler(RequestValidationError, request_validation_error_handler)
+    app.add_exception_handler(StarletteHTTPException, http_error_handler)
+    app.add_exception_handler(Exception, internal_error_handler)
 
     app.add_middleware(
         DeferredCORSMiddleware,
