@@ -1,6 +1,6 @@
 [project]
 name = "manyselves"
-version = "1.2.0"
+version = "1.2.1"
 description = "A local workspace for document-defined agent teams."
 readme = "README.md"
 requires-python = ">=3.12"
