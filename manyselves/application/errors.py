@@ -16,3 +16,12 @@ class RuntimeNotReadyError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("Runtime is not ready")
+
+
+class CommandIdConflictError(RuntimeError):
+    """A completed command ID was reused for a different mutation."""
+
+    code = "COMMAND_ID_CONFLICT"
+
+    def __init__(self) -> None:
+        super().__init__("Command ID was already used with different command data")

@@ -40,11 +40,64 @@ def test_same_client_reacquire_renews_without_creating_a_second_controller() -> 
     original = leases.acquire(client_id="browser-1", actor_id="alice")
     clock.advance(seconds=10)
 
-    renewed = leases.acquire(client_id="browser-1", actor_id="alice")
+    renewed = leases.acquire(
+        client_id="browser-1",
+        actor_id="alice",
+        lease_token=original.token,
+    )
 
     assert renewed.token == original.token
     assert renewed.expires_at > original.expires_at
     assert leases.current_controller_client_id == "browser-1"
+
+
+@pytest.mark.parametrize("proof", [None, "wrong-token"])
+def test_same_client_reacquire_requires_proof_of_the_current_token(
+    proof: str | None,
+) -> None:
+    leases = ControlLeaseService(ttl=timedelta(seconds=30))
+    original = leases.acquire(client_id="browser-1", actor_id="alice")
+
+    with pytest.raises(ControlLeaseRequired):
+        leases.acquire(
+            client_id="browser-1",
+            actor_id="alice",
+            lease_token=proof,
+        )
+
+    assert leases.require(original.token) == original
+
+
+def test_same_client_id_cannot_impersonate_a_different_actor() -> None:
+    leases = ControlLeaseService(ttl=timedelta(seconds=30))
+    original = leases.acquire(client_id="browser-1", actor_id="alice")
+
+    with pytest.raises(ControlLeaseRequired):
+        leases.acquire(
+            client_id="browser-1",
+            actor_id="mallory",
+            lease_token=original.token,
+        )
+
+    assert leases.require(original.token).actor_id == "alice"
+
+
+def test_different_client_remains_held_even_if_it_knows_the_token() -> None:
+    leases = ControlLeaseService(ttl=timedelta(seconds=30))
+    original = leases.acquire(client_id="browser-1", actor_id="alice")
+
+    with pytest.raises(ControlLeaseHeld):
+        leases.acquire(
+            client_id="browser-2",
+            actor_id="alice",
+            lease_token=original.token,
+        )
+
+
+def test_control_lease_repr_never_discloses_token() -> None:
+    lease = ControlLeaseService().acquire(client_id="browser-1", actor_id="alice")
+
+    assert lease.token not in repr(lease)
 
 
 def test_heartbeat_extends_expiration() -> None:

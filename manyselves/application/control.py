@@ -2,7 +2,7 @@
 
 import secrets
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 
 Clock = Callable[[], datetime]
@@ -39,7 +39,7 @@ class ControlLease:
 
     client_id: str
     actor_id: str
-    token: str
+    token: str = field(repr=False)
     expires_at: datetime
 
 
@@ -68,13 +68,25 @@ class ControlLeaseService:
         current = self._unexpired_current()
         return None if current is None else current.client_id
 
-    def acquire(self, *, client_id: str, actor_id: str) -> ControlLease:
+    def acquire(
+        self,
+        *,
+        client_id: str,
+        actor_id: str,
+        lease_token: str | None = None,
+    ) -> ControlLease:
         """Acquire, or renew idempotently for the same controller client."""
         current = self._unexpired_current()
         now = self._clock()
         if current is not None:
             if current.client_id != client_id:
                 raise ControlLeaseHeld(current.client_id)
+            token_matches = lease_token is not None and secrets.compare_digest(
+                current.token,
+                lease_token,
+            )
+            if current.actor_id != actor_id or not token_matches:
+                raise ControlLeaseRequired()
             renewed = replace(current, expires_at=now + self._ttl)
             self._current = renewed
             return renewed

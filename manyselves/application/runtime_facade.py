@@ -3,11 +3,12 @@
 import asyncio
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from typing import TypeVar, cast
+from dataclasses import dataclass
+from typing import Any, Literal, TypeVar, cast
 from uuid import UUID
 
 from .control import ControlLeaseService
-from .errors import RuntimeNotReadyError
+from .errors import CommandIdConflictError, RuntimeNotReadyError
 from .legacy_runtime_adapter import LegacyRuntimeAdapter
 from .models import (
     AcceptedCommand,
@@ -22,6 +23,22 @@ from .runtime_host import RuntimeHost
 
 CommandResponse = AcceptedCommand | RollbackResult
 ResponseT = TypeVar("ResponseT", bound=CommandResponse)
+MutationCommand = (
+    SendMessageCommand | SendFileContextCommand | InterruptCommand | RollbackCommand
+)
+OperationKind = Literal[
+    "send_user_message",
+    "send_file_context",
+    "interrupt",
+    "rollback",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedCommand:
+    operation: OperationKind
+    payload: dict[str, Any]
+    response: CommandResponse
 
 
 class RuntimeFacade:
@@ -41,7 +58,7 @@ class RuntimeFacade:
         self.leases = leases or ControlLeaseService()
         self._adapter = adapter or LegacyRuntimeAdapter(host)
         self._command_cache_size = command_cache_size
-        self._command_cache: OrderedDict[UUID, CommandResponse] = OrderedDict()
+        self._command_cache: OrderedDict[UUID, _CachedCommand] = OrderedDict()
         self._mutation_lock = asyncio.Lock()
 
     def snapshot(self) -> RuntimeSnapshot:
@@ -62,9 +79,11 @@ class RuntimeFacade:
             )
             return AcceptedCommand(command_id=command.command_id)
 
-        return cast(
+        return await self._mutate(
+            "send_user_message",
+            command,
             AcceptedCommand,
-            await self._mutate(command.command_id, command.lease_token, invoke),
+            invoke,
         )
 
     async def send_file_context(self, command: SendFileContextCommand) -> AcceptedCommand:
@@ -74,9 +93,11 @@ class RuntimeFacade:
             await self._host.backend.send_file_context(command.file_context, command.agent_id)
             return AcceptedCommand(command_id=command.command_id)
 
-        return cast(
+        return await self._mutate(
+            "send_file_context",
+            command,
             AcceptedCommand,
-            await self._mutate(command.command_id, command.lease_token, invoke),
+            invoke,
         )
 
     async def interrupt(self, command: InterruptCommand) -> AcceptedCommand:
@@ -86,9 +107,11 @@ class RuntimeFacade:
             await self._host.backend.interrupt_current_message(command.agent_id)
             return AcceptedCommand(command_id=command.command_id)
 
-        return cast(
+        return await self._mutate(
+            "interrupt",
+            command,
             AcceptedCommand,
-            await self._mutate(command.command_id, command.lease_token, invoke),
+            invoke,
         )
 
     async def rollback(self, command: RollbackCommand) -> RollbackResult:
@@ -101,28 +124,45 @@ class RuntimeFacade:
             )
             return RollbackResult.model_validate(result)
 
-        return cast(
+        return await self._mutate(
+            "rollback",
+            command,
             RollbackResult,
-            await self._mutate(command.command_id, command.lease_token, invoke),
+            invoke,
         )
 
     async def _mutate(
         self,
-        command_id: UUID,
-        lease_token: str,
+        operation: OperationKind,
+        command: MutationCommand,
+        response_type: type[ResponseT],
         invoke: Callable[[], Awaitable[ResponseT]],
-    ) -> CommandResponse:
+    ) -> ResponseT:
         async with self._mutation_lock:
-            self.leases.require(lease_token)
+            self.leases.require(command.lease_token)
             if not self._host.is_ready:
                 raise RuntimeNotReadyError()
 
-            cached = self._command_cache.get(command_id)
+            payload = command.model_dump(
+                mode="json",
+                exclude={"command_id", "lease_token"},
+            )
+            cached = self._command_cache.get(command.command_id)
             if cached is not None:
-                return cached
+                if cached.operation != operation or cached.payload != payload:
+                    raise CommandIdConflictError()
+                if not isinstance(cached.response, response_type):
+                    raise AssertionError("Command cache response type invariant violated")
+                return cast(ResponseT, cached.response)
 
             response = await invoke()
-            self._command_cache[command_id] = response
+            if not isinstance(response, response_type):
+                raise AssertionError("Command response type invariant violated")
+            self._command_cache[command.command_id] = _CachedCommand(
+                operation=operation,
+                payload=payload,
+                response=response,
+            )
             while len(self._command_cache) > self._command_cache_size:
                 self._command_cache.popitem(last=False)
             return response

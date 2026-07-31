@@ -12,7 +12,7 @@ import pytest
 from pydantic import ValidationError
 
 from manyselves.application.control import ControlLeaseRequired, ControlLeaseService
-from manyselves.application.errors import RuntimeNotReadyError
+from manyselves.application.errors import CommandIdConflictError, RuntimeNotReadyError
 from manyselves.application.legacy_runtime_adapter import LegacyRuntimeAdapter
 from manyselves.application.models import (
     AcceptedCommand,
@@ -290,7 +290,7 @@ async def test_duplicate_rollback_returns_original_typed_result() -> None:
 
 
 @pytest.mark.asyncio
-async def test_command_id_cache_is_global_across_mutation_types() -> None:
+async def test_command_id_reuse_across_accepted_mutations_is_a_conflict() -> None:
     host = make_host()
     leases = ControlLeaseService()
     token = lease_for(leases)
@@ -298,11 +298,82 @@ async def test_command_id_cache_is_global_across_mutation_types() -> None:
     command_id = uuid4()
 
     first = await facade.send_user_message(message_command(token, command_id=command_id))
-    second = await facade.interrupt(
-        InterruptCommand(command_id=command_id, lease_token=token, agent_id="main")
-    )
+    with pytest.raises(CommandIdConflictError) as raised:
+        await facade.interrupt(
+            InterruptCommand(command_id=command_id, lease_token=token, agent_id="main")
+        )
 
-    assert second is first
+    assert first.status == "accepted"
+    assert raised.value.code == "COMMAND_ID_CONFLICT"
+    assert host.backend.calls == [
+        ("message", "hello", "researcher", "message-1", "main_agent")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_accepted_command_id_cannot_be_reused_for_rollback() -> None:
+    host = make_host()
+    leases = ControlLeaseService()
+    token = lease_for(leases)
+    facade = RuntimeFacade(host, leases=leases)
+    command_id = uuid4()
+
+    await facade.send_user_message(message_command(token, command_id=command_id))
+    with pytest.raises(CommandIdConflictError):
+        await facade.rollback(
+            RollbackCommand(
+                command_id=command_id,
+                lease_token=token,
+                agent_id="main",
+                checkpoint_id="checkpoint-1",
+            )
+        )
+
+    assert host.backend.calls == [
+        ("message", "hello", "researcher", "message-1", "main_agent")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rollback_command_id_cannot_be_reused_for_accepted_command() -> None:
+    host = make_host()
+    leases = ControlLeaseService()
+    token = lease_for(leases)
+    facade = RuntimeFacade(host, leases=leases)
+    command_id = uuid4()
+
+    rollback = await facade.rollback(
+        RollbackCommand(
+            command_id=command_id,
+            lease_token=token,
+            agent_id="main",
+            checkpoint_id="checkpoint-1",
+        )
+    )
+    with pytest.raises(CommandIdConflictError):
+        await facade.interrupt(
+            InterruptCommand(command_id=command_id, lease_token=token, agent_id="main")
+        )
+
+    assert isinstance(rollback, RollbackResult)
+    assert host.backend.calls == [("rollback", "main", "checkpoint-1")]
+
+
+@pytest.mark.asyncio
+async def test_same_operation_command_id_with_changed_payload_is_a_conflict() -> None:
+    host = make_host()
+    leases = ControlLeaseService()
+    token = lease_for(leases)
+    facade = RuntimeFacade(host, leases=leases)
+    command_id = uuid4()
+
+    await facade.send_user_message(message_command(token, command_id=command_id))
+    changed = message_command(token, command_id=command_id).model_copy(
+        update={"content": "different"}
+    )
+    with pytest.raises(CommandIdConflictError):
+        await facade.send_user_message(changed)
+
     assert host.backend.calls == [
         ("message", "hello", "researcher", "message-1", "main_agent")
     ]
