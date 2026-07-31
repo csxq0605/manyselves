@@ -9,8 +9,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
+from .errors import ApiError, api_error_handler
 from .lifespan import application_lifespan
 from .routes.bootstrap import router as bootstrap_router
+from .routes.control import router as control_router
+from .routes.health import router as health_router
 from .settings import WebSettings
 
 API_PREFIX = "/api/v1"
@@ -59,6 +62,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.state.event_broker = None
     app.state.lifecycle_lock = asyncio.Lock()
     app.state.lifecycle_active = False
+    app.add_exception_handler(ApiError, api_error_handler)
 
     app.add_middleware(
         DeferredCORSMiddleware,
@@ -76,7 +80,9 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         response.headers["X-Request-ID"] = request_id
         return response
 
+    app.include_router(health_router, prefix=API_PREFIX)
     app.include_router(bootstrap_router, prefix=API_PREFIX)
+    app.include_router(control_router, prefix=API_PREFIX)
     return app
 
 
