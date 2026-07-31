@@ -42,19 +42,33 @@ class _FakeBus:
         self.release.set()
 
 
+class _CancellationOnlyBus(_FakeBus):
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
+        self.events.append("bus:shutdown")
+
+
 class _FakeLoopManager:
     def __init__(
         self,
         events: list[str],
         *,
         start_error: Exception | None = None,
+        start_entered: asyncio.Event | None = None,
+        start_release: asyncio.Event | None = None,
     ) -> None:
         self.events = events
         self.start_error = start_error
+        self.start_entered = start_entered
+        self.start_release = start_release
         self.stop_calls = 0
 
     async def start(self) -> None:
         self.events.append("loops:start")
+        if self.start_entered is not None:
+            self.start_entered.set()
+        if self.start_release is not None:
+            await self.start_release.wait()
         if self.start_error is not None:
             raise self.start_error
 
@@ -76,9 +90,12 @@ def _host(
     *,
     valid_config: bool = True,
     start_error: Exception | None = None,
+    start_entered: asyncio.Event | None = None,
+    start_release: asyncio.Event | None = None,
+    cancellation_only_bus: bool = False,
 ) -> tuple[RuntimeHost, _FakeBus, _FakeBackend, list[_FakeLoopManager]]:
     config = _FakeConfigManager(valid=valid_config)
-    bus = _FakeBus(events)
+    bus = _CancellationOnlyBus(events) if cancellation_only_bus else _FakeBus(events)
     backend = _FakeBackend()
     created: list[_FakeLoopManager] = []
 
@@ -90,7 +107,12 @@ def _host(
         assert workspace.is_absolute()
         assert config_manager is config
         assert message_bus is bus
-        manager = _FakeLoopManager(events, start_error=start_error)
+        manager = _FakeLoopManager(
+            events,
+            start_error=start_error,
+            start_entered=start_entered,
+            start_release=start_release,
+        )
         created.append(manager)
         return cast(LoopManager, manager)
 
@@ -218,6 +240,130 @@ async def test_partial_start_cleans_up_the_owned_bus_task(tmp_path: Path) -> Non
     assert bus.shutdown_calls == 1
     assert created[0].stop_calls == 1
     assert bus.processor_finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_stopped_host_rejects_restart_without_false_ready_state(tmp_path: Path) -> None:
+    """A permanently shut down bus must never be presented as a ready restart."""
+    host, _, _, created = _host([])
+    await host.start(tmp_path)
+    await host.stop()
+
+    try:
+        with pytest.raises(RuntimeStartupError) as raised:
+            await host.start(tmp_path / "second")
+    finally:
+        await host.stop()
+
+    assert raised.value.code == "RUNTIME_STOPPED"
+    assert host.is_ready is False
+    assert len(created) == 1
+
+
+@pytest.mark.asyncio
+async def test_partial_start_consumes_one_shot_host_lifecycle(tmp_path: Path) -> None:
+    """Retrying a partially started host must not reuse its shut down bus."""
+    host, _, _, created = _host([], start_error=RuntimeError("bootstrap failed"))
+    with pytest.raises(RuntimeError, match="bootstrap failed"):
+        await host.start(tmp_path)
+
+    with pytest.raises(RuntimeStartupError) as raised:
+        await host.start(tmp_path)
+
+    assert raised.value.code == "RUNTIME_STOPPED"
+    assert host.is_ready is False
+    assert len(created) == 1
+
+
+@pytest.mark.asyncio
+async def test_no_provider_failure_can_retry_before_lifecycle_is_consumed(tmp_path: Path) -> None:
+    """Desktop configuration may add a key and retry after validation failure."""
+    host, _, _, created = _host([], valid_config=False)
+    with pytest.raises(RuntimeStartupError) as raised:
+        await host.start(tmp_path)
+    assert raised.value.code == "NO_PROVIDER_KEYS"
+
+    config = cast(_FakeConfigManager, host.config_manager)
+    config.valid = True
+    await host.start(tmp_path)
+
+    assert host.is_ready is True
+    assert len(created) == 1
+    await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_starts_create_only_one_runtime(tmp_path: Path) -> None:
+    """Removing start serialization must create duplicate loop managers and tasks."""
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    host, _, _, created = _host([], start_entered=entered, start_release=release)
+    first = asyncio.create_task(host.start(tmp_path))
+    await entered.wait()
+    second = asyncio.create_task(host.start(tmp_path))
+
+    try:
+        await asyncio.sleep(0)
+        assert len(created) == 1
+    finally:
+        release.set()
+        await asyncio.gather(first, second)
+
+    assert host.is_ready is True
+    assert len(created) == 1
+    await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_waits_for_in_progress_start_then_leaves_host_stopped(tmp_path: Path) -> None:
+    """A stop racing startup must not complete early and allow false-ready state."""
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    host, bus, _, created = _host([], start_entered=entered, start_release=release)
+    start_task = asyncio.create_task(host.start(tmp_path))
+    await entered.wait()
+    stop_task = asyncio.create_task(host.stop())
+
+    try:
+        await asyncio.sleep(0)
+        assert stop_task.done() is False
+    finally:
+        release.set()
+        await asyncio.gather(start_task, stop_task)
+
+    assert host.is_ready is False
+    assert bus.shutdown_calls == 1
+    assert created[0].stop_calls == 1
+    assert bus.processor_finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_blocked_owned_bus_task_but_not_unrelated_work(
+    tmp_path: Path,
+) -> None:
+    """Owned cleanup must not rely on bus shutdown waking the processor."""
+    host, bus, _, _ = _host([], cancellation_only_bus=True)
+    unrelated_release = asyncio.Event()
+    unrelated_cancelled = False
+
+    async def unrelated_worker() -> None:
+        nonlocal unrelated_cancelled
+        try:
+            await unrelated_release.wait()
+        except asyncio.CancelledError:
+            unrelated_cancelled = True
+            raise
+
+    unrelated_task = asyncio.create_task(unrelated_worker())
+    await host.start(tmp_path)
+
+    await host.stop()
+
+    assert bus.processor_finished.is_set()
+    assert unrelated_task.done() is False
+    assert unrelated_cancelled is False
+    unrelated_release.set()
+    await unrelated_task
 
 
 @pytest.mark.asyncio

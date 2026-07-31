@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import Callable
 from contextlib import suppress
+from enum import Enum, auto
 from pathlib import Path
 
 from loguru import logger
@@ -16,6 +17,13 @@ from .errors import RuntimeStartupError
 
 LoopManagerFactory = Callable[[Path, ConfigManager, MessageBus], LoopManager]
 WorkspaceInitializer = Callable[[Path], None]
+
+
+class _LifecycleState(Enum):
+    NEW = auto()
+    STARTING = auto()
+    READY = auto()
+    STOPPED = auto()
 
 
 class RuntimeHost:
@@ -42,9 +50,8 @@ class RuntimeHost:
         self._loop_manager: LoopManager | None = None
         self._workspace: Path | None = None
         self._bus_task: asyncio.Task[None] | None = None
-        self._is_ready = False
-        self._lifecycle_active = False
-        self._stop_lock = asyncio.Lock()
+        self._state = _LifecycleState.NEW
+        self._lifecycle_lock = asyncio.Lock()
 
     @classmethod
     def create(cls) -> "RuntimeHost":
@@ -57,7 +64,7 @@ class RuntimeHost:
     @property
     def is_ready(self) -> bool:
         """Whether all runtime components completed startup."""
-        return self._is_ready
+        return self._state is _LifecycleState.READY
 
     @property
     def workspace(self) -> Path | None:
@@ -71,66 +78,77 @@ class RuntimeHost:
 
     async def start(self, workspace: Path) -> None:
         """Validate configuration and start runtime processing for a workspace."""
-        if self._is_ready:
-            logger.warning("Runtime host already started")
-            return
+        async with self._lifecycle_lock:
+            if self._state is _LifecycleState.READY:
+                logger.warning("Runtime host already started")
+                return
+            if self._state is _LifecycleState.STOPPED:
+                raise RuntimeStartupError(
+                    "RUNTIME_STOPPED",
+                    "Runtime host has already been stopped.",
+                )
 
-        is_valid, available = self.config_manager.validate_api_keys()
-        if not is_valid:
-            logger.warning("No API keys configured.")
-            raise RuntimeStartupError("NO_PROVIDER_KEYS", "No API keys configured.")
+            is_valid, available = self.config_manager.validate_api_keys()
+            if not is_valid:
+                logger.warning("No API keys configured.")
+                raise RuntimeStartupError("NO_PROVIDER_KEYS", "No API keys configured.")
 
-        logger.info("Available providers: {}", available)
+            logger.info("Available providers: {}", available)
+            self._state = _LifecycleState.STARTING
 
-        resolved_workspace = Path(workspace).resolve()
-        self._workspace = resolved_workspace
-        self._project_logging_initializer(resolved_workspace)
-        self._project_structure_initializer(resolved_workspace)
-        logger.debug("Ensured project structure in: {}", resolved_workspace)
-
-        self._loop_manager = self._loop_manager_factory(
-            resolved_workspace,
-            self.config_manager,
-            self.bus,
-        )
-        self._lifecycle_active = True
-
-        try:
-            self.backend.set_loop_manager(self._loop_manager)
-            self._bus_task = asyncio.create_task(
-                self.bus.process_queue(),
-                name="manyselves-message-bus",
-            )
-            await asyncio.sleep(0)
-            await self._loop_manager.start()
-        except BaseException:
             try:
-                await self.stop()
-            except BaseException:
-                logger.exception("Runtime cleanup failed after partial startup")
-            raise
+                resolved_workspace = Path(workspace).resolve()
+                self._workspace = resolved_workspace
+                self._project_logging_initializer(resolved_workspace)
+                self._project_structure_initializer(resolved_workspace)
+                logger.debug("Ensured project structure in: {}", resolved_workspace)
 
-        self._is_ready = True
-        logger.info("Application started successfully with workspace: {}", resolved_workspace)
+                self._loop_manager = self._loop_manager_factory(
+                    resolved_workspace,
+                    self.config_manager,
+                    self.bus,
+                )
+                self.backend.set_loop_manager(self._loop_manager)
+                self._bus_task = asyncio.create_task(
+                    self.bus.process_queue(),
+                    name="manyselves-message-bus",
+                )
+                await asyncio.sleep(0)
+                await self._loop_manager.start()
+            except BaseException:
+                try:
+                    await self._stop_locked()
+                except BaseException:
+                    logger.exception("Runtime cleanup failed after partial startup")
+                raise
+
+            self._state = _LifecycleState.READY
+            logger.info(
+                "Application started successfully with workspace: {}",
+                resolved_workspace,
+            )
 
     async def stop(self) -> None:
         """Stop runtime components and await only work owned by this host."""
-        async with self._stop_lock:
-            self._is_ready = False
-            if not self._lifecycle_active and self._bus_task is None:
-                return
+        async with self._lifecycle_lock:
+            await self._stop_locked()
 
-            self._lifecycle_active = False
-            self.bus.shutdown()
+    async def _stop_locked(self) -> None:
+        """Stop an active lifecycle while the lifecycle lock is held."""
+        if self._state in {_LifecycleState.NEW, _LifecycleState.STOPPED}:
+            return
 
-            try:
-                if self._loop_manager is not None:
-                    await self._loop_manager.stop()
-            finally:
-                bus_task = self._bus_task
-                self._bus_task = None
-                if bus_task is not None:
-                    if not bus_task.done():
-                        bus_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await bus_task
+        self._state = _LifecycleState.STOPPED
+        self.bus.shutdown()
+
+        try:
+            if self._loop_manager is not None:
+                await self._loop_manager.stop()
+        finally:
+            bus_task = self._bus_task
+            self._bus_task = None
+            if bus_task is not None:
+                if not bus_task.done():
+                    bus_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await bus_task
