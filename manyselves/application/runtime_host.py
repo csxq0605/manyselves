@@ -23,6 +23,7 @@ class _LifecycleState(Enum):
     NEW = auto()
     STARTING = auto()
     READY = auto()
+    STOPPING = auto()
     STOPPED = auto()
 
 
@@ -50,6 +51,7 @@ class RuntimeHost:
         self._loop_manager: LoopManager | None = None
         self._workspace: Path | None = None
         self._bus_task: asyncio.Task[None] | None = None
+        self._bus_shutdown = False
         self._state = _LifecycleState.NEW
         self._lifecycle_lock = asyncio.Lock()
 
@@ -83,7 +85,7 @@ class RuntimeHost:
             if self._state is _LifecycleState.READY:
                 logger.warning("Runtime host already started")
                 return
-            if self._state is _LifecycleState.STOPPED:
+            if self._state in {_LifecycleState.STOPPING, _LifecycleState.STOPPED}:
                 raise RuntimeStartupError(
                     "RUNTIME_STOPPED",
                     "Runtime host has already been stopped.",
@@ -136,11 +138,16 @@ class RuntimeHost:
 
     async def _stop_locked(self) -> None:
         """Stop an active lifecycle while the lifecycle lock is held."""
-        if self._state in {_LifecycleState.NEW, _LifecycleState.STOPPED}:
+        if self._state is _LifecycleState.STOPPED:
+            return
+        if self._state is _LifecycleState.NEW:
+            self._state = _LifecycleState.STOPPED
             return
 
-        self._state = _LifecycleState.STOPPED
-        self.bus.shutdown()
+        self._state = _LifecycleState.STOPPING
+        if not self._bus_shutdown:
+            self.bus.shutdown()
+            self._bus_shutdown = True
 
         try:
             if self._loop_manager is not None:
@@ -153,3 +160,5 @@ class RuntimeHost:
                     bus_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await bus_task
+
+        self._state = _LifecycleState.STOPPED

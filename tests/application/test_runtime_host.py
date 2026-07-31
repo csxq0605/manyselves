@@ -56,11 +56,13 @@ class _FakeLoopManager:
         start_error: Exception | None = None,
         start_entered: asyncio.Event | None = None,
         start_release: asyncio.Event | None = None,
+        stop_failures: int = 0,
     ) -> None:
         self.events = events
         self.start_error = start_error
         self.start_entered = start_entered
         self.start_release = start_release
+        self.stop_failures = stop_failures
         self.stop_calls = 0
 
     async def start(self) -> None:
@@ -75,6 +77,9 @@ class _FakeLoopManager:
     async def stop(self) -> None:
         self.stop_calls += 1
         self.events.append("loops:stop")
+        if self.stop_failures > 0:
+            self.stop_failures -= 1
+            raise RuntimeError("loop cleanup failed")
 
 
 class _FakeBackend:
@@ -93,6 +98,7 @@ def _host(
     start_entered: asyncio.Event | None = None,
     start_release: asyncio.Event | None = None,
     cancellation_only_bus: bool = False,
+    stop_failures: int = 0,
 ) -> tuple[RuntimeHost, _FakeBus, _FakeBackend, list[_FakeLoopManager]]:
     config = _FakeConfigManager(valid=valid_config)
     bus = _CancellationOnlyBus(events) if cancellation_only_bus else _FakeBus(events)
@@ -112,6 +118,7 @@ def _host(
             start_error=start_error,
             start_entered=start_entered,
             start_release=start_release,
+            stop_failures=stop_failures,
         )
         created.append(manager)
         return cast(LoopManager, manager)
@@ -248,6 +255,51 @@ async def test_stop_is_idempotent(tmp_path: Path) -> None:
     assert host.is_ready is False
     assert bus.shutdown_calls == 1
     assert created[0].stop_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_stop_before_start_consumes_the_one_shot_host(tmp_path: Path) -> None:
+    """Leaving a stopped host NEW would let a later start create runtime work."""
+    events: list[str] = []
+    host, _, _, created = _host(events)
+
+    await host.stop()
+    try:
+        with pytest.raises(RuntimeStartupError) as raised:
+            await host.start(tmp_path)
+    finally:
+        await host.stop()
+
+    assert raised.value.code == "RUNTIME_STOPPED"
+    assert host.is_ready is False
+    assert created == []
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_failed_loop_cleanup_can_be_retried_without_hiding_error(
+    tmp_path: Path,
+) -> None:
+    """Premature STOPPED state would prevent retry after a transient cleanup error."""
+    host, bus, _, created = _host([], stop_failures=1)
+    await host.start(tmp_path)
+
+    with pytest.raises(RuntimeError, match="loop cleanup failed"):
+        await host.stop()
+
+    assert host.is_ready is False
+    assert bus.shutdown_calls == 1
+    assert bus.processor_finished.is_set()
+    assert created[0].stop_calls == 1
+    with pytest.raises(RuntimeStartupError) as raised:
+        await host.start(tmp_path)
+    assert raised.value.code == "RUNTIME_STOPPED"
+
+    await host.stop()
+    await host.stop()
+
+    assert bus.shutdown_calls == 1
+    assert created[0].stop_calls == 2
 
 
 @pytest.mark.asyncio
