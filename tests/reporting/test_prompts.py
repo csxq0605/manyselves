@@ -163,10 +163,16 @@ def test_task_context_is_xml_and_separate_from_system() -> None:
     assert root.findtext("constraint") == "不得编造 & 必须引用"
     assert root.findtext("allowed_output") == "module_submission"
     assert root.findtext("prior_result_ref") == "drafts/2.4-v0.json"
-    assert root.find("submission_contract") is not None
+    submission = root.find("submission_contract")
+    assert submission is not None
+    assert submission.attrib == {
+        "kind": "module_submission",
+        "version": "1",
+        "machine_schema": "submit_result.input_schema",
+    }
 
 
-def test_task_context_inlines_exact_input_and_complete_first_submit_example() -> None:
+def test_task_context_inlines_input_and_keeps_only_compact_submission_semantics() -> None:
     envelope = TaskEnvelope(
         task_id="audit-2.1",
         run_id="run-audit",
@@ -188,9 +194,18 @@ def test_task_context_inlines_exact_input_and_complete_first_submit_example() ->
     )
 
     assert root.findtext("input_contract") == payload
-    submission = root.findtext("submission_contract") or ""
-    assert "valid_example" in submission
-    assert "top_level_fields" in submission
+    submission = root.find("submission_contract")
+    assert submission is not None
+    assert submission.attrib["kind"] == "module_review_finding_submission"
+    assert submission.attrib["version"] == "1"
+    assert submission.attrib["machine_schema"] == "submit_result.input_schema"
+    assert submission.findtext("purpose")
+    assert submission.findtext("semantic_rule")
+    assert "native JSON object" in (submission.findtext("payload_encoding") or "")
+    rendered = ElementTree.tostring(submission, encoding="unicode")
+    assert "valid_example" not in rendered
+    assert "top_level_fields" not in rendered
+    assert "nested_type" not in rendered
 
 
 def test_task_context_declares_artifact_delivery_modes() -> None:

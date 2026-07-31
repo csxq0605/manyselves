@@ -141,6 +141,98 @@ async def test_evidence_normalization_scopes_canonical_photos_to_run_and_remaps_
     )
     assert photo.source_image_id == "ID_SHARED"
     assert photo.primary_evidence_id == "E-0001"
+    photo_view = tmp_path / photo.path
+    assert photo_view.is_symlink()
+    blobs = list((tmp_path / "Work/content/sha256").glob("*/*/*"))
+    assert len(blobs) == 1
+    assert photo_view.resolve() == blobs[0]
+
+
+def test_service_template_snapshots_share_one_content_blob(tmp_path: Path) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    source = tmp_path / "Templates/report_template.docx"
+    source.parent.mkdir(parents=True)
+    Document().save(source)
+    first = tmp_path / "Work/runs/run-a/templates/report_template.docx"
+    second = tmp_path / "Work/runs/run-b/templates/report_template.docx"
+
+    first_path, first_sha, first_blob = service.snapshot_content(source, first)
+    second_path, second_sha, second_blob = service.snapshot_content(source, second)
+
+    assert first_path.is_symlink()
+    assert second_path.is_symlink()
+    assert first_path.resolve() == second_path.resolve()
+    assert first_sha == second_sha
+    assert first_blob == second_blob
+    assert len(list((tmp_path / "Work/content/sha256").glob("*/*/*"))) == 1
+
+
+def test_snapshot_content_atomically_replaces_matching_file_with_cas_view(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    source = tmp_path / "Inputs/photo.jpeg"
+    target = tmp_path / "Work/runs/run-photo/assets/P-0001.jpeg"
+    source.parent.mkdir(parents=True)
+    target.parent.mkdir(parents=True)
+    source.write_bytes(b"same-photo-bytes")
+    target.write_bytes(source.read_bytes())
+
+    path, digest, blob_ref = service.snapshot_content(
+        source,
+        target,
+        replace_existing_with_view=True,
+    )
+
+    assert path == target
+    assert path.is_symlink()
+    assert path.read_bytes() == b"same-photo-bytes"
+    assert path.resolve() == (tmp_path / blob_ref).resolve()
+    assert path.resolve().name == digest
+    assert list(target.parent.glob(".*.cas-view")) == []
+
+
+def test_snapshot_content_keeps_existing_file_if_view_staging_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    source = tmp_path / "Inputs/photo.jpeg"
+    target = tmp_path / "Work/runs/run-photo/assets/P-0001.jpeg"
+    source.parent.mkdir(parents=True)
+    target.parent.mkdir(parents=True)
+    source.write_bytes(b"same-photo-bytes")
+    target.write_bytes(source.read_bytes())
+
+    def fail_staging(*_args, **_kwargs):
+        raise OSError("staging failed")
+
+    monkeypatch.setattr(service.content_store, "link_view", fail_staging)
+    with pytest.raises(OSError, match="staging failed"):
+        service.snapshot_content(
+            source,
+            target,
+            replace_existing_with_view=True,
+        )
+
+    assert not target.is_symlink()
+    assert target.read_bytes() == b"same-photo-bytes"
+    assert list(target.parent.glob(".*.cas-view")) == []
 
 
 @pytest.mark.asyncio
@@ -809,6 +901,7 @@ async def test_budget_resume_reuses_same_revision_run(
     monkeypatch.setattr(RevisionCoordinator, "run", resumed_revision)
     result = await service.resume_run(
         run_id,
+        cost_control_mode="warn",
         max_provider_attempts=4,
         max_total_tokens=20_000,
     )
@@ -816,6 +909,7 @@ async def test_budget_resume_reuses_same_revision_run(
     assert result.run_id == run_id
     assert seen["run_id"] == run_id
     assert seen["resume"] is True
+    assert seen["request"].cost_control_mode == "warn"
     assert seen["request"].max_provider_attempts == 4
     assert seen["request"].max_total_tokens == 20_000
 

@@ -6,7 +6,10 @@ from xml.sax.saxutils import escape, quoteattr
 from .agentic_models import TaskEnvelope
 from .config import AgentDefinition
 from .module_skills import ModuleSkill
-from .submission_contracts import render_submission_contract
+from .submission_contracts import KIND_SEMANTIC_RULES, KIND_SUMMARIES
+
+
+SUBMISSION_CONTRACT_VERSION = 1
 
 
 def _validated_xml(document: str, *, label: str) -> str:
@@ -80,7 +83,6 @@ class PromptAssembler:
         shared_artifacts: list[str],
         *,
         input_contract_payload: str | None = None,
-        submission_contract_payloads: dict[str, str] | None = None,
     ) -> str:
         inputs = "\n".join(
             (
@@ -107,9 +109,20 @@ class PromptAssembler:
         )
         submission_contracts = "\n".join(
             (
-                f"<submission_contract kind={quoteattr(value)}>"
-                f"{escape((submission_contract_payloads or {}).get(value) or render_submission_contract(value))}"
-                "</submission_contract>"
+                f"<submission_contract kind={quoteattr(value)} "
+                f'version="{SUBMISSION_CONTRACT_VERSION}" '
+                'machine_schema="submit_result.input_schema">'
+                f"<purpose>{escape(KIND_SUMMARIES[value])}</purpose>"
+                + "".join(
+                    f"<semantic_rule>{escape(rule)}</semantic_rule>"
+                    for rule in KIND_SEMANTIC_RULES.get(value, ())
+                )
+                + (
+                    "<payload_encoding>Pass payload as a native JSON object. "
+                    "Never JSON-encode, quote, or stringify the complete object."
+                    "</payload_encoding>"
+                    "</submission_contract>"
+                )
             )
             for value in envelope.allowed_outputs
         )

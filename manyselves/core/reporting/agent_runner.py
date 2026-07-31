@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import gzip
 import hashlib
 import json
 import operator
 import os
 import re
+import tempfile
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
+from typing import Any
 
 from ...config.schema import AgentDefaults
 from ...interfaces.types import (
@@ -21,6 +25,7 @@ from ...interfaces.types import (
     UserMessage,
 )
 from ..artifacts import ArtifactGateway, ArtifactGrant, parse_artifact
+from ..artifacts.content_store import ContentAddressedStore
 from ..loops.agent_loop import (
     AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
     AGENT_TURN_CONTINUATION_REQUIRED,
@@ -39,6 +44,7 @@ from ..tools.reporting_collaboration_tools import (
     ReportGapTool,
     SubmitResultTool,
     WriteResultPartTool,
+    WriteResultPartsTool,
 )
 from ..tools.reporting_research_tools import (
     OpenProjectSourceTool,
@@ -75,10 +81,7 @@ from .session_summary import SessionSummaryBuilder, SessionSummaryStore
 from .skills.resolver import RuntimeSkillResolver
 from .source_ledger import SourceLedger
 from .store import ReportingStore
-from .submission_contracts import (
-    render_submission_schema_contract,
-    submission_schema,
-)
+from .submission_contracts import submission_schema
 from .versions import SkillProvenance
 
 REPORTING_SUBMISSION_STREAM_IDLE_TIMEOUT_SECONDS = 600.0
@@ -90,6 +93,60 @@ REPORTING_AUDIT_AGENT_IDS = frozenset(
         "chief-editor-auditor",
     }
 )
+def load_conversation_trace(
+    workspace: Path,
+    manifest_ref: str | Path,
+) -> dict:
+    """Read legacy inline or v2 compressed conversation traces uniformly."""
+
+    workspace = Path(workspace).resolve()
+    manifest_path = (
+        Path(manifest_ref)
+        if Path(manifest_ref).is_absolute()
+        else workspace / manifest_ref
+    ).resolve()
+    if (
+        not manifest_path.is_relative_to(workspace)
+        or not manifest_path.is_file()
+    ):
+        raise ValueError(
+            f"conversation manifest is not a readable workspace file: {manifest_ref}"
+        )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if isinstance(manifest.get("messages"), list):
+        # v1 compatibility: the transcript was the manifest itself.
+        return manifest
+    if (
+        manifest.get("manifest_version") != 2
+        or manifest.get("encoding") != "gzip+json"
+    ):
+        raise ValueError("unsupported conversation trace manifest")
+    transcript_ref = str(manifest.get("transcript_ref") or "")
+    transcript_path = (workspace / transcript_ref).resolve()
+    content_root = (workspace / "Work/content/sha256").resolve()
+    if (
+        not transcript_path.is_relative_to(content_root)
+        or not transcript_path.is_file()
+    ):
+        raise ValueError("conversation transcript CAS blob is unreadable")
+    compressed = transcript_path.read_bytes()
+    compressed_sha256 = hashlib.sha256(compressed).hexdigest()
+    if compressed_sha256 != manifest.get("compressed_sha256"):
+        raise ValueError("conversation transcript compressed hash mismatch")
+    try:
+        serialized = gzip.decompress(compressed)
+    except OSError as exc:
+        raise ValueError("conversation transcript gzip payload is invalid") from exc
+    if hashlib.sha256(serialized).hexdigest() != manifest.get(
+        "transcript_sha256"
+    ):
+        raise ValueError("conversation transcript content hash mismatch")
+    payload = json.loads(serialized)
+    if not isinstance(payload, dict) or not isinstance(
+        payload.get("messages"), list
+    ):
+        raise ValueError("conversation transcript payload is invalid")
+    return payload
 
 
 class InspectImageTool(Tool):
@@ -265,6 +322,31 @@ class ReportingAgentRunner:
         """Apply one run-scoped guard before every provider attempt."""
 
         self._provider_attempt_guard = guard
+
+    @staticmethod
+    def _usage_stage(definition: AgentDefinition, envelope: TaskEnvelope) -> str:
+        outputs = set(envelope.allowed_outputs)
+        if definition.id == "template-distiller":
+            return "template_distillation"
+        if definition.id == "evidence-auditor":
+            return "module_review"
+        if definition.id == "cross-module-reviewer":
+            return "cross_review"
+        if definition.id == "chief-editor-auditor":
+            return "final_review"
+        if definition.id == "chief-editor":
+            return (
+                "chief_revision"
+                if "chief_revision_submission" in outputs
+                else "chief_edit"
+            )
+        if definition.id == "main-agent":
+            return "main_decision"
+        if "module_revision_submission" in outputs:
+            return "module_revision"
+        if "module_submission" in outputs:
+            return "module_authoring"
+        return "reporting_other"
 
     @staticmethod
     def _provider_stream_idle_timeout(definition: AgentDefinition) -> float:
@@ -523,7 +605,7 @@ class ReportingAgentRunner:
         attempt: int,
         call_index: int,
     ) -> Path:
-        """Persist the exact content hashes for one actual provider request."""
+        """Persist pre-adapter hashes, then backfill canonical provider payload metrics."""
 
         root = f"Work/runs/{envelope.run_id}/context-manifests"
         index_ref = f"{root}/provider-hash-index.json"
@@ -539,6 +621,7 @@ class ReportingAgentRunner:
             f"{root}/provider-calls/{safe_task_id}-r{envelope.revision}-"
             f"{session_id}-c{call_index:04d}-{safe_phase}-a{attempt}.json"
         )
+        provider_call_id = Path(manifest_ref).stem
 
         def component(kind: str, value: str, *, index: int | None = None) -> dict:
             digest = self._sha256_text(value)
@@ -606,7 +689,8 @@ class ReportingAgentRunner:
             default=str,
         )
         manifest = {
-            "provider_context_manifest_version": 1,
+            "provider_context_manifest_version": 2,
+            "provider_call_id": provider_call_id,
             "run_id": envelope.run_id,
             "task_id": envelope.task_id,
             "revision": envelope.revision,
@@ -620,9 +704,65 @@ class ReportingAgentRunner:
             "messages": message_components,
             "tool_definitions": component("tool_definitions", serialized_tools),
             "request_sha256": self._sha256_text(serialized_request),
+            "request_sha256_scope": "agent_pre_adapter",
+            "pre_adapter_request": {
+                "representation": "agent_llm_messages_and_tool_definitions_v1",
+                "request_sha256": self._sha256_text(serialized_request),
+                "message_chars": sum(
+                    int(item["chars"]) for item in message_components
+                ),
+                "tool_schema_chars": len(serialized_tools),
+            },
+            "provider_payload_status": "pending",
+            "provider_payload": None,
         }
         self.store.write_json(index_ref, hash_index)
         return self.store.write_json(manifest_ref, manifest)
+
+    def _finalize_provider_call_manifest(
+        self,
+        record: dict[str, Any],
+    ) -> Path | None:
+        """Attach hash-only metrics for the payload actually passed to the SDK."""
+
+        relative = str(record.get("context_manifest_ref") or "")
+        if not relative:
+            return None
+        path = (self.workspace / relative).resolve()
+        if not path.is_relative_to(self.workspace) or not path.is_file():
+            return None
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        provider_call_id = str(record.get("provider_call_id") or "")
+        if provider_call_id != str(manifest.get("provider_call_id") or ""):
+            raise ValueError(
+                "usage provider_call_id does not match provider context manifest"
+            )
+        observed = record.get("request_metric_source") == "provider_adapter_payload"
+        manifest["provider_payload_status"] = (
+            "observed" if observed else "unavailable"
+        )
+        manifest["provider_payload"] = (
+            {
+                "representation": record.get(
+                    "provider_request_representation"
+                ),
+                "request_sha256": record.get("request_fingerprint"),
+                "message_sha256": record.get("message_fingerprint"),
+                "tool_schema_sha256": record.get(
+                    "tool_schema_fingerprint"
+                ),
+                "request_chars": int(record.get("request_chars", 0) or 0),
+                "message_chars": int(record.get("message_chars", 0) or 0),
+                "tool_schema_chars": int(
+                    record.get("tool_schema_chars", 0) or 0
+                ),
+            }
+            if observed
+            else None
+        )
+        manifest["usage_status"] = record.get("status")
+        manifest["usage_source"] = record.get("usage_source")
+        return self.store.write_json(relative, manifest)
 
     def _input_contract(self, envelope: TaskEnvelope):
         if not envelope.input_contract_kind or not envelope.input_contract_ref:
@@ -660,7 +800,10 @@ class ReportingAgentRunner:
         ]
 
     @staticmethod
-    def _task_submission_schema(kind: str, contract) -> dict:
+    def _task_submission_schema(
+        kind: str,
+        contract,
+    ) -> dict:
         """Specialize provider-visible review schemas to the exact active task."""
 
         schema = deepcopy(submission_schema(kind))
@@ -779,6 +922,84 @@ class ReportingAgentRunner:
                 example["verdicts"] = [deepcopy(base) for _ in required_findings]
         return schema
 
+    @staticmethod
+    def _result_part_item_schema(
+        expected_part_ids: list[str],
+        *,
+        evidence_binding_required: bool,
+    ) -> dict:
+        """Return the exact provider-visible shape for one current-task prose part."""
+
+        part_id_schema: dict = {
+            "type": "string",
+            "description": "One fixed part id assigned by the current task.",
+        }
+        if expected_part_ids:
+            part_id_schema["enum"] = list(expected_part_ids)
+        else:
+            part_id_schema["pattern"] = r"^[A-Za-z0-9._-]+$"
+        properties = {
+            "part_id": part_id_schema,
+            "content": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 48_000,
+                "description": "Complete reader-visible prose for this one durable part.",
+            },
+        }
+        required = ["part_id", "content"]
+        if evidence_binding_required:
+            properties["evidence_ids"] = {
+                "type": "array",
+                "items": {"type": "string", "pattern": r"^E-"},
+                "uniqueItems": True,
+                "description": (
+                    "Registered current-run E-* ids supporting this module part; "
+                    "use an empty list for an explicit evidence gap."
+                ),
+            }
+            required.append("evidence_ids")
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": False,
+        }
+
+    @classmethod
+    def _result_part_tool_schema(
+        cls,
+        expected_part_ids: list[str],
+        *,
+        evidence_binding_required: bool,
+        batch_size: int | None = None,
+    ) -> dict:
+        """Specialize single and batch result-part tools to the active task."""
+
+        item_schema = cls._result_part_item_schema(
+            expected_part_ids,
+            evidence_binding_required=evidence_binding_required,
+        )
+        if batch_size is None:
+            return item_schema
+        return {
+            "type": "object",
+            "properties": {
+                "parts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": batch_size,
+                    "items": item_schema,
+                    "description": (
+                        "A validation-atomic batch; every item is checked before any "
+                        "part is persisted."
+                    ),
+                }
+            },
+            "required": ["parts"],
+            "additionalProperties": False,
+        }
+
     def skill_provenance(self) -> list[SkillProvenance]:
         return [
             SkillProvenance(
@@ -866,6 +1087,10 @@ class ReportingAgentRunner:
         expected_result_part_ids = (
             list(template_inspection.required_part_ids)
             if template_inspection is not None
+            else list(input_contract.required_submodule_ids)
+            if isinstance(input_contract, ModuleAuthoringInput)
+            else list(input_contract.target_submodule_ids)
+            if isinstance(input_contract, ModuleRevisionInput)
             else [
                 CHIEF_SECTION_RESULT_PART_IDS[section_id]
                 for section_id in input_contract.target_section_ids
@@ -885,6 +1110,11 @@ class ReportingAgentRunner:
             if "edited_report_submission" in envelope.allowed_outputs
             else envelope.target_submodule_ids
         )
+        evidence_binding_required = bool(
+            {"module_submission", "module_revision_submission"}
+            & set(envelope.allowed_outputs)
+        )
+        result_part_batch_size = 4 if evidence_binding_required else 8
         required_synthesis_input_ids: list[str] = []
         available: dict[str, Tool] = {
             "search_project_evidence": SearchProjectEvidenceTool(
@@ -1006,11 +1236,18 @@ class ReportingAgentRunner:
                 envelope.revision,
                 self.store,
                 expected_result_part_ids,
-                evidence_binding_required=bool(
-                    {"module_submission", "module_revision_submission"}
-                    & set(envelope.allowed_outputs)
-                ),
+                evidence_binding_required=evidence_binding_required,
                 required_synthesis_input_ids=required_synthesis_input_ids,
+            ),
+            "write_result_parts": WriteResultPartsTool(
+                envelope.run_id,
+                envelope.task_id,
+                envelope.revision,
+                self.store,
+                expected_result_part_ids,
+                evidence_binding_required=evidence_binding_required,
+                required_synthesis_input_ids=required_synthesis_input_ids,
+                max_batch_size=result_part_batch_size,
             ),
             "list_result_parts": ListResultPartsTool(
                 envelope.run_id,
@@ -1018,10 +1255,7 @@ class ReportingAgentRunner:
                 envelope.revision,
                 self.store,
                 expected_result_part_ids,
-                evidence_binding_required=bool(
-                    {"module_submission", "module_revision_submission"}
-                    & set(envelope.allowed_outputs)
-                ),
+                evidence_binding_required=evidence_binding_required,
                 required_synthesis_input_ids=required_synthesis_input_ids,
             ),
             "report_blocked": ReportBlockedTool(
@@ -1042,9 +1276,26 @@ class ReportingAgentRunner:
             if name not in available:
                 raise ValueError(f"unsupported tool in {definition.id}: {name}")
             registry.register(available[name])
+        if registry.get("write_result_part") is not None:
+            # The batch tool is a compatible companion capability. Existing Agent
+            # definitions and recovery envelopes keep their single-part declaration,
+            # while current providers may choose either exact task-scoped shape.
+            registry.register(available["write_result_parts"])
+            registry._schema_cache["write_result_part"] = self._result_part_tool_schema(
+                expected_result_part_ids,
+                evidence_binding_required=evidence_binding_required,
+            )
+            registry._schema_cache["write_result_parts"] = self._result_part_tool_schema(
+                expected_result_part_ids,
+                evidence_binding_required=evidence_binding_required,
+                batch_size=result_part_batch_size,
+            )
         if "submit_result" in definition.tools:
             output_schemas = [
-                self._task_submission_schema(kind, input_contract)
+                self._task_submission_schema(
+                    kind,
+                    input_contract,
+                )
                 for kind in envelope.allowed_outputs
             ]
             if not output_schemas:
@@ -1166,6 +1417,7 @@ class ReportingAgentRunner:
                 ),
             )
             self._sessions[cache_key] = (loop, session_id, runtime_id)
+            loop.usage_stage = self._usage_stage(definition, envelope)
             router.register_session(definition.id, session_id, runtime_id)
             await loop.start()
         else:
@@ -1189,6 +1441,7 @@ class ReportingAgentRunner:
             )
             loop.usage_run_id = envelope.run_id
             loop.usage_task_id = envelope.task_id
+            loop.usage_stage = self._usage_stage(definition, envelope)
             loop.before_provider_attempt = (
                 None
                 if self._provider_attempt_guard is None
@@ -1215,7 +1468,7 @@ class ReportingAgentRunner:
         ) -> None:
             nonlocal provider_call_index
             provider_call_index += 1
-            self._write_provider_call_manifest(
+            manifest_path = self._write_provider_call_manifest(
                 definition=definition,
                 envelope=envelope,
                 identity_key=identity_key,
@@ -1226,8 +1479,16 @@ class ReportingAgentRunner:
                 attempt=attempt,
                 call_index=provider_call_index,
             )
+            loop.usage_context_manifest_ref = manifest_path.relative_to(
+                self.workspace
+            ).as_posix()
+            loop.usage_provider_call_id = manifest_path.stem
+
+        async def finalize_provider_context(record: dict[str, Any]) -> None:
+            self._finalize_provider_call_manifest(record)
 
         loop.provider_attempt_observer = record_provider_context
+        loop.provider_attempt_record_observer = finalize_provider_context
         self._record_identity(
             workflow_id=workflow_id,
             envelope=envelope,
@@ -1249,13 +1510,6 @@ class ReportingAgentRunner:
             envelope,
             shared_artifacts,
             input_contract_payload=input_contract_payload,
-            submission_contract_payloads={
-                kind: render_submission_schema_contract(
-                    kind,
-                    self._task_submission_schema(kind, self._input_contract(envelope)),
-                )
-                for kind in envelope.allowed_outputs
-            },
         )
         self._write_context_manifest(
             definition=definition,
@@ -1384,7 +1638,6 @@ class ReportingAgentRunner:
                         waiter.cancel()
                 await asyncio.gather(*waiters, return_exceptions=True)
 
-        self._save_conversation_trace(loop, envelope, runtime_id, session_id, status="running")
         try:
 
             async def finish_tool_slices(
@@ -1588,6 +1841,8 @@ class ReportingAgentRunner:
         def json_value(value):
             if hasattr(value, "model_dump"):
                 return value.model_dump(mode="json")
+            if is_dataclass(value):
+                return json_value(asdict(value))
             if isinstance(value, dict):
                 return {str(key): json_value(item) for key, item in value.items()}
             if isinstance(value, (list, tuple)):
@@ -1597,9 +1852,52 @@ class ReportingAgentRunner:
             return str(value)
 
         safe_runtime_id = re.sub(r"[^A-Za-z0-9_.-]", "_", runtime_id)
+        trace = {
+            "run_id": envelope.run_id,
+            "task_id": envelope.task_id,
+            "agent_id": envelope.agent_id,
+            "runtime_id": runtime_id,
+            "session_id": session_id,
+            "status": status,
+            "error": error,
+            "messages": json_value(list(loop._conversation_history)),
+        }
+        serialized = (
+            json.dumps(
+                trace,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+        compressed = gzip.compress(serialized, compresslevel=9, mtime=0)
+        trace_root = (
+            self.workspace
+            / f"Work/runs/{envelope.run_id}/agent-conversations"
+        )
+        trace_root.mkdir(parents=True, exist_ok=True)
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                prefix=f".{safe_runtime_id}-",
+                suffix=".json.gz.tmp",
+                dir=trace_root,
+                delete=False,
+            ) as handle:
+                handle.write(compressed)
+                handle.flush()
+                os.fsync(handle.fileno())
+                temporary_path = Path(handle.name)
+            blob = ContentAddressedStore(self.workspace).ingest_file(temporary_path)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
         return self.store.write_json(
             f"Work/runs/{envelope.run_id}/agent-conversations/{safe_runtime_id}.json",
             {
+                "manifest_version": 2,
                 "run_id": envelope.run_id,
                 "task_id": envelope.task_id,
                 "agent_id": envelope.agent_id,
@@ -1607,7 +1905,22 @@ class ReportingAgentRunner:
                 "session_id": session_id,
                 "status": status,
                 "error": error,
-                "messages": json_value(list(loop._conversation_history)),
+                "encoding": "gzip+json",
+                "transcript_semantics": (
+                    "provider_working_history_compacted_v1"
+                ),
+                "forensic_exact_tool_arguments": False,
+                "forensic_note": (
+                    "Successful long write_result_part(s) arguments are replaced "
+                    "in provider history by sha256/artifact_ref markers after the "
+                    "full content is persisted; bus and UI events remain unmodified."
+                ),
+                "transcript_ref": blob.relative_path.as_posix(),
+                "transcript_sha256": hashlib.sha256(serialized).hexdigest(),
+                "compressed_sha256": blob.sha256,
+                "uncompressed_bytes": len(serialized),
+                "compressed_bytes": blob.size,
+                "message_count": len(loop._conversation_history),
             },
         )
 

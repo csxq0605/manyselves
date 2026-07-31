@@ -23,6 +23,7 @@ from .agentic_models import (
     FinalReviewFinding,
     FinalReviewFindingSubmission,
     FinalReviewVerdictSubmission,
+    ClaimRecord,
     ModuleReviewFinding,
     ModuleReviewFindingSubmission,
     ModuleReviewVerdictSubmission,
@@ -60,6 +61,7 @@ from .input_contracts import (
 )
 from .models import CHIEF_SECTION_RESULT_PART_IDS
 from .revision_diff import build_revision_diff
+from .review_preflight import evaluate_module_review_preflight
 from .source_ledger import SourceLedger
 from .taxonomy import REPORT_TAXONOMY
 
@@ -113,6 +115,7 @@ class ModuleReviewProgress(StrictModel):
     phase: str = "initial"
     scope: list[str] = Field(default_factory=list)
     reviewer_session_key: str | None = None
+    last_reviewed_subject_ref: str | None = None
     review_protocol_version: int = 1
 
 
@@ -325,6 +328,129 @@ def _model_sha256(model: StrictModel) -> str:
     return _text_sha256(payload)
 
 
+def _review_claim_statement(claim: ClaimRecord) -> ReviewClaimStatement:
+    return ReviewClaimStatement(
+        statement_ref=(
+            "statement-" + hashlib.sha256(claim.id.encode("utf-8")).hexdigest()[:12]
+        ),
+        submodule_id=claim.submodule_id,
+        text=claim.text,
+        statement_type=claim.claim_type,
+        evidence_ids=claim.source_ids,
+        confidence=claim.confidence,
+        unresolved=claim.unresolved,
+    )
+
+
+def _module_recheck_delta(
+    baseline: ModuleSubmission,
+    current: ModuleSubmission,
+    scope: set[str],
+) -> dict[str, object]:
+    """Build a bounded delta from the last subject seen by the paid reviewer."""
+
+    raw = build_revision_diff(baseline, current)
+    changed_narratives = set(raw["changed_submodule_narratives"])
+    if not changed_narratives.issubset(scope):
+        raise ReviewLifecycleError(
+            "module recheck revision changed narratives outside reviewer finding scope: "
+            f"{sorted(changed_narratives - scope)}"
+        )
+    baseline_claims = {claim.id: claim for claim in baseline.claims}
+    current_claims = {claim.id: claim for claim in current.claims}
+    changed_claim_ids = set(raw["changed_claim_ids"])
+    changed_claim_submodules = {
+        claim.submodule_id
+        for claim_id in changed_claim_ids
+        for claim in (
+            baseline_claims.get(claim_id),
+            current_claims.get(claim_id),
+        )
+        if claim is not None
+    }
+    if not changed_claim_submodules.issubset(scope):
+        raise ReviewLifecycleError(
+            "module recheck revision changed Claims outside reviewer finding scope: "
+            f"{sorted(changed_claim_submodules - scope)}"
+        )
+    current_statements = [
+        _review_claim_statement(current_claims[claim_id])
+        for claim_id in sorted(changed_claim_ids)
+        if claim_id in current_claims
+    ]
+    prior_statements = [
+        _review_claim_statement(baseline_claims[claim_id])
+        for claim_id in sorted(changed_claim_ids)
+        if claim_id in baseline_claims
+    ]
+    changed_statement_refs = sorted(
+        {
+            statement.statement_ref
+            for statement in [*current_statements, *prior_statements]
+        }
+    )
+    delta_submodule_ids = changed_narratives | {
+        statement.submodule_id for statement in current_statements
+    }
+    subject_view = module_content_view(current, changed_narratives).model_copy(
+        update={
+            "evidence_ids_by_submodule": {
+                submodule_id: sorted(
+                    {
+                        evidence_id
+                        for statement in current_statements
+                        if statement.submodule_id == submodule_id
+                        for evidence_id in statement.evidence_ids
+                        if evidence_id.startswith("E-")
+                    }
+                )
+                for submodule_id in delta_submodule_ids
+            }
+        }
+    )
+    changed_statement_ids = set(changed_statement_refs)
+    unchanged_statement_sha256 = {
+        statement.statement_ref: _model_sha256(statement)
+        for statement in (
+            _review_claim_statement(claim)
+            for claim in current.claims
+            if claim.submodule_id in scope and claim.id not in changed_claim_ids
+        )
+        if statement.statement_ref not in changed_statement_ids
+    }
+    revision_diff = ModuleRevisionDiff(
+        module_id=current.module_id,
+        from_revision=baseline.revision,
+        to_revision=current.revision,
+        changed_submodule_narratives=sorted(changed_narratives),
+        changed_statement_refs=changed_statement_refs,
+        evidence_ids_added=raw["source_ids_added"],
+        evidence_ids_removed=raw["source_ids_removed"],
+    )
+    relevant_evidence_ids = {
+        evidence_id
+        for statement in [*current_statements, *prior_statements]
+        for evidence_id in statement.evidence_ids
+        if evidence_id.startswith("E-")
+    }
+    return {
+        "subject": subject_view,
+        "claim_statements": current_statements,
+        "prior_claim_statements": prior_statements,
+        "unchanged_submodule_sha256": {
+            submodule_id: _text_sha256(
+                strip_runtime_claim_markers(
+                    current.submodule_narratives[submodule_id]
+                ).rstrip()
+            )
+            for submodule_id in sorted(scope - changed_narratives)
+        },
+        "unchanged_statement_sha256": unchanged_statement_sha256,
+        "revision_diff": revision_diff,
+        "relevant_evidence_ids": relevant_evidence_ids,
+    }
+
+
 def _apply_module_patch(
     baseline: ModuleSubmission,
     patch: ModuleRevisionSubmission,
@@ -399,13 +525,17 @@ def _module_review_evidence_packet(
     subject: ModuleSubmission,
     run_id: str,
     submodule_ids: set[str],
+    *,
+    evidence_ids: set[str] | None = None,
 ) -> list[ReviewEvidenceExcerpt]:
     """Attach cited E-* evidence once so review does not become a retrieval loop."""
 
     ledger = SourceLedger(runner.service.workspace, run_id)
     records = {record.id: record for record in ledger.records}
-    evidence_ids = sorted(
-        {
+    selected_evidence_ids = sorted(
+        evidence_ids
+        if evidence_ids is not None
+        else {
             source_id
             for claim in subject.claims
             if claim.submodule_id in submodule_ids
@@ -414,7 +544,7 @@ def _module_review_evidence_packet(
         }
     )
     packet: list[ReviewEvidenceExcerpt] = []
-    for evidence_id in evidence_ids:
+    for evidence_id in selected_evidence_ids:
         record = records.get(evidence_id)
         content_ref = ledger.content_ref(evidence_id)
         if record is None or content_ref is None:
@@ -654,10 +784,12 @@ async def request_module_revision(
     cross_findings: list[CrossReviewFinding] | None = None,
     requested_changes: list[RequestedModuleChange] | None = None,
     validation_ref: str | None = None,
+    validation_target_submodule_ids: set[str] | None = None,
 ) -> tuple[ModuleSubmission, str]:
     module_findings = module_findings or []
     cross_findings = cross_findings or []
     requested_changes = requested_changes or []
+    validation_target_submodule_ids = validation_target_submodule_ids or set()
     validation_report = (
         ValidationReport.model_validate_json(
             (runner.service.workspace / validation_ref).read_text(encoding="utf-8")
@@ -674,7 +806,22 @@ async def request_module_revision(
         *(finding.target_submodule_id for finding in module_findings),
         *(target_id for finding in cross_findings for target_id in finding.target_submodule_ids),
         *(target_id for change in requested_changes for target_id in change.target_submodule_ids),
+        *validation_target_submodule_ids,
     }
+    if validation_report is not None:
+        _require_validation_binding(
+            runner,
+            validation_report,
+            subject_ref=(
+                f"Work/runs/{state['run_id']}/modules/"
+                f"{subject.module_id}-r{subject.revision}.json"
+            ),
+            subject_revision=subject.revision,
+        )
+        if not targets:
+            raise ReviewLifecycleError(
+                "failed machine validation requires explicit module-local correction targets"
+            )
     revision_input = ModuleRevisionInput(
         run_id=state["run_id"],
         module_id=subject.module_id,
@@ -706,13 +853,22 @@ async def request_module_revision(
         task_id=f"module-{subject.module_id}-revision-r{subject.revision + 1}",
         run_id=state["run_id"],
         agent_id=specialist_id,
-        objective="按结构化 finding 对当前模块执行显式、定向的补丁修订。",
+        objective=(
+            "只修复确定性 preflight 中可复现的机器谓词失败。"
+            if validation_report is not None and not required_ids
+            else "按结构化 finding 和机器谓词对当前模块执行显式、定向的补丁修订。"
+        ),
         input_refs=input_refs,
         constraints=[
             "只提交小型 module_revision_submission commit；不得在其中重复正文",
-            "每个 assigned target_submodule_id 必须先用 write_result_part 保存完整替换正文和 evidence_ids",
+            "assigned target_submodule_id 优先用 write_result_parts（每批最多 4 项）保存完整替换正文和 evidence_ids；单项纠错或恢复才用 write_result_part",
             "最终提交只使用 schema 声明的简短字段；运行时从保存的小节自动生成补丁",
-            "revision_responses 必须逐项覆盖 assigned finding ids",
+            (
+                "本次只有机器 preflight 触发；revision_responses 必须为空，"
+                "不得伪造 reviewer finding 或 verdict"
+                if not required_ids
+                else "revision_responses 必须逐项且仅覆盖 assigned finding ids"
+            ),
             "disputed 或 needs_input 不得伪造 changed_target_ids",
             *(
                 [f"上一版显式机器检查未通过；只修复 {validation_ref} 中列出的谓词失败"]
@@ -836,6 +992,7 @@ async def run_module_review(
     review_round = 0
     phase = "local_regression" if regression_context is not None else "initial"
     scope = set(initial_scope)
+    last_reviewed_subject_ref: str | None = None
     review_root = f"Work/runs/{state['run_id']}/reviews/module/{lifecycle_id}/{module_id}"
     progress_ref = f"{review_root}/progress.json"
 
@@ -857,6 +1014,7 @@ async def run_module_review(
                 phase=phase,
                 scope=sorted(scope),
                 reviewer_session_key=reviewer_session_key,
+                last_reviewed_subject_ref=last_reviewed_subject_ref,
                 review_protocol_version=2,
             ),
         )
@@ -884,6 +1042,7 @@ async def run_module_review(
         review_round = progress.review_round
         phase = progress.phase
         scope = set(progress.scope)
+        last_reviewed_subject_ref = progress.last_reviewed_subject_ref
         if progress.next_action == "revise":
             candidate_path = runner.service.workspace / (
                 f"Work/runs/{state['run_id']}/modules/{module_id}-r{current.revision + 1}.json"
@@ -944,19 +1103,153 @@ async def run_module_review(
             save_progress("review")
 
     while True:
-        subject_ref = f"Work/runs/{state['run_id']}/modules/{module_id}-r{current.revision}.json"
-        if not (runner.service.workspace / subject_ref).is_file():
-            _write_model(runner, subject_ref, current)
-        signal_ref = runner._validate_module_structure(state, current, f"review-r{review_round}")
-        validation_report = ValidationReport.model_validate_json(
-            (runner.service.workspace / signal_ref).read_text(encoding="utf-8")
-        )
-        _require_validation_binding(
-            runner,
-            validation_report,
-            subject_ref=subject_ref,
-            subject_revision=current.revision,
-        )
+        machine_attempts = 0
+        machine_failure_fingerprints: dict[tuple, int] = {}
+        while True:
+            subject_ref = (
+                f"Work/runs/{state['run_id']}/modules/"
+                f"{module_id}-r{current.revision}.json"
+            )
+            if not (runner.service.workspace / subject_ref).is_file():
+                _write_model(runner, subject_ref, current)
+            structure_ref = runner._validate_module_structure(
+                state,
+                current,
+                f"review-r{review_round}",
+            )
+            structure_report = ValidationReport.model_validate_json(
+                (runner.service.workspace / structure_ref).read_text(encoding="utf-8")
+            )
+            _require_validation_binding(
+                runner,
+                structure_report,
+                subject_ref=subject_ref,
+                subject_revision=current.revision,
+            )
+            preflight = evaluate_module_review_preflight(
+                runner.service.workspace,
+                run_id=state["run_id"],
+                subject=current,
+                subject_ref=subject_ref,
+                upstream_report=structure_report,
+            )
+            signal_ref = _write_model(
+                runner,
+                (
+                    f"{review_root}/preflight-subject-r{current.revision}-"
+                    f"review-r{review_round}.json"
+                ),
+                preflight.report,
+            )
+            validation_report = preflight.report
+            if validation_report.passed:
+                break
+            machine_attempts += 1
+            fingerprint = tuple(
+                sorted(
+                    (
+                        failure.check_id,
+                        failure.target_path,
+                        failure.message,
+                    )
+                    for failure in validation_report.failures
+                )
+            )
+            repeated = machine_failure_fingerprints.get(fingerprint, 0) + 1
+            machine_failure_fingerprints[fingerprint] = repeated
+            if repeated >= 2 or machine_attempts >= 3:
+                raise ReviewLifecycleError(
+                    "module preflight failed repeatedly before semantic review; "
+                    "no reviewer finding or verdict was created. "
+                    f"module={module_id}; attempts={machine_attempts}; "
+                    f"validation_ref={signal_ref}"
+                )
+            current, _ = await request_module_revision(
+                runner,
+                state=state,
+                workflow_id=workflow_id,
+                subject=current,
+                module_findings=(
+                    list(pending.values()) if phase == "recheck" else []
+                ),
+                cross_findings=(
+                    regression_context.trigger_cross_findings
+                    if phase == "local_regression"
+                    and regression_context is not None
+                    else []
+                ),
+                validation_ref=signal_ref,
+                validation_target_submodule_ids=set(
+                    preflight.target_submodule_ids
+                ),
+            )
+            if phase == "recheck":
+                responses = current.revision_responses
+            save_progress("review")
+
+        review_subject = module_content_view(current, scope)
+        review_claim_statements = [
+            _review_claim_statement(claim)
+            for claim in current.claims
+            if claim.submodule_id in scope
+        ]
+        prior_claim_statements: list[ReviewClaimStatement] = []
+        unchanged_submodule_sha256: dict[str, str] = {}
+        unchanged_statement_sha256: dict[str, str] = {}
+        baseline_subject_ref: str | None = None
+        revision_diff_ref: str | None = None
+        revision_diff: ModuleRevisionDiff | None = None
+        relevant_evidence_ids: set[str] | None = None
+        if phase == "recheck":
+            baseline_subject_ref = last_reviewed_subject_ref
+            if baseline_subject_ref is None:
+                legacy_candidate = (
+                    f"Work/runs/{state['run_id']}/modules/"
+                    f"{module_id}-r{current.revision - 1}.json"
+                )
+                if current.revision > 0 and (
+                    runner.service.workspace / legacy_candidate
+                ).is_file():
+                    baseline_subject_ref = legacy_candidate
+                else:
+                    raise ReviewLifecycleError(
+                        "module recheck lacks the last subject seen by its reviewer"
+                    )
+            try:
+                baseline = ModuleSubmission.model_validate_json(
+                    (
+                        runner.service.workspace / baseline_subject_ref
+                    ).read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError) as exc:
+                raise ReviewLifecycleError(
+                    "module recheck last-reviewed baseline is unreadable: "
+                    f"{baseline_subject_ref}"
+                ) from exc
+            delta = _module_recheck_delta(baseline, current, scope)
+            review_subject = delta["subject"]
+            review_claim_statements = delta["claim_statements"]
+            prior_claim_statements = delta["prior_claim_statements"]
+            unchanged_submodule_sha256 = delta["unchanged_submodule_sha256"]
+            unchanged_statement_sha256 = delta["unchanged_statement_sha256"]
+            revision_diff = delta["revision_diff"]
+            relevant_evidence_ids = set(delta["relevant_evidence_ids"])
+            relevant_evidence_ids.update(
+                evidence_ref
+                for finding in pending.values()
+                for evidence_ref in finding.evidence_refs
+                if evidence_ref.startswith("E-")
+            )
+            revision_diff_ref = _write_model(
+                runner,
+                f"{review_root}/recheck-diff-r{review_round}.json",
+                revision_diff,
+            )
+        # ReportingAgentRunner deliberately resets provider working memory at
+        # every typed task boundary.  A stable reviewer identity therefore does
+        # not retain the initial Knowledge slice.  Re-send the same bounded,
+        # immutable taxonomy packet alongside the delta; unchanged subject
+        # prose and evidence remain hash-only/delta-only.
         knowledge_ref, knowledge_context = _module_review_knowledge_packet(
             runner,
             state,
@@ -971,23 +1264,11 @@ async def run_module_review(
             review_round=review_round,
             subject_ref=subject_ref,
             subject_revision=current.revision,
-            subject=module_content_view(current, scope),
-            claim_statements=[
-                ReviewClaimStatement(
-                    statement_ref=(
-                        "statement-"
-                        + hashlib.sha256(claim.id.encode("utf-8")).hexdigest()[:12]
-                    ),
-                    submodule_id=claim.submodule_id,
-                    text=claim.text,
-                    statement_type=claim.claim_type,
-                    evidence_ids=claim.source_ids,
-                    confidence=claim.confidence,
-                    unresolved=claim.unresolved,
-                )
-                for claim in current.claims
-                if claim.submodule_id in scope
-            ],
+            subject=review_subject,
+            claim_statements=review_claim_statements,
+            prior_claim_statements=prior_claim_statements,
+            unchanged_submodule_sha256=unchanged_submodule_sha256,
+            unchanged_statement_sha256=unchanged_statement_sha256,
             knowledge_ref=knowledge_ref,
             knowledge_context=knowledge_context,
             evidence=_module_review_evidence_packet(
@@ -995,6 +1276,7 @@ async def run_module_review(
                 current,
                 state["run_id"],
                 scope,
+                evidence_ids=relevant_evidence_ids,
             ),
             required_submodule_ids=sorted(scope),
             required_findings=list(pending.values()) if phase == "recheck" else [],
@@ -1012,7 +1294,7 @@ async def run_module_review(
             baseline_subject_ref=(
                 regression_context.baseline_subject_ref
                 if phase == "local_regression" and regression_context is not None
-                else None
+                else baseline_subject_ref
             ),
             trigger_cross_findings=(
                 regression_context.trigger_cross_findings
@@ -1027,12 +1309,12 @@ async def run_module_review(
             revision_diff_ref=(
                 regression_context.revision_diff_ref
                 if phase == "local_regression" and regression_context is not None
-                else None
+                else revision_diff_ref
             ),
             revision_diff=(
                 regression_context.revision_diff
                 if phase == "local_regression" and regression_context is not None
-                else None
+                else revision_diff
             ),
             validation_report_ref=signal_ref,
             validation_report=validation_report,
@@ -1117,6 +1399,10 @@ async def run_module_review(
             workflow_id,
             session_key=reviewer_session_key,
         )
+        # This exact subject, not merely the immediately preceding revision, is
+        # the semantic baseline for the next paid reviewer turn. Machine-only
+        # corrections may introduce additional revisions between the two.
+        last_reviewed_subject_ref = subject_ref
         if phase in {"initial", "local_regression"}:
             if not isinstance(result, ModuleReviewFindingSubmission):
                 raise ReviewLifecycleError("module auditor returned the wrong initial type")
@@ -1991,7 +2277,7 @@ async def _request_chief_revision(
                 "input_contract_kind": "chief_revision_input",
                 "input_contract_ref": revision_input_ref,
                 "constraints": [
-                    "只为 target_section_ids 调用 write_result_part 并提交 chief_revision_submission 小补丁",
+                    "只为 target_section_ids 优先调用 write_result_parts（每批最多 8 项）并提交 chief_revision_submission 小补丁；单项纠错才用 write_result_part",
                     "不得提交全文、第二章、表格、图片或其他元数据；运行时确定性继承",
                     "revision_responses 必须逐项且仅覆盖 assigned finding ids",
                     "不得让工作流替你补写响应、章节或引用",

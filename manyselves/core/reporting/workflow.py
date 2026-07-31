@@ -8,7 +8,7 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from pydantic import Field
@@ -39,6 +39,7 @@ from .assets import (
     validate_module_markdown_consistency,
 )
 from .claim_ledger import ClaimLedger
+from .cost_control import StageCostController
 from .delivery import DeliveryPackage, DeliveryReceipt, ProjectDelivery
 from .evidence_readiness import EvidenceReadinessPolicy, ReportingBlockedError
 from .input_contracts import (
@@ -55,6 +56,7 @@ from .input_contracts import (
 )
 from .models import (
     REPORT_MODULE_IDS,
+    CostControlMode,
     CoverageMatrix,
     EvidenceItem,
     OutputArtifact,
@@ -83,6 +85,7 @@ from .review_lifecycle import (
     run_module_review,
 )
 from .revision_diff import build_revision_diff
+from .retention import ReportingRetentionPlanner
 from .session_summary import SessionSummaryStore
 from .source_ledger import SourceLedger
 from .special_topics import load_special_topic_plan
@@ -100,7 +103,7 @@ TEMPLATE_SKILL_SOURCE = TEMPLATE_SKILL_ROOT / "source.json"
 class FullReportCheckpoint(StrictModel):
     """Durable full-report state; every reference is run-scoped and validated on restore."""
 
-    version: int = 2
+    version: int = 3
     workflow_id: str = ""
     run_id: str
     activity: str = "unknown"
@@ -117,6 +120,7 @@ class FullReportCheckpoint(StrictModel):
     chief_candidate_ref: str | None = None
     chief_editor_input_ref: str | None = None
     chief_editor_envelope_ref: str | None = None
+    chief_editor_completion_ref: str | None = None
     final_review_restart_round: int | None = Field(default=None, ge=1)
     final_review_completion_ref: str | None = None
     final_audit_snapshot_ref: str | None = None
@@ -126,6 +130,7 @@ class FullReportCheckpoint(StrictModel):
     final_review_completed: bool = False
     error: str | None = None
     budget: dict | None = None
+    pending_cost_boundary_id: str | None = None
 
 
 class AgentWorkflowError(RuntimeError):
@@ -152,27 +157,114 @@ class ReportingNeedsDecisionError(RuntimeError):
 
 
 class ReportingRunBudget:
-    """Run-scoped usage telemetry without a hard stop or automatic retry boundary."""
+    """Run telemetry plus an optional safe stage-boundary decision policy."""
 
-    def __init__(self, workspace: Path, run_id: str, max_attempts: int, max_tokens: int):
+    def __init__(
+        self,
+        workspace: Path,
+        run_id: str,
+        max_attempts: int,
+        max_tokens: int,
+        mode: CostControlMode = "observe",
+    ):
         self.ledger = UsageLedger(workspace, run_id)
         self.max_attempts = max_attempts
         self.max_tokens = max_tokens
+        self.mode = mode
+        self.controller = StageCostController(
+            workspace,
+            run_id,
+            mode=mode,
+            attempt_window=max_attempts,
+            token_window=max_tokens,
+        )
         self._issued_attempts = len(self.ledger.rows())
         self._active_dispatches = 0
         self._lock = asyncio.Lock()
 
-    def snapshot(self) -> dict[str, int | bool]:
-        rows = self.ledger.rows()
+    def snapshot(self) -> dict[str, Any]:
+        summary = self.ledger.summarize(group_by="stage")
+        totals = summary["totals"]
         return {
-            "provider_attempts": len(rows),
-            "total_tokens": sum(int(row.get("total_tokens", 0) or 0) for row in rows),
+            "provider_attempts": totals["provider_attempts"],
+            "total_tokens": totals["total_tokens"],
+            "input_tokens": totals["input_tokens"],
+            "cached_input_tokens": totals["cached_input_tokens"],
+            "cache_write_input_tokens": totals[
+                "cache_write_input_tokens"
+            ],
+            "uncached_input_tokens": totals["uncached_input_tokens"],
+            "output_tokens": totals["output_tokens"],
+            "message_chars": totals["message_chars"],
+            "tool_schema_chars": totals["tool_schema_chars"],
+            "repeated_message_chars": totals["repeated_message_chars"],
+            "repeated_tool_schema_chars": totals["repeated_tool_schema_chars"],
+            "duration_ms": totals["duration_ms"],
+            "pricing_status": totals["pricing_status"],
+            "pricing_table_version": totals["pricing_table_version"],
+            "pricing_currency": totals["pricing_currency"],
+            "estimated_cost": totals["estimated_cost"],
+            "by_stage": summary["groups"],
             "max_provider_attempts": self.max_attempts,
             "max_total_tokens": self.max_tokens,
             "issued_provider_attempts": self._issued_attempts,
             "active_dispatches": self._active_dispatches,
             "limits_enforced": False,
+            "hard_request_limits_enforced": False,
+            "boundary_policy_active": self.mode
+            in {"warn", "pause_at_boundary"},
+            "cost_control": self.controller.snapshot(),
         }
+
+    def resolve_resume(self) -> bool:
+        return self.controller.resolve_resume(self.snapshot())
+
+    def prepare_boundary(
+        self, completed_stage: str, next_stage: str | None
+    ) -> dict[str, Any]:
+        return self.controller.prepare_boundary(
+            completed_stage=completed_stage,
+            next_stage=next_stage,
+            usage=self.snapshot(),
+        )
+
+    def pending_boundary(self) -> dict[str, Any] | None:
+        return self.controller.pending_boundary()
+
+    def confirm_boundary_checkpoint(self, boundary_id: str) -> dict[str, Any]:
+        return self.controller.confirm_boundary_checkpoint(boundary_id)
+
+    def discard_uncommitted_boundary(
+        self,
+        boundary_id: str,
+        *,
+        reason: str,
+    ) -> bool:
+        return self.controller.discard_uncommitted_boundary(
+            boundary_id,
+            reason=reason,
+        )
+
+    def evaluate_boundary(
+        self, completed_stage: str, next_stage: str | None
+    ) -> dict[str, Any]:
+        usage = self.snapshot()
+        decision = self.controller.evaluate(
+            completed_stage=completed_stage,
+            next_stage=next_stage,
+            usage=usage,
+        )
+        if decision["pause"]:
+            raise ReportingNeedsDecisionError(
+                "成本控制已在安全阶段边界暂停："
+                f"已完成 {completed_stage}，下一阶段 {next_stage or '无'}；"
+                f"当前 Provider 调用 {decision['provider_attempts']} 次、"
+                f"Token {decision['total_tokens']}。"
+                "本轮没有中断 Agent 提交，checkpoint 已保存。"
+                "请由 Main 选择继续同一 run、缩减后续范围，或保持等待；"
+                f"决策状态见 {decision['state_ref']}。"
+            )
+        return decision
 
     async def acquire(self, agent_id: str) -> None:
         async with self._lock:
@@ -220,6 +312,101 @@ class ReportWorkflowRunner:
         if missing:
             raise AgentWorkflowError(f"reporting Agent identities are missing: {missing}")
         self._budget: ReportingRunBudget | None = None
+
+    async def _activate_cost_resume(self, state: dict) -> None:
+        if self._budget is None or not state.get("resume"):
+            return
+        if self._budget.resolve_resume():
+            await self.service._notice(
+                "已按用户的同 run 恢复指令解除上一成本边界暂停；"
+                "新的成本窗口从当前 checkpoint 起计算。"
+            )
+
+    async def _recover_pending_cost_boundary(
+        self,
+        checkpoint: dict | None,
+    ) -> None:
+        """Evaluate a boundary left between durable intent and policy decision."""
+
+        if self._budget is None:
+            return
+        pending = self._budget.pending_boundary()
+        if pending is None:
+            return
+        boundary_id = str(pending["boundary_id"])
+        if (
+            not isinstance(checkpoint, dict)
+            or checkpoint.get("pending_cost_boundary_id") != boundary_id
+        ):
+            self._budget.discard_uncommitted_boundary(
+                boundary_id,
+                reason="workflow_checkpoint_does_not_contain_boundary_id",
+            )
+            return
+        self._budget.confirm_boundary_checkpoint(boundary_id)
+        await self._cost_boundary(
+            str(pending["completed_stage"]),
+            (
+                str(pending["next_stage"])
+                if pending.get("next_stage") is not None
+                else None
+            ),
+        )
+
+    async def _cost_boundary(
+        self,
+        completed_stage: str,
+        next_stage: str | None,
+    ) -> None:
+        if self._budget is None:
+            return
+        decision = self._budget.evaluate_boundary(completed_stage, next_stage)
+        if decision["action"] == "warn":
+            await self.service._notice(
+                "成本观察提醒：已完成 "
+                f"{completed_stage}，当前 Provider 调用 {decision['provider_attempts']} 次、"
+                f"Token {decision['total_tokens']}；流程将在 checkpoint 后继续 "
+                f"{next_stage or '收尾'}。"
+            )
+
+    async def _checkpoint_then_cost_boundary(
+        self,
+        state: dict,
+        activity: str,
+        status: str,
+        completed_stage: str,
+        next_stage: str | None,
+        *,
+        checkpoint_kind: str = "full",
+    ) -> None:
+        """Persist boundary intent, then checkpoint, then evaluate the policy."""
+
+        prepared = None
+        if self._budget is not None:
+            prepared = self._budget.prepare_boundary(
+                completed_stage,
+                next_stage,
+            )
+            state["pending_cost_boundary_id"] = prepared["boundary_id"]
+        checkpoint = {
+            "full": self._checkpoint,
+            "aggregate": self._aggregate_checkpoint,
+            "revision": self._revision_checkpoint,
+        }.get(checkpoint_kind)
+        if checkpoint is None:
+            raise ValueError(f"unsupported checkpoint kind: {checkpoint_kind}")
+        checkpoint(state, activity, status)
+        if prepared is not None:
+            self._budget.confirm_boundary_checkpoint(
+                str(prepared["boundary_id"])
+            )
+        try:
+            await self._cost_boundary(completed_stage, next_stage)
+        finally:
+            if self._budget is not None and self._budget.pending_boundary() is None:
+                state.pop("pending_cost_boundary_id", None)
+        if self._budget is not None:
+            checkpoint(state, activity, status)
 
     async def _agent(
         self,
@@ -389,8 +576,10 @@ class ReportWorkflowRunner:
         snapshot = self.service.workspace / (
             f"Work/runs/{state['run_id']}/templates/template-for-skill.docx"
         )
-        snapshot.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(selected, snapshot)
+        snapshot, snapshot_sha256, snapshot_blob_ref = self.service.snapshot_content(
+            selected,
+            snapshot,
+        )
         snapshot_ref = snapshot.relative_to(self.service.workspace).as_posix()
         distillation_input = TemplateDistillationInput(
             run_id=state["run_id"],
@@ -431,7 +620,7 @@ class ReportWorkflowRunner:
                 "只迁移写作能力，不复制模板项目事实、具体数值、客户名称或原结论",
                 "专家优化版只在本任务中作为一次性 Skill 蒸馏源；不得把其中的具体问题、风险判断、分析结论、建议内容、证据编号或项目措辞写入任何 Skill 文件",
                 "不得迁移专业机理、标准名称、适用条件或带单位阈值；它们属于 Knowledge，不属于模板 Skill",
-                "禁止把五份长文本直接塞入 submit_result：先分别调用 write_result_part，part_id 固定为 skill、analysis、synthesis、visual、rubric；最终 submit_result 的对应字段只提交 artifact_refs",
+                "禁止把五份长文本直接塞入 submit_result：优先一次调用 write_result_parts 批量保存 skill、analysis、synthesis、visual、rubric；只有单项纠错或恢复时才调用 write_result_part；最终 submit_result 的对应字段只提交 artifact_refs",
             ],
             allowed_outputs=["template_skill_submission"],
             allowed_tools=[
@@ -459,7 +648,8 @@ class ReportWorkflowRunner:
             {
                 "source": source,
                 "template_ref": snapshot_ref,
-                "template_sha256": hashlib.sha256(snapshot.read_bytes()).hexdigest(),
+                "template_sha256": snapshot_sha256,
+                "template_blob_ref": snapshot_blob_ref.as_posix(),
                 "inspection_ref": (f"Work/runs/{state['run_id']}/context/template-inspection.json"),
                 "producer": "template-distiller",
                 "task_id": envelope.task_id,
@@ -501,10 +691,12 @@ class ReportWorkflowRunner:
             run_id,
             request.max_provider_attempts,
             request.max_total_tokens,
+            request.cost_control_mode,
         )
         self.agent_runner.set_provider_attempt_guard(self._budget.acquire_provider_attempt)
         activity = "template-skill-distillation"
         try:
+            await self._activate_cost_resume(state)
             self._checkpoint(state, activity, "in_progress")
             await self.service._notice(
                 "正在单独蒸馏报告模板；本次只更新固定模板写作 Skill，不启动报告写作。"
@@ -527,10 +719,17 @@ class ReportWorkflowRunner:
                 "模板写作 Skill 已更新至固定路径 Work/report-template-writing。"
             )
         except asyncio.CancelledError:
-            self._checkpoint(state, activity, "cancelled", "interrupted by user")
+            if not recovering_cost_boundary:
+                self._checkpoint(
+                    state,
+                    activity,
+                    "cancelled",
+                    "interrupted by user",
+                )
             raise
         except Exception as exc:
-            self._checkpoint(state, activity, "failed", str(exc))
+            if not recovering_cost_boundary:
+                self._checkpoint(state, activity, "failed", str(exc))
             raise
         finally:
             await self.agent_runner.close_workflow(workflow_id)
@@ -648,13 +847,24 @@ class ReportWorkflowRunner:
             run_id,
             request.max_provider_attempts,
             request.max_total_tokens,
+            request.cost_control_mode,
         )
         self.agent_runner.set_provider_attempt_guard(self._budget.acquire_provider_attempt)
         activity = "preparation"
         suspended_for_user = False
+        recovering_cost_boundary = True
         try:
+            await self._activate_cost_resume(state)
+            await self._recover_pending_cost_boundary(resume_checkpoint)
+            recovering_cost_boundary = False
             await self.service._notice("正在整理项目资料并建立可追溯证据入口。")
             await self._prepare(state)
+            if state.get("resume"):
+                # Restore every durable paid-work reference before any new
+                # checkpoint or cost-boundary decision can overwrite the prior
+                # checkpoint.  Preparation is restored first so resume
+                # validation has the exact current-run ledgers available.
+                self._restore_resume_state(state, resume_checkpoint)
             readiness = EvidenceReadinessPolicy.evaluate(state["request"], state["coverage_matrix"])
             state["evidence_readiness"] = readiness
             if readiness.should_block:
@@ -668,9 +878,13 @@ class ReportWorkflowRunner:
                     readiness.missing_evidence,
                     readiness.affected_modules,
                 )
-            self._checkpoint(state, activity, "completed")
-            if state.get("resume"):
-                self._restore_resume_state(state, resume_checkpoint)
+            await self._checkpoint_then_cost_boundary(
+                state,
+                activity,
+                "completed",
+                "preparation",
+                "dispatch",
+            )
             activity = "dispatch"
             requested_modules = tuple(state["request"].target_modules)
             await self.service._notice(
@@ -690,11 +904,17 @@ class ReportWorkflowRunner:
                 )
             state["module_dispatch"] = dispatch
             self._write_handoff_contracts(state)
-            self._checkpoint(state, activity, "completed")
+            await self._checkpoint_then_cost_boundary(
+                state,
+                activity,
+                "completed",
+                "dispatch",
+                "module-work",
+            )
             activity = "module-work"
             await self.service._notice(
-                "目标专业模块将按固定顺序逐个执行；当前模块完成写作、独立审计和定向修订闭环后，"
-                "才启动下一个模块。"
+                "目标专业模块将按固定顺序逐个执行；当前模块完成写作、独立审计和"
+                "定向修订闭环后，才启动下一个模块。"
             )
             restored_submissions = dict(state.get("module_submissions", {}))
             pending_modules = tuple(
@@ -703,16 +923,30 @@ class ReportWorkflowRunner:
                 if module_id not in restored_submissions
             )
             state["module_submissions"] = restored_submissions
-            for module_id in pending_modules:
+            for module_index, module_id in enumerate(pending_modules):
                 try:
-                    submission = await self._module_pipeline(module_id, state, workflow_id)
+                    submission = await self._module_pipeline(
+                        module_id,
+                        state,
+                        workflow_id,
+                    )
                 except BaseException:
                     self._checkpoint(state, activity, "failed")
                     raise
                 state["module_submissions"][submission.module_id] = submission
-                self._checkpoint(state, activity, "in_progress")
-            self._checkpoint(state, activity, "completed")
+                remaining = pending_modules[module_index + 1 :]
+                if remaining:
+                    await self._checkpoint_then_cost_boundary(
+                        state,
+                        activity,
+                        "in_progress",
+                        f"module-{module_id}",
+                        f"module-{remaining[0]}",
+                    )
+                else:
+                    self._checkpoint(state, activity, "in_progress")
             if set(requested_modules) != set(REPORT_MODULE_IDS):
+                self._checkpoint(state, activity, "completed")
                 state["output_artifacts"] = [
                     OutputArtifact(
                         kind="module",
@@ -724,11 +958,24 @@ class ReportWorkflowRunner:
                 self._checkpoint(state, "partial-delivery", "completed")
                 await self.service._notice("目标模块已完成写作并通过独立模块审计。")
                 return
+            await self._checkpoint_then_cost_boundary(
+                state,
+                activity,
+                "completed",
+                "module-work",
+                "cross-module-review",
+            )
             activity = "cross-module-review"
             if "cross_review_completion_ref" not in state:
                 await self.service._notice("五个模块均已通过各自独立审查，开始跨模块一致性审查。")
                 await self._cross_review(state, workflow_id)
-                self._checkpoint(state, activity, "completed")
+                await self._checkpoint_then_cost_boundary(
+                    state,
+                    activity,
+                    "completed",
+                    "cross-module-review",
+                    "chief-edit",
+                )
             else:
                 await self.service._notice("已恢复本 run 完成的跨模块审查，直接进入总编。")
             if "final_review_completion_ref" not in state:
@@ -736,7 +983,13 @@ class ReportWorkflowRunner:
                     activity = "chief-edit"
                     await self.service._notice("跨模块审查通过，总编正在整合全文并保护来源语义。")
                     await self._chief_edit(state, workflow_id)
-                    self._checkpoint(state, activity, "completed")
+                    await self._checkpoint_then_cost_boundary(
+                        state,
+                        activity,
+                        "completed",
+                        "chief-edit",
+                        "chief-editor-audit",
+                    )
                 else:
                     await self.service._notice(
                         "已恢复本 run 通过确定性校验的总编候选稿，直接继续独立全文审计。"
@@ -755,7 +1008,13 @@ class ReportWorkflowRunner:
                         for claim in state["module_submissions"][module_id].claims
                     ],
                 )
-                self._checkpoint(state, activity, "completed")
+                await self._checkpoint_then_cost_boundary(
+                    state,
+                    activity,
+                    "completed",
+                    "chief-editor-audit",
+                    "delivery",
+                )
             else:
                 await self.service._notice("已恢复本 run 完成的总编成稿审计，直接进入确定性渲染。")
             activity = "delivery"
@@ -769,18 +1028,26 @@ class ReportWorkflowRunner:
             raise
         except ReportingNeedsDecisionError as exc:
             suspended_for_user = exc.keep_agents_alive
-            self._checkpoint(
-                state,
-                activity,
-                "waiting_user" if suspended_for_user else "stopped_incomplete",
-                str(exc),
-            )
+            if not recovering_cost_boundary:
+                self._checkpoint(
+                    state,
+                    activity,
+                    "waiting_user" if suspended_for_user else "stopped_incomplete",
+                    str(exc),
+                )
             raise
         except asyncio.CancelledError:
-            self._checkpoint(state, activity, "cancelled", "interrupted by user")
+            if not recovering_cost_boundary:
+                self._checkpoint(
+                    state,
+                    activity,
+                    "cancelled",
+                    "interrupted by user",
+                )
             raise
         except Exception as exc:
-            self._checkpoint(state, activity, "failed", str(exc))
+            if not recovering_cost_boundary:
+                self._checkpoint(state, activity, "failed", str(exc))
             raise
         finally:
             if not suspended_for_user:
@@ -792,6 +1059,16 @@ class ReportWorkflowRunner:
         request = state["request"]
         run_id = state["run_id"]
         workflow_id = f"aggregate-existing-report:{run_id}"
+        resume_checkpoint: dict | None = None
+        if state.get("resume"):
+            checkpoint_path = (
+                self.service.workspace
+                / f"Work/runs/{run_id}/workflow-state.json"
+            )
+            if checkpoint_path.is_file():
+                resume_checkpoint = json.loads(
+                    checkpoint_path.read_text(encoding="utf-8")
+                )
         configured_refs = request.source_module_refs or {
             module_id: Path(f"Outputs/Modules/{module_id}.md") for module_id in REPORT_MODULE_IDS
         }
@@ -886,11 +1163,16 @@ class ReportWorkflowRunner:
             run_id,
             request.max_provider_attempts,
             request.max_total_tokens,
+            request.cost_control_mode,
         )
         self.agent_runner.set_provider_attempt_guard(self._budget.acquire_provider_attempt)
         activity = "aggregate-chief-edit"
         suspended_for_user = False
+        recovering_cost_boundary = True
         try:
+            await self._activate_cost_resume(state)
+            await self._recover_pending_cost_boundary(resume_checkpoint)
+            recovering_cost_boundary = False
             self._aggregate_checkpoint(state, activity, "in_progress")
             await self.service._notice(
                 "已识别为已有分块报告汇总任务；读取固定模板写作 Skill 后启动总编和独立成稿审计，"
@@ -1023,22 +1305,6 @@ class ReportWorkflowRunner:
                     if text
                 ),
             )
-            payload = await self._agent(
-                "chief-editor",
-                envelope,
-                envelope.input_refs,
-                workflow_id,
-                session_key="aggregate-existing",
-            )
-            if not isinstance(payload, EditedReportSubmission):
-                raise AgentWorkflowError("chief-editor returned the wrong payload type")
-            if not structured_modules and (
-                payload.protected_claim_ids or payload.tables or payload.photo_ids
-            ):
-                raise AgentWorkflowError(
-                    "markdown aggregate submission bypassed its input/output contract; "
-                    "unverified structured bindings were not accepted or rewritten"
-                )
             source_modules = {
                 module_id: (
                     structured_modules[module_id].markdown
@@ -1049,41 +1315,105 @@ class ReportWorkflowRunner:
                 )
                 for module_id in REPORT_MODULE_IDS
             }
-            payload = expand_approved_module_markers(payload, source_modules)
-            state["editor_quality_observations"] = validate_aggregate_retention(
-                payload, source_modules
-            )
             ledger = None
-            claims = []
-            if structured_modules:
-                claims = [
+            claims = (
+                [
                     claim
                     for module_id in REPORT_MODULE_IDS
                     for claim in structured_modules[module_id].claims
                 ]
+                if structured_modules
+                else []
+            )
+            payload = self._load_aggregate_chief_completion(
+                state,
+                envelope,
+                source_modules,
+                claims,
+            )
+            if payload is None:
+                payload = await self._agent(
+                    "chief-editor",
+                    envelope,
+                    envelope.input_refs,
+                    workflow_id,
+                    session_key="aggregate-existing",
+                )
+                if not isinstance(payload, EditedReportSubmission):
+                    raise AgentWorkflowError(
+                        "chief-editor returned the wrong payload type"
+                    )
+                if not structured_modules and (
+                    payload.protected_claim_ids
+                    or payload.tables
+                    or payload.photo_ids
+                ):
+                    raise AgentWorkflowError(
+                        "markdown aggregate submission bypassed its input/output contract; "
+                        "unverified structured bindings were not accepted or rewritten"
+                    )
+                payload = expand_approved_module_markers(
+                    payload,
+                    source_modules,
+                )
+                state["editor_quality_observations"] = (
+                    validate_aggregate_retention(payload, source_modules)
+                )
+                if claims:
+                    validate_editor_protection(payload, claims)
+                self._write_aggregate_chief_completion(
+                    state,
+                    envelope,
+                    payload,
+                )
+            else:
+                state["editor_quality_observations"] = (
+                    validate_aggregate_retention(payload, source_modules)
+                )
+                await self.service._notice(
+                    "已恢复本 run 经 hash 绑定的汇总总编候选稿，未重复调用 Chief。"
+                )
+            if structured_modules:
                 ledger = ClaimLedger(
                     claims=claims,
                     sources=list(structured_sources.values()),
                 )
-                validate_editor_protection(payload, claims)
                 state["module_submissions"] = structured_modules
                 self.service.store.write_json(
                     f"Work/runs/{run_id}/ledgers/claims.json",
                     ledger.model_dump(mode="json"),
                 )
             state["edited_report"] = payload
-            self._aggregate_checkpoint(state, activity, "completed")
-            activity = "aggregate-chief-editor-audit"
-            await self.service._notice("总编汇总稿已形成，正在进行独立全文质量与交付就绪审计。")
-            await self._final_review_loop(
+            await self._checkpoint_then_cost_boundary(
                 state,
-                workflow_id,
-                chief_envelope=envelope,
-                chief_session_key="aggregate-existing",
-                approved_module_text=source_modules,
-                claims=claims,
-                aggregate_mode=True,
+                activity,
+                "completed",
+                "aggregate-chief-edit",
+                "aggregate-chief-editor-audit",
+                checkpoint_kind="aggregate",
             )
+            activity = "aggregate-chief-editor-audit"
+            if not self._restore_aggregate_final_completion(
+                state,
+                source_modules,
+                claims,
+            ):
+                await self.service._notice(
+                    "总编汇总稿已形成，正在进行独立全文质量与交付就绪审计。"
+                )
+                await self._final_review_loop(
+                    state,
+                    workflow_id,
+                    chief_envelope=envelope,
+                    chief_session_key="aggregate-existing",
+                    approved_module_text=source_modules,
+                    claims=claims,
+                    aggregate_mode=True,
+                )
+            else:
+                await self.service._notice(
+                    "已恢复本 run 完成的汇总成稿审计，未重复调用审查 Agent。"
+                )
             self._aggregate_checkpoint(state, activity, "completed")
             activity = "aggregate-markdown"
             payload = state["edited_report"]
@@ -1145,18 +1475,31 @@ class ReportWorkflowRunner:
             self._aggregate_checkpoint(state, activity, "completed")
         except ReportingNeedsDecisionError as exc:
             suspended_for_user = exc.keep_agents_alive
-            self._aggregate_checkpoint(
-                state,
-                activity,
-                "waiting_user" if suspended_for_user else "stopped_incomplete",
-                str(exc),
-            )
+            if not recovering_cost_boundary:
+                self._aggregate_checkpoint(
+                    state,
+                    activity,
+                    "waiting_user" if suspended_for_user else "stopped_incomplete",
+                    str(exc),
+                )
             raise
         except asyncio.CancelledError:
-            self._aggregate_checkpoint(state, activity, "cancelled", "interrupted by user")
+            if not recovering_cost_boundary:
+                self._aggregate_checkpoint(
+                    state,
+                    activity,
+                    "cancelled",
+                    "interrupted by user",
+                )
             raise
         except Exception as exc:
-            self._aggregate_checkpoint(state, activity, "failed", str(exc))
+            if not recovering_cost_boundary:
+                self._aggregate_checkpoint(
+                    state,
+                    activity,
+                    "failed",
+                    str(exc),
+                )
             raise
         finally:
             if not suspended_for_user:
@@ -1169,19 +1512,39 @@ class ReportWorkflowRunner:
         baseline_edited: EditedReportSubmission,
     ) -> None:
         workflow_id = f"report-revision:{state['run_id']}"
+        resume_checkpoint: dict | None = None
+        if state.get("resume"):
+            checkpoint_path = (
+                self.service.workspace
+                / f"Work/runs/{state['run_id']}/workflow-state.json"
+            )
+            if checkpoint_path.is_file():
+                resume_checkpoint = json.loads(
+                    checkpoint_path.read_text(encoding="utf-8")
+                )
         self._budget = ReportingRunBudget(
             self.service.workspace,
             state["run_id"],
             request.max_provider_attempts,
             request.max_total_tokens,
+            request.cost_control_mode,
         )
         self.agent_runner.set_provider_attempt_guard(self._budget.acquire_provider_attempt)
         activity = "revision-restore"
+        suspended_for_user = False
+        recovering_cost_boundary = True
         try:
+            await self._activate_cost_resume(state)
+            await self._recover_pending_cost_boundary(resume_checkpoint)
+            recovering_cost_boundary = False
             await self.service._notice(
                 f"正在从报告版本 {request.baseline_version_id} 恢复结构化状态并执行局部修订。"
             )
             self._require_template_skill(state)
+            state["chief_editor_constraints"] = [
+                "这是交付后局部修订：未获批准的模块正文必须逐字保持父版本内容",
+                "只可更新输入合同授权的目标模块与固定综合章节字段",
+            ]
             for module_id in REPORT_MODULE_IDS:
                 submission = state["module_submissions"][module_id]
                 self.service.store.write_json(
@@ -1195,26 +1558,58 @@ class ReportWorkflowRunner:
                 self._restore_revision_resume_state(state)
             completed_revision_modules = set(state.get("completed_revision_modules", []))
             activity = "revision-module-work"
-            for module_id in request.target_module_ids:
+            pending_revision_modules = tuple(
+                module_id
+                for module_id in request.target_module_ids
+                if module_id not in completed_revision_modules
+            )
+            for module_index, module_id in enumerate(pending_revision_modules):
                 if module_id in completed_revision_modules:
                     continue
                 await self._post_delivery_module_revision(module_id, state, request, workflow_id)
                 completed_revision_modules.add(module_id)
                 state["completed_revision_modules"] = sorted(completed_revision_modules)
-                self._revision_checkpoint(state, activity, "in_progress")
+                remaining = pending_revision_modules[module_index + 1 :]
+                if remaining:
+                    await self._checkpoint_then_cost_boundary(
+                        state,
+                        activity,
+                        "in_progress",
+                        f"revision-module-{module_id}",
+                        f"revision-module-{remaining[0]}",
+                        checkpoint_kind="revision",
+                    )
+                else:
+                    self._revision_checkpoint(state, activity, "in_progress")
             activity = "revision-cross-review"
+            await self._checkpoint_then_cost_boundary(
+                state,
+                "revision-module-work",
+                "completed",
+                "revision-module-work",
+                "revision-cross-review",
+                checkpoint_kind="revision",
+            )
             if "cross_review_completion_ref" not in state:
                 await self._cross_review(state, workflow_id)
-                self._revision_checkpoint(state, activity, "completed")
+                await self._checkpoint_then_cost_boundary(
+                    state,
+                    activity,
+                    "completed",
+                    "revision-cross-review",
+                    "revision-chief-edit",
+                    checkpoint_kind="revision",
+                )
             else:
                 await self.service._notice("已恢复本修订 run 完成的跨模块审查，直接进入总编。")
             if "final_review_completion_ref" not in state:
                 activity = "revision-chief-edit"
-                state["chief_editor_constraints"] = [
-                    "这是交付后局部修订：未获批准的模块正文必须逐字保持父版本内容",
-                    "只可更新输入合同授权的目标模块与固定综合章节字段",
-                ]
-                await self._chief_edit(state, workflow_id)
+                if "chief_candidate_ref" not in state:
+                    await self._chief_edit(state, workflow_id)
+                else:
+                    await self.service._notice(
+                        "已恢复本修订 run 经校验的总编候选稿，未重复调用 Chief。"
+                    )
                 unexpected_modules = sorted(
                     module_id
                     for module_id in REPORT_MODULE_IDS
@@ -1229,7 +1624,20 @@ class ReportWorkflowRunner:
                         unexpected_module_ids=unexpected_modules,
                         reason="Chief Editor 的修订超出了已批准模块范围，需要用户确认扩大范围。",
                     )
-                self._revision_checkpoint(state, activity, "completed")
+                if not state.get("resume") or (
+                    resume_checkpoint is None
+                    or not resume_checkpoint.get(
+                        "chief_editor_completion_ref"
+                    )
+                ):
+                    await self._checkpoint_then_cost_boundary(
+                        state,
+                        activity,
+                        "completed",
+                        "revision-chief-edit",
+                        "revision-chief-editor-audit",
+                        checkpoint_kind="revision",
+                    )
                 activity = "revision-chief-editor-audit"
                 await self._final_review_loop(
                     state,
@@ -1251,14 +1659,37 @@ class ReportWorkflowRunner:
             activity = "revision-delivery"
             self._deliver(state)
             self._revision_checkpoint(state, activity, "completed")
+        except ReportingNeedsDecisionError as exc:
+            suspended_for_user = exc.keep_agents_alive
+            if not recovering_cost_boundary:
+                self._revision_checkpoint(
+                    state,
+                    activity,
+                    "waiting_user" if suspended_for_user else "stopped_incomplete",
+                    str(exc),
+                )
+            raise
         except asyncio.CancelledError:
-            self._revision_checkpoint(state, activity, "cancelled", "interrupted by user")
+            if not recovering_cost_boundary:
+                self._revision_checkpoint(
+                    state,
+                    activity,
+                    "cancelled",
+                    "interrupted by user",
+                )
             raise
         except Exception as exc:
-            self._revision_checkpoint(state, activity, "failed", str(exc))
+            if not recovering_cost_boundary:
+                self._revision_checkpoint(
+                    state,
+                    activity,
+                    "failed",
+                    str(exc),
+                )
             raise
         finally:
-            await self.agent_runner.close_workflow(workflow_id)
+            if not suspended_for_user:
+                await self.agent_runner.close_workflow(workflow_id)
 
     def _raise_scope_expansion(
         self,
@@ -1397,6 +1828,9 @@ class ReportWorkflowRunner:
             chief_candidate_ref=state.get("chief_candidate_ref"),
             chief_editor_input_ref=state.get("chief_editor_input_ref"),
             chief_editor_envelope_ref=state.get("chief_editor_envelope_ref"),
+            chief_editor_completion_ref=state.get(
+                "chief_editor_completion_ref"
+            ),
             final_review_restart_round=state.get("final_review_restart_round"),
             final_review_completed="final_review_completion_ref" in state,
             final_review_completion_ref=state.get("final_review_completion_ref"),
@@ -1404,6 +1838,9 @@ class ReportWorkflowRunner:
             delivery_completion_ref=state.get("delivery_completion_ref"),
             error=error,
             budget=self._budget.snapshot() if self._budget is not None else None,
+            pending_cost_boundary_id=state.get(
+                "pending_cost_boundary_id"
+            ),
         )
         self.service.store.write_json(
             f"Work/runs/{state['run_id']}/workflow-state.json",
@@ -1438,8 +1875,190 @@ class ReportWorkflowRunner:
                 ),
                 "error": error,
                 "budget": (self._budget.snapshot() if self._budget is not None else None),
+                "pending_cost_boundary_id": state.get(
+                    "pending_cost_boundary_id"
+                ),
             },
         )
+
+    def _load_aggregate_chief_completion(
+        self,
+        state: dict,
+        envelope: TaskEnvelope,
+        source_modules: dict[str, str],
+        claims: list,
+    ) -> EditedReportSubmission | None:
+        """Restore one validated aggregate Chief result without another call."""
+
+        run_id = state["run_id"]
+        completion_ref = (
+            f"Work/runs/{run_id}/aggregate-chief-completion.json"
+        )
+        completion_path = self.service.workspace / completion_ref
+        if not state.get("resume") or not completion_path.is_file():
+            return None
+        try:
+            completion = json.loads(
+                completion_path.read_text(encoding="utf-8")
+            )
+            expected_refs = {
+                "candidate": (
+                    f"Work/runs/{run_id}/edited-revisions/"
+                    "aggregate-chief-r0.json"
+                ),
+                "envelope": (
+                    f"Work/runs/{run_id}/context/"
+                    "aggregate-chief-envelope.json"
+                ),
+                "editor_input": str(envelope.input_contract_ref),
+                "source_manifest": (
+                    f"Work/runs/{run_id}/context/"
+                    "aggregate-source-manifest.json"
+                ),
+            }
+            if (
+                completion.get("kind")
+                != "aggregate_chief_completion"
+                or completion.get("run_id") != run_id
+                or completion.get("refs") != expected_refs
+            ):
+                return None
+            hashes = completion.get("artifact_sha256")
+            if not isinstance(hashes, dict):
+                return None
+            for name, ref in expected_refs.items():
+                path = (self.service.workspace / ref).resolve()
+                run_root = (
+                    self.service.workspace / f"Work/runs/{run_id}"
+                ).resolve()
+                if (
+                    not path.is_relative_to(run_root)
+                    or not path.is_file()
+                    or hashes.get(name) != self._sha256(path)
+                ):
+                    return None
+            persisted_envelope = TaskEnvelope.model_validate_json(
+                (
+                    self.service.workspace / expected_refs["envelope"]
+                ).read_text(encoding="utf-8")
+            )
+            if persisted_envelope != envelope:
+                return None
+            candidate = EditedReportSubmission.model_validate_json(
+                (
+                    self.service.workspace / expected_refs["candidate"]
+                ).read_text(encoding="utf-8")
+            )
+            validate_aggregate_retention(candidate, source_modules)
+            if claims:
+                validate_editor_protection(candidate, claims)
+            validate_final_report_markdown(
+                self._canonical_markdown(candidate),
+                candidate.special_topic_plan,
+            )
+            return candidate
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+
+    def _write_aggregate_chief_completion(
+        self,
+        state: dict,
+        envelope: TaskEnvelope,
+        candidate: EditedReportSubmission,
+    ) -> str:
+        run_id = state["run_id"]
+        refs = {
+            "candidate": (
+                f"Work/runs/{run_id}/edited-revisions/"
+                "aggregate-chief-r0.json"
+            ),
+            "envelope": (
+                f"Work/runs/{run_id}/context/"
+                "aggregate-chief-envelope.json"
+            ),
+            "editor_input": str(envelope.input_contract_ref),
+            "source_manifest": (
+                f"Work/runs/{run_id}/context/"
+                "aggregate-source-manifest.json"
+            ),
+        }
+        self.service.store.write_json(
+            refs["candidate"],
+            candidate.model_dump(mode="json"),
+        )
+        self.service.store.write_json(
+            refs["envelope"],
+            envelope.model_dump(mode="json"),
+        )
+        completion_path = self.service.store.write_json(
+            f"Work/runs/{run_id}/aggregate-chief-completion.json",
+            {
+                "kind": "aggregate_chief_completion",
+                "version": 1,
+                "run_id": run_id,
+                "refs": refs,
+                "artifact_sha256": {
+                    name: self._sha256(self.service.workspace / ref)
+                    for name, ref in refs.items()
+                },
+            },
+        )
+        return completion_path.relative_to(
+            self.service.workspace
+        ).as_posix()
+
+    def _restore_aggregate_final_completion(
+        self,
+        state: dict,
+        source_modules: dict[str, str],
+        claims: list,
+    ) -> bool:
+        run_id = state["run_id"]
+        final_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
+        if not state.get("resume") or not (
+            self.service.workspace / final_ref
+        ).is_file():
+            return False
+        try:
+            completion, artifacts = self._load_current_review_completion(
+                run_id=run_id,
+                completion_ref=final_ref,
+                lifecycle="final",
+                reviewer_agent_id="chief-editor-auditor",
+                reviewer_session_key="chief-editor-auditor",
+            )
+            if len(completion.subject_refs) != 1:
+                raise ValueError(
+                    "aggregate final completion requires one subject"
+                )
+            edited = EditedReportSubmission.model_validate_json(
+                (
+                    self.service.workspace / completion.subject_refs[0]
+                ).read_text(encoding="utf-8")
+            )
+            validate_aggregate_retention(edited, source_modules)
+            if claims:
+                validate_editor_protection(edited, claims)
+            validate_final_report_markdown(
+                self._canonical_markdown(edited),
+                edited.special_topic_plan,
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise AgentWorkflowError(
+                "refusing to replay aggregate final completion: "
+                f"{final_ref}: {exc}"
+            ) from exc
+        state["edited_report"] = edited
+        state["final_review_completion_ref"] = final_ref
+        snapshot_ref = (
+            f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
+        )
+        if (self.service.workspace / snapshot_ref).is_file():
+            state["final_audit_snapshot_ref"] = snapshot_ref
+        state["final_residual_risks"] = (
+            self._latest_final_residual_risks(artifacts)
+        )
+        return True
 
     def _load_current_review_completion(
         self,
@@ -1637,6 +2256,528 @@ class ReportWorkflowRunner:
                 residual_risks = values
         return residual_risks
 
+    @staticmethod
+    def _canonical_payload_sha256(payload: object) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
+    def _current_chief_editor_input(self, state: dict) -> ChiefEditorInput:
+        return ChiefEditorInput(
+            run_id=state["run_id"],
+            approved_module_markers={
+                module_id: f"[[APPROVED_MODULE:{module_id}]]"
+                for module_id in REPORT_MODULE_IDS
+            },
+            modules={
+                module_id: module_content_view(
+                    state["module_submissions"][module_id]
+                )
+                for module_id in REPORT_MODULE_IDS
+            },
+            cross_review_completion_ref=state[
+                "cross_review_completion_ref"
+            ],
+            special_topic_plan=state.get("special_topic_plan"),
+        )
+
+    def _chief_request_context(self, state: dict) -> dict:
+        revision = state.get("revision_request")
+        request = state["request"]
+        if isinstance(revision, RevisionRequest):
+            request_context = {
+                "workflow_kind": "revision",
+                "baseline_version_id": revision.baseline_version_id,
+                "feedback": revision.feedback,
+                "target_module_ids": list(revision.target_module_ids),
+                "target_submodule_ids": list(
+                    revision.target_submodule_ids
+                ),
+                "target_claim_ids": list(revision.target_claim_ids),
+            }
+        else:
+            request_context = {
+                "workflow_kind": "full",
+                "operation": str(
+                    getattr(request, "operation", "full_report")
+                ),
+                "instruction": str(
+                    getattr(request, "instruction", "")
+                ),
+                "target_modules": list(
+                    getattr(request, "target_modules", REPORT_MODULE_IDS)
+                ),
+                "execution_requirements": list(
+                    getattr(request, "execution_requirements", [])
+                ),
+                "missing_evidence_policy": getattr(
+                    request, "missing_evidence_policy", None
+                ),
+            }
+        request_context["chief_editor_constraints"] = list(
+            state.get("chief_editor_constraints", [])
+        )
+        request_context["active_supplement_constraints"] = (
+            self._user_supplement_constraints(
+                state,
+                stage="chief_edit",
+                target_ids={*REPORT_MODULE_IDS},
+            )
+        )
+        return request_context
+
+    def _chief_special_topic_context(self, state: dict) -> tuple[str | None, str]:
+        if state.get("special_topic_plan") is None:
+            return None, ""
+        ref = (
+            f"Work/runs/{state['run_id']}/context/"
+            "special-topic-knowledge.md"
+        )
+        path = self.service.workspace / ref
+        if not path.is_file():
+            raise AgentWorkflowError(
+                "Chief completion lacks its current-run special-topic context"
+            )
+        text = path.read_text(encoding="utf-8")
+        if text.endswith("\n"):
+            text = text[:-1]
+        return ref, text
+
+    def _chief_expected_envelope_inputs(self, state: dict) -> list[str]:
+        preparation = state.get("preparation_refs", {})
+        missing = [
+            name
+            for name in ("evidence", "photo_manifest")
+            if not preparation.get(name)
+        ]
+        if missing:
+            raise AgentWorkflowError(
+                "Chief completion cannot reconstruct preparation refs: "
+                f"{missing}"
+            )
+        special_ref, _ = self._chief_special_topic_context(state)
+        return [
+            f"Work/runs/{state['run_id']}/context/chief-editor-input.json",
+            str(preparation["evidence"]),
+            str(preparation["photo_manifest"]),
+            *([special_ref] if special_ref else []),
+        ]
+
+    def _chief_expected_inline_context(self, state: dict) -> str:
+        _special_ref, special_topic_context = (
+            self._chief_special_topic_context(state)
+        )
+        return "\n\n".join(
+            text
+            for text in (
+                special_topic_context,
+                self._role_skill_context(state, "chief-editor"),
+            )
+            if text
+        )
+
+    def _chief_completion_refs(
+        self,
+        state: dict,
+        *,
+        envelope_input_refs: list[str],
+    ) -> dict:
+        run_id = state["run_id"]
+        return {
+            "candidate": (
+                f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
+            ),
+            "editor_input": (
+                f"Work/runs/{run_id}/context/chief-editor-input.json"
+            ),
+            "envelope": (
+                f"Work/runs/{run_id}/context/chief-editor-envelope.json"
+            ),
+            "claim_ledger": (
+                f"Work/runs/{run_id}/ledgers/claims.json"
+            ),
+            "cross_review_completion": state[
+                "cross_review_completion_ref"
+            ],
+            "module_subjects": {
+                module_id: (
+                    f"Work/runs/{run_id}/modules/{module_id}-r"
+                    f"{state['module_submissions'][module_id].revision}.json"
+                )
+                for module_id in REPORT_MODULE_IDS
+            },
+            "module_review_completions": dict(
+                sorted(
+                    state.get(
+                        "module_review_completion_refs", {}
+                    ).items()
+                )
+            ),
+            "envelope_inputs": list(envelope_input_refs),
+        }
+
+    @staticmethod
+    def _flatten_chief_completion_refs(refs: dict) -> list[str]:
+        values = [
+            refs.get("candidate"),
+            refs.get("editor_input"),
+            refs.get("envelope"),
+            refs.get("claim_ledger"),
+            refs.get("cross_review_completion"),
+            *dict(refs.get("module_subjects", {})).values(),
+            *dict(refs.get("module_review_completions", {})).values(),
+            *list(refs.get("envelope_inputs", [])),
+        ]
+        return list(
+            dict.fromkeys(
+                str(value) for value in values if isinstance(value, str)
+            )
+        )
+
+    def _chief_semantic_context_sha256(
+        self,
+        state: dict,
+        editor_input: ChiefEditorInput,
+    ) -> str:
+        special_ref, _special_text = self._chief_special_topic_context(
+            state
+        )
+        return self._canonical_payload_sha256(
+            {
+                "version": 1,
+                "request": self._chief_request_context(state),
+                "editor_input": editor_input.model_dump(mode="json"),
+                "template_role_context": self._role_skill_context(
+                    state, "chief-editor"
+                ),
+                "special_topic_context": (
+                    {
+                        "ref": special_ref,
+                        "sha256": self._sha256(
+                            self.service.workspace / special_ref
+                        ),
+                    }
+                    if special_ref is not None
+                    else None
+                ),
+            }
+        )
+
+    def _write_chief_editor_completion(
+        self,
+        state: dict,
+        *,
+        editor_input: ChiefEditorInput,
+        envelope: TaskEnvelope,
+    ) -> str:
+        run_id = state["run_id"]
+        refs = self._chief_completion_refs(
+            state,
+            envelope_input_refs=envelope.input_refs,
+        )
+        artifact_refs = self._flatten_chief_completion_refs(refs)
+        completion_path = self.service.store.write_json(
+            f"Work/runs/{run_id}/chief-editor-completion.json",
+            {
+                "kind": "chief_editor_completion",
+                "version": 1,
+                "run_id": run_id,
+                "workflow_kind": (
+                    "revision"
+                    if isinstance(
+                        state.get("revision_request"), RevisionRequest
+                    )
+                    else "full"
+                ),
+                "refs": refs,
+                "artifact_sha256": {
+                    ref: self._sha256(self.service.workspace / ref)
+                    for ref in artifact_refs
+                },
+                "semantic_context_sha256": (
+                    self._chief_semantic_context_sha256(
+                        state, editor_input
+                    )
+                ),
+            },
+        )
+        return completion_path.relative_to(
+            self.service.workspace
+        ).as_posix()
+
+    def _load_chief_editor_completion(
+        self,
+        state: dict,
+        completion_ref: str,
+    ) -> tuple[EditedReportSubmission, TaskEnvelope, dict]:
+        run_id = state["run_id"]
+        canonical_completion_ref = (
+            f"Work/runs/{run_id}/chief-editor-completion.json"
+        )
+        if completion_ref != canonical_completion_ref:
+            raise AgentWorkflowError(
+                "Chief completion ref is not the canonical current-run path"
+            )
+        try:
+            self._require_template_skill(state)
+            completion_path = self.service.workspace / completion_ref
+            completion = json.loads(
+                completion_path.read_text(encoding="utf-8")
+            )
+            expected_workflow_kind = (
+                "revision"
+                if isinstance(
+                    state.get("revision_request"), RevisionRequest
+                )
+                else "full"
+            )
+            if (
+                completion.get("kind") != "chief_editor_completion"
+                or completion.get("version") != 1
+                or completion.get("run_id") != run_id
+                or completion.get("workflow_kind")
+                != expected_workflow_kind
+            ):
+                raise ValueError(
+                    "Chief completion identity does not match this workflow"
+                )
+
+            envelope_ref = (
+                f"Work/runs/{run_id}/context/"
+                "chief-editor-envelope.json"
+            )
+            envelope = TaskEnvelope.model_validate_json(
+                (
+                    self.service.workspace / envelope_ref
+                ).read_text(encoding="utf-8")
+            )
+            editor_input_ref = (
+                f"Work/runs/{run_id}/context/"
+                "chief-editor-input.json"
+            )
+            expected_input_refs = self._chief_expected_envelope_inputs(
+                state
+            )
+            if (
+                envelope.task_id != "chief-edit"
+                or envelope.run_id != run_id
+                or envelope.agent_id != "chief-editor"
+                or envelope.allowed_outputs
+                != ["edited_report_submission"]
+                or envelope.allowed_tools
+                or envelope.revision != 0
+                or envelope.prior_result_ref is not None
+                or envelope.context_summary_refs
+                or envelope.target_submodule_ids
+                or envelope.input_contract_kind
+                != "chief_editor_input"
+                or envelope.input_contract_ref != editor_input_ref
+                or envelope.input_refs != expected_input_refs
+                or envelope.inline_context
+                != self._chief_expected_inline_context(state)
+            ):
+                raise ValueError(
+                    "Chief envelope identity or current semantic inputs "
+                    "do not match this run"
+                )
+            required_constraints = [
+                *state.get("chief_editor_constraints", []),
+                *self._user_supplement_constraints(
+                    state,
+                    stage="chief_edit",
+                    target_ids={*REPORT_MODULE_IDS},
+                ),
+            ]
+            if any(
+                constraint not in envelope.constraints
+                for constraint in required_constraints
+            ):
+                raise ValueError(
+                    "Chief envelope lacks current request constraints"
+                )
+
+            expected_refs = self._chief_completion_refs(
+                state,
+                envelope_input_refs=expected_input_refs,
+            )
+            if completion.get("refs") != expected_refs:
+                raise ValueError(
+                    "Chief completion refs do not match current modules "
+                    "and review context"
+                )
+            artifact_refs = self._flatten_chief_completion_refs(
+                expected_refs
+            )
+            run_root = (
+                self.service.workspace / f"Work/runs/{run_id}"
+            ).resolve()
+            actual_hashes: dict[str, str] = {}
+            for ref in artifact_refs:
+                lexical = self.service.workspace / ref
+                path = lexical.resolve()
+                if (
+                    lexical.is_symlink()
+                    or not path.is_relative_to(run_root)
+                    or not path.is_file()
+                ):
+                    raise ValueError(
+                        "Chief completion contains a non-current-run ref: "
+                        f"{ref}"
+                    )
+                actual_hashes[ref] = self._sha256(path)
+            if completion.get("artifact_sha256") != actual_hashes:
+                raise ValueError(
+                    "Chief completion artifact hash mismatch"
+                )
+
+            persisted_input = ChiefEditorInput.model_validate_json(
+                (
+                    self.service.workspace / editor_input_ref
+                ).read_text(encoding="utf-8")
+            )
+            expected_input = self._current_chief_editor_input(state)
+            if persisted_input != expected_input:
+                raise ValueError(
+                    "Chief editor input does not match current approved "
+                    "modules and Cross completion"
+                )
+            if completion.get("semantic_context_sha256") != (
+                self._chief_semantic_context_sha256(
+                    state, expected_input
+                )
+            ):
+                raise ValueError(
+                    "Chief semantic context no longer matches the current "
+                    "request"
+                )
+
+            candidate_ref = str(expected_refs["candidate"])
+            candidate = EditedReportSubmission.model_validate_json(
+                (
+                    self.service.workspace / candidate_ref
+                ).read_text(encoding="utf-8")
+            )
+            claims = [
+                claim
+                for module_id in REPORT_MODULE_IDS
+                for claim in state["module_submissions"][
+                    module_id
+                ].claims
+            ]
+            validate_editor_protection(candidate, claims)
+            state["editor_quality_observations"] = (
+                validate_editor_quality(
+                    candidate, state["module_submissions"]
+                )
+            )
+            validate_final_report_markdown(
+                self._canonical_markdown(candidate),
+                candidate.special_topic_plan,
+            )
+            return candidate, envelope, expected_refs
+        except AgentWorkflowError:
+            raise
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+            KeyError,
+            json.JSONDecodeError,
+        ) as exc:
+            raise AgentWorkflowError(
+                "refusing to replay Chief because its current-run "
+                f"completion is invalid: {completion_ref}: {exc}"
+            ) from exc
+
+    def _module_authoring_context_sha256(
+        self,
+        state: dict,
+        module_id: str,
+    ) -> str:
+        """Fingerprint every durable input that makes a serial module draft reusable."""
+
+        request = state.get("request")
+
+        def ref_record(ref: str | None) -> dict[str, str | None] | None:
+            if not ref:
+                return None
+            path = (self.service.workspace / ref).resolve()
+            return {
+                "ref": ref,
+                "sha256": (
+                    self._sha256(path)
+                    if path.is_relative_to(self.service.workspace)
+                    and path.is_file()
+                    else None
+                ),
+            }
+
+        planned = None
+        dispatch = state.get("module_dispatch")
+        if dispatch is not None:
+            planned = next(
+                (
+                    item.model_dump(mode="json")
+                    for item in dispatch.module_tasks
+                    if item.agent_id == f"module-{module_id}-specialist"
+                ),
+                None,
+            )
+        supplement_constraints = (
+            self._user_supplement_constraints(
+                state,
+                stage="module_authoring",
+                target_ids={
+                    module_id,
+                    *REPORT_TAXONOMY[module_id].submodules,
+                },
+            )
+            if request is not None
+            and hasattr(request, "user_supplements")
+            else []
+        )
+        payload = {
+            "version": 1,
+            "run_id": state["run_id"],
+            "module_id": module_id,
+            "required_submodule_ids": list(
+                REPORT_TAXONOMY[module_id].submodules
+            ),
+            "planned_task": planned,
+            "execution_requirements": list(
+                getattr(request, "execution_requirements", [])
+            ),
+            "missing_evidence_policy": getattr(
+                request, "missing_evidence_policy", None
+            ),
+            "supplement_constraints": supplement_constraints,
+            "coverage": ref_record(
+                state.get("preparation_refs", {}).get("coverage")
+            ),
+            "evidence": ref_record(
+                state.get("preparation_refs", {}).get("evidence")
+            ),
+            "manifest": ref_record(
+                state.get("preparation_refs", {}).get("manifest")
+            ),
+            "knowledge": ref_record(
+                state.get("module_knowledge_refs", {}).get(module_id)
+            ),
+        }
+        return hashlib.sha256(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
     def _restore_resume_state(self, state: dict, checkpoint: dict | None = None) -> None:
         run_id = state["run_id"]
         if checkpoint is None:
@@ -1789,62 +2930,31 @@ class ReportWorkflowRunner:
         state["cross_review_completion_ref"] = cross_ref
         state["cross_synthesis_inputs"] = self._latest_cross_synthesis(cross_artifacts)
 
-        canonical_chief_candidate = f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
-        canonical_chief_input = f"Work/runs/{run_id}/context/chief-editor-input.json"
-        canonical_chief_envelope = f"Work/runs/{run_id}/context/chief-editor-envelope.json"
-        discovered_candidate_ref = typed_checkpoint.chief_candidate_ref
-        if discovered_candidate_ref is None and all(
-            (self.service.workspace / ref).is_file()
-            for ref in (
-                canonical_chief_candidate,
-                canonical_chief_input,
-                canonical_chief_envelope,
-            )
+        final_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
+        if (
+            not (self.service.workspace / final_ref).is_file()
+            and typed_checkpoint.chief_editor_completion_ref is not None
         ):
-            discovered_candidate_ref = canonical_chief_candidate
-        if discovered_candidate_ref:
-            candidate_ref = require_run_ref(
-                discovered_candidate_ref,
-                label="chief candidate",
-            )
-            candidate = EditedReportSubmission.model_validate_json(
-                (self.service.workspace / candidate_ref).read_text(encoding="utf-8")
-            )
-            claims = [
-                claim
-                for module_id in REPORT_MODULE_IDS
-                for claim in approved_subjects[module_id].claims
-            ]
-            validate_editor_protection(candidate, claims)
-            state["editor_quality_observations"] = validate_editor_quality(
-                candidate, approved_subjects
-            )
-            validate_final_report_markdown(
-                self._canonical_markdown(candidate),
-                candidate.special_topic_plan,
-            )
-            envelope_ref = require_run_ref(
-                typed_checkpoint.chief_editor_envelope_ref or canonical_chief_envelope,
-                label="chief editor envelope",
-            )
-            input_ref = require_run_ref(
-                typed_checkpoint.chief_editor_input_ref or canonical_chief_input,
-                label="chief editor input",
+            candidate, envelope, chief_refs = (
+                self._load_chief_editor_completion(
+                    state,
+                    typed_checkpoint.chief_editor_completion_ref,
+                )
             )
             state["edited_report"] = candidate
-            state["chief_candidate_ref"] = candidate_ref
-            state["chief_editor_input_ref"] = input_ref
-            state["chief_editor_envelope_ref"] = envelope_ref
-            state["chief_editor_envelope"] = TaskEnvelope.model_validate_json(
-                (self.service.workspace / envelope_ref).read_text(encoding="utf-8")
+            state["chief_candidate_ref"] = chief_refs["candidate"]
+            state["chief_editor_input_ref"] = chief_refs["editor_input"]
+            state["chief_editor_envelope_ref"] = chief_refs["envelope"]
+            state["chief_editor_completion_ref"] = (
+                typed_checkpoint.chief_editor_completion_ref
             )
+            state["chief_editor_envelope"] = envelope
             state["chief_editor_session_key"] = "chief-editor"
             state["approved_module_text"] = {
                 module_id: self._approved_module_text(approved_subjects[module_id])
                 for module_id in REPORT_MODULE_IDS
             }
 
-        final_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
         if not (self.service.workspace / final_ref).is_file():
             return
         try:
@@ -1974,10 +3084,23 @@ class ReportWorkflowRunner:
                     state.get("module_review_completion_refs", {})
                 ),
                 "cross_review_completion_ref": state.get("cross_review_completion_ref"),
+                "chief_candidate_ref": state.get("chief_candidate_ref"),
+                "chief_editor_input_ref": state.get(
+                    "chief_editor_input_ref"
+                ),
+                "chief_editor_envelope_ref": state.get(
+                    "chief_editor_envelope_ref"
+                ),
+                "chief_editor_completion_ref": state.get(
+                    "chief_editor_completion_ref"
+                ),
                 "final_review_completed": "final_review_completion_ref" in state,
                 "final_review_completion_ref": state.get("final_review_completion_ref"),
                 "error": error,
                 "budget": self._budget.snapshot() if self._budget is not None else None,
+                "pending_cost_boundary_id": state.get(
+                    "pending_cost_boundary_id"
+                ),
             },
         )
 
@@ -1991,6 +3114,9 @@ class ReportWorkflowRunner:
         checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
         if checkpoint.get("run_id") != run_id:
             raise AgentWorkflowError("revision resume checkpoint belongs to another run")
+        checkpoint_module_review_refs = dict(
+            checkpoint.get("module_review_completion_refs", {})
+        )
         restored: list[str] = []
         for module_id in checkpoint.get("completed_revision_modules", []):
             baseline = state["module_submissions"].get(module_id)
@@ -2009,7 +3135,7 @@ class ReportWorkflowRunner:
                     candidates.append(candidate)
             for candidate in sorted(candidates, key=lambda item: item.revision, reverse=True):
                 subject_ref = f"Work/runs/{run_id}/modules/{module_id}-r{candidate.revision}.json"
-                completion_ref = state.get("module_review_completion_refs", {}).get(module_id)
+                completion_ref = checkpoint_module_review_refs.get(module_id)
                 if not completion_ref:
                     continue
                 completion_path = self.service.workspace / completion_ref
@@ -2074,6 +3200,32 @@ class ReportWorkflowRunner:
         state["cross_review_completion_ref"] = cross_ref
         state["cross_synthesis_inputs"] = self._latest_cross_synthesis(cross_artifacts)
         final_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
+        completion_ref = checkpoint.get("chief_editor_completion_ref")
+        if (
+            not (self.service.workspace / final_ref).is_file()
+            and completion_ref is not None
+        ):
+            candidate, envelope, chief_refs = (
+                self._load_chief_editor_completion(
+                    state,
+                    str(completion_ref),
+                )
+            )
+            state["edited_report"] = candidate
+            state["chief_candidate_ref"] = chief_refs["candidate"]
+            state["chief_editor_input_ref"] = chief_refs["editor_input"]
+            state["chief_editor_envelope_ref"] = chief_refs["envelope"]
+            state["chief_editor_completion_ref"] = str(
+                completion_ref
+            )
+            state["chief_editor_envelope"] = envelope
+            state["chief_editor_session_key"] = "chief-editor"
+            state["approved_module_text"] = {
+                module_id: self._approved_module_text(
+                    state["module_submissions"][module_id]
+                )
+                for module_id in REPORT_MODULE_IDS
+            }
         if not (self.service.workspace / final_ref).is_file():
             return
         try:
@@ -2486,7 +3638,10 @@ class ReportWorkflowRunner:
         return inherited
 
     async def _module_pipeline(
-        self, module_id: str, state: dict, workflow_id: str
+        self,
+        module_id: str,
+        state: dict,
+        workflow_id: str,
     ) -> ModuleSubmission:
         specialist_id = f"module-{module_id}-specialist"
         planned = next(
@@ -2494,7 +3649,10 @@ class ReportWorkflowRunner:
         )
         resumed_payload = state.get("specialist_submissions", {}).get(module_id)
         revision = resumed_payload.revision if resumed_payload is not None else 0
-        if state.get("resume") and resumed_payload is None:
+        if (
+            state.get("resume")
+            and resumed_payload is None
+        ):
             draft_base = self.service.workspace / (
                 f"Work/runs/{state['run_id']}/drafts/module-{module_id}"
             )
@@ -2505,6 +3663,52 @@ class ReportWorkflowRunner:
             ]
             if persisted_revisions:
                 revision = max(persisted_revisions)
+
+        authoring_context_sha256 = self._module_authoring_context_sha256(
+            state,
+            module_id,
+        )
+        draft_base = self.service.workspace / (
+            f"Work/runs/{state['run_id']}/drafts/module-{module_id}"
+        )
+        draft_root = draft_base / f"r{revision}"
+        context_marker = draft_root / "_authoring-context.json"
+        existing_parts = list(draft_root.glob("*.md"))
+        marker_matches = False
+        context_changed = False
+        if context_marker.is_file():
+            try:
+                marker = json.loads(
+                    context_marker.read_text(encoding="utf-8")
+                )
+                marker_matches = (
+                    marker.get("authoring_context_sha256")
+                    == authoring_context_sha256
+                )
+            except (OSError, ValueError):
+                marker_matches = False
+        if existing_parts and not marker_matches:
+            persisted_revisions = [
+                int(path.name[1:])
+                for path in draft_base.glob("r*")
+                if path.is_dir() and path.name[1:].isdigit()
+            ]
+            revision = max([revision, *persisted_revisions]) + 1
+            context_changed = True
+            draft_root = draft_base / f"r{revision}"
+            context_marker = draft_root / "_authoring-context.json"
+        self.service.store.write_json(
+            context_marker.relative_to(
+                self.service.workspace
+            ).as_posix(),
+            {
+                "kind": "module_authoring_draft_context",
+                "run_id": state["run_id"],
+                "module_id": module_id,
+                "revision": revision,
+                "authoring_context_sha256": authoring_context_sha256,
+            },
+        )
 
         resume_part_constraints: list[str] = []
         resume_allowed_tools: list[str] = []
@@ -2528,14 +3732,16 @@ class ReportWorkflowRunner:
                 ]
             )
         )
+        if context_changed:
+            base_constraints.append(
+                "输入或用户补充约束已变化；本 revision 必须从当前上下文完整重写"
+                "全部固定子模块，禁止复用旧 draft parts"
+            )
         if state.get("resume"):
-            if revision > 0:
+            if revision > 0 and not context_changed:
                 self._inherit_module_result_parts(
                     state["run_id"], module_id, revision - 1, revision
                 )
-            draft_root = self.service.workspace / (
-                f"Work/runs/{state['run_id']}/drafts/module-{module_id}/r{revision}"
-            )
             saved_parts = sorted(path.stem for path in draft_root.glob("*.md"))
             missing_parts = sorted(set(REPORT_TAXONOMY[module_id].submodules) - set(saved_parts))
             for part_id in saved_parts:
@@ -2555,7 +3761,7 @@ class ReportWorkflowRunner:
             resume_part_constraints = [
                 "这是同一 run 的恢复任务；已有正文分段=" + (", ".join(saved_parts) or "无"),
                 "固定 taxonomy 尚缺正文分段=" + (", ".join(missing_parts) or "无"),
-                "当前协议只接收 write_result_part 保存的读者可见正文和 evidence_ids。",
+                "当前协议接收 write_result_parts 批量或 write_result_part 单项保存的读者可见正文和 evidence_ids；优先每批最多 4 项。",
                 "先调用 list_result_parts；必须重写或补绑定的 part="
                 + (", ".join(rewrite_part_ids) or "无"),
             ]
@@ -2585,6 +3791,24 @@ class ReportWorkflowRunner:
             module_input.model_dump(mode="json"),
         )
         module_input_ref = module_input_path.relative_to(self.service.workspace).as_posix()
+        module_authoring_tools = [
+            "search_project_evidence",
+            "open_project_source",
+            "search_reference_library",
+            "open_reference",
+            "web_search",
+            "open_web_source",
+            "inspect_document",
+            "inspect_image",
+            "calculate",
+            "open_artifact",
+            "search_text",
+            "report_gap",
+            "write_result_part",
+            "list_result_parts",
+            "report_blocked",
+            "submit_result",
+        ]
         envelope = TaskEnvelope.model_validate(
             planned.model_copy(
                 update={
@@ -2592,7 +3816,11 @@ class ReportWorkflowRunner:
                     "run_id": state["run_id"],
                     "agent_id": specialist_id,
                     "allowed_outputs": ["module_submission"],
-                    "allowed_tools": resume_allowed_tools,
+                    "allowed_tools": (
+                        resume_allowed_tools
+                        if resume_allowed_tools
+                        else module_authoring_tools
+                    ),
                     "target_submodule_ids": (
                         sorted(set(rewrite_part_ids) | set(missing_parts))
                         if state.get("resume") and saved_parts
@@ -2610,6 +3838,7 @@ class ReportWorkflowRunner:
                     ],
                     "input_contract_kind": "module_authoring_input",
                     "input_contract_ref": module_input_ref,
+                    "inline_context": planned.inline_context or "",
                 }
             ).model_dump(mode="python")
         )
@@ -2738,12 +3967,12 @@ class ReportWorkflowRunner:
                 *(
                     [
                         "special_topic_analysis 必须严格按 special_topic_plan 输出全部且仅输出 ### 4.n 标题及其正文",
-                        "八个综合章节必须分别使用同名 part_id 的 write_result_part 持久化",
+                        "八个综合章节优先一次使用同名 part_id 的 write_result_parts 批量持久化；单项纠错才使用 write_result_part",
                     ]
                     if special_topic_plan is not None
                     else [
                         "special_topic_plan 为空；禁止提交 special_topic_analysis，最终 Markdown 和 DOCX 必须完全省略第四章",
-                        "七个固定综合章节必须分别使用同名 part_id 的 write_result_part 持久化",
+                        "七个固定综合章节优先一次使用同名 part_id 的 write_result_parts 批量持久化；单项纠错才使用 write_result_part",
                     ]
                 ),
                 "任何综合节都必须自足地包含归纳事实、综合判断和决策含义；模块号只能用于句末追溯，禁止用‘详见第二章’‘见2.x’或模块编号清单代替分析",
@@ -2824,6 +4053,13 @@ class ReportWorkflowRunner:
         state["chief_candidate_ref"] = candidate_ref
         state["chief_editor_input_ref"] = editor_input_ref
         state["chief_editor_envelope_ref"] = envelope_ref
+        state["chief_editor_completion_ref"] = (
+            self._write_chief_editor_completion(
+                state,
+                editor_input=editor_input,
+                envelope=envelope,
+            )
+        )
 
     @staticmethod
     def _final_report_section_values(
@@ -3349,9 +4585,14 @@ class ReportWorkflowRunner:
         template_snapshot = (
             self.service.workspace / f"Work/runs/{state['run_id']}/templates/report_template.docx"
         )
-        template_snapshot.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(selected_template, template_snapshot)
-        template_sha256 = hashlib.sha256(template_snapshot.read_bytes()).hexdigest()
+        (
+            template_snapshot,
+            template_sha256,
+            template_blob_ref,
+        ) = self.service.snapshot_content(
+            selected_template,
+            template_snapshot,
+        )
         selected_template_ref = (
             selected_template.relative_to(self.service.workspace).as_posix()
             if selected_template.is_relative_to(self.service.workspace)
@@ -3363,6 +4604,7 @@ class ReportWorkflowRunner:
                 "source": template_source,
                 "selected_path": selected_template_ref,
                 "snapshot_path": template_snapshot.relative_to(self.service.workspace).as_posix(),
+                "blob_ref": template_blob_ref.as_posix(),
                 "sha256": template_sha256,
             },
         )
@@ -3516,6 +4758,10 @@ class ReportWorkflowRunner:
             )
         )
         state["report_version"] = version
+        storage_plan = ReportingRetentionPlanner(self.service.workspace).generate()
+        state["storage_usage_ref"] = "Work/storage-usage.json"
+        state["retention_plan_ref"] = "Work/retention-plan.json"
+        state["storage_usage"] = storage_plan["usage"]
         state["output_artifacts"] = self._delivery_output_artifacts(
             final_review_ref=state["final_review_completion_ref"],
             delivery_manifest_ref=receipt.manifest_path.relative_to(self.service.workspace),

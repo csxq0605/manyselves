@@ -191,8 +191,9 @@ class RevisionCoordinator:
             for line in self._read(refs["evidence"]).splitlines()
             if line.strip()
         ]
+        evidence_ref = f"Work/runs/{run_id}/evidence.jsonl"
         evidence_path = self.service.store.write_jsonl(
-            f"Work/runs/{run_id}/evidence.jsonl",
+            evidence_ref,
             [item.model_dump(mode="json") for item in evidence],
         )
         shutil.copyfile(evidence_path, self.service.workspace / "Work/evidence.jsonl")
@@ -208,9 +209,22 @@ class RevisionCoordinator:
                 if key not in refs:
                     raise ValueError(f"baseline photo artifact is missing: {asset_id}")
                 photo_assets.append(PhotoAsset.model_validate({**raw, "path": refs[key]}))
+        photo_manifest = {
+            "assets": [
+                asset.model_dump(mode="json")
+                for asset in photo_assets
+            ]
+        }
+        photo_manifest_ref = (
+            f"Work/runs/{run_id}/photo-manifest.json"
+        )
+        self.service.store.write_json(
+            photo_manifest_ref,
+            photo_manifest,
+        )
         self.service.store.write_json(
             "Work/photo-manifest.json",
-            {"assets": [asset.model_dump(mode="json") for asset in photo_assets]},
+            photo_manifest,
         )
 
         context_by_agent: dict[str, list[str]] = {}
@@ -249,6 +263,10 @@ class RevisionCoordinator:
                 "module_dispatch": dispatch,
                 "evidence_items": evidence,
                 "photo_assets": photo_assets,
+                "preparation_refs": {
+                    "evidence": evidence_ref,
+                    "photo_manifest": photo_manifest_ref,
+                },
                 "revision_context_by_agent": context_by_agent,
                 "inherited_summary_refs": list(baseline.session_summary_refs),
             },

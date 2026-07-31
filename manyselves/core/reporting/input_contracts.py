@@ -437,11 +437,32 @@ class ModuleReviewInput(StrictModel):
             "without exposing the runtime authoring protocol."
         ),
     )
+    prior_claim_statements: list[ReviewClaimStatement] = Field(
+        default_factory=list,
+        description=(
+            "Recheck-only prior semantics for Claims added, removed, or changed since "
+            "the last paid review. Unchanged statements are retained only by hash."
+        ),
+    )
+    unchanged_submodule_sha256: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Recheck-only hashes for required submodule narratives unchanged since "
+            "the last paid review."
+        ),
+    )
+    unchanged_statement_sha256: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Recheck-only hashes for unchanged Claim statements in the required scope."
+        ),
+    )
     knowledge_ref: str | None = Field(
         default=None,
         description=(
             "Provenance path for the current-run module Knowledge artifact from which the "
-            "inline bounded slice was made; it is not a readable task reference."
+            "inline bounded slice was made. Every paid typed review receives the same "
+            "bounded slice because provider working memory is reset between tasks."
         ),
     )
     knowledge_context: str = Field(
@@ -483,7 +504,10 @@ class ModuleReviewInput(StrictModel):
     )
     baseline_subject_ref: str | None = Field(
         default=None,
-        description="Prior module subject from which the local_regression revision was made.",
+        description=(
+            "Prior module subject used by local_regression or the last subject actually "
+            "seen by the paid reviewer before a recheck."
+        ),
     )
     trigger_cross_findings: list[CrossReviewFinding] = Field(
         default_factory=list,
@@ -499,7 +523,7 @@ class ModuleReviewInput(StrictModel):
     )
     revision_diff: ModuleRevisionDiff | None = Field(
         default=None,
-        description="Exact typed diff for the local_regression pass.",
+        description="Exact typed diff from baseline_subject_ref to the current subject.",
     )
     validation_report_ref: str = Field(
         min_length=1,
@@ -517,6 +541,9 @@ class ModuleReviewInput(StrictModel):
 
     @model_validator(mode="after")
     def phase_fields_match(self) -> "ModuleReviewInput":
+        scope = set(self.required_submodule_ids)
+        if len(scope) != len(self.required_submodule_ids):
+            raise ValueError("module review required_submodule_ids must be unique")
         if self.phase == "initial" and self.review_round != 0:
             raise ValueError("initial module review must use review_round zero")
         if self.phase == "local_regression" and self.review_round != 0:
@@ -527,38 +554,67 @@ class ModuleReviewInput(StrictModel):
             raise ValueError("module review subject belongs to a different module")
         if self.subject.revision != self.subject_revision:
             raise ValueError("module review subject_revision does not match subject")
+        if (
+            set(self.subject.submodule_narratives) - scope
+            or set(self.subject.evidence_ids_by_submodule) - scope
+        ):
+            raise ValueError("module review subject lies outside required_submodule_ids")
         if bool(self.knowledge_ref) != bool(self.knowledge_context.strip()):
             raise ValueError(
                 "module review knowledge_ref and knowledge_context must be provided together"
             )
-        required_evidence_ids = {
+        subject_evidence_ids = {
             evidence_id
             for values in self.subject.evidence_ids_by_submodule.values()
             for evidence_id in values
         }
         supplied_evidence_ids = [item.evidence_id for item in self.evidence]
-        if (
-            len(supplied_evidence_ids) != len(set(supplied_evidence_ids))
-            or set(supplied_evidence_ids) != required_evidence_ids
-        ):
-            raise ValueError("module review evidence must contain every bound E-* id exactly once")
         if any(
-            statement.submodule_id not in set(self.required_submodule_ids)
-            for statement in self.claim_statements
+            statement.submodule_id not in scope
+            for statement in [*self.claim_statements, *self.prior_claim_statements]
         ):
             raise ValueError("module review statements must stay inside required_submodule_ids")
-        statement_refs = [
+        current_statement_refs = [
             statement.statement_ref for statement in self.claim_statements
         ]
-        if len(statement_refs) != len(set(statement_refs)):
-            raise ValueError("module review statement refs must be unique")
-        claim_evidence_ids = {
+        prior_statement_refs = [
+            statement.statement_ref for statement in self.prior_claim_statements
+        ]
+        if len(current_statement_refs) != len(set(current_statement_refs)):
+            raise ValueError("module review current statement refs must be unique")
+        if len(prior_statement_refs) != len(set(prior_statement_refs)):
+            raise ValueError("module review prior statement refs must be unique")
+        current_claim_evidence_ids = {
             evidence_id
             for statement in self.claim_statements
             for evidence_id in statement.evidence_ids
             if evidence_id.startswith("E-")
         }
-        if claim_evidence_ids != required_evidence_ids:
+        prior_claim_evidence_ids = {
+            evidence_id
+            for statement in self.prior_claim_statements
+            for evidence_id in statement.evidence_ids
+            if evidence_id.startswith("E-")
+        }
+        finding_evidence_ids = {
+            evidence_ref
+            for finding in self.required_findings
+            for evidence_ref in finding.evidence_refs
+            if evidence_ref.startswith("E-")
+        }
+        required_evidence_ids = (
+            current_claim_evidence_ids
+            | prior_claim_evidence_ids
+            | finding_evidence_ids
+            if self.phase == "recheck"
+            else subject_evidence_ids
+        )
+        if (
+            len(supplied_evidence_ids) != len(set(supplied_evidence_ids))
+            or set(supplied_evidence_ids) != required_evidence_ids
+        ):
+            raise ValueError("module review evidence packet does not match its active semantics")
+        if self.phase != "recheck" and current_claim_evidence_ids != subject_evidence_ids:
             raise ValueError("module review claims and subject evidence bindings differ")
         if not self.validation_report.passed:
             raise ValueError("module semantic review cannot start from failed machine validation")
@@ -571,17 +627,27 @@ class ModuleReviewInput(StrictModel):
             raise ValueError("module review validation is stale or not content-bound")
         if self.phase == "initial" and (self.required_findings or self.revision_responses):
             raise ValueError("initial module review cannot contain prior findings or responses")
-        regression_values = (
+        local_regression_values = (
             self.prior_review_completion_ref,
             self.prior_review_completion,
-            self.baseline_subject_ref,
             self.trigger_cross_findings,
             self.trigger_revision_responses,
+        )
+        if self.phase != "local_regression" and any(local_regression_values):
+            raise ValueError("only local_regression may contain Cross revision context")
+        delta_values = (
+            self.baseline_subject_ref,
             self.revision_diff_ref,
             self.revision_diff,
         )
-        if self.phase != "local_regression" and any(regression_values):
-            raise ValueError("only local_regression may contain Cross revision context")
+        if self.phase == "initial" and any(delta_values):
+            raise ValueError("initial module review cannot contain revision delta state")
+        if self.phase != "recheck" and (
+            self.prior_claim_statements
+            or self.unchanged_submodule_sha256
+            or self.unchanged_statement_sha256
+        ):
+            raise ValueError("only module recheck may contain compact delta state")
         if self.phase == "local_regression":
             if any(
                 value is None
@@ -644,6 +710,70 @@ class ModuleReviewInput(StrictModel):
             responses = {response.finding_id for response in self.revision_responses}
             if not required or responses != required:
                 raise ValueError("module recheck requires exactly one author response per finding")
+            if any(
+                value is None
+                for value in (
+                    self.baseline_subject_ref,
+                    self.revision_diff_ref,
+                    self.revision_diff,
+                )
+            ):
+                raise ValueError("module recheck requires its last-reviewed baseline and diff")
+            assert self.revision_diff is not None
+            if (
+                self.revision_diff.module_id != self.module_id
+                or self.revision_diff.to_revision != self.subject_revision
+                or not set(self.revision_diff.changed_submodule_narratives).issubset(scope)
+            ):
+                raise ValueError("module recheck diff does not bind its current scope")
+            changed_narratives = set(
+                self.revision_diff.changed_submodule_narratives
+            )
+            if set(self.subject.submodule_narratives) != changed_narratives:
+                raise ValueError("module recheck subject must contain only changed narratives")
+            unchanged_submodules = scope - changed_narratives
+            if set(self.unchanged_submodule_sha256) != unchanged_submodules:
+                raise ValueError("module recheck must hash every unchanged required narrative")
+            if any(
+                re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                for digest in self.unchanged_submodule_sha256.values()
+            ):
+                raise ValueError("module recheck narrative hashes must be SHA-256")
+            changed_statements = set(self.revision_diff.changed_statement_refs)
+            visible_changed_statements = set(current_statement_refs) | set(
+                prior_statement_refs
+            )
+            if visible_changed_statements != changed_statements:
+                raise ValueError(
+                    "module recheck must expose current and prior semantics for every "
+                    "changed statement"
+                )
+            if set(self.unchanged_statement_sha256) & changed_statements:
+                raise ValueError("changed statements cannot also be retained by hash")
+            if any(
+                re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                for digest in self.unchanged_statement_sha256.values()
+            ):
+                raise ValueError("module recheck statement hashes must be SHA-256")
+            expected_subject_evidence = {
+                submodule_id: sorted(
+                    {
+                        evidence_id
+                        for statement in self.claim_statements
+                        if statement.submodule_id == submodule_id
+                        for evidence_id in statement.evidence_ids
+                        if evidence_id.startswith("E-")
+                    }
+                )
+                for submodule_id in (
+                    changed_narratives
+                    | {statement.submodule_id for statement in self.claim_statements}
+                )
+            }
+            if self.subject.evidence_ids_by_submodule != expected_subject_evidence:
+                raise ValueError(
+                    "module recheck subject evidence must describe only current changed semantics"
+                )
         return self
 
     @property
@@ -972,14 +1102,29 @@ class ModuleRevisionInput(StrictModel):
             raise ValueError(
                 "module revision subject must contain exactly the assigned target submodules"
             )
-        if not self.module_findings and not self.cross_findings and not self.requested_changes:
-            raise ValueError("module revision input requires a finding or requested change")
         if bool(self.validation_report_ref) != bool(self.validation_report):
             raise ValueError(
                 "validation_report_ref and validation_report must be provided together"
             )
         if self.validation_report and self.validation_report.passed:
             raise ValueError("a passed validation report cannot trigger another revision")
+        if (
+            not self.module_findings
+            and not self.cross_findings
+            and not self.requested_changes
+            and self.validation_report is None
+        ):
+            raise ValueError(
+                "module revision input requires a finding, requested change, or "
+                "failed machine validation"
+            )
+        if self.validation_report and (
+            self.validation_report.validation_protocol_version < 2
+            or self.validation_report.subject_ref != self.subject_ref
+            or self.validation_report.subject_revision != self.subject.revision
+            or self.validation_report.content_sha256 is None
+        ):
+            raise ValueError("module revision machine validation is stale or not content-bound")
         allowed = targets
         for finding in self.module_findings:
             if finding.target_submodule_id not in allowed:

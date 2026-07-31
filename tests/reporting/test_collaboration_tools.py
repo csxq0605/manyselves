@@ -31,6 +31,7 @@ from manyselves.core.tools.reporting_collaboration_tools import (
     ListResultPartsTool,
     SubmitResultTool,
     WriteResultPartTool,
+    WriteResultPartsTool,
 )
 
 
@@ -734,6 +735,122 @@ async def test_result_parts_report_missing_declared_ids(tmp_path: Path) -> None:
     assert listing["missing_part_ids"] == ["part-b"]
     assert listing["required_synthesis_input_ids"] == ["SI-001", "SI-002"]
     assert listing["complete"] is False
+
+
+@pytest.mark.asyncio
+async def test_batch_result_parts_persist_module_prose_and_evidence_bindings(
+    tmp_path: Path,
+) -> None:
+    SourceLedger(tmp_path, "run-1").register_project(
+        "E-0001",
+        "测试证据",
+        "Inputs/test.txt",
+        "测试事实",
+    )
+    store = ReportingStore(tmp_path)
+    writer = WriteResultPartsTool(
+        "run-1",
+        "module-2.1",
+        0,
+        store,
+        ["2.1.1", "2.1.2"],
+        evidence_binding_required=True,
+        max_batch_size=4,
+    )
+
+    result = await writer(
+        parts=[
+            {
+                "part_id": "2.1.1",
+                "content": "### 2.1.1\n\n第一段完整正文。",
+                "evidence_ids": ["E-0001"],
+            },
+            {
+                "part_id": "2.1.2",
+                "content": "### 2.1.2\n\n第二段明确记录证据缺口。",
+                "evidence_ids": [],
+            },
+        ]
+    )
+
+    assert result["status"] == "completed"
+    assert result["count"] == 2
+    assert [part["part_id"] for part in result["parts"]] == ["2.1.1", "2.1.2"]
+    root = tmp_path / "Work/runs/run-1/drafts/module-2.1/r0"
+    assert (root / "2.1.1.md").read_text(encoding="utf-8").endswith("第一段完整正文。")
+    assert json.loads(
+        (root / "_evidence/2.1.1.json").read_text(encoding="utf-8")
+    )["evidence_ids"] == ["E-0001"]
+    assert json.loads(
+        (root / "_evidence/2.1.2.json").read_text(encoding="utf-8")
+    )["evidence_ids"] == []
+
+
+@pytest.mark.asyncio
+async def test_batch_result_parts_validate_every_item_before_writing(
+    tmp_path: Path,
+) -> None:
+    SourceLedger(tmp_path, "run-1").register_project(
+        "E-0001",
+        "测试证据",
+        "Inputs/test.txt",
+        "测试事实",
+    )
+    writer = WriteResultPartsTool(
+        "run-1",
+        "module-2.1",
+        0,
+        ReportingStore(tmp_path),
+        ["2.1.1", "2.1.2"],
+        evidence_binding_required=True,
+        max_batch_size=4,
+    )
+
+    with pytest.raises(ValueError, match="requires evidence_ids"):
+        await writer(
+            parts=[
+                {
+                    "part_id": "2.1.1",
+                    "content": "本项本身有效，但整批失败时不得落盘。",
+                    "evidence_ids": ["E-0001"],
+                },
+                {
+                    "part_id": "2.1.2",
+                    "content": "缺少模块证据绑定。",
+                },
+            ]
+        )
+
+    root = tmp_path / "Work/runs/run-1/drafts/module-2.1/r0"
+    assert not (root / "2.1.1.md").exists()
+    assert not (root / "2.1.2.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_batch_result_parts_reject_duplicate_ids_without_writing(
+    tmp_path: Path,
+) -> None:
+    writer = WriteResultPartsTool(
+        "run-1",
+        "chief-edit",
+        0,
+        ReportingStore(tmp_path),
+        ["assessment_background"],
+        max_batch_size=8,
+    )
+
+    with pytest.raises(ValueError, match="duplicate part_id"):
+        await writer(
+            parts=[
+                {"part_id": "assessment_background", "content": "第一版正文。"},
+                {"part_id": "assessment_background", "content": "重复正文。"},
+            ]
+        )
+
+    assert not (
+        tmp_path
+        / "Work/runs/run-1/drafts/chief-edit/r0/assessment_background.md"
+    ).exists()
 
 
 @pytest.mark.asyncio

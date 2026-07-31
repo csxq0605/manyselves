@@ -21,7 +21,7 @@ from loguru import logger
 
 from ...config.schema import AgentDefaults
 from ...core.prompts import PromptLoader
-from ...core.providers.base import LLMProvider
+from ...core.providers.base import LLMProvider, LLMToolCall
 from ...core.providers.base import Message as LLMMessage
 from ...core.runtime_errors import (
     RuntimeErrorPolicy,
@@ -66,6 +66,8 @@ from .bus import MessageBus
 _TOKENS_PER_CHAR = 0.3
 _SAFETY_BUFFER = 1024  # Extra buffer for tool definitions and overhead
 _MAX_PROVIDER_RETRIES = 2
+_RESULT_PART_TOOLS = frozenset({"write_result_part", "write_result_parts"})
+_RESULT_PART_COMPACTION_THRESHOLD = 256
 
 # Reaching a bounded tool slice is not a terminal Agent state. Reporting
 # orchestration uses this signal to continue with the same durable identity.
@@ -286,6 +288,7 @@ class _LoopLLMResponse:
     usage: dict[str, int] | None = None
     stop_reason: str | None = None
     streamed: bool = False
+    request_metrics: dict[str, Any] | None = None
 
 
 @dataclass
@@ -310,6 +313,72 @@ class _ProgressMonitor:
             self._stagnant_rounds = 0
             return "replan"
         return None
+
+
+def _compact_persisted_result_part_call(
+    tool_call: LLMToolCall,
+    result: Any,
+) -> LLMToolCall:
+    """Replace already-persisted prose in provider history with a durable marker.
+
+    The original call is executed and its full content is persisted before this
+    helper is used.  Only the assistant-history copy is compacted; the tool
+    result, on-disk draft, UI event, and still-unpaired calls remain unchanged.
+    """
+
+    if tool_call.name not in _RESULT_PART_TOOLS or not isinstance(result, dict):
+        return tool_call
+    outcome = normalize_tool_outcome(result, tool_call.name)
+    if outcome.status != "ok":
+        return tool_call
+
+    def compact_item(item: Any, saved: Any = None) -> Any:
+        if not isinstance(item, dict):
+            return item
+        content = item.get("content")
+        if not isinstance(content, str) or len(content) < _RESULT_PART_COMPACTION_THRESHOLD:
+            return dict(item)
+        saved_payload = saved if isinstance(saved, dict) else {}
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        ref = str(saved_payload.get("artifact_ref") or "").strip()
+        marker_fields = [
+            "persisted_result_part",
+            f"sha256={digest}",
+            f"characters={len(content)}",
+        ]
+        if ref:
+            marker_fields.append(f"artifact_ref={ref}")
+        compacted = dict(item)
+        compacted["content"] = "<" + " ".join(marker_fields) + ">"
+        return compacted
+
+    arguments = dict(tool_call.arguments or {})
+    if tool_call.name == "write_result_part":
+        arguments = compact_item(arguments, result)
+    else:
+        argument_key = "parts" if isinstance(arguments.get("parts"), list) else "items"
+        items = arguments.get(argument_key)
+        saved_items = result.get("parts", result.get("results", []))
+        saved_by_id = {
+            str(item.get("part_id")): item
+            for item in saved_items
+            if isinstance(item, dict) and item.get("part_id") is not None
+        } if isinstance(saved_items, list) else {}
+        if isinstance(items, list):
+            arguments[argument_key] = [
+                compact_item(
+                    item,
+                    saved_by_id.get(str(item.get("part_id")))
+                    if isinstance(item, dict)
+                    else None,
+                )
+                for item in items
+            ]
+    return LLMToolCall(
+        id=tool_call.id,
+        name=tool_call.name,
+        arguments=arguments,
+    )
 
 
 class _ProviderAttemptError(RuntimeError):
@@ -356,6 +425,33 @@ def _estimate_tokens(messages: list[LLMMessage]) -> int:
         if getattr(m, "thinking", None) and m.thinking:
             total += int(len(m.thinking) * _TOKENS_PER_CHAR)
     return total
+
+
+def _estimate_response_tokens(response: Any) -> int:
+    """Estimate all generated payload, including structured tool arguments."""
+
+    content = str(getattr(response, "content", "") or "")
+    thinking = str(getattr(response, "thinking", "") or "")
+    tool_calls = [
+        {
+            "id": getattr(call, "id", None),
+            "name": getattr(call, "name", None),
+            "arguments": getattr(call, "arguments", None),
+        }
+        for call in (getattr(response, "tool_calls", None) or [])
+    ]
+    structured = (
+        json.dumps(
+            tool_calls,
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+            separators=(",", ":"),
+        )
+        if tool_calls
+        else ""
+    )
+    return int((len(content) + len(thinking) + len(structured)) * _TOKENS_PER_CHAR)
 
 
 def _trim_messages_to_budget(
@@ -559,6 +655,9 @@ class AgentLoop:
             ]
             | None
         ) = None,
+        provider_attempt_record_observer: (
+            Callable[[dict[str, Any]], Awaitable[None]] | None
+        ) = None,
     ):
         """Initialize agent loop.
 
@@ -613,8 +712,11 @@ class AgentLoop:
         self._progress_monitor = _ProgressMonitor()
         self.usage_run_id = usage_run_id
         self.usage_task_id = usage_task_id
+        self.usage_context_manifest_ref: str | None = None
+        self.usage_provider_call_id: str | None = None
         self.before_provider_attempt = before_provider_attempt
         self.provider_attempt_observer = provider_attempt_observer
+        self.provider_attempt_record_observer = provider_attempt_record_observer
         self._usage_totals = {"input_tokens": 0, "output_tokens": 0}
         self._last_usage_record: dict[str, Any] | None = None
         self._terminal_outcome: ToolOutcome | None = None
@@ -1716,6 +1818,7 @@ class AgentLoop:
         accumulated_tool_calls = []
         accumulated_thinking = ""
         final_usage = None
+        final_request_metrics = None
         stop_reason = None
         try:
             try:
@@ -1777,6 +1880,8 @@ class AgentLoop:
 
                     if chunk.usage:
                         final_usage = chunk.usage
+                    if chunk.request_metrics:
+                        final_request_metrics = chunk.request_metrics
                     if chunk.stop_reason:
                         stop_reason = chunk.stop_reason
 
@@ -1790,6 +1895,7 @@ class AgentLoop:
                     usage=final_usage,
                     stop_reason=stop_reason,
                     streamed=True,
+                    request_metrics=final_request_metrics,
                 )
             except NotImplementedError:
                 response = await self.llm_provider.chat(
@@ -1805,6 +1911,7 @@ class AgentLoop:
                     usage=getattr(response, "usage", None),
                     stop_reason=getattr(response, "stop_reason", None),
                     streamed=False,
+                    request_metrics=getattr(response, "request_metrics", None),
                 )
         except asyncio.CancelledError:
             raise
@@ -1839,6 +1946,7 @@ class AgentLoop:
         attempts = 0
         while True:
             attempts += 1
+            attempt_started = time.monotonic()
             if self.before_provider_attempt is not None:
                 await self.before_provider_attempt()
             if self.provider_attempt_observer is not None:
@@ -1862,7 +1970,10 @@ class AgentLoop:
                     status="success",
                     error=None,
                     attempt=attempts,
+                    tool_definitions=tool_definitions,
+                    duration_ms=int((time.monotonic() - attempt_started) * 1000),
                 )
+                await self._notify_provider_attempt_record(self._last_usage_record)
                 return response
             except _ProviderAttemptError as failure:
                 retry_number = attempts
@@ -1876,7 +1987,10 @@ class AgentLoop:
                     attempt=attempts,
                     retry=policy.retryable,
                     error_class=type(failure.original).__name__,
+                    tool_definitions=tool_definitions,
+                    duration_ms=int((time.monotonic() - attempt_started) * 1000),
                 )
+                await self._notify_provider_attempt_record(self._last_usage_record)
                 can_retry = (
                     policy.retryable
                     and not failure.partial_output
@@ -1907,6 +2021,23 @@ class AgentLoop:
                 if await self._wait_before_retry(policy.delay_seconds):
                     return _LoopLLMResponse(content="", tool_calls=[])
 
+    async def _notify_provider_attempt_record(
+        self,
+        record: dict[str, Any],
+    ) -> None:
+        """Backfill optional reporting telemetry without failing paid work."""
+
+        if self.provider_attempt_record_observer is None:
+            return
+        try:
+            await self.provider_attempt_record_observer(record)
+        except Exception as exc:
+            logger.warning(
+                "Provider attempt telemetry finalizer failed for {}: {}",
+                self.agent_type,
+                exc,
+            )
+
     async def _handle_tool_calls(
         self,
         response,
@@ -1933,14 +2064,20 @@ class AgentLoop:
             )
 
             # Add assistant message with tool calls as structured data
-            current_messages.append(
-                LLMMessage(
-                    role="assistant",
-                    content=response.content or "",
-                    tool_calls=response.tool_calls,
-                    thinking=response.thinking,
-                )
+            assistant_tool_message = LLMMessage(
+                role="assistant",
+                content=response.content or "",
+                tool_calls=[
+                    LLMToolCall(
+                        id=call.id,
+                        name=call.name,
+                        arguments=dict(call.arguments or {}),
+                    )
+                    for call in response.tool_calls
+                ],
+                thinking=response.thinking,
             )
+            current_messages.append(assistant_tool_message)
 
             # Execute a bounded batch. Every skipped call still gets a compact
             # protocol-valid tool result so providers do not see orphan calls.
@@ -2104,6 +2241,10 @@ class AgentLoop:
                         self._turn_reported = True
 
                     outcome = normalize_tool_outcome(result, tool_call.name)
+                    if outcome.status == "ok" and assistant_tool_message.tool_calls:
+                        assistant_tool_message.tool_calls[tool_index] = (
+                            _compact_persisted_result_part_call(tool_call, result)
+                        )
                     await self.bus.publish(
                         ToolResultMsg(
                             agent_type=self.agent_type,
@@ -2364,10 +2505,6 @@ class AgentLoop:
 
         retained_ids = {id(message) for message in compacted}
         removed = [message for message in messages if id(message) not in retained_ids]
-        safe_agent = "".join(
-            char if char.isalnum() or char in "-_." else "_"
-            for char in str(self.agent_type)
-        )
         serialized = json.dumps(
             [
                 {
@@ -2384,15 +2521,6 @@ class AgentLoop:
         checkpoint_ref = self.artifact_gateway.persist_internal(
             "context-checkpoint", hashlib.sha256(serialized.encode()).hexdigest(), serialized
         )
-        legacy_checkpoint_dir = (
-            self.workspace / ".manyselves" / "context-checkpoints" / safe_agent
-        )
-        legacy_checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        legacy_checkpoint = legacy_checkpoint_dir / (
-            hashlib.sha256(serialized.encode()).hexdigest() + ".json"
-        )
-        if not legacy_checkpoint.exists():
-            legacy_checkpoint.write_text(serialized, encoding="utf-8")
         checkpoint = compacted[1]
         compacted[1] = LLMMessage(
             role=checkpoint.role,
@@ -2422,6 +2550,8 @@ class AgentLoop:
         retry: bool = False,
         guard: bool = False,
         error_class: str | None = None,
+        tool_definitions: list[dict] | None = None,
+        duration_ms: int | None = None,
     ) -> dict[str, Any]:
         """Append one provider-round usage record, marking estimates explicitly."""
 
@@ -2435,19 +2565,122 @@ class AgentLoop:
             usage_source = "provider"
         else:
             input_tokens = _estimate_tokens(messages)
-            output_tokens = int(len(str(getattr(response, "content", "") or "")) * _TOKENS_PER_CHAR)
+            output_tokens = _estimate_response_tokens(response)
             usage_source = "estimated"
 
         self._usage_totals["input_tokens"] += input_tokens
         self._usage_totals["output_tokens"] += output_tokens
         run_id = str(self.usage_run_id or self.agent_type)
         task_id = str(self.usage_task_id or "") or None
+        message_payload = [
+            {
+                "role": message.role,
+                "content": message.content or "",
+                "tool_call_id": message.tool_call_id,
+                "is_tool_result": bool(message.is_tool_result),
+                "tool_calls": [
+                    {
+                        "id": call.id,
+                        "name": call.name,
+                        "arguments": call.arguments,
+                    }
+                    for call in (message.tool_calls or [])
+                ],
+            }
+            for message in messages
+        ]
+        serialized_messages = json.dumps(
+            message_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+            separators=(",", ":"),
+        )
+        serialized_tools = json.dumps(
+            tool_definitions or [],
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+            separators=(",", ":"),
+        )
+        pre_adapter_request_fingerprint = hashlib.sha256(
+            f"{serialized_messages}\n{serialized_tools}".encode("utf-8")
+        ).hexdigest()
+        pre_adapter_message_fingerprint = hashlib.sha256(
+            serialized_messages.encode("utf-8")
+        ).hexdigest()
+        pre_adapter_tool_schema_fingerprint = hashlib.sha256(
+            serialized_tools.encode("utf-8")
+        ).hexdigest()
+        request_metrics = getattr(response, "request_metrics", None)
+        if not isinstance(request_metrics, dict):
+            request_metrics = {}
+        provider_request_observed = bool(
+            request_metrics.get("request_fingerprint")
+            and request_metrics.get("message_fingerprint")
+            and request_metrics.get("tool_schema_fingerprint")
+        )
+        request_fingerprint = str(
+            request_metrics.get("request_fingerprint")
+            or pre_adapter_request_fingerprint
+        )
+        message_fingerprint = str(
+            request_metrics.get("message_fingerprint")
+            or pre_adapter_message_fingerprint
+        )
+        tool_schema_fingerprint = str(
+            request_metrics.get("tool_schema_fingerprint")
+            or pre_adapter_tool_schema_fingerprint
+        )
+        message_chars = int(
+            request_metrics.get("message_chars", len(serialized_messages))
+            or 0
+        )
+        tool_schema_chars = int(
+            request_metrics.get("tool_schema_chars", len(serialized_tools))
+            or 0
+        )
+        prompt_details = usage.get("prompt_tokens_details")
+        if not isinstance(prompt_details, dict):
+            prompt_details = {}
+        cached_input_tokens = int(
+            usage.get(
+                "cache_read_input_tokens",
+                usage.get("cached_input_tokens", prompt_details.get("cached_tokens", 0)),
+            )
+            or 0
+        )
+        cache_write_input_tokens = int(
+            usage.get(
+                "cache_creation_input_tokens",
+                usage.get("cache_write_input_tokens", 0),
+            )
+            or 0
+        )
+        uncached_input_tokens = max(
+            0,
+            input_tokens - cached_input_tokens - cache_write_input_tokens,
+        )
+        context_manifest_ref = getattr(
+            self,
+            "usage_context_manifest_ref",
+            None,
+        )
+        provider_call_id = getattr(
+            self,
+            "usage_provider_call_id",
+            None,
+        )
+        if not provider_call_id and context_manifest_ref:
+            provider_call_id = Path(str(context_manifest_ref)).stem
         record = {
             "timestamp": datetime.now().astimezone().isoformat(),
             "run_id": run_id,
             "task_id": task_id,
             "agent_id": str(self.agent_type),
+            "stage": str(getattr(self, "usage_stage", "") or phase),
             "phase": phase,
+            "provider": self.llm_provider.__class__.__name__,
             "model": self.llm_provider.model or "unknown",
             "status": status,
             "error": error,
@@ -2456,7 +2689,43 @@ class AgentLoop:
             "retry": retry,
             "guard": guard or phase.startswith("guard"),
             "message_count": len(messages),
+            "message_chars": message_chars,
+            "tool_schema_chars": tool_schema_chars,
+            "request_chars": int(
+                request_metrics.get(
+                    "request_chars",
+                    len(serialized_messages) + len(serialized_tools),
+                )
+                or 0
+            ),
+            "request_fingerprint": request_fingerprint,
+            "message_fingerprint": message_fingerprint,
+            "tool_schema_fingerprint": tool_schema_fingerprint,
+            "request_metric_source": (
+                "provider_adapter_payload"
+                if provider_request_observed
+                else "agent_pre_adapter"
+            ),
+            "provider_request_representation": request_metrics.get(
+                "representation"
+            ),
+            "pre_adapter_request_fingerprint": pre_adapter_request_fingerprint,
+            "pre_adapter_message_fingerprint": pre_adapter_message_fingerprint,
+            "pre_adapter_tool_schema_fingerprint": (
+                pre_adapter_tool_schema_fingerprint
+            ),
+            "pre_adapter_message_chars": len(serialized_messages),
+            "pre_adapter_tool_schema_chars": len(serialized_tools),
+            "provider_call_id": provider_call_id,
+            "context_manifest_ref": context_manifest_ref,
+            "response_tool_call_count": len(
+                getattr(response, "tool_calls", None) or []
+            ),
+            "duration_ms": duration_ms,
             "input_tokens": input_tokens,
+            "cached_input_tokens": cached_input_tokens,
+            "cache_write_input_tokens": cache_write_input_tokens,
+            "uncached_input_tokens": uncached_input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
             "usage_source": usage_source,
@@ -2507,15 +2776,6 @@ class AgentLoop:
         opaque_ref = self.artifact_gateway.persist_internal(
             "tool-result", f"{safe_agent}:{safe_call}", rendered
         )
-        legacy_target = (
-            self.workspace
-            / ".manyselves"
-            / "tool-results"
-            / safe_agent
-            / f"{safe_call}.json"
-        )
-        legacy_target.parent.mkdir(parents=True, exist_ok=True)
-        legacy_target.write_text(rendered, encoding="utf-8")
         preview_chars = max(0, max_chars - 1024)
         while True:
             preview = rendered[:preview_chars]

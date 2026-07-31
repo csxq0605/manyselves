@@ -55,6 +55,7 @@ ReportOperation = Literal[
     "aggregate_existing",
     "render_existing",
 ]
+CostControlMode = Literal["observe", "warn", "pause_at_boundary"]
 
 
 class ReportingModel(BaseModel):
@@ -277,6 +278,7 @@ class ReportRequest(ReportingModel):
         description="Scoped, stage-bound, superseding current-run user inputs.",
     )
     missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "draft"
+    cost_control_mode: CostControlMode = "observe"
     max_provider_attempts: int = Field(default=80, ge=1, le=1000)
     max_total_tokens: int = Field(default=800_000, ge=1_000)
 
@@ -391,6 +393,7 @@ class RevisionRequest(ReportingModel):
     )
     promote_to_skill: bool = False
     promote_skill_id: str | None = None
+    cost_control_mode: CostControlMode = "observe"
     max_provider_attempts: int = Field(default=40, ge=1, le=1000)
     max_total_tokens: int = Field(default=400_000, ge=1_000)
 

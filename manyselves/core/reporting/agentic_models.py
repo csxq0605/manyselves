@@ -355,8 +355,11 @@ class ModuleRevisionSubmission(StrictModel):
         description="Complete unresolved-question set for the resulting module.",
     )
     revision_responses: list[RevisionResponse] = Field(
-        min_length=1,
-        description="Exactly one author response for every assigned finding id.",
+        default_factory=list,
+        description=(
+            "Exactly one author response for every assigned finding id. Empty only "
+            "when a failed deterministic preflight is the sole revision trigger."
+        ),
     )
 
     @model_validator(mode="after")
@@ -384,10 +387,16 @@ class ModuleRevisionSubmission(StrictModel):
             if response.action == "implemented"
             for target_id in response.changed_target_ids
         }
-        if implemented_targets != set(self.submodule_narratives):
+        if self.revision_responses and implemented_targets != set(
+            self.submodule_narratives
+        ):
             raise ValueError(
                 "module revision narratives must equal the targets declared by "
                 "implemented revision responses"
+            )
+        if not self.revision_responses and not self.submodule_narratives:
+            raise ValueError(
+                "machine-only module revision must replace at least one target narrative"
             )
         return self
 
@@ -1321,7 +1330,7 @@ class ModuleRevisionSubmissionInput(StrictModel):
     base_revision: int = Field(ge=0)
     revision: int = Field(ge=1)
     unresolved_questions: list[str] = Field(default_factory=list)
-    revision_responses: list[RevisionResponse] = Field(min_length=1)
+    revision_responses: list[RevisionResponse] = Field(default_factory=list)
 
 
 class ChiefRevisionSubmission(StrictModel):

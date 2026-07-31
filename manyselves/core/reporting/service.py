@@ -4,7 +4,7 @@ import asyncio
 import fcntl
 import hashlib
 import io
-import shutil
+import os
 import tempfile
 import time
 import uuid
@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ...config.schema import AgentDefaults
 from ...interfaces.types import AgentType, SystemNotice
 from ..loops.bus import MessageBus
+from ..artifacts.content_store import ContentAddressedStore
 from ..providers.base import LLMProvider
 from ..tools.task_board import TaskBoard
 from ..usage_ledger import UsageLedger
@@ -29,6 +30,7 @@ from .intake.manifest import build_manifest
 from .intake.wps_images import canonicalize_photo_bindings, extract_wps_images
 from .mappers import map_s2_1, map_s4_4, map_s4_6
 from .models import (
+    CostControlMode,
     EvidenceDecisionAction,
     EvidenceDecisionRequest,
     EvidenceItem,
@@ -88,11 +90,50 @@ class ReportingService:
         self.llm_provider = llm_provider
         self.agent_defaults = agent_defaults or AgentDefaults()
         self.store = ReportingStore(self.workspace)
+        self.content_store = ContentAddressedStore(self.workspace)
         self.decisions = EvidenceDecisionStore(self.workspace)
         self.agents = load_packaged_agents()
         self._active_agent_runners: dict[str, ReportingAgentRunner] = {}
         template_root = Path(__file__).resolve().parents[2] / "templates" / "reporting"
         self.packaged_report_template_path = template_root / "report_template.docx"
+
+    def snapshot_content(
+        self,
+        source: Path,
+        target: Path,
+        *,
+        replace_existing_with_view: bool = False,
+    ) -> tuple[Path, str, Path]:
+        """Ingest bytes once and expose an immutable project-local compatibility view."""
+
+        source = Path(source)
+        target = Path(target)
+        blob = self.content_store.ingest_file(source)
+        if target.exists() or target.is_symlink():
+            if not target.is_file():
+                raise ValueError(f"content snapshot target is not a file: {target}")
+            target_sha256 = hashlib.sha256(target.read_bytes()).hexdigest()
+            if target_sha256 != blob.sha256:
+                raise ValueError(
+                    "immutable content snapshot already exists with different bytes: "
+                    f"{target}"
+                )
+            if replace_existing_with_view and target.resolve() != blob.path:
+                staged = target.with_name(
+                    f".{target.name}.{uuid.uuid4().hex}.cas-view"
+                )
+                try:
+                    self.content_store.link_view(
+                        blob,
+                        staged,
+                        final_path=target,
+                    )
+                    os.replace(staged, target)
+                finally:
+                    staged.unlink(missing_ok=True)
+        else:
+            self.content_store.link_view(blob, target)
+        return target, blob.sha256, blob.relative_path
 
     def _agent_runner_for(self, workflow_id: str) -> ReportingAgentRunner:
         """Return the one identity registry retained by a live workflow."""
@@ -371,9 +412,10 @@ class ReportingService:
         template_snapshot = (
             self.workspace / f"Work/runs/{run_id}/templates/report_template.docx"
         )
-        template_snapshot.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(selected_template, template_snapshot)
-        template_sha256 = hashlib.sha256(template_snapshot.read_bytes()).hexdigest()
+        template_snapshot, template_sha256, template_blob_ref = self.snapshot_content(
+            selected_template,
+            template_snapshot,
+        )
 
         filename = output_filename or f"{source.stem}.docx"
         output_ref = Path("Outputs/Reports") / filename
@@ -448,6 +490,7 @@ class ReportingService:
                     else "manyselves/templates/reporting/report_template.docx"
                 ),
                 "snapshot_path": template_snapshot.relative_to(self.workspace).as_posix(),
+                "blob_ref": template_blob_ref.as_posix(),
                 "sha256": template_sha256,
             },
         )
@@ -555,6 +598,7 @@ class ReportingService:
         self,
         run_id: str,
         *,
+        cost_control_mode: CostControlMode | None = None,
         max_provider_attempts: int | None = None,
         max_total_tokens: int | None = None,
         supplements: list[UserSupplement] | None = None,
@@ -576,6 +620,8 @@ class ReportingService:
                     ),
                 ]
             }
+            if cost_control_mode is not None:
+                updates["cost_control_mode"] = cost_control_mode
             if max_provider_attempts is not None:
                 updates["max_provider_attempts"] = max_provider_attempts
             if max_total_tokens is not None:
@@ -606,6 +652,8 @@ class ReportingService:
 
         revision = RevisionRequest.model_validate_json(revision_path.read_text(encoding="utf-8"))
         updates = {}
+        if cost_control_mode is not None:
+            updates["cost_control_mode"] = cost_control_mode
         if max_provider_attempts is not None:
             updates["max_provider_attempts"] = max_provider_attempts
         if max_total_tokens is not None:
@@ -770,6 +818,18 @@ class ReportingService:
                             / manifest_file.id
                         ),
                     )
+                    extracted = {
+                        asset_key: asset.model_copy(
+                            update={
+                                "path": self.snapshot_content(
+                                    asset.path,
+                                    asset.path,
+                                    replace_existing_with_view=True,
+                                )[0]
+                            }
+                        )
+                        for asset_key, asset in extracted.items()
+                    }
                 mapped = mapper(input_path, file_id=manifest_file.id)
                 mapped_evidence = [
                     item.model_copy(

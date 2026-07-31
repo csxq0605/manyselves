@@ -7,11 +7,44 @@ import httpx
 from anthropic import AsyncAnthropic
 from loguru import logger
 
-from .base import LLMProvider, LLMResponse, Message, LLMToolCall
+from .base import (
+    LLMProvider,
+    LLMResponse,
+    LLMToolCall,
+    Message,
+    build_provider_request_metrics,
+)
 
 
 ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS = 600.0
 ANTHROPIC_CONNECT_TIMEOUT_SECONDS = 30.0
+
+
+def _value(source: Any, name: str, default: Any = None) -> Any:
+    if isinstance(source, dict):
+        return source.get(name, default)
+    return getattr(source, name, default)
+
+
+def _normalized_anthropic_usage(raw_usage: Any) -> dict[str, int] | None:
+    """Normalize Anthropic's disjoint input buckets to one inclusive total."""
+
+    if raw_usage is None:
+        return None
+    uncached = int(_value(raw_usage, "input_tokens", 0) or 0)
+    cache_write = int(
+        _value(raw_usage, "cache_creation_input_tokens", 0) or 0
+    )
+    cached = int(_value(raw_usage, "cache_read_input_tokens", 0) or 0)
+    output = int(_value(raw_usage, "output_tokens", 0) or 0)
+    input_total = uncached + cache_write + cached
+    return {
+        "input_tokens": input_total,
+        "cached_input_tokens": cached,
+        "cache_write_input_tokens": cache_write,
+        "output_tokens": output,
+        "total_tokens": input_total + output,
+    }
 
 
 class AnthropicProvider(LLMProvider):
@@ -331,6 +364,10 @@ class AnthropicProvider(LLMProvider):
 
         if tools:
             params["tools"] = self._convert_tools(tools)
+        request_metrics = build_provider_request_metrics(
+            params,
+            representation="anthropic_messages_payload_v1",
+        )
 
         logger.debug("Sending Anthropic request: model={}, messages={}", self.model, len(messages))
 
@@ -363,13 +400,10 @@ class AnthropicProvider(LLMProvider):
         return LLMResponse(
             content=content,
             tool_calls=tool_calls,
-            usage={
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens,
-                "total_tokens": response.usage.input_tokens + response.usage.output_tokens,
-            },
+            usage=_normalized_anthropic_usage(response.usage),
             thinking=thinking,
             stop_reason=getattr(response, "stop_reason", None),
+            request_metrics=request_metrics,
         )
 
     # ------------------------------------------------------------------
@@ -404,6 +438,10 @@ class AnthropicProvider(LLMProvider):
 
         if tools:
             params["tools"] = self._convert_tools(tools)
+        request_metrics = build_provider_request_metrics(
+            params,
+            representation="anthropic_messages_stream_payload_v1",
+        )
 
         idle_timeout = (
             ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS
@@ -497,15 +535,7 @@ class AnthropicProvider(LLMProvider):
                     final_thinking = block.thinking
 
             usage = getattr(final_message, "usage", None)
-            usage_payload = (
-                {
-                    "input_tokens": usage.input_tokens,
-                    "output_tokens": usage.output_tokens,
-                    "total_tokens": usage.input_tokens + usage.output_tokens,
-                }
-                if usage is not None
-                else None
-            )
+            usage_payload = _normalized_anthropic_usage(usage)
             logger.debug(
                 "Anthropic stream completed: stop_reason={}, input_tokens={}, "
                 "output_tokens={}, text_chars={}, thinking_chars={}, tool_calls={}",
@@ -523,6 +553,7 @@ class AnthropicProvider(LLMProvider):
                 thinking=final_thinking,
                 usage=usage_payload,
                 stop_reason=getattr(final_message, "stop_reason", None),
+                request_metrics=request_metrics,
             )
 
         except asyncio.TimeoutError as exc:
