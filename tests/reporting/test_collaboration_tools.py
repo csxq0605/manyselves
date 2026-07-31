@@ -7,6 +7,7 @@ import pytest
 
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting.agentic_models import (
+    SUBMISSION_INPUT_TYPES,
     ClaimRecord,
     EditedReportSubmission,
     ModuleSubmission,
@@ -246,6 +247,12 @@ async def test_submit_result_preserves_raw_candidate_before_validation(
     bad = {"kind": "cross_review_submission", "approved": True}
     outcome = await tool(payload=bad)
     assert outcome["status"] == "correction_required"
+    assert outcome["accepted"] is False
+    assert outcome["submission_kind"] == "module_submission"
+    assert outcome["next_action"] == (
+        "resubmit_result_once_after_applying_validation_errors"
+    )
+    assert "Never repeat" in outcome["instruction"]
     issue = outcome["validation_errors"][0]
     assert issue["field"] == "kind"
     assert issue["received_type"] == "string"
@@ -260,6 +267,32 @@ async def test_submit_result_preserves_raw_candidate_before_validation(
         )
     )
     assert persisted["raw_payload"] == bad
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", sorted(SUBMISSION_INPUT_TYPES))
+async def test_every_submission_identity_gets_common_structured_correction(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    tool = _tool(
+        tmp_path,
+        task_id=f"correction-{kind}",
+        allowed_outputs=[kind],
+    )
+
+    outcome = await tool(payload={"kind": kind})
+
+    assert outcome["status"] == "correction_required"
+    assert outcome["accepted"] is False
+    assert outcome["submission_kind"] == kind
+    assert outcome["next_action"] == (
+        "resubmit_result_once_after_applying_validation_errors"
+    )
+    assert isinstance(outcome["validation_errors"], list)
+    assert outcome["validation_errors"]
+    assert "rewrite_part_ids" in outcome
+    assert "Never repeat" in outcome["instruction"]
 
 
 @pytest.mark.asyncio
@@ -322,6 +355,10 @@ async def test_review_submit_runtime_assigns_coverage_and_finding_id(
     )
 
     assert outcome["status"] == "completed"
+    assert outcome["accepted"] is True
+    assert outcome["submission_kind"] == "module_review_finding_submission"
+    assert outcome["next_action"] == "finish_task"
+    assert "Do not submit or rewrite" in outcome["instruction"]
     result = json.loads(
         (tmp_path / "Work/runs/run-1/results/module-2.1-review-r0.json").read_text(encoding="utf-8")
     )
@@ -546,6 +583,126 @@ async def test_module_revision_persists_explicit_patch_without_merging_baseline(
 
 
 @pytest.mark.asyncio
+async def test_module_revision_materializes_only_targets_declared_implemented(
+    tmp_path: Path,
+) -> None:
+    task_id = "module-2.1-revision-r1"
+    contract_ref = _write_revision_contract(
+        tmp_path,
+        subject=_module_subject_payload(),
+        target_submodule_ids=["2.1.1", "2.1.2"],
+    )
+    contract_path = tmp_path / contract_ref
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    contract["module_findings"].append(
+        {
+            "id": "M-002",
+            "target_submodule_id": "2.1.2",
+            "category": "analysis_depth",
+            "impact": "advisory",
+            "observation": "当前目标小节还缺少需要外部确认后才能补写的分析前提与边界说明。",
+            "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
+            "required_change": "在获得缺失输入后补写分析前提，并明确结论适用范围和验证方式。",
+            "reviewer_checks": ["缺失输入已取得，且结论边界和验证方式均已写明"],
+        }
+    )
+    ReportingStore(tmp_path).write_json(contract_ref, contract)
+    await _write_bound_module_parts(
+        tmp_path,
+        task_id=task_id,
+        revision=1,
+        part_ids=["2.1.1"],
+    )
+    tool = _tool(
+        tmp_path,
+        task_id=task_id,
+        allowed_outputs=["module_revision_submission"],
+        revision=1,
+        input_contract_kind="module_revision_input",
+        input_contract_ref=contract_ref,
+    )
+
+    outcome = await tool(
+        payload={
+            "kind": "module_revision_submission",
+            "module_id": "2.1",
+            "base_revision": 0,
+            "revision": 1,
+            "unresolved_questions": ["2.1.2 仍需外部输入。"],
+            "revision_responses": [
+                {
+                    "finding_id": "M-001",
+                    "action": "implemented",
+                    "summary": "已在目标小节实施定向修改，并保持其他小节继续继承基线内容。",
+                    "changed_target_ids": ["2.1.1"],
+                },
+                {
+                    "finding_id": "M-002",
+                    "action": "needs_input",
+                    "summary": "仍缺少形成该小节结论所需的外部事实，当前不能编造补充内容。",
+                    "changed_target_ids": [],
+                },
+            ],
+        }
+    )
+
+    assert outcome["status"] == "completed", outcome
+    result = json.loads((tmp_path / outcome["result_path"]).read_text(encoding="utf-8"))
+    patch = result["payload"]
+    assert set(patch["submodule_narratives"]) == {"2.1.1"}
+    assert {claim["submodule_id"] for claim in patch["claims_upsert"]} == {"2.1.1"}
+    assert {response["action"] for response in patch["revision_responses"]} == {
+        "implemented",
+        "needs_input",
+    }
+
+
+@pytest.mark.asyncio
+async def test_module_revision_correction_example_uses_each_finding_target(
+    tmp_path: Path,
+) -> None:
+    contract_ref = _write_revision_contract(
+        tmp_path,
+        subject=_module_subject_payload(),
+        target_submodule_ids=["2.1.1", "2.1.2"],
+    )
+    contract_path = tmp_path / contract_ref
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    contract["module_findings"].append(
+        {
+            "id": "M-002",
+            "target_submodule_id": "2.1.2",
+            "category": "analysis_depth",
+            "impact": "advisory",
+            "observation": "当前目标小节缺少对关键约束、作用机制和验证路径的完整分析说明。",
+            "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
+            "required_change": "补写关键约束、作用机制及可复核的验证路径，且不得改写其他小节。",
+            "reviewer_checks": ["关键约束、作用机制和验证路径均已在目标小节写明"],
+        }
+    )
+    ReportingStore(tmp_path).write_json(contract_ref, contract)
+    tool = _tool(
+        tmp_path,
+        task_id="module-2.1-revision-r1",
+        allowed_outputs=["module_revision_submission"],
+        revision=1,
+        input_contract_kind="module_revision_input",
+        input_contract_ref=contract_ref,
+    )
+
+    outcome = await tool(payload='{"kind":"module_revision_submission"}')
+
+    responses = outcome["validation_errors"][0]["example"]["revision_responses"]
+    assert {
+        response["finding_id"]: response["changed_target_ids"]
+        for response in responses
+    } == {
+        "M-001": ["2.1.1"],
+        "M-002": ["2.1.2"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_module_commit_materializes_bound_parts_without_model_refs(
     tmp_path: Path,
 ) -> None:
@@ -557,6 +714,291 @@ async def test_module_commit_materializes_bound_parts_without_model_refs(
     assert "由项目证据支持的完整正文。" in result["payload"]["submodule_narratives"]["2.1.1"]
     assert "[[CLAIM:C-2.1-2-1-1]]" in result["payload"]["submodule_narratives"]["2.1.1"]
     assert result["payload"]["claims"][0]["source_ids"] == ["E-0001"]
+
+
+@pytest.mark.asyncio
+async def test_result_part_rejects_compaction_marker_without_overwriting_prose(
+    tmp_path: Path,
+) -> None:
+    store = ReportingStore(tmp_path)
+    writer = WriteResultPartTool("run-1", "task", 0, store, ["2.1.1"])
+    saved = await writer(part_id="2.1.1", content="已经持久化的完整正文。")
+
+    assert saved["persisted"] is True
+    assert saved["next_action"] == "list_result_parts"
+    assert "Do not rewrite" in saved["rewrite_policy"]
+
+    rejected = await writer(
+        part_id="2.1.1",
+        content=(
+            "<persisted_result_part "
+            "sha256=389878319f157175ac47ee882a14cf729420d8766012b5c0d5e82ce4d5ae4fe4 "
+            "characters=1445>"
+        ),
+    )
+    assert rejected["status"] == "correction_required"
+    assert rejected["accepted"] is False
+    assert rejected["persisted"] is False
+    assert rejected["rewrite_part_ids"] == ["2.1.1"]
+    assert "internal persisted_result_part marker" in (
+        rejected["validation_errors"][0]["problem"]
+    )
+
+    saved_content = (
+        tmp_path / "Work/runs/run-1/drafts/task/r0/2.1.1.md"
+    ).read_text(encoding="utf-8")
+    assert saved_content == "已经持久化的完整正文。"
+
+    listing = await ListResultPartsTool(
+        "run-1",
+        "task",
+        0,
+        store,
+        ["2.1.1"],
+    )()
+    assert listing["complete"] is True
+    assert listing["ready_part_ids"] == ["2.1.1"]
+    assert listing["do_not_rewrite_part_ids"] == ["2.1.1"]
+    assert listing["next_action"] == "submit_result"
+    assert "do not rewrite ready parts" in listing["instruction"]
+
+
+@pytest.mark.asyncio
+async def test_template_skill_description_correction_targets_skill_with_exact_values(
+    tmp_path: Path,
+) -> None:
+    submitted_description = (
+        "从模板中提炼可迁移的报告写作与推理方法，仅约束表达组织，"
+        "不迁移当前客户事实、专业阈值或项目结论。"
+    )
+    frontmatter_description = (
+        "从模板中提炼报告写作方法，仅约束表达，不迁移任何客户事实。"
+    )
+    body = (
+        "# 报告模板写作\n\n"
+        "按证据边界组织分析，并分别读取 "
+        "[分析语言](references/analysis-language.md)、"
+        "[综合方法](references/synthesis.md)、"
+        "[视觉组织](references/visual-organization.md) 和"
+        "[质量量表](references/quality-rubric.md)。\n\n"
+        + "所有方法仅约束表达与推理，不提供当前项目事实。" * 12
+    )
+    payload = {
+        "kind": "template_skill_submission",
+        "name": "report-template-writing",
+        "description": submitted_description,
+        "skill_markdown": (
+            "---\n"
+            "name: report-template-writing\n"
+            f"description: {frontmatter_description}\n"
+            "---\n"
+            f"{body}"
+        ),
+        "analysis_language_reference": "分析语言区分事实、解释、风险和建议。" * 12,
+        "synthesis_reference": "综合方法合并发现并形成可执行行动闭环。" * 12,
+        "visual_organization_reference": "图表必须绑定具体论断并由正文解释。" * 12,
+        "quality_rubric": "质量检查覆盖完整性、边界、深度和可追溯性。" * 12,
+        "boundary_manifest": {
+            "policy_version": 1,
+            "transferred_categories": [
+                "analysis_method",
+                "synthesis_method",
+                "visual_method",
+                "quality_check",
+            ],
+            "excluded_categories": [
+                "domain_knowledge",
+                "domain_standard_or_threshold",
+                "project_fact_or_number",
+                "customer_identity",
+                "project_finding_or_risk",
+                "project_conclusion_or_recommendation",
+                "evidence_or_claim_identifier",
+            ],
+            "boundary_statement": (
+                "本 Skill 只迁移跨项目复用的写作、综合、图证组织和质量检查方法；"
+                "专业机理、标准阈值、客户事实、项目判断和证据标识必须由运行时输入提供；"
+                "任何模板项目中的名称、数值、结论和建议均不得进入可复用方法文件。"
+            ),
+        },
+    }
+
+    outcome = await _tool(
+        tmp_path,
+        task_id="template-skill-distillation",
+        allowed_outputs=["template_skill_submission"],
+    )(payload=payload)
+
+    assert outcome["status"] == "correction_required"
+    assert outcome["affected_part_ids"] == ["skill"]
+    assert outcome["rewrite_part_ids"] == ["skill"]
+    problem = outcome["validation_errors"][0]["problem"]
+    assert repr(frontmatter_description) in problem
+    assert repr(submitted_description) in problem
+
+
+@pytest.mark.asyncio
+async def test_module_result_part_rejects_nested_numbered_heading_before_write(
+    tmp_path: Path,
+) -> None:
+    writer = WriteResultPartTool(
+        "run-1",
+        "module-2.1",
+        0,
+        ReportingStore(tmp_path),
+        list(REPORT_TAXONOMY["2.1"].submodules),
+        evidence_binding_required=True,
+    )
+
+    outcome = await writer(
+        part_id="2.1.1",
+        content=(
+            "## 2.1.1 配电系统负荷分配与过载风险\n\n"
+            "### 2.1.1.1 现状描述\n\n完整正文。"
+        ),
+        evidence_ids=[],
+    )
+
+    assert outcome["status"] == "correction_required"
+    assert outcome["persisted"] is False
+    assert outcome["rewrite_part_ids"] == ["2.1.1"]
+    assert "outside the fixed taxonomy" in outcome["validation_errors"][0]["problem"]
+
+    assert not (
+        tmp_path / "Work/runs/run-1/drafts/module-2.1/r0/2.1.1.md"
+    ).exists()
+
+
+@pytest.mark.asyncio
+async def test_list_result_parts_marks_nested_numbered_heading_for_rewrite(
+    tmp_path: Path,
+) -> None:
+    store = ReportingStore(tmp_path)
+    root = "Work/runs/run-1/drafts/module-2.1/r0"
+    store.write_text(
+        f"{root}/2.1.1.md",
+        "## 2.1.1 固定小节\n\n### 2.1.1.1 现状描述\n\n完整正文。",
+    )
+    store.write_json(
+        f"{root}/_evidence/2.1.1.json",
+        {"evidence_ids": []},
+    )
+    listing = await ListResultPartsTool(
+        "run-1",
+        "module-2.1",
+        0,
+        store,
+        ["2.1.1"],
+        evidence_binding_required=True,
+    )()
+
+    assert listing["parts"][0]["ready"] is False
+    assert listing["parts"][0]["structural_errors"] == [
+        "### 2.1.1.1 现状描述"
+    ]
+    assert listing["rewrite_part_ids"] == ["2.1.1"]
+    assert listing["complete"] is False
+
+
+@pytest.mark.asyncio
+async def test_module_commit_rejects_preexisting_compaction_marker(
+    tmp_path: Path,
+) -> None:
+    task_id = "module-2.1"
+    await _write_bound_module_parts(tmp_path, task_id=task_id)
+    ReportingStore(tmp_path).write_text(
+        f"Work/runs/run-1/drafts/{task_id}/r0/2.1.1.md",
+        "<persisted_result_part sha256=" + "0" * 64 + " characters=1445>",
+    )
+
+    outcome = await _tool(tmp_path, task_id=task_id)(payload=_module_payload())
+
+    assert outcome["status"] == "correction_required"
+    issue = outcome["validation_errors"][0]
+    assert issue["field"] == "result_parts.2.1.1.content"
+    assert "provider-history compaction marker" in issue["problem"]
+    assert "complete intended prose" in issue["repair_instruction"]
+
+
+@pytest.mark.asyncio
+async def test_module_commit_targets_nested_heading_correction_to_exact_part(
+    tmp_path: Path,
+) -> None:
+    task_id = "module-2.1"
+    await _write_bound_module_parts(tmp_path, task_id=task_id)
+    ReportingStore(tmp_path).write_text(
+        f"Work/runs/run-1/drafts/{task_id}/r0/2.1.1.md",
+        "## 2.1.1 固定小节\n\n### 2.1.1.1 现状描述\n\n完整正文。",
+    )
+
+    outcome = await _tool(tmp_path, task_id=task_id)(payload=_module_payload())
+
+    assert outcome["status"] == "correction_required"
+    issue = outcome["validation_errors"][0]
+    assert issue["field"] == "submodule_narratives.2.1.1"
+    correction = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-1/submissions/module-2.1/correction-state.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert correction["affected_part_ids"] == ["2.1.1"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_claim_boundary_uses_project_evidence_metadata(
+    tmp_path: Path,
+) -> None:
+    evidence = {
+        "id": "E-0001",
+        "subject": "谐波评估",
+        "fact": "既有结论需要补充连续监测数据确认。",
+        "source": {
+            "file_id": "F-0001",
+            "path": "Inputs/test.xlsx",
+            "sheet": "评估表",
+            "cell": "A1",
+        },
+        "confidence": 0.65,
+        "needs_confirmation": True,
+        "module_id": "2.1",
+        "submodule_id": "2.1.1",
+        "photo_refs": [],
+    }
+    SourceLedger(tmp_path, "run-1").register_project(
+        "E-0001",
+        "谐波评估",
+        "Inputs/test.xlsx#评估表!A1",
+        json.dumps(evidence, ensure_ascii=False),
+    )
+    task_id = "module-2.1"
+    part_ids = list(REPORT_TAXONOMY["2.1"].submodules)
+    writer = WriteResultPartTool(
+        "run-1",
+        task_id,
+        0,
+        ReportingStore(tmp_path),
+        part_ids,
+        evidence_binding_required=True,
+    )
+    for part_id in part_ids:
+        await writer(
+            part_id=part_id,
+            content=f"### {part_id}\n\n由项目证据支持的完整正文。",
+            evidence_ids=["E-0001"] if part_id == "2.1.1" else [],
+        )
+
+    outcome = await _tool(tmp_path, task_id=task_id)(payload=_module_payload())
+
+    assert outcome["status"] == "completed", outcome
+    result = json.loads((tmp_path / outcome["result_path"]).read_text(encoding="utf-8"))
+    claims = {claim["submodule_id"]: claim for claim in result["payload"]["claims"]}
+    assert claims["2.1.1"]["confidence"] == 0.65
+    assert claims["2.1.1"]["unresolved"] is True
+    assert claims["2.1.1"]["footnote_required"] is True
+    assert claims["2.1.2"]["confidence"] == 0.0
+    assert claims["2.1.2"]["unresolved"] is True
+    assert claims["2.1.2"]["footnote_required"] is False
 
 
 @pytest.mark.asyncio

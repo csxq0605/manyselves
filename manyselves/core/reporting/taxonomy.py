@@ -15,24 +15,44 @@ class SubmoduleDefinition:
 class ModuleDefinition:
     id: str
     title: str
+    sections: dict[str, SubmoduleDefinition]
     submodules: dict[str, SubmoduleDefinition]
+
+    @property
+    def groups(self) -> dict[str, SubmoduleDefinition]:
+        """Return structural headings that own child sections but no prose part."""
+
+        return {
+            section_id: section
+            for section_id, section in self.sections.items()
+            if section_id not in self.submodules
+        }
 
 
 def _module(
     module_id: str,
     title: str,
-    submodules: tuple[tuple[str, str], ...],
+    sections: tuple[tuple[str, str], ...],
 ) -> ModuleDefinition:
+    definitions = {
+        section_id: SubmoduleDefinition(
+            id=section_id,
+            title=section_title,
+            module_id=module_id,
+        )
+        for section_id, section_title in sections
+    }
     return ModuleDefinition(
         id=module_id,
         title=title,
+        sections=definitions,
         submodules={
-            submodule_id: SubmoduleDefinition(
-                id=submodule_id,
-                title=submodule_title,
-                module_id=module_id,
+            section_id: definition
+            for section_id, definition in definitions.items()
+            if not any(
+                other_id.startswith(f"{section_id}.")
+                for other_id in definitions
             )
-            for submodule_id, submodule_title in submodules
         },
     )
 
@@ -40,12 +60,12 @@ def _module(
 REPORT_TAXONOMY: dict[str, ModuleDefinition] = {
     "2.1": _module(
         "2.1",
-        "电力系统架构问题",
+        "配电系统架构问题",
         (
-            ("2.1.1", "电力系统负荷分配与过载风险"),
+            ("2.1.1", "配电系统负荷分配与过载风险"),
             ("2.1.2", "关键负荷供电路径与应急/备用供电的问题"),
-            ("2.1.3", "配网自动化、备用电源自动切换"),
-            ("2.1.4", "防止2路电源并联环流返送"),
+            ("2.1.3", "配网自动化、备用电源自动切换（可能性及功能验证）"),
+            ("2.1.4", "防止2路电源并联产生环流"),
             ("2.1.5", "系统无功补偿与电容柜问题"),
         ),
     ),
@@ -53,9 +73,11 @@ REPORT_TAXONOMY: dict[str, ModuleDefinition] = {
         "2.2",
         "环境工况风险",
         (
+            ("2.2.1", "来自电能质量的风险"),
             ("2.2.1.1", "谐波风险情况"),
             ("2.2.1.2", "电压扰动情况"),
             ("2.2.1.3", "频繁启动与冲击负荷"),
+            ("2.2.2", "其他运行工况风险"),
             ("2.2.2.1", "低压配电设备发热情况"),
             ("2.2.2.2", "高压配电设备局放情况"),
             ("2.2.2.3", "其他物理环境风险"),
@@ -67,23 +89,26 @@ REPORT_TAXONOMY: dict[str, ModuleDefinition] = {
         (
             ("2.3.1", "配电系统保护方案与定值的论证计算"),
             ("2.3.2", "零序/漏电的防范"),
-            ("2.3.3", "电压事件（过压、欠压）的防范"),
+            ("2.3.3", "电压事件（过压）的防范"),
         ),
     ),
     "2.4": _module(
         "2.4",
-        "配电设备/元件风险",
+        "配电设备/元件内在风险",
         (
-            ("2.4.1.1", "额定/极限容量"),
+            ("2.4.1", "配置与选型问题"),
+            ("2.4.1.1", "额定/分断能力"),
             ("2.4.1.2", "配电柜分隔形式"),
             ("2.4.1.3", "配电设备安全连锁/闭锁"),
-            ("2.4.1.4", "设备分合/工作位置显示"),
+            ("2.4.1.4", "设备分合/储能/工作位置显示"),
+            ("2.4.2", "安装规范性问题"),
             ("2.4.2.1", "裸露导体防护"),
             ("2.4.2.2", "等电位连接与接地问题"),
             ("2.4.2.3", "电气连接问题"),
             ("2.4.2.4", "标牌标识"),
             ("2.4.2.5", "电缆、桥架、母线安装问题"),
             ("2.4.2.6", "设备外壳IP等级与封堵问题"),
+            ("2.4.3", "带病运行问题汇总"),
             ("2.4.3.1", "低压回路剩余电流过大"),
             ("2.4.3.2", "部分高压柜照明功能缺失"),
             ("2.4.3.3", "部分高压柜柜内除湿装置未开启"),
@@ -92,17 +117,18 @@ REPORT_TAXONOMY: dict[str, ModuleDefinition] = {
     ),
     "2.5": _module(
         "2.5",
-        "运维管理与风险管控",
+        "运维管理与风险管控机制",
         (
             ("2.5.1", "SOP/EOP"),
             ("2.5.2", "图纸资料"),
+            ("2.5.3", "运维（巡检、维护）的实施与组织"),
             ("2.5.3.1", "运维组织架构与人员配备"),
             ("2.5.3.2", "关键配电设备维护工作全面性检查"),
             ("2.5.3.3", "配电设备维保覆盖"),
             ("2.5.4", "运维的智能化手段"),
             ("2.5.5", "配电室装备与LOTO流程的实施"),
-            ("2.5.6", "退市设备与生命周期管理"),
-            ("2.5.7", "备件管理"),
+            ("2.5.6", "备件管理"),
+            ("2.5.7", "退市设备与生命周期管理"),
         ),
     ),
 }
@@ -132,7 +158,13 @@ def compose_module_markdown(
         )
 
     blocks = [f"## {module_id} {definition.title}"]
-    for submodule_id, submodule in definition.submodules.items():
+    for section_id, section in definition.sections.items():
+        heading_level = section_id.count(".") + 1
+        if section_id not in definition.submodules:
+            blocks.append(f"{'#' * heading_level} {section_id} {section.title}")
+            continue
+        submodule_id = section_id
+        submodule = section
         narrative = submodule_narratives[submodule_id].strip()
         if not narrative:
             raise ValueError(f"cannot compose empty submodule narrative: {submodule_id}")
@@ -147,11 +179,15 @@ def compose_module_markdown(
             del lines[first_content]
             while first_content < len(lines) and not lines[first_content].strip():
                 del lines[first_content]
+        body_heading = "#" * min(heading_level + 1, 6)
         normalized_body = "\n".join(
-            re.sub(r"^#{1,6}\s+", "#### ", line) if re.match(r"^#{1,6}\s+", line) else line
+            re.sub(r"^#{1,6}\s+", f"{body_heading} ", line)
+            if re.match(r"^#{1,6}\s+", line)
+            else line
             for line in lines
         ).strip()
         blocks.append(
-            f"### {submodule_id} {submodule.title}\n\n{normalized_body}"
+            f"{'#' * heading_level} {submodule_id} {submodule.title}\n\n"
+            f"{normalized_body}"
         )
     return "\n\n".join(blocks)

@@ -1,6 +1,7 @@
 """Tests for agent loop processing engine."""
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -1739,7 +1740,7 @@ async def test_apply_patch_error_payload_publishes_tool_error(
 
 
 @pytest.mark.asyncio
-async def test_missing_apply_patch_argument_reports_required_schema(
+async def test_missing_tool_argument_returns_structured_correction_without_error(
     workspace, config, mock_provider, mock_prompt_loader
 ):
     bus = MessageBus()
@@ -1790,8 +1791,18 @@ async def test_missing_apply_patch_argument_reports_required_schema(
     published = list(bus._queue._queue)
     tool_results = [msg for msg in published if isinstance(msg, ToolResultMsg)]
     assert len(tool_results) == 1
-    assert "requires arguments: path, patch" in (tool_results[0].error or "")
-    assert "missing required arguments: patch" in (tool_results[0].error or "")
+    assert tool_results[0].error is None
+    correction = tool_results[0].result
+    assert correction["status"] == "correction_required"
+    assert correction["accepted"] is False
+    assert correction["tool_name"] == "apply_patch"
+    assert correction["required_argument_names"] == ["path", "patch"]
+    assert correction["missing_argument_names"] == ["patch"]
+    assert correction["received_argument_names"] == ["path"]
+    assert correction["do_not_repeat_same_shape"] is True
+    assert correction["next_action"] == (
+        "call_apply_patch_once_with_complete_arguments"
+    )
 
 
 @pytest.mark.asyncio

@@ -43,6 +43,33 @@ SynthesisTableType = Literal[
 ]
 
 
+_NUMBERED_MARKDOWN_HEADING = re.compile(r"^#{1,6}\s+\d+(?:\.\d+)*\.?\s+")
+
+
+def extra_numbered_submodule_headings(
+    submodule_id: str,
+    narrative: str,
+) -> tuple[str, ...]:
+    """Return numbered Markdown headings outside one fixed taxonomy section."""
+
+    lines = narrative.splitlines()
+    first_content = next(
+        (index for index, line in enumerate(lines) if line.strip()),
+        None,
+    )
+    unexpected: list[str] = []
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if index == first_content and re.match(
+            rf"^#{{1,6}}\s+{re.escape(submodule_id)}(?:\.|\s|$)",
+            stripped,
+        ):
+            continue
+        if _NUMBERED_MARKDOWN_HEADING.match(stripped):
+            unexpected.append(stripped)
+    return tuple(unexpected)
+
+
 class TaskEnvelope(StrictModel):
     task_id: str = Field(min_length=1)
     run_id: str = Field(min_length=1)
@@ -262,21 +289,12 @@ class ModuleSubmission(StrictModel):
         if any(not narrative.strip() for narrative in self.submodule_narratives.values()):
             raise ValueError("submodule narratives cannot be empty")
         for submodule_id, narrative in self.submodule_narratives.items():
-            lines = narrative.splitlines()
-            first_content = next(
-                (index for index, line in enumerate(lines) if line.strip()),
-                None,
-            )
-            for index, line in enumerate(lines):
-                if index == first_content and re.match(
-                    rf"^#{{1,6}}\s+{re.escape(submodule_id)}(?:\.|\s|$)",
-                    line.strip(),
-                ):
-                    continue
-                if re.match(r"^#{1,6}\s+\d+(?:\.\d+)*\.?\s+", line.strip()):
-                    raise ValueError(
-                        f"submodule {submodule_id} body contains an extra numbered heading"
-                    )
+            unexpected = extra_numbered_submodule_headings(submodule_id, narrative)
+            if unexpected:
+                raise ValueError(
+                    f"submodule {submodule_id} body contains an extra numbered heading: "
+                    f"{unexpected[0]}"
+                )
         wrong_claims = [claim.id for claim in self.claims if claim.module_id != self.module_id]
         if wrong_claims:
             raise ValueError(f"claims do not belong to module {self.module_id}: {wrong_claims}")
@@ -541,7 +559,10 @@ class TemplateSkillSubmission(StrictModel):
             raise ValueError("template Skill frontmatter name must match submission name")
         if str(metadata["description"]).strip() != self.description.strip():
             raise ValueError(
-                "template Skill frontmatter description must match submission description"
+                "template Skill frontmatter description must match submission description "
+                "exactly; frontmatter_description="
+                f"{str(metadata['description']).strip()!r}; "
+                f"submission_description={self.description.strip()!r}"
             )
         if not any(line.lstrip().startswith("# ") for line in lines[closing + 1 :]):
             raise ValueError("template Skill body must contain a top-level heading")

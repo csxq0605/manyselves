@@ -60,6 +60,7 @@ from .agentic_models import AgentResult, AgentRunStatus, TaskEnvelope
 from .capabilities import compile_agent_access, scoped_gateway
 from .config import AgentDefinition
 from .input_contracts import (
+    INPUT_CONTRACT_TYPES,
     AggregateEditorInput,
     ChiefEditorInput,
     ChiefRevisionInput,
@@ -780,16 +781,7 @@ class ReportingAgentRunner:
     def _input_contract(self, envelope: TaskEnvelope):
         if not envelope.input_contract_kind or not envelope.input_contract_ref:
             return None
-        model = {
-            "module_authoring_input": ModuleAuthoringInput,
-            "module_revision_input": ModuleRevisionInput,
-            "module_review_input": ModuleReviewInput,
-            "cross_review_input": CrossReviewInput,
-            "final_review_input": FinalReviewInput,
-            "chief_editor_input": ChiefEditorInput,
-            "aggregate_editor_input": AggregateEditorInput,
-            "chief_revision_input": ChiefRevisionInput,
-        }.get(envelope.input_contract_kind)
+        model = INPUT_CONTRACT_TYPES.get(envelope.input_contract_kind)
         if model is None:
             return None
         path = (self.workspace / envelope.input_contract_ref).resolve()
@@ -1205,13 +1197,33 @@ class ReportingAgentRunner:
             )
             if template_inspection.run_id != envelope.run_id:
                 raise ValueError("template distillation input contract belongs to another run")
-            template_path = (self.workspace / template_inspection.template_ref).resolve()
+            template_ref = Path(template_inspection.template_ref)
+            if (
+                template_ref.is_absolute()
+                or ".." in template_ref.parts
+                or template_ref.as_posix() != template_inspection.template_ref
+            ):
+                raise ValueError(
+                    "template distillation template_ref is not one canonical workspace file"
+                )
+            logical_template_path = self.workspace / template_ref
+            template_path = logical_template_path.resolve()
             if (
                 not template_path.is_relative_to(self.workspace)
                 or not template_path.is_file()
-                or template_path.relative_to(self.workspace).as_posix()
-                != template_inspection.template_ref
             ):
+                raise ValueError(
+                    "template distillation template_ref is not one canonical workspace file"
+                )
+            if logical_template_path.is_symlink():
+                content_ref = template_path.relative_to(self.workspace)
+                try:
+                    ContentAddressedStore(self.workspace).resolve_blob(content_ref)
+                except (FileNotFoundError, ValueError) as exc:
+                    raise ValueError(
+                        "template distillation template_ref symlink is not one verified CAS view"
+                    ) from exc
+            elif template_path != logical_template_path:
                 raise ValueError(
                     "template distillation template_ref is not one canonical workspace file"
                 )

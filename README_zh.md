@@ -46,6 +46,10 @@ Manyselves 团队由三层组成：
 
 需要了解运行基础设施、完整功能、日常操作和产品化服务边界时，见
 [项目说明与产品化服务评审稿](docs/project-guide-zh.md)。
+当前串行成本控制的范围与兼容边界见
+[成本控制主线合入说明](docs/cost-control-main-integration.md)；后续并行工作只按
+[并行 Agent 编排与部署调研计划](docs/parallel-agent-orchestration-research-plan.md)
+先做研究和准入验证。
 
 ## 通用运行时能力
 

@@ -10,6 +10,7 @@ from docx.shared import Inches
 from PIL import Image
 
 from manyselves.config.schema import AgentDefaults
+from manyselves.core.artifacts.content_store import ContentAddressedStore
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import (
     LLMProvider,
@@ -26,6 +27,8 @@ from manyselves.core.reporting.agent_runner import (
 from manyselves.core.reporting.agentic_models import AgentRunStatus, ModuleSubmission, TaskEnvelope
 from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.reporting.input_contracts import (
+    INPUT_CONTRACT_EXAMPLES,
+    INPUT_CONTRACT_TYPES,
     ChiefEditorInput,
     ModuleAuthoringInput,
     ModuleContentView,
@@ -63,6 +66,39 @@ def _write_template_contract(
         encoding="utf-8",
     )
     return contract_ref
+
+
+@pytest.mark.parametrize("kind", sorted(INPUT_CONTRACT_TYPES))
+def test_runner_loads_every_registered_model_input_contract(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    contract_ref = f"Work/runs/run-input-matrix/context/{kind}.json"
+    target = tmp_path / contract_ref
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(INPUT_CONTRACT_EXAMPLES[kind], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    envelope = TaskEnvelope(
+        task_id=f"input-matrix-{kind}",
+        run_id="run-input-matrix",
+        agent_id="main",
+        objective="验证所有模型输入身份共用的契约加载路径",
+        input_refs=[contract_ref],
+        input_contract_kind=kind,
+        input_contract_ref=contract_ref,
+    )
+
+    loaded = runner._input_contract(envelope)
+
+    assert isinstance(loaded, INPUT_CONTRACT_TYPES[kind])
 
 
 class DirectSubmissionProvider(LLMProvider):

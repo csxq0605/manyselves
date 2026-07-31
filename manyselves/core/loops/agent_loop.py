@@ -568,7 +568,10 @@ def _compact_messages_for_working_memory(
         f"<retained_references>{' '.join(references)}</retained_references>\n"
         f"<shared_memory_refs>{' '.join(shared_memory_refs)}</shared_memory_refs>\n"
         "Older tool transcripts were persisted locally. Continue from the recent "
-        "messages. Reuse shared memory before searching or reopening source records.\n"
+        "messages. Reuse shared memory before searching or reopening source records. "
+        "Never recreate an older write merely because it is absent here: call "
+        "list_result_parts once and write only missing or explicitly assigned rewrite "
+        "parts. Current tool schemas, not this checkpoint, define argument shapes.\n"
         "</working_memory_checkpoint>"
     )
     checkpoint = LLMMessage(role="user", content=checkpoint_content)
@@ -705,6 +708,7 @@ class AgentLoop:
         self._report_retries: int = 0
         self._main_block_retries: int = 0
         self._conversation_history: list[LLMMessage] = []
+        self._persisted_result_part_contents: dict[str, str] = {}
         self._current_session_id: str | None = None
         self._manifest_dirty = False
         self._cancel_event = asyncio.Event()
@@ -756,6 +760,7 @@ class AgentLoop:
         if self._status not in {AgentStatus.IDLE, AgentStatus.ERROR}:
             raise RuntimeError("cannot reset working memory while the Agent is active")
         self._conversation_history = []
+        self._persisted_result_part_contents = {}
 
     async def wait_until_turn_complete(self) -> None:
         """Wait until the current queued provider/tool turn has fully finalized."""
@@ -2113,15 +2118,37 @@ class AgentLoop:
                     continue
                 await self._set_status(AgentStatus.RUNNING_TOOL)
 
+                execution_tool_call = _rehydrate_persisted_result_part_call(
+                    tool_call,
+                    self._persisted_result_part_contents,
+                    self.workspace,
+                    str(self.usage_run_id) if self.usage_run_id else None,
+                    str(self.usage_task_id) if self.usage_task_id else None,
+                )
+                unresolved_part_ids = _unresolved_persisted_result_part_ids(
+                    execution_tool_call
+                )
+                visible_tool_call = (
+                    _redact_unresolved_persisted_result_part_call(
+                        execution_tool_call
+                    )
+                    if unresolved_part_ids
+                    else tool_call
+                )
                 await self.bus.publish(
                     ToolCallMessage(
                         agent_type=self.agent_type,
                         tool_name=tool_call.name,
-                        arguments=tool_call.arguments,
+                        arguments=visible_tool_call.arguments,
                     )
                 )
 
                 try:
+                    if unresolved_part_ids:
+                        raise _PersistedResultPartCorrection(
+                            execution_tool_call,
+                            unresolved_part_ids,
+                        )
                     tool = self.tools.get(tool_call.name)
                     if tool is None:
                         raise ValueError(f"Tool not found: {tool_call.name}")
@@ -2139,10 +2166,10 @@ class AgentLoop:
                     if (
                         self.agent_id == "main"
                         and tool_call.name == "resume_reporting_workflow"
-                        and tool_call.arguments.get("decision_id") is not None
+                        and execution_tool_call.arguments.get("decision_id") is not None
                         and not _is_explicit_evidence_decision(
                             self._current_message,
-                            str(tool_call.arguments.get("action") or ""),
+                            str(execution_tool_call.arguments.get("action") or ""),
                         )
                     ):
                         raise PermissionError(
@@ -2182,7 +2209,7 @@ class AgentLoop:
                     required_args = _tool_required_args(self.tools, tool_call.name, tool)
 
                     # Detect truncated tool calls: output hit max_tokens before arguments were complete
-                    if not tool_call.arguments and required_args:
+                    if not execution_tool_call.arguments and required_args:
                         usage = response.usage or {}
                         output_tokens = usage.get("output_tokens", 0)
                         required_hint = (
@@ -2199,24 +2226,29 @@ class AgentLoop:
                                 f"{required_hint}"
                             )
                         else:
-                            raise ValueError(
-                                f"Tool call to '{tool_call.name}' has no arguments. "
-                                f"Please provide the required parameters.{required_hint}"
+                            raise _ToolInputCorrection(
+                                execution_tool_call,
+                                required_argument_names=required_args,
+                                missing_argument_names=required_args,
                             )
 
                     missing_required = [
                         name for name in required_args
-                        if name not in tool_call.arguments or tool_call.arguments.get(name) is None
+                        if (
+                            name not in execution_tool_call.arguments
+                            or execution_tool_call.arguments.get(name) is None
+                        )
                     ]
                     if missing_required:
-                        raise ValueError(
-                            f"Tool call to '{tool_call.name}' is missing required arguments: "
-                            f"{', '.join(missing_required)}. "
-                            f"Tool '{tool_call.name}' requires arguments: {', '.join(required_args)}. "
-                            f"Call it again with a complete argument object."
+                        raise _ToolInputCorrection(
+                            execution_tool_call,
+                            required_argument_names=required_args,
+                            missing_argument_names=missing_required,
                         )
 
-                    tool_task = asyncio.create_task(tool(**tool_call.arguments))
+                    tool_task = asyncio.create_task(
+                        tool(**execution_tool_call.arguments)
+                    )
                     self._active_tool_task = tool_task
                     try:
                         result = await tool_task
@@ -2264,6 +2296,52 @@ class AgentLoop:
                         self._terminal_outcome = outcome
                         self._terminal_tool_name = tool_call.name
 
+                except _PersistedResultPartCorrection as correction:
+                    assistant_tool_message.tool_calls[tool_index] = (
+                        _redact_unresolved_persisted_result_part_call(
+                            correction.tool_call
+                        )
+                    )
+                    logger.info(
+                        "Result-part history placeholder rejected for {} on agent {}; "
+                        "requested provider correction for parts={}",
+                        tool_call.name,
+                        self.agent_type,
+                        correction.payload["affected_part_ids"],
+                    )
+                    await self.bus.publish(
+                        ToolResultMsg(
+                            agent_type=self.agent_type,
+                            tool_name=tool_call.name,
+                            result=correction.payload,
+                            error=None,
+                        )
+                    )
+                    result_str = self._format_tool_result(
+                        correction.payload,
+                        tool_name=tool_call.name,
+                        tool_call_id=tool_call.id,
+                    )
+                except _ToolInputCorrection as correction:
+                    logger.info(
+                        "Incomplete tool input rejected for {} on agent {}; missing={}",
+                        tool_call.name,
+                        self.agent_type,
+                        correction.payload["missing_argument_names"],
+                    )
+                    await self.bus.publish(
+                        ToolResultMsg(
+                            agent_type=self.agent_type,
+                            tool_name=tool_call.name,
+                            result=correction.payload,
+                            error=None,
+                        )
+                    )
+                    result_str = self._format_tool_result(
+                        correction.payload,
+                        tool_name=tool_call.name,
+                        tool_call_id=tool_call.id,
+                    )
                 except asyncio.CancelledError:
                     if not self._cancel_event.is_set():
                         raise

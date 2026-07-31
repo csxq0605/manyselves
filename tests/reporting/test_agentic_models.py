@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from manyselves.core.reporting.agentic_models import (
+    SUBMISSION_INPUT_TYPES,
     CrossReviewFindingSubmission,
     CrossSynthesisInput,
     EditedReportSubmission,
@@ -259,6 +260,7 @@ def test_main_decision_contract_is_exception_only_and_has_no_waiver() -> None:
 
 
 def test_every_model_output_contract_has_semantics_and_a_valid_example() -> None:
+    assert set(KIND_EXAMPLES) == set(SUBMISSION_INPUT_TYPES)
     for kind, example in KIND_EXAMPLES.items():
         submission_model(kind).model_validate(example)
         assert undescribed_property_paths(submission_schema(kind)) == []

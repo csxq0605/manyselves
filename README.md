@@ -49,6 +49,10 @@ Three layers shape a Manyselves team:
 The current definitions are under `manyselves/templates/agents/` and
 `manyselves/templates/reporting/`. See [Defining a team](docs/team-definition.md)
 for the separation between document-only customization and Python extensions.
+The current serial cost-control scope is documented in the
+[cost-control main integration note](docs/cost-control-main-integration.md).
+Future parallel orchestration remains research-only under the
+[parallel Agent orchestration and deployment research plan](docs/parallel-agent-orchestration-research-plan.md).
 
 ## Runtime capabilities
 
