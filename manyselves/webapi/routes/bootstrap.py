@@ -22,18 +22,17 @@ async def bootstrap(request: Request) -> BootstrapSnapshot:
     """Return the first client snapshot from the active runtime facade."""
     facade = request.app.state.runtime_facade
     settings = request.app.state.web_settings
-    async with request.app.state.runtime_read_lock:
+    async with facade.read_transaction():
         runtime = facade.snapshot()
-
-    project_path = settings.data_root / settings.initial_project_id
-    return BootstrapSnapshot(
-        runtime=runtime,
-        project=ProjectSnapshot(id=settings.initial_project_id, path=str(project_path)),
-        conversations=[],
-        agents=runtime.agent_statuses,
-        settings=BootstrapSettings(
-            sse_replay_capacity=settings.sse_replay_capacity,
-            sse_client_queue_capacity=settings.sse_client_queue_capacity,
-            control_lease_seconds=settings.control_lease_seconds,
-        ),
-    )
+        project_path = settings.data_root / settings.initial_project_id
+        return BootstrapSnapshot(
+            runtime=runtime,
+            project=ProjectSnapshot(id=settings.initial_project_id, path=str(project_path)),
+            conversations=[],
+            agents=runtime.agent_statuses,
+            settings=BootstrapSettings(
+                sse_replay_capacity=settings.sse_replay_capacity,
+                sse_client_queue_capacity=settings.sse_client_queue_capacity,
+                control_lease_seconds=settings.control_lease_seconds,
+            ),
+        )

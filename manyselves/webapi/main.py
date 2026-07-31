@@ -1,9 +1,12 @@
 """FastAPI application factory and Gunicorn entry point."""
 
+import asyncio
+from collections.abc import Callable
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
 from .lifespan import application_lifespan
@@ -13,24 +16,59 @@ from .settings import WebSettings
 API_PREFIX = "/api/v1"
 
 
+class DeferredCORSMiddleware:
+    """Apply CORS after lifespan has validated deferred environment settings."""
+
+    def __init__(
+        self,
+        app: Callable[..., object],
+        *,
+        settings_getter: Callable[[], WebSettings | None],
+    ) -> None:
+        self.app = app
+        self._settings_getter = settings_getter
+        self._cors: CORSMiddleware | None = None
+        self._origins: tuple[str, ...] | None = None
+
+    async def __call__(self, scope: object, receive: object, send: object) -> None:
+        settings = self._settings_getter()
+        origins = () if settings is None else tuple(settings.allowed_origins)
+        if self._cors is None or origins != self._origins:
+            self._cors = CORSMiddleware(
+                self.app,
+                allow_origins=list(origins),
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
+            self._origins = origins
+        await self._cors(scope, receive, send)
+
+
 def create_app(settings: WebSettings | None = None) -> FastAPI:
     """Construct an import-safe HTTP app without creating a runtime."""
-    app = FastAPI(lifespan=application_lifespan)
+    app = FastAPI(
+        lifespan=application_lifespan,
+        openapi_url=None,
+        docs_url=None,
+        redoc_url=None,
+    )
     app.state.web_settings = settings
     app.state.runtime_host = None
     app.state.runtime_facade = None
     app.state.event_broker = None
+    app.state.lifecycle_lock = asyncio.Lock()
+    app.state.lifecycle_active = False
 
     app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[] if settings is None else settings.allowed_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        DeferredCORSMiddleware,
+        settings_getter=lambda: app.state.web_settings,
     )
 
     @app.middleware("http")
-    async def attach_request_id(request: Request, call_next: object) -> Response:
+    async def attach_request_id(
+        request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
         """Attach a stable request identifier for the current HTTP response."""
         request_id = request.headers.get("X-Request-ID", uuid4().hex)
         request.state.request_id = request_id

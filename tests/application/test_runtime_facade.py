@@ -217,6 +217,23 @@ async def test_all_mutation_types_share_one_serialization_lock() -> None:
 
 
 @pytest.mark.asyncio
+async def test_read_transaction_prevents_mutation_from_interleaving() -> None:
+    """A mutation during a bootstrap read would make its response internally inconsistent."""
+    host = make_host()
+    leases = ControlLeaseService()
+    token = lease_for(leases)
+    facade = RuntimeFacade(host, leases=leases)
+
+    async with facade.read_transaction():
+        mutation = asyncio.create_task(facade.send_user_message(message_command(token)))
+        await asyncio.sleep(0)
+        assert host.backend.calls == []
+
+    await mutation
+    assert host.backend.calls == [("message", "hello", "researcher", "message-1", "main_agent")]
+
+
+@pytest.mark.asyncio
 async def test_lease_is_revalidated_after_waiting_for_mutation_lock() -> None:
     clock = MutableClock()
     leases = ControlLeaseService(clock=clock, ttl=timedelta(seconds=30))

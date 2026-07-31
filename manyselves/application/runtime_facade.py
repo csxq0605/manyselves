@@ -2,7 +2,8 @@
 
 import asyncio
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, TypeVar, cast
 from uuid import UUID
@@ -108,6 +109,12 @@ class RuntimeFacade:
         return self._adapter.snapshot(
             controller_client_id=self.leases.current_controller_client_id
         )
+
+    @asynccontextmanager
+    async def read_transaction(self) -> AsyncIterator[None]:
+        """Serialize one coherent read with every runtime mutation."""
+        async with self._mutation_lock:
+            yield
 
     async def send_user_message(self, command: SendMessageCommand) -> AcceptedCommand:
         """Send one message after control, readiness, and idempotency checks."""

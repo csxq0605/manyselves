@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -6,6 +7,7 @@ import pytest
 from pydantic import SecretStr
 
 from manyselves.webapi.dependencies import get_runtime_host
+from manyselves.webapi.main import app as exported_app
 from manyselves.webapi.main import create_app
 from manyselves.webapi.settings import WebSettings
 
@@ -13,10 +15,11 @@ from manyselves.webapi.settings import WebSettings
 class FakeRuntimeHost:
     """A lifecycle fake that leaves the facade's snapshot behavior real."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, start_error: BaseException | None = None) -> None:
         self.start_count = 0
         self.stop_count = 0
         self.is_ready = False
+        self.start_error = start_error
         self.workspace: Path | None = None
         self.loop_manager = SimpleNamespace(
             get_all_agent_statuses=lambda: {"main": "idle"},
@@ -26,6 +29,8 @@ class FakeRuntimeHost:
     async def start(self, workspace: Path) -> None:
         self.start_count += 1
         self.workspace = workspace
+        if self.start_error is not None:
+            raise self.start_error
         self.is_ready = True
 
     async def stop(self) -> None:
@@ -90,3 +95,79 @@ async def test_bootstrap_returns_one_coherent_snapshot(
     assert response.status_code == 200
     body = response.json()
     assert {"runtime", "project", "conversations", "agents", "settings"} <= set(body)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start_error", [RuntimeError("startup failed"), asyncio.CancelledError()])
+async def test_failed_or_cancelled_startup_stops_the_created_host(
+    web_settings: WebSettings, start_error: BaseException
+) -> None:
+    """Abandoning a partially-started host would permit a duplicate runtime later."""
+    host = FakeRuntimeHost(start_error=start_error)
+    app = create_app(web_settings)
+    app.dependency_overrides[get_runtime_host] = lambda: host
+
+    with pytest.raises(type(start_error)):
+        async with app.router.lifespan_context(app):
+            pass
+
+    assert host.stop_count == 1
+    assert app.state.lifecycle_active is False
+
+
+@pytest.mark.asyncio
+async def test_reentrant_lifespan_rejects_a_second_runtime(
+    web_settings: WebSettings, fake_runtime_host: FakeRuntimeHost
+) -> None:
+    """Starting another lifespan while active would create a second process-local runtime."""
+    app = create_app(web_settings)
+    app.dependency_overrides[get_runtime_host] = lambda: fake_runtime_host
+
+    async with app.router.lifespan_context(app):
+        with pytest.raises(RuntimeError, match="already active"):
+            async with app.router.lifespan_context(app):
+                pass
+
+        assert fake_runtime_host.start_count == 1
+
+
+@pytest.mark.asyncio
+async def test_app_registers_only_versioned_api_routes(web_settings: WebSettings) -> None:
+    """Unversioned documentation routes would violate the versioned API boundary."""
+    app = create_app(web_settings)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        responses = await asyncio.gather(
+            *(client.get(path) for path in ("/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"))
+        )
+
+    assert [response.status_code for response in responses] == [404, 404, 404, 404]
+
+
+@pytest.mark.asyncio
+async def test_exported_app_applies_env_loaded_cors_origins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Deferring settings must not silently discard production CORS origins."""
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("INITIAL_PROJECT_ID", "project-1")
+    monkeypatch.setenv("ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv("ALLOWED_ORIGINS", '["https://client.example"]')
+    host = FakeRuntimeHost()
+    exported_app.state.web_settings = None
+    exported_app.dependency_overrides[get_runtime_host] = lambda: host
+
+    try:
+        async with exported_app.router.lifespan_context(exported_app):
+            transport = httpx.ASGITransport(app=exported_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    "/api/v1/health/ready",
+                    headers={"Origin": "https://client.example"},
+                )
+    finally:
+        exported_app.dependency_overrides.pop(get_runtime_host, None)
+        exported_app.state.web_settings = None
+
+    assert response.headers["access-control-allow-origin"] == "https://client.example"
