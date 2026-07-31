@@ -29,11 +29,11 @@ class BackendAPIImpl(BackendAPI):
         self.bus = bus
         self.loop_manager: LoopManager | None = None
 
-    def set_loop_manager(self, loop_manager: LoopManager) -> None:
+    def set_loop_manager(self, loop_manager: LoopManager | None) -> None:
         """Set the loop manager (called after it's created).
 
         Args:
-            loop_manager: Loop manager instance.
+            loop_manager: Loop manager instance, or ``None`` when the host is failed/stopped.
         """
         self.loop_manager = loop_manager
 

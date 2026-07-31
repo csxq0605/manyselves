@@ -3,13 +3,19 @@
 import asyncio
 import base64
 import io
+import zipfile
 from pathlib import Path
 
 import pytest
 from docx import Document
 from openpyxl import Workbook
 
-from manyselves.application.preview_service import PreviewEncodingError, PreviewService
+from manyselves.application.preview_service import (
+    InvalidPreviewDocument,
+    PreviewEncodingError,
+    PreviewService,
+    PreviewTooLarge,
+)
 from manyselves.application.workspace_files import (
     DestinationExists,
     FileRevisionConflict,
@@ -97,9 +103,52 @@ def test_create_and_rename_reject_duplicate_destinations(workspace_files: Worksp
     with pytest.raises(DestinationExists):
         workspace_files.create_file("Inputs/b.txt", "other")
     with pytest.raises(DestinationExists):
-        workspace_files.rename("Inputs/a.txt", "Inputs/b.txt")
+        workspace_files.rename(
+            "Inputs/a.txt",
+            "Inputs/b.txt",
+            workspace_files.entry("Inputs/a.txt").revision,
+        )
 
     assert workspace_files.read_text("Inputs/b.txt").content == "b"
+
+
+def test_rename_and_delete_reject_stale_file_revisions(workspace_files: WorkspaceFiles) -> None:
+    """Destructive mutations must not act on a file that changed after the client tree read."""
+    stale = workspace_files.entry("Inputs/a.txt").revision
+    current = workspace_files.read_text("Inputs/a.txt")
+    workspace_files.write_text("Inputs/a.txt", "changed", current.revision)
+
+    with pytest.raises(FileRevisionConflict):
+        workspace_files.rename("Inputs/a.txt", "Inputs/renamed.txt", stale)
+    with pytest.raises(FileRevisionConflict):
+        workspace_files.delete("Inputs/a.txt", stale)
+
+    assert workspace_files.read_text("Inputs/a.txt").content == "changed"
+    assert not (workspace_files.project_root / "Inputs" / "renamed.txt").exists()
+
+
+def test_directory_revision_is_deterministic_and_changes_with_descendants(
+    workspace_files: WorkspaceFiles,
+) -> None:
+    """Directory rename/delete revisions must represent the deterministic subtree state."""
+    workspace_files.create_directory("Inputs/folder")
+    workspace_files.create_file("Inputs/folder/a.txt", "one")
+    first = workspace_files.entry("Inputs/folder").revision
+    second_reader = WorkspaceFiles(workspace_files.project_root)
+
+    assert second_reader.entry("Inputs/folder").revision == first
+
+    child = workspace_files.read_text("Inputs/folder/a.txt")
+    workspace_files.write_text("Inputs/folder/a.txt", "two", child.revision)
+    changed = workspace_files.entry("Inputs/folder").revision
+
+    assert changed != first
+    with pytest.raises(FileRevisionConflict):
+        workspace_files.delete("Inputs/folder", first)
+    assert (workspace_files.project_root / "Inputs" / "folder").is_dir()
+
+    workspace_files.delete("Inputs/folder", changed)
+    assert not (workspace_files.project_root / "Inputs" / "folder").exists()
 
 
 @pytest.mark.asyncio
@@ -159,6 +208,48 @@ def test_preview_dtos_are_bounded_passive_and_path_sanitized(
     assert markdown_dto["type"] == "markdown"
     assert "<script" not in markdown_dto["content"].casefold()
     assert str(workspace_files.project_root) not in serialized
+
+
+def test_svg_preview_uses_strict_passive_allowlist(workspace_files: WorkspaceFiles) -> None:
+    """SVG preview must remove styling, animation, embedded media, and external IRIs."""
+    malicious = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+      <style>@import url(https://evil.example/a.css);</style>
+      <defs><linearGradient id="safe"><stop offset="0" stop-color="#fff"/></linearGradient></defs>
+      <path d="M0 0L1 1" fill="url(#safe)" style="filter:url(https://evil.example/f)"/>
+      <animate attributeName="x" from="0" to="1"/>
+      <image href="https://evil.example/x.png"/>
+      <use href="data:image/svg+xml,evil"/>
+      <a href="javascript:evil()"><text>bad</text></a>
+      <foreignObject><div>html</div></foreignObject>
+    </svg>"""
+    workspace_files.create_file("Inputs/malicious.svg", malicious)
+
+    dto = PreviewService(workspace_files, max_preview_bytes=4096).preview(
+        "Inputs/malicious.svg", content_url="/raw/original.svg"
+    )
+    content = dto["content"].casefold()
+
+    assert dto["type"] == "image"
+    assert "contentUrl" not in dto
+    assert "<style" not in content
+    assert "style=" not in content
+    assert "animate" not in content
+    assert "<image" not in content
+    assert "foreignobject" not in content
+    assert "https:" not in content
+    assert "javascript:" not in content
+    assert "data:" not in content
+    assert "url(#safe)" in content
+
+
+def test_svg_preview_requires_svg_root(workspace_files: WorkspaceFiles) -> None:
+    """Treating arbitrary XML as image/svg+xml would bypass the SVG safety contract."""
+    workspace_files.create_file("Inputs/not-svg.svg", "<html><script>x</script></html>")
+
+    with pytest.raises(InvalidPreviewDocument):
+        PreviewService(workspace_files).preview(
+            "Inputs/not-svg.svg", content_url="/raw/not-svg.svg"
+        )
 
 
 def test_preview_reports_invalid_text_encoding_explicitly(workspace_files: WorkspaceFiles) -> None:
@@ -224,6 +315,63 @@ def test_spreadsheet_preview_limits_rows_columns_and_does_not_evaluate_formulas(
             "truncated": True,
         }
     ]
+
+
+def test_csv_preview_streams_counts_and_bounds_cells(workspace_files: WorkspaceFiles) -> None:
+    """Delimiter-heavy CSV must retain only the configured window and bounded cell text."""
+    csv_text = "x" * 5000 + ",b,c\n" + "1," * 5000 + "end\n" + "z,z,z\n" * 50
+    (workspace_files.project_root / "Inputs" / "wide.csv").write_text(csv_text, encoding="utf-8")
+
+    dto = PreviewService(
+        workspace_files,
+        max_preview_bytes=64 * 1024,
+        row_limit=2,
+        column_limit=3,
+        cell_character_limit=16,
+    ).preview("Inputs/wide.csv", content_url="/content/wide.csv")
+    sheet = dto["sheets"][0]
+
+    assert sheet["rowCount"] == 52
+    assert sheet["columnCount"] == 5001
+    assert len(sheet["rows"]) == 2
+    assert len(sheet["rows"][0]) == 3
+    assert sheet["rows"][0][0] == "x" * 16
+    assert all(len(cell) <= 16 for row in sheet["rows"] for cell in row)
+    assert sheet["truncated"] is True
+
+
+def test_spreadsheet_preview_caps_sheets_and_archive_members(
+    workspace_files: WorkspaceFiles,
+) -> None:
+    """Workbook and ZIP metadata must not create unbounded preview collections."""
+    workbook = Workbook()
+    workbook.active.title = "s0"
+    for index in range(1, 5):
+        workbook.create_sheet(f"s{index}")
+    workbook.save(workspace_files.project_root / "Inputs" / "many-sheets.xlsx")
+    workbook.close()
+
+    dto = PreviewService(
+        workspace_files,
+        max_preview_bytes=128 * 1024,
+        sheet_limit=2,
+        archive_member_limit=100,
+    ).preview("Inputs/many-sheets.xlsx", content_url="/content/many-sheets.xlsx")
+
+    assert [sheet["name"] for sheet in dto["sheets"]] == ["s0", "s1"]
+    assert dto["sheetsTruncated"] is True
+
+    archive_path = workspace_files.project_root / "Inputs" / "many-members.xlsx"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        for index in range(6):
+            archive.writestr(f"member-{index}.xml", "x")
+
+    with pytest.raises(PreviewTooLarge):
+        PreviewService(
+            workspace_files,
+            max_preview_bytes=128 * 1024,
+            archive_member_limit=4,
+        ).preview("Inputs/many-members.xlsx", content_url="/content/many-members.xlsx")
 
 
 def test_docx_preview_preserves_passive_paragraph_table_image_order(

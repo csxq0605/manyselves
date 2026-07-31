@@ -53,7 +53,7 @@ class _FakeLoopManager:
         self,
         events: list[str],
         *,
-        start_error: Exception | None = None,
+        start_error: BaseException | None = None,
         start_entered: asyncio.Event | None = None,
         start_release: asyncio.Event | None = None,
         stop_failures: int = 0,
@@ -89,7 +89,7 @@ class _FakeBackend:
     def __init__(self) -> None:
         self.loop_manager: _FakeLoopManager | None = None
 
-    def set_loop_manager(self, loop_manager: _FakeLoopManager) -> None:
+    def set_loop_manager(self, loop_manager: _FakeLoopManager | None) -> None:
         self.loop_manager = loop_manager
 
 
@@ -102,7 +102,7 @@ def _host(
     start_release: asyncio.Event | None = None,
     cancellation_only_bus: bool = False,
     stop_failures: int = 0,
-    start_errors: list[Exception | None] | None = None,
+    start_errors: list[BaseException | None] | None = None,
 ) -> tuple[RuntimeHost, _FakeBus, _FakeBackend, list[_FakeLoopManager]]:
     config = _FakeConfigManager(valid=valid_config)
     bus = _CancellationOnlyBus(events) if cancellation_only_bus else _FakeBus(events)
@@ -499,6 +499,81 @@ async def test_switch_workspace_failure_restores_coherent_previous_runtime(
     assert events.count("bus:start") == 1
     assert bus.shutdown_calls == 0
     await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_switch_workspace_rollback_failure_enters_clean_non_ready_state(
+    tmp_path: Path,
+) -> None:
+    """Failed replacement and restoration must leave no untracked backend manager."""
+    host, bus, backend, created = _host(
+        [],
+        start_errors=[None, RuntimeError("replacement failed"), RuntimeError("restore failed")],
+    )
+    await host.start(tmp_path / "first")
+
+    with pytest.raises(RuntimeError, match="replacement failed"):
+        await host.switch_workspace(tmp_path / "second")
+
+    assert host.is_ready is False
+    assert host.workspace is None
+    assert host.loop_manager is None
+    assert backend.loop_manager is None
+    assert [manager.running for manager in created] == [False, False, False]
+    assert [manager.stop_calls for manager in created] == [1, 1, 1]
+    assert bus.shutdown_calls == 0
+
+    await host.stop()
+
+    assert bus.shutdown_calls == 1
+    assert host.is_ready is False
+
+
+@pytest.mark.asyncio
+async def test_switch_workspace_cancellation_restores_previous_runtime(tmp_path: Path) -> None:
+    """Cancellation during replacement startup must clean it and restore the old workspace."""
+    host, bus, backend, created = _host(
+        [],
+        start_errors=[None, asyncio.CancelledError(), None],
+    )
+    first = tmp_path / "first"
+    await host.start(first)
+
+    with pytest.raises(asyncio.CancelledError):
+        await host.switch_workspace(tmp_path / "second")
+
+    assert host.is_ready is True
+    assert host.workspace == first.resolve()
+    assert host.loop_manager is created[2]
+    assert backend.loop_manager is created[2]
+    assert [manager.running for manager in created] == [False, False, True]
+    assert created[1].stop_calls == 1
+    assert bus.shutdown_calls == 0
+    await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_switch_workspace_rollback_cancellation_cleans_candidate_and_stops(
+    tmp_path: Path,
+) -> None:
+    """Cancellation during restoration must leave a tracked, stoppable failed host."""
+    host, bus, backend, created = _host(
+        [],
+        start_errors=[None, RuntimeError("replacement failed"), asyncio.CancelledError()],
+    )
+    await host.start(tmp_path / "first")
+
+    with pytest.raises(RuntimeError, match="replacement failed"):
+        await host.switch_workspace(tmp_path / "second")
+
+    assert host.is_ready is False
+    assert host.workspace is None
+    assert host.loop_manager is None
+    assert backend.loop_manager is None
+    assert created[2].stop_calls == 1
+
+    await host.stop()
+    assert bus.shutdown_calls == 1
 
 
 @pytest.mark.asyncio

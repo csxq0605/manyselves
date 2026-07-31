@@ -25,6 +25,7 @@ from .runtime_host import RuntimeHost
 
 CommandResponse = AcceptedCommand | RollbackResult
 ResponseT = TypeVar("ResponseT", bound=CommandResponse)
+ActivationResponseT = TypeVar("ActivationResponseT")
 SemanticPayload = tuple[str | None, ...]
 MutationCommand = (
     SendMessageCommand | SendFileContextCommand | InterruptCommand | RollbackCommand
@@ -126,15 +127,39 @@ class RuntimeFacade:
                 raise RuntimeNotReadyError()
             yield
 
-    async def activate_workspace(self, workspace: Path, lease_token: str) -> None:
-        """Switch an idle runtime to a project under the shared mutation lock."""
+    async def activate_workspace(
+        self,
+        *,
+        lease_token: str,
+        resolve_workspace: Callable[[], Path],
+        commit: Callable[[], ActivationResponseT],
+        rollback: Callable[[], None],
+    ) -> ActivationResponseT:
+        """Resolve, switch, and commit project state as one serialized transaction."""
         async with self._mutation_lock:
             self.leases.require(lease_token)
             if not self._host.is_ready:
                 raise RuntimeNotReadyError()
             if any(status != "idle" for status in self.snapshot().agent_statuses.values()):
                 raise RuntimeBusyError()
+            workspace = resolve_workspace()
+            previous_workspace = self._host.workspace
             await self._host.switch_workspace(workspace)
+            try:
+                return commit()
+            except BaseException as commit_error:
+                try:
+                    rollback()
+                except BaseException as rollback_error:
+                    commit_error.add_note(f"Activation state rollback failed: {rollback_error!r}")
+                if previous_workspace is not None:
+                    try:
+                        await self._host.switch_workspace(previous_workspace)
+                    except BaseException as host_rollback_error:
+                        commit_error.add_note(
+                            f"Activation runtime rollback failed: {host_rollback_error!r}"
+                        )
+                raise
 
     async def send_user_message(self, command: SendMessageCommand) -> AcceptedCommand:
         """Send one message after control, readiness, and idempotency checks."""

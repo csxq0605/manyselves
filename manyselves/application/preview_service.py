@@ -5,7 +5,9 @@ import csv
 import html
 import io
 import mimetypes
+import re
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -48,6 +50,16 @@ class InvalidPreviewDocument(PreviewError):  # noqa: N818 - stable application e
         super().__init__("Preview document is invalid")
 
 
+@dataclass(frozen=True, slots=True)
+class PreviewCapture:
+    """Bounded immutable bytes captured while the facade read lock is held."""
+
+    path: str
+    name: str
+    suffix: str
+    raw: bytes
+
+
 class PreviewService:
     """Return bounded JSON-compatible DTOs without evaluating active content."""
 
@@ -60,6 +72,9 @@ class PreviewService:
         row_limit: int = 200,
         column_limit: int = 100,
         block_limit: int = 500,
+        archive_member_limit: int = 2_000,
+        sheet_limit: int = 100,
+        cell_character_limit: int = 4_096,
     ) -> None:
         if min(
             max_preview_bytes,
@@ -67,6 +82,9 @@ class PreviewService:
             row_limit,
             column_limit,
             block_limit,
+            archive_member_limit,
+            sheet_limit,
+            cell_character_limit,
         ) <= 0:
             raise ValueError("Preview limits must be positive")
         self._files = files
@@ -75,47 +93,65 @@ class PreviewService:
         self._row_limit = row_limit
         self._column_limit = column_limit
         self._block_limit = block_limit
+        self._archive_member_limit = archive_member_limit
+        self._sheet_limit = sheet_limit
+        self._cell_character_limit = cell_character_limit
 
     def preview(self, relative_path: str, *, content_url: str) -> dict[str, Any]:
+        """Convenience synchronous capture and parse for non-HTTP callers."""
+        return self.preview_capture(self.capture(relative_path), content_url=content_url)
+
+    def capture(self, relative_path: str) -> PreviewCapture:
+        """Copy bounded file bytes for parsing after the filesystem transaction releases."""
         path = self._files.file_path(relative_path)
-        suffix = path.suffix.casefold()
-        portable_path = self._files.relative(path)
-        if suffix == ".pdf":
-            return self._pdf(path, portable_path, content_url)
-        if suffix == ".svg":
-            return self._svg(path, portable_path, content_url)
-        if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}:
-            return self._image(path, portable_path, content_url)
-        if suffix in {".xlsx", ".csv"}:
-            return self._spreadsheet(path, portable_path)
-        if suffix == ".docx":
-            return self._docx(path, portable_path)
-        if suffix == ".md":
-            text = self._decode_utf8(self._read_bounded(path))
+        return PreviewCapture(
+            path=self._files.relative(path),
+            name=path.name,
+            suffix=path.suffix.casefold(),
+            raw=self._read_bounded(path),
+        )
+
+    def preview_capture(
+        self,
+        capture: PreviewCapture,
+        *,
+        content_url: str,
+    ) -> dict[str, Any]:
+        """Parse an immutable capture without touching the workspace filesystem."""
+        if capture.suffix == ".pdf":
+            return self._pdf(capture.raw, capture.path, content_url)
+        if capture.suffix == ".svg":
+            return self._svg(capture.raw, capture.path)
+        if capture.suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}:
+            return self._image(capture.raw, capture.name, capture.path, content_url)
+        if capture.suffix in {".xlsx", ".csv"}:
+            return self._spreadsheet(capture.raw, capture.name, capture.suffix, capture.path)
+        if capture.suffix == ".docx":
+            return self._docx(capture.raw, capture.path)
+        if capture.suffix == ".md":
+            text = self._decode_utf8(capture.raw)
             return {
                 "type": "markdown",
-                "path": portable_path,
+                "path": capture.path,
                 "content": html.escape(text, quote=False),
                 "truncated": False,
             }
-        if suffix in {".py", ".json", ".yaml", ".yml", ".txt", ".log"}:
+        if capture.suffix in {".py", ".json", ".yaml", ".yml", ".txt", ".log"}:
             return {
                 "type": "text",
-                "path": portable_path,
-                "content": self._decode_utf8(self._read_bounded(path)),
+                "path": capture.path,
+                "content": self._decode_utf8(capture.raw),
                 "truncated": False,
             }
-        stat = path.stat()
         return {
             "type": "unsupported",
-            "path": portable_path,
-            "mimeType": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
-            "size": stat.st_size,
+            "path": capture.path,
+            "mimeType": mimetypes.guess_type(capture.name)[0] or "application/octet-stream",
+            "size": len(capture.raw),
             "downloadUrl": content_url,
         }
 
-    def _pdf(self, path: Path, portable_path: str, content_url: str) -> dict[str, Any]:
-        raw = self._read_bounded(path)
+    def _pdf(self, raw: bytes, portable_path: str, content_url: str) -> dict[str, Any]:
         if not raw.startswith(b"%PDF-"):
             raise InvalidPreviewDocument()
         return {
@@ -126,8 +162,13 @@ class PreviewService:
             "rangeUrl": content_url,
         }
 
-    def _image(self, path: Path, portable_path: str, content_url: str) -> dict[str, Any]:
-        raw = self._read_bounded(path)
+    def _image(
+        self,
+        raw: bytes,
+        name: str,
+        portable_path: str,
+        content_url: str,
+    ) -> dict[str, Any]:
         try:
             with Image.open(io.BytesIO(raw)) as image:
                 width, height = image.size
@@ -137,7 +178,7 @@ class PreviewService:
             raise InvalidPreviewDocument() from error
         if width <= 0 or height <= 0 or width * height > 40_000_000:
             raise PreviewTooLarge()
-        mime_type = Image.MIME.get(image_format or "") or mimetypes.guess_type(path.name)[0]
+        mime_type = Image.MIME.get(image_format or "") or mimetypes.guess_type(name)[0]
         return {
             "type": "image",
             "path": portable_path,
@@ -147,51 +188,65 @@ class PreviewService:
             "contentUrl": content_url,
         }
 
-    def _svg(self, path: Path, portable_path: str, content_url: str) -> dict[str, Any]:
-        raw = self._read_bounded(path)
+    def _svg(self, raw: bytes, portable_path: str) -> dict[str, Any]:
         try:
             root = ElementTree.fromstring(raw)
         except (ElementTree.ParseError, ValueError) as error:
             raise InvalidPreviewDocument() from error
-        forbidden = {"script", "foreignobject", "iframe", "object", "embed"}
-        for parent in list(root.iter()):
-            for child in list(parent):
-                if _local_name(child.tag).casefold() in forbidden:
-                    parent.remove(child)
-            for name, value in list(parent.attrib.items()):
-                local_name = _local_name(name).casefold()
-                if local_name.startswith("on") or (
-                    local_name in {"href", "src"}
-                    and value.strip().casefold().startswith(("javascript:", "data:text/html"))
-                ):
-                    del parent.attrib[name]
-        content = ElementTree.tostring(root, encoding="unicode")
+        if _local_name(root.tag).casefold() != "svg" or _namespace(root.tag) not in {
+            "",
+            "http://www.w3.org/2000/svg",
+        }:
+            raise InvalidPreviewDocument()
+        sanitized = _sanitize_svg_node(root)
+        if sanitized is None:
+            raise InvalidPreviewDocument()
+        content = ElementTree.tostring(sanitized, encoding="unicode")
         return {
             "type": "image",
             "path": portable_path,
             "mimeType": "image/svg+xml",
             "content": content,
-            "contentUrl": content_url,
         }
 
-    def _spreadsheet(self, path: Path, portable_path: str) -> dict[str, Any]:
-        raw = self._read_bounded(path)
-        if path.suffix.casefold() == ".csv":
+    def _spreadsheet(
+        self,
+        raw: bytes,
+        name: str,
+        suffix: str,
+        portable_path: str,
+    ) -> dict[str, Any]:
+        if suffix == ".csv":
             text = self._decode_utf8(raw)
-            all_rows = list(csv.reader(io.StringIO(text)))
-            column_count = max((len(row) for row in all_rows), default=0)
-            rows = [row[: self._column_limit] for row in all_rows[: self._row_limit]]
+            row_count = 0
+            column_count = 0
+            rows: list[list[str]] = []
+            cells_truncated = False
+            try:
+                for row in csv.reader(io.StringIO(text)):
+                    row_count += 1
+                    column_count = max(column_count, len(row))
+                    if len(rows) < self._row_limit:
+                        serialized = []
+                        for value in row[: self._column_limit]:
+                            cell, truncated = _cell_text(value, self._cell_character_limit)
+                            serialized.append(cell)
+                            cells_truncated = cells_truncated or truncated
+                        rows.append(serialized)
+            except csv.Error as error:
+                raise InvalidPreviewDocument() from error
             return {
                 "type": "spreadsheet",
                 "path": portable_path,
                 "sheets": [
                     {
-                        "name": path.stem,
-                        "rowCount": len(all_rows),
+                        "name": Path(name).stem,
+                        "rowCount": row_count,
                         "columnCount": column_count,
                         "rows": rows,
-                        "truncated": len(all_rows) > self._row_limit
-                        or column_count > self._column_limit,
+                        "truncated": row_count > self._row_limit
+                        or column_count > self._column_limit
+                        or cells_truncated,
                     }
                 ],
             }
@@ -208,14 +263,23 @@ class PreviewService:
             raise InvalidPreviewDocument() from error
         try:
             sheets = []
-            for sheet in workbook.worksheets:
-                rows = [
-                    [_cell_text(cell.value) for cell in row[: self._column_limit]]
-                    for row in sheet.iter_rows(
-                        max_row=self._row_limit,
-                        max_col=self._column_limit,
-                    )
-                ]
+            worksheets = workbook.worksheets
+            for sheet in worksheets[: self._sheet_limit]:
+                rows = []
+                cells_truncated = False
+                for row in sheet.iter_rows(
+                    max_row=self._row_limit,
+                    max_col=self._column_limit,
+                ):
+                    serialized = []
+                    for cell in row[: self._column_limit]:
+                        value, truncated = _cell_text(
+                            cell.value,
+                            self._cell_character_limit,
+                        )
+                        serialized.append(value)
+                        cells_truncated = cells_truncated or truncated
+                    rows.append(serialized)
                 sheets.append(
                     {
                         "name": sheet.title,
@@ -223,15 +287,20 @@ class PreviewService:
                         "columnCount": sheet.max_column,
                         "rows": rows,
                         "truncated": sheet.max_row > self._row_limit
-                        or sheet.max_column > self._column_limit,
+                        or sheet.max_column > self._column_limit
+                        or cells_truncated,
                     }
                 )
-            return {"type": "spreadsheet", "path": portable_path, "sheets": sheets}
+            return {
+                "type": "spreadsheet",
+                "path": portable_path,
+                "sheets": sheets,
+                "sheetsTruncated": len(worksheets) > self._sheet_limit,
+            }
         finally:
             workbook.close()
 
-    def _docx(self, path: Path, portable_path: str) -> dict[str, Any]:
-        raw = self._read_bounded(path)
+    def _docx(self, raw: bytes, portable_path: str) -> dict[str, Any]:
         self._validate_archive(raw)
         try:
             with zipfile.ZipFile(io.BytesIO(raw)) as archive:
@@ -286,10 +355,13 @@ class PreviewService:
                             cells = []
                             for cell in (child for child in row if _local_name(child.tag) == "tc"):
                                 cells.append(
-                                    "".join(
-                                        value.text or ""
-                                        for value in cell.iter()
-                                        if _local_name(value.tag) == "t"
+                                    _bounded_text(
+                                        "".join(
+                                            value.text or ""
+                                            for value in cell.iter()
+                                            if _local_name(value.tag) == "t"
+                                        ),
+                                        self._cell_character_limit,
                                     )
                                 )
                             rows.append(cells[: self._column_limit])
@@ -318,6 +390,8 @@ class PreviewService:
         try:
             with zipfile.ZipFile(io.BytesIO(raw)) as archive:
                 infos = archive.infolist()
+                if len(infos) > self._archive_member_limit:
+                    raise PreviewTooLarge()
                 if any(info.flag_bits & 0x1 for info in infos):
                     raise InvalidPreviewDocument()
                 if sum(info.file_size for info in infos) > self._max_archive_expanded_bytes:
@@ -337,8 +411,123 @@ def _local_name(name: str) -> str:
     return name.rsplit("}", 1)[-1]
 
 
-def _cell_text(value: Any) -> str:
-    return "" if value is None else str(value)
+def _namespace(name: str) -> str:
+    return name[1:].split("}", 1)[0] if name.startswith("{") else ""
+
+
+_SVG_NAMESPACE = "http://www.w3.org/2000/svg"
+_SVG_ELEMENTS = {
+    "circle",
+    "clippath",
+    "defs",
+    "desc",
+    "ellipse",
+    "g",
+    "lineargradient",
+    "line",
+    "mask",
+    "path",
+    "pattern",
+    "polygon",
+    "polyline",
+    "radialgradient",
+    "rect",
+    "stop",
+    "svg",
+    "text",
+    "title",
+    "tspan",
+    "use",
+}
+_SVG_ATTRIBUTES = {
+    "class",
+    "clip-path",
+    "cx",
+    "cy",
+    "d",
+    "dominant-baseline",
+    "fill",
+    "fill-opacity",
+    "font-family",
+    "font-size",
+    "height",
+    "href",
+    "id",
+    "mask",
+    "offset",
+    "opacity",
+    "patternunits",
+    "points",
+    "preserveaspectratio",
+    "r",
+    "rx",
+    "ry",
+    "stop-color",
+    "stop-opacity",
+    "stroke",
+    "stroke-opacity",
+    "stroke-width",
+    "text-anchor",
+    "transform",
+    "viewbox",
+    "width",
+    "x",
+    "x1",
+    "x2",
+    "y",
+    "y1",
+    "y2",
+}
+_SVG_TEXT_ELEMENTS = {"desc", "text", "title", "tspan"}
+_SAFE_SVG_FRAGMENT = re.compile(r"#[A-Za-z_][A-Za-z0-9_.-]*\Z")
+_SAFE_SVG_PAINT_URL = re.compile(
+    r"url\(\s*#[A-Za-z_][A-Za-z0-9_.-]*\s*\)\Z",
+    re.IGNORECASE,
+)
+_EXTERNAL_SVG_MARKERS = ("javascript:", "data:", "http:", "https:", "file:", "//")
+
+
+def _sanitize_svg_node(node: ElementTree.Element) -> ElementTree.Element | None:
+    """Copy only passive SVG elements and attributes into a fresh tree."""
+    namespace = _namespace(node.tag)
+    element_name = _local_name(node.tag).casefold()
+    if namespace not in {"", _SVG_NAMESPACE} or element_name not in _SVG_ELEMENTS:
+        return None
+
+    sanitized = ElementTree.Element(node.tag)
+    for raw_name, raw_value in node.attrib.items():
+        attribute_name = _local_name(raw_name).casefold()
+        value = raw_value.strip()
+        lowered = value.casefold()
+        if attribute_name not in _SVG_ATTRIBUTES or attribute_name.startswith("on"):
+            continue
+        if any(marker in lowered for marker in _EXTERNAL_SVG_MARKERS):
+            continue
+        if attribute_name == "href" and _SAFE_SVG_FRAGMENT.fullmatch(value) is None:
+            continue
+        if "url(" in lowered and _SAFE_SVG_PAINT_URL.fullmatch(value) is None:
+            continue
+        sanitized.set(raw_name, value)
+
+    if element_name in _SVG_TEXT_ELEMENTS:
+        sanitized.text = node.text
+    for child in node:
+        safe_child = _sanitize_svg_node(child)
+        if safe_child is None:
+            continue
+        if element_name in _SVG_TEXT_ELEMENTS:
+            safe_child.tail = child.tail
+        sanitized.append(safe_child)
+    return sanitized
+
+
+def _cell_text(value: Any, limit: int) -> tuple[str, bool]:
+    text = "" if value is None else str(value)
+    return _bounded_text(text, limit), len(text) > limit
+
+
+def _bounded_text(value: str, limit: int) -> str:
+    return value[:limit]
 
 
 def _docx_relationships(archive: zipfile.ZipFile) -> dict[str, str]:

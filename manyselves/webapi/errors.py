@@ -23,6 +23,7 @@ class ApiError(Exception):
         message: str,
         retryable: bool,
         details: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
@@ -30,6 +31,7 @@ class ApiError(Exception):
         self.message = message
         self.retryable = retryable
         self.details = {} if details is None else details
+        self.headers = _safe_error_headers(headers)
 
 
 async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
@@ -41,6 +43,7 @@ async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
         message=exc.message,
         retryable=exc.retryable,
         details=exc.details,
+        headers=exc.headers,
     )
 
 
@@ -94,6 +97,7 @@ def _error_response(
     message: str,
     retryable: bool,
     details: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     """Build one envelope and preserve its request ID even after a server failure."""
     request_id = getattr(request.state, "request_id", None) or request.headers.get(
@@ -108,11 +112,27 @@ def _error_response(
         ),
         request_id=request_id,
     )
+    response_headers = {"X-Request-ID": request_id}
+    response_headers.update(_safe_error_headers(headers))
     return JSONResponse(
         status_code=status_code,
         content=envelope.model_dump(by_alias=True),
-        headers={"X-Request-ID": request_id},
+        headers=response_headers,
     )
+
+
+def _safe_error_headers(headers: dict[str, str] | None) -> dict[str, str]:
+    """Allow only reviewed response headers and reject response-splitting values."""
+    if headers is None:
+        return {}
+    allowed = {"content-range": "Content-Range", "retry-after": "Retry-After"}
+    safe: dict[str, str] = {}
+    for name, value in headers.items():
+        canonical = allowed.get(name.casefold())
+        if canonical is None or "\r" in value or "\n" in value:
+            raise ValueError("Unsafe API error response header")
+        safe[canonical] = value
+    return safe
 
 
 def _http_error_code(status_code: int) -> str:

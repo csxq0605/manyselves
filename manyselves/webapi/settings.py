@@ -23,4 +23,7 @@ class WebSettings(BaseSettings):
     preview_row_limit: int = 200
     preview_column_limit: int = 100
     preview_block_limit: int = 500
+    preview_archive_member_limit: int = 2_000
+    preview_sheet_limit: int = 100
+    preview_cell_character_limit: int = 4_096
     file_tree_entry_limit: int = 20_000

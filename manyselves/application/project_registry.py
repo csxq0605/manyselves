@@ -121,6 +121,11 @@ class ProjectRegistry:
         self._active_project_id = root.name
         return ProjectRecord(id=root.name, active=True)
 
+    def restore_active(self, project_id: str) -> ProjectRecord:
+        """Restore a previously validated active ID during activation rollback."""
+        self._active_project_id = self._validate_id(project_id)
+        return ProjectRecord(id=self._active_project_id, active=True)
+
     def project_root(self, project_id: str) -> Path:
         project_id = self._validate_id(project_id)
         root = self._path_for(project_id)

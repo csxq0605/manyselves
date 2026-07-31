@@ -32,10 +32,11 @@ class CreateEntryRequest(BaseModel):
 
 
 class RenameEntryRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     source: str
     destination: str
+    base_revision: str = Field(alias="baseRevision", pattern=r"^[0-9a-f]{64}$")
 
 
 class FileEntryResponse(BaseModel):
@@ -46,6 +47,7 @@ class FileEntryResponse(BaseModel):
     kind: Literal["file", "directory"]
     size: int | None
     modified_at: datetime = Field(alias="modifiedAt")
+    revision: str
 
 
 class FileTreeResponse(BaseModel):

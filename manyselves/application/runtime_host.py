@@ -25,6 +25,7 @@ class _LifecycleState(Enum):
     READY = auto()
     STOPPING = auto()
     STOPPED = auto()
+    FAILED = auto()
 
 
 class RuntimeHost:
@@ -85,7 +86,11 @@ class RuntimeHost:
             if self._state is _LifecycleState.READY:
                 logger.warning("Runtime host already started")
                 return
-            if self._state in {_LifecycleState.STOPPING, _LifecycleState.STOPPED}:
+            if self._state in {
+                _LifecycleState.STOPPING,
+                _LifecycleState.STOPPED,
+                _LifecycleState.FAILED,
+            }:
                 raise RuntimeStartupError(
                     "RUNTIME_STOPPED",
                     "Runtime host has already been stopped.",
@@ -101,23 +106,22 @@ class RuntimeHost:
 
             try:
                 resolved_workspace = Path(workspace).resolve()
-                self._workspace = resolved_workspace
                 self._project_logging_initializer(resolved_workspace)
                 self._project_structure_initializer(resolved_workspace)
                 logger.debug("Ensured project structure in: {}", resolved_workspace)
 
-                self._loop_manager = self._loop_manager_factory(
+                loop_manager = self._loop_manager_factory(
                     resolved_workspace,
                     self.config_manager,
                     self.bus,
                 )
-                self.backend.set_loop_manager(self._loop_manager)
+                self._bind_manager(loop_manager, resolved_workspace)
                 self._bus_task = asyncio.create_task(
                     self.bus.process_queue(),
                     name="manyselves-message-bus",
                 )
                 await asyncio.sleep(0)
-                await self._loop_manager.start()
+                await loop_manager.start()
             except BaseException:
                 try:
                     await self._stop_locked()
@@ -149,9 +153,13 @@ class RuntimeHost:
             previous_workspace = self._workspace
             previous_manager = self._loop_manager
             self._state = _LifecycleState.STARTING
-            await previous_manager.stop()
+            try:
+                await previous_manager.stop()
+            except BaseException:
+                self._state = _LifecycleState.FAILED
+                raise
+            self._bind_manager(None, None)
 
-            replacement: LoopManager | None = None
             try:
                 self._project_logging_initializer(resolved_workspace)
                 self._project_structure_initializer(resolved_workspace)
@@ -160,29 +168,48 @@ class RuntimeHost:
                     self.config_manager,
                     self.bus,
                 )
-                self.backend.set_loop_manager(replacement)
+                self._bind_manager(replacement, resolved_workspace)
                 await replacement.start()
-            except BaseException:
-                if replacement is not None:
-                    with suppress(BaseException):
-                        await replacement.stop()
+            except BaseException as replacement_error:
+                await self._discard_bound_manager()
                 if previous_workspace is not None:
-                    restored = self._loop_manager_factory(
-                        previous_workspace,
-                        self.config_manager,
-                        self.bus,
-                    )
-                    self.backend.set_loop_manager(restored)
-                    await restored.start()
-                    self._loop_manager = restored
-                    self._workspace = previous_workspace
+                    try:
+                        restored = self._loop_manager_factory(
+                            previous_workspace,
+                            self.config_manager,
+                            self.bus,
+                        )
+                        self._bind_manager(restored, previous_workspace)
+                        await restored.start()
+                    except BaseException as restore_error:
+                        await self._discard_bound_manager()
+                        self._state = _LifecycleState.FAILED
+                        replacement_error.add_note(
+                            f"Previous workspace restoration failed: {restore_error!r}"
+                        )
+                        raise replacement_error from restore_error
                     self._state = _LifecycleState.READY
-                raise
+                raise replacement_error
 
-            self._loop_manager = replacement
-            self._workspace = resolved_workspace
             self._state = _LifecycleState.READY
             logger.info("Activated runtime workspace: {}", resolved_workspace)
+
+    def _bind_manager(self, manager: LoopManager | None, workspace: Path | None) -> None:
+        """Change host/backend manager ownership together without an await boundary."""
+        self._loop_manager = manager
+        self._workspace = workspace
+        self.backend.set_loop_manager(manager)
+
+    async def _discard_bound_manager(self) -> None:
+        """Stop and clear the currently tracked candidate without masking its failure."""
+        manager = self._loop_manager
+        try:
+            if manager is not None:
+                await manager.stop()
+        except BaseException:
+            logger.exception("Runtime loop candidate cleanup failed")
+        finally:
+            self._bind_manager(None, None)
 
     async def _stop_locked(self) -> None:
         """Stop an active lifecycle while the lifecycle lock is held."""

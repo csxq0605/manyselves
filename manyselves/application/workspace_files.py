@@ -7,6 +7,7 @@ import tempfile
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from io import BufferedReader
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from threading import RLock
 from urllib.parse import unquote
@@ -67,6 +68,13 @@ class UploadTooLarge(WorkspaceFileError):  # noqa: N818 - locked application err
         super().__init__("Upload exceeds the configured size limit")
 
 
+class WorkspaceTreeTooLarge(WorkspaceFileError):  # noqa: N818 - stable application error
+    code = "WORKSPACE_TREE_TOO_LARGE"
+
+    def __init__(self) -> None:
+        super().__init__("Workspace tree exceeds the configured entry limit")
+
+
 @dataclass(frozen=True, slots=True)
 class TextFile:
     path: str
@@ -83,6 +91,19 @@ class FileEntry:
     kind: str
     size: int | None
     modified_at: datetime
+    revision: str
+
+
+@dataclass(slots=True)
+class OpenDownload:
+    """One validated descriptor plus metadata derived from that same descriptor."""
+
+    stream: BufferedReader
+    path: str
+    name: str
+    size: int
+    modified_at: datetime
+    revision: str
 
 
 class WorkspaceFiles:
@@ -188,23 +209,32 @@ class WorkspaceFiles:
             path.mkdir()
         return self.entry(relative_path)
 
-    def rename(self, source_path: str, destination_path: str) -> FileEntry:
+    def rename(
+        self,
+        source_path: str,
+        destination_path: str,
+        base_revision: str,
+    ) -> FileEntry:
         source = self.resolve(source_path)
         destination = self.resolve(destination_path)
         with self._mutation_lock:
             if not source.exists():
                 raise WorkspaceEntryNotFound()
+            if self._entry_revision(source) != base_revision:
+                raise FileRevisionConflict()
             self._require_new_destination(destination)
             source.rename(destination)
         return self.entry(destination_path)
 
-    def delete(self, relative_path: str) -> None:
+    def delete(self, relative_path: str, base_revision: str) -> None:
         path = self.resolve(relative_path)
         with self._mutation_lock:
             if not path.exists():
                 raise WorkspaceEntryNotFound()
             if path.is_symlink():
                 raise UnsafeWorkspacePath()
+            if self._entry_revision(path) != base_revision:
+                raise FileRevisionConflict()
             if path.is_dir():
                 shutil.rmtree(path)
             else:
@@ -247,6 +277,7 @@ class WorkspaceFiles:
             kind="directory" if path.is_dir() else "file",
             size=None if path.is_dir() else stat.st_size,
             modified_at=_modified_at(stat.st_mtime),
+            revision=self._entry_revision(path),
         )
 
     def list_tree(self, relative_path: str = "") -> list[FileEntry]:
@@ -264,7 +295,7 @@ class WorkspaceFiles:
                     continue
                 entries.append(self.entry(self.relative(child)))
                 if len(entries) > self.max_tree_entries:
-                    raise WorkspaceFileError("File tree exceeds configured entry limit")
+                    raise WorkspaceTreeTooLarge()
                 if child.is_dir():
                     pending.append(child)
         return entries
@@ -272,6 +303,26 @@ class WorkspaceFiles:
     def file_path(self, relative_path: str) -> Path:
         """Return a validated existing file for trusted application consumers."""
         return self._existing_file(relative_path)
+
+    def open_download(self, relative_path: str) -> OpenDownload:
+        """Open a validated file and derive all response metadata from its descriptor."""
+        path = self._existing_file(relative_path)
+        stream = path.open("rb")
+        try:
+            stat = os.fstat(stream.fileno())
+            revision = _revision_stream(stream)
+            stream.seek(0)
+            return OpenDownload(
+                stream=stream,
+                path=self.relative(path),
+                name=path.name,
+                size=stat.st_size,
+                modified_at=_modified_at(stat.st_mtime),
+                revision=revision,
+            )
+        except BaseException:
+            stream.close()
+            raise
 
     def relative(self, path: Path) -> str:
         return path.relative_to(self.project_root).as_posix()
@@ -309,9 +360,38 @@ class WorkspaceFiles:
             temp.unlink(missing_ok=True)
             raise
 
+    def _entry_revision(self, path: Path) -> str:
+        if path.is_file():
+            with path.open("rb") as stream:
+                return _revision_stream(stream)
+        if not path.is_dir():
+            raise WorkspaceEntryTypeError()
+        digest = hashlib.sha256(b"directory-v1\0")
+        descendants = sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix())
+        if len(descendants) > self.max_tree_entries:
+            raise WorkspaceTreeTooLarge()
+        for child in descendants:
+            relative = child.relative_to(path).as_posix().encode("utf-8")
+            if child.is_symlink():
+                digest.update(b"L\0" + relative + b"\0" + os.readlink(child).encode("utf-8"))
+            elif child.is_dir():
+                digest.update(b"D\0" + relative + b"\0")
+            elif child.is_file():
+                digest.update(b"F\0" + relative + b"\0")
+                with child.open("rb") as stream:
+                    digest.update(bytes.fromhex(_revision_stream(stream)))
+        return digest.hexdigest()
+
 
 def _revision(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
+
+
+def _revision_stream(stream: BufferedReader) -> str:
+    digest = hashlib.sha256()
+    while chunk := stream.read(64 * 1024):
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _modified_at(timestamp: float) -> datetime:

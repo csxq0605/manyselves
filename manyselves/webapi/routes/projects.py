@@ -129,12 +129,31 @@ async def activate_project(
 ) -> ProjectResponse:
     facade = request.app.state.runtime_facade
     registry = request.app.state.project_registry
+    settings = request.app.state.web_settings
+    previous_state: tuple[str, str] | None = None
     try:
-        project_root = registry.project_root(project_id)
-        await facade.activate_workspace(project_root, lease_token)
-        record = registry.activate(project_id)
-        request.app.state.web_settings.initial_project_id = record.id
-        return _response(record)
+        def resolve_workspace():
+            nonlocal previous_state
+            workspace = registry.project_root(project_id)
+            previous_state = (registry.active_project_id, settings.initial_project_id)
+            return workspace
+
+        def commit_activation() -> ProjectResponse:
+            record = registry.activate(project_id)
+            settings.initial_project_id = record.id
+            return _response(record)
+
+        def rollback_activation() -> None:
+            assert previous_state is not None
+            registry.restore_active(previous_state[0])
+            settings.initial_project_id = previous_state[1]
+
+        return await facade.activate_workspace(
+            lease_token=lease_token,
+            resolve_workspace=resolve_workspace,
+            commit=commit_activation,
+            rollback=rollback_activation,
+        )
     except (
         ControlLeaseRequired,
         RuntimeBusyError,
