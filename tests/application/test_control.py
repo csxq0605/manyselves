@@ -1,9 +1,11 @@
 """Contract tests for the single-controller runtime lease."""
 
 from datetime import datetime, timedelta, timezone
+from threading import Event, Lock, Thread
 
 import pytest
 
+from manyselves.application import control as control_module
 from manyselves.application.control import (
     ControlLeaseHeld,
     ControlLeaseRequired,
@@ -175,3 +177,132 @@ def test_non_ascii_reacquire_proof_requires_control() -> None:
 def test_lease_service_rejects_nonpositive_ttl() -> None:
     with pytest.raises(ValueError, match="positive"):
         ControlLeaseService(ttl=timedelta(0))
+
+
+def test_concurrent_initial_acquires_commit_exactly_one_controller(monkeypatch) -> None:
+    first_in_token_generation = Event()
+    allow_first_token = Event()
+    second_started = Event()
+    second_done = Event()
+    call_count = 0
+    call_count_lock = Lock()
+    successes = []
+    failures = []
+
+    def controlled_token(_size: int) -> str:
+        nonlocal call_count
+        with call_count_lock:
+            call_count += 1
+            current_call = call_count
+        if current_call == 1:
+            first_in_token_generation.set()
+            assert allow_first_token.wait(timeout=2)
+        return f"token-{current_call}"
+
+    monkeypatch.setattr(control_module.secrets, "token_urlsafe", controlled_token)
+    leases = ControlLeaseService(ttl=timedelta(seconds=30))
+
+    def acquire(client_id: str, *, started: Event | None = None, done: Event | None = None) -> None:
+        if started is not None:
+            started.set()
+        try:
+            successes.append(leases.acquire(client_id=client_id, actor_id=client_id))
+        except Exception as exc:  # noqa: BLE001 - captured for deterministic thread assertion
+            failures.append(exc)
+        finally:
+            if done is not None:
+                done.set()
+
+    first = Thread(target=acquire, args=("browser-1",), daemon=True)
+    second = Thread(
+        target=acquire,
+        args=("browser-2",),
+        kwargs={"started": second_started, "done": second_done},
+        daemon=True,
+    )
+    first.start()
+    second_was_started = False
+    try:
+        assert first_in_token_generation.wait(timeout=2)
+        second.start()
+        second_was_started = True
+        assert second_started.wait(timeout=2)
+        second_completed_before_first_commit = second_done.wait(timeout=0.2)
+    finally:
+        allow_first_token.set()
+        first.join(timeout=2)
+        if second_was_started:
+            second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert second_completed_before_first_commit is False
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert isinstance(failures[0], ControlLeaseHeld)
+    assert leases.current_controller_client_id == "browser-1"
+
+
+def test_heartbeat_transaction_cannot_overwrite_released_replacement(monkeypatch) -> None:
+    leases = ControlLeaseService(ttl=timedelta(seconds=30))
+    original = leases.acquire(client_id="browser-1", actor_id="alice")
+    first_in_validation = Event()
+    allow_first_validation = Event()
+    replacement_started = Event()
+    replacement_done = Event()
+    call_count = 0
+    call_count_lock = Lock()
+    original_compare = control_module._tokens_equal
+    heartbeat_failures = []
+    replacement_failures = []
+
+    def controlled_compare(left: str, right: str) -> bool:
+        nonlocal call_count
+        with call_count_lock:
+            call_count += 1
+            current_call = call_count
+        if current_call == 1:
+            first_in_validation.set()
+            assert allow_first_validation.wait(timeout=2)
+        return original_compare(left, right)
+
+    monkeypatch.setattr(control_module, "_tokens_equal", controlled_compare)
+
+    def heartbeat() -> None:
+        try:
+            leases.heartbeat(original.token)
+        except Exception as exc:  # noqa: BLE001 - captured for deterministic thread assertion
+            heartbeat_failures.append(exc)
+
+    def replace_controller() -> None:
+        replacement_started.set()
+        try:
+            leases.release(original.token)
+            leases.acquire(client_id="browser-2", actor_id="bob")
+        except Exception as exc:  # noqa: BLE001 - captured for deterministic thread assertion
+            replacement_failures.append(exc)
+        finally:
+            replacement_done.set()
+
+    heartbeat_thread = Thread(target=heartbeat, daemon=True)
+    replacement_thread = Thread(target=replace_controller, daemon=True)
+    heartbeat_thread.start()
+    replacement_was_started = False
+    try:
+        assert first_in_validation.wait(timeout=2)
+        replacement_thread.start()
+        replacement_was_started = True
+        assert replacement_started.wait(timeout=2)
+        replacement_completed_during_heartbeat = replacement_done.wait(timeout=0.2)
+    finally:
+        allow_first_validation.set()
+        heartbeat_thread.join(timeout=2)
+        if replacement_was_started:
+            replacement_thread.join(timeout=2)
+
+    assert not heartbeat_thread.is_alive()
+    assert not replacement_thread.is_alive()
+    assert replacement_completed_during_heartbeat is False
+    assert heartbeat_failures == []
+    assert replacement_failures == []
+    assert leases.current_controller_client_id == "browser-2"
