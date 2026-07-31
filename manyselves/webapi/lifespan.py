@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from loguru import logger
 
 from ..application.control import ControlLeaseService
 from ..application.runtime_facade import RuntimeFacade
@@ -37,10 +38,14 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.event_broker = None
         await host.start(settings.data_root / settings.initial_project_id)
     except BaseException:
-        if host is not None:
-            await host.stop()
-        async with app.state.lifecycle_lock:
-            app.state.lifecycle_active = False
+        try:
+            if host is not None:
+                await host.stop()
+        except BaseException:
+            logger.exception("Runtime cleanup failed after lifespan startup failure")
+        finally:
+            async with app.state.lifecycle_lock:
+                app.state.lifecycle_active = False
         raise
 
     try:

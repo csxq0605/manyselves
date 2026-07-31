@@ -15,11 +15,17 @@ from manyselves.webapi.settings import WebSettings
 class FakeRuntimeHost:
     """A lifecycle fake that leaves the facade's snapshot behavior real."""
 
-    def __init__(self, *, start_error: BaseException | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        start_error: BaseException | None = None,
+        stop_error: BaseException | None = None,
+    ) -> None:
         self.start_count = 0
         self.stop_count = 0
         self.is_ready = False
         self.start_error = start_error
+        self.stop_error = stop_error
         self.workspace: Path | None = None
         self.loop_manager = SimpleNamespace(
             get_all_agent_statuses=lambda: {"main": "idle"},
@@ -36,6 +42,8 @@ class FakeRuntimeHost:
     async def stop(self) -> None:
         self.stop_count += 1
         self.is_ready = False
+        if self.stop_error is not None:
+            raise self.stop_error
 
 
 @pytest.fixture
@@ -113,6 +121,29 @@ async def test_failed_or_cancelled_startup_stops_the_created_host(
 
     assert host.stop_count == 1
     assert app.state.lifecycle_active is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start_error", [RuntimeError("startup failed"), asyncio.CancelledError()])
+async def test_failed_startup_preserves_its_error_when_cleanup_also_fails(
+    web_settings: WebSettings, start_error: BaseException
+) -> None:
+    """Cleanup failure must not mask startup failure or permanently lock out a new lifespan."""
+    host = FakeRuntimeHost(start_error=start_error, stop_error=RuntimeError("cleanup failed"))
+    app = create_app(web_settings)
+    app.dependency_overrides[get_runtime_host] = lambda: host
+
+    with pytest.raises(type(start_error)) as raised:
+        async with app.router.lifespan_context(app):
+            pass
+
+    if isinstance(start_error, RuntimeError):
+        assert str(raised.value) == "startup failed"
+    assert app.state.lifecycle_active is False
+    host.start_error = None
+    host.stop_error = None
+    async with app.router.lifespan_context(app):
+        assert host.start_count == 2
 
 
 @pytest.mark.asyncio
