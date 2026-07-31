@@ -54,9 +54,10 @@ class RuntimeHost:
         self._lifecycle_lock = asyncio.Lock()
 
     @classmethod
-    def create(cls) -> "RuntimeHost":
+    def create(cls, config_manager: ConfigManager | None = None) -> "RuntimeHost":
         """Build a host with the normal production runtime dependencies."""
-        config_manager = ConfigManager()
+        if config_manager is None:
+            config_manager = ConfigManager()
         bus = MessageBus()
         backend = BackendAPIImpl(config_manager=config_manager, bus=bus)
         return cls(config_manager=config_manager, bus=bus, backend=backend)

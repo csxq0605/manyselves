@@ -135,6 +135,28 @@ def _host(
     return host, bus, backend, created
 
 
+def test_create_builds_normal_production_dependencies() -> None:
+    """No-argument construction must retain the normal production graph."""
+    host = RuntimeHost.create()
+
+    assert isinstance(host.config_manager, ConfigManager)
+    assert isinstance(host.bus, MessageBus)
+    assert isinstance(host.backend, BackendAPIImpl)
+    assert host.backend.config_manager is host.config_manager
+    assert host.backend.bus is host.bus
+
+
+def test_create_uses_the_injected_config_manager_across_the_backend_graph() -> None:
+    """Ignoring an injected manager must split client and backend configuration."""
+    config_manager = _FakeConfigManager()
+
+    host = RuntimeHost.create(config_manager=cast(ConfigManager, config_manager))
+
+    assert host.config_manager is config_manager
+    assert host.backend.config_manager is config_manager
+    assert host.backend.bus is host.bus
+
+
 @pytest.mark.asyncio
 async def test_start_exposes_resolved_workspace_after_bus_starts_before_loops(
     tmp_path: Path,
