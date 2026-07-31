@@ -113,6 +113,48 @@ REQUIRED_PARITY_FEATURE_TERMS = {
     "DESKTOP-006": ("native", "file", "folder"),
     "DESKTOP-007": ("unsupported", "open-file"),
 }
+REQUIRED_RUNTIME_EVIDENCE = {
+    "RUNTIME-001": (
+        "manyselves/app.py:ManyselvesApp.startup",
+        "manyselves/application/runtime_host.py:RuntimeHost.start",
+        "tests/application/test_pyqt_runtime_compatibility.py::test_desktop_startup_preserves_boolean_and_loop_manager",
+    ),
+    "RUNTIME-002": (
+        "manyselves/app.py:ManyselvesApp.shutdown",
+        "manyselves/application/runtime_host.py:RuntimeHost.stop",
+        "tests/application/test_pyqt_runtime_compatibility.py::test_desktop_shutdown_preserves_owned_cleanup_boundary",
+    ),
+    "RUNTIME-003": (
+        "manyselves/application/backend_api.py:BackendAPIImpl.send_user_message",
+        "manyselves/application/runtime_facade.py:RuntimeFacade.send_user_message",
+        "tests/application/test_pyqt_runtime_compatibility.py::test_facade_send_matches_direct_backend_observable_message",
+    ),
+    "RUNTIME-004": (
+        "manyselves/application/backend_api.py:BackendAPIImpl.interrupt_current_message",
+        "manyselves/application/runtime_facade.py:RuntimeFacade.interrupt",
+        "tests/application/test_pyqt_runtime_compatibility.py::test_facade_interrupt_matches_direct_backend_target",
+    ),
+    "RUNTIME-005": (
+        "manyselves/application/backend_api.py:BackendAPIImpl.rollback_to_checkpoint",
+        "manyselves/application/runtime_facade.py:RuntimeFacade.rollback",
+        "tests/application/test_pyqt_runtime_compatibility.py::test_facade_rollback_matches_direct_backend_result",
+    ),
+    "RUNTIME-006": (
+        "manyselves/application/backend_api.py:BackendAPIImpl.set_agent_debug_mode",
+        "manyselves/application/backend_api.py:BackendAPIImpl.set_agent_debug_mode",
+        "tests/application/test_pyqt_runtime_compatibility.py::test_direct_backend_debug_preserves_loop_manager_behavior",
+    ),
+    "RUNTIME-007": (
+        "manyselves/application/backend_api.py:BackendAPIImpl.switch_provider",
+        "manyselves/application/backend_api.py:BackendAPIImpl.switch_provider",
+        "tests/application/test_pyqt_runtime_compatibility.py::test_provider_switch_assigns_provider_and_requests_restart",
+    ),
+    "RUNTIME-008": (
+        "manyselves/application/backend_api.py:BackendAPIImpl.switch_model",
+        "manyselves/application/backend_api.py:BackendAPIImpl.switch_model",
+        "tests/application/test_pyqt_runtime_compatibility.py::test_model_switch_assigns_model_without_restart_request",
+    ),
+}
 EVIDENCE_PATH = re.compile(r"(?:manyselves|tests|docs)/[A-Za-z0-9_./-]+")
 
 
@@ -169,10 +211,7 @@ def test_feature_parity_matrix_is_a_complete_planned_inventory() -> None:
     assert len({row["id"] for row in rows}) == len(rows)
     assert REQUIRED_PARITY_FAMILIES <= {row["module"] for row in rows}
     assert REQUIRED_PARITY_IDS <= {row["id"] for row in rows}
-    assert all(
-        row["status"] == "planned" and row["legacy_evidence"] and row["rationale"]
-        for row in rows
-    )
+    assert all(row["legacy_evidence"] and row["rationale"] for row in rows)
 
     for row in rows:
         cited_paths = EVIDENCE_PATH.findall(row["legacy_evidence"])
@@ -185,6 +224,32 @@ def test_feature_parity_matrix_is_a_complete_planned_inventory() -> None:
     for capability_id, terms in REQUIRED_PARITY_FEATURE_TERMS.items():
         feature = rows_by_id[capability_id]["feature"].lower()
         assert all(term in feature for term in terms)
+
+    runtime_rows = [row for row in rows if row["module"] == "RUNTIME"]
+    assert {row["id"] for row in runtime_rows} == set(REQUIRED_RUNTIME_EVIDENCE)
+    assert all(row["status"] == "accepted" for row in runtime_rows)
+    assert all(
+        not row["react_evidence"]
+        and not row["browser_test"]
+        and not row["electron_test"]
+        for row in runtime_rows
+    )
+    assert all(
+        "foundation" in row["rationale"].lower()
+        and "pending" in row["rationale"].lower()
+        for row in runtime_rows
+    )
+    assert all(
+        row["status"] == "planned" for row in rows if row["module"] != "RUNTIME"
+    )
+    for capability_id, anchors in REQUIRED_RUNTIME_EVIDENCE.items():
+        combined_evidence = " ".join(
+            (
+                rows_by_id[capability_id]["legacy_evidence"],
+                rows_by_id[capability_id]["api_or_bridge"],
+            )
+        )
+        assert all(anchor in combined_evidence for anchor in anchors)
 
 
 def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
