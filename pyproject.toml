@@ -40,6 +40,11 @@ dependencies = [
     "pyqt6-qscintilla>=2.14.1",
     "openpyxl>=3.1.5",
     "python-docx>=1.2.0,<2.0.0",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.0",
+    "gunicorn>=26.0.0",
+    "uvicorn-worker>=0.4.0",
+    "python-multipart>=0.0.32",
 ]
 
 [project.optional-dependencies]
