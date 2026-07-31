@@ -1,0 +1,64 @@
+id,module,feature,legacy_evidence,api_or_bridge,react_evidence,browser_test,electron_test,status,reviewer,rationale
+PROJECT-001,PROJECT,recent-project selection,"manyselves/gui/project_dialog.py:ProjectDialog._load_recent_projects",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+PROJECT-002,PROJECT,create project workspace,"manyselves/gui/project_dialog.py:ProjectDialog._on_new_project",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+PROJECT-003,PROJECT,open existing project folder,"manyselves/gui/project_dialog.py:ProjectDialog._on_open_folder",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+PROJECT-004,PROJECT,delete recent project,"manyselves/gui/project_dialog.py:ProjectDialog._on_delete_project",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+PROJECT-005,PROJECT,canonical project structure creation,"manyselves/gui/project_dialog.py:ProjectDialog._create_project_structure",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+FILE-001,FILE,browse canonical workspace tree,"manyselves/gui/widgets/file_tree.py:FileTreeWidget._setup_ui",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+FILE-002,FILE,create file and folder,"manyselves/gui/widgets/file_tree.py:FileTreeWidget._new_file_in_dir and _new_folder_in_dir",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+FILE-003,FILE,rename file and directory,"manyselves/gui/widgets/file_tree.py:FileTreeWidget._rename_file and _rename_directory",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+FILE-004,FILE,delete selected file or directory,"manyselves/gui/widgets/file_tree.py:FileTreeWidget._delete_selected_items",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+FILE-005,FILE,drag and drop file move,"manyselves/gui/widgets/file_tree.py:FileTreeWidget._handle_internal_move",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+FILE-006,FILE,file search in agent composer,"manyselves/gui/widgets/agent_panel.py:AgentPanel._file_search_executor",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+EDITOR-001,EDITOR,open file from desktop menu,"manyselves/gui/main_window.py:MainWindow._on_open_file",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+EDITOR-002,EDITOR,save active editor file,"manyselves/gui/main_window.py:MainWindow._on_save_file",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+EDITOR-003,EDITOR,modified-tab tracking,"manyselves/gui/widgets/preview.py:EditorPanel._on_editor_text_changed",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+EDITOR-004,EDITOR,close and reorder editor tabs,"manyselves/gui/widgets/preview.py:PreviewWidget._on_unified_tab_close and _on_unified_tab_moved",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+EDITOR-005,EDITOR,external file change refresh,"manyselves/gui/widgets/preview.py:PreviewWidget._on_watched_file_changed",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+PREVIEW-001,PREVIEW,select file for preview,"manyselves/gui/main_window.py:MainWindow._on_file_selected",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+PREVIEW-002,PREVIEW,document viewer dispatch,"manyselves/gui/widgets/preview.py:_create_viewer",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+PREVIEW-003,PREVIEW,embedded DOCX preview,"manyselves/gui/widgets/preview.py:_create_docx_viewer",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+PREVIEW-004,PREVIEW,image and SVG preview,"manyselves/gui/widgets/preview.py:_create_image_viewer and _create_svg_viewer",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+PREVIEW-005,PREVIEW,open external-file fallback,"manyselves/gui/widgets/preview.py:_open_external_file",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+PYTHON-001,PYTHON,Python syntax highlighting,"manyselves/gui/widgets/preview.py:EXTENSION_LEXERS (.py)",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+PYTHON-002,PYTHON,run active Python file,"manyselves/gui/widgets/preview.py:PreviewWidget._on_run_clicked",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+PYTHON-003,PYTHON,preview active file action,"manyselves/gui/widgets/preview.py:PreviewWidget._on_preview_clicked",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+CONV-001,CONV,load conversation histories,"manyselves/gui/main_window.py:MainWindow._load_conversations",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+CONV-002,CONV,new conversation per agent,"manyselves/gui/main_window.py:MainWindow._on_new_conversation_requested",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+CONV-003,CONV,switch conversation session,"manyselves/gui/main_window.py:MainWindow._on_session_selected",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+CONV-004,CONV,rename and delete session,"manyselves/gui/main_window.py:MainWindow._on_rename_session and _on_delete_session",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+CONV-005,CONV,conversation history dropdown,"manyselves/gui/widgets/conversation_history.py:ConversationHistoryDropdown.populate_from_store",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+MESSAGE-001,MESSAGE,send user message to selected agent,"manyselves/gui/main_window.py:MainWindow._on_agent_message",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+MESSAGE-002,MESSAGE,send editor file context,"manyselves/gui/main_window.py:MainWindow._on_agent_file_context",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+MESSAGE-003,MESSAGE,render streamed agent response,"manyselves/gui/main_window.py:MainWindow._handle_agent_response",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+MESSAGE-004,MESSAGE,edit and resend user message,"manyselves/gui/main_window.py:MainWindow._on_message_edit_resend_requested",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+MESSAGE-005,MESSAGE,render user message from bus,"manyselves/gui/main_window.py:MainWindow._handle_user_message",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+AGENT-001,AGENT,switch visible agent panel,"manyselves/gui/main_window.py:MainWindow._on_agent_type_changed",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+AGENT-002,AGENT,route backend user messages,"manyselves/app.py:BackendAPIImpl.send_user_message",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+AGENT-003,AGENT,interrupt active agent operation,"manyselves/gui/main_window.py:MainWindow._on_interrupt",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+AGENT-004,AGENT,render status and errors,"manyselves/gui/main_window.py:MainWindow._handle_status_change and _handle_error",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+AGENT-005,AGENT,debug panel entries and export,"manyselves/gui/widgets/debug_panel.py:DebugPanel.add_entry and export_to_json",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+TOOL-001,TOOL,render tool invocation timeline,"manyselves/gui/main_window.py:MainWindow._handle_tool_call",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+TOOL-002,TOOL,render tool result timeline,"manyselves/gui/main_window.py:MainWindow._handle_tool_result",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+TOOL-003,TOOL,show exec command and output detail,"manyselves/gui/widgets/tool_call_group.py:ToolCallGroup._exec_card",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+TOOL-004,TOOL,merge related tool call groups,"manyselves/gui/widgets/tool_call_group.py:ToolCallGroup.can_merge_with_last",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+TASK-001,TASK,render task update from bus,"manyselves/gui/main_window.py:MainWindow._handle_task_update_msg",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+TASK-002,TASK,render task board snapshot,"manyselves/gui/widgets/tool_call_group.py:ToolCallGroup._render_task_board",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+TASK-003,TASK,display task status controls,"manyselves/gui/widgets/tool_call_group.py:_TaskStatusControl",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+CONFIG-001,CONFIG,edit provider API configuration,"manyselves/gui/config_dialog.py:ConfigCard.get_config",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+CONFIG-002,CONFIG,add and remove provider configuration,"manyselves/gui/config_dialog.py:ConfigDialog._add_config and _remove_card",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+CONFIG-003,CONFIG,save and reset configuration,"manyselves/gui/config_dialog.py:ConfigDialog._save_config and _reset_config",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+CONFIG-004,CONFIG,sync provider presets,"manyselves/gui/config_dialog.py:ConfigDialog._sync_presets",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+CONFIG-005,CONFIG,switch provider and model,"manyselves/app.py:BackendAPIImpl.switch_provider and switch_model",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+REPORT-001,REPORT,render report message in main panel,"manyselves/gui/main_window.py:MainWindow._handle_report_message",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+REPORT-002,REPORT,reset transient rows for report run,"manyselves/gui/main_window.py:MainWindow._begin_report_run",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+REPORT-003,REPORT,persist report semantic record,"manyselves/gui/main_window.py:MainWindow._handle_report_message",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+DESKTOP-001,DESKTOP,launch Qt application and GUI loop,"manyselves/app.py:ManyselvesApp.run_gui",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+DESKTOP-002,DESKTOP,configure application menus and shortcuts,"manyselves/gui/main_window.py:MainWindow._setup_menu_bar and _setup_app_shortcuts",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+DESKTOP-003,DESKTOP,show pre-project onboarding,"manyselves/gui/onboarding.py:show_pre_project_guide",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+DESKTOP-004,DESKTOP,show post-project onboarding,"manyselves/gui/onboarding.py:show_onboarding",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+RECOVERY-001,RECOVERY,rollback message to checkpoint,"manyselves/gui/main_window.py:MainWindow._on_rollback_requested",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+RECOVERY-002,RECOVERY,restore UI after rollback,"manyselves/gui/main_window.py:MainWindow._on_rollback_finished",,,,,planned,,PyQt baseline inventory; implementation and acceptance evidence pending.
+RECOVERY-003,RECOVERY,service restart recovery,"docs/superpowers/plans/2026-07-31-manyselves-phase1-01-runtime-foundation.md:Task 3 RuntimeHost lifecycle",,,,,planned,,Approved new-runtime design reference; no PyQt implementation exists.
+DEPLOY-001,DEPLOY,Electron desktop packaging,"docs/superpowers/plans/2026-07-31-manyselves-phase1-03-react-workspace.md:deployment verification",,,,,planned,,Approved deployment design reference; no PyQt implementation exists.
+DEPLOY-002,DEPLOY,browser deployment verification,"docs/superpowers/plans/2026-07-31-manyselves-phase1-03-react-workspace.md:browser acceptance",,,,,planned,,Approved deployment-test reference; no PyQt implementation exists.

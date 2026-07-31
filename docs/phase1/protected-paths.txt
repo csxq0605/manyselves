@@ -1,0 +1,2 @@
+manyselves/core/
+manyselves/templates/
