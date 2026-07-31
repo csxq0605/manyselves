@@ -21,13 +21,15 @@ from loguru import logger
 from PyQt6.QtWidgets import QApplication, QDialog
 from rich.console import Console
 
-from .application.backend_api import BackendAPIImpl
+from .application.backend_api import BackendAPIImpl as BackendAPIImpl
+from .application.errors import RuntimeStartupError
+from .application.runtime_host import RuntimeHost
 from .branding import APP_ICON_PATH, DESCRIPTOR_ZH, PRODUCT_NAME
 from .config import ConfigManager
-from .core.loops import LoopManager, MessageBus
+from .core.loops import LoopManager
 from .core.project_structure import ensure_project_structure
 from .gui import MainWindow
-from .utils import add_project_logging, log_exception, setup_exception_handler, setup_logging
+from .utils import log_exception, setup_exception_handler, setup_logging
 
 console = Console()
 app = typer.Typer(
@@ -116,15 +118,13 @@ def _install_stderr_filter() -> None:
 class ManyselvesApp:
     """Main Manyselves application."""
 
-    def __init__(self):
+    def __init__(self, runtime_host: RuntimeHost | None = None):
         """Initialize application."""
-        self.config_manager = ConfigManager()
-        self.bus = MessageBus()
-        self.backend = BackendAPIImpl(
-            config_manager=self.config_manager,
-            bus=self.bus,
-        )
-        self.loop_manager: LoopManager | None = None
+        self._runtime_host = runtime_host or RuntimeHost.create()
+        self.config_manager = self._runtime_host.config_manager
+        self.bus = self._runtime_host.bus
+        self.backend = self._runtime_host.backend
+        self.loop_manager: LoopManager | None = self._runtime_host.loop_manager
         self.main_window: MainWindow | None = None
         self._qt_app: QApplication | None = None
         self._interrupted = False
@@ -138,40 +138,14 @@ class ManyselvesApp:
         Returns:
             True if startup successful, False otherwise.
         """
-        # Validate API keys
-        is_valid, available = self.config_manager.validate_api_keys()
-        if not is_valid:
-            logger.warning("No API keys configured.")
-            return False
+        try:
+            await self._runtime_host.start(workspace)
+        except RuntimeStartupError as exc:
+            if exc.code == "NO_PROVIDER_KEYS":
+                return False
+            raise
 
-        logger.info("Available providers: {}", available)
-
-        # Use provided workspace
-        workspace = Path(workspace).resolve()
-
-        # Add project-bound logging (in addition to global ./logs/)
-        add_project_logging(workspace)
-
-        # Create project structure if needed
-        self._ensure_project_structure(workspace)
-
-        # Create loop manager
-        self.loop_manager = LoopManager(
-            workspace=workspace,
-            config_manager=self.config_manager,
-            bus=self.bus,
-        )
-
-        # Set loop manager in backend (for rollback functionality)
-        self.backend.set_loop_manager(self.loop_manager)
-
-        # Start message bus processing
-        asyncio.create_task(self.bus.process_queue())
-
-        # Start agent loops
-        await self.loop_manager.start()
-
-        logger.info("Application started successfully with workspace: {}", workspace)
+        self.loop_manager = self._runtime_host.loop_manager
         return True
 
     def _ensure_project_structure(self, workspace: Path) -> None:
@@ -186,21 +160,8 @@ class ManyselvesApp:
 
     async def shutdown(self) -> None:
         """Shutdown application."""
-        # Signal bus to stop processing
-        self.bus.shutdown()
-
-        if self.loop_manager:
-            await self.loop_manager.stop()
-
-        # Give pending tasks a moment to finish
-        await asyncio.sleep(0.5)
-
-        # Cancel remaining tasks
-        loop = asyncio.get_event_loop()
-        for task in asyncio.all_tasks(loop):
-            if task is not asyncio.current_task():
-                task.cancel()
-
+        await self._runtime_host.stop()
+        self.loop_manager = self._runtime_host.loop_manager
         logger.info("Application shut down")
 
     def _check_interrupt(self) -> None:

@@ -1,0 +1,247 @@
+"""Lifecycle contract shared by desktop and future runtime clients."""
+
+import asyncio
+from pathlib import Path
+from typing import cast
+
+import pytest
+
+from manyselves.application.backend_api import BackendAPIImpl
+from manyselves.application.errors import RuntimeStartupError
+from manyselves.application.runtime_host import RuntimeHost
+from manyselves.config import ConfigManager
+from manyselves.core.loops import LoopManager, MessageBus
+
+
+class _FakeConfigManager:
+    def __init__(self, *, valid: bool = True) -> None:
+        self.valid = valid
+
+    def validate_api_keys(self) -> tuple[bool, list[str]]:
+        return self.valid, ["anthropic"] if self.valid else []
+
+
+class _FakeBus:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self.release = asyncio.Event()
+        self.processor_finished = asyncio.Event()
+        self.shutdown_calls = 0
+
+    async def process_queue(self) -> None:
+        self.events.append("bus:start")
+        try:
+            await self.release.wait()
+        finally:
+            self.events.append("bus:finish")
+            self.processor_finished.set()
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
+        self.events.append("bus:shutdown")
+        self.release.set()
+
+
+class _FakeLoopManager:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        start_error: Exception | None = None,
+    ) -> None:
+        self.events = events
+        self.start_error = start_error
+        self.stop_calls = 0
+
+    async def start(self) -> None:
+        self.events.append("loops:start")
+        if self.start_error is not None:
+            raise self.start_error
+
+    async def stop(self) -> None:
+        self.stop_calls += 1
+        self.events.append("loops:stop")
+
+
+class _FakeBackend:
+    def __init__(self) -> None:
+        self.loop_manager: _FakeLoopManager | None = None
+
+    def set_loop_manager(self, loop_manager: _FakeLoopManager) -> None:
+        self.loop_manager = loop_manager
+
+
+def _host(
+    events: list[str],
+    *,
+    valid_config: bool = True,
+    start_error: Exception | None = None,
+) -> tuple[RuntimeHost, _FakeBus, _FakeBackend, list[_FakeLoopManager]]:
+    config = _FakeConfigManager(valid=valid_config)
+    bus = _FakeBus(events)
+    backend = _FakeBackend()
+    created: list[_FakeLoopManager] = []
+
+    def create_loop_manager(
+        workspace: Path,
+        config_manager: ConfigManager,
+        message_bus: MessageBus,
+    ) -> LoopManager:
+        assert workspace.is_absolute()
+        assert config_manager is config
+        assert message_bus is bus
+        manager = _FakeLoopManager(events, start_error=start_error)
+        created.append(manager)
+        return cast(LoopManager, manager)
+
+    def add_logging(workspace: Path) -> None:
+        assert workspace.is_absolute()
+        events.append("project:logging")
+
+    def ensure_structure(workspace: Path) -> None:
+        assert workspace.is_absolute()
+        events.append("project:structure")
+
+    host = RuntimeHost(
+        config_manager=cast(ConfigManager, config),
+        bus=cast(MessageBus, bus),
+        backend=cast(BackendAPIImpl, backend),
+        loop_manager_factory=create_loop_manager,
+        project_logging_initializer=add_logging,
+        project_structure_initializer=ensure_structure,
+    )
+    return host, bus, backend, created
+
+
+@pytest.mark.asyncio
+async def test_start_exposes_resolved_workspace_after_bus_starts_before_loops(
+    tmp_path: Path,
+) -> None:
+    """Moving loop startup before bus processing must break this ordering contract."""
+    events: list[str] = []
+    host, _, _, _ = _host(events)
+    workspace = tmp_path / "nested" / ".." / "workspace"
+
+    await host.start(workspace)
+
+    assert host.workspace == workspace.resolve()
+    assert host.is_ready is True
+    assert events == [
+        "project:logging",
+        "project:structure",
+        "bus:start",
+        "loops:start",
+    ]
+    await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_wires_the_created_loop_manager_into_backend(tmp_path: Path) -> None:
+    """Omitting backend wiring must leave rollback and interruption unavailable."""
+    host, _, backend, created = _host([])
+
+    await host.start(tmp_path)
+
+    assert len(created) == 1
+    assert host.loop_manager is created[0]
+    assert backend.loop_manager is created[0]
+    await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_missing_provider_keys_raise_typed_startup_error(tmp_path: Path) -> None:
+    """Provider validation must fail before workspace setup or task creation."""
+    events: list[str] = []
+    host, _, _, created = _host(events, valid_config=False)
+
+    with pytest.raises(RuntimeStartupError) as raised:
+        await host.start(tmp_path)
+
+    assert raised.value.code == "NO_PROVIDER_KEYS"
+    assert str(raised.value) == "No API keys configured."
+    assert events == []
+    assert created == []
+    assert host.is_ready is False
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_no_unrelated_tasks(tmp_path: Path) -> None:
+    """Restoring process-wide task cancellation must cancel this unrelated worker."""
+    host, bus, _, _ = _host([])
+    unrelated_release = asyncio.Event()
+    unrelated_cancelled = False
+
+    async def unrelated_worker() -> None:
+        nonlocal unrelated_cancelled
+        try:
+            await unrelated_release.wait()
+        except asyncio.CancelledError:
+            unrelated_cancelled = True
+            raise
+
+    unrelated_task = asyncio.create_task(unrelated_worker())
+    await asyncio.sleep(0)
+    await host.start(tmp_path)
+
+    await host.stop()
+
+    assert unrelated_cancelled is False
+    assert unrelated_task.done() is False
+    assert bus.processor_finished.is_set()
+    unrelated_release.set()
+    await unrelated_task
+
+
+@pytest.mark.asyncio
+async def test_stop_is_idempotent(tmp_path: Path) -> None:
+    """Repeated client cleanup must not stop runtime dependencies twice."""
+    host, bus, _, created = _host([])
+    await host.start(tmp_path)
+
+    await host.stop()
+    await host.stop()
+
+    assert host.is_ready is False
+    assert bus.shutdown_calls == 1
+    assert created[0].stop_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_partial_start_cleans_up_the_owned_bus_task(tmp_path: Path) -> None:
+    """A loop startup failure must not leak the already-started bus processor."""
+    host, bus, _, created = _host([], start_error=RuntimeError("loop bootstrap failed"))
+
+    with pytest.raises(RuntimeError, match="loop bootstrap failed"):
+        await host.start(tmp_path)
+
+    assert host.is_ready is False
+    assert bus.shutdown_calls == 1
+    assert created[0].stop_calls == 1
+    assert bus.processor_finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_manyselves_app_keeps_false_for_missing_provider_keys(tmp_path: Path) -> None:
+    """The desktop compatibility layer must retain its legacy boolean outcome."""
+    from manyselves.app import ManyselvesApp
+
+    host, _, _, _ = _host([], valid_config=False)
+    desktop = ManyselvesApp(runtime_host=host)
+
+    assert await desktop.startup(tmp_path) is False
+    assert desktop.config_manager is host.config_manager
+    assert desktop.bus is host.bus
+    assert desktop.backend is host.backend
+    assert desktop.loop_manager is None
+
+
+@pytest.mark.asyncio
+async def test_manyselves_app_does_not_hide_other_startup_failures(tmp_path: Path) -> None:
+    """Only the documented no-provider error may become a False result."""
+    from manyselves.app import ManyselvesApp
+
+    host, _, _, _ = _host([], start_error=RuntimeError("unexpected bootstrap failure"))
+    desktop = ManyselvesApp(runtime_host=host)
+
+    with pytest.raises(RuntimeError, match="unexpected bootstrap failure"):
+        await desktop.startup(tmp_path)
