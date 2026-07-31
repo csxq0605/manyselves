@@ -13,13 +13,13 @@ def test_taxonomy_contains_fixed_module_24_submodules() -> None:
 
 def test_taxonomy_matches_v2_handoff_for_all_five_modules() -> None:
     assert {module_id: module.title for module_id, module in REPORT_TAXONOMY.items()} == {
-        "2.1": "电力系统架构问题",
+        "2.1": "配电系统架构问题",
         "2.2": "环境工况风险",
         "2.3": "针对故障的保护",
-        "2.4": "配电设备/元件风险",
-        "2.5": "运维管理与风险管控",
+        "2.4": "配电设备/元件内在风险",
+        "2.5": "运维管理与风险管控机制",
     }
-    assert REPORT_TAXONOMY["2.1"].submodules["2.1.1"].title == "电力系统负荷分配与过载风险"
+    assert REPORT_TAXONOMY["2.1"].submodules["2.1.1"].title == "配电系统负荷分配与过载风险"
     assert REPORT_TAXONOMY["2.2"].submodules["2.2.1.1"].title == "谐波风险情况"
     assert REPORT_TAXONOMY["2.3"].submodules["2.3.2"].title == "零序/漏电的防范"
     assert REPORT_TAXONOMY["2.5"].submodules["2.5.1"].title == "SOP/EOP"

@@ -68,6 +68,9 @@ _SAFETY_BUFFER = 1024  # Extra buffer for tool definitions and overhead
 _MAX_PROVIDER_RETRIES = 2
 _RESULT_PART_TOOLS = frozenset({"write_result_part", "write_result_parts"})
 _RESULT_PART_COMPACTION_THRESHOLD = 256
+_PERSISTED_RESULT_PART_MARKER = re.compile(
+    r"^<persisted_result_part(?: [^>]*)?>$"
+)
 
 # Reaching a bounded tool slice is not a terminal Agent state. Reporting
 # orchestration uses this signal to continue with the same durable identity.
@@ -315,70 +318,305 @@ class _ProgressMonitor:
         return None
 
 
-def _compact_persisted_result_part_call(
+def _remember_persisted_result_part_content(
     tool_call: LLMToolCall,
-    result: Any,
-) -> LLMToolCall:
-    """Replace already-persisted prose in provider history with a durable marker.
+    contents: dict[str, str],
+) -> None:
+    """Keep exact persisted prose available for defensive history recovery."""
 
-    The original call is executed and its full content is persisted before this
-    helper is used.  Only the assistant-history copy is compacted; the tool
-    result, on-disk draft, UI event, and still-unpaired calls remain unchanged.
+    if tool_call.name not in _RESULT_PART_TOOLS:
+        return
+    arguments = tool_call.arguments or {}
+    if tool_call.name == "write_result_part":
+        items = [arguments]
+    else:
+        items = arguments.get("parts", arguments.get("items", []))
+    if not isinstance(items, list):
+        return
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if (
+            not isinstance(content, str)
+            or len(content) < _RESULT_PART_COMPACTION_THRESHOLD
+        ):
+            continue
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        contents[digest] = content
+
+
+def _rehydrate_persisted_result_part_call(
+    tool_call: LLMToolCall,
+    contents: dict[str, str],
+    workspace: Path | None = None,
+    run_id: str | None = None,
+    task_id: str | None = None,
+) -> LLMToolCall:
+    """Restore only an authentic historical marker before tool execution.
+
+    Provider-visible schemas forbid sending these history-only placeholders.
+    This recovery path exists solely as a defensive compatibility boundary:
+    the exact digest and length must match cached prose or the marker's existing
+    same-run, same-task draft. A fabricated, edited, cross-task, or missing-file
+    marker remains unresolved for deterministic correction by AgentLoop.
     """
 
-    if tool_call.name not in _RESULT_PART_TOOLS or not isinstance(result, dict):
-        return tool_call
-    outcome = normalize_tool_outcome(result, tool_call.name)
-    if outcome.status != "ok":
-        return tool_call
+    def marker_field(marker: str, name: str) -> str | None:
+        match = re.search(rf"(?:^| ){re.escape(name)}=([^ >]+)(?: |>)", marker)
+        return match.group(1) if match is not None else None
 
-    def compact_item(item: Any, saved: Any = None) -> Any:
-        if not isinstance(item, dict):
-            return item
-        content = item.get("content")
-        if not isinstance(content, str) or len(content) < _RESULT_PART_COMPACTION_THRESHOLD:
-            return dict(item)
-        saved_payload = saved if isinstance(saved, dict) else {}
+    def load_marker_artifact(
+        marker: str,
+        *,
+        expected_part_id: str | None = None,
+    ) -> str | None:
+        """Read only a same-workspace result-part draft named by its marker."""
+
+        if workspace is None:
+            return None
+        artifact_ref = marker_field(marker, "artifact_ref")
+        if not artifact_ref:
+            return None
+        relative = Path(artifact_ref)
+        if relative.is_absolute():
+            return None
+        workspace_root = workspace.resolve()
+        target = (workspace_root / relative).resolve()
+        if not target.is_relative_to(workspace_root) or not target.is_file():
+            return None
+        target_relative = target.relative_to(workspace_root)
+        parts = target_relative.parts
+        if (
+            len(parts) < 5
+            or parts[:2] != ("Work", "runs")
+            or "drafts" not in parts
+            or target.suffix.casefold() != ".md"
+        ):
+            return None
+        if run_id is not None and task_id is not None:
+            expected_root = (
+                workspace_root / "Work" / "runs" / run_id / "drafts" / task_id
+            ).resolve()
+            if not expected_root.is_relative_to(workspace_root):
+                return None
+            if not target.is_relative_to(expected_root):
+                return None
+        marker_part_id = marker_field(marker, "part_id")
+        if (
+            expected_part_id is not None
+            and marker_part_id is not None
+            and marker_part_id != expected_part_id
+        ):
+            return None
+        part_id = expected_part_id or marker_part_id
+        if part_id is not None and target.name != f"{part_id}.md":
+            return None
+        try:
+            content = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return None
+        if "<persisted_result_part" in content.casefold():
+            return None
+        return content
+
+    def remember(content: str) -> str:
         digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        ref = str(saved_payload.get("artifact_ref") or "").strip()
-        marker_fields = [
-            "persisted_result_part",
-            f"sha256={digest}",
-            f"characters={len(content)}",
-        ]
-        if ref:
-            marker_fields.append(f"artifact_ref={ref}")
-        compacted = dict(item)
-        compacted["content"] = "<" + " ".join(marker_fields) + ">"
-        return compacted
+        contents[digest] = content
+        return content
+
+    def restore(value: Any) -> Any:
+        if isinstance(value, list):
+            return [restore(item) for item in value]
+        if isinstance(value, dict):
+            return {key: restore(item) for key, item in value.items()}
+        if not isinstance(value, str):
+            return value
+        match = _PERSISTED_RESULT_PART_MARKER.fullmatch(value.strip())
+        if match is None:
+            return value
+        digest = marker_field(value, "sha256")
+        characters = marker_field(value, "characters")
+        if (
+            digest is None
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            or characters is None
+            or re.fullmatch(r"[1-9][0-9]*", characters) is None
+        ):
+            return value
+        content = contents.get(digest)
+        marker_part_id = marker_field(value, "part_id")
+        if content is None:
+            artifact_content = load_marker_artifact(
+                value,
+                expected_part_id=marker_part_id,
+            )
+            if (
+                artifact_content is not None
+                and len(artifact_content) == int(characters)
+                and hashlib.sha256(artifact_content.encode("utf-8")).hexdigest()
+                == digest
+            ):
+                content = remember(artifact_content)
+        if content is None or len(content) != int(characters):
+            return value
+        if hashlib.sha256(content.encode("utf-8")).hexdigest() != digest:
+            return value
+        return content
+
+    def restore_result_part(item: Any) -> Any:
+        if not isinstance(item, dict):
+            return restore(item)
+        return {key: restore(value) for key, value in item.items()}
 
     arguments = dict(tool_call.arguments or {})
     if tool_call.name == "write_result_part":
-        arguments = compact_item(arguments, result)
-    else:
+        restored_arguments = restore_result_part(arguments)
+    elif tool_call.name == "write_result_parts":
         argument_key = "parts" if isinstance(arguments.get("parts"), list) else "items"
         items = arguments.get(argument_key)
-        saved_items = result.get("parts", result.get("results", []))
-        saved_by_id = {
-            str(item.get("part_id")): item
-            for item in saved_items
-            if isinstance(item, dict) and item.get("part_id") is not None
-        } if isinstance(saved_items, list) else {}
+        restored_arguments = {key: restore(value) for key, value in arguments.items()}
         if isinstance(items, list):
-            arguments[argument_key] = [
-                compact_item(
-                    item,
-                    saved_by_id.get(str(item.get("part_id")))
-                    if isinstance(item, dict)
-                    else None,
-                )
-                for item in items
+            restored_arguments[argument_key] = [
+                restore_result_part(item) for item in items
             ]
+    else:
+        restored_arguments = restore(arguments)
+    return LLMToolCall(
+        id=tool_call.id,
+        name=tool_call.name,
+        arguments=restored_arguments,
+    )
+
+
+def _unresolved_persisted_result_part_ids(tool_call: LLMToolCall) -> list[str]:
+    """Return result-part ids whose content still contains an internal marker."""
+
+    if tool_call.name not in _RESULT_PART_TOOLS:
+        return []
+    arguments = tool_call.arguments or {}
+    if tool_call.name == "write_result_part":
+        items = [arguments]
+    else:
+        items = arguments.get("parts", arguments.get("items", []))
+    if not isinstance(items, list):
+        return []
+    affected: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if (
+            isinstance(content, str)
+            and "<persisted_result_part" in content.casefold()
+        ):
+            part_id = str(item.get("part_id") or "").strip()
+            affected.append(part_id or "<unknown>")
+    return list(dict.fromkeys(affected))
+
+
+def _redact_unresolved_persisted_result_part_call(
+    tool_call: LLMToolCall,
+) -> LLMToolCall:
+    """Sanitize rejected marker text without creating a malformed history call."""
+
+    rejected_content = (
+        "[Rejected internal history marker. Regenerate complete reader-visible prose "
+        "before retrying this part.]"
+    )
+    arguments = dict(tool_call.arguments or {})
+    if tool_call.name == "write_result_part":
+        content = arguments.get("content")
+        if (
+            isinstance(content, str)
+            and "<persisted_result_part" in content.casefold()
+        ):
+            arguments["content"] = rejected_content
+    elif tool_call.name == "write_result_parts":
+        argument_key = "parts" if isinstance(arguments.get("parts"), list) else "items"
+        items = arguments.get(argument_key)
+        if isinstance(items, list):
+            redacted_items = []
+            for item in items:
+                if not isinstance(item, dict):
+                    redacted_items.append(item)
+                    continue
+                redacted = dict(item)
+                content = redacted.get("content")
+                if (
+                    isinstance(content, str)
+                    and "<persisted_result_part" in content.casefold()
+                ):
+                    redacted["content"] = rejected_content
+                redacted_items.append(redacted)
+            arguments[argument_key] = redacted_items
     return LLMToolCall(
         id=tool_call.id,
         name=tool_call.name,
         arguments=arguments,
     )
+
+
+class _PersistedResultPartCorrection(RuntimeError):
+    """A model copied an internal history placeholder instead of prose."""
+
+    def __init__(self, tool_call: LLMToolCall, affected_part_ids: list[str]):
+        self.tool_call = tool_call
+        self.payload = {
+            "status": "correction_required",
+            "accepted": False,
+            "problem": (
+                "One or more result parts supplied an internal history placeholder "
+                "instead of complete reader-visible prose."
+            ),
+            "affected_part_ids": affected_part_ids,
+            "next_action": "list_result_parts_then_write_missing_or_rewrite_parts_once",
+            "do_not_repeat_same_shape": True,
+            "repair_instruction": (
+                "Call list_result_parts once. Leave every ready part unchanged. "
+                "For each missing or assigned rewrite part, call write_result_part "
+                "with the complete intended reader-visible "
+                "prose and evidence_ids. Never copy, construct, or submit an "
+                "internal history placeholder or any digest from prior messages."
+            ),
+        }
+        super().__init__(self.payload["problem"])
+
+
+class _ToolInputCorrection(RuntimeError):
+    """Return schema-oriented feedback without turning a repairable call into ERROR."""
+
+    def __init__(
+        self,
+        tool_call: LLMToolCall,
+        *,
+        required_argument_names: list[str],
+        missing_argument_names: list[str],
+    ):
+        self.tool_call = tool_call
+        received_argument_names = sorted((tool_call.arguments or {}).keys())
+        self.payload = {
+            "status": "correction_required",
+            "accepted": False,
+            "tool_name": tool_call.name,
+            "problem": (
+                f"Tool input is incomplete: missing required arguments "
+                f"{missing_argument_names}."
+            ),
+            "required_argument_names": required_argument_names,
+            "missing_argument_names": missing_argument_names,
+            "received_argument_names": received_argument_names,
+            "next_action": f"call_{tool_call.name}_once_with_complete_arguments",
+            "do_not_repeat_same_shape": True,
+            "repair_instruction": (
+                f"Call {tool_call.name} once with one native argument object containing "
+                f"every required field: {required_argument_names}. Preserve already-valid "
+                "values, fill only the missing fields, and do not retry the same incomplete "
+                "argument shape. For durable report prose, call list_result_parts first and "
+                "leave every ready part unchanged."
+            ),
+        }
+        super().__init__(self.payload["problem"])
 
 
 class _ProviderAttemptError(RuntimeError):
@@ -568,7 +806,10 @@ def _compact_messages_for_working_memory(
         f"<retained_references>{' '.join(references)}</retained_references>\n"
         f"<shared_memory_refs>{' '.join(shared_memory_refs)}</shared_memory_refs>\n"
         "Older tool transcripts were persisted locally. Continue from the recent "
-        "messages. Reuse shared memory before searching or reopening source records.\n"
+        "messages. Reuse shared memory before searching or reopening source records. "
+        "Never recreate an older write merely because it is absent here: call "
+        "list_result_parts once and write only missing or explicitly assigned rewrite "
+        "parts. Current tool schemas, not this checkpoint, define argument shapes.\n"
         "</working_memory_checkpoint>"
     )
     checkpoint = LLMMessage(role="user", content=checkpoint_content)
@@ -705,6 +946,7 @@ class AgentLoop:
         self._report_retries: int = 0
         self._main_block_retries: int = 0
         self._conversation_history: list[LLMMessage] = []
+        self._persisted_result_part_contents: dict[str, str] = {}
         self._current_session_id: str | None = None
         self._manifest_dirty = False
         self._cancel_event = asyncio.Event()
@@ -756,6 +998,7 @@ class AgentLoop:
         if self._status not in {AgentStatus.IDLE, AgentStatus.ERROR}:
             raise RuntimeError("cannot reset working memory while the Agent is active")
         self._conversation_history = []
+        self._persisted_result_part_contents = {}
 
     async def wait_until_turn_complete(self) -> None:
         """Wait until the current queued provider/tool turn has fully finalized."""
@@ -2113,15 +2356,37 @@ class AgentLoop:
                     continue
                 await self._set_status(AgentStatus.RUNNING_TOOL)
 
+                execution_tool_call = _rehydrate_persisted_result_part_call(
+                    tool_call,
+                    self._persisted_result_part_contents,
+                    self.workspace,
+                    str(self.usage_run_id) if self.usage_run_id else None,
+                    str(self.usage_task_id) if self.usage_task_id else None,
+                )
+                unresolved_part_ids = _unresolved_persisted_result_part_ids(
+                    execution_tool_call
+                )
+                visible_tool_call = (
+                    _redact_unresolved_persisted_result_part_call(
+                        execution_tool_call
+                    )
+                    if unresolved_part_ids
+                    else tool_call
+                )
                 await self.bus.publish(
                     ToolCallMessage(
                         agent_type=self.agent_type,
                         tool_name=tool_call.name,
-                        arguments=tool_call.arguments,
+                        arguments=visible_tool_call.arguments,
                     )
                 )
 
                 try:
+                    if unresolved_part_ids:
+                        raise _PersistedResultPartCorrection(
+                            execution_tool_call,
+                            unresolved_part_ids,
+                        )
                     tool = self.tools.get(tool_call.name)
                     if tool is None:
                         raise ValueError(f"Tool not found: {tool_call.name}")
@@ -2139,10 +2404,10 @@ class AgentLoop:
                     if (
                         self.agent_id == "main"
                         and tool_call.name == "resume_reporting_workflow"
-                        and tool_call.arguments.get("decision_id") is not None
+                        and execution_tool_call.arguments.get("decision_id") is not None
                         and not _is_explicit_evidence_decision(
                             self._current_message,
-                            str(tool_call.arguments.get("action") or ""),
+                            str(execution_tool_call.arguments.get("action") or ""),
                         )
                     ):
                         raise PermissionError(
@@ -2182,7 +2447,7 @@ class AgentLoop:
                     required_args = _tool_required_args(self.tools, tool_call.name, tool)
 
                     # Detect truncated tool calls: output hit max_tokens before arguments were complete
-                    if not tool_call.arguments and required_args:
+                    if not execution_tool_call.arguments and required_args:
                         usage = response.usage or {}
                         output_tokens = usage.get("output_tokens", 0)
                         required_hint = (
@@ -2199,24 +2464,29 @@ class AgentLoop:
                                 f"{required_hint}"
                             )
                         else:
-                            raise ValueError(
-                                f"Tool call to '{tool_call.name}' has no arguments. "
-                                f"Please provide the required parameters.{required_hint}"
+                            raise _ToolInputCorrection(
+                                execution_tool_call,
+                                required_argument_names=required_args,
+                                missing_argument_names=required_args,
                             )
 
                     missing_required = [
                         name for name in required_args
-                        if name not in tool_call.arguments or tool_call.arguments.get(name) is None
+                        if (
+                            name not in execution_tool_call.arguments
+                            or execution_tool_call.arguments.get(name) is None
+                        )
                     ]
                     if missing_required:
-                        raise ValueError(
-                            f"Tool call to '{tool_call.name}' is missing required arguments: "
-                            f"{', '.join(missing_required)}. "
-                            f"Tool '{tool_call.name}' requires arguments: {', '.join(required_args)}. "
-                            f"Call it again with a complete argument object."
+                        raise _ToolInputCorrection(
+                            execution_tool_call,
+                            required_argument_names=required_args,
+                            missing_argument_names=missing_required,
                         )
 
-                    tool_task = asyncio.create_task(tool(**tool_call.arguments))
+                    tool_task = asyncio.create_task(
+                        tool(**execution_tool_call.arguments)
+                    )
                     self._active_tool_task = tool_task
                     try:
                         result = await tool_task
@@ -2242,9 +2512,19 @@ class AgentLoop:
 
                     outcome = normalize_tool_outcome(result, tool_call.name)
                     if outcome.status == "ok" and assistant_tool_message.tool_calls:
-                        assistant_tool_message.tool_calls[tool_index] = (
-                            _compact_persisted_result_part_call(tool_call, result)
-                        )
+                        if isinstance(result, dict) and result.get("persisted") is True:
+                            _remember_persisted_result_part_content(
+                                execution_tool_call,
+                                self._persisted_result_part_contents,
+                            )
+                        # Keep successful tool history protocol-valid. In particular,
+                        # never delete required ``content`` arguments from a prior
+                        # result-part write call: providers treat the transcript as
+                        # an in-context example and can otherwise imitate the malformed
+                        # call even when its paired tool result says it succeeded.
+                        # The general working-memory compactor bounds cost by evicting
+                        # complete older messages and persists their exact transcript.
+                        assistant_tool_message.tool_calls[tool_index] = execution_tool_call
                     await self.bus.publish(
                         ToolResultMsg(
                             agent_type=self.agent_type,
@@ -2264,6 +2544,52 @@ class AgentLoop:
                         self._terminal_outcome = outcome
                         self._terminal_tool_name = tool_call.name
 
+                except _PersistedResultPartCorrection as correction:
+                    assistant_tool_message.tool_calls[tool_index] = (
+                        _redact_unresolved_persisted_result_part_call(
+                            correction.tool_call
+                        )
+                    )
+                    logger.info(
+                        "Result-part history placeholder rejected for {} on agent {}; "
+                        "requested provider correction for parts={}",
+                        tool_call.name,
+                        self.agent_type,
+                        correction.payload["affected_part_ids"],
+                    )
+                    await self.bus.publish(
+                        ToolResultMsg(
+                            agent_type=self.agent_type,
+                            tool_name=tool_call.name,
+                            result=correction.payload,
+                            error=None,
+                        )
+                    )
+                    result_str = self._format_tool_result(
+                        correction.payload,
+                        tool_name=tool_call.name,
+                        tool_call_id=tool_call.id,
+                    )
+                except _ToolInputCorrection as correction:
+                    logger.info(
+                        "Incomplete tool input rejected for {} on agent {}; missing={}",
+                        tool_call.name,
+                        self.agent_type,
+                        correction.payload["missing_argument_names"],
+                    )
+                    await self.bus.publish(
+                        ToolResultMsg(
+                            agent_type=self.agent_type,
+                            tool_name=tool_call.name,
+                            result=correction.payload,
+                            error=None,
+                        )
+                    )
+                    result_str = self._format_tool_result(
+                        correction.payload,
+                        tool_name=tool_call.name,
+                        tool_call_id=tool_call.id,
+                    )
                 except asyncio.CancelledError:
                     if not self._cancel_event.is_set():
                         raise

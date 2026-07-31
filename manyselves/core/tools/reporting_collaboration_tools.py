@@ -43,6 +43,7 @@ from ..reporting.agentic_models import (
     TableSubmission,
     TemplateSkillSubmission,
     WorkflowDecisionSubmission,
+    extra_numbered_submodule_headings,
 )
 from ..reporting.claim_ledger import ClaimLedger
 from ..reporting.input_contracts import (
@@ -59,13 +60,26 @@ from ..reporting.input_contracts import (
     WorkflowExceptionInput,
 )
 from ..reporting.message_router import artifact_path_refs, source_record_ids
-from ..reporting.models import CHIEF_SECTION_RESULT_PART_IDS
+from ..reporting.models import (
+    CHIEF_RESULT_PART_IDS,
+    CHIEF_SECTION_RESULT_PART_IDS,
+    EvidenceItem,
+)
 from ..reporting.source_ledger import SourceLedger
 from ..reporting.store import ReportingStore
 from ..reporting.submission_contracts import submission_schema
 from ..reporting.taxonomy import REPORT_TAXONOMY
 from .document_tool import InspectDocumentTool
 from .registry import Tool
+
+
+_PERSISTED_RESULT_PART_SENTINEL = "<persisted_result_part"
+
+
+def _contains_persisted_result_part_marker(value: str) -> bool:
+    """Return whether provider-history compaction leaked into report content."""
+
+    return _PERSISTED_RESULT_PART_SENTINEL in value.casefold()
 
 
 class _ResultTool(Tool):
@@ -186,6 +200,40 @@ class SubmitResultTool(_ResultTool):
                 ),
             )
         prose = prose_path.read_text(encoding="utf-8")
+        if _contains_persisted_result_part_marker(prose):
+            raise SubmissionValidationError(
+                "module part contains an internal provider-history compaction marker",
+                field=f"result_parts.{part_id}.content",
+                expected="the complete reader-visible submodule prose",
+                example="完整小节正文；内部 persisted_result_part 标记不得进入报告。",
+                received="contains <persisted_result_part ...>",
+                repair_instruction=(
+                    f"Call write_result_part again for part_id={part_id!r} with the complete "
+                    "intended prose and evidence_ids. Never copy a persisted_result_part "
+                    "marker or its sha256 value into content."
+                ),
+            )
+        unexpected_headings = extra_numbered_submodule_headings(part_id, prose)
+        if unexpected_headings:
+            raise SubmissionValidationError(
+                "module part contains a numbered heading outside the fixed taxonomy",
+                field=f"submodule_narratives.{part_id}",
+                expected=(
+                    f"only the optional opening heading for fixed part {part_id}; "
+                    "internal labels must be unnumbered"
+                ),
+                example=(
+                    f"## {part_id} 固定小节标题\n\n"
+                    "**现状描述**\n\n正文……\n\n**风险判断**\n\n正文……"
+                ),
+                received=list(unexpected_headings),
+                repair_instruction=(
+                    f"Rewrite only part_id={part_id!r}. Keep the fixed {part_id} heading, "
+                    "but remove numeric prefixes from every internal heading; use plain "
+                    "paragraphs or unnumbered bold labels for observation, judgment, "
+                    "mechanism, and actions."
+                ),
+            )
         try:
             binding = json.loads(binding_path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
@@ -276,8 +324,47 @@ class SubmitResultTool(_ResultTool):
                 expected="a non-empty complete target-section body",
                 received="",
             )
+        if _contains_persisted_result_part_marker(prose):
+            raise SubmissionValidationError(
+                "result part contains an internal provider-history compaction marker",
+                field=f"result_parts.{part_id}.content",
+                expected="the complete reader-visible section prose",
+                example="修订后的完整目标小节正文。",
+                received="contains <persisted_result_part ...>",
+                repair_instruction=(
+                    f"Call write_result_part again for part_id={part_id!r} with the complete "
+                    "intended prose. Never copy a persisted_result_part marker or its "
+                    "sha256 value into content."
+                ),
+            )
         relative = prose_path.relative_to(self.store.workspace).as_posix()
         return prose, relative
+
+    def _runtime_claim_boundary(self, evidence_ids: list[str]) -> tuple[float, bool]:
+        """Derive Claim confidence and unresolved state from bound project evidence."""
+
+        if not evidence_ids:
+            return 0.0, True
+        confidences: list[float] = []
+        unresolved = False
+        ledger = SourceLedger(self.store.workspace, self.run_id)
+        for evidence_id in evidence_ids:
+            content_ref = ledger.content_ref(evidence_id)
+            if content_ref is None:
+                continue
+            try:
+                item = EvidenceItem.model_validate_json(
+                    (self.store.workspace / content_ref).read_text(encoding="utf-8")
+                )
+            except (OSError, ValidationError, ValueError):
+                # Compatibility fallback for project evidence registered before
+                # EvidenceItem metadata was persisted in the source content.
+                continue
+            if item.id != evidence_id:
+                continue
+            confidences.append(item.confidence)
+            unresolved = unresolved or item.needs_confirmation
+        return min(confidences, default=1.0), unresolved
 
     def _runtime_claim_for_part(
         self,
@@ -288,6 +375,7 @@ class SubmitResultTool(_ResultTool):
         evidence_ids: list[str],
     ) -> dict[str, object]:
         claim_id = self._generated_part_claim_id(module_id, part_id)
+        confidence, unresolved = self._runtime_claim_boundary(evidence_ids)
         return {
             "id": claim_id,
             "module_id": module_id,
@@ -295,9 +383,9 @@ class SubmitResultTool(_ResultTool):
             "text": prose.strip(),
             "claim_type": "technical_interpretation",
             "source_ids": evidence_ids,
-            "confidence": 1.0,
+            "confidence": confidence,
             "footnote_required": bool(evidence_ids),
-            "unresolved": not evidence_ids,
+            "unresolved": unresolved,
         }
 
     def _assemble_module_commit(
@@ -406,9 +494,42 @@ class SubmitResultTool(_ResultTool):
                     "revision input; do not alter saved prose or evidence bindings."
                 ),
             )
+        declared_target_ids = {
+            target_id
+            for response in commit.revision_responses
+            if response.action == "implemented"
+            for target_id in response.changed_target_ids
+        }
+        contract_target_ids = set(contract.target_submodule_ids)
+        out_of_scope_target_ids = sorted(declared_target_ids - contract_target_ids)
+        if out_of_scope_target_ids:
+            raise SubmissionValidationError(
+                "module revision response declares out-of-scope changed targets",
+                field="revision_responses.changed_target_ids",
+                expected=(
+                    "only assigned target_submodule_ids: "
+                    f"{sorted(contract_target_ids)}"
+                ),
+                example=sorted(declared_target_ids & contract_target_ids),
+                received=out_of_scope_target_ids,
+                repair_instruction=(
+                    "Copy changed_target_ids from the target ids assigned to each finding. "
+                    "Use [] for disputed or needs_input responses."
+                ),
+            )
+        # A review-driven patch materializes only targets the author explicitly
+        # declares implemented. Machine-validation-only revisions have no finding
+        # responses, so their assigned targets remain the materialization boundary.
+        materialized_target_ids = (
+            declared_target_ids
+            if commit.revision_responses
+            else contract_target_ids
+        )
         narratives: dict[str, str] = {}
         claims_upsert: list[dict[str, object]] = []
         for part_id in contract.target_submodule_ids:
+            if part_id not in materialized_target_ids:
+                continue
             prose, evidence_ids, _ = self._bound_module_part(part_id)
             claim = self._runtime_claim_for_part(
                 module_id=commit.module_id,
@@ -421,15 +542,16 @@ class SubmitResultTool(_ResultTool):
                 prose.rstrip() + f"\n\n[[CLAIM:{claim_id}]]" if evidence_ids else prose
             )
             claims_upsert.append(claim)
-        target_ids = set(contract.target_submodule_ids)
         removed_claim_ids = [
             claim.id
             for claim in subject.claims
-            if claim.submodule_id in target_ids
+            if claim.submodule_id in materialized_target_ids
             and claim.id not in {str(claim["id"]) for claim in claims_upsert}
         ]
         resulting_claims = [
-            claim for claim in subject.claims if claim.submodule_id not in target_ids
+            claim
+            for claim in subject.claims
+            if claim.submodule_id not in materialized_target_ids
         ]
         resulting_source_ids = {
             source_id for claim in resulting_claims for source_id in claim.source_ids
@@ -629,7 +751,24 @@ class SubmitResultTool(_ResultTool):
                         "this active task; do not copy or synthesize another path."
                     ),
                 )
-            parts.append(target.read_text(encoding="utf-8"))
+            content = target.read_text(encoding="utf-8")
+            if _contains_persisted_result_part_marker(content):
+                raise SubmissionValidationError(
+                    "text artifact contains an internal provider-history compaction marker",
+                    field=".".join(map(str, path)),
+                    expected="complete reader-visible text in the current-task artifact",
+                    example=(
+                        f"Call write_result_part again for the part stored at {ref!r} "
+                        "with its complete prose."
+                    ),
+                    received="contains <persisted_result_part ...>",
+                    repair_instruction=(
+                        "Rewrite the affected result part with complete prose, then submit "
+                        "the exact artifact_ref returned by write_result_part. Never copy a "
+                        "history placeholder or its digest into a durable artifact."
+                    ),
+                )
+            parts.append(content)
         return separator.join(parts)
 
     def _materialize_text_artifacts(
@@ -638,6 +777,19 @@ class SubmitResultTool(_ResultTool):
         path: tuple[str | int, ...] = (),
     ):
         if isinstance(value, str):
+            if _contains_persisted_result_part_marker(value):
+                raise SubmissionValidationError(
+                    "submission contains an internal provider-history compaction marker",
+                    field=".".join(map(str, path)) or "payload",
+                    expected="complete reader-visible text or an exact current-task artifact_ref",
+                    example="完整正文，或 write_result_part 返回的 Work/runs/.../drafts/...md",
+                    received="contains <persisted_result_part ...>",
+                    repair_instruction=(
+                        "Replace the marker with the complete intended prose or the exact "
+                        "artifact_ref returned by write_result_part. Never submit the marker "
+                        "or its sha256 value as report content."
+                    ),
+                )
             if "result_part_refs" in path:
                 return value
             if self._looks_like_text_artifact_ref(value):
@@ -730,6 +882,48 @@ class SubmitResultTool(_ResultTool):
             )
         )
 
+    def _submission_kind_hint(self, payload: object) -> str | None:
+        """Return the expected kind when unambiguous, otherwise the received kind."""
+
+        if len(self.allowed_outputs) == 1:
+            return next(iter(self.allowed_outputs))
+        if isinstance(payload, dict) and isinstance(payload.get("kind"), str):
+            return str(payload["kind"])
+        return None
+
+    @staticmethod
+    def _affected_result_part_ids(issues: list[dict[str, object]]) -> list[str]:
+        """Map validation fields to only the durable prose parts safe to rewrite."""
+
+        affected: set[str] = set()
+        chief_part_ids = set(CHIEF_RESULT_PART_IDS)
+        for issue in issues:
+            field = str(issue.get("field", ""))
+            problem = str(issue.get("problem", ""))
+            if field == "skill_markdown" or "template Skill frontmatter" in problem:
+                affected.add("skill")
+                continue
+            if field in chief_part_ids:
+                affected.add(field)
+                continue
+            if field.startswith("section_bodies."):
+                remainder = field.removeprefix("section_bodies.")
+                for section_id, part_id in CHIEF_SECTION_RESULT_PART_IDS.items():
+                    if remainder == section_id or remainder.startswith(f"{section_id}."):
+                        affected.add(part_id)
+                        break
+                continue
+            for prefix in ("submodule_narratives.", "result_parts."):
+                if not field.startswith(prefix):
+                    continue
+                remainder = field.removeprefix(prefix)
+                if prefix == "result_parts." and remainder.endswith(".content"):
+                    remainder = remainder.removesuffix(".content")
+                if remainder:
+                    affected.add(remainder)
+                break
+        return sorted(affected)
+
     def _feedback_input_contract(self):
         """Load context only for correction examples without masking the real error."""
 
@@ -784,20 +978,28 @@ class SubmitResultTool(_ResultTool):
             example["base_revision"] = contract.subject.revision
             example["revision"] = contract.subject.revision + 1
             example["unresolved_questions"] = list(contract.subject.unresolved_questions)
-            finding_ids = [
-                *(finding.id for finding in contract.module_findings),
-                *(finding.id for finding in contract.cross_findings),
-                *(change.id for change in contract.requested_changes),
+            response_targets = [
+                *(
+                    (finding.id, [finding.target_submodule_id])
+                    for finding in contract.module_findings
+                ),
+                *(
+                    (finding.id, list(finding.target_submodule_ids))
+                    for finding in contract.cross_findings
+                ),
+                *(
+                    (change.id, list(change.target_submodule_ids))
+                    for change in contract.requested_changes
+                ),
             ]
-            first_target = contract.target_submodule_ids[0]
             example["revision_responses"] = [
                 {
                     "finding_id": finding_id,
                     "action": "implemented",
                     "summary": "已按 finding 修订目标小节并保留其余证据边界。",
-                    "changed_target_ids": [first_target],
+                    "changed_target_ids": target_ids,
                 }
-                for finding_id in finding_ids
+                for finding_id, target_ids in response_targets
             ]
         elif kind == "chief_revision_submission" and isinstance(contract, ChiefRevisionInput):
             example["base_subject_ref"] = contract.subject_ref
@@ -1880,13 +2082,8 @@ class SubmitResultTool(_ResultTool):
             fingerprint = self._correction_fingerprint(exc, issues)
             count = self._validation_fingerprints.get(fingerprint, 0) + 1
             self._validation_fingerprints[fingerprint] = count
-            affected_part_ids = sorted(
-                {
-                    str(issue["field"]).split(".", 1)[1]
-                    for issue in issues
-                    if str(issue.get("field", "")).startswith("submodule_narratives.")
-                }
-            )
+            affected_part_ids = self._affected_result_part_ids(issues)
+            submission_kind = self._submission_kind_hint(payload)
             correction_ref = (
                 f"Work/runs/{self.run_id}/submissions/{self.task_id}/correction-state.json"
             )
@@ -1899,6 +2096,8 @@ class SubmitResultTool(_ResultTool):
                     "task_id": self.task_id,
                     "revision": self.revision,
                     "status": "failed" if terminal else "correction_required",
+                    "accepted": False,
+                    "submission_kind": submission_kind,
                     "raw_payload": payload,
                     "validation_errors": issues,
                     "affected_part_ids": affected_part_ids,
@@ -1909,13 +2108,24 @@ class SubmitResultTool(_ResultTool):
             if not terminal:
                 return {
                     "status": "correction_required",
+                    "accepted": False,
+                    "submission_kind": submission_kind,
                     "validation_errors": issues,
+                    "affected_part_ids": affected_part_ids,
+                    "rewrite_part_ids": affected_part_ids,
                     "remaining_attempts": (
                         self.max_validation_failures - self._validation_failures
                     ),
                     "same_error_attempts_remaining": 1,
                     "attempt": self._submission_attempt,
                     "correction_state_ref": correction_ref,
+                    "next_action": "resubmit_result_once_after_applying_validation_errors",
+                    "instruction": (
+                        "Apply each validation error exactly once and resubmit one complete "
+                        "native payload. Rewrite only rewrite_part_ids; when that list is "
+                        "empty, do not rewrite any durable prose part. Never repeat the "
+                        "same rejected payload."
+                    ),
                 }
             if count >= 2:
                 stop_cause = "the same validation defect was repeated"
@@ -1938,11 +2148,18 @@ class SubmitResultTool(_ResultTool):
             relative = await self._persist_and_publish(result)
             return {
                 "status": "failed",
+                "accepted": False,
+                "submission_kind": submission_kind,
                 "error": reason,
                 "validation_errors": issues,
                 "remaining_attempts": 0,
                 "result_path": relative,
                 "correction_state_ref": correction_ref,
+                "next_action": "stop_task",
+                "instruction": (
+                    "Do not retry this failed submission in the same task turn; return "
+                    "the terminal failure to the workflow."
+                ),
             }
 
     @staticmethod
@@ -2229,6 +2446,8 @@ class SubmitResultTool(_ResultTool):
                 "task_id": self.task_id,
                 "revision": self.revision,
                 "status": "resolved",
+                "accepted": True,
+                "submission_kind": getattr(result.payload, "kind", None),
                 "raw_payload": payload,
                 "validation_errors": [],
                 "affected_part_ids": [],
@@ -2236,7 +2455,17 @@ class SubmitResultTool(_ResultTool):
                 "fingerprint_occurrences": 0,
             },
         )
-        return {"status": "completed", "result_path": relative}
+        return {
+            "status": "completed",
+            "accepted": True,
+            "submission_kind": getattr(result.payload, "kind", None),
+            "result_path": relative,
+            "next_action": "finish_task",
+            "instruction": (
+                "The typed result was accepted and persisted. Do not submit or rewrite "
+                "it again; finish the current task turn."
+            ),
+        }
 
 
 class _ResultPartTool(Tool):
@@ -2273,7 +2502,9 @@ class WriteResultPartTool(_ResultPartTool):
     name = "write_result_part"
     description = (
         "Persist one durable report prose part before final submission. "
-        "The returned artifact_ref can replace a long text value in submit_result."
+        "The returned artifact_ref can replace a long text value in submit_result. "
+        "Always send complete reader-visible prose; never copy an internal "
+        "persisted-result history placeholder into content."
     )
 
     async def __call__(
@@ -2289,7 +2520,49 @@ class WriteResultPartTool(_ResultPartTool):
             content: One non-empty prose part of at most 48000 characters.
             evidence_ids: For module prose, current-run E-* ids supporting this whole fixed submodule; use [] to record an explicit evidence gap.
         """
-        normalized_evidence_ids = self._validate_part(part_id, content, evidence_ids)
+        try:
+            normalized_evidence_ids = self._validate_part(
+                part_id,
+                content,
+                evidence_ids,
+            )
+        except ValueError as exc:
+            affected_part_ids = (
+                [part_id]
+                if isinstance(part_id, str)
+                and (not self.expected_part_ids or part_id in self.expected_part_ids)
+                else []
+            )
+            problem = str(exc)
+            field = (
+                "part_id"
+                if "part_id" in problem
+                else "evidence_ids"
+                if "evidence_ids" in problem
+                else "content"
+            )
+            return {
+                "status": "correction_required",
+                "accepted": False,
+                "persisted": False,
+                "part_id": part_id,
+                "validation_errors": [
+                    {
+                        "field": field,
+                        "problem": problem,
+                    }
+                ],
+                "affected_part_ids": affected_part_ids,
+                "rewrite_part_ids": affected_part_ids,
+                "next_action": "list_result_parts_then_retry_only_if_missing_or_rewrite",
+                "do_not_repeat_same_shape": True,
+                "instruction": (
+                    "Call list_result_parts once. If this part is ready, leave it "
+                    "unchanged. Otherwise correct the reported field and call "
+                    "write_result_part once with part_id, complete content, and the "
+                    "module-only evidence_ids field when required."
+                ),
+            }
         return self._persist_part(part_id, content, normalized_evidence_ids)
 
     def _validate_part(
@@ -2312,6 +2585,20 @@ class WriteResultPartTool(_ResultPartTool):
             raise ValueError("result part content must be a string")
         if not content.strip() or len(content) > 48_000:
             raise ValueError("result part must contain 1-48000 characters")
+        if _contains_persisted_result_part_marker(content):
+            raise ValueError(
+                "result part content contains an internal persisted_result_part marker; "
+                "regenerate the complete intended prose and never copy the marker or its "
+                "sha256 value into report content"
+            )
+        if self.evidence_binding_required:
+            unexpected_headings = extra_numbered_submodule_headings(part_id, content)
+            if unexpected_headings:
+                raise ValueError(
+                    f"result part {part_id} contains numbered headings outside the fixed "
+                    f"taxonomy: {list(unexpected_headings)}; keep only the optional opening "
+                    f"heading for {part_id} and use unnumbered internal labels"
+                )
         if self.evidence_binding_required:
             if evidence_ids is None:
                 raise ValueError(
@@ -2372,12 +2659,20 @@ class WriteResultPartTool(_ResultPartTool):
             "status": "unchanged"
             if previous == content
             else ("updated" if previous else "created"),
+            "persisted": True,
             "part_id": part_id,
             "characters": len(content),
+            "artifact_ref": relative.as_posix(),
+            "next_action": "list_result_parts",
+            "rewrite_policy": (
+                "Do not rewrite this persisted part unless list_result_parts includes "
+                "its part_id in rewrite_part_ids or submit_result correction feedback "
+                "explicitly includes it in rewrite_part_ids."
+            ),
             **(
                 {"evidence_ids": evidence_ids}
                 if self.evidence_binding_required
-                else {"artifact_ref": relative.as_posix()}
+                else {}
             ),
         }
 
@@ -2442,8 +2737,15 @@ class WriteResultPartsTool(WriteResultPartTool):
         ]
         return {
             "status": "completed",
+            "persisted": True,
             "count": len(results),
+            "saved_part_ids": [result["part_id"] for result in results],
             "parts": results,
+            "next_action": "list_result_parts",
+            "rewrite_policy": (
+                "Do not rewrite persisted parts unless list_result_parts or submit_result "
+                "correction feedback explicitly includes them in rewrite_part_ids."
+            ),
         }
 
 
@@ -2460,9 +2762,10 @@ class ListResultPartsTool(_ResultPartTool):
         parts = []
         if root.is_dir():
             for path in sorted(root.glob("*.md")):
+                content = path.read_text(encoding="utf-8")
                 part = {
                     "part_id": path.stem,
-                    "characters": len(path.read_text(encoding="utf-8")),
+                    "characters": len(content),
                 }
                 if self.evidence_binding_required:
                     binding_path = root / "_evidence" / f"{path.stem}.json"
@@ -2474,10 +2777,29 @@ class ListResultPartsTool(_ResultPartTool):
                             binding = None
                         if isinstance(binding, dict):
                             evidence_ids = binding.get("evidence_ids")
+                    structural_errors = list(
+                        extra_numbered_submodule_headings(path.stem, content)
+                    )
+                    if _contains_persisted_result_part_marker(content):
+                        structural_errors.append(
+                            "contains internal persisted_result_part marker"
+                        )
+                    if "[[CLAIM:" in content:
+                        structural_errors.append(
+                            "contains retired model-authored Claim marker"
+                        )
                     part.update(
                         {
                             "evidence_ids": evidence_ids,
-                            "ready": isinstance(evidence_ids, list),
+                            "ready": (
+                                isinstance(evidence_ids, list)
+                                and not structural_errors
+                            ),
+                            **(
+                                {"structural_errors": structural_errors}
+                                if structural_errors
+                                else {}
+                            ),
                         }
                     )
                 else:
@@ -2490,14 +2812,36 @@ class ListResultPartsTool(_ResultPartTool):
             if self.evidence_binding_required
             else []
         )
+        ready_ids = [
+            part["part_id"]
+            for part in parts
+            if part["part_id"] in self.expected_part_ids
+            and (
+                not self.evidence_binding_required
+                or bool(part.get("ready", False))
+            )
+        ]
+        complete = bool(self.expected_part_ids) and not missing_ids and not unbound_ids
         return {
             "revision": self.revision,
             "parts": parts,
             "expected_part_ids": list(self.expected_part_ids),
             "missing_part_ids": missing_ids,
             "unbound_part_ids": unbound_ids,
+            "rewrite_part_ids": unbound_ids,
+            "ready_part_ids": ready_ids,
+            "do_not_rewrite_part_ids": ready_ids,
             "required_synthesis_input_ids": list(self.required_synthesis_input_ids),
-            "complete": (bool(self.expected_part_ids) and not missing_ids and not unbound_ids),
+            "complete": complete,
+            "next_action": (
+                "submit_result" if complete else "write_missing_or_rewrite_parts"
+            ),
+            "instruction": (
+                "All expected parts are durably saved. Submit the complete typed result "
+                "now and do not rewrite ready parts."
+                if complete
+                else "Write only missing_part_ids and rewrite_part_ids, then list again."
+            ),
         }
 
 

@@ -10,6 +10,7 @@ from docx.shared import Inches
 from PIL import Image
 
 from manyselves.config.schema import AgentDefaults
+from manyselves.core.artifacts.content_store import ContentAddressedStore
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import (
     LLMProvider,
@@ -26,6 +27,8 @@ from manyselves.core.reporting.agent_runner import (
 from manyselves.core.reporting.agentic_models import AgentRunStatus, ModuleSubmission, TaskEnvelope
 from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.reporting.input_contracts import (
+    INPUT_CONTRACT_EXAMPLES,
+    INPUT_CONTRACT_TYPES,
     ChiefEditorInput,
     ModuleAuthoringInput,
     ModuleContentView,
@@ -63,6 +66,39 @@ def _write_template_contract(
         encoding="utf-8",
     )
     return contract_ref
+
+
+@pytest.mark.parametrize("kind", sorted(INPUT_CONTRACT_TYPES))
+def test_runner_loads_every_registered_model_input_contract(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    contract_ref = f"Work/runs/run-input-matrix/context/{kind}.json"
+    target = tmp_path / contract_ref
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(INPUT_CONTRACT_EXAMPLES[kind], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    envelope = TaskEnvelope(
+        task_id=f"input-matrix-{kind}",
+        run_id="run-input-matrix",
+        agent_id="main",
+        objective="验证所有模型输入身份共用的契约加载路径",
+        input_refs=[contract_ref],
+        input_contract_kind=kind,
+        input_contract_ref=contract_ref,
+    )
+
+    loaded = runner._input_contract(envelope)
+
+    assert isinstance(loaded, INPUT_CONTRACT_TYPES[kind])
 
 
 class DirectSubmissionProvider(LLMProvider):
@@ -362,7 +398,6 @@ def test_module_authoring_schema_and_example_use_current_identity(
     )
     payload = registry._schema_cache["submit_result"]["properties"]["payload"]
     writer_schema = registry._schema_cache["write_result_part"]
-    batch_schema = registry._schema_cache["write_result_parts"]
 
     assert payload["properties"]["module_id"]["const"] == "2.4"
     assert payload["properties"]["revision"]["const"] == 3
@@ -372,15 +407,14 @@ def test_module_authoring_schema_and_example_use_current_identity(
     assert writer_schema["properties"]["part_id"]["enum"] == expected_part_ids
     assert writer_schema["required"] == ["part_id", "content", "evidence_ids"]
     assert writer_schema["additionalProperties"] is False
-    assert batch_schema["properties"]["parts"]["maxItems"] == 4
-    assert (
-        batch_schema["properties"]["parts"]["items"]["properties"]["part_id"]["enum"]
-        == expected_part_ids
-    )
-    assert (
-        batch_schema["properties"]["parts"]["items"]["required"]
-        == ["part_id", "content", "evidence_ids"]
-    )
+    content_description = writer_schema["properties"]["content"]["description"]
+    assert "Always supply the full intended prose" in content_description
+    assert "Every call must contain all required arguments" in content_description
+    assert "may omit content" not in content_description
+    assert "persisted_result_part" not in content_description
+    assert "list_result_parts" in content_description
+    assert registry.get("write_result_parts") is None
+    assert "write_result_parts" not in registry._schema_cache
 
 
 def test_module_review_tool_schema_omits_runtime_owned_fields(
@@ -526,7 +560,6 @@ def test_template_skill_submission_schema_and_tools_are_exposed_to_distiller(
     assert set(registry.get_all()) == {
         "inspect_document",
         "write_result_part",
-        "write_result_parts",
         "list_result_parts",
         "submit_result",
         "report_blocked",
@@ -544,19 +577,114 @@ def test_template_skill_submission_schema_and_tools_are_exposed_to_distiller(
     )
     expected_parts = ("skill", "analysis", "synthesis", "visual", "rubric")
     assert registry.get("write_result_part").expected_part_ids == expected_parts
-    assert registry.get("write_result_parts").expected_part_ids == expected_parts
-    assert registry.get("write_result_parts").max_batch_size == 8
+    assert registry.get("write_result_parts") is None
     assert registry.get("list_result_parts").expected_part_ids == expected_parts
     writer_schema = registry._schema_cache["write_result_part"]
-    batch_schema = registry._schema_cache["write_result_parts"]
     assert writer_schema["properties"]["part_id"]["enum"] == list(expected_parts)
     assert "evidence_ids" not in writer_schema["properties"]
     assert writer_schema["required"] == ["part_id", "content"]
-    assert batch_schema["properties"]["parts"]["maxItems"] == 8
     assert (
-        "evidence_ids"
-        not in batch_schema["properties"]["parts"]["items"]["properties"]
+        "Every call must contain all required arguments"
+        in writer_schema["properties"]["content"]["description"]
     )
+    assert "may omit content" not in writer_schema["properties"]["content"]["description"]
+    assert "persisted_result_part" not in writer_schema["properties"]["content"]["description"]
+    assert "write_result_parts" not in registry._schema_cache
+
+
+@pytest.mark.asyncio
+async def test_template_distiller_accepts_one_verified_cas_template_view(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "Templates/report_template.docx"
+    source.parent.mkdir(parents=True)
+    Document().save(source)
+    template_ref = "Work/runs/run-cas-skill/templates/template.docx"
+    template = tmp_path / template_ref
+    content_store = ContentAddressedStore(tmp_path)
+    content_store.link_view(content_store.ingest_file(source), template)
+    contract_ref = _write_template_contract(
+        tmp_path,
+        run_id="run-cas-skill",
+        template_ref=template_ref,
+    )
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    envelope = TaskEnvelope(
+        task_id="template-skill-distillation",
+        run_id="run-cas-skill",
+        agent_id="template-distiller",
+        objective="分析模板并生成写作 Skill",
+        allowed_outputs=["template_skill_submission"],
+        allowed_tools=["inspect_document", "submit_result", "report_blocked"],
+        input_refs=[contract_ref, template_ref],
+        input_contract_kind="template_distillation_input",
+        input_contract_ref=contract_ref,
+    )
+
+    registry = runner._tools(
+        load_packaged_agents()["template-distiller"],
+        envelope,
+        "session-cas",
+        "workflow-cas",
+    )
+
+    inspection = registry.get("inspect_document")
+    assert isinstance(inspection, InspectDocumentTool)
+    assert inspection.required_path == template_ref
+    assert template.is_symlink()
+    assert template.resolve().is_relative_to(
+        (tmp_path / "Work/content/sha256").resolve()
+    )
+    result = await inspection(template_ref, max_chars=100_000)
+    assert result["path"] == template_ref
+    assert result["kind"] == "docx"
+    assert result["error"] is None
+
+
+def test_template_distiller_rejects_non_cas_template_symlink(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "Templates/report_template.docx"
+    source.parent.mkdir(parents=True)
+    Document().save(source)
+    template_ref = "Work/runs/run-linked-skill/templates/template.docx"
+    template = tmp_path / template_ref
+    template.parent.mkdir(parents=True)
+    template.symlink_to(source)
+    contract_ref = _write_template_contract(
+        tmp_path,
+        run_id="run-linked-skill",
+        template_ref=template_ref,
+    )
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    envelope = TaskEnvelope(
+        task_id="template-skill-distillation",
+        run_id="run-linked-skill",
+        agent_id="template-distiller",
+        objective="分析模板并生成写作 Skill",
+        allowed_outputs=["template_skill_submission"],
+        input_refs=[contract_ref, template_ref],
+        input_contract_kind="template_distillation_input",
+        input_contract_ref=contract_ref,
+    )
+
+    with pytest.raises(ValueError, match="verified CAS view"):
+        runner._tools(
+            load_packaged_agents()["template-distiller"],
+            envelope,
+            "session-linked",
+            "workflow-linked",
+        )
 
 
 def test_chief_tools_expose_only_current_report_parts(
@@ -637,22 +765,15 @@ def test_chief_tools_expose_only_current_report_parts(
         "special_topic_analysis",
     )
     writer = registry.get("write_result_part")
-    batch_writer = registry.get("write_result_parts")
     listing = registry.get("list_result_parts")
     assert writer.expected_part_ids == expected_parts
-    assert batch_writer.expected_part_ids == expected_parts
-    assert batch_writer.max_batch_size == 8
+    assert registry.get("write_result_parts") is None
     assert listing.expected_part_ids == expected_parts
     assert listing.required_synthesis_input_ids == ()
     writer_schema = registry._schema_cache["write_result_part"]
-    batch_schema = registry._schema_cache["write_result_parts"]
     assert writer_schema["properties"]["part_id"]["enum"] == list(expected_parts)
     assert "evidence_ids" not in writer_schema["properties"]
-    assert batch_schema["properties"]["parts"]["maxItems"] == 8
-    assert (
-        batch_schema["properties"]["parts"]["items"]["properties"]["part_id"]["enum"]
-        == list(expected_parts)
-    )
+    assert "write_result_parts" not in registry._schema_cache
 
 
 @pytest.mark.asyncio
@@ -2250,9 +2371,11 @@ def test_conversation_trace_is_a_small_manifest_for_compressed_cas_content(
     assert manifest["encoding"] == "gzip+json"
     assert (
         manifest["transcript_semantics"]
-        == "provider_working_history_compacted_v1"
+        == "provider_working_history_protocol_valid_v3"
     )
-    assert manifest["forensic_exact_tool_arguments"] is False
+    assert "preserve every required argument" in manifest["forensic_note"]
+    assert "no reusable prose marker or malformed tool call" in manifest["forensic_note"]
+    assert manifest["forensic_exact_tool_arguments"] is True
     assert "messages" not in manifest
     assert manifest["compressed_bytes"] < manifest["uncompressed_bytes"]
     transcript = tmp_path / manifest["transcript_ref"]

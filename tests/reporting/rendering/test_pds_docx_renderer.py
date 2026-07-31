@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import io
 import json
 from pathlib import Path
@@ -43,32 +44,47 @@ def _style_east_asia_font(style) -> str | None:
 def test_packaged_v2_core_matches_normalized_handoff_source() -> None:
     core = PackagedV2DocxCore(Path("unused-template.docx"))
     assert hashlib.sha256(core.source_path.read_bytes()).hexdigest() == (
-        "7452a2f263c7dc1e23b694877d094c32acad902c1d723c6911b8ae0aab2fbb61"
+        "7eb7b7cabe56e50ed1232b2b5711670b1e592fab4ab5ee52bc449268462bbc07"
     )
+
+
+def test_packaged_v2_core_supports_legacy_top_level_dynamic_loading() -> None:
+    core = PackagedV2DocxCore(Path("unused-template.docx"))
+    spec = importlib.util.spec_from_file_location(
+        "_legacy_v2_docx_renderer",
+        core.source_path,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+
+    spec.loader.exec_module(module)
+
+    assert callable(module.render_report_docx)
 
 
 def test_report_embedding_removes_only_duplicate_module_heading() -> None:
     narrative = (
-        "## 2.5 运维管理与风险管控\n\n"
+        "## 2.5 运维管理与风险管控机制\n\n"
         "### 2.5.1 SOP/EOP\n\n完整分析正文。"
     )
 
     embedded = PdsDocxRenderer._strip_leading_module_heading(narrative, "2.5")
 
-    assert "## 2.5 运维管理与风险管控" not in embedded
+    assert "## 2.5 运维管理与风险管控机制" not in embedded
     assert embedded.startswith("#### 2.5.1 SOP/EOP")
 
 
 def test_report_embedding_removes_module_heading_after_editor_transition() -> None:
     narrative = (
         "以下为运维模块的批准正文。\n\n"
-        "## 2.5 运维管理与风险管控\n\n"
+        "## 2.5 运维管理与风险管控机制\n\n"
         "### 2.5.1 SOP/EOP\n\n完整分析正文。"
     )
 
     embedded = PdsDocxRenderer._strip_leading_module_heading(narrative, "2.5")
 
-    assert "## 2.5 运维管理与风险管控" not in embedded
+    assert "## 2.5 运维管理与风险管控机制" not in embedded
     assert "以下为运维模块的批准正文。" in embedded
     assert "#### 2.5.1 SOP/EOP" in embedded
 
@@ -97,7 +113,7 @@ def test_packaged_v2_core_removes_markdown_markers_and_uses_one_label_style(
 
 ## 2. 评估内容描述
 
-### 2.1 电力系统架构问题
+### 2.1 配电系统架构问题
 
 ### 现状描述
 
@@ -148,9 +164,9 @@ def test_packaged_v2_core_preserves_template_fonts_and_uses_consistent_type_scal
 
 ## 2. 评估内容描述
 
-### 2.1 电力系统架构问题
+### 2.1 配电系统架构问题
 
-#### 2.1.1 电力系统负荷分配与过载风险
+#### 2.1.1 配电系统负荷分配与过载风险
 
 正文段落用于验证统一排版节奏。
 """

@@ -110,17 +110,123 @@ def _approved_modules() -> dict[str, ModuleSubmission]:
     }
 
 
+def test_report_taxonomy_matches_s4_6_columns_b_to_e() -> None:
+    expected = {
+        "2.1": (
+            "配电系统架构问题",
+            (
+                ("2.1.1", "配电系统负荷分配与过载风险"),
+                ("2.1.2", "关键负荷供电路径与应急/备用供电的问题"),
+                ("2.1.3", "配网自动化、备用电源自动切换（可能性及功能验证）"),
+                ("2.1.4", "防止2路电源并联产生环流"),
+                ("2.1.5", "系统无功补偿与电容柜问题"),
+            ),
+        ),
+        "2.2": (
+            "环境工况风险",
+            (
+                ("2.2.1", "来自电能质量的风险"),
+                ("2.2.1.1", "谐波风险情况"),
+                ("2.2.1.2", "电压扰动情况"),
+                ("2.2.1.3", "频繁启动与冲击负荷"),
+                ("2.2.2", "其他运行工况风险"),
+                ("2.2.2.1", "低压配电设备发热情况"),
+                ("2.2.2.2", "高压配电设备局放情况"),
+                ("2.2.2.3", "其他物理环境风险"),
+            ),
+        ),
+        "2.3": (
+            "针对故障的保护",
+            (
+                ("2.3.1", "配电系统保护方案与定值的论证计算"),
+                ("2.3.2", "零序/漏电的防范"),
+                ("2.3.3", "电压事件（过压）的防范"),
+            ),
+        ),
+        "2.4": (
+            "配电设备/元件内在风险",
+            (
+                ("2.4.1", "配置与选型问题"),
+                ("2.4.1.1", "额定/分断能力"),
+                ("2.4.1.2", "配电柜分隔形式"),
+                ("2.4.1.3", "配电设备安全连锁/闭锁"),
+                ("2.4.1.4", "设备分合/储能/工作位置显示"),
+                ("2.4.2", "安装规范性问题"),
+                ("2.4.2.1", "裸露导体防护"),
+                ("2.4.2.2", "等电位连接与接地问题"),
+                ("2.4.2.3", "电气连接问题"),
+                ("2.4.2.4", "标牌标识"),
+                ("2.4.2.5", "电缆、桥架、母线安装问题"),
+                ("2.4.2.6", "设备外壳IP等级与封堵问题"),
+                ("2.4.3", "带病运行问题汇总"),
+                ("2.4.3.1", "低压回路剩余电流过大"),
+                ("2.4.3.2", "部分高压柜照明功能缺失"),
+                ("2.4.3.3", "部分高压柜柜内除湿装置未开启"),
+                ("2.4.4", "末端配电抽查情况"),
+            ),
+        ),
+        "2.5": (
+            "运维管理与风险管控机制",
+            (
+                ("2.5.1", "SOP/EOP"),
+                ("2.5.2", "图纸资料"),
+                ("2.5.3", "运维（巡检、维护）的实施与组织"),
+                ("2.5.3.1", "运维组织架构与人员配备"),
+                ("2.5.3.2", "关键配电设备维护工作全面性检查"),
+                ("2.5.3.3", "配电设备维保覆盖"),
+                ("2.5.4", "运维的智能化手段"),
+                ("2.5.5", "配电室装备与LOTO流程的实施"),
+                ("2.5.6", "备件管理"),
+                ("2.5.7", "退市设备与生命周期管理"),
+            ),
+        ),
+    }
+
+    actual = {
+        module_id: (
+            module.title,
+            tuple(
+                (section_id, section.title)
+                for section_id, section in module.sections.items()
+            ),
+        )
+        for module_id, module in REPORT_TAXONOMY.items()
+    }
+    assert actual == expected
+
+
+def test_module_markdown_preserves_intermediate_s4_6_headings() -> None:
+    module = REPORT_TAXONOMY["2.4"]
+    markdown = compose_module_markdown(
+        "2.4",
+        {
+            submodule_id: _deep_text(submodule_id, submodule.title)
+            for submodule_id, submodule in module.submodules.items()
+        },
+    )
+
+    assert "### 2.4.1 配置与选型问题" in markdown
+    assert "#### 2.4.1.1 额定/分断能力" in markdown
+    assert "### 2.4.2 安装规范性问题" in markdown
+    assert "### 2.4.3 带病运行问题汇总" in markdown
+    assert markdown.index("### 2.4.1 配置与选型问题") < markdown.index(
+        "#### 2.4.1.1 额定/分断能力"
+    )
+
+
 def _complete_markdown_modules() -> dict[str, str]:
     return {
-        module_id: "\n\n".join(
-            (
-                f"### {submodule_id} {submodule.title}\n\n"
-                "**现状描述：** 已核查现场记录、运行数据及文件资料，并明确了证据适用边界。\n\n"
-                "**判断：** 当前情况表明该项可能影响系统可靠性，仍需结合持续数据复核。\n\n"
-                "**风险与影响：** 若运行条件恶化，问题可能沿上下游扩大并导致供电中断。\n\n"
-                "**建议：** 应由责任部门完成专项排查、整改和复测，并以验收记录关闭风险。"
-            )
-            for submodule_id, submodule in definition.submodules.items()
+        module_id: compose_module_markdown(
+            module_id,
+            {
+                submodule_id: (
+                    "**现状描述：** 已核查现场记录、运行数据及文件资料，并明确了证据适用边界。\n\n"
+                    "**判断：** 当前情况表明该项可能影响系统可靠性，仍需结合持续数据复核。\n\n"
+                    "**风险与影响：** 若运行条件恶化，问题可能沿上下游扩大并导致供电中断。\n\n"
+                    "**建议：** 应由责任部门完成专项排查、整改和复测，并以验收记录关闭风险。"
+                )
+                for submodule_id in definition.submodules
+            },
         )
         for module_id, definition in REPORT_TAXONOMY.items()
     }
@@ -142,7 +248,7 @@ def _quality_edited() -> EditedReportSubmission:
 def test_existing_markdown_modules_require_every_full_submodule() -> None:
     modules = _complete_markdown_modules()
     modules["2.5"] = (
-        "## 2.5 运维管理与风险管控\n\n"
+        "## 2.5 运维管理与风险管控机制\n\n"
         "九个子模块的结论概述见汇总表，仅引用 E-0001 至 E-0009。"
     )
 
@@ -157,7 +263,7 @@ def test_existing_markdown_modules_accept_detailed_fixed_sections() -> None:
 def test_module_markdown_audit_rejects_export_that_drops_fixed_sections() -> None:
     modules = _approved_modules()
     exported = {module_id: module.markdown for module_id, module in modules.items()}
-    exported["2.5"] = "## 2.5 运维管理与风险管控\n\n九个子模块概览见汇总表。"
+    exported["2.5"] = "## 2.5 运维管理与风险管控机制\n\n九个子模块概览见汇总表。"
 
     with pytest.raises(ValueError, match="missing_export_sections.*2.5.1"):
         validate_module_markdown_consistency(modules, exported)

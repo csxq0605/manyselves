@@ -2157,6 +2157,8 @@ async def test_module_resume_invalidates_legacy_parts_without_context_fingerprin
         allowed_outputs=["module_submission"],
         target_submodule_ids=part_ids,
     )
+    knowledge_ref = f"Work/runs/{run_id}/knowledge/module-{module_id}.md"
+    service.store.write_text(knowledge_ref, "# 当前模块知识\n")
     state = {
         "run_id": run_id,
         "resume": True,
@@ -2171,7 +2173,8 @@ async def test_module_resume_invalidates_legacy_parts_without_context_fingerprin
             "evidence": "Work/evidence.jsonl",
             "manifest": "Work/manifest.json",
         },
-        "module_knowledge_refs": {module_id: f"Work/runs/{run_id}/knowledge/module-{module_id}.md"},
+        "module_knowledge_refs": {module_id: knowledge_ref},
+        "template_skill_text": {},
     }
 
     with pytest.raises(RuntimeError, match="captured correction envelope"):
@@ -2913,6 +2916,8 @@ def test_canonical_markdown_uses_only_current_fixed_sections() -> None:
     modules = {module_id: _module(module_id).markdown for module_id in REPORT_TAXONOMY}
     markdown = ReportWorkflowRunner._canonical_markdown(_edited(modules))
     assert "### 1.1 评估背景" in markdown
+    assert "#### 2.4.1 配置与选型问题" in markdown
+    assert "##### 2.4.1.1 额定/分断能力" in markdown
     assert "#### 3.1.3 跨领域关联风险" not in markdown
     assert "#### 3.1.3 数据缺口分析" in markdown
     assert "### 4.1 动态专项问题" in markdown

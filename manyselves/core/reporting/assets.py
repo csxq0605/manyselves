@@ -147,10 +147,10 @@ def validate_module_markdown_consistency(
         if exported.strip() != canonical.strip():
             export_mismatches.append(module_id)
         missing = [
-            submodule_id
-            for submodule_id in definition.submodules
+            section_id
+            for section_id in definition.sections
             if re.search(
-                rf"^#{{1,6}}\s+{re.escape(submodule_id)}(?:\.|\s|$)",
+                rf"^#{{1,6}}\s+{re.escape(section_id)}(?:\.|\s|$)",
                 exported,
                 flags=re.MULTILINE,
             )
@@ -178,7 +178,7 @@ def validate_existing_markdown_modules(source_modules: dict[str, str]) -> None:
     missing_sections: list[str] = []
     for module_id, definition in REPORT_TAXONOMY.items():
         markdown = source_modules[module_id]
-        for submodule_id in definition.submodules:
+        for submodule_id in definition.sections:
             match = re.search(
                 rf"^#{{1,6}}\s+{re.escape(submodule_id)}(?:\.)?\s+.+$",
                 markdown,
@@ -210,10 +210,11 @@ def validate_final_report_markdown(
     leaves = {title for title, _ in expected[1:4]}
     for module_id, definition in REPORT_TAXONOMY.items():
         expected.append((f"{module_id} {definition.title}", 3))
-        for submodule_id, submodule in definition.submodules.items():
-            title = f"{submodule_id} {submodule.title}"
-            expected.append((title, 4))
-            leaves.add(title)
+        for section_id, section in definition.sections.items():
+            title = f"{section_id} {section.title}"
+            expected.append((title, section_id.count(".") + 2))
+            if section_id in definition.submodules:
+                leaves.add(title)
     if special_topic_plan is not None:
         special_topic_titles = [
             f"{section.section_id} {section.title}"

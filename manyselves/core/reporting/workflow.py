@@ -26,6 +26,7 @@ from .agentic_models import (
     TaskEnvelope,
     TemplateSkillBoundaryManifest,
     TemplateSkillSubmission,
+    extra_numbered_submodule_headings,
 )
 from .assets import (
     ReportAssetAssembler,
@@ -507,8 +508,17 @@ class ReportWorkflowRunner:
         }
         boundary_ref = TEMPLATE_SKILL_ROOT / "boundary.json"
         required = [*refs.values(), boundary_ref, TEMPLATE_SKILL_SOURCE]
-        if not all((self.service.workspace / path).is_file() for path in required):
-            return False
+        missing = [
+            path.as_posix()
+            for path in required
+            if not (self.service.workspace / path).is_file()
+        ]
+        if missing:
+            raise AgentWorkflowError(
+                "固定模板写作 Skill 与当前边界契约不兼容，缺少文件："
+                f"{', '.join(missing)}；请先单独运行 "
+                "operation=distill_template_skill 更新固定 Skill"
+            )
         try:
             boundary = TemplateSkillBoundaryManifest.model_validate_json(
                 (self.service.workspace / boundary_ref).read_text(encoding="utf-8")
@@ -518,36 +528,68 @@ class ReportWorkflowRunner:
                     encoding="utf-8"
                 )
             )
+            if not isinstance(source_payload, dict):
+                raise ValueError("source.json must contain one JSON object")
             expected_hashes = {
                 path.relative_to(TEMPLATE_SKILL_ROOT).as_posix(): self._sha256(
                     self.service.workspace / path
                 )
                 for path in [*refs.values(), boundary_ref]
             }
-            if (
-                source_payload.get("boundary_policy_version")
-                != boundary.policy_version
-                or source_payload.get("boundary_ref") != boundary_ref.as_posix()
-                or source_payload.get("artifact_sha256") != expected_hashes
-            ):
-                return False
-        except (OSError, ValueError, AttributeError):
-            return False
-        state["template_skill_refs"] = {key: path.as_posix() for key, path in refs.items()}
-        state["template_skill_text"] = {
+        except (OSError, ValueError, AttributeError) as exc:
+            raise AgentWorkflowError(
+                "固定模板写作 Skill 的 boundary.json 或 source.json 无法解析；"
+                "请先单独运行 operation=distill_template_skill 更新固定 Skill"
+            ) from exc
+        mismatched = [
+            field
+            for field, actual, expected in (
+                (
+                    "boundary_policy_version",
+                    source_payload.get("boundary_policy_version"),
+                    boundary.policy_version,
+                ),
+                (
+                    "boundary_ref",
+                    source_payload.get("boundary_ref"),
+                    boundary_ref.as_posix(),
+                ),
+                (
+                    "artifact_sha256",
+                    source_payload.get("artifact_sha256"),
+                    expected_hashes,
+                ),
+            )
+            if actual != expected
+        ]
+        if mismatched:
+            raise AgentWorkflowError(
+                "固定模板写作 Skill 的 source.json 与当前边界契约或产物哈希不一致："
+                f"{', '.join(mismatched)}；请先单独运行 "
+                "operation=distill_template_skill 更新固定 Skill"
+            )
+        template_skill_text = {
             key: (self.service.workspace / path).read_text(encoding="utf-8")
             for key, path in refs.items()
         }
+        poisoned = [
+            refs[key].as_posix()
+            for key, text in template_skill_text.items()
+            if "<persisted_result_part" in text.casefold()
+        ]
+        if poisoned:
+            raise AgentWorkflowError(
+                "固定模板写作 Skill 含有内部 persisted_result_part 历史标记："
+                f"{', '.join(poisoned)}；必须恢复完整正文或重新蒸馏，禁止把该标记"
+                "继续注入报告 Agent"
+            )
+        state["template_skill_refs"] = {key: path.as_posix() for key, path in refs.items()}
+        state["template_skill_text"] = template_skill_text
         state["template_skill_boundary"] = boundary
         return True
 
     def _require_template_skill(self, state: dict) -> None:
-        if self._load_template_skill(state):
-            return
-        raise AgentWorkflowError(
-            "固定模板写作 Skill 不完整：Work/report-template-writing/SKILL.md；"
-            "请先单独运行 operation=distill_template_skill"
-        )
+        self._load_template_skill(state)
 
     def _materialize_template_skill(self, state: dict, submission: TemplateSkillSubmission) -> None:
         root = TEMPLATE_SKILL_ROOT
@@ -569,6 +611,27 @@ class ReportWorkflowRunner:
             for relative in (*files, "boundary.json")
         ):
             raise AgentWorkflowError("Template Distiller did not materialize the complete Skill")
+
+    def _module_author_inline_context(self, state: dict, module_id: str) -> str:
+        """Build current authoring context instead of replaying stale dispatch text."""
+
+        knowledge_ref = state["module_knowledge_refs"][module_id]
+        knowledge_path = (self.service.workspace / knowledge_ref).resolve()
+        if (
+            not knowledge_path.is_relative_to(self.service.workspace)
+            or not knowledge_path.is_file()
+        ):
+            raise AgentWorkflowError(
+                f"module {module_id} knowledge is not a readable workspace artifact"
+            )
+        return (
+            self._domain_knowledge_context(
+                knowledge_path.read_text(encoding="utf-8"),
+                knowledge_ref,
+            )
+            + "\n\n"
+            + self._role_skill_context(state, "module-author")
+        )
 
     async def _distill_template_skill(self, state: dict, workflow_id: str) -> None:
         """Let Template Distiller refresh the fixed project writing Skill."""
@@ -620,7 +683,7 @@ class ReportWorkflowRunner:
                 "只迁移写作能力，不复制模板项目事实、具体数值、客户名称或原结论",
                 "专家优化版只在本任务中作为一次性 Skill 蒸馏源；不得把其中的具体问题、风险判断、分析结论、建议内容、证据编号或项目措辞写入任何 Skill 文件",
                 "不得迁移专业机理、标准名称、适用条件或带单位阈值；它们属于 Knowledge，不属于模板 Skill",
-                "禁止把五份长文本直接塞入 submit_result：优先一次调用 write_result_parts 批量保存 skill、analysis、synthesis、visual、rubric；只有单项纠错或恢复时才调用 write_result_part；最终 submit_result 的对应字段只提交 artifact_refs",
+                "禁止把五份长文本直接塞入 submit_result：只用 write_result_part 逐项保存 skill、analysis、synthesis、visual、rubric 的完整内容；先用 list_result_parts 确认状态，ready 项不得重写；最终 submit_result 的对应字段只提交 artifact_refs",
             ],
             allowed_outputs=["template_skill_submission"],
             allowed_tools=[
@@ -695,8 +758,10 @@ class ReportWorkflowRunner:
         )
         self.agent_runner.set_provider_attempt_guard(self._budget.acquire_provider_attempt)
         activity = "template-skill-distillation"
+        recovering_cost_boundary = True
         try:
             await self._activate_cost_resume(state)
+            recovering_cost_boundary = False
             self._checkpoint(state, activity, "in_progress")
             await self.service._notice(
                 "正在单独蒸馏报告模板；本次只更新固定模板写作 Skill，不启动报告写作。"
@@ -2742,7 +2807,7 @@ class ReportWorkflowRunner:
             else []
         )
         payload = {
-            "version": 1,
+            "version": 2,
             "run_id": state["run_id"],
             "module_id": module_id,
             "required_submodule_ids": list(
@@ -2768,6 +2833,10 @@ class ReportWorkflowRunner:
             "knowledge": ref_record(
                 state.get("module_knowledge_refs", {}).get(module_id)
             ),
+            "template_skill": {
+                key: ref_record(ref)
+                for key, ref in state.get("template_skill_refs", {}).items()
+            },
         }
         return hashlib.sha256(
             json.dumps(
@@ -3439,6 +3508,11 @@ class ReportWorkflowRunner:
                     "inline_context 已注入项目 Knowledge 与 Template Distiller 产出的固定模板写作 Skill；按其分析语言、叙述节奏、推理链、建议方法和图证规则写作，不得重复打开同一内容",
                     "R-* 是优先参考而非认知边界；可使用模型世界知识解释机理、备选原因和行业实践，但不能把它补成客户事实",
                     "每个固定子模块必须形成带标题的完整正文，至少包含适用的现状、结论、风险机理和可执行建议",
+                    (
+                        "固定 taxonomy 是唯一合法的数字标题体系；正文只允许使用本任务"
+                        " required_submodule_ids 中的编号标题。现状、判断、原因、风险机理、"
+                        "建议和验证只能使用普通段落或无编号粗体标签，禁止自行生成下一级编号"
+                    ),
                     f"缺失证据策略={request.missing_evidence_policy}",
                     *self._evidence_policy_constraints(request.missing_evidence_policy),
                     *request.execution_requirements,
@@ -3453,14 +3527,7 @@ class ReportWorkflowRunner:
                 ],
                 allowed_outputs=["module_submission"],
                 target_submodule_ids=list(REPORT_TAXONOMY[module_id].submodules),
-                inline_context=(
-                    self._domain_knowledge_context(
-                        module_knowledge[module_id].text,
-                        module_knowledge[module_id].path.as_posix(),
-                    )
-                    + "\n\n"
-                    + self._role_skill_context(state, "module-author")
-                ),
+                inline_context=self._module_author_inline_context(state, module_id),
             )
             for module_id in module_ids
         ]
@@ -3718,6 +3785,11 @@ class ReportWorkflowRunner:
             dict.fromkeys(
                 [
                     *planned.constraints,
+                    (
+                        "固定 taxonomy 是唯一合法的数字标题体系；正文只允许使用当前"
+                        " required_submodule_ids 中的编号标题。现状、判断、原因、风险机理、"
+                        "建议和验证只能使用普通段落或无编号粗体标签，禁止自行生成下一级编号"
+                    ),
                     *state["request"].execution_requirements,
                     f"缺失证据策略={state['request'].missing_evidence_policy}",
                     *self._evidence_policy_constraints(state["request"].missing_evidence_policy),
@@ -3756,12 +3828,18 @@ class ReportWorkflowRunner:
                     binding_ready = isinstance(binding, dict) and isinstance(
                         binding.get("evidence_ids"), list
                     )
-                if not binding_ready or "[[CLAIM:" in part_path.read_text(encoding="utf-8"):
+                part_content = part_path.read_text(encoding="utf-8")
+                if (
+                    not binding_ready
+                    or "[[CLAIM:" in part_content
+                    or "<persisted_result_part" in part_content.casefold()
+                    or extra_numbered_submodule_headings(part_id, part_content)
+                ):
                     rewrite_part_ids.append(part_id)
             resume_part_constraints = [
                 "这是同一 run 的恢复任务；已有正文分段=" + (", ".join(saved_parts) or "无"),
                 "固定 taxonomy 尚缺正文分段=" + (", ".join(missing_parts) or "无"),
-                "当前协议接收 write_result_parts 批量或 write_result_part 单项保存的读者可见正文和 evidence_ids；优先每批最多 4 项。",
+                "当前协议只接收 write_result_part 逐项保存的完整读者可见正文和 evidence_ids；先用 list_result_parts 确认状态，ready 项不得重写。",
                 "先调用 list_result_parts；必须重写或补绑定的 part="
                 + (", ".join(rewrite_part_ids) or "无"),
             ]
@@ -3838,7 +3916,10 @@ class ReportWorkflowRunner:
                     ],
                     "input_contract_kind": "module_authoring_input",
                     "input_contract_ref": module_input_ref,
-                    "inline_context": planned.inline_context or "",
+                    "inline_context": self._module_author_inline_context(
+                        state,
+                        module_id,
+                    ),
                 }
             ).model_dump(mode="python")
         )
@@ -3967,12 +4048,12 @@ class ReportWorkflowRunner:
                 *(
                     [
                         "special_topic_analysis 必须严格按 special_topic_plan 输出全部且仅输出 ### 4.n 标题及其正文",
-                        "八个综合章节优先一次使用同名 part_id 的 write_result_parts 批量持久化；单项纠错才使用 write_result_part",
+                        "八个综合章节只用同名 part_id 的 write_result_part 逐项持久化；先用 list_result_parts 确认状态，ready 项不得重写",
                     ]
                     if special_topic_plan is not None
                     else [
                         "special_topic_plan 为空；禁止提交 special_topic_analysis，最终 Markdown 和 DOCX 必须完全省略第四章",
-                        "七个固定综合章节优先一次使用同名 part_id 的 write_result_parts 批量持久化；单项纠错才使用 write_result_part",
+                        "七个固定综合章节只用同名 part_id 的 write_result_part 逐项持久化；先用 list_result_parts 确认状态，ready 项不得重写",
                     ]
                 ),
                 "任何综合节都必须自足地包含归纳事实、综合判断和决策含义；模块号只能用于句末追溯，禁止用‘详见第二章’‘见2.x’或模块编号清单代替分析",

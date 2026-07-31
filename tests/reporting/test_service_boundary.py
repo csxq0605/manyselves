@@ -1,5 +1,6 @@
 import asyncio
 import fcntl
+import hashlib
 import json
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from manyselves.core.reporting.revisions import RevisionCoordinator
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.workflow import (
+    AgentWorkflowError,
     AgentWorkflowBlocked,
     ReportingNeedsDecisionError,
     ReportWorkflowRunner,
@@ -425,6 +427,165 @@ async def test_distill_template_skill_dispatches_only_the_standalone_action(
 
     assert result.status == "completed"
     assert result.output_paths == [tmp_path / "Work/report-template-writing/SKILL.md"]
+
+
+def test_legacy_template_skill_reports_the_missing_boundary_manifest(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    root = tmp_path / "Work/report-template-writing"
+    for relative in (
+        "SKILL.md",
+        "references/analysis-language.md",
+        "references/synthesis.md",
+        "references/visual-organization.md",
+        "references/quality-rubric.md",
+    ):
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"# {relative}\n", encoding="utf-8")
+    (root / "source.json").write_text(
+        json.dumps(
+            {
+                "source": "legacy-template-skill",
+                "template_ref": "Work/runs/old/templates/template.docx",
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+
+    with pytest.raises(
+        AgentWorkflowError,
+        match=r"缺少文件：Work/report-template-writing/boundary\.json",
+    ):
+        runner._require_template_skill({})
+
+
+def test_template_skill_loader_rejects_persisted_result_part_marker(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    root = tmp_path / "Work/report-template-writing"
+    files = {
+        "SKILL.md": "---\nname: report-template-writing\n---\n# Skill\n",
+        "references/analysis-language.md": (
+            "<persisted_result_part sha256=" + "a" * 64 + " characters=100>\n"
+        ),
+        "references/synthesis.md": "# Synthesis\n",
+        "references/visual-organization.md": "# Visual\n",
+        "references/quality-rubric.md": "# Rubric\n",
+    }
+    for relative, content in files.items():
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    boundary = {
+        "policy_version": 1,
+        "transferred_categories": [
+            "analysis_method",
+            "synthesis_method",
+            "visual_method",
+            "quality_check",
+        ],
+        "excluded_categories": [
+            "domain_knowledge",
+            "domain_standard_or_threshold",
+            "project_fact_or_number",
+            "customer_identity",
+            "project_finding_or_risk",
+            "project_conclusion_or_recommendation",
+            "evidence_or_claim_identifier",
+        ],
+        "boundary_statement": (
+            "本固定 Skill 仅迁移可跨项目复用的分析、综合、视觉组织与质量检查方法，"
+            "不迁移任何客户身份、项目事实、具体数值、风险结论、行动建议、专业机理、"
+            "标准阈值或证据标识；这些内容必须在当前运行中分别由 Evidence 和 Knowledge 提供。"
+        ),
+    }
+    (root / "boundary.json").write_text(
+        json.dumps(boundary, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    artifact_paths = [root / relative for relative in files]
+    artifact_paths.append(root / "boundary.json")
+    (root / "source.json").write_text(
+        json.dumps(
+            {
+                "boundary_policy_version": 1,
+                "boundary_ref": "Work/report-template-writing/boundary.json",
+                "artifact_sha256": {
+                    path.relative_to(root).as_posix(): hashlib.sha256(
+                        path.read_bytes()
+                    ).hexdigest()
+                    for path in artifact_paths
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+
+    with pytest.raises(
+        AgentWorkflowError,
+        match="含有内部 persisted_result_part 历史标记",
+    ):
+        runner._require_template_skill({})
+
+
+@pytest.mark.asyncio
+async def test_distill_template_skill_preserves_the_original_failure_in_checkpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+
+    async def fail_distillation(_self, _state: dict, _workflow_id: str) -> None:
+        raise ValueError("template snapshot validation failed")
+
+    monkeypatch.setattr(
+        ReportWorkflowRunner,
+        "_distill_template_skill",
+        fail_distillation,
+    )
+
+    result = await service.run(
+        ReportRequest(
+            operation="distill_template_skill",
+            instruction="只更新模板写作 Skill",
+            target_modules=[],
+        )
+    )
+    checkpoint = json.loads(
+        (
+            tmp_path
+            / f"Work/runs/{result.run_id}/workflow-state.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert result.status == "failed"
+    assert result.error == "template snapshot validation failed"
+    assert result.usage["provider_attempts"] == 0
+    assert checkpoint["activity"] == "template-skill-distillation"
+    assert checkpoint["status"] == "failed"
+    assert checkpoint["error"] == "template snapshot validation failed"
 
 
 @pytest.mark.asyncio
