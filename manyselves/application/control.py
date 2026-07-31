@@ -47,6 +47,11 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _tokens_equal(left: str, right: str) -> bool:
+    """Compare arbitrary Unicode tokens in constant time without text restrictions."""
+    return secrets.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
+
+
 class ControlLeaseService:
     """Maintain at most one unexpired controller for a runtime process."""
 
@@ -81,7 +86,7 @@ class ControlLeaseService:
         if current is not None:
             if current.client_id != client_id:
                 raise ControlLeaseHeld(current.client_id)
-            token_matches = lease_token is not None and secrets.compare_digest(
+            token_matches = lease_token is not None and _tokens_equal(
                 current.token,
                 lease_token,
             )
@@ -103,7 +108,7 @@ class ControlLeaseService:
     def require(self, token: str) -> ControlLease:
         """Return the controller only when *token* is current and unexpired."""
         current = self._unexpired_current()
-        if current is None or not token or not secrets.compare_digest(current.token, token):
+        if current is None or not token or not _tokens_equal(current.token, token):
             raise ControlLeaseRequired()
         return current
 

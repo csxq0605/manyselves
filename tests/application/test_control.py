@@ -150,6 +150,28 @@ def test_missing_or_unknown_token_requires_control(token: str) -> None:
         leases.require(token)
 
 
+def test_non_ascii_token_requires_control_instead_of_raising_type_error() -> None:
+    leases = ControlLeaseService(ttl=timedelta(seconds=30))
+    leases.acquire(client_id="browser-1", actor_id="alice")
+
+    with pytest.raises(ControlLeaseRequired):
+        leases.require("令牌-错误")
+
+
+def test_non_ascii_reacquire_proof_requires_control() -> None:
+    leases = ControlLeaseService(ttl=timedelta(seconds=30))
+    original = leases.acquire(client_id="browser-1", actor_id="alice")
+
+    with pytest.raises(ControlLeaseRequired):
+        leases.acquire(
+            client_id="browser-1",
+            actor_id="alice",
+            lease_token="令牌-错误",
+        )
+
+    assert leases.require(original.token) == original
+
+
 def test_lease_service_rejects_nonpositive_ttl() -> None:
     with pytest.raises(ValueError, match="positive"):
         ControlLeaseService(ttl=timedelta(0))

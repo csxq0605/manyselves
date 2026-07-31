@@ -79,6 +79,16 @@ class SnapshotLoopManager:
         return "session-1"
 
 
+class StableString:
+    """Non-JSON value whose backend-visible string representation is stable."""
+
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def __str__(self) -> str:
+        return self.value
+
+
 def make_host(*, ready: bool = True, workspace: Path | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         backend=RecordingBackend(),
@@ -377,6 +387,106 @@ async def test_same_operation_command_id_with_changed_payload_is_a_conflict() ->
     assert host.backend.calls == [
         ("message", "hello", "researcher", "message-1", "main_agent")
     ]
+
+
+@pytest.mark.asyncio
+async def test_file_context_non_json_values_replay_by_consumed_semantics() -> None:
+    host = make_host()
+    leases = ControlLeaseService()
+    token = lease_for(leases)
+    facade = RuntimeFacade(host, leases=leases)
+    command_id = uuid4()
+    command = SendFileContextCommand(
+        command_id=command_id,
+        lease_token=token,
+        file_context={
+            "type": "file",
+            "file": StableString("  Inputs/source.txt  "),
+            "irrelevant": object(),
+        },
+        agent_id="main",
+    )
+
+    first = await facade.send_file_context(command)
+    command.file_context["file"] = "Inputs/mutated.txt"
+    command.file_context["irrelevant"] = object()
+    replay = SendFileContextCommand(
+        command_id=command_id,
+        lease_token=token,
+        file_context={
+            "type": "file",
+            "file": StableString("Inputs/source.txt"),
+            "different_irrelevant_key": object(),
+        },
+        agent_id="main",
+    )
+    second = await facade.send_file_context(replay)
+
+    assert second is first
+    assert len(host.backend.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_file_context_changed_consumed_value_is_a_conflict() -> None:
+    host = make_host()
+    leases = ControlLeaseService()
+    token = lease_for(leases)
+    facade = RuntimeFacade(host, leases=leases)
+    command_id = uuid4()
+    original = SendFileContextCommand(
+        command_id=command_id,
+        lease_token=token,
+        file_context={
+            "type": "selection",
+            "file": StableString("Inputs/source.txt"),
+            "start_line": 2,
+            "end_line": 4,
+        },
+        agent_id="main",
+    )
+    changed = original.model_copy(
+        update={
+            "file_context": {
+                "type": "selection",
+                "file": StableString("Inputs/source.txt"),
+                "start_line": 2,
+                "end_line": 5,
+            }
+        }
+    )
+
+    await facade.send_file_context(original)
+    with pytest.raises(CommandIdConflictError):
+        await facade.send_file_context(changed)
+
+    assert len(host.backend.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_file_context_fingerprint_preserves_explicit_none_string_semantics() -> None:
+    host = make_host()
+    leases = ControlLeaseService()
+    token = lease_for(leases)
+    facade = RuntimeFacade(host, leases=leases)
+    command_id = uuid4()
+    explicit_none = SendFileContextCommand(
+        command_id=command_id,
+        lease_token=token,
+        file_context={"type": "file", "file": None},
+        agent_id="main",
+    )
+    missing_file = SendFileContextCommand(
+        command_id=command_id,
+        lease_token=token,
+        file_context={"type": "file"},
+        agent_id="main",
+    )
+
+    await facade.send_file_context(explicit_none)
+    with pytest.raises(CommandIdConflictError):
+        await facade.send_file_context(missing_file)
+
+    assert len(host.backend.calls) == 1
 
 
 @pytest.mark.asyncio

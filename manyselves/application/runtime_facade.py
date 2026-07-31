@@ -23,6 +23,7 @@ from .runtime_host import RuntimeHost
 
 CommandResponse = AcceptedCommand | RollbackResult
 ResponseT = TypeVar("ResponseT", bound=CommandResponse)
+SemanticPayload = tuple[str | None, ...]
 MutationCommand = (
     SendMessageCommand | SendFileContextCommand | InterruptCommand | RollbackCommand
 )
@@ -37,8 +38,49 @@ OperationKind = Literal[
 @dataclass(frozen=True, slots=True)
 class _CachedCommand:
     operation: OperationKind
-    payload: dict[str, Any]
+    payload: SemanticPayload
     response: CommandResponse
+
+
+def _backend_context_text(value: Any) -> str:
+    """Normalize a context value exactly as editor-context prompt building does."""
+    return str(value).strip()
+
+
+def _semantic_payload(command: MutationCommand) -> SemanticPayload:
+    """Capture only immutable values consumed by the matching backend operation."""
+    if isinstance(command, SendMessageCommand):
+        return (
+            command.content,
+            command.agent_id,
+            command.message_id,
+            command.source,
+        )
+    if isinstance(command, SendFileContextCommand):
+        context = command.file_context
+        context_type = context.get("type")
+        if context_type == "selection":
+            selected_lines = (
+                f"{context.get('start_line', '')}-{context.get('end_line', '')}"
+            ).strip()
+            return (
+                command.agent_id,
+                "selection",
+                _backend_context_text(context.get("file", "")),
+                selected_lines,
+            )
+        if context_type == "file":
+            return (
+                command.agent_id,
+                "file",
+                _backend_context_text(context.get("file", "")),
+            )
+        return (command.agent_id, "ignored")
+    if isinstance(command, InterruptCommand):
+        return (command.agent_id,)
+    if isinstance(command, RollbackCommand):
+        return (command.agent_id, command.checkpoint_id)
+    raise AssertionError("Unsupported runtime command type")
 
 
 class RuntimeFacade:
@@ -143,10 +185,7 @@ class RuntimeFacade:
             if not self._host.is_ready:
                 raise RuntimeNotReadyError()
 
-            payload = command.model_dump(
-                mode="json",
-                exclude={"command_id", "lease_token"},
-            )
+            payload = _semantic_payload(command)
             cached = self._command_cache.get(command.command_id)
             if cached is not None:
                 if cached.operation != operation or cached.payload != payload:
