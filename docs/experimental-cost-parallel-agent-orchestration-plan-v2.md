@@ -3,14 +3,18 @@
 ## 1. 当前基线与规划边界
 
 - 当前实验分支：`cost-control-experiments`。
-- main 同步基线：`main@0a5093ed4756e56982bdbe0db24510629a8d7ecf`。
-- 同步提交：`4a1f375`，父提交为原实验计划 `9d1dfcb` 与 main `0a5093e`。
+- main 同步基线：`main@a84d409e7c07e936da70d62a06d0c868ac7a6f93`（版本 `1.2.1`）。
+- 主要功能同步提交：`4a1f375`，父提交为原实验计划 `9d1dfcb` 与
+  main `0a5093e`；后续版本同步提交：`a0df065`，父提交为 `7ae6954` 与
+  main `a84d409`。
 - `main` 已是当前实验分支祖先；本计划不再安排一次重复同步。
 - 用户指定的主要成本问题依据是 session `019fa740-4976-7232-b9e9-17a9959a2d5e` 的存储与内容重复审计。
 - session `019fa2be-22cc-74a0-a4f6-22a210e3a674` 只作为三波协作和安全并行的补充设计依据，不能代替前者。
 - `5f5a5e3` 已经实现输入合同精简、结果分段、CAS、审查 preflight、delta recheck、阶段成本边界和三波协作；本计划不把这些能力重新列为“尚未实现”。
 - main 的 evidence/photo traceability、默认 `draft`、decision reconciliation 和 MessageBus 日志汇总已经进入当前分支。
-- main 合并后以显式 cost-worktree `PYTHONPATH` 和 `QT_QPA_PLATFORM=offscreen` 运行全量非集成回归，结果为 `1374 passed, 6 deselected`；`compileall` 与 `git diff --check` 通过。
+- 最新 main 合并提交 `a0df065` 上，以显式 cost-worktree `PYTHONPATH` 和
+  `QT_QPA_PLATFORM=offscreen` 运行全量非集成回归，结果为
+  `1374 passed, 6 deselected`；`compileall` 与 `git diff --check` 通过。
 - 尚无当前 V2 基线的真实 Provider 完整报告、真实 Token/金额对比、DOCX 目视检查和匹配 receipt，因此本文中的降本、加速数字都是验收目标，不是已实现结果。
 
 本文件取代 `experimental-parallel-agent-deployment-plan.md` 作为后续实施顺序；旧文件保留为合并 main 之前的设计记录。
@@ -650,7 +654,7 @@ deployment_storage = isolated_posix | object_materialized
 
 下一实施项应是 `M0 + P0a`：
 
-1. 冻结 `4a1f375` 的分层串行基线；
+1. 冻结 `a0df065` 的分层串行基线；
 2. 给 task command、result/final/error 增加 task-attempt/session/input/result hash 身份；
 3. 实现 append-only attempt result、三个 exact-key waiter 与 stream-flood/late-terminal 测试；
 4. 通过后严格按 `P0b → P1a/P1b/P1c → P2a/P2b/P2c` 完成 Bus QoS、准入、身份、恢复和共享读写 gate；全部通过后才进入 P3 module lanes。

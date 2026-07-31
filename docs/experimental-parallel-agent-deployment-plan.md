@@ -2,7 +2,7 @@
 
 > 本文件是同步 main 之前的历史设计记录。当前执行计划请使用
 > `docs/experimental-cost-parallel-agent-orchestration-plan-v2.md`；V2 已纳入
-> `main@0a5093e`、现有成本优化、默认 draft、图片证据追溯、MessageBus QoS
+> `main@a84d409`、现有成本优化、默认 draft、图片证据追溯、MessageBus QoS
 > 以及项目隔离 POSIX 卷优先的部署顺序。
 
 ## 1. 本计划的现场基线

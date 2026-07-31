@@ -15,6 +15,13 @@ English | [中文](README_zh.md)
 
 </div>
 
+> **Experimental branch notice:** this checkout documents and implements
+> cost-control-only three-wave collaboration and parallel module authoring.
+> These changes are not present on `main`; module review and the Cross/Chief/Final
+> path remain serial. See
+> [the handoff note](docs/experimental-cost-control-handoff.md) for the exact
+> implemented/planned boundary.
+
 ## What is Manyselves?
 
 Manyselves is a local desktop runtime for teams of AI agents whose identities,

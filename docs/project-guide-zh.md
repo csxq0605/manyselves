@@ -2,7 +2,12 @@
 
 > 文档状态：供产品、研发、运维和家威共同评审
 >
-> 核对起始基线：2026-07-29，`main` 分支，提交 `25b5350`
+> 原始评审核对基线：2026-07-29，`main@25b5350`
+>
+> 当前实验同步基线：2026-07-31，`cost-control-experiments@a0df065`，已单向包含
+> `main@a84d409`；本文中的三波协作和并行写作是实验分支行为，不代表 main。
+> 交接和实施边界见
+> [`experimental-cost-control-handoff.md`](experimental-cost-control-handoff.md)。
 >
 > 目标方向：把当前桌面运行时改造成产品化服务；最终业务界面只保留文件、进度、对话三块。
 >

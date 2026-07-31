@@ -15,6 +15,11 @@
 
 </div>
 
+> **实验分支说明：**当前 checkout 含仅属于 `cost-control-experiments` 的三波协作
+> 和模块并行写作，`main` 不含这些改动；模块责任审查以及 Cross/Chief/Final 路径
+> 仍然串行。已实现与待实现边界见
+> [成本控制实验交接说明](docs/experimental-cost-control-handoff.md)。
+
 ## Manyselves 是什么？
 
 Manyselves 是一套本地桌面 Agent 团队运行时。Agent 的身份、边界、技能和

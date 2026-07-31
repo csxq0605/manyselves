@@ -1,5 +1,10 @@
 # Manyselves 实验性整体成本控制计划
 
+> 文件定位：这是提交 `5f5a5e3` 的 Phase A–D 实现与历史验收说明，里面的起点、
+> 基线 SHA 和 `333 passed` 是当时记录，不是当前分支现场。当前交接入口见
+> `docs/experimental-cost-control-handoff.md`；后续唯一执行计划见
+> `docs/experimental-cost-parallel-agent-orchestration-plan-v2.md`。
+
 ## 1. 基线与边界
 
 - 基线分支：`test-improvements@b8c455e3dc7d65d99747523ed86db53e315fafcc`。
