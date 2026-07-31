@@ -2520,7 +2520,49 @@ class WriteResultPartTool(_ResultPartTool):
             content: One non-empty prose part of at most 48000 characters.
             evidence_ids: For module prose, current-run E-* ids supporting this whole fixed submodule; use [] to record an explicit evidence gap.
         """
-        normalized_evidence_ids = self._validate_part(part_id, content, evidence_ids)
+        try:
+            normalized_evidence_ids = self._validate_part(
+                part_id,
+                content,
+                evidence_ids,
+            )
+        except ValueError as exc:
+            affected_part_ids = (
+                [part_id]
+                if isinstance(part_id, str)
+                and (not self.expected_part_ids or part_id in self.expected_part_ids)
+                else []
+            )
+            problem = str(exc)
+            field = (
+                "part_id"
+                if "part_id" in problem
+                else "evidence_ids"
+                if "evidence_ids" in problem
+                else "content"
+            )
+            return {
+                "status": "correction_required",
+                "accepted": False,
+                "persisted": False,
+                "part_id": part_id,
+                "validation_errors": [
+                    {
+                        "field": field,
+                        "problem": problem,
+                    }
+                ],
+                "affected_part_ids": affected_part_ids,
+                "rewrite_part_ids": affected_part_ids,
+                "next_action": "list_result_parts_then_retry_only_if_missing_or_rewrite",
+                "do_not_repeat_same_shape": True,
+                "instruction": (
+                    "Call list_result_parts once. If this part is ready, leave it "
+                    "unchanged. Otherwise correct the reported field and call "
+                    "write_result_part once with part_id, complete content, and the "
+                    "module-only evidence_ids field when required."
+                ),
+            }
         return self._persist_part(part_id, content, normalized_evidence_ids)
 
     def _validate_part(
@@ -2704,71 +2746,6 @@ class WriteResultPartsTool(WriteResultPartTool):
                 "Do not rewrite persisted parts unless list_result_parts or submit_result "
                 "correction feedback explicitly includes them in rewrite_part_ids."
             ),
-        }
-
-
-class WriteResultPartsTool(WriteResultPartTool):
-    name = "write_result_parts"
-    description = (
-        "Persist a bounded batch of durable report prose parts. The complete batch is "
-        "validated before any part is written; use the single-part tool for compatibility "
-        "or one-off recovery."
-    )
-
-    def __init__(self, *args, max_batch_size: int, **kwargs):
-        super().__init__(*args, **kwargs)
-        if max_batch_size < 1:
-            raise ValueError("max_batch_size must be positive")
-        self.max_batch_size = max_batch_size
-
-    async def __call__(self, parts: list[dict]) -> dict:
-        """Write a validation-atomic batch of resumable prose parts.
-
-        Args:
-            parts: One to max_batch_size objects containing part_id, content, and module-only evidence_ids.
-        """
-
-        if not isinstance(parts, list):
-            raise ValueError("parts must be a list")
-        if not parts or len(parts) > self.max_batch_size:
-            raise ValueError(
-                f"parts must contain 1-{self.max_batch_size} result part objects"
-            )
-
-        allowed_fields = {"part_id", "content", "evidence_ids"}
-        validated: list[tuple[str, str, list[str] | None]] = []
-        seen_part_ids: set[str] = set()
-        for index, part in enumerate(parts):
-            if not isinstance(part, dict):
-                raise ValueError(f"parts[{index}] must be an object")
-            unknown_fields = sorted(set(part) - allowed_fields)
-            if unknown_fields:
-                raise ValueError(
-                    f"parts[{index}] contains unsupported fields: {unknown_fields}"
-                )
-            if "part_id" not in part or "content" not in part:
-                raise ValueError(f"parts[{index}] requires part_id and content")
-            part_id = part["part_id"]
-            content = part["content"]
-            evidence_ids = part.get("evidence_ids")
-            if isinstance(part_id, str) and part_id in seen_part_ids:
-                raise ValueError(f"batch contains duplicate part_id: {part_id}")
-            normalized_evidence_ids = self._validate_part(
-                part_id,
-                content,
-                evidence_ids,
-            )
-            seen_part_ids.add(part_id)
-            validated.append((part_id, content, normalized_evidence_ids))
-
-        results = [
-            self._persist_part(part_id, content, evidence_ids)
-            for part_id, content, evidence_ids in validated
-        ]
-        return {
-            "status": "completed",
-            "count": len(results),
-            "parts": results,
         }
 
 

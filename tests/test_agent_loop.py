@@ -1121,7 +1121,7 @@ def test_format_tool_result_string(agent_loop):
 
 
 @pytest.mark.asyncio
-async def test_successful_batch_result_parts_compact_each_large_content_in_provider_history(
+async def test_successful_batch_result_parts_preserve_required_content_in_provider_history(
     agent_loop,
 ):
     first_content = "第一部分正文。" * 80
@@ -1176,21 +1176,12 @@ async def test_successful_batch_result_parts_compact_each_large_content_in_provi
         for message in agent_loop._conversation_history
         if message.role == "assistant" and message.tool_calls
     ).tool_calls[0]
-    compacted_parts = assistant_call.arguments["parts"]
-    assert all(
-        part["content"].startswith("<persisted_result_part sha256=")
-        for part in compacted_parts
-    )
-    assert first_content not in compacted_parts[0]["content"]
-    assert second_content not in compacted_parts[1]["content"]
-    assert (
-        "artifact_ref=Work/runs/run/result-parts/part-a.md"
-        in compacted_parts[0]["content"]
-    )
-    assert (
-        "artifact_ref=Work/runs/run/result-parts/part-b.md"
-        in compacted_parts[1]["content"]
-    )
+    retained_parts = assistant_call.arguments["parts"]
+    assert "persisted_result_part" not in str(retained_parts)
+    assert retained_parts == [
+        {"part_id": "part-a", "content": first_content},
+        {"part_id": "part-b", "content": second_content},
+    ]
 
 
 @pytest.mark.asyncio
@@ -1549,7 +1540,7 @@ async def test_tool_followup_streams_thinking_chunks(
 
 
 @pytest.mark.asyncio
-async def test_successful_result_part_replaces_persisted_prose_in_followup_history(
+async def test_successful_result_part_preserves_protocol_valid_followup_history(
     workspace, config, mock_provider, mock_prompt_loader
 ):
     full_content = "完整模块正文。" * 400
@@ -1616,13 +1607,243 @@ async def test_successful_result_part_replaces_persisted_prose_in_followup_histo
         for message in observed_messages[0]
         if message.tool_calls
     )
-    assert full_content not in persisted_call.arguments["content"]
-    assert "persisted_result_part" in persisted_call.arguments["content"]
-    assert "artifact_ref=Work/runs/run-1/drafts/module-2.1/r0/2.1.1.md" in (
-        persisted_call.arguments["content"]
-    )
+    assert persisted_call.arguments["content"] == full_content
+    assert "persisted_result_part" not in str(persisted_call.arguments)
     assert persisted_call.arguments["evidence_ids"] == []
     assert original_call.arguments["content"] == full_content
+
+
+def test_working_memory_compaction_removes_complete_old_tool_exchange() -> None:
+    old_content = "已经持久化的长正文。" * 4000
+    old_call = LLMToolCall(
+        id="call-old-write",
+        name="write_result_part",
+        arguments={"part_id": "part-a", "content": old_content},
+    )
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="original task"),
+        LLMMessage(role="assistant", content="", tool_calls=[old_call]),
+        LLMMessage(
+            role="user",
+            content="{\"status\":\"created\"}",
+            tool_call_id="call-old-write",
+            is_tool_result=True,
+        ),
+        LLMMessage(role="assistant", content="old exchange complete"),
+        LLMMessage(role="user", content="continue from current durable state"),
+    ]
+
+    compacted = agent_loop_module._compact_messages_for_working_memory(
+        messages,
+        target_tokens=300,
+    )
+
+    assert compacted[0].role == "system"
+    assert "working_memory_checkpoint" in compacted[1].content
+    assert all(
+        call.id != "call-old-write"
+        for message in compacted
+        for call in (message.tool_calls or [])
+    )
+    assert all(message.tool_call_id != "call-old-write" for message in compacted)
+    assert compacted[-1].content == "continue from current durable state"
+
+
+def test_legacy_result_part_marker_restores_exact_same_task_disk_prose(
+    workspace,
+):
+    content = "历史运行中已经持久化的完整正文。" * 80
+    artifact = workspace / "Work/runs/run/drafts/module/r0/part-a.md"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(content, encoding="utf-8")
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    marker = (
+        "<persisted_result_part part_id=part-a "
+        f"sha256={digest} characters={len(content)} "
+        "history_only=true copy=forbidden "
+        "artifact_ref=Work/runs/run/drafts/module/r0/part-a.md>"
+    )
+    call = LLMToolCall(
+        id="legacy-marker",
+        name="write_result_part",
+        arguments={"part_id": "part-a", "content": marker},
+    )
+
+    restored = agent_loop_module._rehydrate_persisted_result_part_call(
+        call,
+        {},
+        workspace,
+        "run",
+        "module",
+    )
+
+    assert restored.arguments["content"] == content
+
+
+def test_persisted_result_part_disk_fallback_rejects_cross_part_artifact(
+    workspace,
+):
+    artifact = workspace / "Work/runs/run/drafts/module/r0/part-a.md"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("A小节的完整正文。" * 40, encoding="utf-8")
+    marker = (
+        "<persisted_result_part part_id=part-b "
+        f"sha256={'a' * 64} characters=999 history_only=true copy=forbidden "
+        "artifact_ref=Work/runs/run/drafts/module/r0/part-a.md>"
+    )
+    call = LLMToolCall(
+        id="cross-part-marker",
+        name="write_result_part",
+        arguments={"part_id": "part-b", "content": marker},
+    )
+
+    restored = agent_loop_module._rehydrate_persisted_result_part_call(
+        call,
+        {},
+        workspace,
+        "run",
+        "module",
+    )
+
+    assert restored.arguments["content"] == marker
+
+
+def test_persisted_result_part_disk_fallback_rejects_other_run_artifact(
+    workspace,
+):
+    content = "另一运行的正文。" * 80
+    artifact = workspace / "Work/runs/other-run/drafts/module/r0/part-a.md"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(content, encoding="utf-8")
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    marker = (
+        "<persisted_result_part part_id=part-a "
+        f"sha256={digest} characters={len(content)} "
+        "history_only=true copy=forbidden "
+        "artifact_ref=Work/runs/other-run/drafts/module/r0/part-a.md>"
+    )
+    call = LLMToolCall(
+        id="other-run-marker",
+        name="write_result_part",
+        arguments={"part_id": "part-a", "content": marker},
+    )
+
+    restored = agent_loop_module._rehydrate_persisted_result_part_call(
+        call,
+        {},
+        workspace,
+        "current-run",
+        "module",
+    )
+
+    assert restored.arguments["content"] == marker
+
+
+def test_batch_marker_redaction_preserves_valid_peer_content() -> None:
+    marker = (
+        "<persisted_result_part part_id=part-b "
+        f"sha256={'c' * 64} characters=900 "
+        "history_only=true copy=forbidden>"
+    )
+    call = LLMToolCall(
+        id="batch-marker",
+        name="write_result_parts",
+        arguments={
+            "parts": [
+                {"part_id": "part-a", "content": "完整的A部分。"},
+                {"part_id": "part-b", "content": marker},
+            ]
+        },
+    )
+
+    assert agent_loop_module._unresolved_persisted_result_part_ids(call) == [
+        "part-b"
+    ]
+    redacted = agent_loop_module._redact_unresolved_persisted_result_part_call(
+        call
+    )
+    assert redacted.arguments["parts"][0]["content"] == "完整的A部分。"
+    assert "content" in redacted.arguments["parts"][1]
+    assert "persisted_result_part" not in redacted.arguments["parts"][1]["content"]
+    assert "Regenerate complete reader-visible prose" in (
+        redacted.arguments["parts"][1]["content"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_fabricated_result_part_marker_requests_correction_without_tool_error(
+    agent_loop,
+    workspace,
+):
+    write_part = AsyncMock()
+    agent_loop.tools.get = (
+        lambda name: write_part if name == "write_result_part" else None
+    )
+    agent_loop.tools.get_definitions.return_value = []
+    agent_loop.usage_run_id = "run"
+    agent_loop.usage_task_id = "module"
+    agent_loop._chat_with_retries = AsyncMock(
+        return_value=SimpleNamespace(
+            content="I will regenerate the missing prose.",
+            tool_calls=[],
+            thinking=None,
+        )
+    )
+    marker = (
+        "<persisted_result_part part_id=part-new "
+        f"sha256={'b' * 64} characters=4993 history_only=true copy=forbidden "
+        "artifact_ref=Work/runs/run/drafts/module/r0/part-new.md>"
+    )
+
+    await agent_loop._handle_tool_calls(
+        SimpleNamespace(
+            content="",
+            thinking=None,
+            tool_calls=[
+                LLMToolCall(
+                    id="call-fabricated-marker",
+                    name="write_result_part",
+                    arguments={
+                        "part_id": "part-new",
+                        "content": marker,
+                        "evidence_ids": [],
+                    },
+                )
+            ],
+            usage=None,
+        ),
+        "msg-fabricated-marker",
+    )
+
+    write_part.assert_not_awaited()
+    assert not (
+        workspace / "Work/runs/run/drafts/module/r0/part-new.md"
+    ).exists()
+    correction_messages = agent_loop._chat_with_retries.await_args.args[0]
+    rejected_call = next(
+        message.tool_calls[0]
+        for message in correction_messages
+        if message.role == "assistant" and message.tool_calls
+    )
+    assert "content" in rejected_call.arguments
+    assert "persisted_result_part" not in rejected_call.arguments["content"]
+    assert "Regenerate complete reader-visible prose" in rejected_call.arguments["content"]
+    correction_result = next(
+        json.loads(message.content)
+        for message in correction_messages
+        if message.is_tool_result
+    )
+    assert correction_result["status"] == "correction_required"
+    assert correction_result["affected_part_ids"] == ["part-new"]
+    published_results = [
+        message
+        for message in agent_loop.bus._queue._queue
+        if isinstance(message, ToolResultMsg)
+        and message.tool_name == "write_result_part"
+    ]
+    assert published_results[-1].error is None
+    assert published_results[-1].result["status"] == "correction_required"
 
 
 @pytest.mark.asyncio

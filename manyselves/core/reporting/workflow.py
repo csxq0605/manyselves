@@ -695,7 +695,7 @@ class ReportWorkflowRunner:
                 "只迁移写作能力，不复制模板项目事实、具体数值、客户名称或原结论",
                 "专家优化版只在本任务中作为一次性 Skill 蒸馏源；不得把其中的具体问题、风险判断、分析结论、建议内容、证据编号或项目措辞写入任何 Skill 文件",
                 "不得迁移专业机理、标准名称、适用条件或带单位阈值；它们属于 Knowledge，不属于模板 Skill",
-                "禁止把五份长文本直接塞入 submit_result：优先一次调用 write_result_parts 批量保存 skill、analysis、synthesis、visual、rubric；只有单项纠错或恢复时才调用 write_result_part；最终 submit_result 的对应字段只提交 artifact_refs",
+                "禁止把五份长文本直接塞入 submit_result：只用 write_result_part 逐项保存 skill、analysis、synthesis、visual、rubric 的完整内容；先用 list_result_parts 确认状态，ready 项不得重写；最终 submit_result 的对应字段只提交 artifact_refs",
             ],
             allowed_outputs=["template_skill_submission"],
             allowed_tools=[
@@ -773,6 +773,7 @@ class ReportWorkflowRunner:
         recovering_cost_boundary = True
         try:
             await self._activate_cost_resume(state)
+            recovering_cost_boundary = False
             self._checkpoint(state, activity, "in_progress")
             await self.service._notice(
                 "正在单独蒸馏报告模板；本次只更新固定模板写作 Skill，不启动报告写作。"
@@ -4874,7 +4875,7 @@ class ReportWorkflowRunner:
             resume_part_constraints = [
                 "这是同一 run 的恢复任务；已有正文分段=" + (", ".join(saved_parts) or "无"),
                 "固定 taxonomy 尚缺正文分段=" + (", ".join(missing_parts) or "无"),
-                "当前协议接收 write_result_parts 批量或 write_result_part 单项保存的读者可见正文和 evidence_ids；优先每批最多 4 项。",
+                "当前协议只接收 write_result_part 逐项保存的完整读者可见正文和 evidence_ids；先用 list_result_parts 确认状态，ready 项不得重写。",
                 "先调用 list_result_parts；必须重写或补绑定的 part="
                 + (", ".join(rewrite_part_ids) or "无"),
             ]
@@ -5156,12 +5157,12 @@ class ReportWorkflowRunner:
                 *(
                     [
                         "special_topic_analysis 必须严格按 special_topic_plan 输出全部且仅输出 ### 4.n 标题及其正文",
-                        "八个综合章节优先一次使用同名 part_id 的 write_result_parts 批量持久化；单项纠错才使用 write_result_part",
+                        "八个综合章节只用同名 part_id 的 write_result_part 逐项持久化；先用 list_result_parts 确认状态，ready 项不得重写",
                     ]
                     if special_topic_plan is not None
                     else [
                         "special_topic_plan 为空；禁止提交 special_topic_analysis，最终 Markdown 和 DOCX 必须完全省略第四章",
-                        "七个固定综合章节优先一次使用同名 part_id 的 write_result_parts 批量持久化；单项纠错才使用 write_result_part",
+                        "七个固定综合章节只用同名 part_id 的 write_result_part 逐项持久化；先用 list_result_parts 确认状态，ready 项不得重写",
                     ]
                 ),
                 "任何综合节都必须自足地包含归纳事实、综合判断和决策含义；模块号只能用于句末追溯，禁止用‘详见第二章’‘见2.x’或模块编号清单代替分析",

@@ -861,7 +861,7 @@ async def request_module_revision(
         input_refs=input_refs,
         constraints=[
             "只提交小型 module_revision_submission commit；不得在其中重复正文",
-            "assigned target_submodule_id 优先用 write_result_parts（每批最多 4 项）保存完整替换正文和 evidence_ids；单项纠错或恢复才用 write_result_part",
+            "assigned target_submodule_id 只用 write_result_part 逐项保存完整替换正文和 evidence_ids；先用 list_result_parts 确认状态，ready 项不得重写",
             "最终提交只使用 schema 声明的简短字段；运行时从保存的小节自动生成补丁",
             (
                 "本次只有机器 preflight 触发；revision_responses 必须为空，"
@@ -2277,7 +2277,7 @@ async def _request_chief_revision(
                 "input_contract_kind": "chief_revision_input",
                 "input_contract_ref": revision_input_ref,
                 "constraints": [
-                    "只为 target_section_ids 优先调用 write_result_parts（每批最多 8 项）并提交 chief_revision_submission 小补丁；单项纠错才用 write_result_part",
+                    "只为 target_section_ids 调用 write_result_part 逐项保存并提交 chief_revision_submission 小补丁；先用 list_result_parts 确认状态，ready 项不得重写",
                     "不得提交全文、第二章、表格、图片或其他元数据；运行时确定性继承",
                     "revision_responses 必须逐项且仅覆盖 assigned finding ids",
                     "不得让工作流替你补写响应、章节或引用",

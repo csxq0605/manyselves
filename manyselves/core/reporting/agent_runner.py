@@ -44,7 +44,6 @@ from ..tools.reporting_collaboration_tools import (
     ReportGapTool,
     SubmitResultTool,
     WriteResultPartTool,
-    WriteResultPartsTool,
 )
 from ..tools.reporting_research_tools import (
     OpenProjectSourceTool,
@@ -1068,7 +1067,13 @@ class ReportingAgentRunner:
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 48_000,
-                "description": "Complete reader-visible prose for this one durable part.",
+                "description": (
+                    "Complete reader-visible prose for this one durable part. Always "
+                    "supply the full intended prose. Every call must contain all required "
+                    "arguments. After a successful write, use list_result_parts and keep "
+                    "an already-ready part without rewriting it unless correction feedback "
+                    "explicitly names that part."
+                ),
             },
         }
         required = ["part_id", "content"]
@@ -1272,7 +1277,6 @@ class ReportingAgentRunner:
             {"module_submission", "module_revision_submission"}
             & set(envelope.allowed_outputs)
         )
-        result_part_batch_size = 4 if evidence_binding_required else 8
         required_synthesis_input_ids: list[str] = []
         available: dict[str, Tool] = {
             "search_project_evidence": SearchProjectEvidenceTool(
@@ -1397,16 +1401,6 @@ class ReportingAgentRunner:
                 evidence_binding_required=evidence_binding_required,
                 required_synthesis_input_ids=required_synthesis_input_ids,
             ),
-            "write_result_parts": WriteResultPartsTool(
-                envelope.run_id,
-                envelope.task_id,
-                envelope.revision,
-                self.store,
-                expected_result_part_ids,
-                evidence_binding_required=evidence_binding_required,
-                required_synthesis_input_ids=required_synthesis_input_ids,
-                max_batch_size=result_part_batch_size,
-            ),
             "list_result_parts": ListResultPartsTool(
                 envelope.run_id,
                 envelope.task_id,
@@ -1435,18 +1429,14 @@ class ReportingAgentRunner:
                 raise ValueError(f"unsupported tool in {definition.id}: {name}")
             registry.register(available[name])
         if registry.get("write_result_part") is not None:
-            # The batch tool is a compatible companion capability. Existing Agent
-            # definitions and recovery envelopes keep their single-part declaration,
-            # while current providers may choose either exact task-scoped shape.
-            registry.register(available["write_result_parts"])
+            # Expose one exact write shape to providers. The former automatic batch
+            # companion encouraged providers to stringify ``parts`` or omit fields,
+            # then retry already-persisted prose. Internal callers may still use the
+            # batch implementation, but model-facing reporting identities always use
+            # the single-part protocol plus list_result_parts for durable state.
             registry._schema_cache["write_result_part"] = self._result_part_tool_schema(
                 expected_result_part_ids,
                 evidence_binding_required=evidence_binding_required,
-            )
-            registry._schema_cache["write_result_parts"] = self._result_part_tool_schema(
-                expected_result_part_ids,
-                evidence_binding_required=evidence_binding_required,
-                batch_size=result_part_batch_size,
             )
         if "submit_result" in definition.tools:
             output_schemas = [
@@ -2078,13 +2068,14 @@ class ReportingAgentRunner:
                 "error": error,
                 "encoding": "gzip+json",
                 "transcript_semantics": (
-                    "provider_working_history_compacted_v1"
+                    "provider_working_history_protocol_valid_v3"
                 ),
-                "forensic_exact_tool_arguments": False,
+                "forensic_exact_tool_arguments": True,
                 "forensic_note": (
-                    "Successful long write_result_part(s) arguments are replaced "
-                    "in provider history by sha256/artifact_ref markers after the "
-                    "full content is persisted; bus and UI events remain unmodified."
+                    "Retained provider-history tool calls preserve every required argument, "
+                    "including successful write_result_part content. Cost control removes "
+                    "only complete older messages through the general working-memory "
+                    "checkpoint path; no reusable prose marker or malformed tool call is exposed."
                 ),
                 "transcript_ref": blob.relative_path.as_posix(),
                 "transcript_sha256": hashlib.sha256(serialized).hexdigest(),
