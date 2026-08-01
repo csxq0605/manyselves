@@ -23,6 +23,7 @@ from .routes.agents import router as agents_router
 from .routes.bootstrap import router as bootstrap_router
 from .routes.control import router as control_router
 from .routes.conversations import router as conversations_router
+from .routes.events import router as events_router
 from .routes.files import router as files_router
 from .routes.health import router as health_router
 from .routes.maintenance import router as maintenance_router
@@ -110,6 +111,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.include_router(projects_router, prefix=API_PREFIX)
     app.include_router(files_router, prefix=API_PREFIX)
     app.include_router(conversations_router, prefix=API_PREFIX)
+    app.include_router(events_router, prefix=API_PREFIX)
     app.include_router(agents_router, prefix=API_PREFIX)
     app.include_router(reporting_router, prefix=API_PREFIX)
     app.include_router(settings_router, prefix=API_PREFIX)

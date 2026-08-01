@@ -17,6 +17,8 @@ from ..application.reporting_facade import ReportingFacade
 from ..application.runtime_facade import RuntimeFacade
 from ..core.loops.bus import MessageBus
 from .dependencies import resolve_runtime_host
+from .events.broker import EventBroker
+from .events.mapper import EventContext
 from .settings import WebSettings
 
 
@@ -74,6 +76,45 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.reporting_facade = reporting
         app.state.python_run_service = python_runs
         app.state.maintenance_service = maintenance
+
+        def resolve_event_context(message, sequence: int) -> EventContext:
+            registry = app.state.project_registry
+            active_conversations = app.state.conversation_service
+            agent_id = getattr(message, "agent_type", None)
+            if agent_id is None:
+                agent_id = getattr(message, "sender", None)
+            agent_id = str(agent_id) if agent_id is not None else None
+            session_id = None
+            manager = getattr(app.state.runtime_host, "loop_manager", None)
+            get_session = getattr(manager, "get_agent_session_id", None)
+            if agent_id is not None and callable(get_session):
+                session_id = get_session(agent_id)
+            if agent_id is not None and session_id is None:
+                session_id = active_conversations.store._current_session_ids.get(  # noqa: SLF001
+                    agent_id
+                )
+            return EventContext(
+                event_id=f"evt-{sequence}",
+                sequence=sequence,
+                project_id=registry.active_project_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                run_id=(
+                    getattr(message, "run_id", None)
+                    or getattr(message, "workflow_id", None)
+                    or None
+                ),
+                message_id=getattr(message, "message_id", None),
+            )
+
+        broker = EventBroker(
+            bus=bus,
+            context_resolver=resolve_event_context,
+            replay_capacity=settings.sse_replay_capacity,
+            client_capacity=settings.sse_client_queue_capacity,
+        )
+        broker.start()
+        app.state.event_broker = broker
     except BaseException:
         try:
             if host is not None:
@@ -155,6 +196,9 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             conversations = getattr(app.state, "conversation_service", None)
             if conversations is not None:
                 await require_stage(conversations.close())
+            broker = getattr(app.state, "event_broker", None)
+            if broker is not None:
+                await require_stage(broker.close())
             if split_shutdown:
                 await require_stage(host.stop_bus())
             else:
