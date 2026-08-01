@@ -54,7 +54,7 @@ class RuntimeHost:
         self._bus_task: asyncio.Task[None] | None = None
         self._bus_shutdown = False
         self._producers_stopped = False
-        self._persistence_open = False
+        self._orderly_shutdown_draining = False
         self._state = _LifecycleState.NEW
         self._lifecycle_lock = asyncio.Lock()
 
@@ -85,7 +85,10 @@ class RuntimeHost:
     @property
     def persistence_ready(self) -> bool:
         """Whether accepted bus events may still cross the durability boundary."""
-        return self._persistence_open
+        return self._state is _LifecycleState.READY or (
+            self._state is _LifecycleState.STOPPING
+            and self._orderly_shutdown_draining
+        )
 
     async def start(self, workspace: Path) -> None:
         """Validate configuration and start runtime processing for a workspace."""
@@ -137,7 +140,6 @@ class RuntimeHost:
                 raise
 
             self._state = _LifecycleState.READY
-            self._persistence_open = True
             logger.info(
                 "Application started successfully with workspace: {}",
                 resolved_workspace,
@@ -152,6 +154,12 @@ class RuntimeHost:
         """Stop Agent producers while leaving the message bus available to drain."""
         async with self._lifecycle_lock:
             await self._stop_producers_locked()
+
+    async def begin_orderly_shutdown(self) -> None:
+        """Authorize accepted-event draining for the explicit service shutdown path."""
+        async with self._lifecycle_lock:
+            if self._state is _LifecycleState.READY:
+                self._orderly_shutdown_draining = True
 
     async def stop_bus(self) -> None:
         """Stop and join the bus after application consumers have drained."""
@@ -174,6 +182,7 @@ class RuntimeHost:
             try:
                 await previous_manager.stop()
             except BaseException:
+                self._orderly_shutdown_draining = False
                 self._state = _LifecycleState.FAILED
                 raise
             self._bind_manager(None, None)
@@ -191,6 +200,7 @@ class RuntimeHost:
             except BaseException as replacement_error:
                 cleanup_error = await self._discard_bound_manager()
                 if cleanup_error is not None:
+                    self._orderly_shutdown_draining = False
                     self._state = _LifecycleState.FAILED
                     replacement_error.add_note(
                         f"Replacement cleanup did not finish: {cleanup_error!r}"
@@ -207,6 +217,7 @@ class RuntimeHost:
                         await restored.start()
                     except BaseException as restore_error:
                         restore_cleanup_error = await self._discard_bound_manager()
+                        self._orderly_shutdown_draining = False
                         self._state = _LifecycleState.FAILED
                         replacement_error.add_note(
                             f"Previous workspace restoration failed: {restore_error!r}"
@@ -228,6 +239,7 @@ class RuntimeHost:
         """Make an owned runtime unavailable without discarding cleanup ownership."""
         async with self._lifecycle_lock:
             if self._state is not _LifecycleState.STOPPED:
+                self._orderly_shutdown_draining = False
                 self._state = _LifecycleState.FAILED
 
     async def fail_consistency(self) -> None:
@@ -235,6 +247,7 @@ class RuntimeHost:
         async with self._lifecycle_lock:
             if self._state is _LifecycleState.STOPPED:
                 return
+            self._orderly_shutdown_draining = False
             self._state = _LifecycleState.FAILED
             manager = self._loop_manager
             if manager is not None and not self._producers_stopped:
@@ -294,10 +307,10 @@ class RuntimeHost:
         if self._state is _LifecycleState.STOPPED:
             return
         if self._state is _LifecycleState.NEW:
-            self._persistence_open = False
+            self._orderly_shutdown_draining = False
             self._state = _LifecycleState.STOPPED
             return
-        self._persistence_open = False
+        self._orderly_shutdown_draining = False
         if self._state is not _LifecycleState.FAILED:
             self._state = _LifecycleState.STOPPING
         if not self._bus_shutdown:

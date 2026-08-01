@@ -121,7 +121,11 @@ class MaintenanceService:
         if path is None:
             return
         path = path.absolute()
-        existing_components = [item for item in (path, *path.parents) if item.exists()]
+        existing_components = [
+            item
+            for item in (path, *path.parents)
+            if item.exists() or item.is_symlink()
+        ]
         if any(item.is_symlink() for item in existing_components):
             raise ValueError("Maintenance config path must not contain a symlink")
         if not path.is_file():

@@ -356,6 +356,8 @@ class RuntimeFacade:
             )
             cancelled = cancelled or preflight.caller_cancelled
             if preflight.error is not None:
+                if isinstance(preflight.error, NotImplementedError):
+                    raise RollbackPreflightUnsupportedError() from preflight.error
                 self._raise_checkpoint_error(preflight.error, command.checkpoint_id)
 
             committed = await self._await_definite(
@@ -474,8 +476,6 @@ class RuntimeFacade:
 
     @staticmethod
     def _raise_checkpoint_error(error: BaseException, checkpoint_id: str) -> None:
-        if isinstance(error, NotImplementedError):
-            raise RollbackPreflightUnsupportedError() from error
         if isinstance(error, ValueError):
             text = str(error).casefold()
             if "checkpoint" in text and "not found" in text:
@@ -549,6 +549,9 @@ class RuntimeFacade:
         """Atomically reject new commands while allowing persistence to drain."""
         async with self._mutation_lock:
             self._accepting_mutations = False
+            begin_drain = getattr(self._host, "begin_orderly_shutdown", None)
+            if callable(begin_drain):
+                await begin_drain()
 
     def _require_known_agent(self, agent_id: str) -> None:
         manager = self._host.loop_manager

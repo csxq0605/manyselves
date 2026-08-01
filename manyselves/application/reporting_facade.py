@@ -104,7 +104,7 @@ class ReportingFacade:
         state_path = root / "workflow-state.json"
         state = self._json(state_path, root)
         request_path = root / "request.json"
-        self._require_contained(request_path, root)
+        self._json(request_path, root)
         decisions_root = root / "decisions"
         if decisions_root.is_symlink():
             raise ReportingStateInvalidError("Reporting decisions path is invalid")

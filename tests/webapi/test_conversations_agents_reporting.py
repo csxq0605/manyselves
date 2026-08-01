@@ -11,6 +11,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
+from manyselves.application.errors import RuntimeConsistencyFailedError
 from manyselves.application.models import EditResendCommand
 from manyselves.config.schema import ApiConfig, AppConfig, ProvidersConfig
 from manyselves.core.loops.bus import MessageBus
@@ -471,6 +472,126 @@ async def test_shutdown_retries_one_transient_producer_stop_before_draining(
 
 
 @pytest.mark.asyncio
+async def test_shutdown_cancellation_waits_for_definite_producer_cleanup_then_propagates(
+    tmp_path: Path,
+) -> None:
+    """Caller cancellation must neither cancel owned cleanup nor disappear."""
+    host = ResourceRuntimeHost(AppConfig())
+    app = create_app(
+        WebSettings(
+            data_root=tmp_path,
+            initial_project_id="project-1",
+            access_token=SecretStr("test-token"),
+        )
+    )
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    host.app = app
+    entered = asyncio.Event()
+    leave = asyncio.Event()
+    producer_started = asyncio.Event()
+    producer_release = asyncio.Event()
+    attempts = 0
+    events: list[str] = []
+    original_stop = host.stop
+
+    async def stop_producers() -> None:
+        nonlocal attempts
+        attempts += 1
+        events.append("producer-start")
+        producer_started.set()
+        await producer_release.wait()
+        events.append("producer-complete")
+
+    async def stop_bus() -> None:
+        events.append("bus")
+        await original_stop()
+
+    host.stop_producers = stop_producers
+    host.stop_bus = stop_bus
+
+    async def run_lifespan() -> None:
+        async with app.router.lifespan_context(app):
+            reporting_close = app.state.reporting_facade.close
+            python_close = app.state.python_run_service.close
+            conversation_close = app.state.conversation_service.close
+
+            async def close_reporting() -> None:
+                events.append("reporting")
+                await reporting_close()
+
+            async def close_python() -> None:
+                events.append("python")
+                await python_close()
+
+            async def close_conversations() -> None:
+                events.append("conversations")
+                await conversation_close()
+
+            app.state.reporting_facade.close = close_reporting
+            app.state.python_run_service.close = close_python
+            app.state.conversation_service.close = close_conversations
+            entered.set()
+            await leave.wait()
+
+    task = asyncio.create_task(run_lifespan())
+    await entered.wait()
+    leave.set()
+    await producer_started.wait()
+    task.cancel()
+    producer_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert attempts == 1
+    assert events == [
+        "producer-start",
+        "producer-complete",
+        "reporting",
+        "python",
+        "conversations",
+        "bus",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_retries_producer_self_cancellation_without_cancelling_caller(
+    tmp_path: Path,
+) -> None:
+    """A cancelled cleanup task is an owned failure, not caller cancellation."""
+    host = ResourceRuntimeHost(AppConfig())
+    app = create_app(
+        WebSettings(
+            data_root=tmp_path,
+            initial_project_id="project-1",
+            access_token=SecretStr("test-token"),
+        )
+    )
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    host.app = app
+    attempts = 0
+    original_stop = host.stop
+
+    async def stop_producers() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise asyncio.CancelledError
+
+    async def stop_bus() -> None:
+        await original_stop()
+
+    host.stop_producers = stop_producers
+    host.stop_bus = stop_bus
+
+    async with app.router.lifespan_context(app):
+        pass
+
+    assert attempts == 2
+    assert host._bus_task is not None and host._bus_task.done()  # noqa: SLF001
+
+
+@pytest.mark.asyncio
 async def test_shutdown_persistent_producer_failure_retains_downstream_for_retry(
     tmp_path: Path,
 ) -> None:
@@ -873,6 +994,46 @@ async def test_prepare_compensation_failure_marks_runtime_consistency_failed(
 
 
 @pytest.mark.asyncio
+async def test_prepare_compensation_failure_retains_producer_cleanup_diagnostic(
+    resources, monkeypatch
+) -> None:
+    """The exposed consistency failure chain must retain producer-stop diagnostics."""
+    client, host, _, _ = resources
+    await client.post(
+        "/api/v1/agents/main/messages",
+        headers={"Idempotency-Key": "01310000-0000-4000-8000-000000000001"},
+        json={"content": "original", "messageId": "m1"},
+    )
+    service = host.app.state.conversation_service
+    await _eventually(lambda: len(service.messages("main")) == 1)
+
+    async def fail_sync(*_args, **_kwargs) -> None:
+        raise RuntimeError("prepare sync failed")
+
+    restore_error = RuntimeError("prepare compensation failed")
+
+    async def fail_restore(_snapshot) -> None:
+        raise restore_error
+
+    async def fail_consistency() -> None:
+        host.is_ready = False
+        raise RuntimeError("producer stop failed")
+
+    monkeypatch.setattr(service, "_sync", fail_sync)
+    monkeypatch.setattr(service, "restore", fail_restore)
+    host.fail_consistency = fail_consistency
+
+    with pytest.raises(RuntimeConsistencyFailedError) as raised:
+        await service.prepare_edit_resend("main", "m1")
+
+    assert raised.value.__cause__ is restore_error
+    assert any(
+        "producer stop failed" in note
+        for note in getattr(restore_error, "__notes__", ())
+    )
+
+
+@pytest.mark.asyncio
 async def test_cancelled_edit_resend_waits_for_publish_commit_and_replays_cache(resources) -> None:
     client, host, _, _ = resources
     await client.post(
@@ -1058,6 +1219,28 @@ async def test_rollback_maps_backend_unsupported_preflight_to_stable_501(resourc
 
 
 @pytest.mark.asyncio
+async def test_committed_rollback_not_implemented_is_not_misclassified_as_preflight(
+    resources,
+) -> None:
+    """Only the preflight boundary owns the stable unsupported classification."""
+    client, host, _, _ = resources
+
+    async def unsupported_commit(_agent_id: str, _checkpoint_id: str) -> dict:
+        raise NotImplementedError("Committed rollback is unavailable")
+
+    host.backend.rollback_to_checkpoint = unsupported_commit
+    response = await client.post(
+        "/api/v1/agents/main/rollback",
+        headers={"Idempotency-Key": "10100000-0000-4000-8000-000000000097"},
+        json={"checkpointId": "cp-1"},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "INTERNAL_ERROR"
+    assert host.backend.rollback_preparations == [("main", "cp-1")]
+
+
+@pytest.mark.asyncio
 async def test_rollback_rejects_pending_agent_stream_before_preflight(resources) -> None:
     client, host, _, _ = resources
     service = host.app.state.conversation_service
@@ -1238,6 +1421,27 @@ async def test_reporting_malformed_persisted_state_is_not_silently_empty(resourc
     (workspace / "Work/runs/broken.json").write_text("{broken", encoding="utf-8")
 
     response = await client.get("/api/v1/reporting/runs/broken")
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "REPORT_STATE_INVALID"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "request_text",
+    ["{broken", "[]"],
+    ids=["malformed", "non-object"],
+)
+async def test_reporting_request_artifact_must_be_a_valid_json_object(
+    resources, request_text: str
+) -> None:
+    """A request-backed run must validate the artifact that recognizes it."""
+    client, _, workspace, _ = resources
+    root = workspace / "Work/runs/request-only"
+    root.mkdir(parents=True)
+    (root / "request.json").write_text(request_text, encoding="utf-8")
+
+    response = await client.get("/api/v1/reporting/runs/request-only")
 
     assert response.status_code == 500
     assert response.json()["error"]["code"] == "REPORT_STATE_INVALID"
@@ -1675,6 +1879,23 @@ async def test_maintenance_refuses_symlinked_config_path(resources, tmp_path: Pa
     outside.write_text("providers: {}\n", encoding="utf-8")
     link = workspace / "linked.yaml"
     link.symlink_to(outside)
+    host.config_manager._settings = SimpleNamespace(config_path=link)
+    service = host.app.state.maintenance_service
+    service.config_manager = host.config_manager
+
+    with pytest.raises(ValueError, match="symlink"):
+        service._flush()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="dangling symlink contract")
+async def test_maintenance_refuses_dangling_symlinked_config_path(
+    resources, tmp_path: Path
+) -> None:
+    """A dangling final symlink must not bypass the no-follow config boundary."""
+    _, host, workspace, _ = resources
+    link = workspace / "dangling.yaml"
+    link.symlink_to(tmp_path / "missing-outside.yaml")
     host.config_manager._settings = SimpleNamespace(config_path=link)
     service = host.app.state.maintenance_service
     service.config_manager = host.config_manager

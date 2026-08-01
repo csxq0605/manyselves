@@ -1,5 +1,6 @@
 """Application lifecycle ownership for the one shared runtime."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import AsyncIterator
@@ -99,19 +100,40 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
                 else:
                     cleanup_error.add_note(f"Additional shutdown failure: {error!r}")
 
-        async def stop_producers_with_retry(boundary) -> None:
-            first_error: BaseException | None = None
-            for _attempt in range(2):
+        async def await_definite(awaitable) -> tuple[BaseException | None, bool]:
+            """Obtain an owned cleanup outcome while remembering caller cancellation."""
+            task = asyncio.create_task(awaitable)
+            caller_cancelled = False
+            while not task.done():
                 try:
-                    await boundary()
-                    return
-                except BaseException as error:
-                    if first_error is None:
-                        first_error = error
-                    else:
-                        first_error.add_note(
-                            f"Producer shutdown retry also failed: {error!r}"
-                        )
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling():
+                        caller_cancelled = True
+                        current.uncancel()
+                except BaseException:
+                    break
+            try:
+                task.result()
+            except BaseException as error:
+                return error, caller_cancelled
+            return None, caller_cancelled
+
+        async def stop_producers_with_retry(boundary) -> bool:
+            first_error: BaseException | None = None
+            caller_cancelled = False
+            for _attempt in range(2):
+                error, cancelled = await await_definite(boundary())
+                caller_cancelled = caller_cancelled or cancelled
+                if error is None:
+                    return caller_cancelled
+                if first_error is None:
+                    first_error = error
+                else:
+                    first_error.add_note(
+                        f"Producer shutdown retry also failed: {error!r}"
+                    )
             assert first_error is not None
             raise first_error
 
@@ -120,9 +142,10 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             stop_producers = getattr(host, "stop_producers", None)
             split_shutdown = callable(stop_producers)
             producers_stopped = True
+            caller_cancelled = False
             if split_shutdown:
                 try:
-                    await stop_producers_with_retry(stop_producers)
+                    caller_cancelled = await stop_producers_with_retry(stop_producers)
                 except BaseException as error:
                     producers_stopped = False
                     if cleanup_error is None:
@@ -147,6 +170,8 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
                     await cleanup(host.stop())
             if cleanup_error is not None:
                 raise cleanup_error
+            if caller_cancelled:
+                raise asyncio.CancelledError
         finally:
             async with app.state.lifecycle_lock:
                 app.state.lifecycle_active = False

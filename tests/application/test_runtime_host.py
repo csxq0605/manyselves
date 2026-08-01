@@ -3,17 +3,19 @@
 import asyncio
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 import pytest
 
 from manyselves.application.backend_api import BackendAPIImpl
 from manyselves.application.conversation_service import ConversationService
-from manyselves.application.errors import RuntimeStartupError
+from manyselves.application.errors import RuntimeConsistencyFailedError, RuntimeStartupError
+from manyselves.application.models import RollbackCommand
 from manyselves.application.runtime_facade import RuntimeFacade
 from manyselves.application.runtime_host import RuntimeHost
 from manyselves.config import ConfigManager
 from manyselves.core.loops import LoopManager, MessageBus
-from manyselves.interfaces.types import UserMessage
+from manyselves.interfaces.types import Checkpoint, UserMessage
 
 
 class _FakeConfigManager:
@@ -364,6 +366,162 @@ async def test_producer_stop_event_remains_persistable_until_bus_shutdown(
     assert [item["content"] for item in conversations.messages("main")] == [
         "accepted before shutdown"
     ]
+
+
+@pytest.mark.asyncio
+async def test_persistence_is_open_only_while_ready_or_orderly_shutdown_drains(
+    tmp_path: Path,
+) -> None:
+    """A stale startup flag must not authorize writes in failed lifecycle states."""
+    host, _, _, _ = _host([])
+    await host.start(tmp_path)
+
+    try:
+        assert host.persistence_ready is True
+        await host.begin_orderly_shutdown()
+        await host.stop_producers()
+        assert host.persistence_ready is True
+
+        await host.mark_failed()
+        assert host.persistence_ready is False
+    finally:
+        await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_consistency_failure_closes_persistence_before_stopping_producers(
+    tmp_path: Path,
+) -> None:
+    """Producer cleanup during a consistency failure must not retain write access."""
+    observed: list[bool] = []
+    host, _, _, created = _host([])
+    await host.start(tmp_path)
+    original_stop = created[0].stop
+
+    async def observe_stop() -> None:
+        observed.append(host.persistence_ready)
+        await original_stop()
+
+    created[0].stop = observe_stop
+    await host.fail_consistency()
+
+    assert observed == [False]
+    assert host.persistence_ready is False
+    await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_ordinary_stop_never_opens_orderly_persistence_drain(tmp_path: Path) -> None:
+    """Desktop and direct host shutdown must not acquire the service drain grant."""
+    observed: list[bool] = []
+    host, _, _, created = _host([])
+    await host.start(tmp_path)
+    original_stop = created[0].stop
+
+    async def observe_stop() -> None:
+        observed.append(host.persistence_ready)
+        await original_stop()
+
+    created[0].stop = observe_stop
+    await host.stop()
+
+    assert observed == [False]
+    assert host.persistence_ready is False
+
+
+@pytest.mark.asyncio
+async def test_failed_workspace_reconciliation_closes_persistence(tmp_path: Path) -> None:
+    """A replacement plus restoration failure must fail closed before cleanup."""
+    host, _, _, _ = _host(
+        [],
+        start_errors=[None, RuntimeError("replacement failed"), RuntimeError("restore failed")],
+    )
+    await host.start(tmp_path / "first")
+
+    with pytest.raises(RuntimeError, match="replacement failed"):
+        await host.switch_workspace(tmp_path / "second")
+
+    assert host.persistence_ready is False
+    await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_late_checkpoint_cannot_overwrite_rollback_compensation(
+    tmp_path: Path,
+) -> None:
+    """A failed durable rollback must close the bus persistence boundary after restore."""
+    bus = MessageBus()
+    config = _FakeConfigManager()
+    backend = _FakeBackend()
+    manager = _FakeLoopManager([])
+    manager.get_all_agent_statuses = lambda: {"main": "idle"}
+    manager.get_agent_session_id = lambda _agent_id: None
+
+    async def prepare_rollback(_agent_id: str, checkpoint_id: str) -> dict:
+        return {"checkpoint_id": checkpoint_id, "effect_paths": []}
+
+    async def rollback_to_checkpoint(_agent_id: str, _checkpoint_id: str) -> dict:
+        return {"restored_files": 1, "conversation_history": []}
+
+    async def sync_agent_conversation(*_args, **_kwargs) -> None:
+        return None
+
+    backend.prepare_rollback = prepare_rollback
+    backend.rollback_to_checkpoint = rollback_to_checkpoint
+    backend.sync_agent_conversation = sync_agent_conversation
+    host = RuntimeHost(
+        config_manager=cast(ConfigManager, config),
+        bus=bus,
+        backend=cast(BackendAPIImpl, backend),
+        loop_manager_factory=lambda *_args: cast(LoopManager, manager),
+        project_logging_initializer=lambda _workspace: None,
+        project_structure_initializer=lambda _workspace: None,
+    )
+    await host.start(tmp_path)
+    facade = RuntimeFacade(host)
+    conversations = ConversationService(tmp_path, facade=facade, bus=bus)
+    conversations.store.append_message(
+        "main", "user", "preserve", {"message_id": "message-1"}
+    )
+    lease = facade.leases.acquire(client_id="rollback-test", actor_id="test")
+
+    async def fail_after_durable_restore(result, snapshot) -> None:
+        await conversations.apply_rollback(
+            "main", "message-1", result.conversation_history
+        )
+        raise RuntimeError("durable rollback write failed")
+
+    try:
+        with pytest.raises(RuntimeConsistencyFailedError):
+            await facade.rollback(
+                RollbackCommand(
+                    command_id=uuid4(),
+                    lease_token=lease.token,
+                    agent_id="main",
+                    checkpoint_id="checkpoint-1",
+                ),
+                before_restore=lambda: conversations.prepare_rollback(
+                    "main", "message-1"
+                ),
+                after_restore=fail_after_durable_restore,
+                restore=conversations.restore,
+            )
+
+        await bus.publish(
+            Checkpoint(
+                agent_type="main",
+                checkpoint_id="late-checkpoint",
+                description="must not persist",
+            )
+        )
+        await asyncio.sleep(0.05)
+
+        assert [item["content"] for item in conversations.messages("main")] == [
+            "preserve"
+        ]
+    finally:
+        await conversations.close()
+        await host.stop()
 
 
 @pytest.mark.asyncio
