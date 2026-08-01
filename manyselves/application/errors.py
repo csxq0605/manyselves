@@ -79,3 +79,12 @@ class CheckpointNotFoundError(LookupError):
 
     def __init__(self, checkpoint_id: str) -> None:
         super().__init__(f"Checkpoint was not found: {checkpoint_id}")
+
+
+class RollbackPreflightUnsupportedError(RuntimeError):
+    """The active backend cannot prove rollback safety before mutation."""
+
+    code = "ROLLBACK_PREFLIGHT_UNSUPPORTED"
+
+    def __init__(self) -> None:
+        super().__init__("Rollback preflight is unsupported by the active runtime")

@@ -69,6 +69,12 @@ class RecordingBackend:
             "conversation_history": [{"role": "user", "content": "before"}],
         }
 
+    async def prepare_rollback(
+        self, agent_type: str, checkpoint_id: str
+    ) -> dict[str, Any]:
+        self.calls.append(("prepare-rollback", agent_type, checkpoint_id))
+        return {"checkpoint_id": checkpoint_id, "effect_paths": []}
+
 
 class SnapshotLoopManager:
     def get_all_agent_statuses(self) -> dict[str, str]:
@@ -176,6 +182,7 @@ async def test_facade_maps_all_commands_to_existing_backend_methods(tmp_path: Pa
         ("message", "hello", "researcher", "message-1", "main_agent"),
         ("file", {"type": "file", "file": "Inputs/source.txt"}, "main"),
         ("interrupt", "main"),
+        ("prepare-rollback", "main", "checkpoint-1"),
         ("rollback", "main", "checkpoint-1"),
     ]
 
@@ -313,7 +320,10 @@ async def test_duplicate_rollback_returns_original_typed_result() -> None:
 
     assert isinstance(first, RollbackResult)
     assert second is first
-    assert host.backend.calls == [("rollback", "main", "checkpoint-1")]
+    assert host.backend.calls == [
+        ("prepare-rollback", "main", "checkpoint-1"),
+        ("rollback", "main", "checkpoint-1"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -383,7 +393,10 @@ async def test_rollback_command_id_cannot_be_reused_for_accepted_command() -> No
         )
 
     assert isinstance(rollback, RollbackResult)
-    assert host.backend.calls == [("rollback", "main", "checkpoint-1")]
+    assert host.backend.calls == [
+        ("prepare-rollback", "main", "checkpoint-1"),
+        ("rollback", "main", "checkpoint-1"),
+    ]
 
 
 @pytest.mark.asyncio

@@ -57,6 +57,11 @@ class _LoopBoundary:
             "checkpoint_marker": "preserved",
         }
 
+    async def prepare_rollback(
+        self, agent_type: str, checkpoint_id: str
+    ) -> dict[str, Any]:
+        return {"checkpoint_id": checkpoint_id, "effect_paths": []}
+
     def set_agent_debug_mode(self, agent_type: str, enabled: bool) -> None:
         self.debug_changes.append((agent_type, enabled))
 

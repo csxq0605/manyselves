@@ -17,6 +17,7 @@ from .errors import (
     CommandIdConflictError,
     MaintenanceQuiescedError,
     MaintenanceTokenMismatchError,
+    RollbackPreflightUnsupportedError,
     RuntimeBusyError,
     RuntimeConsistencyFailedError,
     RuntimeNotReadyError,
@@ -142,6 +143,7 @@ class RuntimeFacade:
         self._command_cache: OrderedDict[UUID, _CachedCommand] = OrderedDict()
         self._mutation_lock = asyncio.Lock()
         self._maintenance_token: str | None = None
+        self._accepting_mutations = True
 
     def snapshot(self) -> RuntimeSnapshot:
         """Return a point-in-time read-only runtime view."""
@@ -165,6 +167,7 @@ class RuntimeFacade:
         """Serialize an application mutation and require the current controller."""
         async with self._mutation_lock:
             self.leases.require(lease_token)
+            self._require_accepting()
             self._require_mutable()
             if not self._host.is_ready:
                 raise RuntimeNotReadyError()
@@ -191,6 +194,7 @@ class RuntimeFacade:
         """Resolve, switch, and commit project state as one serialized transaction."""
         async with self._mutation_lock:
             self.leases.require(lease_token)
+            self._require_accepting()
             self._require_mutable()
             if not self._host.is_ready:
                 raise RuntimeNotReadyError()
@@ -338,13 +342,14 @@ class RuntimeFacade:
                     raise prepared.error
                 snapshot = prepared.value
             prepare_backend = getattr(self._host.backend, "prepare_rollback", None)
-            if callable(prepare_backend):
-                preflight = await self._await_definite(
-                    prepare_backend(command.agent_id, command.checkpoint_id)
-                )
-                cancelled = cancelled or preflight.caller_cancelled
-                if preflight.error is not None:
-                    self._raise_checkpoint_error(preflight.error, command.checkpoint_id)
+            if not callable(prepare_backend):
+                raise RollbackPreflightUnsupportedError()
+            preflight = await self._await_definite(
+                prepare_backend(command.agent_id, command.checkpoint_id)
+            )
+            cancelled = cancelled or preflight.caller_cancelled
+            if preflight.error is not None:
+                self._raise_checkpoint_error(preflight.error, command.checkpoint_id)
 
             committed = await self._await_definite(
                 self._host.backend.rollback_to_checkpoint(
@@ -388,6 +393,7 @@ class RuntimeFacade:
     ) -> ResponseT:
         async with self._mutation_lock:
             self.leases.require(command.lease_token)
+            self._require_accepting()
             self._require_mutable()
             workspace = str(self._host.workspace) if self._host.workspace is not None else None
             payload = (workspace, *_semantic_payload(command))
@@ -444,6 +450,10 @@ class RuntimeFacade:
             boundary = self._host.mark_failed
         await boundary()
 
+    async def fail_consistency(self) -> None:
+        """Expose the awaited host failure boundary to application transactions."""
+        await self._fail_consistency()
+
     @staticmethod
     def _raise_checkpoint_error(error: BaseException, checkpoint_id: str) -> None:
         if isinstance(error, ValueError):
@@ -486,6 +496,7 @@ class RuntimeFacade:
         """Enter maintenance under the shared mutation lock after a busy check."""
         async with self._mutation_lock:
             self.leases.require(lease_token)
+            self._require_accepting()
             if not self._host.is_ready:
                 raise RuntimeNotReadyError()
             if self._maintenance_token is not None:
@@ -509,6 +520,15 @@ class RuntimeFacade:
     def _require_mutable(self) -> None:
         if self._maintenance_token is not None:
             raise MaintenanceQuiescedError()
+
+    def _require_accepting(self) -> None:
+        if not self._accepting_mutations:
+            raise RuntimeNotReadyError()
+
+    async def begin_shutdown(self) -> None:
+        """Atomically reject new commands while allowing persistence to drain."""
+        async with self._mutation_lock:
+            self._accepting_mutations = False
 
     def _require_known_agent(self, agent_id: str) -> None:
         manager = self._host.loop_manager

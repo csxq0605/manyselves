@@ -14,7 +14,7 @@ from pydantic import SecretStr
 from manyselves.application.models import EditResendCommand
 from manyselves.config.schema import ApiConfig, AppConfig, ProvidersConfig
 from manyselves.core.loops.bus import MessageBus
-from manyselves.interfaces.types import AgentResponse, Error, UserMessage
+from manyselves.interfaces.types import AgentResponse, Error, SystemNotice, UserMessage
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.settings import WebSettings
@@ -32,6 +32,7 @@ class _Backend:
         self.send_error: BaseException | None = None
         self.send_started = asyncio.Event()
         self.send_release: asyncio.Event | None = None
+        self.send_side_effect = None
         self.sync_failures_remaining = 0
 
     async def send_user_message(
@@ -45,6 +46,8 @@ class _Backend:
         self.send_started.set()
         if self.send_release is not None:
             await self.send_release.wait()
+        if self.send_side_effect is not None:
+            self.send_side_effect()
         if self.send_error is not None:
             raise self.send_error
         self.sent.append((content, agent_type, message_id, source))
@@ -100,7 +103,13 @@ class _ReportingController:
         return {"status": "running", "run_id": "report-new", "task_id": "task-new"}
 
     def status(self, run_id: str) -> dict:
-        return {"status": "completed", "run_id": run_id, "active": False, "source": "persisted"}
+        return {
+            "status": "completed",
+            "run_id": run_id,
+            "active": False,
+            "source": "persisted",
+            "task_id": "persisted-task",
+        }
 
     def cancel(self, run_id: str) -> bool:
         self.calls.append(("cancel", run_id))
@@ -319,12 +328,69 @@ async def test_delete_shared_session_syncs_every_affected_agent(resources) -> No
 async def test_resource_services_close_owned_callbacks_and_reporting_tasks(resources) -> None:
     _, host, _, _ = resources
     task = asyncio.create_task(asyncio.Event().wait())
+    watcher = asyncio.create_task(asyncio.Event().wait())
     host.reporting_controller._tasks["pending"] = task
+    host.reporting_controller._status_watchers = {"pending": watcher}
 
     await host.app.state.reporting_facade.close()
     await host.app.state.conversation_service.close()
 
     assert task.done()
+    assert watcher.done()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stops_producers_before_draining_resource_consumers(tmp_path: Path) -> None:
+    config = AppConfig()
+    host = ResourceRuntimeHost(config)
+    app = create_app(
+        WebSettings(
+            data_root=tmp_path,
+            initial_project_id="project-1",
+            access_token=SecretStr("test-token"),
+        )
+    )
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    host.app = app
+    events: list[str] = []
+    original_stop = host.stop
+
+    async def stop_producers() -> None:
+        events.append("producers")
+
+    async def stop_bus() -> None:
+        events.append("bus")
+        await original_stop()
+
+    async def legacy_stop() -> None:
+        events.append("legacy-stop")
+        await original_stop()
+
+    host.stop_producers = stop_producers
+    host.stop_bus = stop_bus
+    host.stop = legacy_stop
+    async with app.router.lifespan_context(app):
+        reporting_close = app.state.reporting_facade.close
+        python_close = app.state.python_run_service.close
+        conversation_close = app.state.conversation_service.close
+
+        async def close_reporting() -> None:
+            events.append("reporting")
+            await reporting_close()
+
+        async def close_python() -> None:
+            events.append("python")
+            await python_close()
+
+        async def close_conversations() -> None:
+            events.append("conversations")
+            await conversation_close()
+
+        app.state.reporting_facade.close = close_reporting
+        app.state.python_run_service.close = close_python
+        app.state.conversation_service.close = close_conversations
+
+    assert events == ["producers", "reporting", "python", "conversations", "bus"]
 
 
 @pytest.mark.asyncio
@@ -366,6 +432,21 @@ async def test_project_activation_rejects_pending_conversation_persistence(resou
 
 
 @pytest.mark.asyncio
+async def test_project_activation_rejects_queued_agent_work(resources) -> None:
+    client, host, original_workspace, _ = resources
+    await client.post("/api/v1/projects", json={"projectId": "project-2"})
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    queue.put_nowait("old-workspace-turn")
+    host.loop_manager._loops = {"main": SimpleNamespace(_message_queue=queue)}
+
+    activated = await client.post("/api/v1/projects/project-2/activate")
+
+    assert activated.status_code == 409
+    assert activated.json()["error"]["code"] == "RUNTIME_BUSY"
+    assert host.workspace == original_workspace.resolve()
+
+
+@pytest.mark.asyncio
 async def test_history_replacement_discards_partial_response_buffer(resources) -> None:
     client, host, workspace, _ = resources
     await host.bus.publish(
@@ -390,6 +471,22 @@ async def test_history_replacement_discards_partial_response_buffer(resources) -
     ).read_text("utf-8")
     assert "fresh" in text
     assert "stale-partial" not in text
+
+
+@pytest.mark.asyncio
+async def test_interrupt_system_notice_clears_captured_stream_state(resources) -> None:
+    _, host, _, _ = resources
+    service = host.app.state.conversation_service
+    session = service.store.get_current_session_id("main")
+    service._streams[(session, "main", "m1")] = "partial"  # noqa: SLF001
+    service._message_sessions[("main", "m1")] = session  # noqa: SLF001
+
+    await service._on_message(  # noqa: SLF001
+        SystemNotice(agent_type="main", content="Interrupted", kind="interrupt")
+    )
+
+    assert not any(key[1] == "main" for key in service._streams)  # noqa: SLF001
+    assert not any(key[0] == "main" for key in service._message_sessions)  # noqa: SLF001
 
 
 @pytest.mark.asyncio
@@ -503,6 +600,105 @@ async def test_edit_resend_publish_failure_restores_exact_durable_turn(resources
         ("first", "main", "m1", "user"),
         ("keep exact bytes", "main", "m2", "user"),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("busy_kind", ["active", "stream", "persistence"])
+async def test_edit_resend_rejects_non_idle_agent_state(resources, busy_kind: str) -> None:
+    client, host, _, _ = resources
+    await client.post(
+        "/api/v1/agents/main/messages",
+        headers={"Idempotency-Key": "01100000-0000-4000-8000-000000000001"},
+        json={"content": "original", "messageId": "m1"},
+    )
+    service = host.app.state.conversation_service
+    await _eventually(lambda: len(service.messages("main")) == 1)
+    attempts = host.backend.send_attempts
+    if busy_kind == "active":
+        host.statuses = {"main": "thinking"}
+    elif busy_kind == "stream":
+        session = service.store.get_current_session_id("main")
+        service._streams[(session, "main", "m1")] = "partial"  # noqa: SLF001
+    else:
+        service._pending_writes = 1  # noqa: SLF001
+
+    try:
+        response = await client.post(
+            "/api/v1/agents/main/messages/m1/edit-resend",
+            headers={"Idempotency-Key": f"01100000-0000-4000-8000-00000000000{2 + ['active', 'stream', 'persistence'].index(busy_kind)}"},
+            json={"content": "replacement"},
+        )
+    finally:
+        if busy_kind == "persistence":
+            service._pending_writes = 0  # noqa: SLF001
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "RUNTIME_BUSY"
+    assert host.backend.send_attempts == attempts
+
+
+@pytest.mark.asyncio
+async def test_edit_resend_compensation_restores_sessions_and_application_state(resources) -> None:
+    client, host, workspace, _ = resources
+    await client.post(
+        "/api/v1/agents/main/messages",
+        headers={"Idempotency-Key": "01200000-0000-4000-8000-000000000001"},
+        json={"content": "original", "messageId": "m1"},
+    )
+    service = host.app.state.conversation_service
+    await _eventually(lambda: len(service.messages("main")) == 1)
+    sessions_path = workspace / ".manyselves/conversations/sessions.json"
+    sessions_before = sessions_path.read_bytes()
+    service._message_sessions[("main", "keep")] = "captured"  # noqa: SLF001
+    message_sessions_before = dict(service._message_sessions)  # noqa: SLF001
+
+    def corrupt_application_state() -> None:
+        sessions_path.write_bytes(b"[]")
+        service._message_sessions.clear()  # noqa: SLF001
+
+    host.backend.send_side_effect = corrupt_application_state
+    host.backend.send_error = RuntimeError("publish failed")
+    response = await client.post(
+        "/api/v1/agents/main/messages/m1/edit-resend",
+        headers={"Idempotency-Key": "01200000-0000-4000-8000-000000000099"},
+        json={"content": "replacement"},
+    )
+
+    assert response.status_code == 500
+    assert sessions_path.read_bytes() == sessions_before
+    assert service._message_sessions == message_sessions_before  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_prepare_compensation_failure_marks_runtime_consistency_failed(
+    resources, monkeypatch
+) -> None:
+    client, host, _, _ = resources
+    await client.post(
+        "/api/v1/agents/main/messages",
+        headers={"Idempotency-Key": "01300000-0000-4000-8000-000000000001"},
+        json={"content": "original", "messageId": "m1"},
+    )
+    service = host.app.state.conversation_service
+    await _eventually(lambda: len(service.messages("main")) == 1)
+
+    async def fail_sync(*_args, **_kwargs):
+        raise RuntimeError("prepare sync failed")
+
+    async def fail_restore(_snapshot):
+        raise RuntimeError("prepare compensation failed")
+
+    monkeypatch.setattr(service, "_sync", fail_sync)
+    monkeypatch.setattr(service, "restore", fail_restore)
+    response = await client.post(
+        "/api/v1/agents/main/messages/m1/edit-resend",
+        headers={"Idempotency-Key": "01300000-0000-4000-8000-000000000099"},
+        json={"content": "replacement"},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "RUNTIME_CONSISTENCY_FAILED"
+    assert host.is_ready is False
 
 
 @pytest.mark.asyncio
@@ -656,6 +852,55 @@ async def test_missing_checkpoint_fails_before_durable_truncation(resources) -> 
 
 
 @pytest.mark.asyncio
+async def test_rollback_requires_public_preflight_before_side_effects(resources) -> None:
+    client, host, _, _ = resources
+    host.backend.prepare_rollback = None
+
+    response = await client.post(
+        "/api/v1/agents/main/rollback",
+        headers={"Idempotency-Key": "10100000-0000-4000-8000-000000000099"},
+        json={"checkpointId": "cp-1"},
+    )
+
+    assert response.status_code == 501
+    assert response.json()["error"]["code"] == "ROLLBACK_PREFLIGHT_UNSUPPORTED"
+    assert host.backend.rollbacks == []
+
+
+@pytest.mark.asyncio
+async def test_rollback_rejects_pending_agent_stream_before_preflight(resources) -> None:
+    client, host, _, _ = resources
+    service = host.app.state.conversation_service
+    session = service.store.get_current_session_id("main")
+    service._streams[(session, "main", "m1")] = "partial"  # noqa: SLF001
+
+    response = await client.post(
+        "/api/v1/agents/main/rollback",
+        headers={"Idempotency-Key": "10110000-0000-4000-8000-000000000099"},
+        json={"checkpointId": "cp-1"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "RUNTIME_BUSY"
+    assert host.backend.rollback_preparations == []
+    assert host.backend.rollbacks == []
+
+
+@pytest.mark.asyncio
+async def test_rollback_clears_tuple_keyed_stream_and_message_state(resources) -> None:
+    _, host, _, _ = resources
+    service = host.app.state.conversation_service
+    session = service.store.get_current_session_id("main")
+    service._streams[(session, "main", "m1")] = "partial"  # noqa: SLF001
+    service._message_sessions[("main", "m1")] = session  # noqa: SLF001
+
+    await service.apply_rollback("main", None, [])
+
+    assert not any(key[1] == "main" for key in service._streams)  # noqa: SLF001
+    assert not any(key[0] == "main" for key in service._message_sessions)  # noqa: SLF001
+
+
+@pytest.mark.asyncio
 async def test_rollback_postcommit_sync_failure_marks_runtime_consistency_failed(resources) -> None:
     client, host, workspace, _ = resources
     await client.post(
@@ -765,7 +1010,9 @@ async def test_reporting_snapshot_covers_durable_state_and_output_metadata(resou
 
     assert response.status_code == 200
     body = response.json()
-    assert body["run"]["status"] == "needs_user_decision"
+    assert body["run"]["status"] == "completed"
+    assert body["run"]["active"] is False
+    assert body["run"]["source"] == "persisted"
     assert body["state"]["activity"] == "coverage"
     assert body["waitingInput"][0]["decision_id"] == "decision-1"
     assert body["checkpoint"]["status"] == "blocked"
@@ -788,8 +1035,10 @@ async def test_reporting_persisted_inactive_status_is_explicit(resources) -> Non
     response = await client.get("/api/v1/reporting/runs/inactive")
 
     assert response.status_code == 200
-    assert response.json()["run"]["status"] == "needs_user_decision"
+    assert response.json()["run"]["status"] == "completed"
     assert response.json()["run"]["active"] is False
+    assert response.json()["run"]["source"] == "persisted"
+    assert response.json()["run"]["task_id"] == "persisted-task"
 
 
 @pytest.mark.asyncio
@@ -824,6 +1073,59 @@ async def test_reporting_rejects_symlinked_run_directory(resources, tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_reporting_empty_run_directory_is_not_a_run(resources) -> None:
+    client, _, workspace, _ = resources
+    (workspace / "Work/runs/empty").mkdir(parents=True, exist_ok=True)
+
+    response = await client.get("/api/v1/reporting/runs/empty")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "REPORT_RUN_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="symlink containment contract")
+async def test_reporting_rejects_symlinked_runs_root(resources, tmp_path: Path) -> None:
+    client, _, workspace, _ = resources
+    runs = workspace / "Work/runs"
+    if runs.exists():
+        runs.rmdir()
+    outside = tmp_path / "outside-runs"
+    outside.mkdir()
+    (outside / "escaped.json").write_text(
+        json.dumps({"run_id": "escaped", "status": "completed"}), encoding="utf-8"
+    )
+    runs.symlink_to(outside, target_is_directory=True)
+
+    response = await client.get("/api/v1/reporting/runs/escaped")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "REPORT_RUN_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="symlink containment contract")
+async def test_reporting_rejects_symlinked_decisions_directory(resources, tmp_path: Path) -> None:
+    client, _, workspace, _ = resources
+    root = workspace / "Work/runs/run-decisions"
+    root.mkdir(parents=True)
+    (root / "workflow-state.json").write_text(
+        json.dumps({"run_id": "run-decisions", "status": "blocked"}), encoding="utf-8"
+    )
+    outside = tmp_path / "outside-decisions"
+    outside.mkdir()
+    (outside / "secret.json").write_text(
+        json.dumps({"decision_id": "secret", "status": "pending"}), encoding="utf-8"
+    )
+    (root / "decisions").symlink_to(outside, target_is_directory=True)
+
+    response = await client.get("/api/v1/reporting/runs/run-decisions")
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "REPORT_STATE_INVALID"
+
+
+@pytest.mark.asyncio
 async def test_reporting_named_start_command_returns_accepted(resources) -> None:
     client, host, _, _ = resources
 
@@ -854,6 +1156,7 @@ async def test_reporting_cancel_missing_run_returns_not_found(resources) -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="Linux deployment contract")
 async def test_python_run_is_project_scoped_bounded_and_queryable(resources) -> None:
     client, host, workspace, _ = resources
     script = workspace / "Work/example.py"
@@ -883,6 +1186,7 @@ async def test_python_run_is_project_scoped_bounded_and_queryable(resources) -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="Linux deployment contract")
 async def test_python_run_rejects_escape_and_non_python(resources, tmp_path: Path) -> None:
     client, _, workspace, _ = resources
     (workspace / "Work/not-python.txt").parent.mkdir(parents=True, exist_ok=True)
@@ -904,6 +1208,7 @@ async def test_python_run_rejects_escape_and_non_python(resources, tmp_path: Pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="Linux deployment contract")
 async def test_python_run_can_be_interrupted_immediately(resources) -> None:
     client, host, workspace, _ = resources
     script = workspace / "Work/slow.py"
@@ -928,6 +1233,7 @@ async def test_python_run_can_be_interrupted_immediately(resources) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="Linux deployment contract")
 async def test_python_status_remains_running_until_pipes_are_drained(resources) -> None:
     client, host, workspace, _ = resources
     script = workspace / "Work/output.py"
@@ -962,35 +1268,36 @@ async def test_python_status_remains_running_until_pipes_are_drained(resources) 
 
 
 @pytest.mark.asyncio
-async def test_windows_termination_uses_owned_job_object(resources, monkeypatch) -> None:
-    _, host, _, _ = resources
+async def test_python_run_is_unsupported_on_windows_before_process_creation(
+    resources, monkeypatch
+) -> None:
+    client, host, workspace, _ = resources
     service = host.app.state.python_run_service
     service._platform = "nt"  # noqa: SLF001
-    service._windows_jobs = {123: 456}  # noqa: SLF001
-    closed: list[int] = []
-    monkeypatch.setattr(
-        service, "_close_windows_job", lambda handle: closed.append(handle)
+    script = workspace / "Work/windows.py"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text("print('must not run')\n", encoding="utf-8")
+    created = False
+
+    async def reject_creation(*_args, **_kwargs):
+        nonlocal created
+        created = True
+        raise AssertionError("Windows subprocess creation must not be attempted")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", reject_creation)
+    response = await client.post(
+        "/api/v1/operations/python",
+        headers={"Idempotency-Key": "31000000-0000-4000-8000-000000000001"},
+        json={"path": "Work/windows.py", "arguments": []},
     )
-    monkeypatch.setattr(
-        os,
-        "killpg",
-        lambda *_args: (_ for _ in ()).throw(AssertionError("POSIX fallback used")),
-    )
 
-    class Process:
-        pid = 123
-        returncode = None
-
-        async def wait(self):
-            self.returncode = -1
-            return self.returncode
-
-        def kill(self):
-            self.returncode = -1
-
-    await service._terminate(Process())  # noqa: SLF001
-
-    assert closed == [456]
+    assert response.status_code == 501
+    assert response.json()["error"]["code"] == "PYTHON_RUN_UNSUPPORTED"
+    assert response.json()["error"]["details"] == {
+        "supportedPlatform": "posix",
+        "deploymentTarget": "linux-compose",
+    }
+    assert created is False
 
 
 @pytest.mark.asyncio
@@ -1055,9 +1362,10 @@ async def test_python_interrupt_kills_descendants_after_parent_exits(resources) 
     await _eventually(pid_path.exists)
     child_pid = int(pid_path.read_text("utf-8"))
     operation = host.app.state.python_run_service.get(accepted.json()["operationId"])
-    await _eventually(
-        lambda: operation.process is not None and operation.process.returncode is not None
-    )
+    def host_process_exited() -> bool:
+        return operation.process is not None and operation.process.returncode is not None
+
+    await _eventually(host_process_exited)
 
     async with asyncio.timeout(1.5):
         interrupted = await client.post(
@@ -1133,6 +1441,46 @@ async def test_maintenance_refuses_symlinked_config_path(resources, tmp_path: Pa
 
     with pytest.raises(ValueError, match="symlink"):
         service._flush_config()
+
+
+@pytest.mark.asyncio
+async def test_maintenance_flushes_authoritative_workspace_without_following_symlinks(
+    resources, tmp_path: Path, monkeypatch
+) -> None:
+    _, host, workspace, _ = resources
+    durable = {
+        workspace / ".checkpoints/main/checkpoint.json",
+        workspace / ".manyselves/tasks/task.json",
+        workspace / "Work/runs/run-1/workflow-state.json",
+        workspace / "Outputs/Reports/manifest.json",
+        workspace / "manyselves.yaml",
+    }
+    for path in durable:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+    host.config_manager._settings = SimpleNamespace(
+        config_path=workspace / "manyselves.yaml"
+    )
+    service = host.app.state.maintenance_service
+    service.config_manager = host.config_manager
+    outside = tmp_path / "outside-durable"
+    outside.mkdir()
+    outside_file = outside / "secret.json"
+    outside_file.write_text("{}", encoding="utf-8")
+    (workspace / "escaped-durable").symlink_to(outside, target_is_directory=True)
+    flushed: set[Path] = set()
+
+    def record_fsync(descriptor: int) -> None:
+        try:
+            flushed.add(Path(os.readlink(f"/proc/self/fd/{descriptor}")).resolve())
+        except OSError:
+            pass
+
+    monkeypatch.setattr(os, "fsync", record_fsync)
+    service._flush()
+
+    assert durable <= flushed
+    assert outside_file.resolve() not in flushed
 
 
 @pytest.mark.asyncio

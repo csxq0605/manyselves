@@ -10,7 +10,11 @@ from ...application.errors import (
     MaintenanceQuiescedError,
     RuntimeNotReadyError,
 )
-from ...application.python_run_service import InvalidPythonPathError, PythonOperationNotFoundError
+from ...application.python_run_service import (
+    InvalidPythonPathError,
+    PythonOperationNotFoundError,
+    PythonRunUnsupportedError,
+)
 from ..errors import ApiError
 from ..schemas.operations import (
     OperationAcceptedResponse,
@@ -39,6 +43,17 @@ def _response(operation) -> PythonOperationResponse:
 
 
 def _error(error: Exception) -> ApiError:
+    if isinstance(error, PythonRunUnsupportedError):
+        return ApiError(
+            status_code=501,
+            code=error.code,
+            message=str(error),
+            retryable=False,
+            details={
+                "supportedPlatform": "posix",
+                "deploymentTarget": "linux-compose",
+            },
+        )
     if isinstance(error, InvalidPythonPathError):
         return ApiError(status_code=422, code=error.code, message=str(error), retryable=False)
     if isinstance(error, PythonOperationNotFoundError):

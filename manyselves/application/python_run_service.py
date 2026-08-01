@@ -27,6 +27,13 @@ class PythonOperationNotFoundError(LookupError):
     code = "PYTHON_OPERATION_NOT_FOUND"
 
 
+class PythonRunUnsupportedError(RuntimeError):
+    code = "PYTHON_RUN_UNSUPPORTED"
+
+    def __init__(self) -> None:
+        super().__init__("Python operations are supported only by the Linux server deployment")
+
+
 @dataclass(slots=True)
 class PythonOperation:
     operation_id: str
@@ -60,7 +67,6 @@ class PythonRunService:
         self.timeout_seconds = timeout_seconds
         self.output_limit_bytes = output_limit_bytes
         self._platform = os.name
-        self._windows_jobs: dict[int, int] = {}
         self._operations: dict[str, PythonOperation] = {}
         self._semantic: dict[str, tuple[str, tuple[str, ...]]] = {}
 
@@ -75,6 +81,8 @@ class PythonRunService:
         self.workspace = Path(workspace).resolve()
 
     def start(self, command_id: UUID, path: str, arguments: list[str]) -> PythonOperation:
+        if self._platform != "posix":
+            raise PythonRunUnsupportedError()
         target, relative = self._resolve(path)
         operation_id = str(command_id)
         semantic = (f"{self.workspace}:{relative}", tuple(arguments))
@@ -135,20 +143,12 @@ class PythonRunService:
                 start_new_session=True,
             )
             operation.process = process
-            if self._platform == "nt":
-                try:
-                    self._windows_jobs[process.pid] = self._create_windows_job(process.pid)
-                except BaseException:
-                    process.kill()
-                    await process.wait()
-                    raise
             operation.launch_ready.set()
             stdout_task = asyncio.create_task(self._drain(process.stdout))
             stderr_task = asyncio.create_task(self._drain(process.stderr))
             try:
                 async with asyncio.timeout(self.timeout_seconds):
                     operation.return_code = await process.wait()
-                self._release_windows_job(process.pid)
                 if operation.interrupt_requested:
                     terminal_status = "interrupted"
                 else:
@@ -191,133 +191,28 @@ class PythonRunService:
 
     async def _terminate(self, process: asyncio.subprocess.Process) -> None:
         if process.returncode is not None:
-            if self._platform == "posix":
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            else:
-                self._release_windows_job(process.pid)
-            return
-        if self._platform == "posix":
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                return
-            try:
-                async with asyncio.timeout(0.5):
-                    await process.wait()
-            except TimeoutError:
-                pass
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            if process.returncode is None:
-                await process.wait()
             return
-        job = self._windows_jobs.pop(process.pid, None)
-        if job is not None:
-            self._close_windows_job(job)
-            if process.returncode is None:
-                try:
-                    async with asyncio.timeout(2):
-                        await process.wait()
-                except TimeoutError:
-                    process.kill()
-                    await process.wait()
+        if self._platform != "posix":
+            raise PythonRunUnsupportedError()
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
             return
         try:
-            killer = await asyncio.create_subprocess_exec(
-                "taskkill",
-                "/PID",
-                str(process.pid),
-                "/T",
-                "/F",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await killer.wait()
-            async with asyncio.timeout(2):
+            async with asyncio.timeout(0.5):
                 await process.wait()
-        except (ProcessLookupError, TimeoutError):
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
-
-    def _release_windows_job(self, pid: int) -> None:
-        job = self._windows_jobs.pop(pid, None)
-        if job is not None:
-            self._close_windows_job(job)
-
-    @staticmethod
-    def _create_windows_job(pid: int) -> int:
-        """Create a kill-on-close Job Object and assign the root process."""
-        import ctypes
-        from ctypes import wintypes
-
-        class IoCounters(ctypes.Structure):
-            _fields_ = [
-                ("ReadOperationCount", ctypes.c_ulonglong),
-                ("WriteOperationCount", ctypes.c_ulonglong),
-                ("OtherOperationCount", ctypes.c_ulonglong),
-                ("ReadTransferCount", ctypes.c_ulonglong),
-                ("WriteTransferCount", ctypes.c_ulonglong),
-                ("OtherTransferCount", ctypes.c_ulonglong),
-            ]
-
-        class BasicLimitInformation(ctypes.Structure):
-            _fields_ = [
-                ("PerProcessUserTimeLimit", ctypes.c_longlong),
-                ("PerJobUserTimeLimit", ctypes.c_longlong),
-                ("LimitFlags", wintypes.DWORD),
-                ("MinimumWorkingSetSize", ctypes.c_size_t),
-                ("MaximumWorkingSetSize", ctypes.c_size_t),
-                ("ActiveProcessLimit", wintypes.DWORD),
-                ("Affinity", ctypes.c_size_t),
-                ("PriorityClass", wintypes.DWORD),
-                ("SchedulingClass", wintypes.DWORD),
-            ]
-
-        class ExtendedLimitInformation(ctypes.Structure):
-            _fields_ = [
-                ("BasicLimitInformation", BasicLimitInformation),
-                ("IoInfo", IoCounters),
-                ("ProcessMemoryLimit", ctypes.c_size_t),
-                ("JobMemoryLimit", ctypes.c_size_t),
-                ("PeakProcessMemoryUsed", ctypes.c_size_t),
-                ("PeakJobMemoryUsed", ctypes.c_size_t),
-            ]
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        job = kernel32.CreateJobObjectW(None, None)
-        if not job:
-            raise ctypes.WinError(ctypes.get_last_error())
-        info = ExtendedLimitInformation()
-        info.BasicLimitInformation.LimitFlags = 0x00002000
+        except TimeoutError:
+            pass
         try:
-            if not kernel32.SetInformationJobObject(
-                job, 9, ctypes.byref(info), ctypes.sizeof(info)
-            ):
-                raise ctypes.WinError(ctypes.get_last_error())
-            process = kernel32.OpenProcess(0x0001 | 0x0100 | 0x0400, False, pid)
-            if not process:
-                raise ctypes.WinError(ctypes.get_last_error())
-            try:
-                if not kernel32.AssignProcessToJobObject(job, process):
-                    raise ctypes.WinError(ctypes.get_last_error())
-            finally:
-                kernel32.CloseHandle(process)
-            return int(job)
-        except BaseException:
-            kernel32.CloseHandle(job)
-            raise
-
-    @staticmethod
-    def _close_windows_job(handle: int) -> None:
-        import ctypes
-
-        ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(handle)
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        if process.returncode is None:
+            await process.wait()
 
     def _resolve(self, raw: str) -> tuple[Path, str]:
         relative = Path(raw)

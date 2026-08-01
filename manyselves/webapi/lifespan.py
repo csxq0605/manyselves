@@ -87,17 +87,39 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        cleanup_error: BaseException | None = None
+
+        async def cleanup(awaitable) -> None:
+            nonlocal cleanup_error
+            try:
+                await awaitable
+            except BaseException as error:
+                if cleanup_error is None:
+                    cleanup_error = error
+                else:
+                    cleanup_error.add_note(f"Additional shutdown failure: {error!r}")
+
         try:
-            python_runs = getattr(app.state, "python_run_service", None)
-            if python_runs is not None:
-                await python_runs.close()
+            await cleanup(facade.begin_shutdown())
+            stop_producers = getattr(host, "stop_producers", None)
+            split_shutdown = callable(stop_producers)
+            if split_shutdown:
+                await cleanup(stop_producers())
             reporting = getattr(app.state, "reporting_facade", None)
             if reporting is not None:
-                await reporting.close()
+                await cleanup(reporting.close())
+            python_runs = getattr(app.state, "python_run_service", None)
+            if python_runs is not None:
+                await cleanup(python_runs.close())
             conversations = getattr(app.state, "conversation_service", None)
             if conversations is not None:
-                await conversations.close()
-            await host.stop()
+                await cleanup(conversations.close())
+            if split_shutdown:
+                await cleanup(host.stop_bus())
+            else:
+                await cleanup(host.stop())
+            if cleanup_error is not None:
+                raise cleanup_error
         finally:
             async with app.state.lifecycle_lock:
                 app.state.lifecycle_active = False

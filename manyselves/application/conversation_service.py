@@ -22,7 +22,7 @@ from ..interfaces.types import (
     ToolResult,
     UserMessage,
 )
-from .errors import RuntimeBusyError
+from .errors import RuntimeBusyError, RuntimeConsistencyFailedError
 from .runtime_facade import RuntimeFacade
 
 
@@ -41,9 +41,14 @@ class ConversationTransactionSnapshot:
     path: Path
     existed: bool
     durable_bytes: bytes
+    sessions_path: Path
+    sessions_existed: bool
+    sessions_bytes: bytes
+    current_session_ids: dict[str, str]
     backend_history: list[dict[str, Any]]
     loop_history: list[Any] | None
     streams: dict[tuple[str, str, str], str]
+    message_sessions: dict[tuple[str, str], str]
 
 
 class ConversationService:
@@ -136,6 +141,7 @@ class ConversationService:
     async def prepare_edit_resend(
         self, agent_id: str, target_message_id: str
     ) -> ConversationTransactionSnapshot:
+        self.require_agent_idle(agent_id)
         self.require_message(agent_id, target_message_id, role="user")
         snapshot = self.snapshot(agent_id)
         try:
@@ -144,8 +150,15 @@ class ConversationService:
             ):
                 raise AssertionError("prevalidated edit target disappeared")
             await self._sync(agent_id, clear_pending=True)
-        except BaseException:
-            await self.restore(snapshot)
+        except BaseException as prepare_error:
+            try:
+                await self.restore(snapshot)
+            except BaseException as restore_error:
+                prepare_error.add_note(
+                    f"Edit-resend prepare compensation failed: {restore_error!r}"
+                )
+                await self.facade.fail_consistency()
+                raise RuntimeConsistencyFailedError() from restore_error
             raise
         return snapshot
 
@@ -159,7 +172,7 @@ class ConversationService:
             agent_id, message_id=target_message_id
         ):
             raise AssertionError("prevalidated rollback target disappeared")
-        self._streams.pop(agent_id, None)
+        self._clear_agent_state(agent_id)
         await self.facade._host.backend.sync_agent_conversation(  # noqa: SLF001
             agent_id,
             conversation_history,
@@ -182,6 +195,7 @@ class ConversationService:
         """Capture exact durable bytes and the live loop history before mutation."""
         session_id = self.store.get_current_session_id(agent_id)
         path = self.workspace / ".manyselves" / "conversations" / agent_id / f"{session_id}.jsonl"
+        sessions_path = self.workspace / ".manyselves" / "conversations" / "sessions.json"
         loop_history: list[Any] | None = None
         manager = self.facade._host.loop_manager  # noqa: SLF001
         get_loop = getattr(manager, "get_loop", None)
@@ -195,14 +209,20 @@ class ConversationService:
             path=path,
             existed=path.exists(),
             durable_bytes=path.read_bytes() if path.exists() else b"",
+            sessions_path=sessions_path,
+            sessions_existed=sessions_path.exists(),
+            sessions_bytes=sessions_path.read_bytes() if sessions_path.exists() else b"",
+            current_session_ids=dict(self.store._current_session_ids),  # noqa: SLF001
             backend_history=self._backend_messages(agent_id),
             loop_history=loop_history,
             streams=dict(self._streams),
+            message_sessions=dict(self._message_sessions),
         )
 
     async def prepare_rollback(
         self, agent_id: str, target_message_id: str | None
     ) -> ConversationTransactionSnapshot:
+        self.require_agent_idle(agent_id)
         if target_message_id is not None:
             self.require_message(agent_id, target_message_id)
         return self.snapshot(agent_id)
@@ -216,9 +236,15 @@ class ConversationService:
                 os.fsync(handle.fileno())
         else:
             snapshot.path.unlink(missing_ok=True)
-        if not self.store.switch_session(snapshot.session_id, snapshot.agent_id):
-            self.store._current_session_ids[snapshot.agent_id] = snapshot.session_id  # noqa: SLF001
+        if snapshot.sessions_existed:
+            snapshot.sessions_path.write_bytes(snapshot.sessions_bytes)
+            with snapshot.sessions_path.open("rb") as handle:
+                os.fsync(handle.fileno())
+        else:
+            snapshot.sessions_path.unlink(missing_ok=True)
+        self.store._current_session_ids = dict(snapshot.current_session_ids)  # noqa: SLF001
         self._streams = dict(snapshot.streams)
+        self._message_sessions = dict(snapshot.message_sessions)
 
         manager = self.facade._host.loop_manager  # noqa: SLF001
         get_loop = getattr(manager, "get_loop", None)
@@ -234,6 +260,25 @@ class ConversationService:
                 session_id=snapshot.session_id,
                 clear_pending=True,
             )
+
+    def require_agent_idle(self, agent_id: str) -> None:
+        """Require no active, queued, streaming, or persistence work for an agent."""
+        status = self.facade.snapshot().agent_statuses.get(agent_id)
+        if status is not None and status != "idle":
+            raise RuntimeBusyError()
+        if self._pending_writes > 0:
+            raise RuntimeBusyError()
+        queue = getattr(self._bus, "_queue", None)
+        if queue is not None and not queue.empty():
+            raise RuntimeBusyError()
+        manager = self.facade._host.loop_manager  # noqa: SLF001
+        loops = getattr(manager, "_loops", {})
+        loop = loops.get(agent_id) if isinstance(loops, dict) else None
+        agent_queue = getattr(loop, "_message_queue", None)
+        if agent_queue is not None and not agent_queue.empty():
+            raise RuntimeBusyError()
+        if any(key[1] == agent_id for key in self._streams):
+            raise RuntimeBusyError()
 
     def flush(self) -> None:
         root = self.workspace / ".manyselves" / "conversations"
@@ -323,7 +368,9 @@ class ConversationService:
                     )
                 elif isinstance(message, (ReportMessage, SystemNotice, Error)):
                     agent_id = str(getattr(message, "agent_type", "main"))
-                    if isinstance(message, Error):
+                    if isinstance(message, Error) or (
+                        isinstance(message, SystemNotice) and message.kind == "interrupt"
+                    ):
                         self._clear_agent_state(agent_id)
                     content = str(
                         getattr(message, "content", "")

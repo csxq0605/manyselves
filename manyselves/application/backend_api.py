@@ -1,6 +1,7 @@
 """Desktop backend adapter implementing the frontend-facing API."""
 
 import asyncio
+import inspect
 from typing import Any, Dict
 
 from loguru import logger
@@ -191,9 +192,17 @@ class BackendAPIImpl(BackendAPI):
         """Validate the checkpoint and its recorded effects before committing."""
         if self.loop_manager is None:
             raise RuntimeError("Loop manager not initialized")
+        prepare = getattr(self.loop_manager, "prepare_rollback", None)
+        if callable(prepare):
+            result = prepare(agent_type, checkpoint_id)
+            if inspect.isawaitable(result):
+                result = await result
+            if not isinstance(result, dict):
+                raise TypeError("Rollback preflight must return a mapping")
+            return result
         manager = getattr(self.loop_manager, "checkpoint_manager", None)
         if manager is None:
-            return {"checkpoint_id": checkpoint_id, "effect_paths": []}
+            raise NotImplementedError("Rollback preflight is unavailable")
         target = manager.get_checkpoint(agent_type, checkpoint_id)
         if target is None:
             raise ValueError(f"Checkpoint not found: {checkpoint_id}")

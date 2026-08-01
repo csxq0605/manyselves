@@ -53,6 +53,7 @@ class RuntimeHost:
         self._workspace: Path | None = None
         self._bus_task: asyncio.Task[None] | None = None
         self._bus_shutdown = False
+        self._producers_stopped = False
         self._state = _LifecycleState.NEW
         self._lifecycle_lock = asyncio.Lock()
 
@@ -140,6 +141,16 @@ class RuntimeHost:
         async with self._lifecycle_lock:
             await self._stop_locked()
 
+    async def stop_producers(self) -> None:
+        """Stop Agent producers while leaving the message bus available to drain."""
+        async with self._lifecycle_lock:
+            await self._stop_producers_locked()
+
+    async def stop_bus(self) -> None:
+        """Stop and join the bus after application consumers have drained."""
+        async with self._lifecycle_lock:
+            await self._stop_bus_locked()
+
     async def switch_workspace(self, workspace: Path) -> None:
         """Replace workspace loops transactionally while retaining the single bus task."""
         async with self._lifecycle_lock:
@@ -213,8 +224,15 @@ class RuntimeHost:
                 self._state = _LifecycleState.FAILED
 
     async def fail_consistency(self) -> None:
-        """Enter FAILED while retaining loop/task ownership for orderly cleanup."""
-        await self.mark_failed()
+        """Fail closed and immediately stop owned Agent producers, retaining cleanup."""
+        async with self._lifecycle_lock:
+            if self._state is _LifecycleState.STOPPED:
+                return
+            self._state = _LifecycleState.FAILED
+            manager = self._loop_manager
+            if manager is not None and not self._producers_stopped:
+                await manager.stop()
+                self._producers_stopped = True
 
     def _bind_manager(self, manager: LoopManager | None, workspace: Path | None) -> None:
         """Change host/backend manager ownership together without an await boundary."""
@@ -242,21 +260,47 @@ class RuntimeHost:
             self._state = _LifecycleState.STOPPED
             return
 
-        self._state = _LifecycleState.STOPPING
+        producer_error: BaseException | None = None
+        try:
+            await self._stop_producers_locked()
+        except BaseException as error:
+            producer_error = error
+        try:
+            await self._stop_bus_locked()
+        except BaseException as bus_error:
+            if producer_error is None:
+                raise
+            producer_error.add_note(f"Runtime bus cleanup also failed: {bus_error!r}")
+        if producer_error is not None:
+            raise producer_error
+
+    async def _stop_producers_locked(self) -> None:
+        if self._state in {_LifecycleState.NEW, _LifecycleState.STOPPED}:
+            return
+        if self._state is not _LifecycleState.FAILED:
+            self._state = _LifecycleState.STOPPING
+        if self._loop_manager is not None and not self._producers_stopped:
+            await self._loop_manager.stop()
+            self._producers_stopped = True
+
+    async def _stop_bus_locked(self) -> None:
+        if self._state is _LifecycleState.STOPPED:
+            return
+        if self._state is _LifecycleState.NEW:
+            self._state = _LifecycleState.STOPPED
+            return
         if not self._bus_shutdown:
             self.bus.shutdown()
             self._bus_shutdown = True
-
-        try:
-            if self._loop_manager is not None:
-                await self._loop_manager.stop()
-        finally:
-            bus_task = self._bus_task
-            self._bus_task = None
-            if bus_task is not None:
-                if not bus_task.done():
-                    bus_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await bus_task
-
-        self._state = _LifecycleState.STOPPED
+        bus_task = self._bus_task
+        self._bus_task = None
+        if bus_task is not None:
+            if not bus_task.done():
+                bus_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await bus_task
+        self._state = (
+            _LifecycleState.STOPPED
+            if self._producers_stopped
+            else _LifecycleState.FAILED
+        )

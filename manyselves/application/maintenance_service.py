@@ -69,26 +69,71 @@ class MaintenanceService:
         )
 
     def _flush(self) -> None:
-        self.conversations.flush()
-        self.reporting.flush()
-        self._flush_config()
+        workspace = self.conversations.workspace.resolve()
+        self._flush_workspace(workspace)
+        config_path = self._config_path()
+        if config_path is not None and not config_path.absolute().is_relative_to(workspace):
+            self._flush_config()
         if self.extra_flush is not None:
             self.extra_flush()
 
-    def _flush_config(self) -> None:
-        """Fsync the configured YAML without following a symlinked path."""
+    def _flush_workspace(self, workspace: Path) -> None:
+        """Fsync all regular workspace files without traversing symbolic links."""
+        if workspace.is_symlink() or not workspace.is_dir():
+            raise ValueError("Maintenance workspace must be a real directory")
+
+        def walk(directory: Path) -> None:
+            with os.scandir(directory) as entries:
+                children = list(entries)
+            for entry in children:
+                if entry.is_symlink():
+                    continue
+                candidate = Path(entry.path)
+                if not candidate.absolute().is_relative_to(workspace):
+                    raise ValueError("Maintenance path escapes the active workspace")
+                if entry.is_dir(follow_symlinks=False):
+                    walk(candidate)
+                elif entry.is_file(follow_symlinks=False):
+                    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                    descriptor = os.open(candidate, flags)
+                    try:
+                        os.fsync(descriptor)
+                    finally:
+                        os.close(descriptor)
+            if os.name == "posix":
+                flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(
+                    os, "O_NOFOLLOW", 0
+                )
+                descriptor = os.open(directory, flags)
+                try:
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+
+        walk(workspace)
+
+    def _config_path(self) -> Path | None:
         settings = getattr(self.config_manager, "_settings", None)
         raw_path = getattr(settings, "config_path", None)
-        if raw_path is None:
+        return Path(raw_path) if raw_path is not None else None
+
+    def _flush_config(self) -> None:
+        """Fsync the configured YAML without following a symlinked path."""
+        path = self._config_path()
+        if path is None:
             return
-        path = Path(raw_path)
+        path = path.absolute()
         existing_components = [item for item in (path, *path.parents) if item.exists()]
         if any(item.is_symlink() for item in existing_components):
             raise ValueError("Maintenance config path must not contain a symlink")
         if not path.is_file():
             return
-        with path.open("rb") as handle:
-            os.fsync(handle.fileno())
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
         if os.name == "posix":
             descriptor = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
             try:

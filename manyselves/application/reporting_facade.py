@@ -71,7 +71,10 @@ class ReportingFacade:
         return any(not task.done() for task in tasks.values())
 
     def list_runs(self) -> list[dict[str, Any]]:
-        runs_root = self.workspace / "Work/runs"
+        try:
+            runs_root = self._runs_root()
+        except ReportingNotFoundError:
+            return []
         ids = {
             path.name
             for path in runs_root.iterdir()
@@ -89,25 +92,43 @@ class ReportingFacade:
 
     def snapshot(self, run_id: str) -> dict[str, Any]:
         self._safe_id(run_id)
-        root = self.workspace / "Work/runs" / run_id
-        if root.is_symlink() or (
-            root.exists() and not root.resolve().is_relative_to(self.workspace)
-        ):
+        runs_root = self._runs_root()
+        root = runs_root / run_id
+        if root.is_symlink() or (root.exists() and not root.is_dir()):
             raise ReportingNotFoundError(run_id)
-        result = self._json(self.workspace / "Work/runs" / f"{run_id}.json")
-        state = self._json(root / "workflow-state.json")
-        if not result and not state and not root.exists():
+        self._require_contained(root, runs_root, invalid=False)
+        result_path = runs_root / f"{run_id}.json"
+        result = self._json(result_path, runs_root)
+        state_path = root / "workflow-state.json"
+        state = self._json(state_path, root)
+        decisions_root = root / "decisions"
+        if decisions_root.is_symlink():
+            raise ReportingStateInvalidError("Reporting decisions path is invalid")
+        if decisions_root.exists() and not decisions_root.is_dir():
+            raise ReportingStateInvalidError("Reporting decisions path is invalid")
+        self._require_contained(decisions_root, root)
+        decision_paths = (
+            sorted(decisions_root.glob("*.json")) if decisions_root.is_dir() else []
+        )
+        recognized = any(
+            path.is_file()
+            for path in (
+                result_path,
+                state_path,
+                root / "evidence-choice.json",
+                root / "revision-request.json",
+                *decision_paths,
+            )
+        )
+        if not recognized:
             raise ReportingNotFoundError(run_id)
         live = self.controller.status(run_id) if self.controller is not None else {}
         run = {"run_id": run_id, **result}
         run["active"] = bool(live.get("active", False))
-        if live.get("active"):
-            run["status"] = live.get("status", run.get("status", "running"))
-            run["active"] = True
-        decisions = []
-        decisions_root = root / "decisions"
-        if decisions_root.exists():
-            decisions = [self._json(path) for path in sorted(decisions_root.glob("*.json"))]
+        for key in ("status", "task_id", "source"):
+            if live.get(key) is not None:
+                run[key] = live[key]
+        decisions = [self._json(path, decisions_root) for path in decision_paths]
         outputs = []
         for raw in result.get("output_paths", []):
             relative = Path(str(raw))
@@ -130,8 +151,8 @@ class ReportingFacade:
             "state": state,
             "waitingInput": [item for item in decisions if item.get("status") == "pending"],
             "checkpoint": state,
-            "evidence": self._json(root / "evidence-choice.json"),
-            "revision": self._json(root / "revision-request.json"),
+            "evidence": self._json(root / "evidence-choice.json", root),
+            "revision": self._json(root / "revision-request.json", root),
             "outputs": outputs,
         }
 
@@ -218,11 +239,13 @@ class ReportingFacade:
 
     async def close(self) -> None:
         """Cancel and join controller-owned reporting tasks before runtime stop."""
-        tasks = list(
-            getattr(self.controller, "_tasks", {}).values()
-            if self.controller is not None
-            else ()
-        )
+        tasks: list[asyncio.Task[Any]] = []
+        if self.controller is not None:
+            for attribute in ("_tasks", "_status_watchers"):
+                owned = getattr(self.controller, attribute, {})
+                tasks.extend(
+                    task for task in owned.values() if isinstance(task, asyncio.Task)
+                )
         for task in tasks:
             if not task.done():
                 task.cancel()
@@ -261,10 +284,8 @@ class ReportingFacade:
         if not value or Path(value).name != value or value in {".", ".."}:
             raise ReportingNotFoundError(value)
 
-    @staticmethod
-    def _json(path: Path) -> dict[str, Any]:
-        if path.is_symlink():
-            raise ReportingStateInvalidError("Reporting state must not be a symlink")
+    def _json(self, path: Path, root: Path) -> dict[str, Any]:
+        self._require_contained(path, root)
         if not path.is_file():
             return {}
         try:
@@ -274,6 +295,37 @@ class ReportingFacade:
         if not isinstance(value, dict):
             raise ReportingStateInvalidError("Persisted reporting state is invalid")
         return value
+
+    def _runs_root(self) -> Path:
+        work = self.workspace / "Work"
+        runs = work / "runs"
+        if work.is_symlink() or runs.is_symlink():
+            raise ReportingNotFoundError("Work/runs")
+        if runs.exists() and not runs.is_dir():
+            raise ReportingNotFoundError("Work/runs")
+        self._require_contained(runs, self.workspace, invalid=False)
+        return runs
+
+    def _require_contained(
+        self, path: Path, root: Path, *, invalid: bool = True
+    ) -> None:
+        try:
+            relative = path.relative_to(root)
+        except ValueError as exc:
+            if invalid:
+                raise ReportingStateInvalidError("Reporting state escapes its root") from exc
+            raise ReportingNotFoundError(str(path)) from exc
+        current = root
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                if invalid:
+                    raise ReportingStateInvalidError("Reporting state contains a symlink")
+                raise ReportingNotFoundError(str(path))
+        if not path.resolve(strict=False).is_relative_to(root.resolve(strict=False)):
+            if invalid:
+                raise ReportingStateInvalidError("Reporting state escapes its root")
+            raise ReportingNotFoundError(str(path))
 
     @staticmethod
     def _sha256(path: Path) -> str:

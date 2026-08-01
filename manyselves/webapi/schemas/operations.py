@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class PythonRunRequest(BaseModel):
+    """A trusted Python operation supported only by the Linux Compose deployment."""
+
     model_config = ConfigDict(extra="forbid")
     path: str = Field(min_length=1)
     arguments: list[str] = Field(default_factory=list)

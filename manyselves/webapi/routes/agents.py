@@ -11,6 +11,8 @@ from ...application.errors import (
     CheckpointNotFoundError,
     CommandIdConflictError,
     MaintenanceQuiescedError,
+    RollbackPreflightUnsupportedError,
+    RuntimeBusyError,
     RuntimeConsistencyFailedError,
     RuntimeNotReadyError,
 )
@@ -52,6 +54,10 @@ def _error(error: Exception) -> ApiError:
         return ApiError(status_code=503, code=error.code, message=str(error), retryable=True)
     if isinstance(error, RuntimeConsistencyFailedError):
         return ApiError(status_code=500, code=error.code, message=str(error), retryable=False)
+    if isinstance(error, RollbackPreflightUnsupportedError):
+        return ApiError(status_code=501, code=error.code, message=str(error), retryable=False)
+    if isinstance(error, RuntimeBusyError):
+        return ApiError(status_code=409, code=error.code, message="Runtime has active work", retryable=True)
     if isinstance(error, MaintenanceQuiescedError):
         return ApiError(status_code=409, code=error.code, message=str(error), retryable=True)
     raise error
@@ -138,6 +144,7 @@ async def edit_resend(
         CommandIdConflictError,
         ConversationNotFoundError,
         RuntimeConsistencyFailedError,
+        RuntimeBusyError,
     ) as error:
         raise _error(error) from error
 
@@ -232,5 +239,7 @@ async def rollback(
         CommandIdConflictError,
         ConversationNotFoundError,
         RuntimeConsistencyFailedError,
+        RuntimeBusyError,
+        RollbackPreflightUnsupportedError,
     ) as error:
         raise _error(error) from error
