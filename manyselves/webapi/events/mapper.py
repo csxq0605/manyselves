@@ -166,6 +166,8 @@ _TOKEN_METRIC_CONTAINERS = {
     "tokenusage",
 }
 _TOKEN_METRIC_SCALARS = {
+    "agentcumulativeinputtokens",
+    "agentcumulativeoutputtokens",
     "cachedtokens",
     "completiontokens",
     "inputtokens",
@@ -180,43 +182,70 @@ _TOKEN_METRIC_SCALARS = {
     "totaltokens",
     "workingmemorytokens",
 }
-_CREDENTIAL_TOKEN_MARKERS = (
-    "accesstoken",
-    "authtoken",
-    "bearertoken",
-    "clienttoken",
-    "controltoken",
-    "deploymenttoken",
-    "idtoken",
-    "identitytoken",
-    "providertoken",
-    "refreshtoken",
-    "servicetoken",
-    "sessiontoken",
-    "usertoken",
+_AUTH_METADATA_KEYS = {
+    "configured",
+    "description",
+    "enabled",
+    "method",
+    "provider",
+    "scheme",
+    "type",
+}
+_AUTH_CONTAINER_TYPES = (dict, list, tuple, set, frozenset)
+_AUTH_SECRET_MARKERS = (
+    "authorization",
+    "credential",
+    "header",
+    "jwt",
+    "password",
+    "secret",
+    "token",
 )
 _MISSING = object()
 
 
+def _normalized_key(value: object) -> str:
+    if type(value) is not str:
+        return ""
+    return "".join(character for character in value.casefold() if character.isalnum())
+
+
 def _token_metric_key(key: str) -> bool:
+    return key in _TOKEN_METRIC_SCALARS
+
+
+def _auth_prefixed_key(value: object) -> bool:
+    if type(value) is not str:
+        return False
+    folded = value.casefold()
     return (
-        key in _TOKEN_METRIC_SCALARS
-        or key.endswith("tokens")
-        or key.endswith("tokencount")
+        folded in {"auth", "authentication"}
+        or folded.startswith(("auth_", "auth-", "auth.", "auth:", "auth/"))
+        or (folded.startswith("auth") and len(value) > 4 and value[4].isupper())
+    )
+
+
+def _auth_context_container(value: object, item: object) -> bool:
+    key = _normalized_key(value)
+    return (
+        bool(key)
+        and _auth_prefixed_key(value)
+        and type(item) in _AUTH_CONTAINER_TYPES
+        and not any(marker in key for marker in _AUTH_SECRET_MARKERS)
     )
 
 
 def _sensitive_key(value: object, item: object = _MISSING) -> bool:
-    key = "".join(character for character in str(value).casefold() if character.isalnum())
+    key = _normalized_key(value)
+    if not key:
+        return True
     if "authheader" in key or "jwt" in key:
         return True
-    if key == "auth":
-        return not isinstance(item, (dict, list, tuple, set, frozenset))
+    if _auth_prefixed_key(value) and key != "authentication":
+        return True
     if any(stem in key for stem in _SENSITIVE_STEMS):
         return True
     if "token" in key:
-        if key == "token" or any(marker in key for marker in _CREDENTIAL_TOKEN_MARKERS):
-            return True
         if _token_metric_key(key) and item is None:
             return False
         numeric_metric = (
@@ -228,7 +257,7 @@ def _sensitive_key(value: object, item: object = _MISSING) -> bool:
         if numeric_metric:
             return False
         if key in _TOKEN_METRIC_CONTAINERS and (
-            item is None or isinstance(item, (dict, list, tuple))
+            item is None or type(item) in (dict, list, tuple)
         ):
             return False
         return True
@@ -256,6 +285,52 @@ def _redact_credential_text(value: str) -> str:
     return _CREDENTIAL_TEXT.sub(replace, value)
 
 
+def _json_key(value: object) -> str:
+    """Return a JSON object key without invoking arbitrary conversion hooks."""
+    if type(value) is str:
+        return value
+    if value is None:
+        return "None"
+    if type(value) in (bool, int, float):
+        return str(value)
+    return "[REDACTED]"
+
+
+def _auth_json_safe(value: object) -> Any:
+    """Sanitize an authentication container using metadata-only scalar semantics."""
+    if type(value) is dict:
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            output_key = _json_key(key)
+            if type(item) in _AUTH_CONTAINER_TYPES:
+                sanitized[output_key] = _auth_json_safe(item)
+            elif _normalized_key(key) in _AUTH_METADATA_KEYS and (
+                item is None or type(item) in (str, bool, int, float)
+            ):
+                sanitized[output_key] = (
+                    _redact_credential_text(item) if type(item) is str else item
+                )
+            else:
+                sanitized[output_key] = "[REDACTED]"
+        return sanitized
+    if type(value) in (list, tuple):
+        return [
+            _auth_json_safe(item)
+            if type(item) in _AUTH_CONTAINER_TYPES
+            else "[REDACTED]"
+            for item in value
+        ]
+    if type(value) in (set, frozenset):
+        sanitized_items = [
+            _auth_json_safe(item)
+            if type(item) in _AUTH_CONTAINER_TYPES
+            else "[REDACTED]"
+            for item in value
+        ]
+        return sorted(sanitized_items, key=repr)
+    return "[REDACTED]"
+
+
 def _json_safe(value: Any) -> Any:
     """Recursively normalize arbitrary internal values and redact credential fields."""
     if isinstance(value, (SecretStr, SecretBytes)):
@@ -263,10 +338,16 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, BaseModel):
         return _json_safe(value.model_dump(mode="python"))
     if isinstance(value, dict):
-        return {
-            str(key): "[REDACTED]" if _sensitive_key(key, item) else _json_safe(item)
-            for key, item in value.items()
-        }
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            output_key = _json_key(key)
+            if _auth_context_container(key, item):
+                sanitized[output_key] = _auth_json_safe(item)
+            elif _sensitive_key(key, item):
+                sanitized[output_key] = "[REDACTED]"
+            else:
+                sanitized[output_key] = _json_safe(item)
+        return sanitized
     if isinstance(value, (list, tuple)):
         return [_json_safe(item) for item in value]
     if isinstance(value, (set, frozenset)):

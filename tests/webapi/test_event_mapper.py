@@ -605,6 +605,206 @@ def test_config_change_optional_metric_old_and_new_values_remain_independent() -
     assert credential.payload["new_value"] == "[REDACTED]"
 
 
+def test_auth_context_preserves_explicit_metadata_and_redacts_every_opaque_leaf() -> None:
+    message = Error(
+        source="provider",
+        message="Bearer authentication uses the configured provider",
+        details={
+            "auth": {
+                "method": "oauth2",
+                "scheme": "Bearer",
+                "type": "service",
+                "provider": "example-provider",
+                "description": "Bearer authentication is supported",
+                "configured": True,
+                "enabled": False,
+                "value": "opaque-value",
+                "endpoint": "https://identity.example/token",
+                "header": "opaque-header",
+                "jwt": "opaque-jwt",
+                "token": 123,
+                "secret": None,
+                "credential": b"opaque-credential",
+                "nested": {
+                    "provider": "nested-provider",
+                    "opaque": "nested-opaque-value",
+                },
+            }
+        },
+        timestamp=NOW,
+    )
+
+    payload = EventMapper().map(message, context=context()).payload
+
+    assert payload["message"] == "Bearer authentication uses the configured provider"
+    assert payload["details"]["auth"] == {
+        "method": "oauth2",
+        "scheme": "Bearer",
+        "type": "service",
+        "provider": "example-provider",
+        "description": "Bearer authentication is supported",
+        "configured": True,
+        "enabled": False,
+        "value": "[REDACTED]",
+        "endpoint": "[REDACTED]",
+        "header": "[REDACTED]",
+        "jwt": "[REDACTED]",
+        "token": "[REDACTED]",
+        "secret": "[REDACTED]",
+        "credential": "[REDACTED]",
+        "nested": {
+            "provider": "nested-provider",
+            "opaque": "[REDACTED]",
+        },
+    }
+
+
+def test_prefixed_auth_containers_redact_unlabelled_scalars_and_never_execute_custom_values() -> None:
+    calls = {"str": 0, "iter": 0}
+
+    class OpaqueObject:
+        def __str__(self) -> str:
+            calls["str"] += 1
+            raise AssertionError("auth sanitization must not stringify opaque objects")
+
+    class OpaqueIterable:
+        def __iter__(self):
+            calls["iter"] += 1
+            raise AssertionError("auth sanitization must not iterate custom objects")
+
+        def __str__(self) -> str:
+            calls["str"] += 1
+            raise AssertionError("auth sanitization must not stringify custom iterables")
+
+    message = ToolResult(
+        agent_type="main",
+        tool_name="provider_probe",
+        result={
+            "auth_tuple": ("tuple-secret", {"method": "basic", "value": "hidden"}),
+            "authSet": {"set-secret-one", "set-secret-two"},
+            "authFrozen": frozenset({"frozen-secret"}),
+            "auth_payload": {
+                "custom_object": OpaqueObject(),
+                "custom_iterable": OpaqueIterable(),
+                "parts": [
+                    "list-secret",
+                    {"scheme": "Bearer", "unknown": "hidden"},
+                ],
+            },
+            "authHeader": {"value": "whole-header-is-secret"},
+            "jwt": ["whole-jwt-is-secret"],
+        },
+        timestamp=NOW,
+    )
+
+    result = EventMapper().map(message, context=context()).payload["result"]
+
+    assert result["auth_tuple"] == [
+        "[REDACTED]",
+        {"method": "basic", "value": "[REDACTED]"},
+    ]
+    assert result["authSet"] == ["[REDACTED]", "[REDACTED]"]
+    assert result["authFrozen"] == ["[REDACTED]"]
+    assert result["auth_payload"] == {
+        "custom_object": "[REDACTED]",
+        "custom_iterable": "[REDACTED]",
+        "parts": [
+            "[REDACTED]",
+            {"scheme": "Bearer", "unknown": "[REDACTED]"},
+        ],
+    }
+    assert result["authHeader"] == "[REDACTED]"
+    assert result["jwt"] == "[REDACTED]"
+    assert calls == {"str": 0, "iter": 0}
+
+
+def test_auth_prefix_matching_does_not_capture_author_or_authority_fields() -> None:
+    message = Error(
+        source="provider",
+        message="failed",
+        details={
+            "author": "Ada",
+            "authority": "standards-board",
+            "authorized": True,
+            "authentication": "Bearer authentication is supported",
+        },
+        timestamp=NOW,
+    )
+
+    assert EventMapper().map(message, context=context()).payload["details"] == {
+        "author": "Ada",
+        "authority": "standards-board",
+        "authorized": True,
+        "authentication": "Bearer authentication is supported",
+    }
+
+
+def test_only_explicit_token_metrics_preserve_numeric_or_none_values() -> None:
+    known_metrics = {
+        "max_tokens": None,
+        "working_memory_tokens": 1,
+        "input_tokens": None,
+        "output_tokens": 2,
+        "prompt_tokens": None,
+        "completion_tokens": 3,
+        "total_tokens": None,
+        "cached_tokens": 4,
+        "reasoning_tokens": None,
+        "max_total_tokens": 5,
+        "agent_cumulative_input_tokens": None,
+        "agent_cumulative_output_tokens": 6,
+        "tokens_in": None,
+        "tokens_out": 7,
+        "token_count": None,
+        "token_usage": {"input_tokens": 8, "output_tokens": None},
+    }
+    unknown_tokens = {
+        "mystery_tokens": None,
+        "opaque_tokens": 9,
+        "api_tokens": 10.0,
+        "csrf_tokens": None,
+        "oauth_tokens": 11,
+        "mystery_token_count": 12,
+        "opaque_token": "opaque",
+    }
+    message = Error(
+        source="provider",
+        message="failed",
+        details={**known_metrics, **unknown_tokens},
+        timestamp=NOW,
+    )
+
+    details = EventMapper().map(message, context=context()).payload["details"]
+
+    assert {key: details[key] for key in known_metrics} == known_metrics
+    assert {key: details[key] for key in unknown_tokens} == {
+        key: "[REDACTED]" for key in unknown_tokens
+    }
+
+
+@pytest.mark.parametrize("value", [None, 13, 13.5, "opaque"])
+@pytest.mark.parametrize(
+    "config_type",
+    ["mystery_tokens", "opaque_tokens", "api_tokens", "csrf_tokens", "oauth_tokens"],
+)
+def test_config_change_rejects_unknown_token_suffixes_for_every_value_type(
+    config_type: str,
+    value: object,
+) -> None:
+    mapped = EventMapper().map(
+        ConfigChange(
+            config_type=config_type,
+            old_value=value,
+            new_value=value,
+            timestamp=NOW,
+        ),
+        context=context(),
+    )
+
+    assert mapped.payload["old_value"] == "[REDACTED]"
+    assert mapped.payload["new_value"] == "[REDACTED]"
+
+
 def test_mapper_normalizes_top_level_and_payload_datetimes_to_utc() -> None:
     """Mixed local/offset timestamps must not make ordering ambiguous to remote clients."""
     offset_time = datetime(2026, 7, 31, 12, 30, tzinfo=timezone(timedelta(hours=8)))
