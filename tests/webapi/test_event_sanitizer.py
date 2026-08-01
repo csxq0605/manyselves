@@ -129,7 +129,19 @@ def test_authentication_roots_preserve_exact_delimiter_and_camel_forms(name: str
     }
 
 
-@pytest.mark.parametrize("name", ["AUTHConfig", "AUTHENTICATIONConfig"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "AUTHConfig",
+        "AUTHENTICATIONConfig",
+        "authOrigin",
+        "authOrganization",
+        "AuthOrigin",
+        "AuthOrganization",
+        "AUTHOrigin",
+        "AUTHOrganization",
+    ],
+)
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
@@ -144,7 +156,7 @@ def test_authentication_roots_preserve_exact_delimiter_and_camel_forms(name: str
     ],
     ids=["dict", "list", "tuple", "set", "frozenset"],
 )
-def test_acronym_camel_authentication_roots_use_authentication_context(
+def test_camel_authentication_roots_use_authentication_context(
     name: str,
     value: object,
     expected: object,

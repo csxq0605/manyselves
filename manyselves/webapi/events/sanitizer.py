@@ -366,8 +366,6 @@ def _is_auth_boundary(value: object) -> bool:
     if type(value) is not str:
         return False
     folded = value.casefold()
-    if folded.startswith("author"):
-        return False
     for stem in ("auth", "authentication"):
         if folded == stem:
             return True
@@ -380,7 +378,7 @@ def _is_auth_boundary(value: object) -> bool:
         if (
             stem_prefix == stem.upper()
             and suffix[:1].isupper()
-            and any(character.islower() for character in suffix[1:])
+            and suffix[1:2].islower()
         ):
             return True
     return False
