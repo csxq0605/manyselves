@@ -34,3 +34,39 @@ class RuntimeBusyError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("Runtime agents must be idle before activating a project")
+
+
+class MaintenanceQuiescedError(RuntimeError):
+    """A mutation was rejected while maintenance owns the application."""
+
+    code = "MAINTENANCE_QUIESCED"
+
+    def __init__(self) -> None:
+        super().__init__("Runtime mutations are disabled during maintenance")
+
+
+class MaintenanceTokenMismatchError(RuntimeError):
+    """Only the opaque token returned by quiesce may release it."""
+
+    code = "MAINTENANCE_TOKEN_MISMATCH"
+
+    def __init__(self) -> None:
+        super().__init__("Maintenance token does not match the active quiesce")
+
+
+class AgentNotFoundError(LookupError):
+    """A command targeted an agent absent from the active runtime."""
+
+    code = "AGENT_NOT_FOUND"
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(f"Agent was not found: {agent_id}")
+
+
+class CheckpointNotFoundError(LookupError):
+    """A rollback referenced a checkpoint absent from the active runtime."""
+
+    code = "CHECKPOINT_NOT_FOUND"
+
+    def __init__(self, checkpoint_id: str) -> None:
+        super().__init__(f"Checkpoint was not found: {checkpoint_id}")

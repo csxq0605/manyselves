@@ -1,0 +1,231 @@
+"""Typed RuntimeFacade Agent commands."""
+
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Header, Request, status
+
+from ...application.control import ControlLeaseRequired
+from ...application.conversation_service import ConversationNotFoundError
+from ...application.errors import (
+    AgentNotFoundError,
+    CheckpointNotFoundError,
+    CommandIdConflictError,
+    MaintenanceQuiescedError,
+    RuntimeNotReadyError,
+)
+from ...application.models import (
+    EditResendCommand,
+    InterruptCommand,
+    RollbackCommand,
+    SendFileContextCommand,
+    SendMessageCommand,
+)
+from ..errors import ApiError
+from ..schemas.agents import (
+    AcceptedCommandResponse,
+    AgentListResponse,
+    AgentSnapshot,
+    EditResendRequest,
+    FileContextRequest,
+    RollbackRequest,
+    RollbackResponse,
+    SendMessageRequest,
+)
+from ..security import require_control_lease_header, require_deployment_access
+
+router = APIRouter(prefix="/agents")
+
+
+def _error(error: Exception) -> ApiError:
+    if isinstance(error, AgentNotFoundError):
+        return ApiError(status_code=404, code=error.code, message=str(error), retryable=False)
+    if isinstance(error, CheckpointNotFoundError):
+        return ApiError(status_code=404, code=error.code, message=str(error), retryable=False)
+    if isinstance(error, ConversationNotFoundError):
+        return ApiError(status_code=404, code=error.code, message="Conversation message was not found", retryable=False)
+    if isinstance(error, CommandIdConflictError):
+        return ApiError(status_code=409, code=error.code, message=str(error), retryable=False)
+    if isinstance(error, ControlLeaseRequired):
+        return ApiError(status_code=423, code=error.code, message=str(error), retryable=False)
+    if isinstance(error, RuntimeNotReadyError):
+        return ApiError(status_code=503, code=error.code, message=str(error), retryable=True)
+    if isinstance(error, MaintenanceQuiescedError):
+        return ApiError(status_code=409, code=error.code, message=str(error), retryable=True)
+    raise error
+
+
+@router.get("", response_model=AgentListResponse)
+async def list_agents(request: Request):
+    facade = request.app.state.runtime_facade
+    async with facade.read_transaction():
+        snapshot = facade.snapshot()
+        manager = request.app.state.runtime_host.loop_manager
+        return AgentListResponse(
+            agents=[
+                AgentSnapshot(
+                    id=agent_id,
+                    status=agent_status,
+                    sessionId=manager.get_agent_session_id(agent_id) if manager is not None else None,
+                )
+                for agent_id, agent_status in snapshot.agent_statuses.items()
+            ]
+        )
+
+
+@router.post("/{agent_id}/messages", response_model=AcceptedCommandResponse, status_code=202)
+async def send_message(
+    agent_id: str,
+    body: SendMessageRequest,
+    request: Request,
+    command_id: UUID = Header(alias="Idempotency-Key"),
+    _access: None = Depends(require_deployment_access),
+    lease_token: str = Depends(require_control_lease_header),
+):
+    try:
+        return await request.app.state.runtime_facade.send_user_message(
+            SendMessageCommand(
+                command_id=command_id,
+                lease_token=lease_token,
+                agent_id=agent_id,
+                content=body.content,
+                message_id=body.message_id,
+                source=body.source,
+            )
+        )
+    except (
+        AgentNotFoundError,
+        ControlLeaseRequired,
+        RuntimeNotReadyError,
+        MaintenanceQuiescedError,
+        CommandIdConflictError,
+    ) as error:
+        raise _error(error) from error
+
+
+@router.post("/{agent_id}/messages/{target_message_id}/edit-resend", response_model=AcceptedCommandResponse, status_code=202)
+async def edit_resend(
+    agent_id: str,
+    target_message_id: str,
+    body: EditResendRequest,
+    request: Request,
+    command_id: UUID = Header(alias="Idempotency-Key"),
+    _access: None = Depends(require_deployment_access),
+    lease_token: str = Depends(require_control_lease_header),
+):
+    service = request.app.state.conversation_service
+    command = EditResendCommand(
+        command_id=command_id,
+        lease_token=lease_token,
+        agent_id=agent_id,
+        content=body.content,
+        message_id=body.message_id or target_message_id,
+        target_message_id=target_message_id,
+    )
+    try:
+        return await request.app.state.runtime_facade.edit_resend(
+            command,
+            prepare=lambda: service.prepare_edit_resend(agent_id, target_message_id),
+        )
+    except (
+        AgentNotFoundError,
+        ControlLeaseRequired,
+        RuntimeNotReadyError,
+        MaintenanceQuiescedError,
+        CommandIdConflictError,
+        ConversationNotFoundError,
+    ) as error:
+        raise _error(error) from error
+
+
+@router.post("/{agent_id}/file-context", response_model=AcceptedCommandResponse, status_code=202)
+async def send_file_context(
+    agent_id: str,
+    body: FileContextRequest,
+    request: Request,
+    command_id: UUID = Header(alias="Idempotency-Key"),
+    _access: None = Depends(require_deployment_access),
+    lease_token: str = Depends(require_control_lease_header),
+):
+    try:
+        return await request.app.state.runtime_facade.send_file_context(
+            SendFileContextCommand(
+                command_id=command_id,
+                lease_token=lease_token,
+                agent_id=agent_id,
+                file_context=body.model_dump(by_alias=False),
+            )
+        )
+    except (
+        AgentNotFoundError,
+        ControlLeaseRequired,
+        RuntimeNotReadyError,
+        MaintenanceQuiescedError,
+        CommandIdConflictError,
+    ) as error:
+        raise _error(error) from error
+
+
+@router.post("/{agent_id}/interrupt", response_model=AcceptedCommandResponse, status_code=202)
+async def interrupt(
+    agent_id: str,
+    request: Request,
+    command_id: UUID = Header(alias="Idempotency-Key"),
+    _access: None = Depends(require_deployment_access),
+    lease_token: str = Depends(require_control_lease_header),
+):
+    try:
+        return await request.app.state.runtime_facade.interrupt(
+            InterruptCommand(command_id=command_id, lease_token=lease_token, agent_id=agent_id)
+        )
+    except (
+        AgentNotFoundError,
+        ControlLeaseRequired,
+        RuntimeNotReadyError,
+        MaintenanceQuiescedError,
+        CommandIdConflictError,
+    ) as error:
+        raise _error(error) from error
+
+
+@router.post("/{agent_id}/rollback", response_model=RollbackResponse, status_code=status.HTTP_202_ACCEPTED)
+async def rollback(
+    agent_id: str,
+    body: RollbackRequest,
+    request: Request,
+    command_id: UUID = Header(alias="Idempotency-Key"),
+    _access: None = Depends(require_deployment_access),
+    lease_token: str = Depends(require_control_lease_header),
+):
+    service = request.app.state.conversation_service
+    try:
+        result = await request.app.state.runtime_facade.rollback(
+            RollbackCommand(
+                command_id=command_id,
+                lease_token=lease_token,
+                agent_id=agent_id,
+                checkpoint_id=body.checkpoint_id,
+            ),
+            before_restore=(
+                (lambda: service.require_message(agent_id, body.target_message_id))
+                if body.target_message_id is not None
+                else None
+            ),
+            after_restore=lambda restored: service.apply_rollback(
+                agent_id, body.target_message_id, restored.conversation_history
+            ),
+        )
+        return RollbackResponse(
+            commandId=command_id,
+            restoredFiles=result.restored_files,
+            conversationHistory=result.conversation_history,
+        )
+    except (
+        AgentNotFoundError,
+        CheckpointNotFoundError,
+        ControlLeaseRequired,
+        RuntimeNotReadyError,
+        MaintenanceQuiescedError,
+        CommandIdConflictError,
+        ConversationNotFoundError,
+    ) as error:
+        raise _error(error) from error

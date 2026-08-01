@@ -12,4 +12,8 @@ async def readiness(request: Request, response: Response) -> dict[str, str]:
     if host is None or not host.is_ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "not_ready"}
+    maintenance = getattr(request.app.state, "maintenance_service", None)
+    if maintenance is not None and maintenance.quiesced:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "quiesced"}
     return {"status": "ready"}

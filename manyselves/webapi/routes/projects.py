@@ -131,22 +131,42 @@ async def activate_project(
     registry = request.app.state.project_registry
     settings = request.app.state.web_settings
     previous_state: tuple[str, str] | None = None
+    target_workspace = None
     try:
         def resolve_workspace():
-            nonlocal previous_state
+            nonlocal previous_state, target_workspace
+            if (
+                request.app.state.maintenance_service.pending_work
+                or request.app.state.reporting_facade.active
+                or request.app.state.python_run_service.active
+            ):
+                raise RuntimeBusyError()
             workspace = registry.project_root(project_id)
             previous_state = (registry.active_project_id, settings.initial_project_id)
+            target_workspace = workspace
             return workspace
 
         def commit_activation() -> ProjectResponse:
+            assert target_workspace is not None
             record = registry.activate(project_id)
             settings.initial_project_id = record.id
+            request.app.state.conversation_service.rebind(target_workspace)
+            request.app.state.reporting_facade.rebind(
+                request.app.state.runtime_host, target_workspace
+            )
+            request.app.state.python_run_service.rebind(target_workspace)
             return _response(record)
 
         def rollback_activation() -> None:
             assert previous_state is not None
             registry.restore_active(previous_state[0])
             settings.initial_project_id = previous_state[1]
+            previous_workspace = registry.project_root(previous_state[0])
+            request.app.state.conversation_service.rebind(previous_workspace)
+            request.app.state.reporting_facade.rebind(
+                request.app.state.runtime_host, previous_workspace
+            )
+            request.app.state.python_run_service.rebind(previous_workspace)
 
         def reconcile_activation(workspace) -> None:
             actual_project_id = workspace.name
@@ -154,6 +174,11 @@ async def activate_project(
                 raise InvalidProjectId()
             registry.restore_active(actual_project_id)
             settings.initial_project_id = actual_project_id
+            request.app.state.conversation_service.rebind(workspace)
+            request.app.state.reporting_facade.rebind(
+                request.app.state.runtime_host, workspace
+            )
+            request.app.state.python_run_service.rebind(workspace)
 
         return await facade.activate_workspace(
             lease_token=lease_token,

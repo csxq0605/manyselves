@@ -29,3 +29,4 @@ class BootstrapSnapshot(BaseModel):
     conversations: list[dict[str, Any]]
     agents: dict[str, str]
     settings: BootstrapSettings
+    maintenance: dict[str, bool]

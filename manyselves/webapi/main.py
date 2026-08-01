@@ -19,11 +19,17 @@ from .errors import (
     request_validation_error_handler,
 )
 from .lifespan import application_lifespan
+from .routes.agents import router as agents_router
 from .routes.bootstrap import router as bootstrap_router
 from .routes.control import router as control_router
+from .routes.conversations import router as conversations_router
 from .routes.files import router as files_router
 from .routes.health import router as health_router
+from .routes.maintenance import router as maintenance_router
+from .routes.operations import router as operations_router
 from .routes.projects import router as projects_router
+from .routes.reporting import router as reporting_router
+from .routes.settings import router as settings_router
 from .settings import WebSettings
 
 API_PREFIX = "/api/v1"
@@ -71,6 +77,10 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.state.runtime_facade = None
     app.state.event_broker = None
     app.state.project_registry = None
+    app.state.conversation_service = None
+    app.state.reporting_facade = None
+    app.state.python_run_service = None
+    app.state.maintenance_service = None
     app.state.lifecycle_lock = asyncio.Lock()
     app.state.lifecycle_active = False
     app.add_exception_handler(ApiError, api_error_handler)
@@ -99,6 +109,12 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.include_router(control_router, prefix=API_PREFIX)
     app.include_router(projects_router, prefix=API_PREFIX)
     app.include_router(files_router, prefix=API_PREFIX)
+    app.include_router(conversations_router, prefix=API_PREFIX)
+    app.include_router(agents_router, prefix=API_PREFIX)
+    app.include_router(reporting_router, prefix=API_PREFIX)
+    app.include_router(settings_router, prefix=API_PREFIX)
+    app.include_router(operations_router, prefix=API_PREFIX)
+    app.include_router(maintenance_router, prefix=API_PREFIX)
     return app
 
 

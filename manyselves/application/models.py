@@ -24,6 +24,12 @@ class SendMessageCommand(_Command):
     source: Literal["user", "main_agent"] = "user"
 
 
+class EditResendCommand(SendMessageCommand):
+    """Replace one durable user turn and send its edited content once."""
+
+    target_message_id: str
+
+
 class SendFileContextCommand(_Command):
     """Attach structured editor/file context to an agent."""
 

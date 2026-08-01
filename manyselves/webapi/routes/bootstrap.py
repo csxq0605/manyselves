@@ -18,11 +18,12 @@ async def bootstrap(request: Request) -> BootstrapSnapshot:
         return BootstrapSnapshot(
             runtime=runtime,
             project=ProjectSnapshot(id=registry.active_project_id),
-            conversations=[],
+            conversations=request.app.state.conversation_service.list("main")[0],
             agents=runtime.agent_statuses,
             settings=BootstrapSettings(
                 sse_replay_capacity=settings.sse_replay_capacity,
                 sse_client_queue_capacity=settings.sse_client_queue_capacity,
                 control_lease_seconds=settings.control_lease_seconds,
             ),
+            maintenance={"quiesced": facade.is_quiesced},
         )

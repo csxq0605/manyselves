@@ -8,8 +8,13 @@ from fastapi import FastAPI
 from loguru import logger
 
 from ..application.control import ControlLeaseService
+from ..application.conversation_service import ConversationService
+from ..application.maintenance_service import MaintenanceService
 from ..application.project_registry import ProjectRegistry
+from ..application.python_run_service import PythonRunService
+from ..application.reporting_facade import ReportingFacade
 from ..application.runtime_facade import RuntimeFacade
+from ..core.loops.bus import MessageBus
 from .dependencies import resolve_runtime_host
 from .settings import WebSettings
 
@@ -40,7 +45,33 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         registry = ProjectRegistry(settings.data_root, settings.initial_project_id)
         registry.ensure_initial()
         app.state.project_registry = registry
-        await host.start(registry.project_root(settings.initial_project_id))
+        active_workspace = registry.project_root(settings.initial_project_id)
+        await host.start(active_workspace)
+        bus = getattr(host, "bus", None)
+        if bus is None:
+            bus = MessageBus()
+        conversations = ConversationService(
+            active_workspace,
+            facade=facade,
+            bus=bus,
+        )
+        reporting = ReportingFacade.from_runtime(host, workspace=active_workspace)
+        python_runs = PythonRunService(
+            active_workspace,
+            bus=bus,
+            timeout_seconds=settings.python_timeout_seconds,
+            output_limit_bytes=settings.python_output_limit_bytes,
+        )
+        maintenance = MaintenanceService(
+            facade,
+            conversations,
+            reporting,
+            python_runs,
+        )
+        app.state.conversation_service = conversations
+        app.state.reporting_facade = reporting
+        app.state.python_run_service = python_runs
+        app.state.maintenance_service = maintenance
     except BaseException:
         try:
             if host is not None:
@@ -56,6 +87,9 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         try:
+            python_runs = getattr(app.state, "python_run_service", None)
+            if python_runs is not None:
+                await python_runs.close()
             await host.stop()
         finally:
             async with app.state.lifecycle_lock:

@@ -29,3 +29,5 @@ class WebSettings(BaseSettings):
     preview_csv_record_byte_limit: int = 256 * 1024
     preview_csv_field_limit: int = 10_000
     file_tree_entry_limit: int = 20_000
+    python_timeout_seconds: float = 30.0
+    python_output_limit_bytes: int = 64 * 1024
