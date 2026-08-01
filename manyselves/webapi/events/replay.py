@@ -52,7 +52,9 @@ class ReplayBuffer:
                 return ReplayResult(requires_resync=True, reason="malformed")
             cursor_sequence = int(match.group(1))
             if cursor_sequence == 0:
-                return ReplayResult(events=events)
+                if not events or events[0].sequence == 1:
+                    return ReplayResult(events=events)
+                return ReplayResult(requires_resync=True, reason="evicted")
             if not events:
                 return ReplayResult(requires_resync=True, reason="future")
             oldest = events[0].sequence

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 
@@ -317,6 +317,97 @@ def test_sensitive_config_change_redacts_scalar_old_and_new_values() -> None:
     assert "provider-secret" not in mapped.to_json()
 
 
+def test_error_payload_redacts_key_families_and_embedded_credentials() -> None:
+    """Unexpected provider errors must not carry credentials into the SSE wire payload."""
+    secrets = {
+        "secretAccessKey": "aws-secret-access-value",
+        "authorizationHeader": "Bearer header-secret-value",
+        "clientKey": "client-key-secret-value",
+        "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+        "apiKeyValue": "sk-api-key-secret-value",
+        "privateKey": "private-key-secret-value",
+    }
+    message = Error(
+        source="provider",
+        message=(
+            "request failed with Bearer loose-bearer-secret and "
+            "Basic dXNlcjpwYXNzd29yZA==; key sk-looseSecret1234; "
+            "account AKIA1234567890ABCDEF"
+        ),
+        details={
+            "provider": secrets,
+            "diagnostic": "Authorization: Bearer nested-bearer-secret",
+            "tokens_in": 123,
+            "tokens_out": 456,
+        },
+        timestamp=NOW,
+    )
+
+    mapped = EventMapper().map(message, context=context())
+    serialized = mapped.to_json()
+
+    for raw in [*secrets.values(), "loose-bearer-secret", "dXNlcjpwYXNzd29yZA==", "sk-looseSecret1234", "AKIA1234567890ABCDEF", "nested-bearer-secret"]:
+        assert raw not in serialized
+    assert mapped.payload["details"]["tokens_in"] == 123
+    assert mapped.payload["details"]["tokens_out"] == 456
+
+
+def test_secret_stems_and_decoded_bytes_are_redacted_without_hiding_token_counts() -> None:
+    message = Error(
+        source="provider",
+        message="failed",
+        details={
+            "clientSecretValue": "client-secret-value",
+            "authorizationMetadata": "metadata-secret-value",
+            "accessKeyValue": "AKIA1111111111111111",
+            "providerTokenValue": "provider-token-secret-value",
+            "accessTokenValue": "access-token-secret-value",
+            "wire": b"Bearer byte-secret-value",
+            "tokens_in": 11,
+            "tokens_out": 12,
+            "max_tokens": 13,
+        },
+        timestamp=NOW,
+    )
+
+    mapped = EventMapper().map(message, context=context())
+    serialized = mapped.to_json()
+
+    for secret in (
+        "client-secret-value",
+        "metadata-secret-value",
+        "AKIA1111111111111111",
+        "provider-token-secret-value",
+        "access-token-secret-value",
+        "byte-secret-value",
+    ):
+        assert secret not in serialized
+    assert mapped.payload["details"]["tokens_in"] == 11
+    assert mapped.payload["details"]["tokens_out"] == 12
+    assert mapped.payload["details"]["max_tokens"] == 13
+
+
+def test_mapper_normalizes_top_level_and_payload_datetimes_to_utc() -> None:
+    """Mixed local/offset timestamps must not make ordering ambiguous to remote clients."""
+    offset_time = datetime(2026, 7, 31, 12, 30, tzinfo=timezone(timedelta(hours=8)))
+    naive_payload = datetime(2026, 7, 31, 9, 15)
+    expected_naive = naive_payload.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    message = Error(
+        source="system",
+        message="failed",
+        details={"observed_at": naive_payload, "offset_at": offset_time},
+        timestamp=offset_time,
+    )
+
+    mapped = EventMapper().map(message, context=context())
+    wire = json.loads(mapped.to_json())
+
+    assert mapped.timestamp == datetime(2026, 7, 31, 4, 30, tzinfo=UTC)
+    assert wire["timestamp"] == "2026-07-31T04:30:00Z"
+    assert wire["payload"]["details"]["observed_at"] == expected_naive
+    assert wire["payload"]["details"]["offset_at"] == "2026-07-31T04:30:00Z"
+
+
 def test_event_envelope_uses_locked_aliases_and_explicit_context() -> None:
     """Snake-case wire fields or stale inferred identifiers would violate the frontend contract."""
     mapped = EventMapper().map(
@@ -371,6 +462,29 @@ def test_replay_returns_only_events_strictly_after_a_present_cursor() -> None:
     assert [item.sequence for item in replay.after("evt-1").events] == [2, 3]
     assert replay.after("evt-3").events == ()
     assert replay.after("evt-0").events == tuple(event(item) for item in range(1, 4))
+
+
+def test_evt_zero_requires_resync_when_replay_no_longer_starts_at_one() -> None:
+    """Treating evt-0 as retained after eviction would silently return a truncated history."""
+    replay = ReplayBuffer(capacity=2)
+    replay.append(event(1))
+    replay.append(event(2))
+    replay.append(event(3))
+
+    outcome = replay.after("evt-0")
+
+    assert outcome.events == ()
+    assert outcome.requires_resync is True
+    assert outcome.reason == "evicted"
+
+
+def test_evt_zero_is_valid_for_empty_or_complete_from_one_replay() -> None:
+    empty = ReplayBuffer(capacity=2)
+    complete = ReplayBuffer(capacity=2)
+    complete.append(event(1))
+
+    assert empty.after("evt-0").events == ()
+    assert complete.after("evt-0").events == (event(1),)
 
 
 @pytest.mark.parametrize(

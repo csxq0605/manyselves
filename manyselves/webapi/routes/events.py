@@ -9,7 +9,12 @@ from fastapi import APIRouter, Depends, Header, Request, status
 from starlette.responses import StreamingResponse
 
 from ..errors import ApiError
-from ..events.broker import EventBroker
+from ..events.broker import (
+    EventBroker,
+    EventBrokerClosedError,
+    EventClient,
+    EventClientClosed,
+)
 from ..events.models import EventEnvelope
 from ..security import require_deployment_access
 
@@ -21,8 +26,11 @@ def _frame(event: EventEnvelope) -> str:
     return f"id: {event.event_id}\nevent: {event.type}\ndata: {event.to_json()}\n\n"
 
 
-async def _body(request: Request, broker: EventBroker, cursor: str | None) -> AsyncIterator[str]:
-    client = await broker.register(cursor)
+async def _body(
+    request: Request,
+    broker: EventBroker,
+    client: EventClient,
+) -> AsyncIterator[str]:
     try:
         while True:
             if await request.is_disconnected():
@@ -35,6 +43,8 @@ async def _body(request: Request, broker: EventBroker, cursor: str | None) -> As
             except TimeoutError:
                 yield ": heartbeat\n\n"
                 continue
+            except EventClientClosed:
+                break
             yield _frame(event)
             if event.type == "stream.resync_required":
                 break
@@ -57,8 +67,17 @@ async def stream_events(
             message="Event stream is not ready",
             retryable=True,
         )
+    try:
+        client = await broker.register(last_event_id)
+    except EventBrokerClosedError as exc:
+        raise ApiError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="EVENT_STREAM_NOT_READY",
+            message="Event stream is not ready",
+            retryable=True,
+        ) from exc
     return StreamingResponse(
-        _body(request, broker, last_event_id),
+        _body(request, broker, client),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",

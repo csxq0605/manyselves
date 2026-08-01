@@ -23,6 +23,14 @@ class EventBus(Protocol):
 ContextResolver = Callable[[Message, int], EventContext]
 
 
+class EventBrokerClosedError(RuntimeError):
+    """Raised when a new client cannot be registered on a closed broker."""
+
+
+class EventClientClosed(EOFError):  # noqa: N818 - locked stream EOF contract
+    """Raised once a closed client's final control event has been consumed."""
+
+
 class EventClient:
     """One loop-local bounded delivery buffer that never blocks publication."""
 
@@ -41,6 +49,8 @@ class EventClient:
                 if not self._events:
                     self._available.clear()
                 return event
+            if self.closed:
+                raise EventClientClosed("Event client is closed")
             await self._available.wait()
 
     def seed(
@@ -69,10 +79,9 @@ class EventClient:
             self._available.set()
             return
 
-        matching_delta = self._matching_delta(event.message_id)
+        matching_delta = self._matching_tail_delta(event.message_id)
         if (
             matching_delta is not None
-            and matching_delta is self._events[-1]
             and event.type
             in {
                 "agent.message.delta",
@@ -89,19 +98,19 @@ class EventClient:
     def close(self, event: EventEnvelope) -> None:
         self._fail_closed(event)
 
-    def _matching_delta(self, message_id: str | None) -> EventEnvelope | None:
+    def _matching_tail_delta(self, message_id: str | None) -> EventEnvelope | None:
         if message_id is None:
             return None
-        return next(
-            (
-                event
-                for event in self._events
-                if event.type == "agent.message.delta" and event.message_id == message_id
-            ),
-            None,
+        tail = self._events[-1]
+        return (
+            tail
+            if tail.type == "agent.message.delta" and tail.message_id == message_id
+            else None
         )
 
     def _fail_closed(self, event: EventEnvelope) -> None:
+        if self.closed:
+            return
         self._events.clear()
         self._events.append(event)
         self.closed = True
@@ -169,7 +178,7 @@ class EventBroker:
         """Atomically capture replay and register for all later publications."""
         async with self._lock:
             if self._closed:
-                raise RuntimeError("Event broker is closed")
+                raise EventBrokerClosedError("Event broker is closed")
             client = EventClient(self._client_capacity)
             client.seed(self.replay.after(cursor), self._resync_event)
             self._clients.add(client)

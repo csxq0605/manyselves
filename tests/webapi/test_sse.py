@@ -13,8 +13,18 @@ import pytest
 from pydantic import SecretStr
 
 from manyselves.core.loops.bus import MessageBus
-from manyselves.interfaces.types import AgentResponse, Message, ProgressNoteMessage, SystemNotice
+from manyselves.interfaces.types import (
+    AgentResponse,
+    Message,
+    PeerQueryMessage,
+    PeerReplyMessage,
+    ProgressNoteMessage,
+    SystemNotice,
+)
+from manyselves.webapi import lifespan as lifespan_module
 from manyselves.webapi.dependencies import get_runtime_host
+from manyselves.webapi.errors import ApiError
+from manyselves.webapi.events import broker as broker_module
 from manyselves.webapi.events.broker import EventBroker
 from manyselves.webapi.events.mapper import EventContext
 from manyselves.webapi.events.models import EventEnvelope
@@ -197,6 +207,42 @@ async def test_non_tail_delta_is_not_reordered_during_coalescing(streaming: bool
 
 
 @pytest.mark.asyncio
+async def test_full_queue_coalesces_the_matching_tail_delta_not_an_earlier_match() -> None:
+    """A same-message delta earlier in the queue must not hide a safe matching tail delta."""
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=10,
+        client_capacity=3,
+    )
+    client = await broker.register(None)
+    await broker.publish_internal(
+        AgentResponse(agent_type="main", message_id="message-1", content="a", streaming=True)
+    )
+    await broker.publish_internal(SystemNotice(agent_type="main", content="between"))
+    await broker.publish_internal(
+        AgentResponse(agent_type="main", message_id="message-1", content="c", streaming=True)
+    )
+    await broker.publish_internal(
+        AgentResponse(agent_type="main", message_id="message-1", content="d", streaming=True)
+    )
+
+    delivered = [
+        await asyncio.wait_for(client.get(), timeout=0.1),
+        await asyncio.wait_for(client.get(), timeout=0.1),
+        await asyncio.wait_for(client.get(), timeout=0.1),
+    ]
+
+    assert [item.sequence for item in delivered] == [1, 2, 4]
+    assert delivered[-1].payload["content"] == "cd"
+    assert delivered[-1].payload["delivery"] == {
+        "coalescedCount": 2,
+        "fromSequence": 3,
+        "toSequence": 4,
+    }
+
+
+@pytest.mark.asyncio
 async def test_full_client_with_no_coalescible_delta_fails_closed_to_resync() -> None:
     broker = EventBroker(
         bus=TrackingBus(),
@@ -214,6 +260,40 @@ async def test_full_client_with_no_coalescible_delta_fails_closed_to_resync() ->
     assert (await slow.get()).type == "stream.resync_required"
     assert (await fast.get()).type == "system.notice"
     assert slow.closed is True
+
+
+@pytest.mark.asyncio
+async def test_closed_client_raises_after_its_resync_is_consumed_without_pending_wait() -> None:
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=4,
+        client_capacity=1,
+    )
+    client = await broker.register(None)
+    await broker.publish_internal(SystemNotice(agent_type="main", content="one"))
+    await broker.publish_internal(SystemNotice(agent_type="main", content="two"))
+
+    assert (await client.get()).type == "stream.resync_required"
+    with pytest.raises(broker_module.EventClientClosed):
+        await asyncio.wait_for(client.get(), timeout=0.05)
+
+
+@pytest.mark.asyncio
+async def test_client_close_is_idempotent_and_preserves_first_resync_reason() -> None:
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=4,
+        client_capacity=1,
+    )
+    client = await broker.register(None)
+    await broker.publish_internal(SystemNotice(agent_type="main", content="one"))
+    await broker.publish_internal(SystemNotice(agent_type="main", content="two"))
+    await broker.close()
+
+    event = await client.get()
+    assert event.payload["reason"] == "client_overflow"
 
 
 @pytest.mark.asyncio
@@ -259,6 +339,33 @@ class FakeRuntimeHost:
     async def stop_bus(self) -> None:
         self.order.append("bus")
         self.is_ready = False
+
+
+class LegacyFakeRuntimeHost:
+    """A pre-split host whose single stop boundary still owns the bus."""
+
+    def __init__(self) -> None:
+        self.is_ready = False
+        self.workspace: Path | None = None
+        self.bus = MessageBus()
+        self.stop_count = 0
+        self.session_id = "session-1"
+        self.loop_manager = SimpleNamespace(
+            get_all_agent_statuses=lambda: {"main": "idle"},
+            get_agent_session_id=lambda agent_id: self.session_id,
+        )
+
+    async def start(self, workspace: Path) -> None:
+        self.workspace = workspace
+        self.is_ready = True
+
+    async def stop(self) -> None:
+        self.stop_count += 1
+        self.is_ready = False
+
+
+def message_subscriber_count(bus: MessageBus) -> int:
+    return len(bus._subscribers.get(Message, ()))  # noqa: SLF001
 
 
 def settings(tmp_path: Path, **updates: object) -> WebSettings:
@@ -385,6 +492,41 @@ async def test_event_context_reads_active_project_and_session_at_processing_time
 
 
 @pytest.mark.asyncio
+async def test_reporting_workflow_uses_explicit_query_and_reply_sessions(tmp_path: Path) -> None:
+    host = FakeRuntimeHost()
+    host.session_id = None
+    app = create_app(settings(tmp_path, sse_replay_capacity=4))
+    app.dependency_overrides[get_runtime_host] = lambda: host
+
+    async with app.router.lifespan_context(app):
+        await app.state.event_broker.publish_internal(
+            PeerQueryMessage(
+                task_id="task-1",
+                sender="dynamic-researcher",
+                recipient="report",
+                query_id="query-1",
+                source_session_id="source-session",
+                target_session_id="target-session",
+                question="why?",
+            )
+        )
+        await app.state.event_broker.publish_internal(
+            PeerReplyMessage(
+                task_id="task-1",
+                sender="dynamic-researcher",
+                recipient="report",
+                query_id="query-1",
+                target_session_id="reply-session",
+                answer="because",
+            )
+        )
+        query, reply = app.state.event_broker.replay.snapshot()
+
+    assert query.session_id == "source-session"
+    assert reply.session_id == "reply-session"
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_is_not_replayed_and_cancel_always_unregisters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -411,6 +553,54 @@ async def test_heartbeat_is_not_replayed_and_cancel_always_unregisters(
     assert heartbeat == ": heartbeat\n\n"
     assert broker.client_count == 0
     assert broker.replay.snapshot() == ()
+
+
+@pytest.mark.asyncio
+async def test_sse_registers_before_response_and_cleans_up_after_stream_cancel() -> None:
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=2,
+        client_capacity=2,
+    )
+
+    class RequestStub:
+        app = SimpleNamespace(state=SimpleNamespace(event_broker=broker))
+
+        async def is_disconnected(self) -> bool:
+            return False
+
+    response = await event_routes.stream_events(RequestStub(), last_event_id=None)
+    assert broker.client_count == 1
+    await broker.publish_internal(SystemNotice(agent_type="main", content="ready"))
+    frame = await asyncio.wait_for(anext(response.body_iterator), timeout=0.2)
+    await response.body_iterator.aclose()
+    await asyncio.sleep(0)
+
+    assert "event: system.notice" in frame
+    assert broker.client_count == 0
+
+
+@pytest.mark.asyncio
+async def test_closed_broker_returns_stable_503_before_sse_response_starts(tmp_path: Path) -> None:
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=2,
+        client_capacity=2,
+    )
+    broker.start()
+    await broker.close()
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(event_broker=broker)))
+
+    with pytest.raises(ApiError) as captured:
+        await event_routes.stream_events(request, last_event_id=None)
+
+    assert captured.value.status_code == 503
+    assert captured.value.code == "EVENT_STREAM_NOT_READY"
+    assert captured.value.message == "Event stream is not ready"
+    assert captured.value.retryable is True
+    assert captured.value.details == {}
 
 
 @pytest.mark.asyncio
@@ -463,3 +653,201 @@ async def test_broker_close_failure_prevents_bus_teardown(tmp_path: Path) -> Non
 
     assert "broker" in host.order
     assert "bus" not in host.order
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_stage", ["reporting", "python", "broker"])
+async def test_staged_startup_failure_cleans_subscriptions_and_same_app_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failed_stage: str,
+) -> None:
+    host = FakeRuntimeHost()
+    app = create_app(settings(tmp_path))
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    failed = False
+
+    if failed_stage == "reporting":
+        original = lifespan_module.ReportingFacade.from_runtime
+
+        def create_reporting(*args, **kwargs):
+            nonlocal failed
+            if not failed:
+                failed = True
+                raise RuntimeError("reporting startup failed")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(lifespan_module.ReportingFacade, "from_runtime", create_reporting)
+    elif failed_stage == "python":
+        original = lifespan_module.PythonRunService
+
+        def create_python(*args, **kwargs):
+            nonlocal failed
+            if not failed:
+                failed = True
+                raise RuntimeError("python startup failed")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(lifespan_module, "PythonRunService", create_python)
+    else:
+        original = lifespan_module.EventBroker.start
+
+        def start_broker(broker) -> None:
+            nonlocal failed
+            original(broker)
+            if not failed:
+                failed = True
+                raise RuntimeError("broker startup failed")
+
+        monkeypatch.setattr(lifespan_module.EventBroker, "start", start_broker)
+
+    with pytest.raises(RuntimeError, match=f"{failed_stage} startup failed"):
+        async with app.router.lifespan_context(app):
+            pass
+
+    assert message_subscriber_count(host.bus) == 0
+    assert app.state.lifecycle_active is False
+
+    async with app.router.lifespan_context(app):
+        assert message_subscriber_count(host.bus) == 2
+
+    assert message_subscriber_count(host.bus) == 0
+
+
+@pytest.mark.asyncio
+async def test_cancelled_staged_startup_definitely_cleans_owned_subscriptions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    host = FakeRuntimeHost()
+    app = create_app(settings(tmp_path))
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    original = lifespan_module.EventBroker.start
+    cancel_once = True
+
+    def cancel_after_subscribe(broker) -> None:
+        nonlocal cancel_once
+        original(broker)
+        if cancel_once:
+            cancel_once = False
+            task = asyncio.current_task()
+            assert task is not None
+            task.cancel()
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(lifespan_module.EventBroker, "start", cancel_after_subscribe)
+
+    async def start_lifespan() -> None:
+        async with app.router.lifespan_context(app):
+            pass
+
+    startup = asyncio.create_task(start_lifespan())
+    with pytest.raises(asyncio.CancelledError):
+        await startup
+
+    assert message_subscriber_count(host.bus) == 0
+    assert app.state.lifecycle_active is False
+
+    async with app.router.lifespan_context(app):
+        assert message_subscriber_count(host.bus) == 2
+
+
+@pytest.mark.asyncio
+async def test_staged_startup_preserves_original_error_when_resource_cleanup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    host = FakeRuntimeHost()
+    app = create_app(settings(tmp_path))
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    original_close = lifespan_module.ConversationService.close
+
+    def fail_reporting(*args, **kwargs):
+        raise RuntimeError("reporting startup failed")
+
+    async def close_then_fail(conversations) -> None:
+        await original_close(conversations)
+        raise RuntimeError("conversation cleanup failed")
+
+    monkeypatch.setattr(lifespan_module.ReportingFacade, "from_runtime", fail_reporting)
+    monkeypatch.setattr(lifespan_module.ConversationService, "close", close_then_fail)
+
+    with pytest.raises(RuntimeError, match="reporting startup failed") as captured:
+        async with app.router.lifespan_context(app):
+            pass
+
+    assert str(captured.value) == "reporting startup failed"
+    assert message_subscriber_count(host.bus) == 0
+
+
+@pytest.mark.asyncio
+async def test_staged_startup_cleanup_supports_legacy_single_stop_host(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    host = LegacyFakeRuntimeHost()
+    app = create_app(settings(tmp_path))
+    app.dependency_overrides[get_runtime_host] = lambda: host
+
+    def fail_reporting(*args, **kwargs):
+        raise RuntimeError("reporting startup failed")
+
+    monkeypatch.setattr(lifespan_module.ReportingFacade, "from_runtime", fail_reporting)
+
+    with pytest.raises(RuntimeError, match="reporting startup failed"):
+        async with app.router.lifespan_context(app):
+            pass
+
+    assert host.stop_count == 1
+    assert message_subscriber_count(host.bus) == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_startup_cleanup_retains_dependencies_and_retries_before_new_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A pre-unsubscribe failure must keep the broker and bus owned for cleanup retry."""
+    host = FakeRuntimeHost()
+    app = create_app(settings(tmp_path))
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    original_start = lifespan_module.EventBroker.start
+    original_close = lifespan_module.ConversationService.close
+    startup_failed = False
+    cleanup_failed = False
+
+    def fail_start_once(broker) -> None:
+        nonlocal startup_failed
+        original_start(broker)
+        if not startup_failed:
+            startup_failed = True
+            raise RuntimeError("broker startup failed")
+
+    async def fail_close_before_unsubscribe_once(conversations) -> None:
+        nonlocal cleanup_failed
+        if not cleanup_failed:
+            cleanup_failed = True
+            raise RuntimeError("conversation cleanup failed")
+        await original_close(conversations)
+
+    monkeypatch.setattr(lifespan_module.EventBroker, "start", fail_start_once)
+    monkeypatch.setattr(
+        lifespan_module.ConversationService,
+        "close",
+        fail_close_before_unsubscribe_once,
+    )
+
+    with pytest.raises(RuntimeError, match="broker startup failed") as captured:
+        async with app.router.lifespan_context(app):
+            pass
+
+    assert str(captured.value) == "broker startup failed"
+    assert "bus" not in host.order
+    assert message_subscriber_count(host.bus) == 2
+    assert app.state.conversation_service is not None
+    assert app.state.event_broker is not None
+
+    async with app.router.lifespan_context(app):
+        assert message_subscriber_count(host.bus) == 2
+
+    assert message_subscriber_count(host.bus) == 0

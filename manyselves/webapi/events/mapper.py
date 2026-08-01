@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
@@ -132,6 +133,11 @@ _SENSITIVE_NAMES = {
     "credentials",
     "cookie",
     "privatekey",
+    "secretaccesskey",
+    "authorizationheader",
+    "clientkey",
+    "accesskeyid",
+    "apikeyvalue",
 }
 _SENSITIVE_SUFFIXES = (
     "apikey",
@@ -143,11 +149,54 @@ _SENSITIVE_SUFFIXES = (
     "cookie",
     "privatekey",
 )
+_SENSITIVE_STEMS = (
+    "secret",
+    "password",
+    "credential",
+    "authorization",
+    "privatekey",
+    "accesskey",
+    "apikey",
+    "clientkey",
+    "bearer",
+    "token",
+)
+_NON_SECRET_COUNTERS = {
+    "cachedtokens",
+    "completiontokens",
+    "inputtokens",
+    "maxtokens",
+    "outputtokens",
+    "prompttokens",
+    "reasoningtokens",
+    "tokencount",
+    "tokenusage",
+    "tokensin",
+    "tokensout",
+    "totaltokens",
+}
 
 
 def _sensitive_key(value: object) -> bool:
     key = "".join(character for character in str(value).casefold() if character.isalnum())
-    return key in _SENSITIVE_NAMES or key.endswith(_SENSITIVE_SUFFIXES)
+    if key in _NON_SECRET_COUNTERS:
+        return False
+    return (
+        key in _SENSITIVE_NAMES
+        or key.endswith(_SENSITIVE_SUFFIXES)
+        or any(stem in key for stem in _SENSITIVE_STEMS)
+    )
+
+
+_CREDENTIAL_TEXT = re.compile(
+    r"(?i)\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+"
+    r"|(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{8,}"
+    r"|\bAKIA[A-Z0-9]{16}\b"
+)
+
+
+def _redact_credential_text(value: str) -> str:
+    return _CREDENTIAL_TEXT.sub("[REDACTED]", value)
 
 
 def _json_safe(value: Any) -> Any:
@@ -166,15 +215,15 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (set, frozenset)):
         return [_json_safe(item) for item in sorted(value, key=repr)]
     if isinstance(value, datetime):
-        if value.tzinfo is not None and value.utcoffset() == UTC.utcoffset(value):
-            return value.isoformat().replace("+00:00", "Z")
-        return value.isoformat()
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
     if isinstance(value, Enum):
         return _json_safe(value.value)
     if isinstance(value, Path):
         return str(value)
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if isinstance(value, str):
+        return _redact_credential_text(value)
+    if value is None or isinstance(value, (int, float, bool)):
         return value
     if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
+        return _redact_credential_text(value.decode("utf-8", errors="replace"))
     return str(value)

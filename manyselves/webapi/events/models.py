@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class EventEnvelope(BaseModel):
@@ -25,6 +25,12 @@ class EventEnvelope(BaseModel):
     payload: dict[str, Any]
 
     model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime) -> datetime:
+        """Expose one unambiguous UTC clock on every public event."""
+        return value.astimezone(UTC)
 
     def to_json(self) -> str:
         """Serialize deterministically as the single JSON line used by SSE."""
