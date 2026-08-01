@@ -530,9 +530,7 @@ def test_auth_headers_jwt_and_scalar_auth_redact_while_auth_containers_recurse()
     assert tool_payload["result"]["auth"] == "[REDACTED]"
     assert tool_payload["result"]["authHeader"] == "[REDACTED]"
     assert tool_payload["result"]["jwt"] == "[REDACTED]"
-    assert tool_payload["result"]["authentication"] == (
-        "Bearer authentication remains documented"
-    )
+    assert tool_payload["result"]["authentication"] == "[REDACTED]"
 
 
 def test_optional_token_metrics_preserve_none_but_unknown_and_credential_tokens_redact() -> None:
@@ -735,8 +733,109 @@ def test_auth_prefix_matching_does_not_capture_author_or_authority_fields() -> N
         "author": "Ada",
         "authority": "standards-board",
         "authorized": True,
-        "authentication": "Bearer authentication is supported",
+        "authentication": "[REDACTED]",
     }
+
+
+def test_mapper_closes_authentication_and_token_usage_review_reproducers() -> None:
+    calls = {"str": 0, "repr": 0, "iter": 0}
+
+    class HostileWithoutSafeHooks:
+        def __str__(self) -> str:
+            calls["str"] += 1
+            raise AssertionError("must not stringify")
+
+        def __repr__(self) -> str:
+            calls["repr"] += 1
+            raise AssertionError("must not repr")
+
+        def __iter__(self):
+            calls["iter"] += 1
+            raise AssertionError("must not iterate")
+
+    hostile = HostileWithoutSafeHooks()
+    message = Error(
+        source="provider",
+        message="failed",
+        details={
+            "authentication": "opaque-auth-value-123",
+            "authentication_header": "opaque-header-value-123",
+            "authenticationConfig": {"opaque": "value-123", "custom": hostile},
+            "token_usage": {
+                "input_tokens": 3,
+                "mystery": "opaque-token-value-123",
+                "custom": hostile,
+            },
+        },
+        timestamp=NOW,
+    )
+
+    details = EventMapper().map(message, context=context()).payload["details"]
+
+    assert details == {
+        "authentication": "[REDACTED]",
+        "authentication_header": "[REDACTED]",
+        "authenticationConfig": {
+            "opaque": "[REDACTED]",
+            "custom": "[REDACTED]",
+        },
+        "token_usage": {
+            "input_tokens": 3,
+            "mystery": "[REDACTED]",
+            "custom": "[REDACTED]",
+        },
+    }
+    assert calls == {"str": 0, "repr": 0, "iter": 0}
+
+
+@pytest.mark.parametrize(
+    ("config_type", "old_value", "new_value", "expected_old", "expected_new"),
+    [
+        (
+            "authentication",
+            "old-auth-secret-123",
+            {"method": "oauth2", "opaque": "new-auth-secret-123"},
+            "[REDACTED]",
+            {"method": "oauth2", "opaque": "[REDACTED]"},
+        ),
+        (
+            "authenticationConfig",
+            {"provider": "example", "opaque": "old-config-secret-123"},
+            {"configured": True, "value": "new-config-secret-123"},
+            {"provider": "example", "opaque": "[REDACTED]"},
+            {"configured": True, "value": "[REDACTED]"},
+        ),
+        (
+            "token_usage",
+            {"input_tokens": 2, "opaque": "old-usage-secret-123"},
+            {"output_tokens": 3, "mystery": "new-usage-secret-123"},
+            {"input_tokens": 2, "opaque": "[REDACTED]"},
+            {"output_tokens": 3, "mystery": "[REDACTED]"},
+        ),
+    ],
+)
+def test_config_change_applies_context_policy_independently(
+    config_type: str,
+    old_value: object,
+    new_value: object,
+    expected_old: object,
+    expected_new: object,
+) -> None:
+    mapped = EventMapper().map(
+        ConfigChange(
+            config_type=config_type,
+            old_value=old_value,
+            new_value=new_value,
+            timestamp=NOW,
+        ),
+        context=context(),
+    )
+
+    assert mapped.payload["old_value"] == expected_old
+    assert mapped.payload["new_value"] == expected_new
+    wire = mapped.to_json()
+    for marker in ("auth-secret-123", "config-secret-123", "usage-secret-123"):
+        assert marker not in wire
 
 
 def test_only_explicit_token_metrics_preserve_numeric_or_none_values() -> None:

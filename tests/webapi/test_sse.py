@@ -15,6 +15,7 @@ from pydantic import SecretStr
 from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import (
     AgentResponse,
+    Error,
     Message,
     PeerQueryMessage,
     PeerReplyMessage,
@@ -81,6 +82,38 @@ def resolve_context(message: Message, sequence: int) -> EventContext:
         run_id=None,
         message_id=getattr(message, "message_id", None),
     )
+
+
+@pytest.mark.asyncio
+async def test_sensitive_payload_is_absent_from_live_and_replayed_events() -> None:
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=4,
+        client_capacity=4,
+    )
+    live = await broker.register(None)
+    await broker.publish_internal(
+        Error(
+            source="provider",
+            message="failed",
+            details={
+                "authenticationConfig": {"opaque": "auth-secret-123"},
+                "token_usage": {"mystery": "usage-secret-123", "input_tokens": 1},
+            },
+        )
+    )
+    live_event = await live.get()
+    replayed = await broker.register("evt-0")
+    replay_event = await replayed.get()
+
+    for event in (live_event, replay_event):
+        wire = event.to_json()
+        assert "auth-secret-123" not in wire
+        assert "usage-secret-123" not in wire
+        assert '"input_tokens":1' in wire
+
+    await broker.close()
 
 
 @pytest.mark.asyncio
