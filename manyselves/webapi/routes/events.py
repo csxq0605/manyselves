@@ -26,30 +26,88 @@ def _frame(event: EventEnvelope) -> str:
     return f"id: {event.event_id}\nevent: {event.type}\ndata: {event.to_json()}\n\n"
 
 
-async def _body(
-    request: Request,
-    broker: EventBroker,
-    client: EventClient,
-) -> AsyncIterator[str]:
-    try:
-        while True:
-            if await request.is_disconnected():
-                break
+class _EventStreamBody(AsyncIterator[str]):
+    """Own registration independently of whether response iteration ever starts."""
+
+    def __init__(self, request: Request, broker: EventBroker, client: EventClient) -> None:
+        self._request = request
+        self._broker = broker
+        self._client = client
+        self._done = False
+        self._close_task: asyncio.Task[None] | None = None
+        self._read_task: asyncio.Task[EventEnvelope] | None = None
+
+    def __aiter__(self) -> _EventStreamBody:
+        return self
+
+    async def __anext__(self) -> str:
+        if self._done:
+            raise StopAsyncIteration
+        try:
+            if await self._request.is_disconnected():
+                await self.aclose()
+                raise StopAsyncIteration
+            read_task = asyncio.create_task(self._client.get())
+            self._read_task = read_task
             try:
                 event = await asyncio.wait_for(
-                    client.get(),
+                    read_task,
                     timeout=SSE_HEARTBEAT_SECONDS,
                 )
             except TimeoutError:
-                yield ": heartbeat\n\n"
-                continue
+                return ": heartbeat\n\n"
             except EventClientClosed:
-                break
-            yield _frame(event)
+                await self.aclose()
+                raise StopAsyncIteration from None
+            finally:
+                if self._read_task is read_task:
+                    self._read_task = None
+            frame = _frame(event)
             if event.type == "stream.resync_required":
-                break
-    finally:
-        await broker.unregister(client)
+                await self.aclose()
+            return frame
+        except asyncio.CancelledError:
+            owner_was_closed = self._done
+            await self.aclose()
+            if owner_was_closed:
+                raise StopAsyncIteration from None
+            raise
+        except BaseException:
+            await self.aclose()
+            raise
+
+    async def aclose(self) -> None:
+        self._done = True
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close_owned())
+        task = self._close_task
+        caller_cancelled = False
+        while not task.done():
+            current = asyncio.current_task()
+            cancellation_count = current.cancelling() if current is not None else 0
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                updated_count = current.cancelling() if current is not None else 0
+                if updated_count > cancellation_count:
+                    caller_cancelled = True
+                    while current is not None and current.cancelling() > cancellation_count:
+                        current.uncancel()
+                elif task.done():
+                    break
+        task.result()
+        if caller_cancelled:
+            raise asyncio.CancelledError
+
+    async def _close_owned(self) -> None:
+        read_task = self._read_task
+        if read_task is not None and not read_task.done():
+            read_task.cancel()
+            try:
+                await read_task
+            except asyncio.CancelledError:
+                pass
+        await self._broker.unregister(self._client)
 
 
 @router.get("")
@@ -77,7 +135,7 @@ async def stream_events(
             retryable=True,
         ) from exc
     return StreamingResponse(
-        _body(request, broker, client),
+        _EventStreamBody(request, broker, client),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",

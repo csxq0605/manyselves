@@ -159,33 +159,24 @@ _SENSITIVE_STEMS = (
     "apikey",
     "clientkey",
     "bearer",
-    "token",
 )
-_NON_SECRET_COUNTERS = {
-    "cachedtokens",
-    "completiontokens",
-    "inputtokens",
-    "maxtokens",
-    "outputtokens",
-    "prompttokens",
-    "reasoningtokens",
-    "tokencount",
+_TOKEN_METRIC_CONTAINERS = {
     "tokenusage",
-    "tokensin",
-    "tokensout",
-    "totaltokens",
 }
+_MISSING = object()
 
 
-def _sensitive_key(value: object) -> bool:
+def _sensitive_key(value: object, item: object = _MISSING) -> bool:
     key = "".join(character for character in str(value).casefold() if character.isalnum())
-    if key in _NON_SECRET_COUNTERS:
-        return False
-    return (
-        key in _SENSITIVE_NAMES
-        or key.endswith(_SENSITIVE_SUFFIXES)
-        or any(stem in key for stem in _SENSITIVE_STEMS)
-    )
+    if any(stem in key for stem in _SENSITIVE_STEMS):
+        return True
+    if "token" in key:
+        if item is not _MISSING and isinstance(item, (int, float)) and not isinstance(item, bool):
+            return False
+        if key in _TOKEN_METRIC_CONTAINERS and isinstance(item, (dict, list, tuple)):
+            return False
+        return True
+    return key in _SENSITIVE_NAMES or key.endswith(_SENSITIVE_SUFFIXES)
 
 
 _CREDENTIAL_TEXT = re.compile(
@@ -196,7 +187,17 @@ _CREDENTIAL_TEXT = re.compile(
 
 
 def _redact_credential_text(value: str) -> str:
-    return _CREDENTIAL_TEXT.sub("[REDACTED]", value)
+    def replace(match: re.Match[str]) -> str:
+        parts = match.group(0).split(maxsplit=1)
+        if len(parts) == 2 and parts[1].casefold() in {
+            "authentication",
+            "authorization",
+            "scheme",
+        }:
+            return match.group(0)
+        return "[REDACTED]"
+
+    return _CREDENTIAL_TEXT.sub(replace, value)
 
 
 def _json_safe(value: Any) -> Any:
@@ -207,7 +208,7 @@ def _json_safe(value: Any) -> Any:
         return _json_safe(value.model_dump(mode="python"))
     if isinstance(value, dict):
         return {
-            str(key): "[REDACTED]" if _sensitive_key(key) else _json_safe(item)
+            str(key): "[REDACTED]" if _sensitive_key(key, item) else _json_safe(item)
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):
@@ -226,4 +227,4 @@ def _json_safe(value: Any) -> Any:
         return value
     if isinstance(value, bytes):
         return _redact_credential_text(value.decode("utf-8", errors="replace"))
-    return str(value)
+    return _redact_credential_text(str(value))

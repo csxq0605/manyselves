@@ -582,6 +582,56 @@ async def test_sse_registers_before_response_and_cleans_up_after_stream_cancel()
 
 
 @pytest.mark.asyncio
+async def test_sse_body_close_before_first_iteration_unregisters_idempotently() -> None:
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=2,
+        client_capacity=2,
+    )
+
+    class RequestStub:
+        app = SimpleNamespace(state=SimpleNamespace(event_broker=broker))
+
+        async def is_disconnected(self) -> bool:
+            return False
+
+    response = await event_routes.stream_events(RequestStub(), last_event_id=None)
+    assert broker.client_count == 1
+
+    await response.body_iterator.aclose()
+    await response.body_iterator.aclose()
+
+    assert broker.client_count == 0
+
+
+@pytest.mark.asyncio
+async def test_sse_body_close_racing_blocked_next_ends_reader_without_pending_task() -> None:
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=2,
+        client_capacity=2,
+    )
+
+    class RequestStub:
+        app = SimpleNamespace(state=SimpleNamespace(event_broker=broker))
+
+        async def is_disconnected(self) -> bool:
+            return False
+
+    response = await event_routes.stream_events(RequestStub(), last_event_id=None)
+    reader = asyncio.create_task(anext(response.body_iterator))
+    await asyncio.sleep(0)
+
+    await response.body_iterator.aclose()
+
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(reader, timeout=0.1)
+    assert broker.client_count == 0
+
+
+@pytest.mark.asyncio
 async def test_closed_broker_returns_stable_503_before_sse_response_starts(tmp_path: Path) -> None:
     broker = EventBroker(
         bus=TrackingBus(),
@@ -849,5 +899,132 @@ async def test_failed_startup_cleanup_retains_dependencies_and_retries_before_ne
 
     async with app.router.lifespan_context(app):
         assert message_subscriber_count(host.bus) == 2
+
+    assert message_subscriber_count(host.bus) == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_cleanup_cancellation_finishes_cleanup_without_starting_new_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    host = FakeRuntimeHost()
+    app = create_app(settings(tmp_path))
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    original_start = host.start
+    original_broker_start = lifespan_module.EventBroker.start
+    original_close = lifespan_module.ConversationService.close
+    start_count = 0
+    broker_failed = False
+    cleanup_failed = False
+
+    async def count_start(workspace: Path) -> None:
+        nonlocal start_count
+        start_count += 1
+        await original_start(workspace)
+
+    def fail_broker_once(broker) -> None:
+        nonlocal broker_failed
+        original_broker_start(broker)
+        if not broker_failed:
+            broker_failed = True
+            raise RuntimeError("broker startup failed")
+
+    async def leave_pending_once(conversations) -> None:
+        nonlocal cleanup_failed
+        if not cleanup_failed:
+            cleanup_failed = True
+            raise RuntimeError("conversation cleanup failed")
+        await original_close(conversations)
+
+    monkeypatch.setattr(host, "start", count_start)
+    monkeypatch.setattr(lifespan_module.EventBroker, "start", fail_broker_once)
+    monkeypatch.setattr(lifespan_module.ConversationService, "close", leave_pending_once)
+
+    with pytest.raises(RuntimeError, match="broker startup failed"):
+        async with app.router.lifespan_context(app):
+            pass
+    assert start_count == 1
+
+    cleanup_entered = asyncio.Event()
+    cleanup_release = asyncio.Event()
+
+    async def blocking_close(conversations) -> None:
+        cleanup_entered.set()
+        await cleanup_release.wait()
+        await original_close(conversations)
+
+    monkeypatch.setattr(lifespan_module.ConversationService, "close", blocking_close)
+
+    async def retry_lifespan() -> None:
+        async with app.router.lifespan_context(app):
+            pass
+
+    retry = asyncio.create_task(retry_lifespan())
+    await cleanup_entered.wait()
+    retry.cancel()
+    cleanup_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await retry
+
+    assert retry.cancelled() is True
+    assert start_count == 1
+    assert app.state._startup_cleanup_pending is None  # noqa: SLF001
+    assert app.state.lifecycle_active is False
+    assert message_subscriber_count(host.bus) == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_startup_cleanup_grants_shutdown_before_producers_and_retries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    host = FakeRuntimeHost()
+    app = create_app(settings(tmp_path))
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    original_broker_start = lifespan_module.EventBroker.start
+    original_begin = lifespan_module.RuntimeFacade.begin_shutdown
+    broker_failed = False
+    grant_failed = False
+    order: list[str] = []
+
+    def fail_broker_once(broker) -> None:
+        nonlocal broker_failed
+        original_broker_start(broker)
+        if not broker_failed:
+            broker_failed = True
+            raise RuntimeError("broker startup failed")
+
+    async def fail_grant_once(facade) -> None:
+        nonlocal grant_failed
+        order.append("grant")
+        if not grant_failed:
+            grant_failed = True
+            raise RuntimeError("shutdown grant failed")
+        await original_begin(facade)
+
+    original_stop_producers = host.stop_producers
+
+    async def stop_producers() -> None:
+        order.append("producers")
+        await original_stop_producers()
+
+    monkeypatch.setattr(lifespan_module.EventBroker, "start", fail_broker_once)
+    monkeypatch.setattr(lifespan_module.RuntimeFacade, "begin_shutdown", fail_grant_once)
+    monkeypatch.setattr(host, "stop_producers", stop_producers)
+
+    with pytest.raises(RuntimeError, match="broker startup failed") as captured:
+        async with app.router.lifespan_context(app):
+            pass
+
+    assert str(captured.value) == "broker startup failed"
+    assert order == ["grant"]
+    assert "bus" not in host.order
+    assert app.state.runtime_facade is not None
+    assert app.state._startup_cleanup_pending["facade"] is app.state.runtime_facade  # noqa: SLF001
+
+    async with app.router.lifespan_context(app):
+        assert order[:3] == ["grant", "grant", "producers"]
 
     assert message_subscriber_count(host.bus) == 0

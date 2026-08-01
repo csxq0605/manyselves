@@ -53,45 +53,52 @@ async def _await_definite(awaitable: Awaitable[Any]) -> tuple[BaseException | No
 async def _cleanup_failed_startup(
     *,
     host: Any,
+    facade: RuntimeFacade | None,
     reporting: ReportingFacade | None,
     python_runs: PythonRunService | None,
     conversations: ConversationService | None,
     broker: EventBroker | None,
-) -> list[tuple[str, BaseException]]:
+) -> tuple[list[tuple[str, BaseException]], bool]:
     """Release each successfully-created startup stage without masking its error."""
     failures: list[tuple[str, BaseException]] = []
+    caller_cancelled = False
 
     async def cleanup(name: str, awaitable: Awaitable[Any]) -> bool:
-        error, _cancelled = await _await_definite(awaitable)
+        nonlocal caller_cancelled
+        error, cancelled = await _await_definite(awaitable)
+        caller_cancelled = caller_cancelled or cancelled
         if error is not None:
             failures.append((name, error))
             return False
         return True
 
+    if facade is not None and not await cleanup("shutdown grant", facade.begin_shutdown()):
+        return failures, caller_cancelled
     stop_producers = getattr(host, "stop_producers", None)
     split_shutdown = callable(stop_producers)
     if split_shutdown and not await cleanup("producer cleanup", stop_producers()):
-        return failures
+        return failures, caller_cancelled
     if reporting is not None and not await cleanup("reporting cleanup", reporting.close()):
-        return failures
+        return failures, caller_cancelled
     if python_runs is not None and not await cleanup("Python cleanup", python_runs.close()):
-        return failures
+        return failures, caller_cancelled
     if conversations is not None and not await cleanup(
         "conversation cleanup", conversations.close()
     ):
-        return failures
+        return failures, caller_cancelled
     if broker is not None and not await cleanup("event broker cleanup", broker.close()):
-        return failures
+        return failures, caller_cancelled
     if split_shutdown:
         await cleanup("bus cleanup", host.stop_bus())
     else:
         await cleanup("host cleanup", host.stop())
-    return failures
+    return failures, caller_cancelled
 
 
 def _startup_ownership(
     *,
     host: Any,
+    facade: RuntimeFacade | None,
     reporting: ReportingFacade | None,
     python_runs: PythonRunService | None,
     conversations: ConversationService | None,
@@ -99,6 +106,7 @@ def _startup_ownership(
 ) -> dict[str, Any]:
     return {
         "host": host,
+        "facade": facade,
         "reporting": reporting,
         "python_runs": python_runs,
         "conversations": conversations,
@@ -110,12 +118,12 @@ def _expose_startup_ownership(app: FastAPI, ownership: dict[str, Any] | None) ->
     """Keep unfinished cleanup reachable, or clear resources after definite release."""
     values = ownership or {}
     app.state.runtime_host = values.get("host")
+    app.state.runtime_facade = values.get("facade")
     app.state.conversation_service = values.get("conversations")
     app.state.reporting_facade = values.get("reporting")
     app.state.python_run_service = values.get("python_runs")
     app.state.event_broker = values.get("broker")
     if ownership is None:
-        app.state.runtime_facade = None
         app.state.maintenance_service = None
 
 
@@ -128,6 +136,7 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.lifecycle_active = True
 
     host = None
+    facade = None
     conversations = None
     reporting = None
     python_runs = None
@@ -135,14 +144,24 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         pending_ownership = getattr(app.state, "_startup_cleanup_pending", None)
         if pending_ownership is not None:
-            pending_failures = await _cleanup_failed_startup(**pending_ownership)
+            pending_failures, pending_cancelled = await _cleanup_failed_startup(
+                **pending_ownership
+            )
             if pending_failures:
                 name, cleanup_error = pending_failures[0]
+                if pending_cancelled:
+                    cancel_error = asyncio.CancelledError()
+                    cancel_error.add_note(
+                        f"Pending startup {name} failed: {cleanup_error!r}"
+                    )
+                    raise cancel_error from cleanup_error
                 retry_error = RuntimeError("Previous startup cleanup is incomplete")
                 retry_error.add_note(f"{name} failed: {cleanup_error!r}")
                 raise retry_error from cleanup_error
             app.state._startup_cleanup_pending = None
             _expose_startup_ownership(app, None)
+            if pending_cancelled:
+                raise asyncio.CancelledError
 
         settings = app.state.web_settings
         if settings is None:
@@ -236,12 +255,15 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         if host is not None:
             ownership = _startup_ownership(
                 host=host,
+                facade=facade,
                 reporting=reporting,
                 python_runs=python_runs,
                 conversations=conversations,
                 broker=broker,
             )
-            cleanup_failures = await _cleanup_failed_startup(**ownership)
+            cleanup_failures, cleanup_cancelled = await _cleanup_failed_startup(**ownership)
+            if cleanup_cancelled:
+                startup_error.add_note("Caller cancellation observed during startup cleanup")
             for name, cleanup_error in cleanup_failures:
                 startup_error.add_note(f"{name} failed: {cleanup_error!r}")
                 logger.error("{} after lifespan startup failure: {!r}", name, cleanup_error)

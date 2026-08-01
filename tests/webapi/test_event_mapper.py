@@ -387,6 +387,43 @@ def test_secret_stems_and_decoded_bytes_are_redacted_without_hiding_token_counts
     assert mapped.payload["details"]["max_tokens"] == 13
 
 
+def test_fallback_objects_and_value_aware_token_fields_are_safe() -> None:
+    class CredentialObject:
+        def __str__(self) -> str:
+            return "Bearer custom-object-secret"
+
+    message = Error(
+        source="provider",
+        message="Bearer authentication and Basic authentication are supported",
+        details={
+            "fallback": CredentialObject(),
+            "working_memory_tokens": 2048,
+            "max_total_tokens": 4096.0,
+            "token_usage": {
+                "prompt_tokens": 12,
+                "completion_tokens": 34,
+            },
+            "provider_token_value": "opaque-provider-value",
+        },
+        timestamp=NOW,
+    )
+
+    mapped = EventMapper().map(message, context=context())
+    details = mapped.payload["details"]
+
+    assert "custom-object-secret" not in mapped.to_json()
+    assert mapped.payload["message"] == (
+        "Bearer authentication and Basic authentication are supported"
+    )
+    assert details["working_memory_tokens"] == 2048
+    assert details["max_total_tokens"] == 4096.0
+    assert details["token_usage"] == {
+        "prompt_tokens": 12,
+        "completion_tokens": 34,
+    }
+    assert details["provider_token_value"] == "[REDACTED]"
+
+
 def test_mapper_normalizes_top_level_and_payload_datetimes_to_utc() -> None:
     """Mixed local/offset timestamps must not make ordering ambiguous to remote clients."""
     offset_time = datetime(2026, 7, 31, 12, 30, tzinfo=timezone(timedelta(hours=8)))
