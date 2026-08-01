@@ -88,30 +88,23 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        cleanup_error: BaseException | None = None
-
-        async def cleanup(awaitable) -> None:
-            nonlocal cleanup_error
-            try:
-                await awaitable
-            except BaseException as error:
-                if cleanup_error is None:
-                    cleanup_error = error
-                else:
-                    cleanup_error.add_note(f"Additional shutdown failure: {error!r}")
-
         async def await_definite(awaitable) -> tuple[BaseException | None, bool]:
             """Obtain an owned cleanup outcome while remembering caller cancellation."""
             task = asyncio.create_task(awaitable)
             caller_cancelled = False
             while not task.done():
+                current = asyncio.current_task()
+                cancellation_count = current.cancelling() if current is not None else 0
                 try:
                     await asyncio.shield(task)
                 except asyncio.CancelledError:
-                    current = asyncio.current_task()
-                    if current is not None and current.cancelling():
+                    updated_count = current.cancelling() if current is not None else 0
+                    if updated_count > cancellation_count:
                         caller_cancelled = True
-                        current.uncancel()
+                        while current is not None and current.cancelling() > cancellation_count:
+                            current.uncancel()
+                    elif task.done():
+                        break
                 except BaseException:
                     break
             try:
@@ -120,14 +113,23 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
                 return error, caller_cancelled
             return None, caller_cancelled
 
-        async def stop_producers_with_retry(boundary) -> bool:
+        caller_cancelled = False
+
+        async def require_stage(awaitable) -> None:
+            nonlocal caller_cancelled
+            error, cancelled = await await_definite(awaitable)
+            caller_cancelled = caller_cancelled or cancelled
+            if error is not None:
+                raise error
+
+        async def stop_producers_with_retry(boundary) -> None:
+            nonlocal caller_cancelled
             first_error: BaseException | None = None
-            caller_cancelled = False
             for _attempt in range(2):
                 error, cancelled = await await_definite(boundary())
                 caller_cancelled = caller_cancelled or cancelled
                 if error is None:
-                    return caller_cancelled
+                    return
                 if first_error is None:
                     first_error = error
                 else:
@@ -137,41 +139,43 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             assert first_error is not None
             raise first_error
 
+        shutdown_error: BaseException | None = None
         try:
-            await cleanup(facade.begin_shutdown())
+            await require_stage(facade.begin_shutdown())
             stop_producers = getattr(host, "stop_producers", None)
             split_shutdown = callable(stop_producers)
-            producers_stopped = True
-            caller_cancelled = False
             if split_shutdown:
-                try:
-                    caller_cancelled = await stop_producers_with_retry(stop_producers)
-                except BaseException as error:
-                    producers_stopped = False
-                    if cleanup_error is None:
-                        cleanup_error = error
-                    else:
-                        cleanup_error.add_note(
-                            f"Producer shutdown failed: {error!r}"
-                        )
-            if producers_stopped:
-                reporting = getattr(app.state, "reporting_facade", None)
-                if reporting is not None:
-                    await cleanup(reporting.close())
-                python_runs = getattr(app.state, "python_run_service", None)
-                if python_runs is not None:
-                    await cleanup(python_runs.close())
-                conversations = getattr(app.state, "conversation_service", None)
-                if conversations is not None:
-                    await cleanup(conversations.close())
-                if split_shutdown:
-                    await cleanup(host.stop_bus())
-                else:
-                    await cleanup(host.stop())
-            if cleanup_error is not None:
-                raise cleanup_error
-            if caller_cancelled:
-                raise asyncio.CancelledError
+                await stop_producers_with_retry(stop_producers)
+            reporting = getattr(app.state, "reporting_facade", None)
+            if reporting is not None:
+                await require_stage(reporting.close())
+            python_runs = getattr(app.state, "python_run_service", None)
+            if python_runs is not None:
+                await require_stage(python_runs.close())
+            conversations = getattr(app.state, "conversation_service", None)
+            if conversations is not None:
+                await require_stage(conversations.close())
+            if split_shutdown:
+                await require_stage(host.stop_bus())
+            else:
+                await require_stage(host.stop())
+        except BaseException as error:
+            shutdown_error = error
         finally:
-            async with app.state.lifecycle_lock:
-                app.state.lifecycle_active = False
+            async def deactivate_lifespan() -> None:
+                async with app.state.lifecycle_lock:
+                    app.state.lifecycle_active = False
+
+            deactivate_error, cancelled = await await_definite(deactivate_lifespan())
+            caller_cancelled = caller_cancelled or cancelled
+            if deactivate_error is not None:
+                if shutdown_error is None:
+                    shutdown_error = deactivate_error
+                else:
+                    shutdown_error.add_note(
+                        f"Lifespan deactivation failed: {deactivate_error!r}"
+                    )
+        if shutdown_error is not None:
+            raise shutdown_error
+        if caller_cancelled:
+            raise asyncio.CancelledError

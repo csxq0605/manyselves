@@ -555,6 +555,468 @@ async def test_shutdown_cancellation_waits_for_definite_producer_cleanup_then_pr
 
 
 @pytest.mark.asyncio
+async def test_shutdown_cancellation_during_begin_establishes_orderly_drain_before_stop(
+    tmp_path: Path,
+) -> None:
+    """A queued event must remain durable when cancellation lands at the mutation lock."""
+    host = ResourceRuntimeHost(AppConfig())
+    host.persistence_ready = True
+    app = create_app(
+        WebSettings(
+            data_root=tmp_path,
+            initial_project_id="project-1",
+            access_token=SecretStr("test-token"),
+        )
+    )
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    host.app = app
+    ready = asyncio.Event()
+    leave = asyncio.Event()
+    begin_waiting = asyncio.Event()
+    events: list[str] = []
+    state: dict[str, object] = {}
+    original_stop = host.stop
+
+    async def begin_orderly_shutdown() -> None:
+        events.append("orderly-grant")
+
+    async def stop_producers() -> None:
+        service = app.state.conversation_service
+        events.append("producers")
+        await _eventually(
+            lambda: any(
+                item.get("content") == "accepted-before-shutdown"
+                for item in service.messages("main")
+            )
+        )
+        host.persistence_ready = False
+
+    async def stop_bus() -> None:
+        events.append("bus")
+        await original_stop()
+
+    host.begin_orderly_shutdown = begin_orderly_shutdown
+    host.stop_producers = stop_producers
+    host.stop_bus = stop_bus
+
+    async def run_lifespan() -> None:
+        async with app.router.lifespan_context(app):
+            facade = app.state.runtime_facade
+            service = app.state.conversation_service
+            service.create("Shutdown", "main")
+            original_begin = facade.begin_shutdown
+
+            async def begin_shutdown() -> None:
+                begin_waiting.set()
+                await original_begin()
+                events.append("begin-complete")
+
+            facade.begin_shutdown = begin_shutdown
+            for name, resource in (
+                ("reporting", app.state.reporting_facade),
+                ("python", app.state.python_run_service),
+                ("conversations", service),
+            ):
+                original_close = resource.close
+
+                async def close_resource(
+                    *, stage: str = name, close=original_close
+                ) -> None:
+                    await close()
+                    events.append(stage)
+
+                resource.close = close_resource
+            state["facade"] = facade
+            state["service"] = service
+            await facade._mutation_lock.acquire()  # noqa: SLF001
+            ready.set()
+            await leave.wait()
+
+    task = asyncio.create_task(run_lifespan())
+    await ready.wait()
+    leave.set()
+    await begin_waiting.wait()
+    await asyncio.sleep(0)
+    await host.bus.publish(
+        UserMessage(
+            agent_type="main",
+            content="accepted-before-shutdown",
+            message_id="shutdown-message",
+        )
+    )
+    service = state["service"]
+    assert hasattr(service, "_pending_writes")
+    await _eventually(lambda: service._pending_writes == 1)  # type: ignore[attr-defined]  # noqa: SLF001
+    task.cancel()
+    await asyncio.sleep(0)
+    facade = state["facade"]
+    assert hasattr(facade, "_mutation_lock")
+    facade._mutation_lock.release()  # type: ignore[attr-defined]  # noqa: SLF001
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert events == [
+        "orderly-grant",
+        "begin-complete",
+        "producers",
+        "reporting",
+        "python",
+        "conversations",
+        "bus",
+    ]
+    assert service._pending_writes == 0  # type: ignore[attr-defined]  # noqa: SLF001
+    assert any(
+        item.get("content") == "accepted-before-shutdown"
+        for item in service.messages("main")  # type: ignore[attr-defined]
+    )
+    assert host._bus_task is not None and host._bus_task.done()  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled_stage", ["reporting", "python", "conversations"])
+async def test_shutdown_cancellation_during_resource_close_finishes_pipeline_once(
+    tmp_path: Path,
+    cancelled_stage: str,
+) -> None:
+    host = ResourceRuntimeHost(AppConfig())
+    app = create_app(
+        WebSettings(
+            data_root=tmp_path,
+            initial_project_id="project-1",
+            access_token=SecretStr("test-token"),
+        )
+    )
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    host.app = app
+    ready = asyncio.Event()
+    leave = asyncio.Event()
+    stage_started = asyncio.Event()
+    stage_release = asyncio.Event()
+    events: list[str] = []
+    state: dict[str, object] = {}
+    original_closes: list[object] = []
+    original_stop = host.stop
+
+    async def stop_producers() -> None:
+        events.append("producers")
+
+    async def stop_bus() -> None:
+        events.append("bus-start")
+        await original_stop()
+        events.append("bus-complete")
+
+    host.stop_producers = stop_producers
+    host.stop_bus = stop_bus
+
+    async def run_lifespan() -> None:
+        async with app.router.lifespan_context(app):
+            reporting_task = asyncio.create_task(asyncio.Event().wait())
+            reporting_watcher = asyncio.create_task(asyncio.Event().wait())
+            host.reporting_controller._tasks["shutdown-task"] = reporting_task
+            host.reporting_controller._status_watchers = {
+                "shutdown-task": reporting_watcher
+            }
+            workspace = app.state.python_run_service.workspace
+            script = workspace / "shutdown-process.py"
+            script.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
+            operation = app.state.python_run_service.start(
+                UUID("03000000-0000-4000-8000-000000000001"),
+                "shutdown-process.py",
+                [],
+            )
+            await operation.launch_ready.wait()
+            await host.bus.publish(
+                UserMessage(
+                    agent_type="main",
+                    content="persist-before-close",
+                    message_id="resource-close-message",
+                )
+            )
+            await _eventually(
+                lambda: any(
+                    item.get("content") == "persist-before-close"
+                    for item in app.state.conversation_service.messages("main")
+                )
+            )
+
+            for name, resource in (
+                ("reporting", app.state.reporting_facade),
+                ("python", app.state.python_run_service),
+                ("conversations", app.state.conversation_service),
+            ):
+                original_close = resource.close
+                original_closes.append(original_close)
+
+                async def close_resource(
+                    *, stage: str = name, close=original_close
+                ) -> None:
+                    events.append(f"{stage}-start")
+                    if stage == cancelled_stage:
+                        stage_started.set()
+                        await stage_release.wait()
+                    await close()
+                    events.append(f"{stage}-complete")
+
+                resource.close = close_resource
+
+            state.update(
+                reporting_task=reporting_task,
+                reporting_watcher=reporting_watcher,
+                operation=operation,
+                conversation_service=app.state.conversation_service,
+            )
+            ready.set()
+            await leave.wait()
+
+    task = asyncio.create_task(run_lifespan())
+    await ready.wait()
+    leave.set()
+    await stage_started.wait()
+    task.cancel()
+    task.cancel()
+    stage_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    try:
+        assert events == [
+            "producers",
+            "reporting-start",
+            "reporting-complete",
+            "python-start",
+            "python-complete",
+            "conversations-start",
+            "conversations-complete",
+            "bus-start",
+            "bus-complete",
+        ]
+        assert state["reporting_task"].done()  # type: ignore[union-attr]
+        assert state["reporting_watcher"].done()  # type: ignore[union-attr]
+        operation = state["operation"]
+        assert operation.task is not None and operation.task.done()  # type: ignore[union-attr]
+        assert operation.process is None  # type: ignore[union-attr]
+        conversation_service = state["conversation_service"]
+        assert conversation_service._closed is True  # type: ignore[union-attr]  # noqa: SLF001
+        assert conversation_service._pending_writes == 0  # type: ignore[union-attr]  # noqa: SLF001
+        assert host._bus_task is not None and host._bus_task.done()  # noqa: SLF001
+    finally:
+        for close in original_closes:
+            await close()  # type: ignore[operator]
+        if host._bus_task is not None and not host._bus_task.done():  # noqa: SLF001
+            await original_stop()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancellation_during_stop_bus_finishes_bus_once(tmp_path: Path) -> None:
+    host = ResourceRuntimeHost(AppConfig())
+    app = create_app(
+        WebSettings(
+            data_root=tmp_path,
+            initial_project_id="project-1",
+            access_token=SecretStr("test-token"),
+        )
+    )
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    host.app = app
+    ready = asyncio.Event()
+    leave = asyncio.Event()
+    bus_started = asyncio.Event()
+    bus_release = asyncio.Event()
+    bus_attempts = 0
+    original_stop = host.stop
+
+    async def stop_producers() -> None:
+        return None
+
+    async def stop_bus() -> None:
+        nonlocal bus_attempts
+        bus_attempts += 1
+        bus_started.set()
+        await bus_release.wait()
+        await original_stop()
+
+    host.stop_producers = stop_producers
+    host.stop_bus = stop_bus
+
+    async def run_lifespan() -> None:
+        async with app.router.lifespan_context(app):
+            ready.set()
+            await leave.wait()
+
+    task = asyncio.create_task(run_lifespan())
+    await ready.wait()
+    leave.set()
+    await bus_started.wait()
+    task.cancel()
+    task.cancel()
+    bus_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    try:
+        assert bus_attempts == 1
+        assert host._bus_task is not None and host._bus_task.done()  # noqa: SLF001
+    finally:
+        if host._bus_task is not None and not host._bus_task.done():  # noqa: SLF001
+            await original_stop()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancellation_during_legacy_stop_finishes_host_once(tmp_path: Path) -> None:
+    host = ResourceRuntimeHost(AppConfig())
+    app = create_app(
+        WebSettings(
+            data_root=tmp_path,
+            initial_project_id="project-1",
+            access_token=SecretStr("test-token"),
+        )
+    )
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    host.app = app
+    ready = asyncio.Event()
+    leave = asyncio.Event()
+    stop_started = asyncio.Event()
+    stop_release = asyncio.Event()
+    stop_attempts = 0
+    original_stop = host.stop
+
+    async def legacy_stop() -> None:
+        nonlocal stop_attempts
+        stop_attempts += 1
+        stop_started.set()
+        await stop_release.wait()
+        await original_stop()
+
+    host.stop = legacy_stop
+
+    async def run_lifespan() -> None:
+        async with app.router.lifespan_context(app):
+            ready.set()
+            await leave.wait()
+
+    task = asyncio.create_task(run_lifespan())
+    await ready.wait()
+    leave.set()
+    await stop_started.wait()
+    task.cancel()
+    stop_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    try:
+        assert stop_attempts == 1
+        assert host._bus_task is not None and host._bus_task.done()  # noqa: SLF001
+    finally:
+        if host._bus_task is not None and not host._bus_task.done():  # noqa: SLF001
+            await original_stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failed_stage", "error_type"),
+    [
+        (stage, error_type)
+        for stage in ("begin", "producers", "reporting", "python", "conversations", "bus")
+        for error_type in (RuntimeError, asyncio.CancelledError)
+    ],
+)
+async def test_shutdown_owned_stage_failure_stops_before_dependencies(
+    tmp_path: Path,
+    failed_stage: str,
+    error_type: type[BaseException],
+) -> None:
+    host = ResourceRuntimeHost(AppConfig())
+    app = create_app(
+        WebSettings(
+            data_root=tmp_path,
+            initial_project_id="project-1",
+            access_token=SecretStr("test-token"),
+        )
+    )
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    host.app = app
+    events: list[str] = []
+    originals: dict[str, object] = {"host_stop": host.stop}
+
+    def fail_or_continue(stage: str) -> None:
+        events.append(stage)
+        if stage == failed_stage:
+            raise error_type(f"owned {stage} failure")
+
+    async def stop_producers() -> None:
+        fail_or_continue("producers")
+
+    async def stop_bus() -> None:
+        fail_or_continue("bus")
+        await originals["host_stop"]()  # type: ignore[operator]
+
+    host.stop_producers = stop_producers
+    host.stop_bus = stop_bus
+
+    expected_error = (
+        pytest.raises(asyncio.CancelledError)
+        if error_type is asyncio.CancelledError
+        else pytest.raises(RuntimeError, match=f"owned {failed_stage} failure")
+    )
+    try:
+        with expected_error:
+            async with app.router.lifespan_context(app):
+                facade = app.state.runtime_facade
+                original_begin = facade.begin_shutdown
+                originals["begin"] = original_begin
+
+                async def begin_shutdown() -> None:
+                    fail_or_continue("begin")
+                    await original_begin()
+
+                facade.begin_shutdown = begin_shutdown
+                for name, resource in (
+                    ("reporting", app.state.reporting_facade),
+                    ("python", app.state.python_run_service),
+                    ("conversations", app.state.conversation_service),
+                ):
+                    original_close = resource.close
+                    originals[name] = original_close
+
+                    async def close_resource(
+                        *, stage: str = name, close=original_close
+                    ) -> None:
+                        fail_or_continue(stage)
+                        await close()
+
+                    resource.close = close_resource
+
+        expected = ["begin"]
+        if failed_stage != "begin":
+            expected.append("producers")
+            if failed_stage == "producers":
+                expected.append("producers")
+            else:
+                for stage in ("reporting", "python", "conversations", "bus"):
+                    expected.append(stage)
+                    if stage == failed_stage:
+                        break
+        assert events == expected
+        assert host._bus_task is not None and not host._bus_task.done()  # noqa: SLF001
+    finally:
+        reporting = getattr(app.state, "reporting_facade", None)
+        python_runs = getattr(app.state, "python_run_service", None)
+        conversations = getattr(app.state, "conversation_service", None)
+        if reporting is not None and "reporting" in originals:
+            await originals["reporting"]()  # type: ignore[operator]
+        if python_runs is not None and "python" in originals:
+            await originals["python"]()  # type: ignore[operator]
+        if conversations is not None and "conversations" in originals:
+            await originals["conversations"]()  # type: ignore[operator]
+        if host._bus_task is not None and not host._bus_task.done():  # noqa: SLF001
+            await originals["host_stop"]()  # type: ignore[operator]
+
+
+@pytest.mark.asyncio
 async def test_shutdown_retries_producer_self_cancellation_without_cancelling_caller(
     tmp_path: Path,
 ) -> None:
