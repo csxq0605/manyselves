@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from enum import Enum, auto
-from pathlib import Path
+from pathlib import PosixPath, WindowsPath
 from typing import Any
 
 from pydantic import BaseModel, SecretBytes, SecretStr
@@ -67,9 +67,9 @@ class EventPayloadSanitizer:
         key = _normalized_key(name)
         if key is None:
             return REDACTED
+        if _is_secret_key(key):
+            return REDACTED
         if _is_auth_boundary(name):
-            if _contains_auth_secret_marker(key):
-                return REDACTED
             if type(value) in AUTH_CONTAINER_TYPES:
                 return self._sanitize(
                     value,
@@ -92,8 +92,6 @@ class EventPayloadSanitizer:
         if "token" in key:
             if key in TOKEN_METRIC_KEYS and _is_metric_value(value):
                 return value
-            return REDACTED
-        if _is_secret_key(key):
             return REDACTED
         return self._sanitize(
             value,
@@ -130,16 +128,21 @@ class EventPayloadSanitizer:
         if isinstance(value, (SecretStr, SecretBytes)):
             return REDACTED
         if isinstance(value, BaseModel):
+            if id(value) in active:
+                return REDACTED
+            active.add(id(value))
             try:
                 dumped = value.model_dump(mode="python")
+                return self._sanitize(
+                    dumped,
+                    context=_Context.GENERIC,
+                    depth=depth + 1,
+                    active=active,
+                )
             except Exception:
                 return REDACTED
-            return self._sanitize(
-                dumped,
-                context=_Context.GENERIC,
-                depth=depth,
-                active=active,
-            )
+            finally:
+                active.remove(id(value))
         if type(value) is dict:
             return self._sanitize_generic_mapping(value, depth=depth, active=active)
         if type(value) in (list, tuple):
@@ -166,7 +169,7 @@ class EventPayloadSanitizer:
                 depth=depth + 1,
                 active=active,
             )
-        if isinstance(value, Path):
+        if type(value) in (PosixPath, WindowsPath):
             return str(value)
         if type(value) is str:
             return _redact_credential_text(value)
@@ -262,12 +265,15 @@ class EventPayloadSanitizer:
         try:
             for name, item in value.items():
                 output_name = _output_key(name, reserved | set(result))
+                key = _normalized_key(name)
                 allowed_containers = (
                     AUTH_CONTAINER_TYPES
                     if context is _Context.AUTHENTICATION
                     else (dict, list, tuple)
                 )
-                if type(item) in allowed_containers:
+                if context is _Context.TOKEN_USAGE and key in TOKEN_METRIC_KEYS:
+                    result[output_name] = item if _is_metric_value(item) else REDACTED
+                elif type(item) in allowed_containers:
                     result[output_name] = self._sanitize(
                         item,
                         context=context,
@@ -276,11 +282,6 @@ class EventPayloadSanitizer:
                     )
                 elif context is _Context.AUTHENTICATION:
                     result[output_name] = _sanitize_auth_metadata(name, item)
-                elif (
-                    _normalized_key(name) in TOKEN_METRIC_KEYS
-                    and _is_metric_value(item)
-                ):
-                    result[output_name] = item
                 else:
                     result[output_name] = REDACTED
         finally:
@@ -334,7 +335,6 @@ class EventPayloadSanitizer:
             active.remove(id(value))
 
 
-_AUTH_SECRET_MARKERS = ("header", "jwt", "token", "secret", "password", "credential")
 _SECRET_MARKERS = (
     "authorization",
     "header",
@@ -371,14 +371,11 @@ def _is_auth_boundary(value: object) -> bool:
             return True
         if folded.startswith(tuple(f"{stem}{delimiter}" for delimiter in "_-.:/")):
             return True
-        if folded.startswith(stem) and len(value) > len(stem):
+        stem_prefix = value[: len(stem)]
+        if stem_prefix in {stem, stem.capitalize()} and len(value) > len(stem):
             if value[len(stem)].isupper():
                 return True
     return False
-
-
-def _contains_auth_secret_marker(key: str) -> bool:
-    return any(marker in key for marker in _AUTH_SECRET_MARKERS)
 
 
 def _is_secret_key(key: str) -> bool:

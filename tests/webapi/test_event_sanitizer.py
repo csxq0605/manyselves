@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
 from manyselves.webapi.events.sanitizer import EventPayloadSanitizer
 
@@ -54,6 +56,73 @@ def test_authentication_context_keeps_only_metadata_scalars() -> None:
             "[REDACTED]",
             {"provider": "example", "jwt": "[REDACTED]"},
         ],
+    }
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "authApiKey",
+        "authAuthorization",
+        "authCookie",
+        "authPrivateKey",
+        "authAccessKey",
+        "authClientKey",
+        "authBearer",
+    ],
+)
+def test_explicit_secret_meaning_wins_before_authentication_context(name: str) -> None:
+    value = {"method": "oauth2", "provider": "example", "opaque": "secret"}
+
+    assert EventPayloadSanitizer().sanitize_field(name, value) == "[REDACTED]"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "author",
+        "Author",
+        "AUTHOR",
+        "AuThOr",
+        "authority",
+        "Authority",
+        "AUTHORITY",
+        "AuThOrItY",
+        "authorized",
+        "Authorized",
+        "AUTHORIZED",
+        "AuThOrIzEd",
+    ],
+)
+def test_authentication_boundary_nonmatches_are_case_independent(name: str) -> None:
+    value = {"safe": "value"}
+
+    assert EventPayloadSanitizer().sanitize_field(name, value) == value
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "auth",
+        "AUTH",
+        "authentication",
+        "AUTHENTICATION",
+        "auth_config",
+        "AUTH_CONFIG",
+        "authentication-payload",
+        "Authentication-Payload",
+        "authConfig",
+        "AuthConfig",
+        "authenticationConfig",
+        "AuthenticationConfig",
+    ],
+)
+def test_authentication_roots_preserve_exact_delimiter_and_camel_forms(name: str) -> None:
+    value = {"method": "oauth2", "opaque": "secret"}
+
+    assert EventPayloadSanitizer().sanitize_field(name, value) == {
+        "method": "oauth2",
+        "opaque": "[REDACTED]",
     }
 
 
@@ -123,6 +192,23 @@ def test_token_usage_keeps_only_exact_numeric_metrics() -> None:
             "[REDACTED]",
         ],
     }
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"input_tokens": 7},
+        [7],
+        (7,),
+        True,
+        "7",
+    ],
+    ids=["dict", "list", "tuple", "bool", "string"],
+)
+def test_token_usage_metric_keys_reject_every_non_numeric_value(value: object) -> None:
+    assert EventPayloadSanitizer().sanitize_field(
+        "token_usage", {"input_tokens": value}
+    ) == {"input_tokens": "[REDACTED]"}
 
 
 @pytest.mark.parametrize(
@@ -199,3 +285,62 @@ def test_non_string_keys_are_redacted_without_collision_or_hooks() -> None:
         "[REDACTED]#2": "[REDACTED]",
     }
     assert calls == {"str": 0, "repr": 0}
+
+
+def test_only_native_path_types_are_serialized() -> None:
+    calls = {"str": 0}
+    native = Path("artifact.txt")
+
+    class HostilePath(type(native)):
+        def __str__(self) -> str:
+            calls["str"] += 1
+            return "hostile-path-secret"
+
+    sanitizer = EventPayloadSanitizer()
+
+    assert sanitizer.sanitize_field("path", HostilePath("opaque")) == "[REDACTED]"
+    assert calls == {"str": 0}
+    assert sanitizer.sanitize_field("path", native) == "artifact.txt"
+
+
+def test_base_model_identity_is_tracked_before_dump_recursion() -> None:
+    calls = {"dump": 0}
+
+    class SelfReturningModel(BaseModel):
+        def model_dump(self, *args: object, **kwargs: object) -> object:
+            calls["dump"] += 1
+            if calls["dump"] > 1:
+                raise AssertionError("model cycle must be detected before a second dump")
+            return self
+
+    assert (
+        EventPayloadSanitizer().sanitize_field("details", SelfReturningModel())
+        == "[REDACTED]"
+    )
+    assert calls == {"dump": 1}
+
+
+def test_normal_base_model_is_preserved_as_a_sanitized_mapping() -> None:
+    class NormalModel(BaseModel):
+        label: str
+        count: int
+
+    assert EventPayloadSanitizer().sanitize_field(
+        "details", NormalModel(label="ready", count=2)
+    ) == {"label": "ready", "count": 2}
+
+
+def test_base_model_consumes_depth_before_dumped_mapping_recursion() -> None:
+    class NormalModel(BaseModel):
+        label: str
+
+    deep: object = NormalModel(label="too-deep")
+    for _ in range(31):
+        deep = [deep]
+
+    sanitized = EventPayloadSanitizer().sanitize_field("details", deep)
+    cursor = sanitized
+    for _ in range(31):
+        assert type(cursor) is list
+        cursor = cursor[0]
+    assert cursor == "[REDACTED]"
