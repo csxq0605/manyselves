@@ -97,12 +97,27 @@ class _ReportingController:
         self.service = SimpleNamespace(workspace=workspace)
         self._tasks: dict[str, asyncio.Task] = {}
         self.calls: list[tuple[str, object]] = []
+        self.live_runs: set[str] = set()
 
     def start(self, request) -> dict:
         self.calls.append(("start", request))
+        self.live_runs.add("report-new")
+        run_root = self.service.workspace / "Work/runs/report-new"
+        run_root.mkdir(parents=True, exist_ok=True)
+        (run_root / "request.json").write_text(
+            json.dumps(request.model_dump(mode="json")), encoding="utf-8"
+        )
         return {"status": "running", "run_id": "report-new", "task_id": "task-new"}
 
     def status(self, run_id: str) -> dict:
+        if run_id in self.live_runs:
+            return {
+                "status": "running",
+                "run_id": run_id,
+                "active": True,
+                "source": "live",
+                "task_id": "task-new",
+            }
         return {
             "status": "completed",
             "run_id": run_id,
@@ -391,6 +406,147 @@ async def test_shutdown_stops_producers_before_draining_resource_consumers(tmp_p
         app.state.conversation_service.close = close_conversations
 
     assert events == ["producers", "reporting", "python", "conversations", "bus"]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_retries_one_transient_producer_stop_before_draining(
+    tmp_path: Path,
+) -> None:
+    host = ResourceRuntimeHost(AppConfig())
+    app = create_app(
+        WebSettings(
+            data_root=tmp_path,
+            initial_project_id="project-1",
+            access_token=SecretStr("test-token"),
+        )
+    )
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    host.app = app
+    events: list[str] = []
+    attempts = 0
+    original_stop = host.stop
+
+    async def stop_producers() -> None:
+        nonlocal attempts
+        attempts += 1
+        events.append(f"producers-{attempts}")
+        if attempts == 1:
+            raise RuntimeError("transient producer stop")
+
+    async def stop_bus() -> None:
+        events.append("bus")
+        await original_stop()
+
+    host.stop_producers = stop_producers
+    host.stop_bus = stop_bus
+    async with app.router.lifespan_context(app):
+        reporting_close = app.state.reporting_facade.close
+        python_close = app.state.python_run_service.close
+        conversation_close = app.state.conversation_service.close
+
+        async def close_reporting() -> None:
+            events.append("reporting")
+            await reporting_close()
+
+        async def close_python() -> None:
+            events.append("python")
+            await python_close()
+
+        async def close_conversations() -> None:
+            events.append("conversations")
+            await conversation_close()
+
+        app.state.reporting_facade.close = close_reporting
+        app.state.python_run_service.close = close_python
+        app.state.conversation_service.close = close_conversations
+
+    assert events == [
+        "producers-1",
+        "producers-2",
+        "reporting",
+        "python",
+        "conversations",
+        "bus",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_persistent_producer_failure_retains_downstream_for_retry(
+    tmp_path: Path,
+) -> None:
+    host = ResourceRuntimeHost(AppConfig())
+    app = create_app(
+        WebSettings(
+            data_root=tmp_path,
+            initial_project_id="project-1",
+            access_token=SecretStr("test-token"),
+        )
+    )
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    host.app = app
+    events: list[str] = []
+    first_error = RuntimeError("first producer stop")
+    producer_errors: list[BaseException | None] = [
+        first_error,
+        RuntimeError("second producer stop"),
+        None,
+    ]
+    original_stop = host.stop
+
+    async def stop_producers() -> None:
+        events.append("producers")
+        error = producer_errors.pop(0)
+        if error is not None:
+            raise error
+
+    async def stop_bus() -> None:
+        events.append("bus")
+        await original_stop()
+
+    host.stop_producers = stop_producers
+    host.stop_bus = stop_bus
+    with pytest.raises(RuntimeError, match="first producer stop") as raised:
+        async with app.router.lifespan_context(app):
+            reporting_close = app.state.reporting_facade.close
+            python_close = app.state.python_run_service.close
+            conversation_close = app.state.conversation_service.close
+
+            async def close_reporting() -> None:
+                events.append("reporting")
+                await reporting_close()
+
+            async def close_python() -> None:
+                events.append("python")
+                await python_close()
+
+            async def close_conversations() -> None:
+                events.append("conversations")
+                await conversation_close()
+
+            app.state.reporting_facade.close = close_reporting
+            app.state.python_run_service.close = close_python
+            app.state.conversation_service.close = close_conversations
+
+    assert raised.value is first_error
+    assert events == ["producers", "producers"]
+    assert app.state.conversation_service._closed is False  # noqa: SLF001
+    assert host._bus_task is not None and not host._bus_task.done()  # noqa: SLF001
+
+    await host.stop_producers()
+    await app.state.reporting_facade.close()
+    await app.state.python_run_service.close()
+    await app.state.conversation_service.close()
+    await host.stop_bus()
+
+    assert events == [
+        "producers",
+        "producers",
+        "producers",
+        "reporting",
+        "python",
+        "conversations",
+        "bus",
+    ]
 
 
 @pytest.mark.asyncio
@@ -690,14 +846,29 @@ async def test_prepare_compensation_failure_marks_runtime_consistency_failed(
 
     monkeypatch.setattr(service, "_sync", fail_sync)
     monkeypatch.setattr(service, "restore", fail_restore)
+    cleanup_error = RuntimeError("producer stop failed")
+
+    async def fail_consistency() -> None:
+        host.is_ready = False
+        raise cleanup_error
+
+    host.fail_consistency = fail_consistency
+    headers = {"Idempotency-Key": "01300000-0000-4000-8000-000000000099"}
     response = await client.post(
         "/api/v1/agents/main/messages/m1/edit-resend",
-        headers={"Idempotency-Key": "01300000-0000-4000-8000-000000000099"},
+        headers=headers,
+        json={"content": "replacement"},
+    )
+    replay = await client.post(
+        "/api/v1/agents/main/messages/m1/edit-resend",
+        headers=headers,
         json={"content": "replacement"},
     )
 
     assert response.status_code == 500
     assert response.json()["error"]["code"] == "RUNTIME_CONSISTENCY_FAILED"
+    assert replay.status_code == 500
+    assert replay.json()["error"]["code"] == "RUNTIME_CONSISTENCY_FAILED"
     assert host.is_ready is False
 
 
@@ -859,6 +1030,25 @@ async def test_rollback_requires_public_preflight_before_side_effects(resources)
     response = await client.post(
         "/api/v1/agents/main/rollback",
         headers={"Idempotency-Key": "10100000-0000-4000-8000-000000000099"},
+        json={"checkpointId": "cp-1"},
+    )
+
+    assert response.status_code == 501
+    assert response.json()["error"]["code"] == "ROLLBACK_PREFLIGHT_UNSUPPORTED"
+    assert host.backend.rollbacks == []
+
+
+@pytest.mark.asyncio
+async def test_rollback_maps_backend_unsupported_preflight_to_stable_501(resources) -> None:
+    client, host, _, _ = resources
+
+    async def unsupported_preflight(_agent_id: str, _checkpoint_id: str) -> dict:
+        raise NotImplementedError("Rollback preflight is unavailable")
+
+    host.backend.prepare_rollback = unsupported_preflight
+    response = await client.post(
+        "/api/v1/agents/main/rollback",
+        headers={"Idempotency-Key": "10100000-0000-4000-8000-000000000098"},
         json={"checkpointId": "cp-1"},
     )
 
@@ -1140,6 +1330,56 @@ async def test_reporting_named_start_command_returns_accepted(resources) -> None
     assert response.json()["runId"] == "report-new"
     assert host.reporting_controller is not None
     assert host.reporting_controller.calls[0][0] == "start"
+
+
+@pytest.mark.asyncio
+async def test_fresh_reporting_run_is_immediately_queryable_listed_and_cancellable(
+    resources,
+) -> None:
+    client, _, _, _ = resources
+    accepted = await client.post(
+        "/api/v1/reporting/runs",
+        headers={"Idempotency-Key": "20000000-0000-4000-8000-000000000011"},
+        json={"instruction": "Generate report", "operation": "full_report"},
+    )
+    run_id = accepted.json()["runId"]
+
+    snapshot = await client.get(f"/api/v1/reporting/runs/{run_id}")
+    listed = await client.get("/api/v1/reporting/runs")
+    cancelled = await client.post(
+        f"/api/v1/reporting/runs/{run_id}/cancel",
+        headers={"Idempotency-Key": "20000000-0000-4000-8000-000000000012"},
+    )
+
+    assert accepted.status_code == 202
+    assert snapshot.status_code == 200
+    assert snapshot.json()["run"]["status"] == "running"
+    assert any(item["run_id"] == run_id for item in listed.json()["runs"])
+    assert cancelled.status_code == 202
+
+
+@pytest.mark.asyncio
+async def test_live_reporting_run_without_artifacts_is_queryable_and_listed(
+    resources,
+) -> None:
+    client, host, _, _ = resources
+    run_id = "live-only"
+    host.reporting_controller.live_runs.add(run_id)
+    host.reporting_controller._tasks[run_id] = asyncio.create_task(  # noqa: SLF001
+        asyncio.Event().wait()
+    )
+
+    snapshot = await client.get(f"/api/v1/reporting/runs/{run_id}")
+    listed = await client.get("/api/v1/reporting/runs")
+    cancelled = await client.post(
+        f"/api/v1/reporting/runs/{run_id}/cancel",
+        headers={"Idempotency-Key": "20000000-0000-4000-8000-000000000013"},
+    )
+
+    assert snapshot.status_code == 200
+    assert snapshot.json()["run"]["source"] == "live"
+    assert any(item["run_id"] == run_id for item in listed.json()["runs"])
+    assert cancelled.status_code == 202
 
 
 @pytest.mark.asyncio
@@ -1440,7 +1680,7 @@ async def test_maintenance_refuses_symlinked_config_path(resources, tmp_path: Pa
     service.config_manager = host.config_manager
 
     with pytest.raises(ValueError, match="symlink"):
-        service._flush_config()
+        service._flush()
 
 
 @pytest.mark.asyncio

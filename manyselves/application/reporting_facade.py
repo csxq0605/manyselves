@@ -82,6 +82,8 @@ class ReportingFacade:
         } if runs_root.exists() else set()
         if runs_root.exists():
             ids.update(path.stem for path in runs_root.glob("*.json"))
+        if self.controller is not None:
+            ids.update(str(run_id) for run_id in getattr(self.controller, "_tasks", {}))
         result = []
         for run_id in sorted(ids, reverse=True):
             try:
@@ -101,6 +103,8 @@ class ReportingFacade:
         result = self._json(result_path, runs_root)
         state_path = root / "workflow-state.json"
         state = self._json(state_path, root)
+        request_path = root / "request.json"
+        self._require_contained(request_path, root)
         decisions_root = root / "decisions"
         if decisions_root.is_symlink():
             raise ReportingStateInvalidError("Reporting decisions path is invalid")
@@ -110,19 +114,24 @@ class ReportingFacade:
         decision_paths = (
             sorted(decisions_root.glob("*.json")) if decisions_root.is_dir() else []
         )
+        live = self.controller.status(run_id) if self.controller is not None else {}
+        live_recognized = (
+            live.get("source") == "live"
+            and live.get("status") not in {None, "not_found", "unknown"}
+        )
         recognized = any(
             path.is_file()
             for path in (
                 result_path,
                 state_path,
+                request_path,
                 root / "evidence-choice.json",
                 root / "revision-request.json",
                 *decision_paths,
             )
-        )
+        ) or live_recognized
         if not recognized:
             raise ReportingNotFoundError(run_id)
-        live = self.controller.status(run_id) if self.controller is not None else {}
         run = {"run_id": run_id, **result}
         run["active"] = bool(live.get("active", False))
         for key in ("status", "task_id", "source"):

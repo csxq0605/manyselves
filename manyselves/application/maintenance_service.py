@@ -71,9 +71,7 @@ class MaintenanceService:
     def _flush(self) -> None:
         workspace = self.conversations.workspace.resolve()
         self._flush_workspace(workspace)
-        config_path = self._config_path()
-        if config_path is not None and not config_path.absolute().is_relative_to(workspace):
-            self._flush_config()
+        self._flush_config()
         if self.extra_flush is not None:
             self.extra_flush()
 

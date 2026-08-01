@@ -178,7 +178,10 @@ class RuntimeFacade:
         """Serialize one durable event write and reject it after quiescence."""
         async with self._mutation_lock:
             self._require_mutable()
-            if not self._host.is_ready:
+            persistence_ready = getattr(
+                self._host, "persistence_ready", self._host.is_ready
+            )
+            if not persistence_ready:
                 raise RuntimeNotReadyError()
             yield
 
@@ -296,7 +299,11 @@ class RuntimeFacade:
                         published.error.add_note(
                             f"Edit-resend compensation failed: {restored.error!r}"
                         )
-                        await self._fail_consistency()
+                        cleanup_error = await self._fail_consistency()
+                        if cleanup_error is not None:
+                            published.error.add_note(
+                                f"Consistency producer shutdown failed: {cleanup_error!r}"
+                            )
                         raise _CommittedConsistencyFailure() from restored.error
                 if cancelled:
                     raise asyncio.CancelledError
@@ -371,7 +378,11 @@ class RuntimeFacade:
                             durable.error.add_note(
                                 f"Rollback compensation failed: {compensation.error!r}"
                             )
-                    await self._fail_consistency()
+                    cleanup_error = await self._fail_consistency()
+                    if cleanup_error is not None:
+                        durable.error.add_note(
+                            f"Consistency producer shutdown failed: {cleanup_error!r}"
+                        )
                     raise _CommittedConsistencyFailure() from durable.error
             if cancelled:
                 raise _CommittedCallerCancellation(restored)
@@ -421,6 +432,9 @@ class RuntimeFacade:
             except _CommittedConsistencyFailure:
                 self._cache(operation, command.command_id, payload, None, failed=True)
                 raise RuntimeConsistencyFailedError()
+            except RuntimeConsistencyFailedError:
+                self._cache(operation, command.command_id, payload, None, failed=True)
+                raise
             if not isinstance(response, response_type):
                 raise AssertionError("Command response type invariant violated")
             self._cache(operation, command.command_id, payload, response)
@@ -444,18 +458,24 @@ class RuntimeFacade:
         while len(self._command_cache) > self._command_cache_size:
             self._command_cache.popitem(last=False)
 
-    async def _fail_consistency(self) -> None:
+    async def _fail_consistency(self) -> BaseException | None:
         boundary = getattr(self._host, "fail_consistency", None)
         if not callable(boundary):
             boundary = self._host.mark_failed
-        await boundary()
+        try:
+            await boundary()
+        except BaseException as error:
+            return error
+        return None
 
-    async def fail_consistency(self) -> None:
+    async def fail_consistency(self) -> BaseException | None:
         """Expose the awaited host failure boundary to application transactions."""
-        await self._fail_consistency()
+        return await self._fail_consistency()
 
     @staticmethod
     def _raise_checkpoint_error(error: BaseException, checkpoint_id: str) -> None:
+        if isinstance(error, NotImplementedError):
+            raise RollbackPreflightUnsupportedError() from error
         if isinstance(error, ValueError):
             text = str(error).casefold()
             if "checkpoint" in text and "not found" in text:

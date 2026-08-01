@@ -99,25 +99,52 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
                 else:
                     cleanup_error.add_note(f"Additional shutdown failure: {error!r}")
 
+        async def stop_producers_with_retry(boundary) -> None:
+            first_error: BaseException | None = None
+            for _attempt in range(2):
+                try:
+                    await boundary()
+                    return
+                except BaseException as error:
+                    if first_error is None:
+                        first_error = error
+                    else:
+                        first_error.add_note(
+                            f"Producer shutdown retry also failed: {error!r}"
+                        )
+            assert first_error is not None
+            raise first_error
+
         try:
             await cleanup(facade.begin_shutdown())
             stop_producers = getattr(host, "stop_producers", None)
             split_shutdown = callable(stop_producers)
+            producers_stopped = True
             if split_shutdown:
-                await cleanup(stop_producers())
-            reporting = getattr(app.state, "reporting_facade", None)
-            if reporting is not None:
-                await cleanup(reporting.close())
-            python_runs = getattr(app.state, "python_run_service", None)
-            if python_runs is not None:
-                await cleanup(python_runs.close())
-            conversations = getattr(app.state, "conversation_service", None)
-            if conversations is not None:
-                await cleanup(conversations.close())
-            if split_shutdown:
-                await cleanup(host.stop_bus())
-            else:
-                await cleanup(host.stop())
+                try:
+                    await stop_producers_with_retry(stop_producers)
+                except BaseException as error:
+                    producers_stopped = False
+                    if cleanup_error is None:
+                        cleanup_error = error
+                    else:
+                        cleanup_error.add_note(
+                            f"Producer shutdown failed: {error!r}"
+                        )
+            if producers_stopped:
+                reporting = getattr(app.state, "reporting_facade", None)
+                if reporting is not None:
+                    await cleanup(reporting.close())
+                python_runs = getattr(app.state, "python_run_service", None)
+                if python_runs is not None:
+                    await cleanup(python_runs.close())
+                conversations = getattr(app.state, "conversation_service", None)
+                if conversations is not None:
+                    await cleanup(conversations.close())
+                if split_shutdown:
+                    await cleanup(host.stop_bus())
+                else:
+                    await cleanup(host.stop())
             if cleanup_error is not None:
                 raise cleanup_error
         finally:

@@ -7,10 +7,13 @@ from typing import cast
 import pytest
 
 from manyselves.application.backend_api import BackendAPIImpl
+from manyselves.application.conversation_service import ConversationService
 from manyselves.application.errors import RuntimeStartupError
+from manyselves.application.runtime_facade import RuntimeFacade
 from manyselves.application.runtime_host import RuntimeHost
 from manyselves.config import ConfigManager
 from manyselves.core.loops import LoopManager, MessageBus
+from manyselves.interfaces.types import UserMessage
 
 
 class _FakeConfigManager:
@@ -316,6 +319,51 @@ async def test_failed_loop_cleanup_can_be_retried_without_hiding_error(
 
     assert bus.shutdown_calls == 1
     assert created[0].stop_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_producer_stop_event_remains_persistable_until_bus_shutdown(
+    tmp_path: Path,
+) -> None:
+    """Closing host persistence during producer stop must lose its accepted final event."""
+    bus = MessageBus()
+    config = _FakeConfigManager()
+    backend = _FakeBackend()
+
+    class PublishingManager:
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            await bus.publish(
+                UserMessage(
+                    agent_type="main",
+                    content="accepted before shutdown",
+                    message_id="shutdown-final",
+                )
+            )
+
+    manager = PublishingManager()
+    host = RuntimeHost(
+        config_manager=cast(ConfigManager, config),
+        bus=bus,
+        backend=cast(BackendAPIImpl, backend),
+        loop_manager_factory=lambda *_args: cast(LoopManager, manager),
+        project_logging_initializer=lambda _workspace: None,
+        project_structure_initializer=lambda _workspace: None,
+    )
+    await host.start(tmp_path)
+    facade = RuntimeFacade(host)
+    conversations = ConversationService(tmp_path, facade=facade, bus=bus)
+
+    await facade.begin_shutdown()
+    await host.stop_producers()
+    await conversations.close()
+    await host.stop_bus()
+
+    assert [item["content"] for item in conversations.messages("main")] == [
+        "accepted before shutdown"
+    ]
 
 
 @pytest.mark.asyncio

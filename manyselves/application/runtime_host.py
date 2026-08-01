@@ -54,6 +54,7 @@ class RuntimeHost:
         self._bus_task: asyncio.Task[None] | None = None
         self._bus_shutdown = False
         self._producers_stopped = False
+        self._persistence_open = False
         self._state = _LifecycleState.NEW
         self._lifecycle_lock = asyncio.Lock()
 
@@ -80,6 +81,11 @@ class RuntimeHost:
     def loop_manager(self) -> LoopManager | None:
         """Loop manager created for the selected workspace, if any."""
         return self._loop_manager
+
+    @property
+    def persistence_ready(self) -> bool:
+        """Whether accepted bus events may still cross the durability boundary."""
+        return self._persistence_open
 
     async def start(self, workspace: Path) -> None:
         """Validate configuration and start runtime processing for a workspace."""
@@ -131,6 +137,7 @@ class RuntimeHost:
                 raise
 
             self._state = _LifecycleState.READY
+            self._persistence_open = True
             logger.info(
                 "Application started successfully with workspace: {}",
                 resolved_workspace,
@@ -287,8 +294,12 @@ class RuntimeHost:
         if self._state is _LifecycleState.STOPPED:
             return
         if self._state is _LifecycleState.NEW:
+            self._persistence_open = False
             self._state = _LifecycleState.STOPPED
             return
+        self._persistence_open = False
+        if self._state is not _LifecycleState.FAILED:
+            self._state = _LifecycleState.STOPPING
         if not self._bus_shutdown:
             self.bus.shutdown()
             self._bus_shutdown = True

@@ -157,7 +157,11 @@ class ConversationService:
                 prepare_error.add_note(
                     f"Edit-resend prepare compensation failed: {restore_error!r}"
                 )
-                await self.facade.fail_consistency()
+                cleanup_error = await self.facade.fail_consistency()
+                if cleanup_error is not None:
+                    prepare_error.add_note(
+                        f"Consistency producer shutdown failed: {cleanup_error!r}"
+                    )
                 raise RuntimeConsistencyFailedError() from restore_error
             raise
         return snapshot
