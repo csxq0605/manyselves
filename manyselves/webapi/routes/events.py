@@ -74,9 +74,12 @@ class _EventStreamBody(AsyncIterator[str]):
                 await self.aclose()
             return frame
         except asyncio.CancelledError:
-            owner_was_closed = self._done
+            current = asyncio.current_task()
+            caller_cancelled = current is not None and current.cancelling() > 0
             await self.aclose()
-            if owner_was_closed:
+            if caller_cancelled:
+                raise
+            if self._done:
                 raise StopAsyncIteration from None
             raise
         except BaseException:

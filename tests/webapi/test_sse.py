@@ -718,6 +718,115 @@ async def test_sse_close_after_event_read_completes_suppresses_racing_frame(
 
 
 @pytest.mark.asyncio
+async def test_reader_caller_cancel_wins_over_simultaneous_owner_close() -> None:
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=2,
+        client_capacity=2,
+    )
+    probe_entered = asyncio.Event()
+    probe_release = asyncio.Event()
+
+    class RequestStub:
+        app = SimpleNamespace(state=SimpleNamespace(event_broker=broker))
+
+        async def is_disconnected(self) -> bool:
+            probe_entered.set()
+            await probe_release.wait()
+            return False
+
+    response = await event_routes.stream_events(RequestStub(), last_event_id=None)
+    reader = asyncio.create_task(anext(response.body_iterator))
+    await probe_entered.wait()
+
+    await response.body_iterator.aclose()
+    reader.cancel()
+    probe_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await reader
+    assert reader.cancelled() is True
+    assert broker.client_count == 0
+
+
+@pytest.mark.asyncio
+async def test_owner_close_cancels_blocked_client_read_as_eof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=2,
+        client_capacity=2,
+    )
+
+    class RequestStub:
+        app = SimpleNamespace(state=SimpleNamespace(event_broker=broker))
+
+        async def is_disconnected(self) -> bool:
+            return False
+
+    response = await event_routes.stream_events(RequestStub(), last_event_id=None)
+    client = next(iter(broker._clients))  # noqa: SLF001
+    read_entered = asyncio.Event()
+
+    async def blocked_get():
+        read_entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(client, "get", blocked_get)
+    reader = asyncio.create_task(anext(response.body_iterator))
+    await read_entered.wait()
+
+    await response.body_iterator.aclose()
+
+    with pytest.raises(StopAsyncIteration):
+        await reader
+    assert reader.cancelled() is False
+    assert broker.client_count == 0
+
+
+@pytest.mark.asyncio
+async def test_aclose_caller_cancel_waits_for_unregister_then_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=2,
+        client_capacity=2,
+    )
+
+    class RequestStub:
+        app = SimpleNamespace(state=SimpleNamespace(event_broker=broker))
+
+        async def is_disconnected(self) -> bool:
+            return False
+
+    response = await event_routes.stream_events(RequestStub(), last_event_id=None)
+    unregister_entered = asyncio.Event()
+    unregister_release = asyncio.Event()
+    original_unregister = broker.unregister
+
+    async def blocking_unregister(client) -> None:
+        unregister_entered.set()
+        await unregister_release.wait()
+        await original_unregister(client)
+
+    monkeypatch.setattr(broker, "unregister", blocking_unregister)
+    closer = asyncio.create_task(response.body_iterator.aclose())
+    await unregister_entered.wait()
+    closer.cancel()
+    unregister_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await closer
+    assert closer.cancelled() is True
+    assert broker.client_count == 0
+
+
+@pytest.mark.asyncio
 async def test_closed_broker_returns_stable_503_before_sse_response_starts(tmp_path: Path) -> None:
     broker = EventBroker(
         bus=TrackingBus(),

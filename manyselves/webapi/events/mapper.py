@@ -198,26 +198,38 @@ _CREDENTIAL_TOKEN_MARKERS = (
 _MISSING = object()
 
 
+def _token_metric_key(key: str) -> bool:
+    return (
+        key in _TOKEN_METRIC_SCALARS
+        or key.endswith("tokens")
+        or key.endswith("tokencount")
+    )
+
+
 def _sensitive_key(value: object, item: object = _MISSING) -> bool:
     key = "".join(character for character in str(value).casefold() if character.isalnum())
+    if "authheader" in key or "jwt" in key:
+        return True
+    if key == "auth":
+        return not isinstance(item, (dict, list, tuple, set, frozenset))
     if any(stem in key for stem in _SENSITIVE_STEMS):
         return True
     if "token" in key:
         if key == "token" or any(marker in key for marker in _CREDENTIAL_TOKEN_MARKERS):
             return True
+        if _token_metric_key(key) and item is None:
+            return False
         numeric_metric = (
             item is not _MISSING
             and isinstance(item, (int, float))
             and not isinstance(item, bool)
-            and (
-                key in _TOKEN_METRIC_SCALARS
-                or key.endswith("tokens")
-                or key.endswith("tokencount")
-            )
+            and _token_metric_key(key)
         )
         if numeric_metric:
             return False
-        if key in _TOKEN_METRIC_CONTAINERS and isinstance(item, (dict, list, tuple)):
+        if key in _TOKEN_METRIC_CONTAINERS and (
+            item is None or isinstance(item, (dict, list, tuple))
+        ):
             return False
         return True
     return key in _SENSITIVE_NAMES or key.endswith(_SENSITIVE_SUFFIXES)

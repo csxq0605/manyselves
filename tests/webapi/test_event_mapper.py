@@ -487,6 +487,124 @@ def test_config_change_redacts_old_and_new_independently_with_value_aware_rules(
     assert mapped.payload["new_value"] == expected_new
 
 
+def test_auth_headers_jwt_and_scalar_auth_redact_while_auth_containers_recurse() -> None:
+    error = Error(
+        source="provider",
+        message="Bearer authentication is supported",
+        details={
+            "authHeader": "opaque-header-value",
+            "jwt": "opaque-jwt-value",
+            "jwtToken": 123456,
+            "auth": {
+                "method": "oauth2",
+                "accessToken": "nested-access-value",
+                "description": "Basic authentication is supported",
+            },
+        },
+        timestamp=NOW,
+    )
+    tool = ToolResult(
+        agent_type="main",
+        tool_name="provider_probe",
+        result={
+            "auth": b"opaque-auth-bytes",
+            "authHeader": {"value": "nested-header-value"},
+            "jwt": ["jwt-part-one", "jwt-part-two"],
+            "authentication": "Bearer authentication remains documented",
+        },
+        timestamp=NOW,
+    )
+
+    error_payload = EventMapper().map(error, context=context()).payload
+    tool_payload = EventMapper().map(tool, context=context()).payload
+
+    assert error_payload["message"] == "Bearer authentication is supported"
+    assert error_payload["details"]["authHeader"] == "[REDACTED]"
+    assert error_payload["details"]["jwt"] == "[REDACTED]"
+    assert error_payload["details"]["jwtToken"] == "[REDACTED]"
+    assert error_payload["details"]["auth"] == {
+        "method": "oauth2",
+        "accessToken": "[REDACTED]",
+        "description": "Basic authentication is supported",
+    }
+    assert tool_payload["result"]["auth"] == "[REDACTED]"
+    assert tool_payload["result"]["authHeader"] == "[REDACTED]"
+    assert tool_payload["result"]["jwt"] == "[REDACTED]"
+    assert tool_payload["result"]["authentication"] == (
+        "Bearer authentication remains documented"
+    )
+
+
+def test_optional_token_metrics_preserve_none_but_unknown_and_credential_tokens_redact() -> None:
+    message = Error(
+        source="provider",
+        message="failed",
+        details={
+            "max_tokens": None,
+            "working_memory_tokens": None,
+            "max_total_tokens": None,
+            "prompt_tokens": None,
+            "token_count": None,
+            "token_usage": None,
+            "mystery_token": None,
+            "accessToken": None,
+            "auth": None,
+        },
+        timestamp=NOW,
+    )
+
+    details = EventMapper().map(message, context=context()).payload["details"]
+
+    for key in (
+        "max_tokens",
+        "working_memory_tokens",
+        "max_total_tokens",
+        "prompt_tokens",
+        "token_count",
+        "token_usage",
+    ):
+        assert details[key] is None
+    for key in ("mystery_token", "accessToken", "auth"):
+        assert details[key] == "[REDACTED]"
+
+
+def test_config_change_optional_metric_old_and_new_values_remain_independent() -> None:
+    metric = EventMapper().map(
+        ConfigChange(
+            config_type="max_tokens",
+            old_value=None,
+            new_value=4096,
+            timestamp=NOW,
+        ),
+        context=context(),
+    )
+    usage = EventMapper().map(
+        ConfigChange(
+            config_type="token_usage",
+            old_value=None,
+            new_value={"input_tokens": 1, "output_tokens": 2},
+            timestamp=NOW,
+        ),
+        context=context(),
+    )
+    credential = EventMapper().map(
+        ConfigChange(
+            config_type="jwtToken",
+            old_value=None,
+            new_value=123,
+            timestamp=NOW,
+        ),
+        context=context(),
+    )
+
+    assert metric.payload["old_value"] is None
+    assert metric.payload["new_value"] == 4096
+    assert usage.payload["old_value"] is None
+    assert usage.payload["new_value"] == {"input_tokens": 1, "output_tokens": 2}
+    assert credential.payload["old_value"] == "[REDACTED]"
+    assert credential.payload["new_value"] == "[REDACTED]"
+
+
 def test_mapper_normalizes_top_level_and_payload_datetimes_to_utc() -> None:
     """Mixed local/offset timestamps must not make ordering ambiguous to remote clients."""
     offset_time = datetime(2026, 7, 31, 12, 30, tzinfo=timezone(timedelta(hours=8)))
