@@ -212,6 +212,10 @@ class RuntimeHost:
             if self._state is not _LifecycleState.STOPPED:
                 self._state = _LifecycleState.FAILED
 
+    async def fail_consistency(self) -> None:
+        """Enter FAILED while retaining loop/task ownership for orderly cleanup."""
+        await self.mark_failed()
+
     def _bind_manager(self, manager: LoopManager | None, workspace: Path | None) -> None:
         """Change host/backend manager ownership together without an await boundary."""
         self._loop_manager = manager

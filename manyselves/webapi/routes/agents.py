@@ -11,6 +11,7 @@ from ...application.errors import (
     CheckpointNotFoundError,
     CommandIdConflictError,
     MaintenanceQuiescedError,
+    RuntimeConsistencyFailedError,
     RuntimeNotReadyError,
 )
 from ...application.models import (
@@ -49,6 +50,8 @@ def _error(error: Exception) -> ApiError:
         return ApiError(status_code=423, code=error.code, message=str(error), retryable=False)
     if isinstance(error, RuntimeNotReadyError):
         return ApiError(status_code=503, code=error.code, message=str(error), retryable=True)
+    if isinstance(error, RuntimeConsistencyFailedError):
+        return ApiError(status_code=500, code=error.code, message=str(error), retryable=False)
     if isinstance(error, MaintenanceQuiescedError):
         return ApiError(status_code=409, code=error.code, message=str(error), retryable=True)
     raise error
@@ -125,6 +128,7 @@ async def edit_resend(
         return await request.app.state.runtime_facade.edit_resend(
             command,
             prepare=lambda: service.prepare_edit_resend(agent_id, target_message_id),
+            restore=service.restore,
         )
     except (
         AgentNotFoundError,
@@ -133,6 +137,7 @@ async def edit_resend(
         MaintenanceQuiescedError,
         CommandIdConflictError,
         ConversationNotFoundError,
+        RuntimeConsistencyFailedError,
     ) as error:
         raise _error(error) from error
 
@@ -205,14 +210,13 @@ async def rollback(
                 agent_id=agent_id,
                 checkpoint_id=body.checkpoint_id,
             ),
-            before_restore=(
-                (lambda: service.require_message(agent_id, body.target_message_id))
-                if body.target_message_id is not None
-                else None
+            before_restore=lambda: service.prepare_rollback(
+                agent_id, body.target_message_id
             ),
-            after_restore=lambda restored: service.apply_rollback(
+            after_restore=lambda restored, _snapshot: service.apply_rollback(
                 agent_id, body.target_message_id, restored.conversation_history
             ),
+            restore=service.restore,
         )
         return RollbackResponse(
             commandId=command_id,
@@ -227,5 +231,6 @@ async def rollback(
         MaintenanceQuiescedError,
         CommandIdConflictError,
         ConversationNotFoundError,
+        RuntimeConsistencyFailedError,
     ) as error:
         raise _error(error) from error

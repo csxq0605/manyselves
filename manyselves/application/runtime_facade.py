@@ -18,6 +18,7 @@ from .errors import (
     MaintenanceQuiescedError,
     MaintenanceTokenMismatchError,
     RuntimeBusyError,
+    RuntimeConsistencyFailedError,
     RuntimeNotReadyError,
 )
 from .legacy_runtime_adapter import LegacyRuntimeAdapter
@@ -57,7 +58,24 @@ OperationKind = Literal[
 class _CachedCommand:
     operation: OperationKind
     payload: SemanticPayload
-    response: CommandResponse
+    response: CommandResponse | None
+    consistency_failed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _DefiniteOutcome:
+    value: Any = None
+    error: BaseException | None = None
+    caller_cancelled: bool = False
+
+
+class _CommittedCallerCancellation(BaseException):
+    def __init__(self, response: CommandResponse) -> None:
+        self.response = response
+
+
+class _CommittedConsistencyFailure(BaseException):
+    pass
 
 
 def _backend_context_text(value: Any) -> str:
@@ -247,19 +265,42 @@ class RuntimeFacade:
         self,
         command: EditResendCommand,
         *,
-        prepare: Callable[[], Awaitable[None]],
+        prepare: Callable[[], Awaitable[Any]],
+        restore: Callable[[Any], Awaitable[None]] | None = None,
     ) -> AcceptedCommand:
         """Atomically truncate/synchronize a turn before publishing its replacement."""
 
         async def invoke() -> AcceptedCommand:
-            await prepare()
-            await self._host.backend.send_user_message(
-                command.content,
-                command.agent_id,
-                message_id=command.message_id,
-                source=command.source,
+            prepared = await self._await_definite(prepare())
+            if prepared.error is not None:
+                raise prepared.error
+            snapshot = prepared.value
+            published = await self._await_definite(
+                self._host.backend.send_user_message(
+                    command.content,
+                    command.agent_id,
+                    message_id=command.message_id,
+                    source=command.source,
+                )
             )
-            return AcceptedCommand(command_id=command.command_id)
+            cancelled = prepared.caller_cancelled or published.caller_cancelled
+            if published.error is not None:
+                if restore is not None:
+                    restored = await self._await_definite(restore(snapshot))
+                    cancelled = cancelled or restored.caller_cancelled
+                    if restored.error is not None:
+                        published.error.add_note(
+                            f"Edit-resend compensation failed: {restored.error!r}"
+                        )
+                        await self._fail_consistency()
+                        raise _CommittedConsistencyFailure() from restored.error
+                if cancelled:
+                    raise asyncio.CancelledError
+                raise published.error
+            response = AcceptedCommand(command_id=command.command_id)
+            if cancelled:
+                raise _CommittedCallerCancellation(response)
+            return response
 
         return await self._mutate("edit_resend", command, AcceptedCommand, invoke)
 
@@ -281,26 +322,54 @@ class RuntimeFacade:
         self,
         command: RollbackCommand,
         *,
-        before_restore: Callable[[], None] | None = None,
-        after_restore: Callable[[RollbackResult], Awaitable[None]] | None = None,
+        before_restore: Callable[[], Awaitable[Any]] | None = None,
+        after_restore: Callable[[RollbackResult, Any], Awaitable[None]] | None = None,
+        restore: Callable[[Any], Awaitable[None]] | None = None,
     ) -> RollbackResult:
         """Rollback an agent and preserve the backend's client-facing result data."""
 
         async def invoke() -> RollbackResult:
+            snapshot: Any = None
+            cancelled = False
             if before_restore is not None:
-                before_restore()
-            try:
-                result = await self._host.backend.rollback_to_checkpoint(
+                prepared = await self._await_definite(before_restore())
+                cancelled = prepared.caller_cancelled
+                if prepared.error is not None:
+                    raise prepared.error
+                snapshot = prepared.value
+            prepare_backend = getattr(self._host.backend, "prepare_rollback", None)
+            if callable(prepare_backend):
+                preflight = await self._await_definite(
+                    prepare_backend(command.agent_id, command.checkpoint_id)
+                )
+                cancelled = cancelled or preflight.caller_cancelled
+                if preflight.error is not None:
+                    self._raise_checkpoint_error(preflight.error, command.checkpoint_id)
+
+            committed = await self._await_definite(
+                self._host.backend.rollback_to_checkpoint(
                     command.agent_id,
                     command.checkpoint_id,
                 )
-            except ValueError as exc:
-                if "checkpoint" in str(exc).casefold() and "not found" in str(exc).casefold():
-                    raise CheckpointNotFoundError(command.checkpoint_id) from exc
-                raise
-            restored = RollbackResult.model_validate(result)
+            )
+            cancelled = cancelled or committed.caller_cancelled
+            if committed.error is not None:
+                self._raise_checkpoint_error(committed.error, command.checkpoint_id)
+            restored = RollbackResult.model_validate(committed.value)
             if after_restore is not None:
-                await after_restore(restored)
+                durable = await self._await_definite(after_restore(restored, snapshot))
+                cancelled = cancelled or durable.caller_cancelled
+                if durable.error is not None:
+                    if restore is not None:
+                        compensation = await self._await_definite(restore(snapshot))
+                        if compensation.error is not None:
+                            durable.error.add_note(
+                                f"Rollback compensation failed: {compensation.error!r}"
+                            )
+                    await self._fail_consistency()
+                    raise _CommittedConsistencyFailure() from durable.error
+            if cancelled:
+                raise _CommittedCallerCancellation(restored)
             return restored
 
         return await self._mutate(
@@ -320,31 +389,92 @@ class RuntimeFacade:
         async with self._mutation_lock:
             self.leases.require(command.lease_token)
             self._require_mutable()
-            if not self._host.is_ready:
-                raise RuntimeNotReadyError()
-            self._require_known_agent(command.agent_id)
-
             workspace = str(self._host.workspace) if self._host.workspace is not None else None
             payload = (workspace, *_semantic_payload(command))
             cached = self._command_cache.get(command.command_id)
             if cached is not None:
                 if cached.operation != operation or cached.payload != payload:
                     raise CommandIdConflictError()
+                if cached.consistency_failed:
+                    raise RuntimeConsistencyFailedError()
                 if not isinstance(cached.response, response_type):
                     raise AssertionError("Command cache response type invariant violated")
                 return cast(ResponseT, cached.response)
 
-            response = await invoke()
+            if not self._host.is_ready:
+                raise RuntimeNotReadyError()
+            self._require_known_agent(command.agent_id)
+
+            try:
+                response = await invoke()
+            except _CommittedCallerCancellation as cancellation:
+                if not isinstance(cancellation.response, response_type):
+                    raise AssertionError("Command response type invariant violated")
+                self._cache(operation, command.command_id, payload, cancellation.response)
+                raise asyncio.CancelledError
+            except _CommittedConsistencyFailure:
+                self._cache(operation, command.command_id, payload, None, failed=True)
+                raise RuntimeConsistencyFailedError()
             if not isinstance(response, response_type):
                 raise AssertionError("Command response type invariant violated")
-            self._command_cache[command.command_id] = _CachedCommand(
+            self._cache(operation, command.command_id, payload, response)
+            return response
+
+    def _cache(
+        self,
+        operation: OperationKind,
+        command_id: UUID,
+        payload: SemanticPayload,
+        response: CommandResponse | None,
+        *,
+        failed: bool = False,
+    ) -> None:
+        self._command_cache[command_id] = _CachedCommand(
                 operation=operation,
                 payload=payload,
                 response=response,
+                consistency_failed=failed,
             )
-            while len(self._command_cache) > self._command_cache_size:
-                self._command_cache.popitem(last=False)
-            return response
+        while len(self._command_cache) > self._command_cache_size:
+            self._command_cache.popitem(last=False)
+
+    async def _fail_consistency(self) -> None:
+        boundary = getattr(self._host, "fail_consistency", None)
+        if not callable(boundary):
+            boundary = self._host.mark_failed
+        await boundary()
+
+    @staticmethod
+    def _raise_checkpoint_error(error: BaseException, checkpoint_id: str) -> None:
+        if isinstance(error, ValueError):
+            text = str(error).casefold()
+            if "checkpoint" in text and "not found" in text:
+                raise CheckpointNotFoundError(checkpoint_id) from error
+        raise error
+
+    @staticmethod
+    async def _await_definite(awaitable: Awaitable[Any]) -> _DefiniteOutcome:
+        """Wait for an owned task's definite outcome despite caller cancellation."""
+        task = asyncio.create_task(awaitable)
+        caller_cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                if task.done():
+                    break
+                caller_cancelled = True
+                current = asyncio.current_task()
+                if current is not None:
+                    current.uncancel()
+            except BaseException:
+                break
+        try:
+            return _DefiniteOutcome(
+                value=task.result(), caller_cancelled=caller_cancelled
+            )
+        except BaseException as error:
+            return _DefiniteOutcome(error=error, caller_cancelled=caller_cancelled)
 
     async def quiesce(
         self,

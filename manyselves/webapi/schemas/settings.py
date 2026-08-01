@@ -50,3 +50,10 @@ class SettingsDefaultsUpdate(BaseModel):
     active_provider_id: str | None = Field(default=None, alias="activeProviderId")
     model: str | None = None
     provider: str | None = None
+
+    @field_validator("active_provider_id", "model", "provider")
+    @classmethod
+    def reject_explicit_null_defaults(cls, value):
+        if value is None:
+            raise ValueError("field may be omitted but must not be null")
+        return value

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +22,7 @@ from ..interfaces.types import (
     ToolResult,
     UserMessage,
 )
+from .errors import RuntimeBusyError
 from .runtime_facade import RuntimeFacade
 
 
@@ -28,6 +32,18 @@ class ConversationNotFoundError(LookupError):
 
 class ConversationInvalidError(ValueError):
     code = "INVALID_CONVERSATION"
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationTransactionSnapshot:
+    agent_id: str
+    session_id: str
+    path: Path
+    existed: bool
+    durable_bytes: bytes
+    backend_history: list[dict[str, Any]]
+    loop_history: list[Any] | None
+    streams: dict[tuple[str, str, str], str]
 
 
 class ConversationService:
@@ -45,7 +61,9 @@ class ConversationService:
         self.facade = facade
         self._bus = bus
         self._pending_writes = 0
-        self._streams: dict[str, str] = {}
+        self._streams: dict[tuple[str, str, str], str] = {}
+        self._message_sessions: dict[tuple[str, str], str] = {}
+        self._closed = False
         bus.subscribe(Message, self._on_message)
 
     def rebind(self, workspace: Path) -> None:
@@ -53,6 +71,7 @@ class ConversationService:
         self.workspace = Path(workspace).resolve()
         self.store = ConversationStore(self.workspace)
         self._streams.clear()
+        self._message_sessions.clear()
 
     def list(self, agent_id: str = "main") -> tuple[list[dict], str]:
         items = self.store.get_sessions(agent_id)
@@ -99,8 +118,11 @@ class ConversationService:
     async def delete(self, session_id: str, agent_id: str = "main") -> str:
         if not any(item.get("id") == session_id for item in self.store._load_sessions_metadata()):  # noqa: SLF001
             raise ConversationNotFoundError(session_id)
+        current_ids = dict(self.store._current_session_ids)  # noqa: SLF001
+        affected = [item for item, active in current_ids.items() if active == session_id]
         self.store.delete_session(session_id)
-        await self._sync(agent_id, clear_pending=True)
+        for affected_agent in affected:
+            await self._sync(affected_agent, clear_pending=True)
         return self.store.get_current_session_id(agent_id)
 
     async def clear(self, agent_id: str = "main") -> str:
@@ -111,12 +133,21 @@ class ConversationService:
     def messages(self, agent_id: str = "main") -> list[dict[str, Any]]:
         return self.store.load_messages(agent_id)
 
-    async def prepare_edit_resend(self, agent_id: str, target_message_id: str) -> None:
-        if not self.store.truncate_from_message(
-            agent_id, message_id=target_message_id, role="user"
-        ):
-            raise ConversationNotFoundError(target_message_id)
-        await self._sync(agent_id, clear_pending=True)
+    async def prepare_edit_resend(
+        self, agent_id: str, target_message_id: str
+    ) -> ConversationTransactionSnapshot:
+        self.require_message(agent_id, target_message_id, role="user")
+        snapshot = self.snapshot(agent_id)
+        try:
+            if not self.store.truncate_from_message(
+                agent_id, message_id=target_message_id, role="user"
+            ):
+                raise AssertionError("prevalidated edit target disappeared")
+            await self._sync(agent_id, clear_pending=True)
+        except BaseException:
+            await self.restore(snapshot)
+            raise
+        return snapshot
 
     async def apply_rollback(
         self,
@@ -136,13 +167,73 @@ class ConversationService:
             clear_pending=True,
         )
 
-    def require_message(self, agent_id: str, message_id: str) -> None:
+    def require_message(
+        self, agent_id: str, message_id: str, *, role: str | None = None
+    ) -> None:
         """Validate a durable rollback/edit target before irreversible work."""
         if not any(
             item.get("message_id") == message_id
+            and (role is None or item.get("role") == role)
             for item in self.store.load_messages(agent_id, limit=10_000)
         ):
             raise ConversationNotFoundError(message_id)
+
+    def snapshot(self, agent_id: str) -> ConversationTransactionSnapshot:
+        """Capture exact durable bytes and the live loop history before mutation."""
+        session_id = self.store.get_current_session_id(agent_id)
+        path = self.workspace / ".manyselves" / "conversations" / agent_id / f"{session_id}.jsonl"
+        loop_history: list[Any] | None = None
+        manager = self.facade._host.loop_manager  # noqa: SLF001
+        get_loop = getattr(manager, "get_loop", None)
+        loop = get_loop(agent_id) if callable(get_loop) else None
+        current_history = getattr(loop, "_conversation_history", None)
+        if isinstance(current_history, list):
+            loop_history = copy.deepcopy(current_history)
+        return ConversationTransactionSnapshot(
+            agent_id=agent_id,
+            session_id=session_id,
+            path=path,
+            existed=path.exists(),
+            durable_bytes=path.read_bytes() if path.exists() else b"",
+            backend_history=self._backend_messages(agent_id),
+            loop_history=loop_history,
+            streams=dict(self._streams),
+        )
+
+    async def prepare_rollback(
+        self, agent_id: str, target_message_id: str | None
+    ) -> ConversationTransactionSnapshot:
+        if target_message_id is not None:
+            self.require_message(agent_id, target_message_id)
+        return self.snapshot(agent_id)
+
+    async def restore(self, snapshot: ConversationTransactionSnapshot) -> None:
+        """Restore an application snapshot exactly, including durable JSONL bytes."""
+        snapshot.path.parent.mkdir(parents=True, exist_ok=True)
+        if snapshot.existed:
+            snapshot.path.write_bytes(snapshot.durable_bytes)
+            with snapshot.path.open("rb") as handle:
+                os.fsync(handle.fileno())
+        else:
+            snapshot.path.unlink(missing_ok=True)
+        if not self.store.switch_session(snapshot.session_id, snapshot.agent_id):
+            self.store._current_session_ids[snapshot.agent_id] = snapshot.session_id  # noqa: SLF001
+        self._streams = dict(snapshot.streams)
+
+        manager = self.facade._host.loop_manager  # noqa: SLF001
+        get_loop = getattr(manager, "get_loop", None)
+        loop = get_loop(snapshot.agent_id) if callable(get_loop) else None
+        current_history = getattr(loop, "_conversation_history", None)
+        if snapshot.loop_history is not None and isinstance(current_history, list):
+            current_history.clear()
+            current_history.extend(copy.deepcopy(snapshot.loop_history))
+        else:
+            await self.facade._host.backend.sync_agent_conversation(  # noqa: SLF001
+                snapshot.agent_id,
+                snapshot.backend_history,
+                session_id=snapshot.session_id,
+                clear_pending=True,
+            )
 
     def flush(self) -> None:
         root = self.workspace / ".manyselves" / "conversations"
@@ -152,9 +243,30 @@ class ConversationService:
                     os.fsync(handle.fileno())
         self._fsync_directories(root)
 
+    def require_switch_safe(self) -> None:
+        """Reject session switches while a turn or persistence callback owns state."""
+        statuses = self.facade.snapshot().agent_statuses.values()
+        if (
+            any(status != "idle" for status in statuses)
+            or self.pending_persistence
+            or bool(self._streams)
+        ):
+            raise RuntimeBusyError()
+
+    async def close(self) -> None:
+        """Drain queued persistence, unsubscribe, and fsync before host shutdown."""
+        if self._closed:
+            return
+        queue = getattr(self._bus, "_queue", None)
+        while self._pending_writes > 0 or (queue is not None and not queue.empty()):
+            await asyncio.sleep(0)
+        self._bus.unsubscribe(Message, self._on_message)
+        self.flush()
+        self._closed = True
+
     async def _sync(self, agent_id: str, *, clear_pending: bool = False) -> None:
         if clear_pending:
-            self._streams.pop(agent_id, None)
+            self._clear_agent_state(agent_id)
         await self.facade._host.backend.sync_agent_conversation(  # noqa: SLF001
             agent_id,
             self._backend_messages(agent_id),
@@ -176,8 +288,12 @@ class ConversationService:
         try:
             async with self.facade.persistence_transaction():
                 if isinstance(message, UserMessage) and not message.internal:
+                    agent_id = str(message.agent_type)
+                    session_id = self.store.get_current_session_id(agent_id)
+                    if message.message_id:
+                        self._message_sessions[(agent_id, message.message_id)] = session_id
                     self.store.append_message(
-                        str(message.agent_type),
+                        agent_id,
                         "user",
                         message.content,
                         {"source": message.source, "message_id": message.message_id},
@@ -207,6 +323,8 @@ class ConversationService:
                     )
                 elif isinstance(message, (ReportMessage, SystemNotice, Error)):
                     agent_id = str(getattr(message, "agent_type", "main"))
+                    if isinstance(message, Error):
+                        self._clear_agent_state(agent_id)
                     content = str(
                         getattr(message, "content", "")
                         or getattr(message, "message", "")
@@ -219,7 +337,12 @@ class ConversationService:
         agent_id = str(message.agent_type)
         if message.thinking is not None:
             return
-        previous = self._streams.get(agent_id, "")
+        message_id = str(message.message_id or "")
+        session_id = self._message_sessions.get(
+            (agent_id, message_id), self.store.get_current_session_id(agent_id)
+        )
+        stream_key = (session_id, agent_id, message_id)
+        previous = self._streams.get(stream_key, "")
         incoming = message.content
         if not incoming:
             merged = previous
@@ -230,14 +353,28 @@ class ConversationService:
         else:
             merged = previous + incoming
         if message.streaming:
-            self._streams[agent_id] = merged
+            self._streams[stream_key] = merged
             return
         final = merged or previous
-        self._streams.pop(agent_id, None)
+        self._streams.pop(stream_key, None)
+        self._message_sessions.pop((agent_id, message_id), None)
         if final:
-            self.store.append_message(
+            target_store = self.store
+            if session_id != self.store.get_current_session_id(agent_id):
+                target_store = ConversationStore(self.workspace)
+                if not target_store.switch_session(session_id, agent_id):
+                    return
+            target_store.append_message(
                 agent_id, "agent", final, {"message_id": message.message_id}
             )
+
+    def _clear_agent_state(self, agent_id: str) -> None:
+        self._streams = {
+            key: value for key, value in self._streams.items() if key[1] != agent_id
+        }
+        self._message_sessions = {
+            key: value for key, value in self._message_sessions.items() if key[0] != agent_id
+        }
 
     def _session(self, session_id: str, agent_id: str) -> dict[str, Any]:
         metadata = next(

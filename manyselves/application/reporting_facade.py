@@ -1,5 +1,6 @@
 """HTTP-safe wrapper over the existing reporting controller and persisted store."""
 
+import asyncio
 import hashlib
 import json
 import os
@@ -23,6 +24,10 @@ class ReportingNotFoundError(LookupError):
 
 class ReportingInvalidTransitionError(ValueError):
     code = "REPORT_INVALID_TRANSITION"
+
+
+class ReportingStateInvalidError(RuntimeError):
+    code = "REPORT_STATE_INVALID"
 
 
 class ReportingFacade:
@@ -67,7 +72,11 @@ class ReportingFacade:
 
     def list_runs(self) -> list[dict[str, Any]]:
         runs_root = self.workspace / "Work/runs"
-        ids = {path.name for path in runs_root.iterdir() if path.is_dir()} if runs_root.exists() else set()
+        ids = {
+            path.name
+            for path in runs_root.iterdir()
+            if path.is_dir() and not path.is_symlink()
+        } if runs_root.exists() else set()
         if runs_root.exists():
             ids.update(path.stem for path in runs_root.glob("*.json"))
         result = []
@@ -81,12 +90,17 @@ class ReportingFacade:
     def snapshot(self, run_id: str) -> dict[str, Any]:
         self._safe_id(run_id)
         root = self.workspace / "Work/runs" / run_id
+        if root.is_symlink() or (
+            root.exists() and not root.resolve().is_relative_to(self.workspace)
+        ):
+            raise ReportingNotFoundError(run_id)
         result = self._json(self.workspace / "Work/runs" / f"{run_id}.json")
         state = self._json(root / "workflow-state.json")
         if not result and not state and not root.exists():
             raise ReportingNotFoundError(run_id)
         live = self.controller.status(run_id) if self.controller is not None else {}
         run = {"run_id": run_id, **result}
+        run["active"] = bool(live.get("active", False))
         if live.get("active"):
             run["status"] = live.get("status", run.get("status", "running"))
             run["active"] = True
@@ -183,11 +197,14 @@ class ReportingFacade:
     def flush(self) -> None:
         runs = self.workspace / "Work/runs"
         for path in runs.rglob("*") if runs.exists() else ():
-            if path.is_file() and path.name != ".active.lock":
+            if path.is_file() and not path.is_symlink() and path.name != ".active.lock":
                 with path.open("rb") as handle:
                     os.fsync(handle.fileno())
         if os.name == "posix" and runs.exists():
-            directories = [runs, *(path for path in runs.rglob("*") if path.is_dir())]
+            directories = [
+                runs,
+                *(path for path in runs.rglob("*") if path.is_dir() and not path.is_symlink()),
+            ]
             for path in sorted(
                 directories, key=lambda item: len(item.parts), reverse=True
             ):
@@ -198,6 +215,20 @@ class ReportingFacade:
                     os.fsync(descriptor)
                 finally:
                     os.close(descriptor)
+
+    async def close(self) -> None:
+        """Cancel and join controller-owned reporting tasks before runtime stop."""
+        tasks = list(
+            getattr(self.controller, "_tasks", {}).values()
+            if self.controller is not None
+            else ()
+        )
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self.flush()
 
     def _command(
         self,
@@ -232,13 +263,17 @@ class ReportingFacade:
 
     @staticmethod
     def _json(path: Path) -> dict[str, Any]:
+        if path.is_symlink():
+            raise ReportingStateInvalidError("Reporting state must not be a symlink")
         if not path.is_file():
             return {}
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        return value if isinstance(value, dict) else {}
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ReportingStateInvalidError("Persisted reporting state is invalid") from exc
+        if not isinstance(value, dict):
+            raise ReportingStateInvalidError("Persisted reporting state is invalid")
+        return value
 
     @staticmethod
     def _sha256(path: Path) -> str:

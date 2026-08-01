@@ -67,6 +67,7 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             conversations,
             reporting,
             python_runs,
+            config_manager=getattr(host, "config_manager", None),
         )
         app.state.conversation_service = conversations
         app.state.reporting_facade = reporting
@@ -90,6 +91,12 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             python_runs = getattr(app.state, "python_run_service", None)
             if python_runs is not None:
                 await python_runs.close()
+            reporting = getattr(app.state, "reporting_facade", None)
+            if reporting is not None:
+                await reporting.close()
+            conversations = getattr(app.state, "conversation_service", None)
+            if conversations is not None:
+                await conversations.close()
             await host.stop()
         finally:
             async with app.state.lifecycle_lock:

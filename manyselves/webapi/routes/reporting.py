@@ -13,6 +13,7 @@ from ...application.errors import (
 from ...application.reporting_facade import (
     ReportingInvalidTransitionError,
     ReportingNotFoundError,
+    ReportingStateInvalidError,
 )
 from ..errors import ApiError
 from ..schemas.reporting import (
@@ -34,6 +35,8 @@ def _error(error: Exception) -> ApiError:
         return ApiError(status_code=404, code=error.code, message="Reporting run was not found", retryable=False)
     if isinstance(error, ReportingInvalidTransitionError):
         return ApiError(status_code=422, code=error.code, message=str(error), retryable=False)
+    if isinstance(error, ReportingStateInvalidError):
+        return ApiError(status_code=500, code=error.code, message=str(error), retryable=False)
     if isinstance(error, FileNotFoundError):
         return ApiError(status_code=404, code="REPORT_RUN_NOT_FOUND", message=str(error), retryable=False)
     if isinstance(error, ValueError):
@@ -60,8 +63,11 @@ def _accepted(command_id: UUID, payload: dict) -> ReportingAcceptedResponse:
 @router.get("/runs", response_model=ReportingListResponse)
 async def list_runs(request: Request):
     facade = request.app.state.runtime_facade
-    async with facade.read_transaction():
-        return ReportingListResponse(runs=request.app.state.reporting_facade.list_runs())
+    try:
+        async with facade.read_transaction():
+            return ReportingListResponse(runs=request.app.state.reporting_facade.list_runs())
+    except Exception as error:
+        raise _error(error) from error
 
 
 @router.get("/runs/{run_id}", response_model=ReportingSnapshotResponse)
@@ -72,7 +78,7 @@ async def get_run(run_id: str, request: Request):
             return ReportingSnapshotResponse.model_validate(
                 request.app.state.reporting_facade.snapshot(run_id)
             )
-    except ReportingNotFoundError as error:
+    except Exception as error:
         raise _error(error) from error
 
 

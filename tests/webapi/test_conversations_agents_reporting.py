@@ -5,14 +5,16 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import UUID
 
 import httpx
 import pytest
 from pydantic import SecretStr
 
+from manyselves.application.models import EditResendCommand
 from manyselves.config.schema import ApiConfig, AppConfig, ProvidersConfig
 from manyselves.core.loops.bus import MessageBus
-from manyselves.interfaces.types import AgentResponse, UserMessage
+from manyselves.interfaces.types import AgentResponse, Error, UserMessage
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.settings import WebSettings
@@ -25,6 +27,12 @@ class _Backend:
         self.synced: list[tuple[str, list[dict], str | None, bool]] = []
         self.interrupted: list[str] = []
         self.rollbacks: list[tuple[str, str]] = []
+        self.rollback_preparations: list[tuple[str, str]] = []
+        self.send_attempts = 0
+        self.send_error: BaseException | None = None
+        self.send_started = asyncio.Event()
+        self.send_release: asyncio.Event | None = None
+        self.sync_failures_remaining = 0
 
     async def send_user_message(
         self,
@@ -33,6 +41,12 @@ class _Backend:
         message_id: str | None = None,
         source: str = "user",
     ) -> None:
+        self.send_attempts += 1
+        self.send_started.set()
+        if self.send_release is not None:
+            await self.send_release.wait()
+        if self.send_error is not None:
+            raise self.send_error
         self.sent.append((content, agent_type, message_id, source))
         await self.host.bus.publish(
             UserMessage(
@@ -51,12 +65,16 @@ class _Backend:
 
     async def rollback_to_checkpoint(self, agent_type: str, checkpoint_id: str) -> dict:
         self.rollbacks.append((agent_type, checkpoint_id))
-        if checkpoint_id == "missing-cp":
-            raise ValueError("Checkpoint not found: missing-cp")
         return {
             "restored_files": 2,
             "conversation_history": [{"role": "user", "content": "before"}],
         }
+
+    async def prepare_rollback(self, agent_type: str, checkpoint_id: str) -> dict:
+        self.rollback_preparations.append((agent_type, checkpoint_id))
+        if checkpoint_id == "missing-cp":
+            raise ValueError("Checkpoint not found: missing-cp")
+        return {"checkpoint_id": checkpoint_id, "effect_paths": []}
 
     async def sync_agent_conversation(
         self,
@@ -65,6 +83,9 @@ class _Backend:
         session_id: str | None = None,
         clear_pending: bool = False,
     ) -> None:
+        if self.sync_failures_remaining:
+            self.sync_failures_remaining -= 1
+            raise RuntimeError("injected conversation sync failure")
         self.synced.append((agent_type, list(messages or []), session_id, clear_pending))
 
 
@@ -146,6 +167,9 @@ class ResourceRuntimeHost:
     async def switch_workspace(self, workspace: Path) -> None:
         self.workspace = Path(workspace).resolve()
         self.reporting_controller = _ReportingController(self.workspace)
+
+    async def mark_failed(self) -> None:
+        self.is_ready = False
 
 
 @pytest.fixture
@@ -237,6 +261,73 @@ async def test_session_activation_syncs_durable_history_under_runtime_lock(resou
 
 
 @pytest.mark.asyncio
+async def test_conversation_activation_rejects_active_agent(resources) -> None:
+    client, host, _, _ = resources
+    first = await client.post("/api/v1/conversations", json={"name": "First"})
+    await client.post("/api/v1/conversations", json={"name": "Second"})
+    host.statuses = {"main": "thinking"}
+
+    response = await client.post(
+        f"/api/v1/conversations/{first.json()['sessionId']}/activate"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "RUNTIME_BUSY"
+
+
+@pytest.mark.asyncio
+async def test_agent_response_is_persisted_to_captured_turn_session(resources) -> None:
+    _, host, _, _ = resources
+    service = host.app.state.conversation_service
+    first = service.create("First", "main")["id"]
+    await service._on_message(  # noqa: SLF001
+        UserMessage(agent_type="main", content="turn", message_id="captured-turn")
+    )
+    second = service.create("Second", "main")["id"]
+
+    await service._on_message(  # noqa: SLF001
+        AgentResponse(
+            agent_type="main",
+            content="belongs to first",
+            message_id="captured-turn",
+            streaming=False,
+        )
+    )
+
+    assert service.store.switch_session(first, "main") is True
+    assert any(item.get("content") == "belongs to first" for item in service.messages("main"))
+    assert service.store.switch_session(second, "main") is True
+    assert not any(item.get("content") == "belongs to first" for item in service.messages("main"))
+
+
+@pytest.mark.asyncio
+async def test_delete_shared_session_syncs_every_affected_agent(resources) -> None:
+    _, host, _, _ = resources
+    service = host.app.state.conversation_service
+    shared = service.create("Shared", "main")["id"]
+    assert service.store.switch_session(shared, "critic") is True
+    replacement = service.create("Replacement", "main")["id"]
+    host.backend.synced.clear()
+
+    await service.delete(shared, "main")
+
+    assert "critic" in {item[0] for item in host.backend.synced}
+    assert service.store.get_current_session_id("main") == replacement
+
+
+@pytest.mark.asyncio
+async def test_resource_services_close_owned_callbacks_and_reporting_tasks(resources) -> None:
+    _, host, _, _ = resources
+    task = asyncio.create_task(asyncio.Event().wait())
+    host.reporting_controller._tasks["pending"] = task
+
+    await host.app.state.reporting_facade.close()
+    await host.app.state.conversation_service.close()
+
+    assert task.done()
+
+
+@pytest.mark.asyncio
 async def test_project_activation_rebinds_project_scoped_resource_services(resources) -> None:
     client, host, original_workspace, _ = resources
     created_project = await client.post("/api/v1/projects", json={"projectId": "project-2"})
@@ -282,6 +373,12 @@ async def test_history_replacement_discards_partial_response_buffer(resources) -
     )
     await _eventually(lambda: bool(host.app.state.conversation_service._streams))  # noqa: SLF001
 
+    blocked = await client.post("/api/v1/conversations", json={"name": "Fresh"})
+    assert blocked.status_code == 409
+    await host.bus.publish(
+        Error(agent_type="main", source="agent", message="interrupted")
+    )
+    await _eventually(lambda: not host.app.state.conversation_service._streams)  # noqa: SLF001
     created = await client.post("/api/v1/conversations", json={"name": "Fresh"})
     await host.bus.publish(AgentResponse(agent_type="main", content="fresh", streaming=False))
     await _eventually(
@@ -377,6 +474,119 @@ async def test_edit_resend_truncates_durable_and_in_memory_history_before_send(r
 
 
 @pytest.mark.asyncio
+async def test_edit_resend_publish_failure_restores_exact_durable_turn(resources) -> None:
+    client, host, workspace, _ = resources
+    for message_id, content in (("m1", "first"), ("m2", "keep exact bytes")):
+        await client.post(
+            "/api/v1/agents/main/messages",
+            headers={"Idempotency-Key": f"01000000-0000-4000-8000-00000000000{message_id[-1]}"},
+            json={"content": content, "messageId": message_id},
+        )
+    await _eventually(lambda: len(host.backend.sent) == 2)
+    session_id = json.loads(
+        (workspace / ".manyselves/conversations/sessions.json").read_text("utf-8")
+    )[0]["id"]
+    conversation = workspace / f".manyselves/conversations/main/{session_id}.jsonl"
+    before = conversation.read_bytes()
+    host.backend.send_error = RuntimeError("publish failed before commit")
+
+    response = await client.post(
+        "/api/v1/agents/main/messages/m2/edit-resend",
+        headers={"Idempotency-Key": "01000000-0000-4000-8000-000000000099"},
+        json={"content": "replacement"},
+    )
+
+    assert response.status_code == 500
+    assert conversation.read_bytes() == before
+    assert host.is_ready is True
+    assert host.backend.sent == [
+        ("first", "main", "m1", "user"),
+        ("keep exact bytes", "main", "m2", "user"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_edit_resend_waits_for_publish_commit_and_replays_cache(resources) -> None:
+    client, host, _, _ = resources
+    await client.post(
+        "/api/v1/agents/main/messages",
+        headers={"Idempotency-Key": "02000000-0000-4000-8000-000000000001"},
+        json={"content": "original", "messageId": "m1"},
+    )
+    await _eventually(lambda: len(host.backend.sent) == 1)
+    host.backend.send_started = asyncio.Event()
+    host.backend.send_release = asyncio.Event()
+    attempts_before = host.backend.send_attempts
+    headers = {"Idempotency-Key": "02000000-0000-4000-8000-000000000099"}
+    request_task = asyncio.create_task(
+        client.post(
+            "/api/v1/agents/main/messages/m1/edit-resend",
+            headers=headers,
+            json={"content": "committed"},
+        )
+    )
+    await host.backend.send_started.wait()
+    request_task.cancel()
+    host.backend.send_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await request_task
+
+    replay = await client.post(
+        "/api/v1/agents/main/messages/m1/edit-resend",
+        headers=headers,
+        json={"content": "committed"},
+    )
+
+    assert replay.status_code == 202
+    assert host.backend.send_attempts == attempts_before + 1
+    assert host.backend.sent[-1] == ("committed", "main", "m1", "user")
+
+
+@pytest.mark.asyncio
+async def test_facade_cancellation_retains_edit_resend_publish_and_caches_commit(resources) -> None:
+    client, host, _, _ = resources
+    await client.post(
+        "/api/v1/agents/main/messages",
+        headers={"Idempotency-Key": "02100000-0000-4000-8000-000000000001"},
+        json={"content": "original", "messageId": "m1"},
+    )
+    service = host.app.state.conversation_service
+    await _eventually(lambda: len(service.messages("main")) == 1)
+    host.backend.send_started = asyncio.Event()
+    host.backend.send_release = asyncio.Event()
+    attempts_before = host.backend.send_attempts
+    command = EditResendCommand(
+        command_id=UUID("02100000-0000-4000-8000-000000000099"),
+        lease_token=client.headers["X-Control-Lease-Token"],
+        agent_id="main",
+        content="committed",
+        message_id="m1",
+        target_message_id="m1",
+    )
+
+    task = asyncio.create_task(
+        host.app.state.runtime_facade.edit_resend(
+            command,
+            prepare=lambda: service.prepare_edit_resend("main", "m1"),
+        )
+    )
+    await host.backend.send_started.wait()
+    task.cancel()
+    host.backend.send_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    replay = await host.app.state.runtime_facade.edit_resend(
+        command,
+        prepare=lambda: service.prepare_edit_resend("main", "m1"),
+    )
+
+    assert replay.command_id == command.command_id
+    assert host.backend.send_attempts == attempts_before + 1
+    assert host.backend.sent[-1] == ("committed", "main", "m1", "user")
+
+
+@pytest.mark.asyncio
 async def test_rollback_truncates_durable_tail_after_checkpoint_restore(resources) -> None:
     client, _, workspace, _ = resources
     for message_id, content in (("m1", "before"), ("m2", "rollback target")):
@@ -435,13 +645,49 @@ async def test_missing_checkpoint_fails_before_durable_truncation(resources) -> 
     )
 
     assert response.status_code == 404
-    assert host.backend.rollbacks == [("main", "missing-cp")]
+    assert host.backend.rollback_preparations == [("main", "missing-cp")]
+    assert host.backend.rollbacks == []
     session_id = json.loads(
         (workspace / ".manyselves/conversations/sessions.json").read_text("utf-8")
     )[0]["id"]
     assert "keep me" in (
         workspace / f".manyselves/conversations/main/{session_id}.jsonl"
     ).read_text("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_rollback_postcommit_sync_failure_marks_runtime_consistency_failed(resources) -> None:
+    client, host, workspace, _ = resources
+    await client.post(
+        "/api/v1/agents/main/messages",
+        headers={"Idempotency-Key": "11000000-0000-4000-8000-000000000001"},
+        json={"content": "durable before", "messageId": "m1"},
+    )
+    await _eventually(lambda: (workspace / ".manyselves/conversations/sessions.json").exists())
+    headers = {"Idempotency-Key": "11000000-0000-4000-8000-000000000099"}
+    host.backend.sync_failures_remaining = 1
+
+    first = await client.post(
+        "/api/v1/agents/main/rollback",
+        headers=headers,
+        json={"checkpointId": "cp-1", "targetMessageId": "m1"},
+    )
+    replay = await client.post(
+        "/api/v1/agents/main/rollback",
+        headers=headers,
+        json={"checkpointId": "cp-1", "targetMessageId": "m1"},
+    )
+
+    assert first.status_code == 500
+    assert first.json()["error"] == {
+        "code": "RUNTIME_CONSISTENCY_FAILED",
+        "message": "Runtime consistency could not be guaranteed",
+        "retryable": False,
+        "details": {},
+    }
+    assert replay.json()["error"]["code"] == "RUNTIME_CONSISTENCY_FAILED"
+    assert host.backend.rollbacks == [("main", "cp-1")]
+    assert host.is_ready is False
 
 
 @pytest.mark.asyncio
@@ -471,6 +717,15 @@ async def test_settings_rejects_null_required_fields_and_can_clear_secret(resour
     assert invalid.status_code == 422
     assert cleared.status_code == 200
     assert cleared.json()["providers"][0]["configured"] is False
+
+
+@pytest.mark.asyncio
+async def test_settings_defaults_reject_explicit_null(resources) -> None:
+    client, _, _, _ = resources
+
+    response = await client.patch("/api/v1/settings", json={"model": None})
+
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -519,6 +774,53 @@ async def test_reporting_snapshot_covers_durable_state_and_output_metadata(resou
     assert body["outputs"][0]["path"] == "Outputs/Reports/report.docx"
     assert body["outputs"][0]["size"] == 4
     assert body["outputs"][0]["exists"] is True
+
+
+@pytest.mark.asyncio
+async def test_reporting_persisted_inactive_status_is_explicit(resources) -> None:
+    client, _, workspace, _ = resources
+    (workspace / "Work/runs").mkdir(parents=True, exist_ok=True)
+    (workspace / "Work/runs/inactive.json").write_text(
+        json.dumps({"run_id": "inactive", "status": "needs_user_decision"}),
+        encoding="utf-8",
+    )
+
+    response = await client.get("/api/v1/reporting/runs/inactive")
+
+    assert response.status_code == 200
+    assert response.json()["run"]["status"] == "needs_user_decision"
+    assert response.json()["run"]["active"] is False
+
+
+@pytest.mark.asyncio
+async def test_reporting_malformed_persisted_state_is_not_silently_empty(resources) -> None:
+    client, _, workspace, _ = resources
+    (workspace / "Work/runs").mkdir(parents=True, exist_ok=True)
+    (workspace / "Work/runs/broken.json").write_text("{broken", encoding="utf-8")
+
+    response = await client.get("/api/v1/reporting/runs/broken")
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "REPORT_STATE_INVALID"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="symlink containment contract")
+async def test_reporting_rejects_symlinked_run_directory(resources, tmp_path: Path) -> None:
+    client, _, workspace, _ = resources
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    (outside / "workflow-state.json").write_text(
+        json.dumps({"run_id": "escaped", "status": "completed"}), encoding="utf-8"
+    )
+    runs = workspace / "Work/runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "escaped").symlink_to(outside, target_is_directory=True)
+
+    response = await client.get("/api/v1/reporting/runs/escaped")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "REPORT_RUN_NOT_FOUND"
 
 
 @pytest.mark.asyncio
@@ -660,6 +962,38 @@ async def test_python_status_remains_running_until_pipes_are_drained(resources) 
 
 
 @pytest.mark.asyncio
+async def test_windows_termination_uses_owned_job_object(resources, monkeypatch) -> None:
+    _, host, _, _ = resources
+    service = host.app.state.python_run_service
+    service._platform = "nt"  # noqa: SLF001
+    service._windows_jobs = {123: 456}  # noqa: SLF001
+    closed: list[int] = []
+    monkeypatch.setattr(
+        service, "_close_windows_job", lambda handle: closed.append(handle)
+    )
+    monkeypatch.setattr(
+        os,
+        "killpg",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("POSIX fallback used")),
+    )
+
+    class Process:
+        pid = 123
+        returncode = None
+
+        async def wait(self):
+            self.returncode = -1
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -1
+
+    await service._terminate(Process())  # noqa: SLF001
+
+    assert closed == [456]
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif(os.name != "posix", reason="POSIX process-group contract")
 async def test_python_interrupt_kills_descendants_that_hold_output_pipes(resources) -> None:
     client, _, workspace, _ = resources
@@ -768,6 +1102,37 @@ async def test_maintenance_requires_matching_opaque_token_and_exposes_state(reso
     assert rejected.json()["error"]["code"] == "MAINTENANCE_TOKEN_MISMATCH"
     assert released.status_code == 200
     assert released.json()["quiesced"] is False
+
+
+@pytest.mark.asyncio
+async def test_maintenance_flushes_config_file(resources, monkeypatch) -> None:
+    _, host, workspace, _ = resources
+    config_path = workspace / "manyselves.yaml"
+    config_path.write_text("providers: {}\n", encoding="utf-8")
+    host.config_manager._settings = SimpleNamespace(config_path=config_path)
+    service = host.app.state.maintenance_service
+    service.config_manager = host.config_manager
+    fsync_calls: list[int] = []
+    monkeypatch.setattr(os, "fsync", lambda descriptor: fsync_calls.append(descriptor))
+
+    service._flush_config()
+
+    assert fsync_calls
+
+
+@pytest.mark.asyncio
+async def test_maintenance_refuses_symlinked_config_path(resources, tmp_path: Path) -> None:
+    _, host, workspace, _ = resources
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("providers: {}\n", encoding="utf-8")
+    link = workspace / "linked.yaml"
+    link.symlink_to(outside)
+    host.config_manager._settings = SimpleNamespace(config_path=link)
+    service = host.app.state.maintenance_service
+    service.config_manager = host.config_manager
+
+    with pytest.raises(ValueError, match="symlink"):
+        service._flush_config()
 
 
 @pytest.mark.asyncio

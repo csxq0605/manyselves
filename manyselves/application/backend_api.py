@@ -187,6 +187,37 @@ class BackendAPIImpl(BackendAPI):
         )
         return result
 
+    async def prepare_rollback(self, agent_type: str, checkpoint_id: str) -> Dict[str, Any]:
+        """Validate the checkpoint and its recorded effects before committing."""
+        if self.loop_manager is None:
+            raise RuntimeError("Loop manager not initialized")
+        manager = getattr(self.loop_manager, "checkpoint_manager", None)
+        if manager is None:
+            return {"checkpoint_id": checkpoint_id, "effect_paths": []}
+        target = manager.get_checkpoint(agent_type, checkpoint_id)
+        if target is None:
+            raise ValueError(f"Checkpoint not found: {checkpoint_id}")
+
+        workspace = manager.workspace.resolve()
+        effect_paths: list[str] = []
+        for checkpoint in manager.list_checkpoints(agent_type):
+            if checkpoint.epoch < target.epoch:
+                continue
+            for operation in checkpoint.operations:
+                if operation.kind not in {"add", "modify", "delete"}:
+                    raise ValueError(f"Unsupported checkpoint operation: {operation.kind}")
+                candidate = (workspace / operation.path).resolve(strict=False)
+                if not candidate.is_relative_to(workspace):
+                    raise ValueError("Checkpoint effect escapes the active workspace")
+                if operation.kind == "modify" and operation.before is None:
+                    raise ValueError("Checkpoint modify effect has no prior content")
+                if operation.kind == "delete" and (
+                    operation.before is None and operation.before_binary_b64 is None
+                ):
+                    raise ValueError("Checkpoint delete effect has no prior content")
+                effect_paths.append(str(candidate.relative_to(workspace)))
+        return {"checkpoint_id": checkpoint_id, "effect_paths": effect_paths}
+
     def set_agent_debug_mode(self, agent_type: str, enabled: bool) -> None:
         """Enable or disable debug mode for an agent."""
         if self.loop_manager is None:

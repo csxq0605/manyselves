@@ -18,6 +18,15 @@ class RuntimeNotReadyError(RuntimeError):
         super().__init__("Runtime is not ready")
 
 
+class RuntimeConsistencyFailedError(RuntimeError):
+    """An irreversible runtime commit could not be reflected durably."""
+
+    code = "RUNTIME_CONSISTENCY_FAILED"
+
+    def __init__(self) -> None:
+        super().__init__("Runtime consistency could not be guaranteed")
+
+
 class CommandIdConflictError(RuntimeError):
     """A completed command ID was reused for a different mutation."""
 
