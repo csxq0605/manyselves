@@ -449,6 +449,79 @@ async def test_tree_revision_scan_runs_off_event_loop_under_read_transaction(
 
 
 @pytest.mark.asyncio
+async def test_cancelled_tree_scan_retains_lock_until_worker_terminates(
+    api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation must not abandon a hashing worker outside the facade read lock."""
+    client, host, root = api
+    (root / "p1" / "Inputs" / "nested").mkdir()
+    (root / "p1" / "Inputs" / "nested" / "a.txt").write_text("a", encoding="utf-8")
+    headers = await acquire_controller(client)
+    facade = host.app.state.runtime_facade
+    first_started = threading.Event()
+    first_release = threading.Event()
+    first_finished = threading.Event()
+    second_started = threading.Event()
+    second_saw_first_finished: list[bool] = []
+    call_count = 0
+    call_lock = threading.Lock()
+    original_list_tree = WorkspaceFiles.list_tree
+
+    def blocking_list_tree(files: WorkspaceFiles, path: str = ""):
+        nonlocal call_count
+        with call_lock:
+            call_count += 1
+            call_number = call_count
+        if call_number == 1:
+            first_started.set()
+            try:
+                assert first_release.wait(timeout=5)
+            finally:
+                first_finished.set()
+        else:
+            second_saw_first_finished.append(first_finished.is_set())
+            second_started.set()
+        return original_list_tree(files, path)
+
+    monkeypatch.setattr(WorkspaceFiles, "list_tree", blocking_list_tree)
+    first_request = asyncio.create_task(client.get("/api/v1/projects/p1/files/tree"))
+    assert await asyncio.to_thread(first_started.wait, 5)
+
+    first_request.cancel()
+    await asyncio.sleep(0)
+    first_request.cancel()
+    second_request = asyncio.create_task(client.get("/api/v1/projects/p1/files/tree"))
+    await asyncio.sleep(0)
+    mutation_entered = asyncio.Event()
+
+    async def mutation_probe() -> None:
+        async with facade.mutation_transaction(headers["X-Control-Lease-Token"]):
+            mutation_entered.set()
+
+    mutation = asyncio.create_task(mutation_probe())
+    await asyncio.sleep(0.05)
+    first_done_before_release = first_request.done()
+    second_entered_before_release = second_started.is_set()
+    mutation_entered_before_release = mutation_entered.is_set()
+    first_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await first_request
+    second_response = await asyncio.wait_for(second_request, timeout=5)
+    await asyncio.wait_for(mutation, timeout=5)
+    async with asyncio.timeout(1), facade.read_transaction():
+        lock_reacquired = True
+
+    assert first_done_before_release is False
+    assert second_entered_before_release is False
+    assert mutation_entered_before_release is False
+    assert second_saw_first_finished == [True]
+    assert second_response.status_code == 200
+    assert lock_reacquired is True
+
+
+@pytest.mark.asyncio
 async def test_http_rejects_encoded_separator_and_duplicate_destination(api) -> None:
     """Encoded path tricks and duplicate creates must return structured safe errors."""
     client, _, _ = api

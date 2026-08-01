@@ -2,8 +2,9 @@
 
 import asyncio
 import mimetypes
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from io import BufferedReader
+from typing import ParamSpec, TypeVar
 from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
@@ -45,6 +46,29 @@ from ..security import require_control_lease_header, require_deployment_access
 
 router = APIRouter(prefix="/projects/{project_id}/files")
 _STREAM_CHUNK_SIZE = 64 * 1024
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+async def _to_thread_non_abandoning(
+    function: Callable[_P, _R],
+    /,
+    *args: _P.args,
+    **kwargs: _P.kwargs,
+) -> _R:
+    """Keep a cancelled caller attached until its worker thread terminates."""
+    worker = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+        if not worker.cancelled():
+            worker.exception()
+        raise
 
 
 def _file_service(request: Request, project_id: str) -> WorkspaceFiles:
@@ -160,7 +184,7 @@ async def file_tree(
     files = _file_service(request, project_id)
     try:
         async with request.app.state.runtime_facade.read_transaction():
-            entries = await asyncio.to_thread(files.list_tree, path)
+            entries = await _to_thread_non_abandoning(files.list_tree, path)
             return FileTreeResponse(entries=[_entry_response(item) for item in entries])
     except WorkspaceFileError as error:
         raise _file_error(error) from error
