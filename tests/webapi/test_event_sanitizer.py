@@ -92,6 +92,9 @@ def test_explicit_secret_meaning_wins_before_authentication_context(name: str) -
         "Authorized",
         "AUTHORIZED",
         "AuThOrIzEd",
+        "AUTHORName",
+        "AUTHORITYConfig",
+        "AUTHORIZEDState",
     ],
 )
 def test_authentication_boundary_nonmatches_are_case_independent(name: str) -> None:
@@ -124,6 +127,29 @@ def test_authentication_roots_preserve_exact_delimiter_and_camel_forms(name: str
         "method": "oauth2",
         "opaque": "[REDACTED]",
     }
+
+
+@pytest.mark.parametrize("name", ["AUTHConfig", "AUTHENTICATIONConfig"])
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (
+            {"method": "oauth2", "opaque": "secret"},
+            {"method": "oauth2", "opaque": "[REDACTED]"},
+        ),
+        (["opaque-list-value"], ["[REDACTED]"]),
+        (("opaque-tuple-value",), ["[REDACTED]"]),
+        ({"opaque-set-value"}, ["[REDACTED]"]),
+        (frozenset({"opaque-frozen-value"}), ["[REDACTED]"]),
+    ],
+    ids=["dict", "list", "tuple", "set", "frozenset"],
+)
+def test_acronym_camel_authentication_roots_use_authentication_context(
+    name: str,
+    value: object,
+    expected: object,
+) -> None:
+    assert EventPayloadSanitizer().sanitize_field(name, value) == expected
 
 
 def test_sensitive_contexts_never_execute_unknown_object_hooks() -> None:

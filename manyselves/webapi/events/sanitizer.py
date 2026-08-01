@@ -366,15 +366,23 @@ def _is_auth_boundary(value: object) -> bool:
     if type(value) is not str:
         return False
     folded = value.casefold()
+    if folded.startswith("author"):
+        return False
     for stem in ("auth", "authentication"):
         if folded == stem:
             return True
         if folded.startswith(tuple(f"{stem}{delimiter}" for delimiter in "_-.:/")):
             return True
         stem_prefix = value[: len(stem)]
-        if stem_prefix in {stem, stem.capitalize()} and len(value) > len(stem):
-            if value[len(stem)].isupper():
-                return True
+        suffix = value[len(stem) :]
+        if stem_prefix in {stem, stem.capitalize()} and suffix[:1].isupper():
+            return True
+        if (
+            stem_prefix == stem.upper()
+            and suffix[:1].isupper()
+            and any(character.islower() for character in suffix[1:])
+        ):
+            return True
     return False
 
 
