@@ -44,7 +44,10 @@ class _EventStreamBody(AsyncIterator[str]):
         if self._done:
             raise StopAsyncIteration
         try:
-            if await self._request.is_disconnected():
+            disconnected = await self._request.is_disconnected()
+            if self._done:
+                raise StopAsyncIteration
+            if disconnected:
                 await self.aclose()
                 raise StopAsyncIteration
             read_task = asyncio.create_task(self._client.get())
@@ -55,6 +58,8 @@ class _EventStreamBody(AsyncIterator[str]):
                     timeout=SSE_HEARTBEAT_SECONDS,
                 )
             except TimeoutError:
+                if self._done:
+                    raise StopAsyncIteration from None
                 return ": heartbeat\n\n"
             except EventClientClosed:
                 await self.aclose()
@@ -62,6 +67,8 @@ class _EventStreamBody(AsyncIterator[str]):
             finally:
                 if self._read_task is read_task:
                     self._read_task = None
+            if self._done:
+                raise StopAsyncIteration
             frame = _frame(event)
             if event.type == "stream.resync_required":
                 await self.aclose()

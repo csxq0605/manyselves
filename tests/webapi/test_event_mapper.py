@@ -424,6 +424,69 @@ def test_fallback_objects_and_value_aware_token_fields_are_safe() -> None:
     assert details["provider_token_value"] == "[REDACTED]"
 
 
+def test_numeric_credential_tokens_redact_but_metric_shaped_tokens_remain_numeric() -> None:
+    message = Error(
+        source="provider",
+        message="failed",
+        details={
+            "accessToken": 101,
+            "providerToken": 202.0,
+            "control_token": 303,
+            "refresh_token": 404,
+            "id_token": 505,
+            "working_memory_tokens": 1024,
+            "max_total_tokens": 2048.0,
+            "prompt_tokens": 12,
+            "completion_tokens": 34,
+            "token_count": 46,
+            "token_usage": {"input_tokens": 7, "output_tokens": 8},
+        },
+        timestamp=NOW,
+    )
+
+    details = EventMapper().map(message, context=context()).payload["details"]
+
+    for key in ("accessToken", "providerToken", "control_token", "refresh_token", "id_token"):
+        assert details[key] == "[REDACTED]"
+    assert details["working_memory_tokens"] == 1024
+    assert details["max_total_tokens"] == 2048.0
+    assert details["prompt_tokens"] == 12
+    assert details["completion_tokens"] == 34
+    assert details["token_count"] == 46
+    assert details["token_usage"] == {"input_tokens": 7, "output_tokens": 8}
+
+
+@pytest.mark.parametrize(
+    ("config_type", "old_value", "new_value", "expected_old", "expected_new"),
+    [
+        ("max_tokens", 1024, 2048, 1024, 2048),
+        ("working_memory_tokens", 512, 768.0, 512, 768.0),
+        ("max_total_tokens", 4096.0, 8192, 4096.0, 8192),
+        ("accessToken", 123, 456, "[REDACTED]", "[REDACTED]"),
+        ("max_tokens", 1024, "opaque-token-value", 1024, "[REDACTED]"),
+    ],
+)
+def test_config_change_redacts_old_and_new_independently_with_value_aware_rules(
+    config_type: str,
+    old_value: object,
+    new_value: object,
+    expected_old: object,
+    expected_new: object,
+) -> None:
+    mapped = EventMapper().map(
+        ConfigChange(
+            config_type=config_type,
+            old_value=old_value,
+            new_value=new_value,
+            timestamp=NOW,
+        ),
+        context=context(),
+    )
+
+    assert mapped.payload["old_value"] == expected_old
+    assert mapped.payload["new_value"] == expected_new
+
+
 def test_mapper_normalizes_top_level_and_payload_datetimes_to_utc() -> None:
     """Mixed local/offset timestamps must not make ordering ambiguous to remote clients."""
     offset_time = datetime(2026, 7, 31, 12, 30, tzinfo=timezone(timedelta(hours=8)))

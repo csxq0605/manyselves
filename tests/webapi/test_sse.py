@@ -632,6 +632,92 @@ async def test_sse_body_close_racing_blocked_next_ends_reader_without_pending_ta
 
 
 @pytest.mark.asyncio
+async def test_sse_close_during_disconnect_probe_never_starts_event_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=2,
+        client_capacity=2,
+    )
+    probe_entered = asyncio.Event()
+    probe_release = asyncio.Event()
+
+    class RequestStub:
+        app = SimpleNamespace(state=SimpleNamespace(event_broker=broker))
+
+        async def is_disconnected(self) -> bool:
+            probe_entered.set()
+            await probe_release.wait()
+            return False
+
+    response = await event_routes.stream_events(RequestStub(), last_event_id=None)
+    client = next(iter(broker._clients))  # noqa: SLF001
+    get_calls = 0
+    original_get = client.get
+
+    async def tracked_get():
+        nonlocal get_calls
+        get_calls += 1
+        return await original_get()
+
+    monkeypatch.setattr(client, "get", tracked_get)
+    reader = asyncio.create_task(anext(response.body_iterator))
+    await probe_entered.wait()
+
+    await response.body_iterator.aclose()
+    probe_release.set()
+
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(reader, timeout=0.1)
+    assert broker.client_count == 0
+    assert get_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_sse_close_after_event_read_completes_suppresses_racing_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=2,
+        client_capacity=2,
+    )
+
+    class RequestStub:
+        app = SimpleNamespace(state=SimpleNamespace(event_broker=broker))
+
+        async def is_disconnected(self) -> bool:
+            return False
+
+    response = await event_routes.stream_events(RequestStub(), last_event_id=None)
+    client = next(iter(broker._clients))  # noqa: SLF001
+    read_entered = asyncio.Event()
+    read_release = asyncio.Event()
+    read_returning = asyncio.Event()
+
+    async def controlled_get():
+        read_entered.set()
+        await read_release.wait()
+        read_returning.set()
+        return make_event(1)
+
+    monkeypatch.setattr(client, "get", controlled_get)
+    reader = asyncio.create_task(anext(response.body_iterator))
+    await read_entered.wait()
+    read_release.set()
+    await read_returning.wait()
+
+    await response.body_iterator.aclose()
+
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(reader, timeout=0.1)
+    assert broker.client_count == 0
+
+
+@pytest.mark.asyncio
 async def test_closed_broker_returns_stable_503_before_sse_response_starts(tmp_path: Path) -> None:
     broker = EventBroker(
         bus=TrackingBus(),

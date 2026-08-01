@@ -65,9 +65,11 @@ class EventMapper:
         payload = _json_safe(message.model_dump(exclude={"type", "timestamp"}))
         if not isinstance(payload, dict):
             raise TypeError("Mapped event payload must be an object")
-        if type(message) is ConfigChange and _sensitive_key(message.config_type):
-            payload["old_value"] = "[REDACTED]"
-            payload["new_value"] = "[REDACTED]"
+        if type(message) is ConfigChange:
+            if _sensitive_key(message.config_type, message.old_value):
+                payload["old_value"] = "[REDACTED]"
+            if _sensitive_key(message.config_type, message.new_value):
+                payload["new_value"] = "[REDACTED]"
         return EventEnvelope(
             eventId=context.event_id,
             sequence=context.sequence,
@@ -163,6 +165,36 @@ _SENSITIVE_STEMS = (
 _TOKEN_METRIC_CONTAINERS = {
     "tokenusage",
 }
+_TOKEN_METRIC_SCALARS = {
+    "cachedtokens",
+    "completiontokens",
+    "inputtokens",
+    "maxtokens",
+    "maxtotaltokens",
+    "outputtokens",
+    "prompttokens",
+    "reasoningtokens",
+    "tokencount",
+    "tokensin",
+    "tokensout",
+    "totaltokens",
+    "workingmemorytokens",
+}
+_CREDENTIAL_TOKEN_MARKERS = (
+    "accesstoken",
+    "authtoken",
+    "bearertoken",
+    "clienttoken",
+    "controltoken",
+    "deploymenttoken",
+    "idtoken",
+    "identitytoken",
+    "providertoken",
+    "refreshtoken",
+    "servicetoken",
+    "sessiontoken",
+    "usertoken",
+)
 _MISSING = object()
 
 
@@ -171,7 +203,19 @@ def _sensitive_key(value: object, item: object = _MISSING) -> bool:
     if any(stem in key for stem in _SENSITIVE_STEMS):
         return True
     if "token" in key:
-        if item is not _MISSING and isinstance(item, (int, float)) and not isinstance(item, bool):
+        if key == "token" or any(marker in key for marker in _CREDENTIAL_TOKEN_MARKERS):
+            return True
+        numeric_metric = (
+            item is not _MISSING
+            and isinstance(item, (int, float))
+            and not isinstance(item, bool)
+            and (
+                key in _TOKEN_METRIC_SCALARS
+                or key.endswith("tokens")
+                or key.endswith("tokencount")
+            )
+        )
+        if numeric_metric:
             return False
         if key in _TOKEN_METRIC_CONTAINERS and isinstance(item, (dict, list, tuple)):
             return False
