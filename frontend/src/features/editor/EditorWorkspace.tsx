@@ -13,6 +13,7 @@ import type { EditorStore, EditorTab } from "./editor-store";
 import { EditorTabs } from "./EditorTabs";
 import { SaveConflictDialog } from "./SaveConflictDialog";
 import type { TextEditorProps } from "./TextEditor";
+import type { SelectionInput } from "./selection-context";
 
 const DefaultTextEditor = lazy(async () => {
   const module = await import("./TextEditor");
@@ -22,6 +23,7 @@ const DefaultTextEditor = lazy(async () => {
 export interface EditorWorkspaceProps {
   readonly api: EditorFileApi;
   readonly editorComponent?: ComponentType<TextEditorProps>;
+  readonly onSelectionChange?: ((selection: SelectionInput | null) => void) | undefined;
   readonly projectId: string;
   readonly repository?: DraftRepository;
   readonly serverUrl: string;
@@ -31,6 +33,7 @@ export interface EditorWorkspaceProps {
 export function EditorWorkspace({
   api,
   editorComponent: EditorComponent = DefaultTextEditor,
+  onSelectionChange,
   projectId,
   repository,
   serverUrl,
@@ -186,6 +189,10 @@ export function EditorWorkspace({
                 });
               }}
               onSave={() => void saveActive()}
+              onSelectionChange={(selection) => onSelectionChange?.(selection ? {
+                ...selection,
+                path: activeTab.path,
+              } : null)}
               onViewStateChange={(cursor, viewState) => {
                 store.getState().setViewState(activeTab.path, cursor, viewState);
               }}

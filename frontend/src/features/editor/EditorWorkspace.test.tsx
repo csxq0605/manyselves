@@ -99,4 +99,27 @@ describe("EditorWorkspace", () => {
     expect(await screen.findByRole("textbox", { name: "代码编辑器" })).toHaveValue("recovered local");
     expect(screen.getByRole("status")).toHaveTextContent("服务器文件已更新");
   });
+
+  it("adds the active server path to editor selection metadata", async () => {
+    const store = createEditorStore();
+    store.getState().openFile("p1", first);
+    const onSelectionChange = vi.fn();
+    const SelectionEditor: ComponentType<TextEditorProps> = ({ onSelectionChange: reportSelection }) => (
+      <button onClick={() => reportSelection?.({ endLine: 7, startLine: 3 })} type="button">选择代码</button>
+    );
+    const user = userEvent.setup();
+
+    render(<EditorWorkspace
+      api={{ read: async () => first, save: async () => first }}
+      editorComponent={SelectionEditor}
+      onSelectionChange={onSelectionChange}
+      projectId="p1"
+      repository={{ list: async () => [], remove: async () => undefined, save: async () => undefined }}
+      serverUrl="https://server"
+      store={store}
+    />);
+    await user.click(screen.getByRole("button", { name: "选择代码" }));
+
+    expect(onSelectionChange).toHaveBeenCalledWith({ endLine: 7, path: "Inputs/a.md", startLine: 3 });
+  });
 });

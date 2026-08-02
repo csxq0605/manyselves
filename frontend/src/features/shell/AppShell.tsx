@@ -7,6 +7,8 @@ import type { PlatformBridge } from "../../platform/types";
 import { createEditorFileApi } from "../editor/editor-api";
 import { createEditorStore } from "../editor/editor-store";
 import { isEditableTextPath } from "../editor/editable-files";
+import type { SelectionInput } from "../editor/selection-context";
+import { ConversationWorkspace } from "../conversations/ConversationWorkspace";
 import { createOperationApi } from "../preview/operation-api";
 import { createPreviewApi } from "../preview/preview-api";
 import { PythonRunAction } from "../preview/PythonRunAction";
@@ -37,6 +39,11 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
   const activeDraft = drafts[activeDraftPath] ?? "";
   const [openError, setOpenError] = useState<string | null>(null);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [editorSelection, setEditorSelection] = useState<SelectionInput | null>(null);
+  const [projectOverride, setProjectOverride] = useState<{
+    readonly sourceProjectId: string;
+    readonly targetProjectId: string;
+  } | null>(null);
   const editorApi = useMemo(() => gateway ? createEditorFileApi(gateway) : null, [gateway]);
   const operationApi = useMemo(() => gateway ? createOperationApi(gateway) : null, [gateway]);
   const previewApi = useMemo(() => gateway ? createPreviewApi(gateway) : null, [gateway]);
@@ -46,6 +53,12 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
     editorStore,
     (store) => store.tabs.some((tab) => tab.dirty),
   );
+
+  const bootstrapProjectId = bootstrap?.project.id ?? "";
+  const conversationProjectId = projectOverride?.sourceProjectId === bootstrapProjectId
+    ? projectOverride.targetProjectId
+    : bootstrapProjectId;
+  const activeEditorSelection = editorSelection?.path === activeEditorPath ? editorSelection : null;
 
   return (
     <div className="app-frame">
@@ -90,9 +103,13 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
                 setOpenError(null);
                 setPreviewPath(entry.path);
               }}
-              onProjectActivated={() => {
+              onProjectActivated={(projectId) => {
                 editorStore.getState().reset();
                 setPreviewPath(null);
+                setProjectOverride({
+                  sourceProjectId: bootstrap.project.id,
+                  targetProjectId: projectId,
+                });
               }}
               platform={platform}
             />
@@ -120,6 +137,7 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
             <Suspense fallback={<p role="status">正在加载编辑器…</p>}>
               <EditorWorkspace
                 api={editorApi}
+                onSelectionChange={setEditorSelection}
                 projectId={bootstrap.project.id}
                 serverUrl={gateway.baseUrl}
                 store={editorStore}
@@ -148,10 +166,21 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
             <PythonRunAction api={operationApi} path={activeEditorPath} />
           ) : null}
           {openError ? <p role="alert">{openError}</p> : null}
-          <section className="conversation-placeholder" aria-label="对话区域">
-            <p className="pane-label">对话</p>
-            <p>连接 Runtime 后，Agent 消息和操作进度会出现在这里。</p>
-          </section>
+          {bootstrap && gateway ? (
+            <ConversationWorkspace
+              agentId="main"
+              currentEditorPath={activeEditorPath}
+              currentSelection={activeEditorSelection}
+              gateway={gateway}
+              key={conversationProjectId || bootstrap.project.id}
+              projectId={conversationProjectId || bootstrap.project.id}
+            />
+          ) : (
+            <section className="conversation-placeholder" aria-label="对话区域">
+              <p className="pane-label">对话</p>
+              <p>连接 Runtime 后，Agent 消息和操作进度会出现在这里。</p>
+            </section>
+          )}
         </main>
 
         <aside className="workspace-pane workspace-pane--agents" aria-label="智能体与控制">

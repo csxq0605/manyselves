@@ -12,11 +12,17 @@ import type { EditorTab } from "./editor-store";
 export interface TextEditorProps {
   readonly onChange: (content: string) => void;
   readonly onSave: () => void;
+  readonly onSelectionChange?: ((selection: TextEditorSelection | null) => void) | undefined;
   readonly onViewStateChange?: (
     cursor: { readonly column: number; readonly lineNumber: number } | null,
     viewState: unknown,
   ) => void;
   readonly tab: EditorTab;
+}
+
+export interface TextEditorSelection {
+  readonly endLine: number;
+  readonly startLine: number;
 }
 
 const languageByExtension: Readonly<Record<string, string>> = {
@@ -44,13 +50,18 @@ globalThis.MonacoEnvironment = {
 };
 loader.config({ monaco });
 
-export function TextEditor({ onChange, onSave, onViewStateChange, tab }: TextEditorProps) {
+export function TextEditor({ onChange, onSave, onSelectionChange, onViewStateChange, tab }: TextEditorProps) {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const selectionCallback = useRef(onSelectionChange);
   const viewStateCallback = useRef(onViewStateChange);
 
   useEffect(() => {
     viewStateCallback.current = onViewStateChange;
   }, [onViewStateChange]);
+
+  useEffect(() => {
+    selectionCallback.current = onSelectionChange;
+  }, [onSelectionChange]);
 
   useEffect(() => () => {
     const editor = editorRef.current;
@@ -60,6 +71,12 @@ export function TextEditor({ onChange, onSave, onViewStateChange, tab }: TextEdi
   const mount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, onSave);
+    editor.onDidChangeCursorSelection(({ selection }) => {
+      selectionCallback.current?.({
+        endLine: selection.endLineNumber,
+        startLine: selection.startLineNumber,
+      });
+    });
     if (tab.viewState) {
       editor.restoreViewState(tab.viewState as monaco.editor.ICodeEditorViewState);
     }
