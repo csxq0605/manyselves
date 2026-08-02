@@ -165,4 +165,44 @@ describe("ApiGateway", () => {
       }),
     );
   });
+
+  it("sends JSON mutations through the authenticated transport", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({ id: "project-2", active: true }),
+    );
+    const gateway = createApiGateway({
+      baseUrl: "https://server/",
+      clientId: "browser-client",
+      fetch: fetchMock,
+      getLeaseToken: () => "lease-token",
+      getToken: () => "secret",
+    });
+
+    await gateway.requestJson("/api/v1/projects/project-2/activate", {
+      json: {},
+      method: "POST",
+      requireLease: true,
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    const headers = new Headers(init?.headers);
+    expect(url).toBe("https://server/api/v1/projects/project-2/activate");
+    expect(init?.body).toBe("{}");
+    expect(headers.get("Authorization")).toBe("Bearer secret");
+    expect(headers.get("Content-Type")).toBe("application/json");
+    expect(headers.get("X-Control-Lease-Token")).toBe("lease-token");
+  });
+
+  it("returns binary downloads without parsing them as JSON", async () => {
+    const gateway = gatewayWithResponse(new Response("report"));
+
+    const downloaded = await gateway.requestBlob("/download");
+    expect(await downloaded.text()).toBe("report");
+  });
+
+  it("accepts an empty successful response", async () => {
+    const gateway = gatewayWithResponse(new Response(null, { status: 204 }));
+
+    await expect(gateway.requestVoid("/entry", { method: "DELETE" })).resolves.toBeUndefined();
+  });
 });

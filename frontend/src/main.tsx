@@ -7,6 +7,10 @@ import { getOrCreateBrowserClientId } from "./app/client-config";
 import { AppProviders } from "./app/providers";
 import { createAppRouter } from "./app/router";
 import { createApiGateway } from "./api/gateway";
+import {
+  BrowserPlatformBridge,
+  createDomBrowserPlatformDriver,
+} from "./platform/browser-platform";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
@@ -24,10 +28,12 @@ const gateway = createApiGateway({
   getLeaseToken,
   getToken,
 });
+const platform = new BrowserPlatformBridge(createDomBrowserPlatformDriver());
 const router = createAppRouter(
   <App
     eventSource={{ baseUrl, fetch: fetchImplementation, getToken }}
     gateway={gateway}
+    platform={platform}
   />,
 );
 

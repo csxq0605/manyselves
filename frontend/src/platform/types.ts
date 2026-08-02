@@ -1,6 +1,7 @@
 export interface LocalFileRef {
   readonly file: File;
   readonly name: string;
+  readonly relativePath?: string;
   readonly size: number;
   readonly type: string;
 }

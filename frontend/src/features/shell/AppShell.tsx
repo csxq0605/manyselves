@@ -1,15 +1,19 @@
 import { useMemo } from "react";
 
 import { useWorkspaceStore } from "../../app/store-context";
-import type { BootstrapSnapshot } from "../../api/gateway";
+import type { ApiGateway, BootstrapSnapshot } from "../../api/gateway";
+import type { PlatformBridge } from "../../platform/types";
+import { ProjectWorkspace } from "../projects/ProjectWorkspace";
 import { ConnectionBanner } from "./ConnectionBanner";
 import "./app-shell.css";
 
 export interface AppShellProps {
   readonly bootstrap?: BootstrapSnapshot | undefined;
+  readonly gateway?: ApiGateway;
+  readonly platform?: PlatformBridge;
 }
 
-export function AppShell({ bootstrap }: AppShellProps) {
+export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
   const drafts = useWorkspaceStore((store) => store.drafts);
   const setDraft = useWorkspaceStore((store) => store.setDraft);
   const activeDraftPath = useMemo(() => Object.keys(drafts)[0] ?? "scratchpad.md", [drafts]);
@@ -35,8 +39,20 @@ export function AppShell({ bootstrap }: AppShellProps) {
         <nav className="workspace-pane workspace-pane--files" aria-label="服务器工作区">
           <p className="pane-label">服务器工作区</p>
           <h2>项目与文件</h2>
-          <p className="project-identity">{bootstrap?.project.id ?? "等待项目同步"}</p>
-          <p className="pane-muted">项目、文件树与导入操作将在此处显示。</p>
+          {bootstrap && gateway && platform ? (
+            <ProjectWorkspace
+              activeProjectId={bootstrap.project.id}
+              gateway={gateway}
+              hasDirtyDrafts={Object.keys(drafts).length > 0}
+              key={bootstrap.project.id}
+              platform={platform}
+            />
+          ) : (
+            <>
+              <p className="project-identity">{bootstrap?.project.id ?? "等待项目同步"}</p>
+              <p className="pane-muted">项目、文件树与导入操作将在此处显示。</p>
+            </>
+          )}
         </nav>
 
         <main className="workspace-pane workspace-pane--main" aria-label="主工作区">

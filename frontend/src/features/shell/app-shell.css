@@ -151,6 +151,86 @@ select {
   line-height: 1.55;
 }
 
+.project-workspace {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.project-workspace__project-row,
+.file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.project-switcher label {
+  display: grid;
+  gap: 5px;
+}
+
+.project-switcher select,
+.project-workspace input {
+  width: 100%;
+  padding: 7px 9px;
+  background: #fff;
+  border: 1px solid #cbd4df;
+  border-radius: 5px;
+}
+
+.file-actions button,
+.project-workspace button {
+  padding: 6px 9px;
+  color: #243247;
+  background: #fff;
+  border: 1px solid #cbd4df;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.76rem;
+}
+
+.file-actions button:disabled,
+.project-workspace button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+[role="tree"] {
+  display: grid;
+  gap: 2px;
+  max-height: 44vh;
+  overflow: auto;
+}
+
+[role="treeitem"] {
+  padding: 7px 8px;
+  border-radius: 5px;
+  cursor: default;
+  font-size: 0.82rem;
+}
+
+[role="treeitem"]:hover,
+[role="treeitem"]:focus-visible {
+  background: #e5edff;
+}
+
+.upload-queue {
+  display: grid;
+  width: 100%;
+  gap: 5px;
+  margin: 0;
+  padding: 8px 0 0;
+  list-style: none;
+}
+
+.upload-queue li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.76rem;
+}
+
 .workspace-heading {
   display: flex;
   align-items: flex-start;

@@ -38,9 +38,18 @@ export interface ApiGatewayOptions {
   readonly getToken: () => string | null;
 }
 
+export interface ApiRequestOptions extends Omit<RequestInit, "body"> {
+  readonly body?: BodyInit | null;
+  readonly json?: unknown;
+  readonly requireLease?: boolean;
+}
+
 export interface ApiGateway {
   readonly clientId: string;
   bootstrap(): Promise<BootstrapSnapshot>;
+  requestBlob(path: string, init?: ApiRequestOptions): Promise<Blob>;
+  requestJson<T>(path: string, init?: ApiRequestOptions): Promise<T>;
+  requestVoid(path: string, init?: ApiRequestOptions): Promise<void>;
   sendMessage(
     agentId: string,
     request: SendMessageRequest,
@@ -100,39 +109,69 @@ async function toApiError(response: Response): Promise<ApiError> {
 export function createApiGateway(options: ApiGatewayOptions): ApiGateway {
   const baseUrl = normalizeBaseUrl(options.baseUrl);
 
-  async function sendRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const headers = new Headers(init.headers);
+  async function sendRequest(
+    path: string,
+    init: ApiRequestOptions = {},
+  ): Promise<Response> {
+    const { json, requireLease, ...requestInit } = init;
+    const headers = new Headers(requestInit.headers);
     const token = options.getToken();
     if (token) {
       headers.set("Authorization", `Bearer ${token}`);
     }
-    const response = await options.fetch(`${baseUrl}${path}`, { ...init, headers });
-    if (!response.ok) {
-      throw await toApiError(response);
-    }
-    return (await response.json()) as T;
-  }
-
-  return {
-    clientId: options.clientId,
-    bootstrap: () => sendRequest<BootstrapSnapshot>("/api/v1/bootstrap"),
-    async sendMessage(agentId, request, idempotencyKey) {
-      const headers = new Headers({
-        "Content-Type": "application/json",
-        "Idempotency-Key": idempotencyKey,
-      });
+    if (requireLease) {
       const leaseToken = options.getLeaseToken();
       if (leaseToken) {
         headers.set("X-Control-Lease-Token", leaseToken);
       }
-      return sendRequest<AcceptedCommandResponse>(
+    }
+    let body = requestInit.body;
+    if (json !== undefined) {
+      headers.set("Content-Type", "application/json");
+      body = JSON.stringify(json);
+    }
+    const request: RequestInit = {
+      ...requestInit,
+      headers,
+    };
+    if (body !== undefined) {
+      request.body = body;
+    }
+    const response = await options.fetch(`${baseUrl}${path}`, request);
+    if (!response.ok) {
+      throw await toApiError(response);
+    }
+    return response;
+  }
+
+  const gateway: ApiGateway = {
+    clientId: options.clientId,
+    async bootstrap() {
+      return gateway.requestJson<BootstrapSnapshot>("/api/v1/bootstrap");
+    },
+    async requestBlob(path, init) {
+      return (await sendRequest(path, init)).blob();
+    },
+    async requestJson<T>(path: string, init?: ApiRequestOptions) {
+      return (await sendRequest(path, init)).json() as Promise<T>;
+    },
+    async requestVoid(path, init) {
+      await sendRequest(path, init);
+    },
+    async sendMessage(agentId, request, idempotencyKey) {
+      const headers = new Headers({
+        "Idempotency-Key": idempotencyKey,
+      });
+      return gateway.requestJson<AcceptedCommandResponse>(
         `/api/v1/agents/${encodeURIComponent(agentId)}/messages`,
         {
-          body: JSON.stringify(request),
           headers,
+          json: request,
           method: "POST",
+          requireLease: true,
         },
       );
     },
   };
+  return gateway;
 }

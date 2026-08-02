@@ -54,6 +54,28 @@ describe("BrowserPlatformBridge", () => {
     expect(selected?.files[0]).not.toHaveProperty("path");
   });
 
+  it("retains a browser-safe relative path for nested directory imports", async () => {
+    const file = new File(["data"], "report.csv");
+    Object.defineProperty(file, "webkitRelativePath", {
+      configurable: true,
+      value: "Inputs/nested/report.csv",
+    });
+    const platform = new BrowserPlatformBridge({
+      notify: async () => undefined,
+      saveDownload: async () => undefined,
+      selectDirectory: async () => ({ files: [file], name: "Inputs" }),
+      selectFiles: async () => [],
+    });
+
+    const selected = await platform.selectDirectory();
+
+    expect(selected?.files[0]).toEqual(expect.objectContaining({
+      name: "report.csv",
+      relativePath: "Inputs/nested/report.csv",
+    }));
+    expect(selected?.files[0]).not.toHaveProperty("path");
+  });
+
   it("delegates downloads and notifications through the browser driver", async () => {
     const effects: unknown[] = [];
     const platform = new BrowserPlatformBridge({

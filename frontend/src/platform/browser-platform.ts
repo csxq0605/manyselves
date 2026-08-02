@@ -106,12 +106,15 @@ export function createDomBrowserPlatformDriver(
 }
 
 function toLocalFileRef(file: File): LocalFileRef {
-  return {
+  const reference: LocalFileRef = {
     file,
     name: file.name,
     size: file.size,
     type: file.type,
   };
+  return file.webkitRelativePath
+    ? { ...reference, relativePath: file.webkitRelativePath }
+    : reference;
 }
 
 export class BrowserPlatformBridge implements PlatformBridge {

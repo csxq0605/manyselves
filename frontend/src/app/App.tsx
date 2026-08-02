@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { EventStream, type EventStreamOptions, type RuntimeEvent } from "../api/event-stream";
 import { ApiError, type ApiGateway } from "../api/gateway";
 import { AppShell } from "../features/shell/AppShell";
+import type { PlatformBridge } from "../platform/types";
 import { useConnectionStore } from "./store-context";
 
 interface EventStreamController {
@@ -15,6 +16,7 @@ export interface AppProps {
   readonly createEventStream?: (options: EventStreamOptions) => EventStreamController;
   readonly eventSource?: Pick<EventStreamOptions, "baseUrl" | "fetch" | "getToken">;
   readonly gateway: ApiGateway;
+  readonly platform?: PlatformBridge;
 }
 
 const knownEventPrefixes = [
@@ -40,6 +42,7 @@ export function App({
   createEventStream = (options) => new EventStream(options),
   eventSource,
   gateway,
+  platform,
 }: AppProps) {
   const queryClient = useQueryClient();
   const setConnectionState = useConnectionStore((store) => store.setState);
@@ -122,5 +125,11 @@ export function App({
     setConnectionState,
   ]);
 
-  return <AppShell bootstrap={bootstrap.data} />;
+  return (
+    <AppShell
+      bootstrap={bootstrap.data}
+      gateway={gateway}
+      {...(platform ? { platform } : {})}
+    />
+  );
 }
