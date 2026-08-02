@@ -30,7 +30,7 @@ router = APIRouter(prefix="/settings")
 
 def _service(request: Request) -> SettingsService:
     host = request.app.state.runtime_host
-    return SettingsService(host.config_manager, host.backend)
+    return SettingsService(host)
 
 
 def _settings(manager) -> SettingsResponse:

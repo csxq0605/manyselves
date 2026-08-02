@@ -189,13 +189,32 @@ class ResourceRuntimeHost:
         self.config_manager = SimpleNamespace(config=config, save_config=lambda: None)
         self.backend = _Backend(self)
         self.reporting_controller: _ReportingController | None = None
-        self.loop_manager = SimpleNamespace(
+        self.manager_factory_calls = 0
+        self.replace_calls: list[bool] = []
+        self.replace_error: BaseException | None = None
+        self.replace_failures_remaining = 0
+        self.recovery_error: BaseException | None = None
+        self.loop_manager = self._new_loop_manager()
+        self._bus_task: asyncio.Task | None = None
+
+    def _new_loop_manager(self):
+        self.manager_factory_calls += 1
+        return SimpleNamespace(
+            provider_registry={
+                item.id: {
+                    "provider": item.provider,
+                    "api_key": item.api_key,
+                    "api_base": item.api_base,
+                    "enabled": item.enabled,
+                }
+                for item in self.config_manager.config.providers.configurations
+                if item.enabled and item.api_key
+            },
             get_all_agent_statuses=lambda: dict(self.statuses),
             get_agent_session_id=lambda _agent_id: None,
             get_loop=self._get_loop,
             get_agent_debug_mode=lambda agent_id: self.backend.debug_modes.get(agent_id, False),
         )
-        self._bus_task: asyncio.Task | None = None
 
     def _get_loop(self, agent_id: str):
         if agent_id != "main" or self.reporting_controller is None:
@@ -217,6 +236,24 @@ class ResourceRuntimeHost:
     async def switch_workspace(self, workspace: Path) -> None:
         self.workspace = Path(workspace).resolve()
         self.reporting_controller = _ReportingController(self.workspace)
+
+    async def replace_loop_manager(self, *, recovery: bool = False) -> None:
+        self.replace_calls.append(recovery)
+        if recovery and self.recovery_error is not None:
+            self.loop_manager = None
+            self.is_ready = False
+            raise self.recovery_error
+        if not recovery and self.replace_failures_remaining:
+            self.replace_failures_remaining -= 1
+            self.loop_manager = None
+            self.is_ready = False
+            raise RuntimeError("injected transient replacement failure")
+        if not recovery and self.replace_error is not None:
+            self.loop_manager = None
+            self.is_ready = False
+            raise self.replace_error
+        self.loop_manager = self._new_loop_manager()
+        self.is_ready = True
 
     async def mark_failed(self) -> None:
         self.is_ready = False
@@ -2325,20 +2362,73 @@ async def test_settings_mutations_apply_to_live_runtime_and_model_only_does_not_
     resources,
 ) -> None:
     client, host, _, secret = resources
+    previous = host.loop_manager
+    previous_registry = previous.provider_registry
+    bus_task = host._bus_task  # noqa: SLF001
 
     provider = await client.patch(
         "/api/v1/settings/providers/provider-1",
         json={"apiKey": "replacement-secret", "apiBase": "https://new.invalid/v1"},
     )
+    replacement = host.loop_manager
     model = await client.patch("/api/v1/settings", json={"model": "next-model"})
 
     assert provider.status_code == 200
     assert model.status_code == 200
-    assert host.backend.restart_calls == ["provider_configuration_changed"]
+    assert host.replace_calls == [False]
+    assert host.backend.restart_calls == []
+    assert replacement is not previous
+    assert replacement.provider_registry is not previous_registry
+    assert host.loop_manager is replacement
+    assert host.manager_factory_calls == 2
+    assert host._bus_task is bus_task  # noqa: SLF001
+    assert bus_task is not None and bus_task.done() is False
     assert "replacement-secret" not in provider.text
     assert secret not in provider.text
     assert provider.json()["providers"][0]["configured"] is True
     assert model.json()["defaults"]["model"] == "next-model"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "payload", "provider_absent", "active_cleared"),
+    [
+        ("patch", {"apiKey": None}, True, False),
+        ("patch", {"enabled": False}, True, False),
+        ("patch", {"apiBase": "https://changed.invalid/v1"}, False, False),
+        ("delete", None, True, True),
+    ],
+    ids=["clear-credentials", "disable-provider", "connection-fields", "remove-active"],
+)
+async def test_provider_affecting_mutations_rebuild_complete_manager(
+    resources,
+    method: str,
+    payload: dict | None,
+    provider_absent: bool,
+    active_cleared: bool,
+) -> None:
+    """Every provider mutation must replace stale provider registry state."""
+    client, host, _, _ = resources
+    previous = host.loop_manager
+    previous_registry = previous.provider_registry
+    if method == "delete":
+        response = await client.delete("/api/v1/settings/providers/provider-1")
+    else:
+        response = await client.patch(
+            "/api/v1/settings/providers/provider-1",
+            json=payload,
+        )
+
+    assert response.status_code == 200
+    assert host.loop_manager is not previous
+    assert host.loop_manager.provider_registry is not previous_registry
+    assert host.manager_factory_calls == 2
+    assert host.replace_calls == [False]
+    assert host.backend.restart_calls == []
+    if provider_absent:
+        assert "provider-1" not in host.loop_manager.provider_registry
+    if active_cleared:
+        assert host.config_manager.config.providers.active is None
 
 
 @pytest.mark.asyncio
@@ -2350,7 +2440,7 @@ async def test_settings_apply_failure_rolls_back_memory_and_persisted_config(res
         saved_keys.append(host.config_manager.config.providers.configurations[0].api_key)
 
     host.config_manager.save_config = save_config
-    host.backend.restart_error = RuntimeError("injected restart failure")
+    host.replace_error = RuntimeError("injected replacement failure")
 
     response = await client.patch(
         "/api/v1/settings/providers/provider-1",
@@ -2375,7 +2465,7 @@ async def test_settings_apply_failure_restores_exact_persisted_config_bytes(
     original = b"# retain operator comment\n" + config_path.read_bytes()
     config_path.write_bytes(original)
     host.config_manager = manager
-    host.backend.restart_error = RuntimeError("injected restart failure")
+    host.replace_error = RuntimeError("injected replacement failure")
 
     response = await client.patch(
         "/api/v1/settings/providers/provider-1",
@@ -2390,11 +2480,11 @@ async def test_settings_apply_failure_restores_exact_persisted_config_bytes(
 
 
 @pytest.mark.asyncio
-async def test_settings_restart_failure_recovers_live_runtime_with_old_config(
+async def test_settings_replacement_failure_recovers_live_runtime_with_old_config(
     resources,
 ) -> None:
     client, host, _, secret = resources
-    host.backend.restart_failures_remaining = 1
+    host.replace_failures_remaining = 1
 
     response = await client.patch(
         "/api/v1/settings/providers/provider-1",
@@ -2402,10 +2492,10 @@ async def test_settings_restart_failure_recovers_live_runtime_with_old_config(
     )
 
     assert response.status_code == 500
-    assert host.backend.restart_calls == [
-        "provider_configuration_changed",
-        "settings_rollback",
-    ]
+    assert host.replace_calls == [False, True]
+    assert host.backend.restart_calls == []
+    assert host.is_ready is True
+    assert host.loop_manager.provider_registry["provider-1"]["api_key"] == secret
     assert host.config_manager.config.providers.configurations[0].api_key == secret
 
 
@@ -2447,10 +2537,8 @@ async def test_provider_lifecycle_presets_validation_and_agent_debug_are_exposed
     assert debug_enabled.status_code == 200
     assert debug.json() == {"agentId": "main", "enabled": True, "entries": []}
     assert removed.status_code == 200
-    assert host.backend.restart_calls == [
-        "provider_created",
-        "provider_removed",
-    ]
+    assert host.replace_calls == [False, False]
+    assert host.backend.restart_calls == []
 
 
 @pytest.mark.asyncio

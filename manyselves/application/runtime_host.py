@@ -235,6 +235,69 @@ class RuntimeHost:
             self._state = _LifecycleState.READY
             logger.info("Activated runtime workspace: {}", resolved_workspace)
 
+    async def replace_loop_manager(self, *, recovery: bool = False) -> None:
+        """Replace all provider-backed loops while retaining the shared message bus."""
+        async with self._lifecycle_lock:
+            workspace = self._workspace
+            if workspace is None:
+                raise RuntimeStartupError("RUNTIME_NOT_READY", "Runtime is not ready")
+            if recovery:
+                allowed = self._state is _LifecycleState.FAILED
+            else:
+                allowed = (
+                    self._state is _LifecycleState.READY
+                    and self._loop_manager is not None
+                )
+            if not allowed:
+                raise RuntimeStartupError("RUNTIME_NOT_READY", "Runtime is not ready")
+
+            self._orderly_shutdown_draining = False
+            self._state = _LifecycleState.STARTING
+            previous_manager = self._loop_manager
+            if previous_manager is not None:
+                try:
+                    await previous_manager.stop()
+                except BaseException:
+                    self._state = _LifecycleState.FAILED
+                    raise
+            self._bind_manager(None, workspace)
+
+            try:
+                replacement = self._loop_manager_factory(
+                    workspace,
+                    self.config_manager,
+                    self.bus,
+                )
+                self._bind_manager(replacement, workspace)
+                await replacement.start()
+            except BaseException as replacement_error:
+                cleanup_error = await self._discard_provider_candidate(workspace)
+                self._state = _LifecycleState.FAILED
+                if cleanup_error is not None:
+                    replacement_error.add_note(
+                        "Provider runtime candidate cleanup did not finish."
+                    )
+                    raise replacement_error from None
+                raise
+
+            self._producers_stopped = False
+            self._state = _LifecycleState.READY
+
+    async def _discard_provider_candidate(
+        self,
+        workspace: Path,
+    ) -> BaseException | None:
+        """Stop a failed provider candidate and retain its workspace for recovery."""
+        manager = self._loop_manager
+        try:
+            if manager is not None:
+                await manager.stop()
+        except BaseException as error:
+            logger.error("Provider runtime candidate cleanup did not finish")
+            return error
+        self._bind_manager(None, workspace)
+        return None
+
     async def mark_failed(self) -> None:
         """Make an owned runtime unavailable without discarding cleanup ownership."""
         async with self._lifecycle_lock:

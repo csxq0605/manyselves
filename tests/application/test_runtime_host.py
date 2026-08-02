@@ -1,6 +1,8 @@
 """Lifecycle contract shared by desktop and future runtime clients."""
 
 import asyncio
+import threading
+import traceback
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -13,7 +15,9 @@ from manyselves.application.errors import RuntimeConsistencyFailedError, Runtime
 from manyselves.application.models import RollbackCommand
 from manyselves.application.runtime_facade import RuntimeFacade
 from manyselves.application.runtime_host import RuntimeHost
+from manyselves.application.settings_service import SettingsService
 from manyselves.config import ConfigManager
+from manyselves.config.schema import ApiConfig, AppConfig, ProvidersConfig
 from manyselves.core.loops import LoopManager, MessageBus
 from manyselves.interfaces.types import Checkpoint, UserMessage
 
@@ -103,6 +107,132 @@ class _FakeBackend:
 
     def set_loop_manager(self, loop_manager: _FakeLoopManager | None) -> None:
         self.loop_manager = loop_manager
+
+
+class _LoopControl:
+    """Explicit lifecycle gates for one factory-created provider manager."""
+
+    def __init__(
+        self,
+        *,
+        start_release: asyncio.Event | None = None,
+        start_error: BaseException | None = None,
+        stop_release: asyncio.Event | None = None,
+        stop_error: BaseException | None = None,
+    ) -> None:
+        self.start_entered = asyncio.Event()
+        self.start_release = start_release
+        self.start_error = start_error
+        self.stop_entered = asyncio.Event()
+        self.stop_release = stop_release
+        self.stop_error = stop_error
+
+
+class _ProviderLoopBoundary:
+    """Provider snapshot plus controlled real async lifecycle behavior."""
+
+    def __init__(self, config: AppConfig, control: _LoopControl) -> None:
+        self.config = config.model_copy(deep=True)
+        self.provider_registry = {
+            item.id: {
+                "provider": item.provider,
+                "api_key": item.api_key,
+                "api_base": item.api_base,
+                "enabled": item.enabled,
+            }
+            for item in config.providers.configurations
+            if item.enabled and item.api_key
+        }
+        self.control = control
+        self.start_calls = 0
+        self.stop_calls = 0
+        self.running = False
+
+    async def start(self) -> None:
+        self.start_calls += 1
+        self.control.start_entered.set()
+        if self.control.start_release is not None:
+            await self.control.start_release.wait()
+        self.running = True
+        if self.control.start_error is not None:
+            raise self.control.start_error
+
+    async def stop(self) -> None:
+        self.stop_calls += 1
+        self.control.stop_entered.set()
+        if self.control.stop_release is not None:
+            await self.control.stop_release.wait()
+        if self.control.stop_error is not None:
+            raise self.control.stop_error
+        self.running = False
+
+
+def _provider_runtime(
+    tmp_path: Path,
+    controls: list[_LoopControl],
+) -> tuple[
+    RuntimeHost,
+    ConfigManager,
+    _FakeBus,
+    _FakeBackend,
+    list[_ProviderLoopBoundary],
+    Path,
+    bytes,
+]:
+    config_path = tmp_path / "runtime-config.yaml"
+    config = ConfigManager(config_path=config_path)
+    config._config = AppConfig(  # noqa: SLF001
+        providers=ProvidersConfig(
+            configurations=[
+                ApiConfig(
+                    id="provider-1",
+                    name="Primary",
+                    provider="openai",
+                    api_key="provider-secret",
+                    api_base="https://provider.invalid/v1",
+                    enabled=True,
+                ),
+                ApiConfig(
+                    id="provider-2",
+                    name="Recovery",
+                    provider="anthropic",
+                    api_key="recovery-secret",
+                    enabled=True,
+                ),
+            ],
+            active="provider-1",
+        )
+    )
+    config.save_config()
+    original_bytes = b"# exact operator bytes\n" + config_path.read_bytes()
+    config_path.write_bytes(original_bytes)
+
+    events: list[str] = []
+    bus = _FakeBus(events)
+    backend = _FakeBackend()
+    created: list[_ProviderLoopBoundary] = []
+
+    def create_loop_manager(
+        workspace: Path,
+        config_manager: ConfigManager,
+        message_bus: MessageBus,
+    ) -> LoopManager:
+        assert workspace.is_absolute()
+        assert config_manager is config
+        assert message_bus is bus
+        manager = _ProviderLoopBoundary(config.config, controls[len(created)])
+        created.append(manager)
+        return cast(LoopManager, manager)
+
+    host = RuntimeHost(
+        config_manager=config,
+        bus=cast(MessageBus, bus),
+        backend=cast(BackendAPIImpl, backend),
+        loop_manager_factory=create_loop_manager,
+        project_logging_initializer=lambda _workspace: None,
+        project_structure_initializer=lambda _workspace: None,
+    )
+    return host, config, bus, backend, created, config_path, original_bytes
 
 
 def _host(
@@ -826,6 +956,270 @@ async def test_switch_workspace_retains_candidate_when_cleanup_does_not_finish(
     assert created[1].stop_calls == 2
     assert created[1].running is False
     assert bus.shutdown_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_replace_loop_manager_uses_factory_and_keeps_shared_bus(
+    tmp_path: Path,
+) -> None:
+    """Reusing the manager/provider registry or restarting the bus breaks isolation."""
+    host, _, bus, backend, created, _, _ = _provider_runtime(
+        tmp_path,
+        [_LoopControl(), _LoopControl()],
+    )
+    await host.start(tmp_path / "workspace")
+    previous = created[0]
+    previous_registry = previous.provider_registry
+
+    try:
+        await host.replace_loop_manager()
+
+        assert host.is_ready is True
+        assert host.loop_manager is created[1]
+        assert backend.loop_manager is created[1]
+        assert created[1] is not previous
+        assert created[1].provider_registry is not previous_registry
+        assert previous.stop_calls == 1
+        assert created[1].running is True
+        assert bus.events.count("bus:start") == 1
+        assert bus.shutdown_calls == 0
+    finally:
+        await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_replace_loop_manager_cleanup_diagnostic_does_not_expose_api_key(
+    tmp_path: Path,
+) -> None:
+    """A cleanup cause must not smuggle provider credentials into diagnostics."""
+    secret = "cleanup-api-key"
+    replacement_error = RuntimeError("replacement failed")
+    host, _, _, created = _host(
+        [],
+        start_errors=[None, replacement_error],
+        stop_errors=[[], [RuntimeError(f"cleanup failed with {secret}"), None]],
+    )
+    await host.start(tmp_path / "workspace")
+
+    try:
+        with pytest.raises(RuntimeError, match="replacement failed") as raised:
+            await host.replace_loop_manager()
+
+        diagnostic = "".join(traceback.format_exception(raised.value))
+        assert raised.value is replacement_error
+        assert "candidate cleanup did not finish" in diagnostic
+        assert secret not in diagnostic
+        assert host.is_ready is False
+        assert host.loop_manager is created[1]
+    finally:
+        await host.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cancel_point",
+    ["old_manager_stop", "candidate_start"],
+)
+async def test_provider_commit_finishes_before_repeated_caller_cancellation(
+    tmp_path: Path,
+    cancel_point: str,
+) -> None:
+    """Caller cancellation must not strand a successful provider commit mid-transition."""
+    old_stop_release = asyncio.Event() if cancel_point == "old_manager_stop" else None
+    candidate_start_release = (
+        asyncio.Event() if cancel_point == "candidate_start" else None
+    )
+    controls = [
+        _LoopControl(stop_release=old_stop_release),
+        _LoopControl(start_release=candidate_start_release),
+    ]
+    host, config, bus, backend, created, config_path, original_bytes = _provider_runtime(
+        tmp_path,
+        controls,
+    )
+    await host.start(tmp_path / "workspace")
+    previous = created[0]
+    service = SettingsService(host)
+
+    def mutation(current: AppConfig) -> None:
+        current.providers.configurations[0].api_base = "https://committed.invalid/v1"
+
+    task = asyncio.create_task(
+        service.mutate(mutation, restart_reason="provider_configuration_changed")
+    )
+    entered = (
+        controls[0].stop_entered
+        if cancel_point == "old_manager_stop"
+        else controls[1].start_entered
+    )
+    await asyncio.wait_for(entered.wait(), timeout=1.0)
+    task.cancel()
+    task.cancel()
+    if old_stop_release is not None:
+        old_stop_release.set()
+    if candidate_start_release is not None:
+        candidate_start_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1.0)
+
+    try:
+        assert host.is_ready is True
+        assert host.loop_manager is created[1]
+        assert backend.loop_manager is created[1]
+        assert created[1] is not previous
+        assert previous.stop_calls == 1
+        assert created[1].running is True
+        assert config.config.providers.configurations[0].api_base == (
+            "https://committed.invalid/v1"
+        )
+        assert config_path.read_bytes() != original_bytes
+        assert bus.shutdown_calls == 0
+    finally:
+        await host.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cancel_point",
+    ["failed_candidate_cleanup", "recovery_start"],
+)
+async def test_provider_failure_recovers_before_repeated_caller_cancellation(
+    tmp_path: Path,
+    cancel_point: str,
+) -> None:
+    """Replacement failure must restore exact config and a fresh live manager first."""
+    cleanup_release = (
+        asyncio.Event() if cancel_point == "failed_candidate_cleanup" else None
+    )
+    recovery_start_release = (
+        asyncio.Event() if cancel_point == "recovery_start" else None
+    )
+    replacement_error = RuntimeError("replacement failed")
+    controls = [
+        _LoopControl(),
+        _LoopControl(start_error=replacement_error, stop_release=cleanup_release),
+        _LoopControl(start_release=recovery_start_release),
+    ]
+    host, config, bus, backend, created, config_path, original_bytes = _provider_runtime(
+        tmp_path,
+        controls,
+    )
+    await host.start(tmp_path / "workspace")
+    previous = created[0]
+    service = SettingsService(host)
+
+    def mutation(current: AppConfig) -> None:
+        current.providers.configurations[0].api_key = "transient-secret"
+
+    task = asyncio.create_task(
+        service.mutate(mutation, restart_reason="provider_configuration_changed")
+    )
+    entered = (
+        controls[1].stop_entered
+        if cancel_point == "failed_candidate_cleanup"
+        else controls[2].start_entered
+    )
+    await asyncio.wait_for(entered.wait(), timeout=1.0)
+    task.cancel()
+    task.cancel()
+    if cleanup_release is not None:
+        cleanup_release.set()
+    if recovery_start_release is not None:
+        recovery_start_release.set()
+
+    with pytest.raises(RuntimeError, match="replacement failed") as raised:
+        await asyncio.wait_for(task, timeout=1.0)
+
+    try:
+        assert raised.value is replacement_error
+        assert config.config.providers.configurations[0].api_key == "provider-secret"
+        assert config_path.read_bytes() == original_bytes
+        assert host.is_ready is True
+        assert host.loop_manager is created[2]
+        assert backend.loop_manager is created[2]
+        assert created[2] is not previous
+        assert created[1].stop_calls == 1
+        assert created[1].running is False
+        assert created[2].provider_registry["provider-1"]["api_key"] == (
+            "provider-secret"
+        )
+        assert bus.shutdown_calls == 0
+    finally:
+        await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_provider_recovery_failure_is_safe_and_leaves_host_failed(
+    tmp_path: Path,
+) -> None:
+    """Recovery diagnostics must not expose keys or publish a false READY state."""
+    secret = "provider-secret"
+    replacement_error = RuntimeError("replacement failed")
+    controls = [
+        _LoopControl(),
+        _LoopControl(start_error=replacement_error),
+        _LoopControl(start_error=RuntimeError(f"recovery failed with {secret}")),
+    ]
+    host, config, bus, backend, created, config_path, original_bytes = _provider_runtime(
+        tmp_path,
+        controls,
+    )
+    await host.start(tmp_path / "workspace")
+    service = SettingsService(host)
+
+    def mutation(current: AppConfig) -> None:
+        current.providers.configurations[0].api_key = "transient-secret"
+
+    try:
+        with pytest.raises(RuntimeError, match="replacement failed") as raised:
+            await service.mutate(
+                mutation,
+                restart_reason="provider_configuration_changed",
+            )
+
+        diagnostics = " ".join(getattr(raised.value, "__notes__", []))
+        assert raised.value is replacement_error
+        assert "recovery" in diagnostics.lower()
+        assert secret not in diagnostics
+        assert "transient-secret" not in diagnostics
+        assert config.config.providers.configurations[0].api_key == secret
+        assert config_path.read_bytes() == original_bytes
+        assert host.is_ready is False
+        assert host.loop_manager is None
+        assert backend.loop_manager is None
+        assert created[1].stop_calls == 1
+        assert created[2].stop_calls == 1
+        assert bus.shutdown_calls == 0
+    finally:
+        await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_to_thread_non_abandoning_joins_worker_before_rethrowing_cancellation() -> None:
+    """A cancelled request must not leave its owned worker thread running detached."""
+    from manyselves.application.async_ownership import to_thread_non_abandoning
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def worker() -> str:
+        started.set()
+        release.wait(timeout=2.0)
+        return "finished"
+
+    task = asyncio.create_task(to_thread_non_abandoning(worker))
+    async with asyncio.timeout(1.0):
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+    task.cancel()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert task.done() is False
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1.0)
 
 
 @pytest.mark.asyncio

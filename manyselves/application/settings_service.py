@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from .async_ownership import await_owned
+
+if TYPE_CHECKING:
+    from .runtime_host import RuntimeHost
 
 
 class SettingsService:
     """Persist one config change, apply it live, and roll back both on failure."""
 
-    def __init__(self, manager: Any, backend: Any) -> None:
-        self.manager = manager
-        self.backend = backend
+    def __init__(self, host: RuntimeHost) -> None:
+        self.host = host
+        self.manager = host.config_manager
 
     async def mutate(
         self,
@@ -22,8 +28,6 @@ class SettingsService:
     ) -> None:
         before = self.manager.config.model_copy(deep=True)
         persisted = self._capture_persisted()
-        restart: Callable[[str], Any] | None = None
-        restart_attempted = False
         try:
             mutation(self.manager.config)
             valid, _available, errors = self.validate()
@@ -35,27 +39,27 @@ class SettingsService:
             if not valid and structural_errors:
                 raise ValueError("; ".join(structural_errors))
             self.manager.save_config()
-            if restart_reason is not None:
-                restart = getattr(self.backend, "restart_agents_and_wait", None)
-                if not callable(restart):
-                    restart = self.backend.restart_agents
-                restart_attempted = True
-                await restart(restart_reason)
         except BaseException as error:
-            self._restore(before)
-            try:
-                if persisted is None:
-                    self.manager.save_config()
-                else:
-                    self._restore_persisted(persisted)
-            except BaseException as rollback_error:
-                error.add_note(f"Settings persistence rollback failed: {rollback_error!r}")
-            if restart_attempted and restart is not None:
-                try:
-                    await restart("settings_rollback")
-                except BaseException as rollback_error:
-                    error.add_note(f"Settings runtime rollback failed: {rollback_error!r}")
+            self._rollback_config(before, persisted, error)
             raise
+
+        if restart_reason is None:
+            return
+
+        replacement = await await_owned(self.host.replace_loop_manager())
+        if replacement.error is None:
+            if replacement.cancellation_requested:
+                raise asyncio.CancelledError
+            return
+
+        replacement_error = replacement.error
+        self._rollback_config(before, persisted, replacement_error)
+        recovery = await await_owned(self.host.replace_loop_manager(recovery=True))
+        if recovery.error is not None:
+            replacement_error.add_note(
+                "Provider runtime recovery failed after configuration rollback."
+            )
+        raise replacement_error
 
     def validate(self) -> tuple[bool, list[str], list[str]]:
         config = self.manager.config
@@ -81,6 +85,21 @@ class SettingsService:
             self.manager._config = snapshot  # noqa: SLF001
         else:
             self.manager.config = snapshot
+
+    def _rollback_config(
+        self,
+        snapshot: Any,
+        persisted: tuple[Path, bool, bytes] | None,
+        primary_error: BaseException,
+    ) -> None:
+        self._restore(snapshot)
+        try:
+            if persisted is None:
+                self.manager.save_config()
+            else:
+                self._restore_persisted(persisted)
+        except BaseException:
+            primary_error.add_note("Settings persistence rollback did not finish.")
 
     def _capture_persisted(self) -> tuple[Path, bool, bytes] | None:
         settings = getattr(self.manager, "_settings", None)
