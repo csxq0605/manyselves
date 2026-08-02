@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -154,17 +155,39 @@ class ConversationService:
         return self._session(session_id, agent_id)
 
     async def delete(self, session_id: str, agent_id: str = "main") -> str:
-        if not any(
-            item.get("id") == session_id
-            for item in self.store._load_sessions_metadata()  # noqa: SLF001
-        ):
+        metadata_before = self.store._load_sessions_metadata()  # noqa: SLF001
+        if not any(item.get("id") == session_id for item in metadata_before):
             raise ConversationNotFoundError(session_id)
+        expected_metadata = [
+            item for item in metadata_before if item.get("id") != session_id
+        ]
         current_ids = dict(self.store._current_session_ids)  # noqa: SLF001
         affected = [item for item, active in current_ids.items() if active == session_id]
         snapshot = self._snapshot_mutation(set(affected), deleted_session_id=session_id)
+        target_paths = {
+            path
+            for path, (existed, _durable_bytes) in snapshot.affected_files.items()
+            if existed and path.stem == session_id
+        }
 
         async def operation() -> str:
             self.store.delete_session(session_id)
+            sessions_path = (
+                self.workspace
+                / ".manyselves"
+                / "conversations"
+                / "sessions.json"
+            )
+            try:
+                persisted_metadata = json.loads(sessions_path.read_text("utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as error:
+                raise RuntimeError(
+                    "Conversation metadata deletion did not persist"
+                ) from error
+            if persisted_metadata != expected_metadata:
+                raise RuntimeError("Conversation metadata deletion did not persist")
+            if any(path.exists() for path in target_paths):
+                raise RuntimeError("Conversation history deletion did not persist")
             for affected_agent in affected:
                 await self._sync(affected_agent, clear_pending=True)
             return self.store.get_current_session_id(agent_id)

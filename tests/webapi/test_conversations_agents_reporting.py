@@ -561,6 +561,71 @@ async def test_delete_shared_active_session_restores_every_affected_agent_after_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_mode", ["metadata_save", "target_unlink"]
+)
+async def test_delete_silent_store_failure_restores_exact_store_and_live_state(
+    resources, monkeypatch, failure_mode: str
+) -> None:
+    client, host, workspace, _ = resources
+    service = host.app.state.conversation_service
+
+    survivor = await client.post(
+        "/api/v1/conversations", json={"name": "Survivor"}
+    )
+    assert survivor.status_code == 201
+    service.store.append_message("main", "user", "survivor history")
+    target = await client.post("/api/v1/conversations", json={"name": "Target"})
+    assert target.status_code == 201
+    target_id = target.json()["sessionId"]
+    service.store.append_message("main", "user", "target history")
+    await service._sync("main", clear_pending=True)  # noqa: SLF001
+
+    conversations_root = workspace / ".manyselves" / "conversations"
+    sessions_path = conversations_root / "sessions.json"
+    sessions_before = sessions_path.read_bytes()
+    metadata_before = json.loads(sessions_before)
+    assert len(metadata_before) >= 2
+    files_before = {
+        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
+    }
+    target_paths = {path for path in files_before if path.stem == target_id}
+    assert target_paths
+    current_before = dict(service.store._current_session_ids)  # noqa: SLF001
+    live_before = dict(host.backend.live_sessions)
+    live_histories_before = {
+        agent_id: [dict(item) for item in history]
+        for agent_id, history in host.backend.live_histories.items()
+    }
+
+    if failure_mode == "metadata_save":
+        monkeypatch.setattr(
+            service.store, "_save_sessions_metadata", lambda _sessions: None
+        )
+    else:
+        original_unlink = Path.unlink
+
+        def silently_keep_target(path: Path, *args, **kwargs) -> None:
+            if path in target_paths:
+                return
+            original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", silently_keep_target)
+
+    response = await client.delete(f"/api/v1/conversations/{target_id}")
+
+    assert response.status_code == 500
+    assert sessions_path.read_bytes() == sessions_before
+    assert json.loads(sessions_path.read_bytes()) == metadata_before
+    assert {
+        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
+    } == files_before
+    assert service.store._current_session_ids == current_before  # noqa: SLF001
+    assert host.backend.live_sessions == live_before
+    assert host.backend.live_histories == live_histories_before
+
+
+@pytest.mark.asyncio
 async def test_cancelled_conversation_mutation_keeps_lease_until_sync_finishes(
     resources,
 ) -> None:
