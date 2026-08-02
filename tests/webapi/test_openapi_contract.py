@@ -1,11 +1,13 @@
 """Contract tests for the Phase 1 frontend OpenAPI boundary."""
 
 import json
+import re
 from pathlib import Path
 
+from fastapi.routing import APIRoute
 from pydantic import SecretStr
 
-from manyselves.webapi.main import create_app
+from manyselves.webapi.main import create_app, generate_operation_id
 from manyselves.webapi.settings import WebSettings
 from scripts.export_openapi import render_openapi_document, write_or_check
 
@@ -48,6 +50,39 @@ def test_all_operations_have_unique_operation_ids() -> None:
 
     assert None not in operation_ids
     assert len(operation_ids) == len(set(operation_ids))
+
+
+def test_all_operation_ids_depend_only_on_public_method_and_path() -> None:
+    schema = create_app(_test_settings()).openapi()
+
+    for path, path_item in schema["paths"].items():
+        path_slug = re.sub(r"[^a-zA-Z0-9]+", "_", path).strip("_").lower()
+        for method, operation in path_item.items():
+            if not isinstance(operation, dict) or "responses" not in operation:
+                continue
+            assert operation["operationId"] == f"{method.lower()}_{path_slug}"
+
+
+def test_operation_id_is_independent_of_endpoint_function_name() -> None:
+    def first_handler() -> None:
+        pass
+
+    def renamed_handler() -> None:
+        pass
+
+    first = APIRoute(
+        "/api/v1/widgets/{widget_id}",
+        first_handler,
+        methods=["GET"],
+    )
+    renamed = APIRoute(
+        "/api/v1/widgets/{widget_id}",
+        renamed_handler,
+        methods=["GET"],
+    )
+
+    assert generate_operation_id(first) == "get_api_v1_widgets_widget_id"
+    assert generate_operation_id(renamed) == "get_api_v1_widgets_widget_id"
 
 
 def test_rendered_openapi_is_deterministic_and_contains_no_settings() -> None:

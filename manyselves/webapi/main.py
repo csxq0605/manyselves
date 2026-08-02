@@ -1,12 +1,14 @@
 """FastAPI application factory and Gunicorn entry point."""
 
 import asyncio
+import re
 from collections.abc import Callable
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
@@ -34,6 +36,18 @@ from .routes.settings import router as settings_router
 from .settings import WebSettings
 
 API_PREFIX = "/api/v1"
+
+
+def generate_operation_id(route: APIRoute) -> str:
+    """Generate a client-stable ID from the public HTTP method and path only."""
+    methods = sorted(method.lower() for method in route.methods or ())
+    if len(methods) != 1:
+        raise ValueError(
+            "OpenAPI routes must declare exactly one HTTP method for a stable "
+            "operation ID"
+        )
+    path_slug = re.sub(r"[^a-zA-Z0-9]+", "_", route.path_format).strip("_").lower()
+    return f"{methods[0]}_{path_slug or 'root'}"
 
 
 class DeferredCORSMiddleware:
@@ -69,6 +83,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     """Construct an import-safe HTTP app without creating a runtime."""
     app = FastAPI(
         lifespan=application_lifespan,
+        generate_unique_id_function=generate_operation_id,
         openapi_url=None,
         docs_url=None,
         redoc_url=None,

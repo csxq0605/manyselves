@@ -1688,7 +1688,7 @@
   "paths": {
     "/api/v1/agents": {
       "get": {
-        "operationId": "list_agents_api_v1_agents_get",
+        "operationId": "get_api_v1_agents",
         "responses": {
           "200": {
             "content": {
@@ -1706,7 +1706,7 @@
     },
     "/api/v1/agents/{agent_id}/file-context": {
       "post": {
-        "operationId": "send_file_context_api_v1_agents__agent_id__file_context_post",
+        "operationId": "post_api_v1_agents_agent_id_file_context",
         "parameters": [
           {
             "in": "path",
@@ -1797,7 +1797,7 @@
     },
     "/api/v1/agents/{agent_id}/interrupt": {
       "post": {
-        "operationId": "interrupt_api_v1_agents__agent_id__interrupt_post",
+        "operationId": "post_api_v1_agents_agent_id_interrupt",
         "parameters": [
           {
             "in": "path",
@@ -1878,7 +1878,7 @@
     },
     "/api/v1/agents/{agent_id}/messages": {
       "post": {
-        "operationId": "send_message_api_v1_agents__agent_id__messages_post",
+        "operationId": "post_api_v1_agents_agent_id_messages",
         "parameters": [
           {
             "in": "path",
@@ -1969,7 +1969,7 @@
     },
     "/api/v1/agents/{agent_id}/messages/{target_message_id}/edit-resend": {
       "post": {
-        "operationId": "edit_resend_api_v1_agents__agent_id__messages__target_message_id__edit_resend_post",
+        "operationId": "post_api_v1_agents_agent_id_messages_target_message_id_edit_resend",
         "parameters": [
           {
             "in": "path",
@@ -2069,7 +2069,7 @@
     },
     "/api/v1/agents/{agent_id}/rollback": {
       "post": {
-        "operationId": "rollback_api_v1_agents__agent_id__rollback_post",
+        "operationId": "post_api_v1_agents_agent_id_rollback",
         "parameters": [
           {
             "in": "path",
@@ -2161,7 +2161,7 @@
     "/api/v1/bootstrap": {
       "get": {
         "description": "Return the first client snapshot from the active runtime facade.",
-        "operationId": "bootstrap_api_v1_bootstrap_get",
+        "operationId": "get_api_v1_bootstrap",
         "responses": {
           "200": {
             "content": {
@@ -2180,7 +2180,7 @@
     "/api/v1/control/lease": {
       "delete": {
         "description": "Release the current controller lease when its token matches.",
-        "operationId": "release_lease_api_v1_control_lease_delete",
+        "operationId": "delete_api_v1_control_lease",
         "parameters": [
           {
             "in": "header",
@@ -2228,7 +2228,7 @@
       },
       "post": {
         "description": "Acquire a controller lease, or renew the same client's matching lease.",
-        "operationId": "acquire_lease_api_v1_control_lease_post",
+        "operationId": "post_api_v1_control_lease",
         "parameters": [
           {
             "in": "header",
@@ -2285,7 +2285,7 @@
     "/api/v1/control/lease/heartbeat": {
       "post": {
         "description": "Extend the current controller lease when its token matches.",
-        "operationId": "heartbeat_lease_api_v1_control_lease_heartbeat_post",
+        "operationId": "post_api_v1_control_lease_heartbeat",
         "parameters": [
           {
             "in": "header",
@@ -2341,7 +2341,7 @@
     },
     "/api/v1/conversations": {
       "get": {
-        "operationId": "list_conversations_api_v1_conversations_get",
+        "operationId": "get_api_v1_conversations",
         "parameters": [
           {
             "in": "query",
@@ -2379,7 +2379,7 @@
         "summary": "List Conversations"
       },
       "post": {
-        "operationId": "create_conversation_api_v1_conversations_post",
+        "operationId": "post_api_v1_conversations",
         "parameters": [
           {
             "in": "header",
@@ -2451,7 +2451,7 @@
     },
     "/api/v1/conversations/clear": {
       "post": {
-        "operationId": "clear_conversation_api_v1_conversations_clear_post",
+        "operationId": "post_api_v1_conversations_clear",
         "parameters": [
           {
             "in": "query",
@@ -2521,7 +2521,7 @@
     },
     "/api/v1/conversations/messages": {
       "get": {
-        "operationId": "messages_api_v1_conversations_messages_get",
+        "operationId": "get_api_v1_conversations_messages",
         "parameters": [
           {
             "in": "query",
@@ -2561,7 +2561,7 @@
     },
     "/api/v1/conversations/{session_id}": {
       "delete": {
-        "operationId": "delete_conversation_api_v1_conversations__session_id__delete",
+        "operationId": "delete_api_v1_conversations_session_id",
         "parameters": [
           {
             "in": "path",
@@ -2638,7 +2638,7 @@
         "summary": "Delete Conversation"
       },
       "patch": {
-        "operationId": "rename_conversation_api_v1_conversations__session_id__patch",
+        "operationId": "patch_api_v1_conversations_session_id",
         "parameters": [
           {
             "in": "path",
@@ -2719,7 +2719,7 @@
     },
     "/api/v1/conversations/{session_id}/activate": {
       "post": {
-        "operationId": "activate_conversation_api_v1_conversations__session_id__activate_post",
+        "operationId": "post_api_v1_conversations_session_id_activate",
         "parameters": [
           {
             "in": "path",
@@ -2801,7 +2801,7 @@
     "/api/v1/events": {
       "get": {
         "description": "Stream runtime notifications with replay or an explicit bootstrap requirement.",
-        "operationId": "stream_events_api_v1_events_get",
+        "operationId": "get_api_v1_events",
         "parameters": [
           {
             "in": "header",
@@ -2862,7 +2862,7 @@
     "/api/v1/health/ready": {
       "get": {
         "description": "Report whether the lifespan-owned runtime can accept work.",
-        "operationId": "readiness_api_v1_health_ready_get",
+        "operationId": "get_api_v1_health_ready",
         "responses": {
           "200": {
             "content": {
@@ -2871,7 +2871,7 @@
                   "additionalProperties": {
                     "type": "string"
                   },
-                  "title": "Response Readiness Api V1 Health Ready Get",
+                  "title": "Response Get Api V1 Health Ready",
                   "type": "object"
                 }
               }
@@ -2884,7 +2884,7 @@
     },
     "/api/v1/maintenance/quiesce": {
       "post": {
-        "operationId": "quiesce_api_v1_maintenance_quiesce_post",
+        "operationId": "post_api_v1_maintenance_quiesce",
         "parameters": [
           {
             "in": "header",
@@ -2946,7 +2946,7 @@
     },
     "/api/v1/maintenance/release": {
       "post": {
-        "operationId": "release_api_v1_maintenance_release_post",
+        "operationId": "post_api_v1_maintenance_release",
         "parameters": [
           {
             "in": "header",
@@ -3018,7 +3018,7 @@
     },
     "/api/v1/operations/python": {
       "post": {
-        "operationId": "run_python_api_v1_operations_python_post",
+        "operationId": "post_api_v1_operations_python",
         "parameters": [
           {
             "in": "header",
@@ -3107,7 +3107,7 @@
     },
     "/api/v1/operations/{operation_id}": {
       "get": {
-        "operationId": "get_operation_api_v1_operations__operation_id__get",
+        "operationId": "get_api_v1_operations_operation_id",
         "parameters": [
           {
             "in": "path",
@@ -3146,7 +3146,7 @@
     },
     "/api/v1/operations/{operation_id}/interrupt": {
       "post": {
-        "operationId": "interrupt_operation_api_v1_operations__operation_id__interrupt_post",
+        "operationId": "post_api_v1_operations_operation_id_interrupt",
         "parameters": [
           {
             "in": "path",
@@ -3217,7 +3217,7 @@
     },
     "/api/v1/projects": {
       "get": {
-        "operationId": "list_projects_api_v1_projects_get",
+        "operationId": "get_api_v1_projects",
         "responses": {
           "200": {
             "content": {
@@ -3233,7 +3233,7 @@
         "summary": "List Projects"
       },
       "post": {
-        "operationId": "create_project_api_v1_projects_post",
+        "operationId": "post_api_v1_projects",
         "parameters": [
           {
             "in": "header",
@@ -3305,7 +3305,7 @@
     },
     "/api/v1/projects/{project_id}": {
       "delete": {
-        "operationId": "delete_project_api_v1_projects__project_id__delete",
+        "operationId": "delete_api_v1_projects_project_id",
         "parameters": [
           {
             "in": "path",
@@ -3367,7 +3367,7 @@
         "summary": "Delete Project"
       },
       "patch": {
-        "operationId": "rename_project_api_v1_projects__project_id__patch",
+        "operationId": "patch_api_v1_projects_project_id",
         "parameters": [
           {
             "in": "path",
@@ -3448,7 +3448,7 @@
     },
     "/api/v1/projects/{project_id}/activate": {
       "post": {
-        "operationId": "activate_project_api_v1_projects__project_id__activate_post",
+        "operationId": "post_api_v1_projects_project_id_activate",
         "parameters": [
           {
             "in": "path",
@@ -3519,7 +3519,7 @@
     },
     "/api/v1/projects/{project_id}/files/content": {
       "get": {
-        "operationId": "read_file_api_v1_projects__project_id__files_content_get",
+        "operationId": "get_api_v1_projects_project_id_files_content",
         "parameters": [
           {
             "in": "path",
@@ -3565,7 +3565,7 @@
         "summary": "Read File"
       },
       "put": {
-        "operationId": "save_file_api_v1_projects__project_id__files_content_put",
+        "operationId": "put_api_v1_projects_project_id_files_content",
         "parameters": [
           {
             "in": "path",
@@ -3655,7 +3655,7 @@
     },
     "/api/v1/projects/{project_id}/files/download": {
       "get": {
-        "operationId": "download_file_api_v1_projects__project_id__files_download_get",
+        "operationId": "get_api_v1_projects_project_id_files_download",
         "parameters": [
           {
             "in": "path",
@@ -3701,7 +3701,7 @@
     },
     "/api/v1/projects/{project_id}/files/entries": {
       "delete": {
-        "operationId": "delete_entry_api_v1_projects__project_id__files_entries_delete",
+        "operationId": "delete_api_v1_projects_project_id_files_entries",
         "parameters": [
           {
             "in": "path",
@@ -3781,7 +3781,7 @@
         "summary": "Delete Entry"
       },
       "post": {
-        "operationId": "create_entry_api_v1_projects__project_id__files_entries_post",
+        "operationId": "post_api_v1_projects_project_id_files_entries",
         "parameters": [
           {
             "in": "path",
@@ -3862,7 +3862,7 @@
     },
     "/api/v1/projects/{project_id}/files/preview": {
       "get": {
-        "operationId": "preview_file_api_v1_projects__project_id__files_preview_get",
+        "operationId": "get_api_v1_projects_project_id_files_preview",
         "parameters": [
           {
             "in": "path",
@@ -3889,7 +3889,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Preview File Api V1 Projects  Project Id  Files Preview Get",
+                  "title": "Response Get Api V1 Projects Project Id Files Preview",
                   "type": "object"
                 }
               }
@@ -3912,7 +3912,7 @@
     },
     "/api/v1/projects/{project_id}/files/rename": {
       "post": {
-        "operationId": "rename_entry_api_v1_projects__project_id__files_rename_post",
+        "operationId": "post_api_v1_projects_project_id_files_rename",
         "parameters": [
           {
             "in": "path",
@@ -3993,7 +3993,7 @@
     },
     "/api/v1/projects/{project_id}/files/tree": {
       "get": {
-        "operationId": "file_tree_api_v1_projects__project_id__files_tree_get",
+        "operationId": "get_api_v1_projects_project_id_files_tree",
         "parameters": [
           {
             "in": "path",
@@ -4042,7 +4042,7 @@
     },
     "/api/v1/projects/{project_id}/files/upload": {
       "post": {
-        "operationId": "upload_file_api_v1_projects__project_id__files_upload_post",
+        "operationId": "post_api_v1_projects_project_id_files_upload",
         "parameters": [
           {
             "in": "path",
@@ -4122,7 +4122,7 @@
     },
     "/api/v1/reporting/decisions/{decision_id}/resume": {
       "post": {
-        "operationId": "resume_decision_api_v1_reporting_decisions__decision_id__resume_post",
+        "operationId": "post_api_v1_reporting_decisions_decision_id_resume",
         "parameters": [
           {
             "in": "path",
@@ -4213,7 +4213,7 @@
     },
     "/api/v1/reporting/revisions": {
       "post": {
-        "operationId": "revise_api_v1_reporting_revisions_post",
+        "operationId": "post_api_v1_reporting_revisions",
         "parameters": [
           {
             "in": "header",
@@ -4295,7 +4295,7 @@
     },
     "/api/v1/reporting/runs": {
       "get": {
-        "operationId": "list_runs_api_v1_reporting_runs_get",
+        "operationId": "get_api_v1_reporting_runs",
         "responses": {
           "200": {
             "content": {
@@ -4311,7 +4311,7 @@
         "summary": "List Runs"
       },
       "post": {
-        "operationId": "start_run_api_v1_reporting_runs_post",
+        "operationId": "post_api_v1_reporting_runs",
         "parameters": [
           {
             "in": "header",
@@ -4393,7 +4393,7 @@
     },
     "/api/v1/reporting/runs/{run_id}": {
       "get": {
-        "operationId": "get_run_api_v1_reporting_runs__run_id__get",
+        "operationId": "get_api_v1_reporting_runs_run_id",
         "parameters": [
           {
             "in": "path",
@@ -4432,7 +4432,7 @@
     },
     "/api/v1/reporting/runs/{run_id}/cancel": {
       "post": {
-        "operationId": "cancel_run_api_v1_reporting_runs__run_id__cancel_post",
+        "operationId": "post_api_v1_reporting_runs_run_id_cancel",
         "parameters": [
           {
             "in": "path",
@@ -4513,7 +4513,7 @@
     },
     "/api/v1/reporting/runs/{run_id}/resume": {
       "post": {
-        "operationId": "resume_run_api_v1_reporting_runs__run_id__resume_post",
+        "operationId": "post_api_v1_reporting_runs_run_id_resume",
         "parameters": [
           {
             "in": "path",
@@ -4604,7 +4604,7 @@
     },
     "/api/v1/settings": {
       "get": {
-        "operationId": "get_settings_api_v1_settings_get",
+        "operationId": "get_api_v1_settings",
         "responses": {
           "200": {
             "content": {
@@ -4620,7 +4620,7 @@
         "summary": "Get Settings"
       },
       "patch": {
-        "operationId": "update_defaults_api_v1_settings_patch",
+        "operationId": "patch_api_v1_settings",
         "parameters": [
           {
             "in": "header",
@@ -4692,7 +4692,7 @@
     },
     "/api/v1/settings/providers/{provider_id}": {
       "patch": {
-        "operationId": "update_provider_api_v1_settings_providers__provider_id__patch",
+        "operationId": "patch_api_v1_settings_providers_provider_id",
         "parameters": [
           {
             "in": "path",
