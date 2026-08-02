@@ -65,6 +65,7 @@ class ConversationMutationSnapshot:
     current_session_ids: dict[str, str]
     backend_histories: dict[str, list[dict[str, Any]]]
     loop_histories: dict[str, list[Any] | None]
+    loop_session_ids: dict[str, str | None]
     streams: dict[tuple[str, str, str], str]
     message_sessions: dict[tuple[str, str], str]
 
@@ -225,6 +226,7 @@ class ConversationService:
         get_loop = getattr(manager, "get_loop", None)
         backend_histories: dict[str, list[dict[str, Any]]] = {}
         loop_histories: dict[str, list[Any] | None] = {}
+        loop_session_ids: dict[str, str | None] = {}
         for affected_agent in affected_agents:
             backend_histories[affected_agent] = (
                 self._backend_messages(affected_agent)
@@ -238,6 +240,8 @@ class ConversationService:
                 if isinstance(current_history, list)
                 else None
             )
+            if loop is not None and hasattr(loop, "_current_session_id"):
+                loop_session_ids[affected_agent] = loop._current_session_id  # noqa: SLF001
 
         return ConversationMutationSnapshot(
             sessions_existed=sessions_path.exists(),
@@ -250,6 +254,7 @@ class ConversationService:
             current_session_ids=current_session_ids,
             backend_histories=backend_histories,
             loop_histories=loop_histories,
+            loop_session_ids=loop_session_ids,
             streams=dict(self._streams),
             message_sessions=dict(self._message_sessions),
         )
@@ -286,10 +291,15 @@ class ConversationService:
         manager = self.facade._host.loop_manager  # noqa: SLF001
         get_loop = getattr(manager, "get_loop", None)
         for affected_agent, backend_history in snapshot.backend_histories.items():
+            session_id = (
+                snapshot.loop_session_ids[affected_agent]
+                if affected_agent in snapshot.loop_session_ids
+                else snapshot.current_session_ids.get(affected_agent)
+            )
             await self.facade._host.backend.sync_agent_conversation(  # noqa: SLF001
                 affected_agent,
                 copy.deepcopy(backend_history),
-                session_id=snapshot.current_session_ids.get(affected_agent),
+                session_id=session_id,
                 clear_pending=True,
             )
             loop = get_loop(affected_agent) if callable(get_loop) else None
@@ -298,6 +308,14 @@ class ConversationService:
             if loop_history is not None and isinstance(current_history, list):
                 current_history.clear()
                 current_history.extend(copy.deepcopy(loop_history))
+            if (
+                affected_agent in snapshot.loop_session_ids
+                and loop is not None
+                and hasattr(loop, "_current_session_id")
+            ):
+                loop._current_session_id = snapshot.loop_session_ids[  # noqa: SLF001
+                    affected_agent
+                ]
         self._fsync_directories(root)
 
     async def _run_mutation(

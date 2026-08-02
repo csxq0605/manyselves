@@ -80,7 +80,7 @@ async def _cleanup_owned_runtime(
                 if first_error is None:
                     first_error = outcome.error
                 else:
-                    first_error.add_note(f"Producer shutdown retry also failed: {outcome.error!r}")
+                    first_error.add_note("Producer shutdown retry also failed")
             if "producers" not in ownership.completed:
                 assert first_error is not None
                 failures.append(("producer cleanup", first_error))
@@ -162,10 +162,10 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         if pending_ownership is not None:
             pending_failures, pending_cancelled = await _cleanup_owned_runtime(pending_ownership)
             if pending_failures:
-                name, cleanup_error = pending_failures[0]
+                _name, cleanup_error = pending_failures[0]
                 retry_error = RuntimeError("Previous lifespan cleanup is incomplete")
-                for failure_name, failure in pending_failures:
-                    retry_error.add_note(f"{failure_name} failed: {failure!r}")
+                for failure_name, _failure in pending_failures:
+                    retry_error.add_note(f"{failure_name} failed")
                 if pending_cancelled:
                     retry_error.add_note("Caller cancellation observed during lifecycle cleanup")
                 raise retry_error from cleanup_error
@@ -292,9 +292,9 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             cleanup_failures, cleanup_cancelled = await _cleanup_owned_runtime(ownership)
             if cleanup_cancelled:
                 startup_error.add_note("Caller cancellation observed during lifecycle cleanup")
-            for name, cleanup_error in cleanup_failures:
-                startup_error.add_note(f"{name} failed: {cleanup_error!r}")
-                logger.error("{} after lifespan startup failure: {!r}", name, cleanup_error)
+            for name, _cleanup_error in cleanup_failures:
+                startup_error.add_note(f"{name} failed")
+                logger.error("{} after lifespan startup failure", name)
             if not cleanup_failures:
                 app.state._lifecycle_cleanup_pending = None
                 _expose_lifecycle_ownership(app, None)
@@ -309,7 +309,7 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         if deactivate.cancellation_requested and not cleanup_cancelled:
             startup_error.add_note("Caller cancellation observed during lifecycle cleanup")
         if deactivate.error is not None:
-            startup_error.add_note(f"Lifespan deactivation failed: {deactivate.error!r}")
+            startup_error.add_note("Lifespan deactivation failed")
         raise
 
     try:
@@ -333,13 +333,13 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         shutdown_error: BaseException | None = None
         if cleanup_failures:
             _, shutdown_error = cleanup_failures[0]
-            for name, cleanup_error in cleanup_failures[1:]:
-                shutdown_error.add_note(f"{name} failed: {cleanup_error!r}")
+            for name, _cleanup_error in cleanup_failures[1:]:
+                shutdown_error.add_note(f"{name} failed")
         if deactivate.error is not None:
             if shutdown_error is None:
                 shutdown_error = deactivate.error
             else:
-                shutdown_error.add_note(f"Lifespan deactivation failed: {deactivate.error!r}")
+                shutdown_error.add_note("Lifespan deactivation failed")
         if shutdown_error is not None:
             if caller_cancelled:
                 shutdown_error.add_note("Caller cancellation observed during lifecycle cleanup")

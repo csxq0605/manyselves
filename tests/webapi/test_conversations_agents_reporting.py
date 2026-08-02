@@ -118,6 +118,15 @@ class _Backend:
         self.synced.append((agent_type, history, session_id, clear_pending))
         self.live_sessions[agent_type] = session_id
         self.live_histories[agent_type] = history
+        manager = self.host.loop_manager
+        get_loop = getattr(manager, "get_loop", None)
+        loop = get_loop(agent_type) if callable(get_loop) else None
+        if loop is not None:
+            loop._current_session_id = session_id  # noqa: SLF001
+            loop._conversation_history.clear()  # noqa: SLF001
+            loop._conversation_history.extend(  # noqa: SLF001
+                [dict(item) for item in history]
+            )
 
     async def restart_agents_and_wait(self, reason: str) -> None:
         self.restart_calls.append(reason)
@@ -210,11 +219,13 @@ class ResourceRuntimeHost:
         self.replace_error: BaseException | None = None
         self.replace_failures_remaining = 0
         self.recovery_error: BaseException | None = None
+        self._loops: dict[str, SimpleNamespace] = {}
         self.loop_manager = self._new_loop_manager()
         self._bus_task: asyncio.Task | None = None
 
     def _new_loop_manager(self):
         self.manager_factory_calls += 1
+        self._loops = {}
         return SimpleNamespace(
             provider_registry={
                 item.id: {
@@ -227,7 +238,9 @@ class ResourceRuntimeHost:
                 if item.enabled and item.api_key
             },
             get_all_agent_statuses=lambda: dict(self.statuses),
-            get_agent_session_id=lambda _agent_id: None,
+            get_agent_session_id=lambda agent_id: getattr(
+                self._get_loop(agent_id), "_current_session_id", None
+            ),
             get_loop=self._get_loop,
             get_agent_debug_mode=lambda agent_id: self.backend.debug_modes.get(agent_id, False),
         )
@@ -235,7 +248,17 @@ class ResourceRuntimeHost:
     def _get_loop(self, agent_id: str):
         if agent_id != "main" or self.reporting_controller is None:
             return None
-        return SimpleNamespace(tools=_ToolRegistry(self.reporting_controller))
+        loop = self._loops.get(agent_id)
+        if loop is None:
+            loop = SimpleNamespace(
+                tools=_ToolRegistry(self.reporting_controller),
+                _current_session_id=None,
+                _conversation_history=[],
+            )
+            self._loops[agent_id] = loop
+        else:
+            loop.tools = _ToolRegistry(self.reporting_controller)
+        return loop
 
     async def start(self, workspace: Path) -> None:
         self.workspace = Path(workspace).resolve()
@@ -506,6 +529,52 @@ async def test_conversation_mutations_restore_exact_store_and_live_state_after_s
         deleted_paths = [path for path in files_before if path.stem == target_id]
         assert deleted_paths
         assert all(path.read_bytes() == files_before[path] for path in deleted_paths)
+
+
+@pytest.mark.asyncio
+async def test_conversation_compensation_restores_exact_divergent_live_session_id(
+    resources,
+) -> None:
+    client, host, workspace, _ = resources
+    service = host.app.state.conversation_service
+    created = await client.post(
+        "/api/v1/conversations", json={"name": "Durable Session"}
+    )
+    assert created.status_code == 201
+    service.store.append_message("main", "user", "durable history")
+    await service._sync("main", clear_pending=True)  # noqa: SLF001
+
+    loop = host.loop_manager.get_loop("main")
+    assert loop is not None
+    live_history_before = [{"role": "system", "content": "live-only baseline"}]
+    loop._current_session_id = None  # noqa: SLF001
+    loop._conversation_history[:] = live_history_before  # noqa: SLF001
+    host.backend.live_sessions["main"] = None
+    host.backend.live_histories["main"] = [dict(item) for item in live_history_before]
+
+    conversations_root = workspace / ".manyselves" / "conversations"
+    sessions_path = conversations_root / "sessions.json"
+    sessions_before = sessions_path.read_bytes()
+    files_before = {
+        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
+    }
+    current_before = dict(service.store._current_session_ids)  # noqa: SLF001
+    assert current_before["main"] == created.json()["sessionId"]
+
+    host.backend.sync_failures_remaining = 1
+    response = await client.post(
+        "/api/v1/conversations", json={"name": "Must Compensate"}
+    )
+
+    assert response.status_code == 500
+    assert sessions_path.read_bytes() == sessions_before
+    assert {
+        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
+    } == files_before
+    assert service.store._current_session_ids == current_before  # noqa: SLF001
+    assert loop._conversation_history == live_history_before  # noqa: SLF001
+    assert loop._current_session_id is None  # noqa: SLF001
+    assert host.backend.live_sessions["main"] is None
 
 
 @pytest.mark.asyncio

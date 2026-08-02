@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -1267,6 +1268,126 @@ async def test_staged_startup_preserves_original_error_when_resource_cleanup_fai
 
     assert str(captured.value) == "reporting startup failed"
     assert message_subscriber_count(host.bus) == 0
+
+
+@pytest.mark.asyncio
+async def test_startup_and_pending_cleanup_secondary_diagnostics_are_secret_safe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    host = FakeRuntimeHost()
+    app = create_app(settings(tmp_path))
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    secret = "startup-pending-secondary-secret"
+    logger_calls: list[tuple[object, ...]] = []
+    original_broker_start = lifespan_module.EventBroker.start
+    original_reporting_close = lifespan_module.ReportingFacade.close
+    original_python_close = lifespan_module.PythonRunService.close
+    startup_failed = False
+
+    def fail_broker_once(broker) -> None:
+        nonlocal startup_failed
+        original_broker_start(broker)
+        if not startup_failed:
+            startup_failed = True
+            raise RuntimeError("broker startup primary")
+
+    async def fail_reporting_close(_reporting) -> None:
+        raise RuntimeError("reporting cleanup primary")
+
+    async def fail_python_close(_python_runs) -> None:
+        raise RuntimeError(f"Python cleanup contained {secret}")
+
+    monkeypatch.setattr(lifespan_module.EventBroker, "start", fail_broker_once)
+    monkeypatch.setattr(
+        lifespan_module.ReportingFacade, "close", fail_reporting_close
+    )
+    monkeypatch.setattr(lifespan_module.PythonRunService, "close", fail_python_close)
+    monkeypatch.setattr(
+        lifespan_module,
+        "logger",
+        SimpleNamespace(error=lambda *args, **_kwargs: logger_calls.append(args)),
+    )
+
+    with pytest.raises(RuntimeError, match="broker startup primary") as startup:
+        async with app.router.lifespan_context(app):
+            pass
+
+    startup_diagnostics = "\n".join(
+        [
+            *getattr(startup.value, "__notes__", ()),
+            "".join(traceback.format_exception(startup.value)),
+            repr(logger_calls),
+        ]
+    )
+    assert secret not in startup_diagnostics
+    assert "Python cleanup failed" in startup_diagnostics
+
+    logger_calls.clear()
+    with pytest.raises(
+        RuntimeError, match="Previous lifespan cleanup is incomplete"
+    ) as pending:
+        async with app.router.lifespan_context(app):
+            pass
+
+    pending_diagnostics = "\n".join(
+        [
+            *getattr(pending.value, "__notes__", ()),
+            "".join(traceback.format_exception(pending.value)),
+            repr(logger_calls),
+        ]
+    )
+    assert secret not in pending_diagnostics
+    assert "Python cleanup failed" in pending_diagnostics
+
+    monkeypatch.setattr(
+        lifespan_module.ReportingFacade, "close", original_reporting_close
+    )
+    monkeypatch.setattr(
+        lifespan_module.PythonRunService, "close", original_python_close
+    )
+    async with app.router.lifespan_context(app):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_normal_shutdown_secondary_diagnostics_are_secret_safe(
+    tmp_path: Path,
+) -> None:
+    host = FakeRuntimeHost()
+    app = create_app(settings(tmp_path))
+    app.dependency_overrides[get_runtime_host] = lambda: host
+    secret = "normal-shutdown-secondary-secret"
+
+    with pytest.raises(RuntimeError, match="reporting cleanup primary") as captured:
+        async with app.router.lifespan_context(app):
+            reporting = app.state.reporting_facade
+            python_runs = app.state.python_run_service
+            original_reporting_close = reporting.close
+            original_python_close = python_runs.close
+
+            async def fail_reporting_close() -> None:
+                raise RuntimeError("reporting cleanup primary")
+
+            async def fail_python_close() -> None:
+                raise RuntimeError(f"Python cleanup contained {secret}")
+
+            reporting.close = fail_reporting_close
+            python_runs.close = fail_python_close
+
+    diagnostics = "\n".join(
+        [
+            *getattr(captured.value, "__notes__", ()),
+            "".join(traceback.format_exception(captured.value)),
+        ]
+    )
+    assert secret not in diagnostics
+    assert "Python cleanup failed" in diagnostics
+
+    reporting.close = original_reporting_close
+    python_runs.close = original_python_close
+    async with app.router.lifespan_context(app):
+        pass
 
 
 @pytest.mark.asyncio

@@ -96,6 +96,23 @@ async def test_ready_is_503_until_runtime_is_ready(web_settings: WebSettings) ->
 
 
 @pytest.mark.asyncio
+async def test_ready_is_200_with_exact_ready_body(
+    web_settings: WebSettings, fake_runtime_host: FakeRuntimeHost
+) -> None:
+    fake_runtime_host.is_ready = True
+    app = create_app(web_settings)
+    app.state.runtime_host = fake_runtime_host
+    app.state.maintenance_service = SimpleNamespace(quiesced=False)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/health/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+
+
+@pytest.mark.asyncio
 async def test_ready_is_503_with_quiesced_error_envelope(
     web_settings: WebSettings, fake_runtime_host: FakeRuntimeHost
 ) -> None:
