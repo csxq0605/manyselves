@@ -64,19 +64,12 @@ class EventPayloadSanitizer:
         depth: int,
         active: set[int],
     ) -> Any:
+        if depth >= MAX_SANITIZE_DEPTH:
+            return REDACTED
         key = _normalized_key(name)
         if key is None:
             return REDACTED
         if _is_secret_key(key):
-            return REDACTED
-        if _is_auth_boundary(name):
-            if type(value) in AUTH_CONTAINER_TYPES:
-                return self._sanitize(
-                    value,
-                    context=_Context.AUTHENTICATION,
-                    depth=depth,
-                    active=active,
-                )
             return REDACTED
         if key == "tokenusage":
             if value is None:
@@ -92,6 +85,15 @@ class EventPayloadSanitizer:
         if "token" in key:
             if key in TOKEN_METRIC_KEYS and _is_metric_value(value):
                 return value
+            return REDACTED
+        if _is_auth_boundary(name):
+            if type(value) in AUTH_CONTAINER_TYPES:
+                return self._sanitize(
+                    value,
+                    context=_Context.AUTHENTICATION,
+                    depth=depth,
+                    active=active,
+                )
             return REDACTED
         return self._sanitize(
             value,
@@ -266,13 +268,18 @@ class EventPayloadSanitizer:
             for name, item in value.items():
                 output_name = _output_key(name, reserved | set(result))
                 key = _normalized_key(name)
+                scalar_within_depth = depth + 1 < MAX_SANITIZE_DEPTH
                 allowed_containers = (
                     AUTH_CONTAINER_TYPES
                     if context is _Context.AUTHENTICATION
                     else (dict, list, tuple)
                 )
                 if context is _Context.TOKEN_USAGE and key in TOKEN_METRIC_KEYS:
-                    result[output_name] = item if _is_metric_value(item) else REDACTED
+                    result[output_name] = (
+                        item
+                        if scalar_within_depth and _is_metric_value(item)
+                        else REDACTED
+                    )
                 elif type(item) in allowed_containers:
                     result[output_name] = self._sanitize(
                         item,
@@ -281,7 +288,11 @@ class EventPayloadSanitizer:
                         active=active,
                     )
                 elif context is _Context.AUTHENTICATION:
-                    result[output_name] = _sanitize_auth_metadata(name, item)
+                    result[output_name] = (
+                        _sanitize_auth_metadata(name, item)
+                        if scalar_within_depth
+                        else REDACTED
+                    )
                 else:
                     result[output_name] = REDACTED
         finally:
@@ -416,7 +427,7 @@ def _sanitize_auth_metadata(name: object, value: object) -> Any:
 def _redact_credential_text(value: str) -> str:
     def replace(match: re.Match[str]) -> str:
         parts = match.group(0).split(maxsplit=1)
-        if len(parts) == 2 and parts[1].casefold() in {
+        if len(parts) == 2 and parts[1].rstrip(".,;:!?").casefold() in {
             "authentication",
             "authorization",
             "scheme",

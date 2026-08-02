@@ -80,6 +80,38 @@ def test_explicit_secret_meaning_wins_before_authentication_context(name: str) -
 @pytest.mark.parametrize(
     "name",
     [
+        "token",
+        "auth-token",
+        "authentication_token",
+        "authToken",
+        "authenticationAccessToken",
+        "AuthToken",
+        "AuthenticationAccessToken",
+        "AUTHToken",
+        "AUTHENTICATIONAccessToken",
+    ],
+)
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"method": "oauth2", "provider": "example"},
+        ["opaque-list-value"],
+        ("opaque-tuple-value",),
+        {"opaque-set-value"},
+        frozenset({"opaque-frozen-value"}),
+    ],
+    ids=["dict", "list", "tuple", "set", "frozenset"],
+)
+def test_token_meaning_wins_before_authentication_context(
+    name: str,
+    value: object,
+) -> None:
+    assert EventPayloadSanitizer().sanitize_field(name, value) == "[REDACTED]"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
         "author",
         "Author",
         "AUTHOR",
@@ -184,6 +216,57 @@ def test_sensitive_contexts_never_execute_unknown_object_hooks() -> None:
     assert sanitizer.sanitize_field("authenticationConfig", Hostile()) == "[REDACTED]"
     assert sanitizer.sanitize_field("token_usage", Hostile()) == "[REDACTED]"
     assert calls == {"str": 0, "repr": 0, "iter": 0}
+
+
+def _wrapped_in_lists(value: object, levels: int) -> object:
+    wrapped = value
+    for _ in range(levels):
+        wrapped = [wrapped]
+    return wrapped
+
+
+def _descend_lists(value: object, levels: int) -> object:
+    cursor = value
+    for _ in range(levels):
+        assert type(cursor) is list
+        cursor = cursor[0]
+    return cursor
+
+
+def test_direct_field_returns_respect_depth_boundary() -> None:
+    value = {"input_tokens": 7, "token_usage": None}
+    sanitizer = EventPayloadSanitizer()
+
+    boundary = sanitizer.sanitize_field("details", _wrapped_in_lists(value, 31))
+    below = sanitizer.sanitize_field("details", _wrapped_in_lists(value, 30))
+
+    assert _descend_lists(boundary, 31) == {
+        "input_tokens": "[REDACTED]",
+        "token_usage": "[REDACTED]",
+    }
+    assert _descend_lists(below, 30) == value
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("authConfig", {"method": "oauth2", "configured": True}),
+        ("token_usage", {"input_tokens": 7, "output_tokens": None}),
+    ],
+)
+def test_sensitive_mapping_scalar_returns_respect_depth_boundary(
+    name: str,
+    value: dict[str, object],
+) -> None:
+    sanitizer = EventPayloadSanitizer()
+
+    boundary = sanitizer.sanitize_field(name, _wrapped_in_lists(value, 31))
+    below = sanitizer.sanitize_field(name, _wrapped_in_lists(value, 30))
+
+    assert _descend_lists(boundary, 31) == {
+        key: "[REDACTED]" for key in value
+    }
+    assert _descend_lists(below, 30) == value
 
 
 def test_cycles_and_depth_limit_fail_closed() -> None:
@@ -300,6 +383,31 @@ def test_token_usage_rejects_unsupported_containers_without_hooks() -> None:
     for value in ({1}, frozenset({1}), HostileMapping(), HostileIterable()):
         assert sanitizer.sanitize_field("token_usage", value) == "[REDACTED]"
     assert calls == {"iter": 0, "items": 0, "repr": 0, "str": 0}
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Bearer authentication.",
+        "Basic authentication.",
+        "Bearer authorization.",
+        "Basic scheme.",
+    ],
+)
+def test_benign_credential_prose_preserves_trailing_punctuation(value: str) -> None:
+    assert EventPayloadSanitizer().sanitize_field("message", value) == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature",
+        "Basic dXNlcjpwYXNzd29yZA==",
+        "Bearer authentication.evil",
+    ],
+)
+def test_real_credentials_and_dotted_jwt_text_remain_redacted(value: str) -> None:
+    assert EventPayloadSanitizer().sanitize_field("message", value) == "[REDACTED]"
 
 
 def test_non_string_keys_are_redacted_without_collision_or_hooks() -> None:
