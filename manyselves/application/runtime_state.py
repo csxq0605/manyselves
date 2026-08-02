@@ -26,12 +26,13 @@ from .models import (
 class RuntimeStateProjection:
     """Keep the bounded transient state that cannot be reconstructed from stores."""
 
-    def __init__(self, *, debug_capacity: int = 100) -> None:
-        if debug_capacity <= 0:
-            raise ValueError("Debug capacity must be positive")
+    def __init__(self, *, debug_capacity: int = 100, tool_capacity: int = 100) -> None:
+        if debug_capacity <= 0 or tool_capacity <= 0:
+            raise ValueError("Debug and tool capacities must be positive")
         self._lock = threading.RLock()
         self._queues: dict[str, list[str]] = {}
         self._tools: dict[str, RuntimeToolSnapshot] = {}
+        self._tool_capacity = tool_capacity
         self._debug: deque[RuntimeDebugSnapshot] = deque(maxlen=debug_capacity)
         self._checkpoints: dict[tuple[str, str], RuntimeCheckpointSnapshot] = {}
 
@@ -41,29 +42,45 @@ class RuntimeStateProjection:
             if isinstance(message, QueueUpdateMessage):
                 self._queues[str(message.agent_type)] = list(message.queued_messages)
             elif isinstance(message, ToolCallMessage):
+                if message.tool_call_id is None:
+                    return
                 agent_id = str(message.agent_type)
-                self._tools[agent_id] = RuntimeToolSnapshot(
-                    agent_id=agent_id,
-                    name=message.tool_name,
-                    status="running",
+                self._set_tool(
+                    RuntimeToolSnapshot(
+                        tool_call_id=message.tool_call_id,
+                        agent_id=agent_id,
+                        name=message.tool_name,
+                        arguments=message.arguments,
+                        status="running",
+                    )
                 )
             elif isinstance(message, ToolResult):
+                if message.tool_call_id is None:
+                    return
                 agent_id = str(message.agent_type)
-                self._tools[agent_id] = RuntimeToolSnapshot(
-                    agent_id=agent_id,
-                    name=message.tool_name,
-                    status="failed" if message.error else "completed",
+                previous = self._tools.get(message.tool_call_id)
+                self._set_tool(
+                    RuntimeToolSnapshot(
+                        tool_call_id=message.tool_call_id,
+                        agent_id=agent_id,
+                        name=message.tool_name,
+                        arguments=previous.arguments if previous is not None else {},
+                        status="failed" if message.error else "completed",
+                        result=message.result,
+                        error=message.error,
+                    )
                 )
             elif isinstance(message, ApiDebugMessage):
                 self._debug.append(
                     RuntimeDebugSnapshot(
-                        agent_id="main",
+                        agent_id=str(message.agent_type),
                         model=message.model,
                         tokens_in=message.tokens_in,
                         tokens_out=message.tokens_out,
                         duration_ms=message.duration_ms,
                         status=message.status,
                         timestamp=message.timestamp,
+                        error=message.error,
                     )
                 )
             elif isinstance(message, Checkpoint):
@@ -78,6 +95,11 @@ class RuntimeStateProjection:
                     message_id=message.message_id,
                 )
                 self._checkpoints[(agent_id, item.checkpoint_id)] = item
+
+    def _set_tool(self, item: RuntimeToolSnapshot) -> None:
+        if item.tool_call_id not in self._tools and len(self._tools) >= self._tool_capacity:
+            self._tools.pop(next(iter(self._tools)))
+        self._tools[item.tool_call_id] = item
 
     def build(self, manager: Any, statuses: dict[str, str]) -> dict[str, list[Any]]:
         """Merge transient projection with authoritative manager/store snapshots."""

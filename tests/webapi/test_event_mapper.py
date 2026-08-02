@@ -256,6 +256,67 @@ def test_mapper_preserves_branch_specific_terminal_semantics(
     assert EventMapper().map(message, context=context()).type == expected_type
 
 
+def test_tool_and_debug_payloads_publish_explicit_identity_aliases() -> None:
+    """Clients must not infer correlation or debug ownership from event ordering."""
+    tool = EventMapper().map(
+        ToolCallMessage(
+            agent_type="researcher",
+            tool_name="read",
+            tool_call_id="provider-call-1",
+            arguments={"path": "a"},
+            timestamp=NOW,
+        ),
+        context=context(),
+    )
+    result = EventMapper().map(
+        ToolResult(
+            agent_type="researcher",
+            tool_name="read",
+            tool_call_id="provider-call-1",
+            result="ok",
+            timestamp=NOW,
+        ),
+        context=context(),
+    )
+    debug = EventMapper().map(
+        ApiDebugMessage(
+            agent_type="researcher",
+            model="model",
+            tokens_in=1,
+            tokens_out=2,
+            duration_ms=3,
+            status="success",
+            timestamp=NOW,
+        ),
+        context=context(),
+    )
+
+    assert tool.payload["toolCallId"] == "provider-call-1"
+    assert result.payload["toolCallId"] == "provider-call-1"
+    assert tool.payload["agentId"] == "researcher"
+    assert result.payload["agentId"] == "researcher"
+    assert debug.payload["agentId"] == "researcher"
+
+
+def test_tool_identity_aliases_use_the_fail_closed_payload_sanitizer() -> None:
+    """Appending IDs after sanitization must not create a public secret escape hatch."""
+    mapped = EventMapper().map(
+        ToolCallMessage(
+            agent_type="Bearer agent-secret",
+            tool_name="read",
+            tool_call_id="Bearer call-secret",
+            arguments={},
+            timestamp=NOW,
+        ),
+        context=context(),
+    )
+
+    assert mapped.payload["toolCallId"] == "[REDACTED]"
+    assert mapped.payload["agentId"] == "[REDACTED]"
+    assert "agent-secret" not in mapped.to_json()
+    assert "call-secret" not in mapped.to_json()
+
+
 class ExampleEnum(str, Enum):
     VALUE = "enum-value"
 

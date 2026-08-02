@@ -30,6 +30,7 @@ from manyselves.interfaces.types import (
     Checkpoint,
     QueueUpdateMessage,
     ToolCallMessage,
+    ToolResult,
 )
 
 
@@ -171,7 +172,12 @@ def test_runtime_snapshot_projects_real_queue_tool_debug_and_checkpoint_state() 
         QueueUpdateMessage(agent_type="main", queued_messages=["next turn"])
     )
     projection.observe(
-        ToolCallMessage(agent_type="main", tool_name="read_file", arguments={})
+        ToolCallMessage(
+            agent_type="main",
+            tool_name="read_file",
+            arguments={},
+            tool_call_id="call-1",
+        )
     )
     projection.observe(
         ApiDebugMessage(
@@ -213,6 +219,82 @@ def test_runtime_snapshot_projects_real_queue_tool_debug_and_checkpoint_state() 
     assert snapshot.tools[0].status == "running"
     assert snapshot.debug[0].model == "test-model"
     assert snapshot.checkpoints[0].checkpoint_id == "cp-1"
+
+
+def test_runtime_projection_keeps_concurrent_same_name_tools_by_call_id() -> None:
+    """Keying tools by Agent rather than call ID would overwrite in-flight work."""
+    projection = RuntimeStateProjection()
+    projection.observe(
+        ToolCallMessage(
+            agent_type="main",
+            tool_name="read",
+            tool_call_id="call-1",
+            arguments={"path": "a"},
+        )
+    )
+    projection.observe(
+        ToolCallMessage(
+            agent_type="main",
+            tool_name="read",
+            tool_call_id="call-2",
+            arguments={"path": "b"},
+        )
+    )
+    projection.observe(
+        ToolResult(
+            agent_type="main",
+            tool_name="read",
+            tool_call_id="call-2",
+            result={"value": 2},
+        )
+    )
+
+    rows = {item.tool_call_id: item for item in projection.build(SimpleNamespace(), {})["tools"]}
+
+    assert set(rows) == {"call-1", "call-2"}
+    assert rows["call-1"].status == "running"
+    assert rows["call-1"].arguments == {"path": "a"}
+    assert rows["call-2"].status == "completed"
+    assert rows["call-2"].result == {"value": 2}
+
+
+def test_runtime_projection_records_debug_error_under_emitting_agent() -> None:
+    """Hard-coding debug rows to main would expose another Agent's diagnostics."""
+    projection = RuntimeStateProjection()
+    projection.observe(
+        ApiDebugMessage(
+            agent_type="researcher",
+            model="test-model",
+            tokens_in=10,
+            tokens_out=3,
+            duration_ms=25,
+            status="error",
+            error="Bearer debug-secret",
+        )
+    )
+
+    rows = projection.build(SimpleNamespace(), {})["debug"]
+
+    assert rows[0].agent_id == "researcher"
+    assert rows[0].error == "Bearer debug-secret"
+
+
+def test_runtime_projection_evicts_oldest_tool_snapshot_at_its_capacity() -> None:
+    """An unbounded tool projection would grow forever during a long-running runtime."""
+    projection = RuntimeStateProjection(tool_capacity=2)
+    for call_id in ("call-1", "call-2", "call-3"):
+        projection.observe(
+            ToolCallMessage(
+                agent_type="main",
+                tool_name="read",
+                tool_call_id=call_id,
+                arguments={},
+            )
+        )
+
+    rows = projection.build(SimpleNamespace(), {})["tools"]
+
+    assert [item.tool_call_id for item in rows] == ["call-2", "call-3"]
 
 
 @pytest.mark.asyncio

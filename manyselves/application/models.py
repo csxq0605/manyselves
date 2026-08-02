@@ -109,9 +109,13 @@ class RuntimeTaskSnapshot(BaseModel):
 class RuntimeToolSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    tool_call_id: str
     agent_id: str
     name: str
+    arguments: Any
     status: Literal["running", "completed", "failed"]
+    result: Any = None
+    error: str | None = None
 
 
 class RuntimeDebugSnapshot(BaseModel):
@@ -124,6 +128,7 @@ class RuntimeDebugSnapshot(BaseModel):
     duration_ms: int
     status: str
     timestamp: datetime
+    error: str | None = None
 
 
 class RuntimeCheckpointSnapshot(BaseModel):

@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from ...interfaces.types import Message
+from .identity import ToolIdentityNormalizer
 from .mapper import EventContext, EventMapper
 from .models import EventEnvelope
 from .replay import ReplayBuffer, ReplayResult
@@ -142,6 +143,7 @@ class EventBroker:
         self._bus = bus
         self._context_resolver = context_resolver
         self._mapper = mapper or EventMapper()
+        self._identity_normalizer = ToolIdentityNormalizer()
         if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", stream_id) is None:
             raise ValueError("Stream ID must be an opaque URL-safe identifier")
         self.stream_id = stream_id
@@ -173,6 +175,7 @@ class EventBroker:
             if self._closed:
                 return
             sequence = self._sequence + 1
+            message = self._identity_normalizer.normalize(message)
             context = self._context_resolver(message, sequence)
             event = self._mapper.map(message, context=context)
             event = event.model_copy(

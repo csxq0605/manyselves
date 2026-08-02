@@ -68,6 +68,7 @@ class AgentDebugEntry(BaseModel):
     duration_ms: int = Field(alias="durationMs")
     status: str
     timestamp: str
+    error: Any = None
 
 
 class AgentDebugResponse(BaseModel):

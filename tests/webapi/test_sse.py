@@ -21,6 +21,8 @@ from manyselves.interfaces.types import (
     PeerReplyMessage,
     ProgressNoteMessage,
     SystemNotice,
+    ToolCallMessage,
+    ToolResult,
 )
 from manyselves.webapi import lifespan as lifespan_module
 from manyselves.webapi.dependencies import get_runtime_host
@@ -116,6 +118,92 @@ async def test_sensitive_payload_is_absent_from_live_and_replayed_events() -> No
         assert '"input_tokens":1' in wire
 
     await broker.close()
+
+
+@pytest.mark.asyncio
+async def test_broker_correlates_legacy_tool_call_and_result_once_at_its_boundary() -> None:
+    """A legacy result without an ID must follow its matching legacy call."""
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=4,
+        client_capacity=4,
+        stream_id="fixed-stream",
+    )
+
+    await broker.publish_internal(
+        ToolCallMessage(agent_type="main", tool_name="read", arguments={"path": "a"})
+    )
+    await broker.publish_internal(
+        ToolResult(agent_type="main", tool_name="read", result="ok")
+    )
+
+    events = broker.replay.snapshot()
+    call_id = events[0].payload["toolCallId"]
+    assert call_id
+    assert events[1].payload["toolCallId"] == call_id
+
+
+@pytest.mark.asyncio
+async def test_broker_keeps_same_name_legacy_calls_distinct_and_fifo_correlated() -> None:
+    """Collapsing same-name calls would attach a completion to the wrong invocation."""
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=8,
+        client_capacity=4,
+        stream_id="fixed-stream",
+    )
+
+    await broker.publish_internal(
+        ToolCallMessage(agent_type="main", tool_name="read", arguments={"path": "a"})
+    )
+    await broker.publish_internal(
+        ToolCallMessage(agent_type="main", tool_name="read", arguments={"path": "b"})
+    )
+    await broker.publish_internal(ToolResult(agent_type="main", tool_name="read", result="a"))
+    await broker.publish_internal(ToolResult(agent_type="main", tool_name="read", result="b"))
+
+    events = broker.replay.snapshot()
+    assert events[0].payload["toolCallId"] != events[1].payload["toolCallId"]
+    assert events[2].payload["toolCallId"] == events[0].payload["toolCallId"]
+    assert events[3].payload["toolCallId"] == events[1].payload["toolCallId"]
+
+
+@pytest.mark.asyncio
+async def test_broker_preserves_explicit_tool_ids_and_marks_unmatched_legacy_results_orphaned() -> None:
+    """Replacing provider IDs or matching another tool's result would corrupt recovery."""
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=8,
+        client_capacity=4,
+        stream_id="fixed-stream",
+    )
+
+    await broker.publish_internal(
+        ToolCallMessage(
+            agent_type="main",
+            tool_name="read",
+            tool_call_id="provider-call-1",
+            arguments={},
+        )
+    )
+    await broker.publish_internal(
+        ToolResult(
+            agent_type="main",
+            tool_name="read",
+            tool_call_id="provider-call-1",
+            result="ok",
+        )
+    )
+    await broker.publish_internal(ToolResult(agent_type="main", tool_name="write", result="orphan"))
+
+    events = broker.replay.snapshot()
+    assert events[0].payload["toolCallId"] == "provider-call-1"
+    assert events[1].payload["toolCallId"] == "provider-call-1"
+    assert events[2].payload["toolCallId"].startswith("legacy-orphan-")
+    assert events[2].payload["toolCallId"] != "provider-call-1"
 
 
 @pytest.mark.asyncio

@@ -62,6 +62,17 @@ class EventMapper:
         event_type = self._event_type(message)
         dumped = message.model_dump(exclude={"type", "timestamp"})
         payload = self._sanitizer.sanitize_mapping(dumped)
+        if isinstance(message, (ToolCallMessage, ToolResult)):
+            payload["toolCallId"] = self._sanitizer.sanitize_field(
+                "toolCallId", message.tool_call_id
+            )
+            payload["agentId"] = self._sanitizer.sanitize_field(
+                "agentId", str(message.agent_type)
+            )
+        elif isinstance(message, ApiDebugMessage):
+            payload["agentId"] = self._sanitizer.sanitize_field(
+                "agentId", str(message.agent_type)
+            )
         if type(message) is ConfigChange:
             payload["old_value"] = self._sanitizer.sanitize_field(
                 message.config_type, message.old_value

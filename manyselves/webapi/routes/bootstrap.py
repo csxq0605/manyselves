@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Request
 
 from ..schemas.bootstrap import BootstrapSettings, BootstrapSnapshot, ProjectSnapshot
+from ..schemas.runtime import RuntimeSnapshotResponse
 
 router = APIRouter()
 
@@ -15,9 +16,10 @@ async def bootstrap(request: Request) -> BootstrapSnapshot:
         runtime = facade.snapshot()
         registry = request.app.state.project_registry
         runtime = runtime.model_copy(update={"workspace": registry.active_project_id})
+        public_runtime = RuntimeSnapshotResponse.from_runtime(runtime)
         return BootstrapSnapshot(
             streamId=request.app.state.event_broker.stream_id,
-            runtime=runtime,
+            runtime=public_runtime,
             project=ProjectSnapshot(id=registry.active_project_id),
             conversations=request.app.state.conversation_service.list("main")[0],
             agents=runtime.agent_statuses,

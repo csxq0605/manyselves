@@ -16,7 +16,13 @@ from manyselves.application.models import EditResendCommand
 from manyselves.config import ConfigManager
 from manyselves.config.schema import ApiConfig, AppConfig, ProvidersConfig
 from manyselves.core.loops.bus import MessageBus
-from manyselves.interfaces.types import AgentResponse, Error, SystemNotice, UserMessage
+from manyselves.interfaces.types import (
+    AgentResponse,
+    ApiDebugMessage,
+    Error,
+    SystemNotice,
+    UserMessage,
+)
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.settings import WebSettings
@@ -2445,6 +2451,50 @@ async def test_provider_lifecycle_presets_validation_and_agent_debug_are_exposed
         "provider_created",
         "provider_removed",
     ]
+
+
+@pytest.mark.asyncio
+async def test_agent_debug_groups_dynamic_agent_events_and_sanitizes_error(resources) -> None:
+    """A debug event must stay with its emitting Agent and never return provider secrets."""
+    client, host, _, _ = resources
+    host.statuses["researcher"] = "idle"
+    host.loop_manager = SimpleNamespace(
+        get_all_agent_statuses=lambda: dict(host.statuses),
+        get_agent_session_id=lambda _agent_id: None,
+        get_loop=lambda agent_id: SimpleNamespace() if agent_id in host.statuses else None,
+        get_agent_debug_mode=lambda agent_id: host.backend.debug_modes.get(agent_id, False),
+    )
+    await host.app.state.event_broker.publish_internal(
+        ApiDebugMessage(
+            agent_type="researcher",
+            model="test-model",
+            tokens_in=10,
+            tokens_out=3,
+            duration_ms=25,
+            status="error",
+            error="Bearer dynamic-debug-secret",
+        )
+    )
+
+    researcher = await client.get("/api/v1/agents/researcher/debug")
+    main = await client.get("/api/v1/agents/main/debug")
+
+    assert researcher.status_code == 200
+    assert researcher.json()["agentId"] == "researcher"
+    assert researcher.json()["entries"] == [
+        {
+            "model": "test-model",
+            "tokensIn": 10,
+            "tokensOut": 3,
+            "durationMs": 25,
+            "status": "error",
+            "timestamp": researcher.json()["entries"][0]["timestamp"],
+            "error": "[REDACTED]",
+        }
+    ]
+    assert "dynamic-debug-secret" not in researcher.text
+    assert main.status_code == 200
+    assert main.json()["entries"] == []
 
 
 @pytest.mark.asyncio

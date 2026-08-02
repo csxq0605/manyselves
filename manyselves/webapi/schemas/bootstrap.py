@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...application.models import RuntimeSnapshot
+from .runtime import RuntimeSnapshotResponse
 
 
 class ProjectSnapshot(BaseModel):
@@ -27,7 +27,7 @@ class BootstrapSnapshot(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     stream_id: str = Field(alias="streamId")
-    runtime: RuntimeSnapshot
+    runtime: RuntimeSnapshotResponse
     project: ProjectSnapshot
     conversations: list[dict[str, Any]]
     agents: dict[str, str]

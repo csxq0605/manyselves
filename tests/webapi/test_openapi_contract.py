@@ -150,6 +150,19 @@ def test_openapi_locks_errors_security_sse_and_preview_semantics() -> None:
     assert len(preview_schema["oneOf"]) == 7
 
 
+def test_openapi_exposes_correlated_and_sanitized_runtime_response_shapes() -> None:
+    """Generated clients need stable names for recoverable tool and debug fields."""
+    schemas = create_app(_test_settings()).openapi()["components"]["schemas"]
+
+    tool = schemas["RuntimeToolResponse"]
+    debug = schemas["RuntimeDebugResponse"]
+
+    assert {"toolCallId", "agentId", "arguments", "result", "error"} <= set(
+        tool["properties"]
+    )
+    assert {"agentId", "error"} <= set(debug["properties"])
+
+
 def test_framework_validation_runtime_uses_the_documented_error_envelope() -> None:
     schema = create_app(_test_settings()).openapi()
     for path_item in schema["paths"].values():

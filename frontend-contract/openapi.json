@@ -27,6 +27,9 @@
             "title": "Durationms",
             "type": "integer"
           },
+          "error": {
+            "title": "Error"
+          },
           "model": {
             "title": "Model",
             "type": "string"
@@ -225,7 +228,7 @@
             "$ref": "#/components/schemas/ProjectSnapshot"
           },
           "runtime": {
-            "$ref": "#/components/schemas/RuntimeSnapshot"
+            "$ref": "#/components/schemas/RuntimeSnapshotResponse"
           },
           "settings": {
             "$ref": "#/components/schemas/BootstrapSettings"
@@ -2059,7 +2062,7 @@
         "title": "RollbackResponse",
         "type": "object"
       },
-      "RuntimeCheckpointSnapshot": {
+      "RuntimeCheckpointResponse": {
         "additionalProperties": false,
         "properties": {
           "agent_id": {
@@ -2106,19 +2109,22 @@
           "description",
           "source"
         ],
-        "title": "RuntimeCheckpointSnapshot",
+        "title": "RuntimeCheckpointResponse",
         "type": "object"
       },
-      "RuntimeDebugSnapshot": {
+      "RuntimeDebugResponse": {
         "additionalProperties": false,
         "properties": {
-          "agent_id": {
-            "title": "Agent Id",
+          "agentId": {
+            "title": "Agentid",
             "type": "string"
           },
           "duration_ms": {
             "title": "Duration Ms",
             "type": "integer"
+          },
+          "error": {
+            "title": "Error"
           },
           "model": {
             "title": "Model",
@@ -2129,7 +2135,6 @@
             "type": "string"
           },
           "timestamp": {
-            "format": "date-time",
             "title": "Timestamp",
             "type": "string"
           },
@@ -2143,7 +2148,7 @@
           }
         },
         "required": [
-          "agent_id",
+          "agentId",
           "model",
           "tokens_in",
           "tokens_out",
@@ -2151,10 +2156,10 @@
           "status",
           "timestamp"
         ],
-        "title": "RuntimeDebugSnapshot",
+        "title": "RuntimeDebugResponse",
         "type": "object"
       },
-      "RuntimeQueueSnapshot": {
+      "RuntimeQueueResponse": {
         "additionalProperties": false,
         "properties": {
           "agent_id": {
@@ -2175,14 +2180,14 @@
         },
         "required": [
           "agent_id",
-          "pending_count"
+          "pending_count",
+          "queued_messages"
         ],
-        "title": "RuntimeQueueSnapshot",
+        "title": "RuntimeQueueResponse",
         "type": "object"
       },
-      "RuntimeSnapshot": {
+      "RuntimeSnapshotResponse": {
         "additionalProperties": false,
-        "description": "Minimal query view shared by desktop and service clients.",
         "properties": {
           "active_session_id": {
             "anyOf": [
@@ -2204,7 +2209,7 @@
           },
           "checkpoints": {
             "items": {
-              "$ref": "#/components/schemas/RuntimeCheckpointSnapshot"
+              "$ref": "#/components/schemas/RuntimeCheckpointResponse"
             },
             "title": "Checkpoints",
             "type": "array"
@@ -2222,14 +2227,14 @@
           },
           "debug": {
             "items": {
-              "$ref": "#/components/schemas/RuntimeDebugSnapshot"
+              "$ref": "#/components/schemas/RuntimeDebugResponse"
             },
             "title": "Debug",
             "type": "array"
           },
           "queues": {
             "items": {
-              "$ref": "#/components/schemas/RuntimeQueueSnapshot"
+              "$ref": "#/components/schemas/RuntimeQueueResponse"
             },
             "title": "Queues",
             "type": "array"
@@ -2240,14 +2245,14 @@
           },
           "tasks": {
             "items": {
-              "$ref": "#/components/schemas/RuntimeTaskSnapshot"
+              "$ref": "#/components/schemas/RuntimeTaskResponse"
             },
             "title": "Tasks",
             "type": "array"
           },
           "tools": {
             "items": {
-              "$ref": "#/components/schemas/RuntimeToolSnapshot"
+              "$ref": "#/components/schemas/RuntimeToolResponse"
             },
             "title": "Tools",
             "type": "array"
@@ -2269,16 +2274,20 @@
           "workspace",
           "agent_statuses",
           "active_session_id",
-          "controller_client_id"
+          "controller_client_id",
+          "queues",
+          "tasks",
+          "tools",
+          "debug",
+          "checkpoints"
         ],
-        "title": "RuntimeSnapshot",
+        "title": "RuntimeSnapshotResponse",
         "type": "object"
       },
-      "RuntimeTaskSnapshot": {
+      "RuntimeTaskResponse": {
         "additionalProperties": false,
         "properties": {
           "blocking": {
-            "default": false,
             "title": "Blocking",
             "type": "boolean"
           },
@@ -2319,21 +2328,31 @@
           "source_agent",
           "target_agent",
           "status",
-          "brief"
+          "brief",
+          "blocking"
         ],
-        "title": "RuntimeTaskSnapshot",
+        "title": "RuntimeTaskResponse",
         "type": "object"
       },
-      "RuntimeToolSnapshot": {
+      "RuntimeToolResponse": {
         "additionalProperties": false,
         "properties": {
-          "agent_id": {
-            "title": "Agent Id",
+          "agentId": {
+            "title": "Agentid",
             "type": "string"
+          },
+          "arguments": {
+            "title": "Arguments"
+          },
+          "error": {
+            "title": "Error"
           },
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "result": {
+            "title": "Result"
           },
           "status": {
             "enum": [
@@ -2343,14 +2362,20 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "toolCallId": {
+            "title": "Toolcallid",
+            "type": "string"
           }
         },
         "required": [
-          "agent_id",
+          "toolCallId",
+          "agentId",
           "name",
+          "arguments",
           "status"
         ],
-        "title": "RuntimeToolSnapshot",
+        "title": "RuntimeToolResponse",
         "type": "object"
       },
       "SaveFileRequest": {

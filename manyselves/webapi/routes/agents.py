@@ -37,6 +37,7 @@ from ..schemas.agents import (
     RollbackResponse,
     SendMessageRequest,
 )
+from ..events.sanitizer import EventPayloadSanitizer
 from ..security import require_control_lease_header, require_deployment_access
 
 router = APIRouter(prefix="/agents")
@@ -89,6 +90,7 @@ def _debug_response(request: Request, agent_id: str) -> AgentDebugResponse:
     if manager is None or manager.get_loop(agent_id) is None:
         raise AgentNotFoundError(agent_id)
     entries = request.app.state.runtime_facade.state_projection.debug_for(agent_id)
+    sanitizer = EventPayloadSanitizer()
     return AgentDebugResponse(
         agentId=agent_id,
         enabled=manager.get_agent_debug_mode(agent_id),
@@ -100,6 +102,7 @@ def _debug_response(request: Request, agent_id: str) -> AgentDebugResponse:
                 durationMs=item.duration_ms,
                 status=item.status,
                 timestamp=item.timestamp.isoformat(),
+                error=sanitizer.sanitize_field("error", item.error),
             )
             for item in entries
         ],
