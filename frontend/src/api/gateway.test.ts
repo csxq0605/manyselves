@@ -15,6 +15,50 @@ function gatewayWithResponse(response: Response) {
 }
 
 describe("ApiGateway", () => {
+  it("loads bootstrap with bearer authentication", async () => {
+    const snapshot = {
+      agents: { main: "Main Agent" },
+      conversations: [],
+      maintenance: {},
+      project: { id: "project-1" },
+      runtime: {
+        active_session_id: "session-1",
+        agent_statuses: { main: "idle" },
+        checkpoints: [],
+        controller_client_id: null,
+        debug: [],
+        queues: [],
+        ready: true,
+        tasks: [],
+        tools: [],
+        workspace: null,
+      },
+      settings: {
+        control_lease_seconds: 30,
+        sse_client_queue_capacity: 128,
+        sse_replay_capacity: 512,
+      },
+      streamId: "boot-a",
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json(snapshot, { status: 200 }),
+    );
+    const gateway = createApiGateway({
+      baseUrl: "https://server/",
+      clientId: "browser-client",
+      fetch: fetchMock,
+      getLeaseToken: () => null,
+      getToken: () => "secret",
+    });
+
+    await expect(gateway.bootstrap()).resolves.toEqual(snapshot);
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    const headers = new Headers(init?.headers);
+    expect(url).toBe("https://server/api/v1/bootstrap");
+    expect(headers.get("Authorization")).toBe("Bearer secret");
+    expect(headers.get("X-Control-Lease-Token")).toBeNull();
+  });
+
   it("sends bearer, control lease, and idempotency headers", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(

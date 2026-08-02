@@ -3,6 +3,7 @@ import type { components } from "./generated/schema";
 type AcceptedCommandResponse = components["schemas"]["AcceptedCommandResponse"];
 type ErrorEnvelope = components["schemas"]["ErrorEnvelope"];
 type SendMessageRequest = components["schemas"]["SendMessageRequest"];
+export type BootstrapSnapshot = components["schemas"]["BootstrapSnapshot"];
 
 export class ApiError extends Error {
   readonly code: string;
@@ -38,6 +39,8 @@ export interface ApiGatewayOptions {
 }
 
 export interface ApiGateway {
+  readonly clientId: string;
+  bootstrap(): Promise<BootstrapSnapshot>;
   sendMessage(
     agentId: string,
     request: SendMessageRequest,
@@ -97,33 +100,39 @@ async function toApiError(response: Response): Promise<ApiError> {
 export function createApiGateway(options: ApiGatewayOptions): ApiGateway {
   const baseUrl = normalizeBaseUrl(options.baseUrl);
 
+  async function sendRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const headers = new Headers(init.headers);
+    const token = options.getToken();
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    const response = await options.fetch(`${baseUrl}${path}`, { ...init, headers });
+    if (!response.ok) {
+      throw await toApiError(response);
+    }
+    return (await response.json()) as T;
+  }
+
   return {
+    clientId: options.clientId,
+    bootstrap: () => sendRequest<BootstrapSnapshot>("/api/v1/bootstrap"),
     async sendMessage(agentId, request, idempotencyKey) {
       const headers = new Headers({
         "Content-Type": "application/json",
         "Idempotency-Key": idempotencyKey,
       });
-      const token = options.getToken();
-      if (token) {
-        headers.set("Authorization", `Bearer ${token}`);
-      }
       const leaseToken = options.getLeaseToken();
       if (leaseToken) {
         headers.set("X-Control-Lease-Token", leaseToken);
       }
-
-      const response = await options.fetch(
-        `${baseUrl}/api/v1/agents/${encodeURIComponent(agentId)}/messages`,
+      return sendRequest<AcceptedCommandResponse>(
+        `/api/v1/agents/${encodeURIComponent(agentId)}/messages`,
         {
           body: JSON.stringify(request),
           headers,
           method: "POST",
         },
       );
-      if (!response.ok) {
-        throw await toApiError(response);
-      }
-      return (await response.json()) as AcceptedCommandResponse;
     },
   };
 }

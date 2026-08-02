@@ -1,0 +1,254 @@
+:root {
+  color: #151a22;
+  background: #e8edf2;
+  font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+textarea,
+input,
+select {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid #2667ff;
+  outline-offset: 3px;
+}
+
+.app-frame {
+  min-height: 100vh;
+  padding: 18px;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 72px;
+  padding: 0 20px;
+  color: #f4f6f8;
+  background: #151a22;
+  border-radius: 14px 14px 4px 4px;
+}
+
+.app-header__eyebrow,
+.pane-label {
+  margin: 0 0 4px;
+  color: #667487;
+  font-family: "Cascadia Mono", "SFMono-Regular", monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.app-header__eyebrow {
+  color: #8fa4bd;
+}
+
+.app-header__brand {
+  font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  font-size: 1.6rem;
+  letter-spacing: -0.04em;
+}
+
+.connection-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 32rem;
+  font-size: 0.86rem;
+}
+
+.connection-banner__signal {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  background: #d98e04;
+  border-radius: 50%;
+  box-shadow: 0 0 0 5px rgb(217 142 4 / 16%);
+}
+
+.connection-banner--online .connection-banner__signal {
+  background: #41c38a;
+  box-shadow: 0 0 0 5px rgb(65 195 138 / 16%);
+}
+
+.connection-banner--offline .connection-banner__signal,
+.connection-banner--unauthorized .connection-banner__signal {
+  background: #e06458;
+  box-shadow: 0 0 0 5px rgb(224 100 88 / 16%);
+}
+
+.route-rail {
+  display: grid;
+  grid-template-columns: 0.82fr 2.2fr 0.98fr;
+  height: 5px;
+  gap: 3px;
+  margin: 4px 0;
+}
+
+.route-rail span {
+  background: #2667ff;
+}
+
+.route-rail span:first-child {
+  background: #6e7e91;
+}
+
+.route-rail span:last-child {
+  background: #d98e04;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.82fr) minmax(440px, 2.2fr) minmax(230px, 0.98fr);
+  gap: 4px;
+  min-height: calc(100vh - 121px);
+}
+
+.workspace-pane {
+  min-width: 0;
+  padding: 24px;
+  background: #f4f6f8;
+}
+
+.workspace-pane h2 {
+  margin: 0;
+  font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+}
+
+.workspace-pane--files {
+  border-radius: 4px 4px 4px 14px;
+}
+
+.workspace-pane--main {
+  background: #fff;
+}
+
+.workspace-pane--agents {
+  border-radius: 4px 4px 14px 4px;
+}
+
+.pane-muted,
+.conversation-placeholder {
+  color: #667487;
+  line-height: 1.55;
+}
+
+.workspace-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.draft-badge {
+  padding: 4px 8px;
+  color: #184ebf;
+  background: #e5edff;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.draft-field {
+  display: grid;
+  gap: 8px;
+  color: #465467;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.draft-field textarea {
+  width: 100%;
+  min-height: 260px;
+  resize: vertical;
+  padding: 16px;
+  color: #172033;
+  background: #f7f9fb;
+  border: 1px solid #cbd4df;
+  border-radius: 8px;
+  font-family: "Cascadia Mono", "SFMono-Regular", monospace;
+  line-height: 1.55;
+}
+
+.conversation-placeholder {
+  margin-top: 22px;
+  padding: 18px;
+  border-top: 1px solid #dfe5eb;
+}
+
+.status-list {
+  display: grid;
+  gap: 2px;
+  margin-top: 20px;
+}
+
+.status-list div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid #dfe5eb;
+}
+
+.status-list dt {
+  color: #667487;
+}
+
+.status-list dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+@media (max-width: 880px) {
+  .app-frame {
+    padding: 8px;
+  }
+
+  .app-header {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-block: 16px;
+  }
+
+  .route-rail {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-pane,
+  .workspace-pane--files,
+  .workspace-pane--agents {
+    border-radius: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
