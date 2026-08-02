@@ -53,7 +53,13 @@ class SettingsService:
             return
 
         replacement_error = replacement.error
-        self._rollback_config(before, persisted, replacement_error)
+        rollback_complete = self._rollback_config(
+            before,
+            persisted,
+            replacement_error,
+        )
+        if not rollback_complete:
+            raise replacement_error
         recovery = await await_owned(self.host.replace_loop_manager(recovery=True))
         if recovery.error is not None:
             replacement_error.add_note(
@@ -91,15 +97,17 @@ class SettingsService:
         snapshot: Any,
         persisted: tuple[Path, bool, bytes] | None,
         primary_error: BaseException,
-    ) -> None:
-        self._restore(snapshot)
+    ) -> bool:
         try:
+            self._restore(snapshot)
             if persisted is None:
                 self.manager.save_config()
             else:
                 self._restore_persisted(persisted)
         except BaseException:
             primary_error.add_note("Settings persistence rollback did not finish.")
+            return False
+        return True
 
     def _capture_persisted(self) -> tuple[Path, bool, bytes] | None:
         settings = getattr(self.manager, "_settings", None)

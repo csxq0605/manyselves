@@ -1196,6 +1196,105 @@ async def test_provider_recovery_failure_is_safe_and_leaves_host_failed(
 
 
 @pytest.mark.asyncio
+async def test_persisted_rollback_failure_blocks_runtime_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh manager must not become READY when exact bytes remain unrolled back."""
+    rollback_secret = "rollback-write-api-key"
+    replacement_error = RuntimeError("replacement failed")
+    controls = [
+        _LoopControl(),
+        _LoopControl(start_error=replacement_error),
+        _LoopControl(),
+    ]
+    host, config, _, backend, created, config_path, original_bytes = _provider_runtime(
+        tmp_path,
+        controls,
+    )
+    await host.start(tmp_path / "workspace")
+    service = SettingsService(host)
+    original_write_bytes = Path.write_bytes
+
+    def reject_exact_restore(path: Path, content: bytes) -> int:
+        if path == config_path and content == original_bytes:
+            raise OSError(f"rollback failed with {rollback_secret}")
+        return original_write_bytes(path, content)
+
+    monkeypatch.setattr(Path, "write_bytes", reject_exact_restore)
+
+    def mutation(current: AppConfig) -> None:
+        current.providers.configurations[0].api_key = "transient-secret"
+
+    try:
+        with pytest.raises(RuntimeError, match="replacement failed") as raised:
+            await service.mutate(
+                mutation,
+                restart_reason="provider_configuration_changed",
+            )
+
+        diagnostic = "".join(traceback.format_exception(raised.value))
+        assert raised.value is replacement_error
+        assert "persistence rollback did not finish" in diagnostic
+        assert rollback_secret not in diagnostic
+        assert "transient-secret" not in diagnostic
+        assert "provider-secret" not in diagnostic
+        assert config.config.providers.configurations[0].api_key == "provider-secret"
+        assert config_path.read_bytes() != original_bytes
+        assert b"transient-secret" in config_path.read_bytes()
+        assert len(created) == 2
+        assert host.is_ready is False
+        assert host.loop_manager is None
+        assert backend.loop_manager is None
+    finally:
+        await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_stopped_host_rejects_recovery_after_clean_recovery_failure(
+    tmp_path: Path,
+) -> None:
+    """Closing the shared bus must make a later recovery unable to revive loops."""
+    events: list[str] = []
+    host, bus, backend, created = _host(
+        events,
+        start_errors=[
+            None,
+            RuntimeError("replacement failed"),
+            RuntimeError("recovery failed"),
+            None,
+        ],
+    )
+    await host.start(tmp_path / "workspace")
+
+    try:
+        with pytest.raises(RuntimeError, match="replacement failed"):
+            await host.replace_loop_manager()
+        with pytest.raises(RuntimeError, match="recovery failed"):
+            await host.replace_loop_manager(recovery=True)
+
+        assert host.is_ready is False
+        assert host.loop_manager is None
+        assert backend.loop_manager is None
+        assert created[1].stop_calls == 1
+        assert created[2].stop_calls == 1
+
+        await host.stop()
+
+        assert bus.shutdown_calls == 1
+        with pytest.raises(RuntimeStartupError) as raised:
+            await host.replace_loop_manager(recovery=True)
+        assert raised.value.code == "RUNTIME_NOT_READY"
+        assert len(created) == 3
+        assert events.count("bus:start") == 1
+        assert host.is_ready is False
+        assert host.loop_manager is None
+        assert backend.loop_manager is None
+    finally:
+        await host.stop()
+
+
+@pytest.mark.asyncio
 async def test_to_thread_non_abandoning_joins_worker_before_rethrowing_cancellation() -> None:
     """A cancelled request must not leave its owned worker thread running detached."""
     from manyselves.application.async_ownership import to_thread_non_abandoning

@@ -269,6 +269,7 @@ class RuntimeHost:
                     self.bus,
                 )
                 self._bind_manager(replacement, workspace)
+                self._producers_stopped = False
                 await replacement.start()
             except BaseException as replacement_error:
                 cleanup_error = await self._discard_provider_candidate(workspace)
@@ -296,6 +297,7 @@ class RuntimeHost:
             logger.error("Provider runtime candidate cleanup did not finish")
             return error
         self._bind_manager(None, workspace)
+        self._producers_stopped = True
         return None
 
     async def mark_failed(self) -> None:
