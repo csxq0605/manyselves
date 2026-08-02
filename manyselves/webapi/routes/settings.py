@@ -4,7 +4,11 @@ from fastapi import APIRouter, Depends, Request
 
 from ...application.async_ownership import to_thread_non_abandoning
 from ...application.control import ControlLeaseRequired
-from ...application.errors import MaintenanceQuiescedError, RuntimeNotReadyError
+from ...application.errors import (
+    MaintenanceQuiescedError,
+    RuntimeConsistencyFailedError,
+    RuntimeNotReadyError,
+)
 from ...application.settings_service import SettingsService
 from ...config.presets import load_presets
 from ...config.schema import ApiConfig
@@ -67,6 +71,8 @@ def _error(error: Exception) -> ApiError:
         return ApiError(status_code=423, code=error.code, message=str(error), retryable=False)
     if isinstance(error, RuntimeNotReadyError):
         return ApiError(status_code=503, code=error.code, message=str(error), retryable=True)
+    if isinstance(error, RuntimeConsistencyFailedError):
+        return ApiError(status_code=500, code=error.code, message=str(error), retryable=False)
     if isinstance(error, MaintenanceQuiescedError):
         return ApiError(status_code=409, code=error.code, message=str(error), retryable=True)
     raise error

@@ -2457,6 +2457,7 @@ async def test_settings_apply_failure_rolls_back_memory_and_persisted_config(res
     )
 
     assert response.status_code == 500
+    assert response.json()["error"]["code"] == "INTERNAL_ERROR"
     assert host.config_manager.config.providers.configurations[0].api_key == secret
     assert saved_keys == ["must-roll-back", secret]
     assert "must-roll-back" not in response.text
@@ -2501,11 +2502,79 @@ async def test_settings_replacement_failure_recovers_live_runtime_with_old_confi
     )
 
     assert response.status_code == 500
+    assert response.json()["error"]["code"] == "INTERNAL_ERROR"
     assert host.replace_calls == [False, True]
     assert host.backend.restart_calls == []
     assert host.is_ready is True
     assert host.loop_manager.provider_registry["provider-1"]["api_key"] == secret
     assert host.config_manager.config.providers.configurations[0].api_key == secret
+
+
+@pytest.mark.asyncio
+async def test_settings_recovery_failure_returns_consistency_failure_without_secret(
+    resources,
+) -> None:
+    client, host, _, secret = resources
+    recovery_secret = "recovery-api-key-never-return"
+    host.replace_error = RuntimeError("injected replacement failure")
+    host.recovery_error = RuntimeError(f"recovery failed with {recovery_secret}")
+
+    response = await client.patch(
+        "/api/v1/settings/providers/provider-1",
+        json={"apiKey": "transient-api-key-never-return"},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["error"] == {
+        "code": "RUNTIME_CONSISTENCY_FAILED",
+        "message": "Runtime consistency could not be guaranteed",
+        "retryable": False,
+        "details": {},
+    }
+    assert host.replace_calls == [False, True]
+    assert host.is_ready is False
+    assert host.loop_manager is None
+    assert secret not in response.text
+    assert recovery_secret not in response.text
+    assert "transient-api-key-never-return" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_settings_durable_rollback_failure_returns_consistency_failure_without_recovery(
+    resources,
+) -> None:
+    client, host, _, secret = resources
+    rollback_secret = "rollback-api-key-never-return"
+    saved_keys: list[str | None] = []
+
+    def save_config() -> None:
+        key = host.config_manager.config.providers.configurations[0].api_key
+        saved_keys.append(key)
+        if len(saved_keys) == 2:
+            raise OSError(f"rollback failed with {rollback_secret}")
+
+    host.config_manager.save_config = save_config
+    host.replace_error = RuntimeError("injected replacement failure")
+
+    response = await client.patch(
+        "/api/v1/settings/providers/provider-1",
+        json={"apiKey": "transient-api-key-never-return"},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["error"] == {
+        "code": "RUNTIME_CONSISTENCY_FAILED",
+        "message": "Runtime consistency could not be guaranteed",
+        "retryable": False,
+        "details": {},
+    }
+    assert saved_keys == ["transient-api-key-never-return", secret]
+    assert host.replace_calls == [False]
+    assert host.is_ready is False
+    assert host.loop_manager is None
+    assert secret not in response.text
+    assert rollback_secret not in response.text
+    assert "transient-api-key-never-return" not in response.text
 
 
 @pytest.mark.asyncio

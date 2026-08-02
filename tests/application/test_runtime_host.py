@@ -1156,10 +1156,11 @@ async def test_provider_recovery_failure_is_safe_and_leaves_host_failed(
     """Recovery diagnostics must not expose keys or publish a false READY state."""
     secret = "provider-secret"
     replacement_error = RuntimeError("replacement failed")
+    recovery_error = RuntimeError(f"recovery failed with {secret}")
     controls = [
         _LoopControl(),
         _LoopControl(start_error=replacement_error),
-        _LoopControl(start_error=RuntimeError(f"recovery failed with {secret}")),
+        _LoopControl(start_error=recovery_error),
     ]
     host, config, bus, backend, created, config_path, original_bytes = _provider_runtime(
         tmp_path,
@@ -1172,14 +1173,24 @@ async def test_provider_recovery_failure_is_safe_and_leaves_host_failed(
         current.providers.configurations[0].api_key = "transient-secret"
 
     try:
-        with pytest.raises(RuntimeError, match="replacement failed") as raised:
+        with pytest.raises(RuntimeConsistencyFailedError) as raised:
             await service.mutate(
                 mutation,
                 restart_reason="provider_configuration_changed",
             )
 
-        diagnostics = " ".join(getattr(raised.value, "__notes__", []))
-        assert raised.value is replacement_error
+        diagnostics = "".join(traceback.format_exception(raised.value))
+        assert str(raised.value) == "Runtime consistency could not be guaranteed"
+        assert raised.value.__cause__ is replacement_error
+        assert raised.value.__context__ is None
+        assert replacement_error.__cause__ is None
+        assert replacement_error.__context__ is None
+        assert recovery_error not in {
+            raised.value.__cause__,
+            raised.value.__context__,
+            replacement_error.__cause__,
+            replacement_error.__context__,
+        }
         assert "recovery" in diagnostics.lower()
         assert secret not in diagnostics
         assert "transient-secret" not in diagnostics
@@ -1203,6 +1214,7 @@ async def test_persisted_rollback_failure_blocks_runtime_recovery(
     """A fresh manager must not become READY when exact bytes remain unrolled back."""
     rollback_secret = "rollback-write-api-key"
     replacement_error = RuntimeError("replacement failed")
+    rollback_error = OSError(f"rollback failed with {rollback_secret}")
     controls = [
         _LoopControl(),
         _LoopControl(start_error=replacement_error),
@@ -1218,7 +1230,7 @@ async def test_persisted_rollback_failure_blocks_runtime_recovery(
 
     def reject_exact_restore(path: Path, content: bytes) -> int:
         if path == config_path and content == original_bytes:
-            raise OSError(f"rollback failed with {rollback_secret}")
+            raise rollback_error
         return original_write_bytes(path, content)
 
     monkeypatch.setattr(Path, "write_bytes", reject_exact_restore)
@@ -1227,14 +1239,24 @@ async def test_persisted_rollback_failure_blocks_runtime_recovery(
         current.providers.configurations[0].api_key = "transient-secret"
 
     try:
-        with pytest.raises(RuntimeError, match="replacement failed") as raised:
+        with pytest.raises(RuntimeConsistencyFailedError) as raised:
             await service.mutate(
                 mutation,
                 restart_reason="provider_configuration_changed",
             )
 
         diagnostic = "".join(traceback.format_exception(raised.value))
-        assert raised.value is replacement_error
+        assert str(raised.value) == "Runtime consistency could not be guaranteed"
+        assert raised.value.__cause__ is replacement_error
+        assert raised.value.__context__ is None
+        assert replacement_error.__cause__ is None
+        assert replacement_error.__context__ is None
+        assert rollback_error not in {
+            raised.value.__cause__,
+            raised.value.__context__,
+            replacement_error.__cause__,
+            replacement_error.__context__,
+        }
         assert "persistence rollback did not finish" in diagnostic
         assert rollback_secret not in diagnostic
         assert "transient-secret" not in diagnostic

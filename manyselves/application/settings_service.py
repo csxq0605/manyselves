@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .async_ownership import await_owned
+from .errors import RuntimeConsistencyFailedError
 
 if TYPE_CHECKING:
     from .runtime_host import RuntimeHost
@@ -59,12 +60,13 @@ class SettingsService:
             replacement_error,
         )
         if not rollback_complete:
-            raise replacement_error
+            raise RuntimeConsistencyFailedError() from replacement_error
         recovery = await await_owned(self.host.replace_loop_manager(recovery=True))
         if recovery.error is not None:
             replacement_error.add_note(
                 "Provider runtime recovery failed after configuration rollback."
             )
+            raise RuntimeConsistencyFailedError() from replacement_error
         raise replacement_error
 
     def validate(self) -> tuple[bool, list[str], list[str]]:
