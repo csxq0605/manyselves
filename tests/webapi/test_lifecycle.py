@@ -86,6 +86,38 @@ async def test_ready_is_503_until_runtime_is_ready(web_settings: WebSettings) ->
         response = await client.get("/api/v1/health/ready")
 
     assert response.status_code == 503
+    assert response.json()["error"] == {
+        "code": "RUNTIME_NOT_READY",
+        "message": "Runtime is not ready",
+        "retryable": True,
+        "details": {},
+    }
+    assert response.json()["requestId"]
+
+
+@pytest.mark.asyncio
+async def test_ready_is_503_with_quiesced_error_envelope(
+    web_settings: WebSettings, fake_runtime_host: FakeRuntimeHost
+) -> None:
+    """Readiness must not expose raw maintenance state while work is quiesced."""
+    fake_runtime_host.is_ready = True
+    app = create_app(web_settings)
+    app.state.runtime_host = fake_runtime_host
+    app.state.maintenance_service = SimpleNamespace(quiesced=True)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["error"] == {
+        "code": "MAINTENANCE_QUIESCED",
+        "message": "Runtime mutations are disabled during maintenance",
+        "retryable": True,
+        "details": {},
+    }
+    assert response.json()["requestId"]
+    assert set(response.json()) == {"error", "requestId"}
 
 
 @pytest.mark.asyncio

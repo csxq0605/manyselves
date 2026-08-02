@@ -134,6 +134,10 @@ def test_openapi_locks_errors_security_sse_and_preview_semantics() -> None:
     assert mutation["responses"]["422"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/ErrorEnvelope"
     }
+    readiness = schema["paths"]["/api/v1/health/ready"]["get"]
+    assert readiness["responses"]["503"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ErrorEnvelope"
+    }
 
     events = schema["paths"]["/api/v1/events"]["get"]
     stream = events["responses"]["200"]["content"]["text/event-stream"]

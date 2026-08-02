@@ -3946,6 +3946,16 @@
             },
             "description": "Request validation failed"
           },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
           "default": {
             "content": {
               "application/json": {
