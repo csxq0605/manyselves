@@ -10,6 +10,7 @@ from ...application.conversation_service import (
 from ...application.errors import (
     MaintenanceQuiescedError,
     RuntimeBusyError,
+    RuntimeConsistencyFailedError,
     RuntimeNotReadyError,
 )
 from ..errors import ApiError
@@ -44,6 +45,8 @@ def _error(error: Exception) -> ApiError:
         return ApiError(status_code=423, code=error.code, message=str(error), retryable=False)
     if isinstance(error, RuntimeNotReadyError):
         return ApiError(status_code=503, code=error.code, message=str(error), retryable=True)
+    if isinstance(error, RuntimeConsistencyFailedError):
+        return ApiError(status_code=500, code=error.code, message=str(error), retryable=False)
     if isinstance(error, RuntimeBusyError):
         return ApiError(status_code=409, code=error.code, message="Runtime has active work", retryable=True)
     if isinstance(error, MaintenanceQuiescedError):
@@ -85,12 +88,16 @@ async def create_conversation(
         async with request.app.state.runtime_facade.mutation_transaction(lease_token):
             service = request.app.state.conversation_service
             service.require_switch_safe()
-            item = service.create(body.name, body.agent_id)
-            await request.app.state.conversation_service._sync(  # noqa: SLF001
-                body.agent_id, clear_pending=True
-            )
+            item = await service.create(body.name, body.agent_id)
             return _response(item)
-    except (ControlLeaseRequired, RuntimeNotReadyError, RuntimeBusyError, MaintenanceQuiescedError, ConversationInvalidError) as error:
+    except (
+        ControlLeaseRequired,
+        RuntimeNotReadyError,
+        RuntimeBusyError,
+        RuntimeConsistencyFailedError,
+        MaintenanceQuiescedError,
+        ConversationInvalidError,
+    ) as error:
         raise _error(error) from error
 
 
@@ -122,7 +129,14 @@ async def activate_conversation(
             service = request.app.state.conversation_service
             service.require_switch_safe()
             return _response(await service.activate(session_id, agent_id))
-    except (ControlLeaseRequired, RuntimeNotReadyError, RuntimeBusyError, MaintenanceQuiescedError, ConversationNotFoundError) as error:
+    except (
+        ControlLeaseRequired,
+        RuntimeNotReadyError,
+        RuntimeBusyError,
+        RuntimeConsistencyFailedError,
+        MaintenanceQuiescedError,
+        ConversationNotFoundError,
+    ) as error:
         raise _error(error) from error
 
 
@@ -140,7 +154,14 @@ async def delete_conversation(
             service.require_switch_safe()
             active = await service.delete(session_id, agent_id)
             return {"activeSessionId": active}
-    except (ControlLeaseRequired, RuntimeNotReadyError, RuntimeBusyError, MaintenanceQuiescedError, ConversationNotFoundError) as error:
+    except (
+        ControlLeaseRequired,
+        RuntimeNotReadyError,
+        RuntimeBusyError,
+        RuntimeConsistencyFailedError,
+        MaintenanceQuiescedError,
+        ConversationNotFoundError,
+    ) as error:
         raise _error(error) from error
 
 
@@ -156,5 +177,11 @@ async def clear_conversation(
             service = request.app.state.conversation_service
             service.require_switch_safe()
             return {"activeSessionId": await service.clear(agent_id)}
-    except (ControlLeaseRequired, RuntimeNotReadyError, RuntimeBusyError, MaintenanceQuiescedError) as error:
+    except (
+        ControlLeaseRequired,
+        RuntimeNotReadyError,
+        RuntimeBusyError,
+        RuntimeConsistencyFailedError,
+        MaintenanceQuiescedError,
+    ) as error:
         raise _error(error) from error

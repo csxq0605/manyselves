@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import copy
 import os
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from ..core.conversations import ConversationStore
 from ..core.loops.bus import MessageBus
@@ -22,8 +23,11 @@ from ..interfaces.types import (
     ToolResult,
     UserMessage,
 )
+from .async_ownership import await_owned
 from .errors import RuntimeBusyError, RuntimeConsistencyFailedError
 from .runtime_facade import RuntimeFacade
+
+_T = TypeVar("_T")
 
 
 class ConversationNotFoundError(LookupError):
@@ -47,6 +51,19 @@ class ConversationTransactionSnapshot:
     current_session_ids: dict[str, str]
     backend_history: list[dict[str, Any]]
     loop_history: list[Any] | None
+    streams: dict[tuple[str, str, str], str]
+    message_sessions: dict[tuple[str, str], str]
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationMutationSnapshot:
+    sessions_existed: bool
+    sessions_bytes: bytes
+    existing_jsonl_paths: frozenset[Path]
+    affected_files: dict[Path, tuple[bool, bytes]]
+    current_session_ids: dict[str, str]
+    backend_histories: dict[str, list[dict[str, Any]]]
+    loop_histories: dict[str, list[Any] | None]
     streams: dict[tuple[str, str, str], str]
     message_sessions: dict[tuple[str, str], str]
 
@@ -100,20 +117,36 @@ class ConversationService:
         queue = getattr(self._bus, "_queue", None)
         return self._pending_writes > 0 or (queue is not None and not queue.empty())
 
-    def create(self, name: str, agent_id: str = "main") -> dict[str, Any]:
+    async def create(self, name: str, agent_id: str = "main") -> dict[str, Any]:
         clean = self._name(name)
-        # This existing store helper is the only boundary that persists a named,
-        # intentionally empty session in the protected sessions.json format.
-        session_id = self.store._create_new_session(clean)  # noqa: SLF001
-        if not self.store.switch_session(session_id, agent_id):
-            raise AssertionError("newly persisted conversation could not be activated")
-        return self._session(session_id, agent_id)
+        snapshot = self._snapshot_mutation({agent_id})
+
+        async def operation() -> dict[str, Any]:
+            # This existing store helper is the only boundary that persists a named,
+            # intentionally empty session in the protected sessions.json format.
+            session_id = self.store._create_new_session(clean)  # noqa: SLF001
+            if not self.store.switch_session(session_id, agent_id):
+                raise AssertionError("newly persisted conversation could not be activated")
+            await self._sync(agent_id, clear_pending=True)
+            return self._session(session_id, agent_id)
+
+        return await self._run_mutation(operation, snapshot)
 
     async def activate(self, session_id: str, agent_id: str = "main") -> dict[str, Any]:
-        if not self.store.switch_session(session_id, agent_id):
+        if not any(
+            item.get("id") == session_id
+            for item in self.store._load_sessions_metadata()  # noqa: SLF001
+        ):
             raise ConversationNotFoundError(session_id)
-        await self._sync(agent_id, clear_pending=True)
-        return self._session(session_id, agent_id)
+        snapshot = self._snapshot_mutation({agent_id})
+
+        async def operation() -> dict[str, Any]:
+            if not self.store.switch_session(session_id, agent_id):
+                raise AssertionError("prevalidated conversation disappeared")
+            await self._sync(agent_id, clear_pending=True)
+            return self._session(session_id, agent_id)
+
+        return await self._run_mutation(operation, snapshot)
 
     def rename(self, session_id: str, name: str, agent_id: str = "main") -> dict[str, Any]:
         if not self.store.rename_session(session_id, self._name(name)):
@@ -121,19 +154,158 @@ class ConversationService:
         return self._session(session_id, agent_id)
 
     async def delete(self, session_id: str, agent_id: str = "main") -> str:
-        if not any(item.get("id") == session_id for item in self.store._load_sessions_metadata()):  # noqa: SLF001
+        if not any(
+            item.get("id") == session_id
+            for item in self.store._load_sessions_metadata()  # noqa: SLF001
+        ):
             raise ConversationNotFoundError(session_id)
         current_ids = dict(self.store._current_session_ids)  # noqa: SLF001
         affected = [item for item, active in current_ids.items() if active == session_id]
-        self.store.delete_session(session_id)
-        for affected_agent in affected:
-            await self._sync(affected_agent, clear_pending=True)
-        return self.store.get_current_session_id(agent_id)
+        snapshot = self._snapshot_mutation(set(affected), deleted_session_id=session_id)
+
+        async def operation() -> str:
+            self.store.delete_session(session_id)
+            for affected_agent in affected:
+                await self._sync(affected_agent, clear_pending=True)
+            return self.store.get_current_session_id(agent_id)
+
+        return await self._run_mutation(operation, snapshot)
 
     async def clear(self, agent_id: str = "main") -> str:
-        session_id = self.store.new_session(agent_type=agent_id)
-        await self._sync(agent_id, clear_pending=True)
-        return session_id
+        snapshot = self._snapshot_mutation({agent_id})
+
+        async def operation() -> str:
+            session_id = self.store.new_session(agent_type=agent_id)
+            await self._sync(agent_id, clear_pending=True)
+            return session_id
+
+        return await self._run_mutation(operation, snapshot)
+
+    def _snapshot_mutation(
+        self,
+        affected_agents: set[str],
+        deleted_session_id: str | None = None,
+    ) -> ConversationMutationSnapshot:
+        root = self.workspace / ".manyselves" / "conversations"
+        sessions_path = root / "sessions.json"
+        existing_jsonl_paths = frozenset(root.rglob("*.jsonl"))
+        current_session_ids = dict(self.store._current_session_ids)  # noqa: SLF001
+        affected_paths: set[Path] = set()
+        for affected_agent in affected_agents:
+            current_id = current_session_ids.get(affected_agent)
+            if current_id is not None:
+                affected_paths.add(root / affected_agent / f"{current_id}.jsonl")
+        if deleted_session_id is not None:
+            affected_paths.update(root.rglob(f"{deleted_session_id}.jsonl"))
+
+        manager = self.facade._host.loop_manager  # noqa: SLF001
+        get_loop = getattr(manager, "get_loop", None)
+        backend_histories: dict[str, list[dict[str, Any]]] = {}
+        loop_histories: dict[str, list[Any] | None] = {}
+        for affected_agent in affected_agents:
+            backend_histories[affected_agent] = (
+                self._backend_messages(affected_agent)
+                if affected_agent in current_session_ids
+                else []
+            )
+            loop = get_loop(affected_agent) if callable(get_loop) else None
+            current_history = getattr(loop, "_conversation_history", None)
+            loop_histories[affected_agent] = (
+                copy.deepcopy(current_history)
+                if isinstance(current_history, list)
+                else None
+            )
+
+        return ConversationMutationSnapshot(
+            sessions_existed=sessions_path.exists(),
+            sessions_bytes=sessions_path.read_bytes() if sessions_path.exists() else b"",
+            existing_jsonl_paths=existing_jsonl_paths,
+            affected_files={
+                path: (path.exists(), path.read_bytes() if path.exists() else b"")
+                for path in affected_paths
+            },
+            current_session_ids=current_session_ids,
+            backend_histories=backend_histories,
+            loop_histories=loop_histories,
+            streams=dict(self._streams),
+            message_sessions=dict(self._message_sessions),
+        )
+
+    async def _restore_mutation_snapshot(
+        self, snapshot: ConversationMutationSnapshot
+    ) -> None:
+        root = self.workspace / ".manyselves" / "conversations"
+        root.mkdir(parents=True, exist_ok=True)
+        sessions_path = root / "sessions.json"
+        if snapshot.sessions_existed:
+            sessions_path.write_bytes(snapshot.sessions_bytes)
+            with sessions_path.open("rb") as handle:
+                os.fsync(handle.fileno())
+        else:
+            sessions_path.unlink(missing_ok=True)
+
+        for path, (existed, durable_bytes) in snapshot.affected_files.items():
+            if existed:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(durable_bytes)
+                with path.open("rb") as handle:
+                    os.fsync(handle.fileno())
+            else:
+                path.unlink(missing_ok=True)
+        for path in root.rglob("*.jsonl"):
+            if path not in snapshot.existing_jsonl_paths:
+                path.unlink(missing_ok=True)
+
+        self.store._current_session_ids = dict(snapshot.current_session_ids)  # noqa: SLF001
+        self._streams = dict(snapshot.streams)
+        self._message_sessions = dict(snapshot.message_sessions)
+
+        manager = self.facade._host.loop_manager  # noqa: SLF001
+        get_loop = getattr(manager, "get_loop", None)
+        for affected_agent, backend_history in snapshot.backend_histories.items():
+            await self.facade._host.backend.sync_agent_conversation(  # noqa: SLF001
+                affected_agent,
+                copy.deepcopy(backend_history),
+                session_id=snapshot.current_session_ids.get(affected_agent),
+                clear_pending=True,
+            )
+            loop = get_loop(affected_agent) if callable(get_loop) else None
+            current_history = getattr(loop, "_conversation_history", None)
+            loop_history = snapshot.loop_histories.get(affected_agent)
+            if loop_history is not None and isinstance(current_history, list):
+                current_history.clear()
+                current_history.extend(copy.deepcopy(loop_history))
+        self._fsync_directories(root)
+
+    async def _run_mutation(
+        self,
+        operation: Callable[[], Awaitable[_T]],
+        snapshot: ConversationMutationSnapshot,
+    ) -> _T:
+        async def compensate_on_failure() -> _T:
+            try:
+                return await operation()
+            except BaseException:
+                try:
+                    await self._restore_mutation_snapshot(snapshot)
+                except BaseException as restore_error:
+                    restore_error.add_note(
+                        "Conversation mutation compensation did not complete"
+                    )
+                    cleanup_error = await self.facade.fail_consistency()
+                    if cleanup_error is not None:
+                        restore_error.add_note(
+                            "Runtime consistency cleanup did not complete"
+                        )
+                    raise RuntimeConsistencyFailedError() from restore_error
+                raise
+
+        outcome = await await_owned(compensate_on_failure())
+        if outcome.error is not None:
+            raise outcome.error
+        if outcome.cancellation_requested:
+            raise asyncio.CancelledError
+        return outcome.result()
 
     def messages(self, agent_id: str = "main") -> list[dict[str, Any]]:
         return self.store.load_messages(agent_id)

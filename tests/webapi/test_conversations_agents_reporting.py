@@ -44,6 +44,12 @@ class _Backend:
         self.send_release: asyncio.Event | None = None
         self.send_side_effect = None
         self.sync_failures_remaining = 0
+        self.live_sessions: dict[str, str | None] = {}
+        self.live_histories: dict[str, list[dict]] = {}
+        self.sync_attempts = 0
+        self.sync_fail_on_attempt: int | None = None
+        self.sync_started = asyncio.Event()
+        self.sync_release: asyncio.Event | None = None
         self.restart_calls: list[str] = []
         self.restart_error: BaseException | None = None
         self.restart_failures_remaining = 0
@@ -100,10 +106,18 @@ class _Backend:
         session_id: str | None = None,
         clear_pending: bool = False,
     ) -> None:
-        if self.sync_failures_remaining:
-            self.sync_failures_remaining -= 1
+        self.sync_attempts += 1
+        self.sync_started.set()
+        if self.sync_release is not None:
+            await self.sync_release.wait()
+        if self.sync_failures_remaining or self.sync_attempts == self.sync_fail_on_attempt:
+            if self.sync_failures_remaining:
+                self.sync_failures_remaining -= 1
             raise RuntimeError("injected conversation sync failure")
-        self.synced.append((agent_type, list(messages or []), session_id, clear_pending))
+        history = list(messages or [])
+        self.synced.append((agent_type, history, session_id, clear_pending))
+        self.live_sessions[agent_type] = session_id
+        self.live_histories[agent_type] = history
 
     async def restart_agents_and_wait(self, reason: str) -> None:
         self.restart_calls.append(reason)
@@ -375,11 +389,12 @@ async def test_conversation_activation_rejects_active_agent(resources) -> None:
 async def test_agent_response_is_persisted_to_captured_turn_session(resources) -> None:
     _, host, _, _ = resources
     service = host.app.state.conversation_service
-    first = service.create("First", "main")["id"]
+    first = (await service.create("First", "main"))["id"]
     await service._on_message(  # noqa: SLF001
         UserMessage(agent_type="main", content="turn", message_id="captured-turn")
     )
-    second = service.create("Second", "main")["id"]
+    second = service.store._create_new_session("Second")  # noqa: SLF001
+    assert service.store.switch_session(second, "main") is True
 
     await service._on_message(  # noqa: SLF001
         AgentResponse(
@@ -397,18 +412,234 @@ async def test_agent_response_is_persisted_to_captured_turn_session(resources) -
 
 
 @pytest.mark.asyncio
+async def test_public_create_clears_pending_agent_routing(resources) -> None:
+    _, host, _, _ = resources
+    service = host.app.state.conversation_service
+    current = service.store.get_current_session_id("main")
+    service._message_sessions[("main", "pending-message")] = current  # noqa: SLF001
+    service._streams[(current, "main", "pending-message")] = "partial"  # noqa: SLF001
+
+    await service.create("Replacement", "main")
+
+    assert not any(key[0] == "main" for key in service._message_sessions)  # noqa: SLF001
+    assert not any(key[1] == "main" for key in service._streams)  # noqa: SLF001
+
+
+@pytest.mark.asyncio
 async def test_delete_shared_session_syncs_every_affected_agent(resources) -> None:
     _, host, _, _ = resources
     service = host.app.state.conversation_service
-    shared = service.create("Shared", "main")["id"]
+    shared = (await service.create("Shared", "main"))["id"]
     assert service.store.switch_session(shared, "critic") is True
-    replacement = service.create("Replacement", "main")["id"]
+    replacement = (await service.create("Replacement", "main"))["id"]
     host.backend.synced.clear()
 
     await service.delete(shared, "main")
 
     assert "critic" in {item[0] for item in host.backend.synced}
     assert service.store.get_current_session_id("main") == replacement
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["create", "activate", "delete", "clear"])
+async def test_conversation_mutations_restore_exact_store_and_live_state_after_sync_failure(
+    resources, mutation: str
+) -> None:
+    client, host, workspace, _ = resources
+    service = host.app.state.conversation_service
+
+    first = await client.post("/api/v1/conversations", json={"name": "First"})
+    assert first.status_code == 201
+    first_id = first.json()["sessionId"]
+    service.store.append_message("main", "user", "first history")
+
+    target_id = first_id
+    if mutation in {"activate", "delete"}:
+        second = await client.post("/api/v1/conversations", json={"name": "Second"})
+        assert second.status_code == 201
+        target_id = second.json()["sessionId"]
+        service.store.append_message("main", "user", "second history")
+        if mutation == "activate":
+            assert service.store.switch_session(first_id, "main") is True
+
+    await service._sync("main", clear_pending=True)  # noqa: SLF001
+    host.backend.sync_attempts = 0
+    host.backend.synced.clear()
+
+    conversations_root = workspace / ".manyselves" / "conversations"
+    sessions_path = conversations_root / "sessions.json"
+    sessions_before = sessions_path.read_bytes()
+    files_before = {
+        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
+    }
+    current_before = dict(service.store._current_session_ids)  # noqa: SLF001
+    live_before = dict(host.backend.live_sessions)
+    live_histories_before = {
+        agent_id: [dict(item) for item in history]
+        for agent_id, history in host.backend.live_histories.items()
+    }
+
+    host.backend.sync_failures_remaining = 1
+    if mutation == "create":
+        response = await client.post(
+            "/api/v1/conversations", json={"name": "Must Roll Back"}
+        )
+    elif mutation == "activate":
+        response = await client.post(f"/api/v1/conversations/{target_id}/activate")
+    elif mutation == "delete":
+        response = await client.delete(f"/api/v1/conversations/{target_id}")
+    else:
+        response = await client.post("/api/v1/conversations/clear")
+
+    assert response.status_code == 500
+    assert sessions_path.read_bytes() == sessions_before
+    files_after = {
+        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
+    }
+    assert files_after == files_before
+    assert service.store._current_session_ids == current_before  # noqa: SLF001
+    assert host.backend.live_sessions == live_before
+    assert host.backend.live_histories == live_histories_before
+    if mutation in {"create", "clear"}:
+        assert set(conversations_root.rglob("*.jsonl")) == set(files_before)
+    if mutation == "delete":
+        deleted_paths = [path for path in files_before if path.stem == target_id]
+        assert deleted_paths
+        assert all(path.read_bytes() == files_before[path] for path in deleted_paths)
+
+
+@pytest.mark.asyncio
+async def test_delete_shared_active_session_restores_every_affected_agent_after_partial_sync(
+    resources,
+) -> None:
+    client, host, workspace, _ = resources
+    service = host.app.state.conversation_service
+
+    replacement = await client.post(
+        "/api/v1/conversations", json={"name": "Replacement"}
+    )
+    replacement_id = replacement.json()["sessionId"]
+    service.store.append_message("main", "user", "replacement history")
+    shared = await client.post("/api/v1/conversations", json={"name": "Shared"})
+    shared_id = shared.json()["sessionId"]
+    service.store.append_message("main", "user", "main shared history")
+    assert service.store.switch_session(shared_id, "critic") is True
+    service.store.append_message("critic", "user", "critic shared history")
+
+    for agent_id in ("main", "critic"):
+        await service._sync(agent_id, clear_pending=True)  # noqa: SLF001
+    host.backend.sync_attempts = 0
+    host.backend.synced.clear()
+
+    conversations_root = workspace / ".manyselves" / "conversations"
+    sessions_path = conversations_root / "sessions.json"
+    sessions_before = sessions_path.read_bytes()
+    files_before = {
+        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
+    }
+    current_before = dict(service.store._current_session_ids)  # noqa: SLF001
+    live_before = dict(host.backend.live_sessions)
+    live_histories_before = {
+        agent_id: [dict(item) for item in history]
+        for agent_id, history in host.backend.live_histories.items()
+    }
+
+    host.backend.sync_fail_on_attempt = 2
+    response = await client.delete(f"/api/v1/conversations/{shared_id}")
+
+    assert response.status_code == 500
+    assert host.backend.synced[0][0] == "main"
+    assert host.backend.synced[0][2] == replacement_id
+    assert host.backend.synced[0][2] != live_before["main"]
+    assert sessions_path.read_bytes() == sessions_before
+    assert {
+        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
+    } == files_before
+    assert service.store._current_session_ids == current_before  # noqa: SLF001
+    assert host.backend.live_sessions == live_before
+    assert host.backend.live_histories == live_histories_before
+
+
+@pytest.mark.asyncio
+async def test_cancelled_conversation_mutation_keeps_lease_until_sync_finishes(
+    resources,
+) -> None:
+    client, host, workspace, _ = resources
+    service = host.app.state.conversation_service
+    host.backend.sync_started = asyncio.Event()
+    host.backend.sync_release = asyncio.Event()
+    host.backend.synced.clear()
+
+    first_task = asyncio.create_task(
+        client.post("/api/v1/conversations", json={"name": "First Owned"})
+    )
+    await host.backend.sync_started.wait()
+    first_task.cancel()
+    first_task.cancel()
+    second_task = asyncio.create_task(
+        client.post("/api/v1/conversations", json={"name": "Second Owned"})
+    )
+
+    await _assert_task_remains_pending(first_task)
+    await _assert_task_remains_pending(second_task)
+    host.backend.sync_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await first_task
+    second_response = await second_task
+
+    assert second_response.status_code == 201
+    metadata = json.loads(
+        (workspace / ".manyselves/conversations/sessions.json").read_text("utf-8")
+    )
+    session_by_name = {item["name"]: item["id"] for item in metadata}
+    first_id = session_by_name["First Owned"]
+    second_id = session_by_name["Second Owned"]
+    assert host.backend.synced[0][2] == first_id
+    assert service.store.get_current_session_id("main") == second_id
+    assert host.backend.live_sessions["main"] == second_id
+    assert host.backend.sync_attempts >= 2
+
+
+@pytest.mark.asyncio
+async def test_conversation_compensation_failure_fails_runtime_closed(
+    resources, monkeypatch
+) -> None:
+    client, host, _, _ = resources
+    service = host.app.state.conversation_service
+    facade = host.app.state.runtime_facade
+    failed_closed = asyncio.Event()
+    original_fail_consistency = facade.fail_consistency
+
+    async def fail_restore(_snapshot) -> None:
+        raise RuntimeError("sk-restore-secret")
+
+    async def observe_fail_consistency():
+        result = await original_fail_consistency()
+        failed_closed.set()
+        return result
+
+    monkeypatch.setattr(
+        service, "_restore_mutation_snapshot", fail_restore, raising=False
+    )
+    monkeypatch.setattr(facade, "fail_consistency", observe_fail_consistency)
+    host.backend.sync_failures_remaining = 1
+
+    response = await client.post(
+        "/api/v1/conversations", json={"name": "sk-sync-secret"}
+    )
+
+    assert failed_closed.is_set()
+    assert host.is_ready is False
+    assert response.status_code == 500
+    assert response.json()["error"] == {
+        "code": "RUNTIME_CONSISTENCY_FAILED",
+        "message": "Runtime consistency could not be guaranteed",
+        "retryable": False,
+        "details": {},
+    }
+    assert "sk-sync-secret" not in response.text
+    assert "sk-restore-secret" not in response.text
 
 
 @pytest.mark.asyncio
@@ -674,7 +905,7 @@ async def test_shutdown_cancellation_during_begin_establishes_orderly_drain_befo
         async with app.router.lifespan_context(app):
             facade = app.state.runtime_facade
             service = app.state.conversation_service
-            service.create("Shutdown", "main")
+            await service.create("Shutdown", "main")
             original_begin = facade.begin_shutdown
 
             async def begin_shutdown() -> None:
