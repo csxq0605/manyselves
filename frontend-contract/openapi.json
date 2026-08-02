@@ -1,0 +1,4775 @@
+{
+  "components": {
+    "schemas": {
+      "AcceptedCommandResponse": {
+        "properties": {
+          "commandId": {
+            "format": "uuid",
+            "title": "Commandid",
+            "type": "string"
+          },
+          "status": {
+            "const": "accepted",
+            "default": "accepted",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "commandId"
+        ],
+        "title": "AcceptedCommandResponse",
+        "type": "object"
+      },
+      "AgentDefaultsResponse": {
+        "properties": {
+          "maxTokens": {
+            "title": "Maxtokens",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "temperature": {
+            "title": "Temperature",
+            "type": "number"
+          }
+        },
+        "required": [
+          "model",
+          "provider",
+          "maxTokens",
+          "temperature"
+        ],
+        "title": "AgentDefaultsResponse",
+        "type": "object"
+      },
+      "AgentListResponse": {
+        "properties": {
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/AgentSnapshot"
+            },
+            "title": "Agents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "agents"
+        ],
+        "title": "AgentListResponse",
+        "type": "object"
+      },
+      "AgentSnapshot": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "sessionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionid"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "AgentSnapshot",
+        "type": "object"
+      },
+      "BootstrapSettings": {
+        "description": "Non-sensitive client configuration required during initial load.",
+        "properties": {
+          "control_lease_seconds": {
+            "title": "Control Lease Seconds",
+            "type": "integer"
+          },
+          "sse_client_queue_capacity": {
+            "title": "Sse Client Queue Capacity",
+            "type": "integer"
+          },
+          "sse_replay_capacity": {
+            "title": "Sse Replay Capacity",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sse_replay_capacity",
+          "sse_client_queue_capacity",
+          "control_lease_seconds"
+        ],
+        "title": "BootstrapSettings",
+        "type": "object"
+      },
+      "BootstrapSnapshot": {
+        "description": "One read of the client-visible runtime state.",
+        "properties": {
+          "agents": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Agents",
+            "type": "object"
+          },
+          "conversations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Conversations",
+            "type": "array"
+          },
+          "maintenance": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Maintenance",
+            "type": "object"
+          },
+          "project": {
+            "$ref": "#/components/schemas/ProjectSnapshot"
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/RuntimeSnapshot"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/BootstrapSettings"
+          }
+        },
+        "required": [
+          "runtime",
+          "project",
+          "conversations",
+          "agents",
+          "settings",
+          "maintenance"
+        ],
+        "title": "BootstrapSnapshot",
+        "type": "object"
+      },
+      "ConversationCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "agentId": {
+            "default": "main",
+            "title": "Agentid",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ConversationCreateRequest",
+        "type": "object"
+      },
+      "ConversationListResponse": {
+        "properties": {
+          "activeSessionId": {
+            "title": "Activesessionid",
+            "type": "string"
+          },
+          "conversations": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationResponse"
+            },
+            "title": "Conversations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "conversations",
+          "activeSessionId"
+        ],
+        "title": "ConversationListResponse",
+        "type": "object"
+      },
+      "ConversationMessagesResponse": {
+        "properties": {
+          "messages": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "messages"
+        ],
+        "title": "ConversationMessagesResponse",
+        "type": "object"
+      },
+      "ConversationRenameRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "agentId": {
+            "default": "main",
+            "title": "Agentid",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ConversationRenameRequest",
+        "type": "object"
+      },
+      "ConversationResponse": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "preview": {
+            "default": "",
+            "title": "Preview",
+            "type": "string"
+          },
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "name",
+          "timestamp",
+          "active"
+        ],
+        "title": "ConversationResponse",
+        "type": "object"
+      },
+      "CreateEntryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "default": "",
+            "title": "Content",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "file",
+              "directory"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "kind"
+        ],
+        "title": "CreateEntryRequest",
+        "type": "object"
+      },
+      "EditResendRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "messageId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Messageid"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "EditResendRequest",
+        "type": "object"
+      },
+      "FileContent": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "modifiedAt": {
+            "format": "date-time",
+            "title": "Modifiedat",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "revision",
+          "size",
+          "modifiedAt",
+          "content"
+        ],
+        "title": "FileContent",
+        "type": "object"
+      },
+      "FileContextRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "endLine": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endline"
+          },
+          "file": {
+            "minLength": 1,
+            "title": "File",
+            "type": "string"
+          },
+          "startLine": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startline"
+          },
+          "type": {
+            "enum": [
+              "file",
+              "selection"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "file"
+        ],
+        "title": "FileContextRequest",
+        "type": "object"
+      },
+      "FileEntryResponse": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "file",
+              "directory"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "modifiedAt": {
+            "format": "date-time",
+            "title": "Modifiedat",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          }
+        },
+        "required": [
+          "path",
+          "name",
+          "kind",
+          "size",
+          "modifiedAt",
+          "revision"
+        ],
+        "title": "FileEntryResponse",
+        "type": "object"
+      },
+      "FileTreeResponse": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/FileEntryResponse"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "title": "FileTreeResponse",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LeaseAcquireRequest": {
+        "description": "Request a new lease or renew the caller's current lease.",
+        "properties": {
+          "actorId": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actorid"
+          },
+          "clientId": {
+            "minLength": 1,
+            "title": "Clientid",
+            "type": "string"
+          },
+          "leaseToken": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leasetoken"
+          }
+        },
+        "required": [
+          "clientId"
+        ],
+        "title": "LeaseAcquireRequest",
+        "type": "object"
+      },
+      "LeaseResponse": {
+        "description": "The active control lease, including its credential for future requests.",
+        "properties": {
+          "actorId": {
+            "title": "Actorid",
+            "type": "string"
+          },
+          "clientId": {
+            "title": "Clientid",
+            "type": "string"
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "title": "Expiresat",
+            "type": "string"
+          },
+          "leaseToken": {
+            "title": "Leasetoken",
+            "type": "string"
+          }
+        },
+        "required": [
+          "clientId",
+          "actorId",
+          "leaseToken",
+          "expiresAt"
+        ],
+        "title": "LeaseResponse",
+        "type": "object"
+      },
+      "LeaseTokenRequest": {
+        "description": "Supply a lease token for heartbeat and release actions.",
+        "properties": {
+          "leaseToken": {
+            "default": "",
+            "title": "Leasetoken",
+            "type": "string"
+          }
+        },
+        "title": "LeaseTokenRequest",
+        "type": "object"
+      },
+      "MaintenanceReleaseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "maintenanceToken": {
+            "title": "Maintenancetoken",
+            "type": "string"
+          }
+        },
+        "required": [
+          "maintenanceToken"
+        ],
+        "title": "MaintenanceReleaseRequest",
+        "type": "object"
+      },
+      "MaintenanceResponse": {
+        "properties": {
+          "maintenanceToken": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maintenancetoken"
+          },
+          "quiesced": {
+            "title": "Quiesced",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "quiesced"
+        ],
+        "title": "MaintenanceResponse",
+        "type": "object"
+      },
+      "OperationAcceptedResponse": {
+        "properties": {
+          "commandId": {
+            "format": "uuid",
+            "title": "Commandid",
+            "type": "string"
+          },
+          "operationId": {
+            "title": "Operationid",
+            "type": "string"
+          },
+          "status": {
+            "const": "accepted",
+            "default": "accepted",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "commandId",
+          "operationId"
+        ],
+        "title": "OperationAcceptedResponse",
+        "type": "object"
+      },
+      "ProjectListResponse": {
+        "properties": {
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectResponse"
+            },
+            "title": "Projects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "projects"
+        ],
+        "title": "ProjectListResponse",
+        "type": "object"
+      },
+      "ProjectRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId"
+        ],
+        "title": "ProjectRequest",
+        "type": "object"
+      },
+      "ProjectResponse": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "active"
+        ],
+        "title": "ProjectResponse",
+        "type": "object"
+      },
+      "ProjectSnapshot": {
+        "description": "The project selected for the process-local runtime.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "ProjectSnapshot",
+        "type": "object"
+      },
+      "ProviderSettingsResponse": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "apiBase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apibase"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "defaultModel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultmodel"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "provider",
+          "enabled",
+          "configured",
+          "apiBase",
+          "defaultModel",
+          "active"
+        ],
+        "title": "ProviderSettingsResponse",
+        "type": "object"
+      },
+      "ProviderSettingsUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "apiBase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apibase"
+          },
+          "apiKey": {
+            "anyOf": [
+              {
+                "format": "password",
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apikey"
+          },
+          "defaultModel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultmodel"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          }
+        },
+        "title": "ProviderSettingsUpdate",
+        "type": "object"
+      },
+      "PythonOperationResponse": {
+        "properties": {
+          "arguments": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Arguments",
+            "type": "array"
+          },
+          "completedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completedat"
+          },
+          "operationId": {
+            "title": "Operationid",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "returnCode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returncode"
+          },
+          "startedAt": {
+            "format": "date-time",
+            "title": "Startedat",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "stderr": {
+            "title": "Stderr",
+            "type": "string"
+          },
+          "stderrTruncated": {
+            "title": "Stderrtruncated",
+            "type": "boolean"
+          },
+          "stdout": {
+            "title": "Stdout",
+            "type": "string"
+          },
+          "stdoutTruncated": {
+            "title": "Stdouttruncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "operationId",
+          "path",
+          "arguments",
+          "status",
+          "stdout",
+          "stderr",
+          "stdoutTruncated",
+          "stderrTruncated",
+          "returnCode",
+          "startedAt",
+          "completedAt"
+        ],
+        "title": "PythonOperationResponse",
+        "type": "object"
+      },
+      "PythonRunRequest": {
+        "additionalProperties": false,
+        "description": "A trusted Python operation supported only by the Linux Compose deployment.",
+        "properties": {
+          "arguments": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Arguments",
+            "type": "array"
+          },
+          "path": {
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "PythonRunRequest",
+        "type": "object"
+      },
+      "RenameEntryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Baserevision",
+            "type": "string"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "destination",
+          "baseRevision"
+        ],
+        "title": "RenameEntryRequest",
+        "type": "object"
+      },
+      "ReportingAcceptedResponse": {
+        "properties": {
+          "commandId": {
+            "format": "uuid",
+            "title": "Commandid",
+            "type": "string"
+          },
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          },
+          "status": {
+            "const": "accepted",
+            "default": "accepted",
+            "title": "Status",
+            "type": "string"
+          },
+          "taskId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taskid"
+          }
+        },
+        "required": [
+          "commandId",
+          "runId"
+        ],
+        "title": "ReportingAcceptedResponse",
+        "type": "object"
+      },
+      "ReportingDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "supplement",
+              "draft",
+              "skip",
+              "stop"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "supplements": {
+            "items": {
+              "$ref": "#/components/schemas/UserSupplement"
+            },
+            "title": "Supplements",
+            "type": "array"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "ReportingDecisionRequest",
+        "type": "object"
+      },
+      "ReportingListResponse": {
+        "properties": {
+          "runs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs"
+        ],
+        "title": "ReportingListResponse",
+        "type": "object"
+      },
+      "ReportingResumeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "maxProviderAttempts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maxproviderattempts"
+          },
+          "maxTotalTokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maxtotaltokens"
+          },
+          "supplements": {
+            "items": {
+              "$ref": "#/components/schemas/UserSupplement"
+            },
+            "title": "Supplements",
+            "type": "array"
+          }
+        },
+        "title": "ReportingResumeRequest",
+        "type": "object"
+      },
+      "ReportingRevisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "baselineVersionId": {
+            "title": "Baselineversionid",
+            "type": "string"
+          },
+          "feedback": {
+            "title": "Feedback",
+            "type": "string"
+          },
+          "maxProviderAttempts": {
+            "default": 40,
+            "title": "Maxproviderattempts",
+            "type": "integer"
+          },
+          "maxTotalTokens": {
+            "default": 400000,
+            "title": "Maxtotaltokens",
+            "type": "integer"
+          },
+          "promoteSkillId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promoteskillid"
+          },
+          "promoteToSkill": {
+            "default": false,
+            "title": "Promotetoskill",
+            "type": "boolean"
+          },
+          "targetClaimIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Targetclaimids",
+            "type": "array"
+          },
+          "targetModuleIds": {
+            "items": {
+              "enum": [
+                "2.1",
+                "2.2",
+                "2.3",
+                "2.4",
+                "2.5"
+              ],
+              "type": "string"
+            },
+            "title": "Targetmoduleids",
+            "type": "array"
+          },
+          "targetSubmoduleIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Targetsubmoduleids",
+            "type": "array"
+          },
+          "userSupplements": {
+            "items": {
+              "$ref": "#/components/schemas/UserSupplement"
+            },
+            "title": "Usersupplements",
+            "type": "array"
+          }
+        },
+        "required": [
+          "baselineVersionId",
+          "feedback",
+          "targetModuleIds"
+        ],
+        "title": "ReportingRevisionRequest",
+        "type": "object"
+      },
+      "ReportingSnapshotResponse": {
+        "properties": {
+          "checkpoint": {
+            "additionalProperties": true,
+            "title": "Checkpoint",
+            "type": "object"
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "title": "Evidence",
+            "type": "object"
+          },
+          "outputs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Outputs",
+            "type": "array"
+          },
+          "revision": {
+            "additionalProperties": true,
+            "title": "Revision",
+            "type": "object"
+          },
+          "run": {
+            "additionalProperties": true,
+            "title": "Run",
+            "type": "object"
+          },
+          "state": {
+            "additionalProperties": true,
+            "title": "State",
+            "type": "object"
+          },
+          "waitingInput": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Waitinginput",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run",
+          "state",
+          "waitingInput",
+          "checkpoint",
+          "evidence",
+          "revision",
+          "outputs"
+        ],
+        "title": "ReportingSnapshotResponse",
+        "type": "object"
+      },
+      "ReportingStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "executionRequirements": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Executionrequirements",
+            "type": "array"
+          },
+          "instruction": {
+            "minLength": 1,
+            "title": "Instruction",
+            "type": "string"
+          },
+          "maxProviderAttempts": {
+            "default": 80,
+            "title": "Maxproviderattempts",
+            "type": "integer"
+          },
+          "maxTotalTokens": {
+            "default": 800000,
+            "title": "Maxtotaltokens",
+            "type": "integer"
+          },
+          "missingEvidencePolicy": {
+            "default": "draft",
+            "enum": [
+              "ask",
+              "block",
+              "skip",
+              "draft"
+            ],
+            "title": "Missingevidencepolicy",
+            "type": "string"
+          },
+          "operation": {
+            "default": "full_report",
+            "enum": [
+              "distill_template_skill",
+              "full_report",
+              "module_report",
+              "aggregate_existing",
+              "render_existing"
+            ],
+            "title": "Operation",
+            "type": "string"
+          },
+          "outputFilename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outputfilename"
+          },
+          "sourceMarkdownRef": {
+            "anyOf": [
+              {
+                "format": "path",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcemarkdownref"
+          },
+          "sourceModuleRefs": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "format": "path",
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourcemodulerefs"
+          },
+          "targetModules": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetmodules"
+          },
+          "userSupplements": {
+            "items": {
+              "$ref": "#/components/schemas/UserSupplement"
+            },
+            "title": "Usersupplements",
+            "type": "array"
+          }
+        },
+        "required": [
+          "instruction"
+        ],
+        "title": "ReportingStartRequest",
+        "type": "object"
+      },
+      "RollbackRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "checkpointId": {
+            "minLength": 1,
+            "title": "Checkpointid",
+            "type": "string"
+          },
+          "targetMessageId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetmessageid"
+          }
+        },
+        "required": [
+          "checkpointId"
+        ],
+        "title": "RollbackRequest",
+        "type": "object"
+      },
+      "RollbackResponse": {
+        "properties": {
+          "commandId": {
+            "format": "uuid",
+            "title": "Commandid",
+            "type": "string"
+          },
+          "conversationHistory": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Conversationhistory",
+            "type": "array"
+          },
+          "restoredFiles": {
+            "title": "Restoredfiles",
+            "type": "integer"
+          },
+          "status": {
+            "const": "accepted",
+            "default": "accepted",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "commandId",
+          "restoredFiles",
+          "conversationHistory"
+        ],
+        "title": "RollbackResponse",
+        "type": "object"
+      },
+      "RuntimeSnapshot": {
+        "additionalProperties": false,
+        "description": "Minimal query view shared by desktop and service clients.",
+        "properties": {
+          "active_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Session Id"
+          },
+          "agent_statuses": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Agent Statuses",
+            "type": "object"
+          },
+          "controller_client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Controller Client Id"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace"
+          }
+        },
+        "required": [
+          "ready",
+          "workspace",
+          "agent_statuses",
+          "active_session_id",
+          "controller_client_id"
+        ],
+        "title": "RuntimeSnapshot",
+        "type": "object"
+      },
+      "SaveFileRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Baserevision",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "baseRevision",
+          "content"
+        ],
+        "title": "SaveFileRequest",
+        "type": "object"
+      },
+      "SendMessageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "messageId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Messageid"
+          },
+          "source": {
+            "default": "user",
+            "enum": [
+              "user",
+              "main_agent"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "SendMessageRequest",
+        "type": "object"
+      },
+      "SettingsDefaultsUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "activeProviderId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activeproviderid"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          }
+        },
+        "title": "SettingsDefaultsUpdate",
+        "type": "object"
+      },
+      "SettingsResponse": {
+        "properties": {
+          "defaults": {
+            "$ref": "#/components/schemas/AgentDefaultsResponse"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderSettingsResponse"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "providers",
+          "defaults"
+        ],
+        "title": "SettingsResponse",
+        "type": "object"
+      },
+      "UserSupplement": {
+        "additionalProperties": false,
+        "description": "One scoped, auditable user fact or instruction added to the current run.",
+        "properties": {
+          "content": {
+            "description": "Exact user-confirmed fact or instruction without inferred additions.",
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "id": {
+            "description": "Stable current-run supplement id used by supersedes.",
+            "pattern": "^US-[A-Za-z0-9._-]+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "scope": {
+            "default": "run",
+            "description": "Run-wide or explicitly targeted applicability boundary.",
+            "enum": [
+              "run",
+              "module",
+              "submodule",
+              "claim",
+              "final_section"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "stages": {
+            "description": "Only workflow stages allowed to consume this supplement.",
+            "items": {
+              "enum": [
+                "module_authoring",
+                "module_review",
+                "cross_review",
+                "chief_edit",
+                "final_review"
+              ],
+              "type": "string"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "supersedes": {
+            "description": "Earlier supplement ids replaced by this one while preserving audit history.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Supersedes",
+            "type": "array"
+          },
+          "target_ids": {
+            "description": "Required module, submodule, Claim, or final-section ids outside run scope.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Target Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "UserSupplement",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "FastAPI",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/agents": {
+      "get": {
+        "operationId": "list_agents_api_v1_agents_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Agents"
+      }
+    },
+    "/api/v1/agents/{agent_id}/file-context": {
+      "post": {
+        "operationId": "send_file_context_api_v1_agents__agent_id__file_context_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileContextRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedCommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Send File Context"
+      }
+    },
+    "/api/v1/agents/{agent_id}/interrupt": {
+      "post": {
+        "operationId": "interrupt_api_v1_agents__agent_id__interrupt_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedCommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Interrupt"
+      }
+    },
+    "/api/v1/agents/{agent_id}/messages": {
+      "post": {
+        "operationId": "send_message_api_v1_agents__agent_id__messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedCommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Send Message"
+      }
+    },
+    "/api/v1/agents/{agent_id}/messages/{target_message_id}/edit-resend": {
+      "post": {
+        "operationId": "edit_resend_api_v1_agents__agent_id__messages__target_message_id__edit_resend_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "target_message_id",
+            "required": true,
+            "schema": {
+              "title": "Target Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditResendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedCommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Edit Resend"
+      }
+    },
+    "/api/v1/agents/{agent_id}/rollback": {
+      "post": {
+        "operationId": "rollback_api_v1_agents__agent_id__rollback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RollbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RollbackResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rollback"
+      }
+    },
+    "/api/v1/bootstrap": {
+      "get": {
+        "description": "Return the first client snapshot from the active runtime facade.",
+        "operationId": "bootstrap_api_v1_bootstrap_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BootstrapSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Bootstrap"
+      }
+    },
+    "/api/v1/control/lease": {
+      "delete": {
+        "description": "Release the current controller lease when its token matches.",
+        "operationId": "release_lease_api_v1_control_lease_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeaseTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Lease"
+      },
+      "post": {
+        "description": "Acquire a controller lease, or renew the same client's matching lease.",
+        "operationId": "acquire_lease_api_v1_control_lease_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeaseAcquireRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Acquire Lease"
+      }
+    },
+    "/api/v1/control/lease/heartbeat": {
+      "post": {
+        "description": "Extend the current controller lease when its token matches.",
+        "operationId": "heartbeat_lease_api_v1_control_lease_heartbeat_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeaseTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Heartbeat Lease"
+      }
+    },
+    "/api/v1/conversations": {
+      "get": {
+        "operationId": "list_conversations_api_v1_conversations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "agentId",
+            "required": false,
+            "schema": {
+              "default": "main",
+              "title": "Agentid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Conversations"
+      },
+      "post": {
+        "operationId": "create_conversation_api_v1_conversations_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Conversation"
+      }
+    },
+    "/api/v1/conversations/clear": {
+      "post": {
+        "operationId": "clear_conversation_api_v1_conversations_clear_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "agentId",
+            "required": false,
+            "schema": {
+              "default": "main",
+              "title": "Agentid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Conversation"
+      }
+    },
+    "/api/v1/conversations/messages": {
+      "get": {
+        "operationId": "messages_api_v1_conversations_messages_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "agentId",
+            "required": false,
+            "schema": {
+              "default": "main",
+              "title": "Agentid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationMessagesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Messages"
+      }
+    },
+    "/api/v1/conversations/{session_id}": {
+      "delete": {
+        "operationId": "delete_conversation_api_v1_conversations__session_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agentId",
+            "required": false,
+            "schema": {
+              "default": "main",
+              "title": "Agentid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Conversation"
+      },
+      "patch": {
+        "operationId": "rename_conversation_api_v1_conversations__session_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationRenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename Conversation"
+      }
+    },
+    "/api/v1/conversations/{session_id}/activate": {
+      "post": {
+        "operationId": "activate_conversation_api_v1_conversations__session_id__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agentId",
+            "required": false,
+            "schema": {
+              "default": "main",
+              "title": "Agentid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Activate Conversation"
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "description": "Stream runtime notifications with replay or an explicit bootstrap requirement.",
+        "operationId": "stream_events_api_v1_events_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Events"
+      }
+    },
+    "/api/v1/health/ready": {
+      "get": {
+        "description": "Report whether the lifespan-owned runtime can accept work.",
+        "operationId": "readiness_api_v1_health_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Readiness Api V1 Health Ready Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Readiness"
+      }
+    },
+    "/api/v1/maintenance/quiesce": {
+      "post": {
+        "operationId": "quiesce_api_v1_maintenance_quiesce_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaintenanceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Quiesce"
+      }
+    },
+    "/api/v1/maintenance/release": {
+      "post": {
+        "operationId": "release_api_v1_maintenance_release_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaintenanceReleaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaintenanceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release"
+      }
+    },
+    "/api/v1/operations/python": {
+      "post": {
+        "operationId": "run_python_api_v1_operations_python_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PythonRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationAcceptedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Python"
+      }
+    },
+    "/api/v1/operations/{operation_id}": {
+      "get": {
+        "operationId": "get_operation_api_v1_operations__operation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation_id",
+            "required": true,
+            "schema": {
+              "title": "Operation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PythonOperationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Operation"
+      }
+    },
+    "/api/v1/operations/{operation_id}/interrupt": {
+      "post": {
+        "operationId": "interrupt_operation_api_v1_operations__operation_id__interrupt_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation_id",
+            "required": true,
+            "schema": {
+              "title": "Operation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PythonOperationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Interrupt Operation"
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "operationId": "list_projects_api_v1_projects_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Projects"
+      },
+      "post": {
+        "operationId": "create_project_api_v1_projects_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Project"
+      }
+    },
+    "/api/v1/projects/{project_id}": {
+      "delete": {
+        "operationId": "delete_project_api_v1_projects__project_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Project"
+      },
+      "patch": {
+        "operationId": "rename_project_api_v1_projects__project_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename Project"
+      }
+    },
+    "/api/v1/projects/{project_id}/activate": {
+      "post": {
+        "operationId": "activate_project_api_v1_projects__project_id__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Activate Project"
+      }
+    },
+    "/api/v1/projects/{project_id}/files/content": {
+      "get": {
+        "operationId": "read_file_api_v1_projects__project_id__files_content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileContent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read File"
+      },
+      "put": {
+        "operationId": "save_file_api_v1_projects__project_id__files_content_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveFileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileContent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save File"
+      }
+    },
+    "/api/v1/projects/{project_id}/files/download": {
+      "get": {
+        "operationId": "download_file_api_v1_projects__project_id__files_download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download File"
+      }
+    },
+    "/api/v1/projects/{project_id}/files/entries": {
+      "delete": {
+        "operationId": "delete_entry_api_v1_projects__project_id__files_entries_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "title": "If-Match",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Entry"
+      },
+      "post": {
+        "operationId": "create_entry_api_v1_projects__project_id__files_entries_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEntryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileEntryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Entry"
+      }
+    },
+    "/api/v1/projects/{project_id}/files/preview": {
+      "get": {
+        "operationId": "preview_file_api_v1_projects__project_id__files_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Preview File Api V1 Projects  Project Id  Files Preview Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview File"
+      }
+    },
+    "/api/v1/projects/{project_id}/files/rename": {
+      "post": {
+        "operationId": "rename_entry_api_v1_projects__project_id__files_rename_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameEntryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileEntryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename Entry"
+      }
+    },
+    "/api/v1/projects/{project_id}/files/tree": {
+      "get": {
+        "operationId": "file_tree_api_v1_projects__project_id__files_tree_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileTreeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "File Tree"
+      }
+    },
+    "/api/v1/projects/{project_id}/files/upload": {
+      "post": {
+        "operationId": "upload_file_api_v1_projects__project_id__files_upload_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileEntryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload File"
+      }
+    },
+    "/api/v1/reporting/decisions/{decision_id}/resume": {
+      "post": {
+        "operationId": "resume_decision_api_v1_reporting_decisions__decision_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "decision_id",
+            "required": true,
+            "schema": {
+              "title": "Decision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportingDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportingAcceptedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Decision"
+      }
+    },
+    "/api/v1/reporting/revisions": {
+      "post": {
+        "operationId": "revise_api_v1_reporting_revisions_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportingRevisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportingAcceptedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revise"
+      }
+    },
+    "/api/v1/reporting/runs": {
+      "get": {
+        "operationId": "list_runs_api_v1_reporting_runs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportingListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Runs"
+      },
+      "post": {
+        "operationId": "start_run_api_v1_reporting_runs_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportingStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportingAcceptedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Run"
+      }
+    },
+    "/api/v1/reporting/runs/{run_id}": {
+      "get": {
+        "operationId": "get_run_api_v1_reporting_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportingSnapshotResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run"
+      }
+    },
+    "/api/v1/reporting/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_run_api_v1_reporting_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportingAcceptedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Run"
+      }
+    },
+    "/api/v1/reporting/runs/{run_id}/resume": {
+      "post": {
+        "operationId": "resume_run_api_v1_reporting_runs__run_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportingResumeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportingAcceptedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Run"
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "operationId": "get_settings_api_v1_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Settings"
+      },
+      "patch": {
+        "operationId": "update_defaults_api_v1_settings_patch",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsDefaultsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Defaults"
+      }
+    },
+    "/api/v1/settings/providers/{provider_id}": {
+      "patch": {
+        "operationId": "update_provider_api_v1_settings_providers__provider_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "title": "Provider Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Control-Lease-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Control-Lease-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Provider"
+      }
+    }
+  }
+}
