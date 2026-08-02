@@ -7,6 +7,8 @@
     "node": ">=22"
   },
   "scripts": {
+    "dev": "vite",
+    "e2e": "playwright test",
     "generate:api": "openapi-typescript ../frontend-contract/openapi.json -o src/api/generated/schema.ts",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest",
@@ -16,14 +18,19 @@
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-query": "^5.101.4",
+    "dompurify": "^3.4.12",
     "idb": "^8.0.3",
+    "pdfjs-dist": "^6.2.108",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.2",
+    "remark-gfm": "^4.0.1",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

@@ -18,6 +18,7 @@ export interface ProjectWorkspaceProps {
   readonly hasDirtyDrafts?: boolean;
   readonly onProjectActivated?: (projectId: string) => void;
   readonly onOpenFile?: (entry: FileEntry) => void;
+  readonly onPreviewFile?: ((entry: FileEntry) => void) | undefined;
   readonly platform: PlatformBridge;
 }
 
@@ -32,6 +33,7 @@ export function ProjectWorkspace({
   gateway,
   hasDirtyDrafts = false,
   onOpenFile,
+  onPreviewFile,
   onProjectActivated,
   platform,
 }: ProjectWorkspaceProps) {
@@ -126,6 +128,7 @@ export function ProjectWorkspace({
         api={fileApi}
         directory={directory}
         onChanged={refreshFiles}
+        onPreview={onPreviewFile}
         platform={platform}
         projectId={currentProjectId}
         selectedEntry={selectedEntry}

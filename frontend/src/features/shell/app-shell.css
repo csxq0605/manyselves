@@ -317,6 +317,89 @@ select {
   border-radius: 5px;
 }
 
+.preview-workspace,
+.python-run-action {
+  display: grid;
+  gap: 12px;
+}
+
+.preview-workspace button,
+.preview-toolbar button,
+.python-run-action button {
+  padding: 7px 11px;
+  color: #243247;
+  background: #fff;
+  border: 1px solid #cbd4df;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.preview-workspace pre,
+.python-run-action pre {
+  max-height: 28rem;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  color: #dbe6f4;
+  background: #172033;
+  border-radius: 7px;
+  font-family: "Cascadia Mono", "SFMono-Regular", monospace;
+  white-space: pre-wrap;
+}
+
+.markdown-preview {
+  max-width: 78ch;
+  line-height: 1.65;
+}
+
+.markdown-preview img,
+.preview-workspace img {
+  max-width: 100%;
+}
+
+.spreadsheet-scroll,
+.pdf-preview__viewport {
+  max-width: 100%;
+  max-height: 62vh;
+  overflow: auto;
+  border: 1px solid #dfe5eb;
+  border-radius: 7px;
+}
+
+.spreadsheet-scroll table,
+.preview-workspace article table {
+  border-collapse: collapse;
+}
+
+.spreadsheet-scroll td,
+.preview-workspace article td {
+  min-width: 7rem;
+  padding: 7px 9px;
+  border: 1px solid #dfe5eb;
+  white-space: pre-wrap;
+}
+
+.trusted-runtime-note {
+  margin: 0;
+  color: #8b5b00;
+  font-size: 0.78rem;
+}
+
+.python-run-action {
+  margin-top: 14px;
+  padding: 12px;
+  background: #fff8e8;
+  border: 1px solid #eed79e;
+  border-radius: 8px;
+}
+
 .text-editor {
   min-height: 320px;
   overflow: hidden;

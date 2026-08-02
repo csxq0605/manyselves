@@ -77,6 +77,26 @@ describe("FileTree", () => {
 });
 
 describe("FileActions", () => {
+  it("offers an explicit preview action for the selected file", async () => {
+    const previewed: string[] = [];
+    const platform = {
+      kind: "browser", notify: async () => undefined, openDownloadedFile: async () => undefined,
+      saveDownload: async () => undefined, selectDirectory: async () => null, selectFiles: async () => [],
+    } satisfies PlatformBridge;
+    const api = {
+      createEntry: async () => entries[1]!, deleteEntry: async () => undefined,
+      download: async () => new Blob(), listTree: async () => entries,
+      renameEntry: async () => entries[1]!, upload: async () => entries[1]!,
+    } satisfies FileApi;
+    const user = userEvent.setup();
+
+    render(<FileActions api={api} directory="Inputs" onPreview={(entry) => previewed.push(entry.path)}
+      platform={platform} projectId="project-1" selectedEntry={entries[1]!} />);
+    await user.click(screen.getByRole("button", { name: "预览" }));
+
+    expect(previewed).toEqual(["Inputs/a.md"]);
+  });
+
   it("imports selected files into the chosen server directory", async () => {
     const file = new File(["x"], "a.csv", { type: "text/csv" });
     const uploads: string[] = [];

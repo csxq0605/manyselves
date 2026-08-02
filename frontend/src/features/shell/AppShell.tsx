@@ -7,6 +7,9 @@ import type { PlatformBridge } from "../../platform/types";
 import { createEditorFileApi } from "../editor/editor-api";
 import { createEditorStore } from "../editor/editor-store";
 import { isEditableTextPath } from "../editor/editable-files";
+import { createOperationApi } from "../preview/operation-api";
+import { createPreviewApi } from "../preview/preview-api";
+import { PythonRunAction } from "../preview/PythonRunAction";
 import { ProjectWorkspace } from "../projects/ProjectWorkspace";
 import { ConnectionBanner } from "./ConnectionBanner";
 import "./app-shell.css";
@@ -14,6 +17,11 @@ import "./app-shell.css";
 const EditorWorkspace = lazy(async () => {
   const module = await import("../editor/EditorWorkspace");
   return { default: module.EditorWorkspace };
+});
+
+const PreviewWorkspace = lazy(async () => {
+  const module = await import("../preview/PreviewWorkspace");
+  return { default: module.PreviewWorkspace };
 });
 
 export interface AppShellProps {
@@ -28,8 +36,12 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
   const activeDraftPath = useMemo(() => Object.keys(drafts)[0] ?? "scratchpad.md", [drafts]);
   const activeDraft = drafts[activeDraftPath] ?? "";
   const [openError, setOpenError] = useState<string | null>(null);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
   const editorApi = useMemo(() => gateway ? createEditorFileApi(gateway) : null, [gateway]);
+  const operationApi = useMemo(() => gateway ? createOperationApi(gateway) : null, [gateway]);
+  const previewApi = useMemo(() => gateway ? createPreviewApi(gateway) : null, [gateway]);
   const [editorStore] = useState(() => createEditorStore());
+  const activeEditorPath = useStore(editorStore, (store) => store.activePath);
   const hasDirtyEditorDrafts = useStore(
     editorStore,
     (store) => store.tabs.some((tab) => tab.dirty),
@@ -63,16 +75,25 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
               key={bootstrap.project.id}
               onOpenFile={(entry) => {
                 if (!isEditableTextPath(entry.path)) {
-                  setOpenError("该文件需要使用预览面板；当前编辑器只接受文本文件");
+                  setOpenError(null);
+                  setPreviewPath(entry.path);
                   return;
                 }
                 setOpenError(null);
+                setPreviewPath(null);
                 void editorApi?.read(bootstrap.project.id, entry.path).then(
                   (file) => editorStore.getState().openFile(bootstrap.project.id, file),
                   () => setOpenError("服务器文件读取失败"),
                 );
               }}
-              onProjectActivated={() => editorStore.getState().reset()}
+              onPreviewFile={(entry) => {
+                setOpenError(null);
+                setPreviewPath(entry.path);
+              }}
+              onProjectActivated={() => {
+                editorStore.getState().reset();
+                setPreviewPath(null);
+              }}
               platform={platform}
             />
           ) : (
@@ -84,7 +105,18 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
         </nav>
 
         <main className="workspace-pane workspace-pane--main" aria-label="主工作区">
-          {bootstrap && editorApi && gateway && platform ? (
+          {bootstrap && editorApi && gateway && platform && previewApi && previewPath ? (
+            <Suspense fallback={<p role="status">正在加载预览器…</p>}>
+              <PreviewWorkspace
+                api={previewApi}
+                key={previewPath}
+                onClose={() => setPreviewPath(null)}
+                path={previewPath}
+                platform={platform}
+                projectId={bootstrap.project.id}
+              />
+            </Suspense>
+          ) : bootstrap && editorApi && gateway && platform ? (
             <Suspense fallback={<p role="status">正在加载编辑器…</p>}>
               <EditorWorkspace
                 api={editorApi}
@@ -112,6 +144,9 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
               </label>
             </>
           )}
+          {operationApi && activeEditorPath?.toLowerCase().endsWith(".py") && !previewPath ? (
+            <PythonRunAction api={operationApi} path={activeEditorPath} />
+          ) : null}
           {openError ? <p role="alert">{openError}</p> : null}
           <section className="conversation-placeholder" aria-label="对话区域">
             <p className="pane-label">对话</p>

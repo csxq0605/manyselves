@@ -8,6 +8,7 @@ export interface FileActionsProps {
   readonly api: FileApi;
   readonly directory: string;
   readonly onChanged?: () => void;
+  readonly onPreview?: ((entry: FileEntry) => void) | undefined;
   readonly onUploaded?: () => void;
   readonly platform: PlatformBridge;
   readonly projectId: string;
@@ -23,6 +24,7 @@ export function FileActions({
   api,
   directory,
   onChanged,
+  onPreview,
   onUploaded,
   platform,
   projectId,
@@ -167,6 +169,11 @@ export function FileActions({
         onClick={() => void downloadSelected()}
         type="button"
       >下载</button>
+      <button
+        disabled={!selectedEntry || selectedEntry.kind !== "file"}
+        onClick={() => selectedEntry && onPreview?.(selectedEntry)}
+        type="button"
+      >预览</button>
       <button onClick={onChanged} type="button">刷新</button>
       {error ? <p role="alert">{error}</p> : null}
       {pendingDirectory ? (
