@@ -6,7 +6,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from manyselves.interfaces.types import ToolCallMessage, ToolResult
+from manyselves.interfaces.types import ApiDebugMessage, ToolCallMessage, ToolResult
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import app as exported_app
 from manyselves.webapi.main import create_app
@@ -168,6 +168,55 @@ async def test_bootstrap_sanitizes_recoverable_runtime_tool_snapshot(
     tool = response.json()["runtime"]["tools"][0]
     assert tool["toolCallId"] == "call-1"
     assert tool["arguments"]["cycle"]["again"] == "[REDACTED]"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_sanitizes_tool_and_debug_identity_strings(
+    web_settings: WebSettings, fake_runtime_host: FakeRuntimeHost
+) -> None:
+    """Bootstrap must not leak identities that the SSE boundary redacts."""
+    app = create_app(web_settings)
+    app.dependency_overrides[get_runtime_host] = lambda: fake_runtime_host
+    async with app.router.lifespan_context(app):
+        await app.state.event_broker.publish_internal(
+            ToolCallMessage(
+                agent_type="Bearer tool-agent-secret",
+                tool_name="Bearer tool-name-secret",
+                tool_call_id="Bearer tool-call-secret",
+                arguments={},
+            )
+        )
+        await app.state.event_broker.publish_internal(
+            ApiDebugMessage(
+                agent_type="Bearer debug-agent-secret",
+                model="Bearer debug-model-secret",
+                tokens_in=1,
+                tokens_out=2,
+                duration_ms=3,
+                status="Bearer debug-status-secret",
+            )
+        )
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/api/v1/bootstrap")
+
+    assert response.status_code == 200
+    runtime = response.json()["runtime"]
+    assert runtime["tools"][0]["toolCallId"] == "[REDACTED]"
+    assert runtime["tools"][0]["agentId"] == "[REDACTED]"
+    assert runtime["tools"][0]["name"] == "[REDACTED]"
+    assert runtime["debug"][0]["agentId"] == "[REDACTED]"
+    assert runtime["debug"][0]["model"] == "[REDACTED]"
+    assert runtime["debug"][0]["status"] == "[REDACTED]"
+    for secret in (
+        "tool-agent-secret",
+        "tool-name-secret",
+        "tool-call-secret",
+        "debug-agent-secret",
+        "debug-model-secret",
+        "debug-status-secret",
+    ):
+        assert secret not in response.text
 
 
 @pytest.mark.asyncio

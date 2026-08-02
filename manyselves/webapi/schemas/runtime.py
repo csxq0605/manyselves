@@ -105,9 +105,11 @@ class RuntimeSnapshotResponse(_RuntimeResponse):
             ],
             tools=[
                 RuntimeToolResponse(
-                    toolCallId=item.tool_call_id,
-                    agentId=item.agent_id,
-                    name=item.name,
+                    toolCallId=sanitizer.sanitize_field(
+                        "toolCallId", item.tool_call_id
+                    ),
+                    agentId=sanitizer.sanitize_field("agentId", item.agent_id),
+                    name=sanitizer.sanitize_field("name", item.name),
                     arguments=sanitizer.sanitize_field("arguments", item.arguments),
                     status=item.status,
                     result=sanitizer.sanitize_field("result", item.result),
@@ -117,12 +119,12 @@ class RuntimeSnapshotResponse(_RuntimeResponse):
             ],
             debug=[
                 RuntimeDebugResponse(
-                    agentId=item.agent_id,
-                    model=item.model,
+                    agentId=sanitizer.sanitize_field("agentId", item.agent_id),
+                    model=sanitizer.sanitize_field("model", item.model),
                     tokens_in=item.tokens_in,
                     tokens_out=item.tokens_out,
                     duration_ms=item.duration_ms,
-                    status=item.status,
+                    status=sanitizer.sanitize_field("status", item.status),
                     timestamp=item.timestamp.isoformat(),
                     error=sanitizer.sanitize_field("error", item.error),
                 )

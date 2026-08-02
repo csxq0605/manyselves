@@ -29,6 +29,7 @@ from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.errors import ApiError
 from manyselves.webapi.events import broker as broker_module
 from manyselves.webapi.events.broker import EventBroker
+from manyselves.webapi.events.identity import ToolIdentityNormalizer
 from manyselves.webapi.events.mapper import EventContext
 from manyselves.webapi.events.models import EventEnvelope
 from manyselves.webapi.main import create_app
@@ -204,6 +205,50 @@ async def test_broker_preserves_explicit_tool_ids_and_marks_unmatched_legacy_res
     assert events[1].payload["toolCallId"] == "provider-call-1"
     assert events[2].payload["toolCallId"].startswith("legacy-orphan-")
     assert events[2].payload["toolCallId"] != "provider-call-1"
+
+
+def test_tool_identity_capacity_evicts_globally_across_agent_and_tool_keys() -> None:
+    """Per-key limits would let old calls survive an unbounded stream of new keys."""
+    normalizer = ToolIdentityNormalizer(outstanding_capacity=2)
+    normalizer.normalize(
+        ToolCallMessage(
+            agent_type="main",
+            tool_name="read",
+            tool_call_id="call-1",
+            arguments={},
+        )
+    )
+    normalizer.normalize(
+        ToolCallMessage(
+            agent_type="researcher",
+            tool_name="read",
+            tool_call_id="call-2",
+            arguments={},
+        )
+    )
+    normalizer.normalize(
+        ToolCallMessage(
+            agent_type="main",
+            tool_name="write",
+            tool_call_id="call-3",
+            arguments={},
+        )
+    )
+
+    evicted_result = normalizer.normalize(
+        ToolResult(agent_type="main", tool_name="read", result="late")
+    )
+    second_result = normalizer.normalize(
+        ToolResult(agent_type="researcher", tool_name="read", result="second")
+    )
+    third_result = normalizer.normalize(
+        ToolResult(agent_type="main", tool_name="write", result="third")
+    )
+
+    assert evicted_result.tool_call_id.startswith("legacy-orphan-")
+    assert evicted_result.tool_call_id != "call-1"
+    assert second_result.tool_call_id == "call-2"
+    assert third_result.tool_call_id == "call-3"
 
 
 @pytest.mark.asyncio
