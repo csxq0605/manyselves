@@ -105,6 +105,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.state.maintenance_service = None
     app.state.lifecycle_lock = asyncio.Lock()
     app.state.lifecycle_active = False
+    app.state._lifecycle_cleanup_pending = None
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_error_handler)

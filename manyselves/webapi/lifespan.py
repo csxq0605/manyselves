@@ -1,8 +1,8 @@
 """Application lifecycle ownership for the one shared runtime."""
 
 import asyncio
-from collections.abc import Awaitable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, AsyncIterator
 from uuid import uuid4
@@ -10,6 +10,7 @@ from uuid import uuid4
 from fastapi import FastAPI
 from loguru import logger
 
+from ..application.async_ownership import await_owned
 from ..application.control import ControlLeaseService
 from ..application.conversation_service import ConversationService
 from ..application.maintenance_service import MaintenanceService
@@ -25,78 +26,92 @@ from .events.mapper import EventContext
 from .settings import WebSettings
 
 
-async def _await_definite(awaitable: Awaitable[Any]) -> tuple[BaseException | None, bool]:
-    """Obtain an owned cleanup outcome while remembering caller cancellation."""
-    task = asyncio.create_task(awaitable)
-    caller_cancelled = False
-    while not task.done():
-        current = asyncio.current_task()
-        cancellation_count = current.cancelling() if current is not None else 0
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError:
-            updated_count = current.cancelling() if current is not None else 0
-            if updated_count > cancellation_count:
-                caller_cancelled = True
-                while current is not None and current.cancelling() > cancellation_count:
-                    current.uncancel()
-            elif task.done():
-                break
-        except BaseException:
-            break
-    try:
-        task.result()
-    except BaseException as error:
-        return error, caller_cancelled
-    return None, caller_cancelled
+@dataclass(slots=True)
+class LifespanCleanupOwnership:
+    """Resources retained until every ordered lifecycle cleanup stage completes."""
+
+    host: Any
+    facade: RuntimeFacade | None
+    reporting: ReportingFacade | None
+    python_runs: PythonRunService | None
+    conversations: ConversationService | None
+    broker: EventBroker | None
+    completed: set[str] = field(default_factory=set)
 
 
-async def _cleanup_failed_startup(
-    *,
-    host: Any,
-    facade: RuntimeFacade | None,
-    reporting: ReportingFacade | None,
-    python_runs: PythonRunService | None,
-    conversations: ConversationService | None,
-    broker: EventBroker | None,
+async def _cleanup_owned_runtime(
+    ownership: LifespanCleanupOwnership,
 ) -> tuple[list[tuple[str, BaseException]], bool]:
-    """Release each successfully-created startup stage without masking its error."""
+    """Release one runtime in dependency order while retaining failed stages."""
     failures: list[tuple[str, BaseException]] = []
     caller_cancelled = False
 
-    async def cleanup(name: str, awaitable: Awaitable[Any]) -> bool:
+    async def cleanup(stage: str, name: str, awaitable) -> bool:
         nonlocal caller_cancelled
-        error, cancelled = await _await_definite(awaitable)
-        caller_cancelled = caller_cancelled or cancelled
-        if error is not None:
-            failures.append((name, error))
+        outcome = await await_owned(awaitable)
+        caller_cancelled = caller_cancelled or outcome.cancellation_requested
+        if outcome.error is not None:
+            failures.append((name, outcome.error))
             return False
+        ownership.completed.add(stage)
         return True
 
-    if facade is not None and not await cleanup("shutdown grant", facade.begin_shutdown()):
-        return failures, caller_cancelled
-    stop_producers = getattr(host, "stop_producers", None)
+    if "begin_shutdown" not in ownership.completed:
+        if ownership.facade is None:
+            ownership.completed.add("begin_shutdown")
+        elif not await cleanup(
+            "begin_shutdown", "shutdown grant", ownership.facade.begin_shutdown()
+        ):
+            return failures, caller_cancelled
+
+    stop_producers = getattr(ownership.host, "stop_producers", None)
     split_shutdown = callable(stop_producers)
-    if split_shutdown and not await cleanup("producer cleanup", stop_producers()):
+    if "producers" not in ownership.completed:
+        if not split_shutdown:
+            ownership.completed.add("producers")
+        else:
+            first_error: BaseException | None = None
+            for _attempt in range(2):
+                outcome = await await_owned(stop_producers())
+                caller_cancelled = caller_cancelled or outcome.cancellation_requested
+                if outcome.error is None:
+                    ownership.completed.add("producers")
+                    break
+                if first_error is None:
+                    first_error = outcome.error
+                else:
+                    first_error.add_note(f"Producer shutdown retry also failed: {outcome.error!r}")
+            if "producers" not in ownership.completed:
+                assert first_error is not None
+                failures.append(("producer cleanup", first_error))
+                return failures, caller_cancelled
+
+    service_stages = (
+        ("reporting", "reporting cleanup", ownership.reporting),
+        ("python", "Python cleanup", ownership.python_runs),
+        ("conversations", "conversation cleanup", ownership.conversations),
+        ("broker", "event broker cleanup", ownership.broker),
+    )
+    for stage, name, resource in service_stages:
+        if stage in ownership.completed:
+            continue
+        if resource is None:
+            ownership.completed.add(stage)
+            continue
+        await cleanup(stage, name, resource.close())
+
+    if any(stage not in ownership.completed for stage, _, _ in service_stages):
         return failures, caller_cancelled
-    if reporting is not None and not await cleanup("reporting cleanup", reporting.close()):
-        return failures, caller_cancelled
-    if python_runs is not None and not await cleanup("Python cleanup", python_runs.close()):
-        return failures, caller_cancelled
-    if conversations is not None and not await cleanup(
-        "conversation cleanup", conversations.close()
-    ):
-        return failures, caller_cancelled
-    if broker is not None and not await cleanup("event broker cleanup", broker.close()):
-        return failures, caller_cancelled
-    if split_shutdown:
-        await cleanup("bus cleanup", host.stop_bus())
-    else:
-        await cleanup("host cleanup", host.stop())
+
+    if "bus" not in ownership.completed:
+        if split_shutdown:
+            await cleanup("bus", "bus cleanup", ownership.host.stop_bus())
+        else:
+            await cleanup("bus", "host cleanup", ownership.host.stop())
     return failures, caller_cancelled
 
 
-def _startup_ownership(
+def _lifecycle_ownership(
     *,
     host: Any,
     facade: RuntimeFacade | None,
@@ -104,26 +119,25 @@ def _startup_ownership(
     python_runs: PythonRunService | None,
     conversations: ConversationService | None,
     broker: EventBroker | None,
-) -> dict[str, Any]:
-    return {
-        "host": host,
-        "facade": facade,
-        "reporting": reporting,
-        "python_runs": python_runs,
-        "conversations": conversations,
-        "broker": broker,
-    }
+) -> LifespanCleanupOwnership:
+    return LifespanCleanupOwnership(
+        host=host,
+        facade=facade,
+        reporting=reporting,
+        python_runs=python_runs,
+        conversations=conversations,
+        broker=broker,
+    )
 
 
-def _expose_startup_ownership(app: FastAPI, ownership: dict[str, Any] | None) -> None:
+def _expose_lifecycle_ownership(app: FastAPI, ownership: LifespanCleanupOwnership | None) -> None:
     """Keep unfinished cleanup reachable, or clear resources after definite release."""
-    values = ownership or {}
-    app.state.runtime_host = values.get("host")
-    app.state.runtime_facade = values.get("facade")
-    app.state.conversation_service = values.get("conversations")
-    app.state.reporting_facade = values.get("reporting")
-    app.state.python_run_service = values.get("python_runs")
-    app.state.event_broker = values.get("broker")
+    app.state.runtime_host = None if ownership is None else ownership.host
+    app.state.runtime_facade = None if ownership is None else ownership.facade
+    app.state.conversation_service = None if ownership is None else ownership.conversations
+    app.state.reporting_facade = None if ownership is None else ownership.reporting
+    app.state.python_run_service = None if ownership is None else ownership.python_runs
+    app.state.event_broker = None if ownership is None else ownership.broker
     if ownership is None:
         app.state.maintenance_service = None
 
@@ -142,25 +156,21 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
     reporting = None
     python_runs = None
     broker = None
+    ownership: LifespanCleanupOwnership | None = None
     try:
-        pending_ownership = getattr(app.state, "_startup_cleanup_pending", None)
+        pending_ownership = app.state._lifecycle_cleanup_pending
         if pending_ownership is not None:
-            pending_failures, pending_cancelled = await _cleanup_failed_startup(
-                **pending_ownership
-            )
+            pending_failures, pending_cancelled = await _cleanup_owned_runtime(pending_ownership)
             if pending_failures:
                 name, cleanup_error = pending_failures[0]
+                retry_error = RuntimeError("Previous lifespan cleanup is incomplete")
+                for failure_name, failure in pending_failures:
+                    retry_error.add_note(f"{failure_name} failed: {failure!r}")
                 if pending_cancelled:
-                    cancel_error = asyncio.CancelledError()
-                    cancel_error.add_note(
-                        f"Pending startup {name} failed: {cleanup_error!r}"
-                    )
-                    raise cancel_error from cleanup_error
-                retry_error = RuntimeError("Previous startup cleanup is incomplete")
-                retry_error.add_note(f"{name} failed: {cleanup_error!r}")
+                    retry_error.add_note("Caller cancellation observed during lifecycle cleanup")
                 raise retry_error from cleanup_error
-            app.state._startup_cleanup_pending = None
-            _expose_startup_ownership(app, None)
+            app.state._lifecycle_cleanup_pending = None
+            _expose_lifecycle_ownership(app, None)
             if pending_cancelled:
                 raise asyncio.CancelledError
 
@@ -256,110 +266,83 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         broker.start()
         app.state.event_broker = broker
+        ownership = _lifecycle_ownership(
+            host=host,
+            facade=facade,
+            reporting=reporting,
+            python_runs=python_runs,
+            conversations=conversations,
+            broker=broker,
+        )
     except BaseException as startup_error:
         cleanup_failures: list[tuple[str, BaseException]] = []
+        cleanup_cancelled = False
         if host is not None:
-            ownership = _startup_ownership(
-                host=host,
-                facade=facade,
-                reporting=reporting,
-                python_runs=python_runs,
-                conversations=conversations,
-                broker=broker,
-            )
-            cleanup_failures, cleanup_cancelled = await _cleanup_failed_startup(**ownership)
+            if ownership is None:
+                ownership = _lifecycle_ownership(
+                    host=host,
+                    facade=facade,
+                    reporting=reporting,
+                    python_runs=python_runs,
+                    conversations=conversations,
+                    broker=broker,
+                )
+            app.state._lifecycle_cleanup_pending = ownership
+            _expose_lifecycle_ownership(app, ownership)
+            cleanup_failures, cleanup_cancelled = await _cleanup_owned_runtime(ownership)
             if cleanup_cancelled:
-                startup_error.add_note("Caller cancellation observed during startup cleanup")
+                startup_error.add_note("Caller cancellation observed during lifecycle cleanup")
             for name, cleanup_error in cleanup_failures:
                 startup_error.add_note(f"{name} failed: {cleanup_error!r}")
                 logger.error("{} after lifespan startup failure: {!r}", name, cleanup_error)
-            if cleanup_failures:
-                app.state._startup_cleanup_pending = ownership
-                _expose_startup_ownership(app, ownership)
-            else:
-                app.state._startup_cleanup_pending = None
-                _expose_startup_ownership(app, None)
-        elif getattr(app.state, "_startup_cleanup_pending", None) is None:
-            _expose_startup_ownership(app, None)
+            if not cleanup_failures:
+                app.state._lifecycle_cleanup_pending = None
+                _expose_lifecycle_ownership(app, None)
+        elif app.state._lifecycle_cleanup_pending is None:
+            _expose_lifecycle_ownership(app, None)
 
         async def deactivate_failed_startup() -> None:
             async with app.state.lifecycle_lock:
                 app.state.lifecycle_active = False
 
-        deactivate_error, _cancelled = await _await_definite(deactivate_failed_startup())
-        if deactivate_error is not None:
-            startup_error.add_note(f"Lifespan deactivation failed: {deactivate_error!r}")
+        deactivate = await await_owned(deactivate_failed_startup())
+        if deactivate.cancellation_requested and not cleanup_cancelled:
+            startup_error.add_note("Caller cancellation observed during lifecycle cleanup")
+        if deactivate.error is not None:
+            startup_error.add_note(f"Lifespan deactivation failed: {deactivate.error!r}")
         raise
 
     try:
         yield
     finally:
-        caller_cancelled = False
+        assert ownership is not None
+        app.state._lifecycle_cleanup_pending = ownership
+        _expose_lifecycle_ownership(app, ownership)
+        cleanup_failures, caller_cancelled = await _cleanup_owned_runtime(ownership)
+        if not cleanup_failures:
+            app.state._lifecycle_cleanup_pending = None
+            _expose_lifecycle_ownership(app, None)
 
-        async def require_stage(awaitable) -> None:
-            nonlocal caller_cancelled
-            error, cancelled = await _await_definite(awaitable)
-            caller_cancelled = caller_cancelled or cancelled
-            if error is not None:
-                raise error
+        async def deactivate_lifespan() -> None:
+            async with app.state.lifecycle_lock:
+                app.state.lifecycle_active = False
 
-        async def stop_producers_with_retry(boundary) -> None:
-            nonlocal caller_cancelled
-            first_error: BaseException | None = None
-            for _attempt in range(2):
-                error, cancelled = await _await_definite(boundary())
-                caller_cancelled = caller_cancelled or cancelled
-                if error is None:
-                    return
-                if first_error is None:
-                    first_error = error
-                else:
-                    first_error.add_note(
-                        f"Producer shutdown retry also failed: {error!r}"
-                    )
-            assert first_error is not None
-            raise first_error
+        deactivate = await await_owned(deactivate_lifespan())
+        caller_cancelled = caller_cancelled or deactivate.cancellation_requested
 
         shutdown_error: BaseException | None = None
-        try:
-            await require_stage(facade.begin_shutdown())
-            stop_producers = getattr(host, "stop_producers", None)
-            split_shutdown = callable(stop_producers)
-            if split_shutdown:
-                await stop_producers_with_retry(stop_producers)
-            reporting = getattr(app.state, "reporting_facade", None)
-            if reporting is not None:
-                await require_stage(reporting.close())
-            python_runs = getattr(app.state, "python_run_service", None)
-            if python_runs is not None:
-                await require_stage(python_runs.close())
-            conversations = getattr(app.state, "conversation_service", None)
-            if conversations is not None:
-                await require_stage(conversations.close())
-            broker = getattr(app.state, "event_broker", None)
-            if broker is not None:
-                await require_stage(broker.close())
-            if split_shutdown:
-                await require_stage(host.stop_bus())
+        if cleanup_failures:
+            _, shutdown_error = cleanup_failures[0]
+            for name, cleanup_error in cleanup_failures[1:]:
+                shutdown_error.add_note(f"{name} failed: {cleanup_error!r}")
+        if deactivate.error is not None:
+            if shutdown_error is None:
+                shutdown_error = deactivate.error
             else:
-                await require_stage(host.stop())
-        except BaseException as error:
-            shutdown_error = error
-        finally:
-            async def deactivate_lifespan() -> None:
-                async with app.state.lifecycle_lock:
-                    app.state.lifecycle_active = False
-
-            deactivate_error, cancelled = await _await_definite(deactivate_lifespan())
-            caller_cancelled = caller_cancelled or cancelled
-            if deactivate_error is not None:
-                if shutdown_error is None:
-                    shutdown_error = deactivate_error
-                else:
-                    shutdown_error.add_note(
-                        f"Lifespan deactivation failed: {deactivate_error!r}"
-                    )
+                shutdown_error.add_note(f"Lifespan deactivation failed: {deactivate.error!r}")
         if shutdown_error is not None:
+            if caller_cancelled:
+                shutdown_error.add_note("Caller cancellation observed during lifecycle cleanup")
             raise shutdown_error
         if caller_cancelled:
             raise asyncio.CancelledError

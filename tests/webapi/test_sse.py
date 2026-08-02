@@ -635,6 +635,7 @@ async def test_last_event_id_eviction_emits_one_line_resync_sse_and_headers(tmp_
     app = create_app(settings(tmp_path))
     app.dependency_overrides[get_runtime_host] = lambda: host
     async with app.router.lifespan_context(app):
+        stream_id = app.state.event_broker.stream_id
         for number in range(1, 4):
             await app.state.event_broker.publish_internal(
                 SystemNotice(agent_type="main", content=str(number))
@@ -645,7 +646,7 @@ async def test_last_event_id_eviction_emits_one_line_resync_sse_and_headers(tmp_
                 "/api/v1/events",
                 headers={
                     "Authorization": "Bearer test-token",
-                    "Last-Event-ID": f"{app.state.event_broker.stream_id}:evt-1",
+                    "Last-Event-ID": f"{stream_id}:evt-1",
                 },
             )
 
@@ -654,7 +655,7 @@ async def test_last_event_id_eviction_emits_one_line_resync_sse_and_headers(tmp_
     assert response.headers["cache-control"] == "no-cache, no-transform"
     assert response.headers["x-accel-buffering"] == "no"
     lines = response.text.splitlines()
-    assert lines[0].startswith(f"id: {app.state.event_broker.stream_id}:evt-")
+    assert lines[0].startswith(f"id: {stream_id}:evt-")
     assert lines[1] == "event: stream.resync_required"
     assert lines[2].startswith("data: {")
     assert "\n" not in lines[2][6:]
@@ -1331,9 +1332,10 @@ async def test_failed_startup_cleanup_retains_dependencies_and_retries_before_ne
 
     assert str(captured.value) == "broker startup failed"
     assert "bus" not in host.order
-    assert message_subscriber_count(host.bus) == 2
+    assert message_subscriber_count(host.bus) == 1
     assert app.state.conversation_service is not None
     assert app.state.event_broker is not None
+    assert app.state.event_broker._closed is True  # noqa: SLF001
 
     async with app.router.lifespan_context(app):
         assert message_subscriber_count(host.bus) == 2
@@ -1408,7 +1410,7 @@ async def test_pending_cleanup_cancellation_finishes_cleanup_without_starting_ne
 
     assert retry.cancelled() is True
     assert start_count == 1
-    assert app.state._startup_cleanup_pending is None  # noqa: SLF001
+    assert app.state._lifecycle_cleanup_pending is None  # noqa: SLF001
     assert app.state.lifecycle_active is False
     assert message_subscriber_count(host.bus) == 0
 
@@ -1460,7 +1462,7 @@ async def test_failed_startup_cleanup_grants_shutdown_before_producers_and_retri
     assert order == ["grant"]
     assert "bus" not in host.order
     assert app.state.runtime_facade is not None
-    assert app.state._startup_cleanup_pending["facade"] is app.state.runtime_facade  # noqa: SLF001
+    assert app.state._lifecycle_cleanup_pending.facade is app.state.runtime_facade  # noqa: SLF001
 
     async with app.router.lifespan_context(app):
         assert order[:3] == ["grant", "grant", "producers"]
