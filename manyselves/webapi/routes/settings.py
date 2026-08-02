@@ -1,9 +1,8 @@
 """Masked provider settings and transactional lease-controlled updates."""
 
-import asyncio
-
 from fastapi import APIRouter, Depends, Request
 
+from ...application.async_ownership import to_thread_non_abandoning
 from ...application.control import ControlLeaseRequired
 from ...application.errors import MaintenanceQuiescedError, RuntimeNotReadyError
 from ...application.settings_service import SettingsService
@@ -259,8 +258,7 @@ async def synchronize_provider_presets(
 ) -> PresetSyncResponse:
     try:
         async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            pass
-        downloaded = await asyncio.to_thread(sync_presets)
+            downloaded = await to_thread_non_abandoning(sync_presets)
     except (
         ControlLeaseRequired,
         RuntimeNotReadyError,

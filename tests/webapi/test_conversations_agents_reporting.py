@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
@@ -16,6 +17,7 @@ from manyselves.application.models import EditResendCommand
 from manyselves.config import ConfigManager
 from manyselves.config.schema import ApiConfig, AppConfig, ProvidersConfig
 from manyselves.core.loops.bus import MessageBus
+from manyselves.core.preset_sync import SyncError
 from manyselves.interfaces.types import (
     AgentResponse,
     ApiDebugMessage,
@@ -310,6 +312,13 @@ async def _eventually(predicate, *, timeout: float = 2.0) -> None:
     async with asyncio.timeout(timeout):
         while not predicate():
             await asyncio.sleep(0.01)
+
+
+async def _assert_task_remains_pending(task: asyncio.Task[object]) -> None:
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.05):
+            await asyncio.shield(task)
+    assert not task.done()
 
 
 @pytest.mark.asyncio
@@ -2539,6 +2548,134 @@ async def test_provider_lifecycle_presets_validation_and_agent_debug_are_exposed
     assert removed.status_code == 200
     assert host.replace_calls == [False, False]
     assert host.backend.restart_calls == []
+
+
+@pytest.mark.asyncio
+async def test_preset_sync_holds_mutation_ownership_until_worker_completes(
+    resources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Moving the sync write outside its transaction lets a later mutation enter."""
+    client, _, _, _ = resources
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+
+    def blocking_sync() -> int:
+        worker_started.set()
+        release_worker.wait()
+        return 7
+
+    monkeypatch.setattr("manyselves.webapi.routes.settings.sync_presets", blocking_sync)
+    sync_task = asyncio.create_task(client.post("/api/v1/settings/presets/sync"))
+    mutation_task: asyncio.Task[httpx.Response] | None = None
+    try:
+        await _eventually(worker_started.is_set)
+        mutation_task = asyncio.create_task(
+            client.patch("/api/v1/settings", json={"model": "serialized-model"})
+        )
+
+        await _assert_task_remains_pending(mutation_task)
+    finally:
+        release_worker.set()
+        await asyncio.gather(
+            sync_task,
+            *(() if mutation_task is None else (mutation_task,)),
+            return_exceptions=True,
+        )
+
+    assert (await sync_task).json() == {"downloaded": 7}
+    assert (await mutation_task).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_preset_sync_rejects_invalid_lease_before_starting_worker(
+    resources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lease validation must happen before the sync write can begin."""
+    client, _, _, _ = resources
+    worker_started = threading.Event()
+
+    def sync_that_must_not_run() -> int:
+        worker_started.set()
+        return 5
+
+    monkeypatch.setattr(
+        "manyselves.webapi.routes.settings.sync_presets", sync_that_must_not_run
+    )
+
+    response = await client.post(
+        "/api/v1/settings/presets/sync",
+        headers={"X-Control-Lease-Token": "not-the-controller"},
+    )
+
+    assert response.status_code == 423
+    assert response.json()["error"]["code"] == "CONTROL_LEASE_REQUIRED"
+    assert not worker_started.is_set()
+
+
+@pytest.mark.asyncio
+async def test_preset_sync_sanitizes_sync_error(
+    resources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Worker failures must retain the route's sanitized public envelope."""
+    client, _, _, _ = resources
+    secret = "Bearer preset-sync-secret"
+
+    def failing_sync() -> int:
+        raise SyncError(secret)
+
+    monkeypatch.setattr("manyselves.webapi.routes.settings.sync_presets", failing_sync)
+
+    response = await client.post("/api/v1/settings/presets/sync")
+
+    assert response.status_code == 503
+    error = response.json()["error"]
+    assert error["code"] == "PRESET_SYNC_FAILED"
+    assert error["message"] == "Provider presets could not be synchronized"
+    assert error["retryable"] is True
+    assert error["details"] == {}
+    assert secret not in response.text
+
+
+@pytest.mark.asyncio
+async def test_preset_sync_cancellation_keeps_mutation_ownership_until_worker_completes(
+    resources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancelling the caller must not release the sync write's mutation lock."""
+    client, _, _, _ = resources
+    worker_started = threading.Event()
+    worker_completed = threading.Event()
+    release_worker = threading.Event()
+
+    def blocking_sync() -> int:
+        worker_started.set()
+        release_worker.wait()
+        worker_completed.set()
+        return 11
+
+    monkeypatch.setattr("manyselves.webapi.routes.settings.sync_presets", blocking_sync)
+    sync_task = asyncio.create_task(client.post("/api/v1/settings/presets/sync"))
+    mutation_task: asyncio.Task[httpx.Response] | None = None
+    try:
+        await _eventually(worker_started.is_set)
+        sync_task.cancel()
+        await _assert_task_remains_pending(sync_task)
+
+        mutation_task = asyncio.create_task(
+            client.patch("/api/v1/settings", json={"model": "after-cancel"})
+        )
+        await _assert_task_remains_pending(mutation_task)
+    finally:
+        release_worker.set()
+        await asyncio.gather(
+            sync_task,
+            *(() if mutation_task is None else (mutation_task,)),
+            return_exceptions=True,
+        )
+
+    assert worker_completed.is_set()
+    with pytest.raises(asyncio.CancelledError):
+        await sync_task
+    assert (await mutation_task).status_code == 200
 
 
 @pytest.mark.asyncio
