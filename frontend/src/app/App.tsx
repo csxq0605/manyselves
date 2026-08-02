@@ -35,6 +35,9 @@ function eventQueryKey(event: RuntimeEvent): readonly string[] | null {
   if (!prefix) {
     return null;
   }
+  if (prefix === "file.") {
+    return ["files"];
+  }
   return [prefix.slice(0, -1)];
 }
 
@@ -129,6 +132,7 @@ export function App({
     <AppShell
       bootstrap={bootstrap.data}
       gateway={gateway}
+      key={bootstrap.data?.project.id ?? "waiting-for-bootstrap"}
       {...(platform ? { platform } : {})}
     />
   );

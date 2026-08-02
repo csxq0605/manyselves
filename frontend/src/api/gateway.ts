@@ -45,6 +45,7 @@ export interface ApiRequestOptions extends Omit<RequestInit, "body"> {
 }
 
 export interface ApiGateway {
+  readonly baseUrl: string;
   readonly clientId: string;
   bootstrap(): Promise<BootstrapSnapshot>;
   requestBlob(path: string, init?: ApiRequestOptions): Promise<Blob>;
@@ -145,6 +146,7 @@ export function createApiGateway(options: ApiGatewayOptions): ApiGateway {
   }
 
   const gateway: ApiGateway = {
+    baseUrl,
     clientId: options.clientId,
     async bootstrap() {
       return gateway.requestJson<BootstrapSnapshot>("/api/v1/bootstrap");

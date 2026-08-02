@@ -16,6 +16,7 @@ export interface ProjectWorkspaceProps {
   readonly activeProjectId: string;
   readonly gateway: ApiGateway;
   readonly hasDirtyDrafts?: boolean;
+  readonly onProjectActivated?: (projectId: string) => void;
   readonly onOpenFile?: (entry: FileEntry) => void;
   readonly platform: PlatformBridge;
 }
@@ -31,6 +32,7 @@ export function ProjectWorkspace({
   gateway,
   hasDirtyDrafts = false,
   onOpenFile,
+  onProjectActivated,
   platform,
 }: ProjectWorkspaceProps) {
   const queryClient = useQueryClient();
@@ -101,6 +103,7 @@ export function ProjectWorkspace({
           current={currentProjectId}
           hasDirtyDrafts={hasDirtyDrafts}
           onActivated={(project) => {
+            onProjectActivated?.(project.id);
             setCurrentProjectId(project.id);
             setSelectedEntry(null);
             queryClient.setQueryData(["project"], { id: project.id });

@@ -1,11 +1,20 @@
-import { useMemo } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
+import { useStore } from "zustand";
 
 import { useWorkspaceStore } from "../../app/store-context";
 import type { ApiGateway, BootstrapSnapshot } from "../../api/gateway";
 import type { PlatformBridge } from "../../platform/types";
+import { createEditorFileApi } from "../editor/editor-api";
+import { createEditorStore } from "../editor/editor-store";
+import { isEditableTextPath } from "../editor/editable-files";
 import { ProjectWorkspace } from "../projects/ProjectWorkspace";
 import { ConnectionBanner } from "./ConnectionBanner";
 import "./app-shell.css";
+
+const EditorWorkspace = lazy(async () => {
+  const module = await import("../editor/EditorWorkspace");
+  return { default: module.EditorWorkspace };
+});
 
 export interface AppShellProps {
   readonly bootstrap?: BootstrapSnapshot | undefined;
@@ -18,6 +27,13 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
   const setDraft = useWorkspaceStore((store) => store.setDraft);
   const activeDraftPath = useMemo(() => Object.keys(drafts)[0] ?? "scratchpad.md", [drafts]);
   const activeDraft = drafts[activeDraftPath] ?? "";
+  const [openError, setOpenError] = useState<string | null>(null);
+  const editorApi = useMemo(() => gateway ? createEditorFileApi(gateway) : null, [gateway]);
+  const [editorStore] = useState(() => createEditorStore());
+  const hasDirtyEditorDrafts = useStore(
+    editorStore,
+    (store) => store.tabs.some((tab) => tab.dirty),
+  );
 
   return (
     <div className="app-frame">
@@ -43,8 +59,20 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
             <ProjectWorkspace
               activeProjectId={bootstrap.project.id}
               gateway={gateway}
-              hasDirtyDrafts={Object.keys(drafts).length > 0}
+              hasDirtyDrafts={Object.keys(drafts).length > 0 || hasDirtyEditorDrafts}
               key={bootstrap.project.id}
+              onOpenFile={(entry) => {
+                if (!isEditableTextPath(entry.path)) {
+                  setOpenError("该文件需要使用预览面板；当前编辑器只接受文本文件");
+                  return;
+                }
+                setOpenError(null);
+                void editorApi?.read(bootstrap.project.id, entry.path).then(
+                  (file) => editorStore.getState().openFile(bootstrap.project.id, file),
+                  () => setOpenError("服务器文件读取失败"),
+                );
+              }}
+              onProjectActivated={() => editorStore.getState().reset()}
               platform={platform}
             />
           ) : (
@@ -56,21 +84,35 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
         </nav>
 
         <main className="workspace-pane workspace-pane--main" aria-label="主工作区">
-          <div className="workspace-heading">
-            <div>
-              <p className="pane-label">当前草稿</p>
-              <h2>{activeDraftPath}</h2>
-            </div>
-            <span className="draft-badge">本地</span>
-          </div>
-          <label className="draft-field">
-            <span>本地草稿</span>
-            <textarea
-              aria-label="本地草稿"
-              value={activeDraft}
-              onChange={(event) => setDraft(activeDraftPath, event.target.value)}
-            />
-          </label>
+          {bootstrap && editorApi && gateway && platform ? (
+            <Suspense fallback={<p role="status">正在加载编辑器…</p>}>
+              <EditorWorkspace
+                api={editorApi}
+                projectId={bootstrap.project.id}
+                serverUrl={gateway.baseUrl}
+                store={editorStore}
+              />
+            </Suspense>
+          ) : (
+            <>
+              <div className="workspace-heading">
+                <div>
+                  <p className="pane-label">当前草稿</p>
+                  <h2>{activeDraftPath}</h2>
+                </div>
+                <span className="draft-badge">本地</span>
+              </div>
+              <label className="draft-field">
+                <span>本地草稿</span>
+                <textarea
+                  aria-label="本地草稿"
+                  value={activeDraft}
+                  onChange={(event) => setDraft(activeDraftPath, event.target.value)}
+                />
+              </label>
+            </>
+          )}
+          {openError ? <p role="alert">{openError}</p> : null}
           <section className="conversation-placeholder" aria-label="对话区域">
             <p className="pane-label">对话</p>
             <p>连接 Runtime 后，Agent 消息和操作进度会出现在这里。</p>

@@ -269,6 +269,61 @@ select {
   line-height: 1.55;
 }
 
+.editor-workspace {
+  display: grid;
+  gap: 12px;
+}
+
+.editor-tabs {
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+  border-bottom: 1px solid #dfe5eb;
+}
+
+.editor-tab {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.editor-tab button {
+  padding: 8px 10px;
+  color: #465467;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.editor-tab [role="tab"][aria-selected="true"] {
+  color: #184ebf;
+  background: #e5edff;
+  box-shadow: inset 0 -2px #2667ff;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #667487;
+  font-size: 0.78rem;
+}
+
+.editor-toolbar button {
+  padding: 7px 14px;
+  color: #fff;
+  background: #2667ff;
+  border: 0;
+  border-radius: 5px;
+}
+
+.text-editor {
+  min-height: 320px;
+  overflow: hidden;
+  border: 1px solid #cbd4df;
+  border-radius: 8px;
+}
+
 .conversation-placeholder {
   margin-top: 22px;
   padding: 18px;
