@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from uuid import uuid4
 
-
 if TYPE_CHECKING:
     from .manager import LoopManager
 

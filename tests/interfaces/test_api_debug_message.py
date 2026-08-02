@@ -1,6 +1,7 @@
 """Tests for ApiDebugMessage."""
 
 from datetime import datetime
+
 from manyselves.interfaces.types import ApiDebugMessage, MessageType
 
 

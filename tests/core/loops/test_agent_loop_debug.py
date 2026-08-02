@@ -2,15 +2,15 @@
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.agent_loop import AgentLoop
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.tools.registry import ToolRegistry
-from manyselves.config.schema import AgentDefaults
-from manyselves.interfaces.types import ApiDebugMessage, UserMessage, AgentType, AgentResponse
+from manyselves.interfaces.types import AgentType, ApiDebugMessage, UserMessage
 
 
 @pytest.fixture

@@ -24,6 +24,7 @@ from ...application.models import (
     SendMessageCommand,
 )
 from ..errors import ApiError
+from ..events.sanitizer import EventPayloadSanitizer
 from ..schemas.agents import (
     AcceptedCommandResponse,
     AgentDebugEntry,
@@ -37,7 +38,6 @@ from ..schemas.agents import (
     RollbackResponse,
     SendMessageRequest,
 )
-from ..events.sanitizer import EventPayloadSanitizer
 from ..security import require_control_lease_header, require_deployment_access
 
 router = APIRouter(prefix="/agents")
