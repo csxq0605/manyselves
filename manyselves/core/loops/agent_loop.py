@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from uuid import uuid4
 
 
 if TYPE_CHECKING:
@@ -1133,6 +1134,7 @@ class AgentLoop:
             return True
 
         arguments = {"run_id": run_id}
+        tool_call_id = f"tool-{uuid4().hex}"
         logger.info("Direct same-run resume route selected: {}", run_id)
         await self._set_status(AgentStatus.RUNNING_TOOL)
         await self.bus.publish(
@@ -1140,6 +1142,7 @@ class AgentLoop:
                 agent_type=self.agent_type,
                 tool_name="resume_reporting_workflow",
                 arguments=arguments,
+                tool_call_id=tool_call_id,
             )
         )
         try:
@@ -1151,6 +1154,7 @@ class AgentLoop:
                     tool_name="resume_reporting_workflow",
                     result=result,
                     error=outcome.error if outcome.status != "ok" else None,
+                    tool_call_id=tool_call_id,
                 )
             )
             self._terminal_outcome = outcome
@@ -1165,6 +1169,7 @@ class AgentLoop:
                     tool_name="resume_reporting_workflow",
                     result=None,
                     error=str(exc),
+                    tool_call_id=tool_call_id,
                 )
             )
 
@@ -1482,6 +1487,7 @@ class AgentLoop:
 
                 await self.bus.publish(
                     ApiDebugMessage(
+                        agent_type=self.agent_type,
                         model=self.llm_provider.model or "unknown",
                         tokens_in=usage_record["input_tokens"],
                         tokens_out=usage_record["output_tokens"],
@@ -1958,6 +1964,7 @@ class AgentLoop:
                             tool_name=tool_call.name,
                             result=None,
                             error=result_str,
+                            tool_call_id=tool_call.id,
                         )
                     )
                     provider_class_name = self.llm_provider.__class__.__name__
@@ -1981,6 +1988,7 @@ class AgentLoop:
                         agent_type=self.agent_type,
                         tool_name=tool_call.name,
                         arguments=tool_call.arguments,
+                        tool_call_id=tool_call.id,
                     )
                 )
 
@@ -2110,6 +2118,7 @@ class AgentLoop:
                             tool_name=tool_call.name,
                             result=result,
                             error=outcome.error if outcome.status != "ok" else None,
+                            tool_call_id=tool_call.id,
                         )
                     )
 
@@ -2138,6 +2147,7 @@ class AgentLoop:
                             tool_name=tool_call.name,
                             result=None,
                             error=error_msg,
+                            tool_call_id=tool_call.id,
                         )
                     )
                     result_str = error_msg
@@ -2156,6 +2166,7 @@ class AgentLoop:
                             tool_name=tool_call.name,
                             result=None,
                             error=error_msg,
+                            tool_call_id=tool_call.id,
                         )
                     )
                     result_str = error_msg
@@ -2273,6 +2284,7 @@ class AgentLoop:
 
                 await self.bus.publish(
                     ApiDebugMessage(
+                        agent_type=self.agent_type,
                         model=self.llm_provider.model or "unknown",
                         tokens_in=usage_record["input_tokens"],
                         tokens_out=usage_record["output_tokens"],
