@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from ...application.models import RuntimeSnapshot
 
@@ -24,6 +24,9 @@ class BootstrapSettings(BaseModel):
 class BootstrapSnapshot(BaseModel):
     """One read of the client-visible runtime state."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
+    stream_id: str = Field(alias="streamId")
     runtime: RuntimeSnapshot
     project: ProjectSnapshot
     conversations: list[dict[str, Any]]

@@ -9,7 +9,9 @@ from dataclasses import dataclass
 
 from .models import EventEnvelope
 
-_EVENT_ID = re.compile(r"evt-(0|[1-9][0-9]*)\Z")
+_EVENT_ID = re.compile(
+    r"(?P<stream>[A-Za-z0-9_-]{1,64}):evt-(?P<sequence>0|[1-9][0-9]*)\Z"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,16 +24,21 @@ class ReplayResult:
 class ReplayBuffer:
     """Retain a monotonic suffix of public events for Last-Event-ID recovery."""
 
-    def __init__(self, capacity: int) -> None:
+    def __init__(self, capacity: int, *, stream_id: str = "test-stream") -> None:
         if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity <= 0:
             raise ValueError("Replay capacity must be a positive integer")
         self.capacity = capacity
+        if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", stream_id) is None:
+            raise ValueError("Stream ID must be an opaque URL-safe identifier")
+        self.stream_id = stream_id
         self._events: deque[EventEnvelope] = deque(maxlen=capacity)
         self._lock = threading.RLock()
 
     def append(self, event: EventEnvelope) -> None:
         with self._lock:
-            if event.event_id != f"evt-{event.sequence}":
+            if event.stream_id != self.stream_id or event.event_id != (
+                f"{self.stream_id}:evt-{event.sequence}"
+            ):
                 raise ValueError("Replay event ID must match its sequence")
             if self._events and event.sequence <= self._events[-1].sequence:
                 raise ValueError("Replay event sequence must be strictly monotonic")
@@ -50,7 +57,9 @@ class ReplayBuffer:
             match = _EVENT_ID.fullmatch(cursor)
             if match is None:
                 return ReplayResult(requires_resync=True, reason="malformed")
-            cursor_sequence = int(match.group(1))
+            if match.group("stream") != self.stream_id:
+                return ReplayResult(requires_resync=True, reason="epoch_mismatch")
+            cursor_sequence = int(match.group("sequence"))
             if cursor_sequence == 0:
                 if not events or events[0].sequence == 1:
                     return ReplayResult(events=events)

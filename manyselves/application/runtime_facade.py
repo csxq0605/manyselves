@@ -34,6 +34,7 @@ from .models import (
     SendMessageCommand,
 )
 from .runtime_host import RuntimeHost
+from .runtime_state import RuntimeStateProjection
 
 CommandResponse = AcceptedCommand | RollbackResult
 ResponseT = TypeVar("ResponseT", bound=CommandResponse)
@@ -132,13 +133,14 @@ class RuntimeFacade:
         *,
         leases: ControlLeaseService | None = None,
         adapter: LegacyRuntimeAdapter | None = None,
+        state: RuntimeStateProjection | None = None,
         command_cache_size: int = 256,
     ) -> None:
         if command_cache_size <= 0:
             raise ValueError("Command cache size must be positive")
         self._host = host
         self.leases = leases or ControlLeaseService()
-        self._adapter = adapter or LegacyRuntimeAdapter(host)
+        self._adapter = adapter or LegacyRuntimeAdapter(host, state=state)
         self._command_cache_size = command_cache_size
         self._command_cache: OrderedDict[UUID, _CachedCommand] = OrderedDict()
         self._mutation_lock = asyncio.Lock()
@@ -150,6 +152,10 @@ class RuntimeFacade:
         return self._adapter.snapshot(
             controller_client_id=self.leases.current_controller_client_id
         )
+
+    @property
+    def state_projection(self) -> RuntimeStateProjection:
+        return self._adapter.state
 
     @property
     def is_quiesced(self) -> bool:

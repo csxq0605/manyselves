@@ -107,3 +107,58 @@ def test_check_mode_rejects_stale_artifact_without_overwriting(tmp_path: Path) -
 
 def test_canonical_openapi_artifact_is_current() -> None:
     assert CONTRACT_PATH.read_text(encoding="utf-8") == render_openapi_document()
+
+
+def test_openapi_locks_errors_security_sse_and_preview_semantics() -> None:
+    """A generated React client must see the same wire contracts as runtime clients."""
+    schema = create_app(_test_settings()).openapi()
+    components = schema["components"]
+
+    assert "ErrorEnvelope" in components["schemas"]
+    assert "EventEnvelope" in components["schemas"]
+    assert "PreviewResponse" in components["schemas"]
+    assert components["securitySchemes"]["DeploymentBearer"] == {
+        "type": "http",
+        "scheme": "bearer",
+    }
+    assert components["securitySchemes"]["ControlLeaseToken"] == {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Control-Lease-Token",
+    }
+
+    mutation = schema["paths"]["/api/v1/settings/providers/{provider_id}"]["patch"]
+    assert mutation["security"] == [
+        {"DeploymentBearer": [], "ControlLeaseToken": []}
+    ]
+    assert mutation["responses"]["422"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ErrorEnvelope"
+    }
+
+    events = schema["paths"]["/api/v1/events"]["get"]
+    stream = events["responses"]["200"]["content"]["text/event-stream"]
+    assert stream["schema"]["type"] == "string"
+    assert stream["x-event-envelope"] == {
+        "$ref": "#/components/schemas/EventEnvelope"
+    }
+    preview = schema["paths"][
+        "/api/v1/projects/{project_id}/files/preview"
+    ]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    assert preview["$ref"] == "#/components/schemas/PreviewResponse"
+    preview_schema = components["schemas"]["PreviewResponse"]
+    assert preview_schema["discriminator"]["propertyName"] == "kind"
+    assert len(preview_schema["oneOf"]) == 7
+
+
+def test_framework_validation_runtime_uses_the_documented_error_envelope() -> None:
+    schema = create_app(_test_settings()).openapi()
+    for path_item in schema["paths"].values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict) or "responses" not in operation:
+                continue
+            validation = operation["responses"].get("422")
+            if validation is None:
+                continue
+            assert validation["content"]["application/json"]["schema"] == {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+            }

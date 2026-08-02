@@ -57,3 +57,40 @@ class SettingsDefaultsUpdate(BaseModel):
         if value is None:
             raise ValueError("field may be omitted but must not be null")
         return value
+
+
+class ProviderSettingsCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    name: str = Field(min_length=1)
+    provider: str = Field(min_length=1)
+    api_key: SecretStr | None = Field(default=None, alias="apiKey", repr=False)
+    api_base: str | None = Field(default=None, alias="apiBase")
+    enabled: bool = True
+    default_model: str | None = Field(default=None, alias="defaultModel")
+
+
+class ProviderPresetResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str
+    provider: str
+    category: str
+    base_url: str = Field(alias="baseUrl")
+    default_model: str = Field(alias="defaultModel")
+    website_url: str = Field(alias="websiteUrl")
+    description: str
+
+
+class PresetListResponse(BaseModel):
+    presets: list[ProviderPresetResponse]
+
+
+class PresetSyncResponse(BaseModel):
+    downloaded: int
+
+
+class SettingsValidationResponse(BaseModel):
+    valid: bool
+    available_providers: list[str] = Field(alias="availableProviders")
+    errors: list[str]

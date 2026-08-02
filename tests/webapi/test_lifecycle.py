@@ -99,10 +99,12 @@ async def test_bootstrap_returns_one_coherent_snapshot(
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get("/api/v1/bootstrap")
+            stream_id = app.state.event_broker.stream_id
 
     assert response.status_code == 200
     body = response.json()
     assert {"runtime", "project", "conversations", "agents", "settings"} <= set(body)
+    assert body["streamId"] == stream_id
 
 
 @pytest.mark.asyncio

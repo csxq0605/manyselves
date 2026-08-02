@@ -26,6 +26,9 @@ from ...application.models import (
 from ..errors import ApiError
 from ..schemas.agents import (
     AcceptedCommandResponse,
+    AgentDebugEntry,
+    AgentDebugResponse,
+    AgentDebugUpdate,
     AgentListResponse,
     AgentSnapshot,
     EditResendRequest,
@@ -79,6 +82,64 @@ async def list_agents(request: Request):
                 for agent_id, agent_status in snapshot.agent_statuses.items()
             ]
         )
+
+
+def _debug_response(request: Request, agent_id: str) -> AgentDebugResponse:
+    manager = request.app.state.runtime_host.loop_manager
+    if manager is None or manager.get_loop(agent_id) is None:
+        raise AgentNotFoundError(agent_id)
+    entries = request.app.state.runtime_facade.state_projection.debug_for(agent_id)
+    return AgentDebugResponse(
+        agentId=agent_id,
+        enabled=manager.get_agent_debug_mode(agent_id),
+        entries=[
+            AgentDebugEntry(
+                model=item.model,
+                tokensIn=item.tokens_in,
+                tokensOut=item.tokens_out,
+                durationMs=item.duration_ms,
+                status=item.status,
+                timestamp=item.timestamp.isoformat(),
+            )
+            for item in entries
+        ],
+    )
+
+
+@router.get("/{agent_id}/debug", response_model=AgentDebugResponse)
+async def get_agent_debug(agent_id: str, request: Request) -> AgentDebugResponse:
+    facade = request.app.state.runtime_facade
+    try:
+        async with facade.read_transaction():
+            return _debug_response(request, agent_id)
+    except AgentNotFoundError as error:
+        raise _error(error) from error
+
+
+@router.patch("/{agent_id}/debug", response_model=AgentDebugResponse)
+async def update_agent_debug(
+    agent_id: str,
+    body: AgentDebugUpdate,
+    request: Request,
+    _access: None = Depends(require_deployment_access),
+    lease_token: str = Depends(require_control_lease_header),
+) -> AgentDebugResponse:
+    try:
+        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+            manager = request.app.state.runtime_host.loop_manager
+            if manager is None or manager.get_loop(agent_id) is None:
+                raise AgentNotFoundError(agent_id)
+            request.app.state.runtime_host.backend.set_agent_debug_mode(
+                agent_id, body.enabled
+            )
+            return _debug_response(request, agent_id)
+    except (
+        AgentNotFoundError,
+        ControlLeaseRequired,
+        RuntimeNotReadyError,
+        MaintenanceQuiescedError,
+    ) as error:
+        raise _error(error) from error
 
 
 @router.post("/{agent_id}/messages", response_model=AcceptedCommandResponse, status_code=202)

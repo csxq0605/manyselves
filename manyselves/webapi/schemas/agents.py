@@ -53,3 +53,26 @@ class AgentSnapshot(BaseModel):
 
 class AgentListResponse(BaseModel):
     agents: list[AgentSnapshot]
+
+
+class AgentDebugUpdate(_Strict):
+    enabled: bool
+
+
+class AgentDebugEntry(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    model: str
+    tokens_in: int = Field(alias="tokensIn")
+    tokens_out: int = Field(alias="tokensOut")
+    duration_ms: int = Field(alias="durationMs")
+    status: str
+    timestamp: str
+
+
+class AgentDebugResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    agent_id: str = Field(alias="agentId")
+    enabled: bool
+    entries: list[AgentDebugEntry]

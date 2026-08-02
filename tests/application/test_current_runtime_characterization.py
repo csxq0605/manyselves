@@ -239,8 +239,19 @@ def test_feature_parity_matrix_is_a_complete_planned_inventory() -> None:
         and "pending" in row["rationale"].lower()
         for row in runtime_rows
     )
+    gate_b_rows = [row for row in rows if row["module"] in {"API", "SSE"}]
+    assert gate_b_rows
+    assert all(row["status"] == "accepted" for row in gate_b_rows)
     assert all(
-        row["status"] == "planned" for row in rows if row["module"] != "RUNTIME"
+        not row["react_evidence"]
+        and not row["browser_test"]
+        and not row["electron_test"]
+        for row in gate_b_rows
+    )
+    assert all(
+        row["status"] == "planned"
+        for row in rows
+        if row["module"] not in {"RUNTIME", "API", "SSE"}
     )
     for capability_id, anchors in REQUIRED_RUNTIME_EVIDENCE.items():
         combined_evidence = " ".join(

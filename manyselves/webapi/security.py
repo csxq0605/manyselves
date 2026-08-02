@@ -2,11 +2,22 @@
 
 import secrets
 
-from fastapi import Depends, Header, status
+from fastapi import Depends, Security, status
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 from .dependencies import get_web_settings
 from .errors import ApiError
 from .settings import WebSettings
+
+deployment_bearer = HTTPBearer(
+    auto_error=False,
+    scheme_name="DeploymentBearer",
+)
+control_lease_token = APIKeyHeader(
+    name="X-Control-Lease-Token",
+    auto_error=False,
+    scheme_name="ControlLeaseToken",
+)
 
 
 def _tokens_equal(left: str, right: str) -> bool:
@@ -15,11 +26,11 @@ def _tokens_equal(left: str, right: str) -> bool:
 
 
 def require_deployment_access(
-    authorization: str | None = Header(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Security(deployment_bearer),
     settings: WebSettings | None = Depends(get_web_settings),
 ) -> None:
     """Require the configured deployment bearer token for a mutation."""
-    if authorization is None:
+    if credentials is None or credentials.scheme.casefold() != "bearer":
         raise ApiError(
             status_code=status.HTTP_401_UNAUTHORIZED,
             code="AUTH_REQUIRED",
@@ -27,8 +38,8 @@ def require_deployment_access(
             retryable=False,
         )
 
-    scheme, separator, token = authorization.partition(" ")
-    if scheme.casefold() != "bearer" or not separator or not token:
+    token = credentials.credentials
+    if not token:
         raise ApiError(
             status_code=status.HTTP_401_UNAUTHORIZED,
             code="AUTH_REQUIRED",
@@ -46,7 +57,7 @@ def require_deployment_access(
 
 
 def require_control_lease_header(
-    lease_token: str | None = Header(default=None, alias="X-Control-Lease-Token"),
+    lease_token: str | None = Security(control_lease_token),
 ) -> str:
     """Require a non-empty controller token; the facade validates it under its lock."""
     if not lease_token:

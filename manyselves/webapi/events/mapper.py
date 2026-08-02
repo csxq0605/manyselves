@@ -43,6 +43,7 @@ class EventContext:
     """Identifiers resolved from live application state at processing time."""
 
     event_id: str
+    stream_id: str
     sequence: int
     project_id: str | None
     session_id: str | None
@@ -69,6 +70,7 @@ class EventMapper:
                 message.config_type, message.new_value
             )
         return EventEnvelope(
+            streamId=context.stream_id,
             eventId=context.event_id,
             sequence=context.sequence,
             type=event_type,

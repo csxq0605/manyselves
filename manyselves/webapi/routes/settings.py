@@ -1,20 +1,36 @@
-"""Masked provider settings and lease-controlled updates."""
+"""Masked provider settings and transactional lease-controlled updates."""
+
+import asyncio
 
 from fastapi import APIRouter, Depends, Request
 
 from ...application.control import ControlLeaseRequired
 from ...application.errors import MaintenanceQuiescedError, RuntimeNotReadyError
+from ...application.settings_service import SettingsService
+from ...config.presets import load_presets
+from ...config.schema import ApiConfig
+from ...core.preset_sync import SyncError, sync_presets
 from ..errors import ApiError
 from ..schemas.settings import (
     AgentDefaultsResponse,
+    PresetListResponse,
+    PresetSyncResponse,
+    ProviderPresetResponse,
+    ProviderSettingsCreate,
     ProviderSettingsResponse,
     ProviderSettingsUpdate,
     SettingsDefaultsUpdate,
     SettingsResponse,
+    SettingsValidationResponse,
 )
 from ..security import require_control_lease_header, require_deployment_access
 
 router = APIRouter(prefix="/settings")
+
+
+def _service(request: Request) -> SettingsService:
+    host = request.app.state.runtime_host
+    return SettingsService(host.config_manager, host.backend)
 
 
 def _settings(manager) -> SettingsResponse:
@@ -74,15 +90,25 @@ async def update_defaults(
     manager = request.app.state.runtime_host.config_manager
     try:
         async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            if body.active_provider_id is not None:
-                if not any(item.id == body.active_provider_id for item in manager.config.providers.configurations):
-                    raise KeyError(body.active_provider_id)
-                manager.config.providers.active = body.active_provider_id
-            if body.model is not None:
-                manager.config.agents.defaults.model = body.model
-            if body.provider is not None:
-                manager.config.agents.defaults.provider = body.provider
-            manager.save_config()
+            def mutation(config) -> None:
+                if body.active_provider_id is not None:
+                    if not any(
+                        item.id == body.active_provider_id
+                        for item in config.providers.configurations
+                    ):
+                        raise KeyError(body.active_provider_id)
+                    config.providers.active = body.active_provider_id
+                if body.model is not None:
+                    config.agents.defaults.model = body.model
+                if body.provider is not None:
+                    config.agents.defaults.provider = body.provider
+
+            restart = (
+                "provider_defaults_changed"
+                if body.model_fields_set & {"active_provider_id", "provider"}
+                else None
+            )
+            await _service(request).mutate(mutation, restart_reason=restart)
             return _settings(manager)
     except Exception as error:
         raise _error(error) from error
@@ -99,20 +125,165 @@ async def update_provider(
     manager = request.app.state.runtime_host.config_manager
     try:
         async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            provider = next(
-                (item for item in manager.config.providers.configurations if item.id == provider_id),
-                None,
+            def mutation(config) -> None:
+                provider = next(
+                    (
+                        item
+                        for item in config.providers.configurations
+                        if item.id == provider_id
+                    ),
+                    None,
+                )
+                if provider is None:
+                    raise KeyError(provider_id)
+                updates = body.model_dump(exclude_unset=True)
+                secret_present = "api_key" in updates
+                secret = updates.pop("api_key", None)
+                for key, value in updates.items():
+                    setattr(provider, key, value)
+                if secret_present:
+                    provider.api_key = (
+                        secret.get_secret_value() if secret is not None else ""
+                    )
+
+            restart_fields = {
+                "provider",
+                "api_key",
+                "api_base",
+                "enabled",
+                "default_model",
+            }
+            restart = (
+                "provider_configuration_changed"
+                if body.model_fields_set & restart_fields
+                else None
             )
-            if provider is None:
-                raise KeyError(provider_id)
-            updates = body.model_dump(exclude_unset=True)
-            secret_present = "api_key" in updates
-            secret = updates.pop("api_key", None)
-            for key, value in updates.items():
-                setattr(provider, key, value)
-            if secret_present:
-                provider.api_key = secret.get_secret_value() if secret is not None else ""
-            manager.save_config()
+            await _service(request).mutate(mutation, restart_reason=restart)
             return _settings(manager)
     except Exception as error:
         raise _error(error) from error
+
+
+@router.post("/providers", response_model=SettingsResponse, status_code=201)
+async def create_provider(
+    body: ProviderSettingsCreate,
+    request: Request,
+    _access: None = Depends(require_deployment_access),
+    lease_token: str = Depends(require_control_lease_header),
+):
+    manager = request.app.state.runtime_host.config_manager
+    try:
+        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+            secret = body.api_key.get_secret_value() if body.api_key is not None else None
+
+            def mutation(config) -> None:
+                provider = ApiConfig(
+                    name=body.name,
+                    provider=body.provider,
+                    api_key=secret,
+                    api_base=body.api_base,
+                    enabled=body.enabled,
+                    default_model=body.default_model,
+                )
+                config.providers.configurations.append(provider)
+                if config.providers.active is None and provider.enabled and provider.api_key:
+                    config.providers.active = provider.id
+
+            await _service(request).mutate(
+                mutation, restart_reason="provider_created"
+            )
+            return _settings(manager)
+    except Exception as error:
+        raise _error(error) from error
+
+
+@router.delete("/providers/{provider_id}", response_model=SettingsResponse)
+async def remove_provider(
+    provider_id: str,
+    request: Request,
+    _access: None = Depends(require_deployment_access),
+    lease_token: str = Depends(require_control_lease_header),
+):
+    manager = request.app.state.runtime_host.config_manager
+    try:
+        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+            def mutation(config) -> None:
+                existing = list(config.providers.configurations)
+                if not any(item.id == provider_id for item in existing):
+                    raise KeyError(provider_id)
+                config.providers.configurations = [
+                    item for item in existing if item.id != provider_id
+                ]
+                if config.providers.active == provider_id:
+                    replacement = next(
+                        (
+                            item.id
+                            for item in config.providers.configurations
+                            if item.enabled and item.api_key
+                        ),
+                        None,
+                    )
+                    config.providers.active = replacement
+
+            await _service(request).mutate(
+                mutation, restart_reason="provider_removed"
+            )
+            return _settings(manager)
+    except Exception as error:
+        raise _error(error) from error
+
+
+@router.get("/presets", response_model=PresetListResponse)
+async def list_provider_presets() -> PresetListResponse:
+    return PresetListResponse(
+        presets=[
+            ProviderPresetResponse(
+                name=item.name,
+                provider=item.provider,
+                category=item.category,
+                baseUrl=item.base_url,
+                defaultModel=item.default_model,
+                websiteUrl=item.website_url,
+                description=item.description,
+            )
+            for item in load_presets()
+        ]
+    )
+
+
+@router.post("/presets/sync", response_model=PresetSyncResponse)
+async def synchronize_provider_presets(
+    request: Request,
+    _access: None = Depends(require_deployment_access),
+    lease_token: str = Depends(require_control_lease_header),
+) -> PresetSyncResponse:
+    try:
+        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+            pass
+        downloaded = await asyncio.to_thread(sync_presets)
+    except (
+        ControlLeaseRequired,
+        RuntimeNotReadyError,
+        MaintenanceQuiescedError,
+    ) as error:
+        raise _error(error) from error
+    except SyncError as error:
+        raise ApiError(
+            status_code=503,
+            code="PRESET_SYNC_FAILED",
+            message="Provider presets could not be synchronized",
+            retryable=True,
+        ) from error
+    return PresetSyncResponse(downloaded=downloaded)
+
+
+@router.post("/validate", response_model=SettingsValidationResponse)
+async def validate_settings(request: Request) -> SettingsValidationResponse:
+    facade = request.app.state.runtime_facade
+    async with facade.read_transaction():
+        valid, available, errors = _service(request).validate()
+        return SettingsValidationResponse(
+            valid=valid,
+            availableProviders=available,
+            errors=errors,
+        )

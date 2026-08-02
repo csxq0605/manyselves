@@ -13,6 +13,7 @@ from pydantic import SecretStr
 
 from manyselves.application.errors import RuntimeConsistencyFailedError
 from manyselves.application.models import EditResendCommand
+from manyselves.config import ConfigManager
 from manyselves.config.schema import ApiConfig, AppConfig, ProvidersConfig
 from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import AgentResponse, Error, SystemNotice, UserMessage
@@ -35,6 +36,10 @@ class _Backend:
         self.send_release: asyncio.Event | None = None
         self.send_side_effect = None
         self.sync_failures_remaining = 0
+        self.restart_calls: list[str] = []
+        self.restart_error: BaseException | None = None
+        self.restart_failures_remaining = 0
+        self.debug_modes: dict[str, bool] = {}
 
     async def send_user_message(
         self,
@@ -91,6 +96,19 @@ class _Backend:
             self.sync_failures_remaining -= 1
             raise RuntimeError("injected conversation sync failure")
         self.synced.append((agent_type, list(messages or []), session_id, clear_pending))
+
+    async def restart_agents_and_wait(self, reason: str) -> None:
+        self.restart_calls.append(reason)
+        if self.restart_failures_remaining:
+            self.restart_failures_remaining -= 1
+            raise RuntimeError("injected transient restart failure")
+        if self.restart_error is not None:
+            raise self.restart_error
+
+    def set_agent_debug_mode(self, agent_type: str, enabled: bool) -> None:
+        if agent_type != "main":
+            raise KeyError(agent_type)
+        self.debug_modes[agent_type] = enabled
 
 
 class _ReportingController:
@@ -169,6 +187,7 @@ class ResourceRuntimeHost:
             get_all_agent_statuses=lambda: dict(self.statuses),
             get_agent_session_id=lambda _agent_id: None,
             get_loop=self._get_loop,
+            get_agent_debug_mode=lambda agent_id: self.backend.debug_modes.get(agent_id, False),
         )
         self._bus_task: asyncio.Task | None = None
 
@@ -2293,6 +2312,139 @@ async def test_maintenance_quiesce_rejects_active_runtime(resources) -> None:
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "RUNTIME_BUSY"
+
+
+@pytest.mark.asyncio
+async def test_settings_mutations_apply_to_live_runtime_and_model_only_does_not_restart(
+    resources,
+) -> None:
+    client, host, _, secret = resources
+
+    provider = await client.patch(
+        "/api/v1/settings/providers/provider-1",
+        json={"apiKey": "replacement-secret", "apiBase": "https://new.invalid/v1"},
+    )
+    model = await client.patch("/api/v1/settings", json={"model": "next-model"})
+
+    assert provider.status_code == 200
+    assert model.status_code == 200
+    assert host.backend.restart_calls == ["provider_configuration_changed"]
+    assert "replacement-secret" not in provider.text
+    assert secret not in provider.text
+    assert provider.json()["providers"][0]["configured"] is True
+    assert model.json()["defaults"]["model"] == "next-model"
+
+
+@pytest.mark.asyncio
+async def test_settings_apply_failure_rolls_back_memory_and_persisted_config(resources) -> None:
+    client, host, _, secret = resources
+    saved_keys: list[str | None] = []
+
+    def save_config() -> None:
+        saved_keys.append(host.config_manager.config.providers.configurations[0].api_key)
+
+    host.config_manager.save_config = save_config
+    host.backend.restart_error = RuntimeError("injected restart failure")
+
+    response = await client.patch(
+        "/api/v1/settings/providers/provider-1",
+        json={"apiKey": "must-roll-back"},
+    )
+
+    assert response.status_code == 500
+    assert host.config_manager.config.providers.configurations[0].api_key == secret
+    assert saved_keys == ["must-roll-back", secret]
+    assert "must-roll-back" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_settings_apply_failure_restores_exact_persisted_config_bytes(
+    resources,
+) -> None:
+    client, host, workspace, _ = resources
+    manager = ConfigManager(config_path=workspace / "runtime-config.yaml")
+    manager._config = host.config_manager.config.model_copy(deep=True)  # noqa: SLF001
+    manager.save_config()
+    config_path = manager._settings.config_path  # noqa: SLF001
+    original = b"# retain operator comment\n" + config_path.read_bytes()
+    config_path.write_bytes(original)
+    host.config_manager = manager
+    host.backend.restart_error = RuntimeError("injected restart failure")
+
+    response = await client.patch(
+        "/api/v1/settings/providers/provider-1",
+        json={"apiBase": "https://must-roll-back.invalid/v1"},
+    )
+
+    assert response.status_code == 500
+    assert config_path.read_bytes() == original
+    assert manager.config.providers.configurations[0].api_base == (
+        "https://provider.invalid/v1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_restart_failure_recovers_live_runtime_with_old_config(
+    resources,
+) -> None:
+    client, host, _, secret = resources
+    host.backend.restart_failures_remaining = 1
+
+    response = await client.patch(
+        "/api/v1/settings/providers/provider-1",
+        json={"apiKey": "transient-value"},
+    )
+
+    assert response.status_code == 500
+    assert host.backend.restart_calls == [
+        "provider_configuration_changed",
+        "settings_rollback",
+    ]
+    assert host.config_manager.config.providers.configurations[0].api_key == secret
+
+
+@pytest.mark.asyncio
+async def test_provider_lifecycle_presets_validation_and_agent_debug_are_exposed(
+    resources, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, host, _, _ = resources
+    monkeypatch.setattr("manyselves.webapi.routes.settings.sync_presets", lambda: 3)
+
+    created = await client.post(
+        "/api/v1/settings/providers",
+        json={
+            "name": "Backup",
+            "provider": "openai",
+            "apiKey": "backup-secret",
+            "enabled": True,
+        },
+    )
+    presets = await client.get("/api/v1/settings/presets")
+    rejected_sync = await client.post(
+        "/api/v1/settings/presets/sync",
+        headers={"X-Control-Lease-Token": "not-the-controller"},
+    )
+    synced = await client.post("/api/v1/settings/presets/sync")
+    validation = await client.post("/api/v1/settings/validate")
+    debug_enabled = await client.patch("/api/v1/agents/main/debug", json={"enabled": True})
+    debug = await client.get("/api/v1/agents/main/debug")
+    removed = await client.delete(
+        f"/api/v1/settings/providers/{created.json()['providers'][-1]['id']}"
+    )
+
+    assert created.status_code == 201
+    assert "backup-secret" not in created.text
+    assert presets.status_code == 200 and presets.json()["presets"]
+    assert rejected_sync.status_code == 423
+    assert synced.json()["downloaded"] == 3
+    assert validation.json()["valid"] is True
+    assert debug_enabled.status_code == 200
+    assert debug.json() == {"agentId": "main", "enabled": True, "entries": []}
+    assert removed.status_code == 200
+    assert host.backend.restart_calls == [
+        "provider_created",
+        "provider_removed",
+    ]
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ class EventEnvelope(BaseModel):
     """One stable, JSON-safe event sent to React and Electron clients."""
 
     schema_version: Literal[1] = Field(default=1, alias="schemaVersion")
+    stream_id: str = Field(alias="streamId", pattern=r"^[A-Za-z0-9_-]{1,64}$")
     event_id: str = Field(alias="eventId")
     sequence: int
     type: str

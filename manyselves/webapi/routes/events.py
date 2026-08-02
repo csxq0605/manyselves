@@ -120,7 +120,23 @@ class _EventStreamBody(AsyncIterator[str]):
         await self._broker.unregister(self._client)
 
 
-@router.get("")
+@router.get(
+    "",
+    response_model=EventEnvelope,
+    responses={
+        200: {
+            "description": "Recoverable runtime event stream",
+            "content": {
+                "text/event-stream": {
+                    "schema": {"type": "string"},
+                    "x-event-envelope": {
+                        "$ref": "#/components/schemas/EventEnvelope"
+                    },
+                }
+            },
+        }
+    },
+)
 async def stream_events(
     request: Request,
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),

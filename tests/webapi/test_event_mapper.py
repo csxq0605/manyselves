@@ -51,7 +51,8 @@ NOW = datetime(2026, 7, 31, 10, 30, tzinfo=UTC)
 
 def context(sequence: int = 1) -> EventContext:
     return EventContext(
-        event_id=f"evt-{sequence}",
+        event_id=f"test-stream:evt-{sequence}",
+        stream_id="test-stream",
         sequence=sequence,
         project_id="project-1",
         session_id="session-1",
@@ -63,7 +64,8 @@ def context(sequence: int = 1) -> EventContext:
 
 def event(sequence: int, *, event_type: str = "system.notice") -> EventEnvelope:
     return EventEnvelope(
-        eventId=f"evt-{sequence}",
+        streamId="test-stream",
+        eventId=f"test-stream:evt-{sequence}",
         sequence=sequence,
         type=event_type,
         timestamp=NOW,
@@ -935,6 +937,7 @@ def test_event_envelope_uses_locked_aliases_and_explicit_context() -> None:
 
     assert list(body) == [
         "schemaVersion",
+        "streamId",
         "eventId",
         "sequence",
         "type",
@@ -948,7 +951,8 @@ def test_event_envelope_uses_locked_aliases_and_explicit_context() -> None:
     ]
     assert body | {"payload": None} == {
         "schemaVersion": 1,
-        "eventId": "evt-7",
+        "streamId": "test-stream",
+        "eventId": "test-stream:evt-7",
         "sequence": 7,
         "type": "agent.message.completed",
         "timestamp": "2026-07-31T10:30:00Z",
@@ -976,9 +980,11 @@ def test_replay_returns_only_events_strictly_after_a_present_cursor() -> None:
     for sequence in range(1, 4):
         replay.append(event(sequence))
 
-    assert [item.sequence for item in replay.after("evt-1").events] == [2, 3]
-    assert replay.after("evt-3").events == ()
-    assert replay.after("evt-0").events == tuple(event(item) for item in range(1, 4))
+    assert [item.sequence for item in replay.after("test-stream:evt-1").events] == [2, 3]
+    assert replay.after("test-stream:evt-3").events == ()
+    assert replay.after("test-stream:evt-0").events == tuple(
+        event(item) for item in range(1, 4)
+    )
 
 
 def test_evt_zero_requires_resync_when_replay_no_longer_starts_at_one() -> None:
@@ -988,7 +994,7 @@ def test_evt_zero_requires_resync_when_replay_no_longer_starts_at_one() -> None:
     replay.append(event(2))
     replay.append(event(3))
 
-    outcome = replay.after("evt-0")
+    outcome = replay.after("test-stream:evt-0")
 
     assert outcome.events == ()
     assert outcome.requires_resync is True
@@ -1000,16 +1006,16 @@ def test_evt_zero_is_valid_for_empty_or_complete_from_one_replay() -> None:
     complete = ReplayBuffer(capacity=2)
     complete.append(event(1))
 
-    assert empty.after("evt-0").events == ()
-    assert complete.after("evt-0").events == (event(1),)
+    assert empty.after("test-stream:evt-0").events == ()
+    assert complete.after("test-stream:evt-0").events == (event(1),)
 
 
 @pytest.mark.parametrize(
     ("cursor", "reason"),
     [
-        ("evt-1", "evicted"),
-        ("evt-3", "unknown"),
-        ("evt-99", "future"),
+        ("test-stream:evt-1", "evicted"),
+        ("test-stream:evt-3", "unknown"),
+        ("test-stream:evt-99", "future"),
         ("not-an-event", "malformed"),
     ],
 )
@@ -1045,7 +1051,7 @@ def test_replay_is_bounded_and_requires_strict_monotonic_sequence() -> None:
 def test_replay_rejects_event_id_that_disagrees_with_sequence() -> None:
     """A mismatched cursor ID would make a retained event impossible to recover exactly."""
     replay = ReplayBuffer(capacity=2)
-    mismatched = event(1).model_copy(update={"event_id": "evt-99"})
+    mismatched = event(1).model_copy(update={"event_id": "test-stream:evt-99"})
 
     with pytest.raises(ValueError, match="event ID"):
         replay.append(mismatched)

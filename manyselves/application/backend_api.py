@@ -126,6 +126,12 @@ class BackendAPIImpl(BackendAPI):
         message = RestartRequest(reason=reason)
         await self.bus.publish(message)
 
+    async def restart_agents_and_wait(self, reason: str) -> None:
+        """Apply a configuration restart before acknowledging an HTTP mutation."""
+        if self.loop_manager is None:
+            raise RuntimeError("Loop manager not initialized")
+        await self.loop_manager.restart(reason)
+
     async def switch_provider(self, provider: str) -> None:
         """Switch to a different provider."""
         # Update config

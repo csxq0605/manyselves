@@ -5,6 +5,7 @@ from collections.abc import Awaitable
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any, AsyncIterator
+from uuid import uuid4
 
 from fastapi import FastAPI
 from loguru import logger
@@ -208,6 +209,8 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.python_run_service = python_runs
         app.state.maintenance_service = maintenance
 
+        stream_id = uuid4().hex
+
         def resolve_event_context(message, sequence: int) -> EventContext:
             registry = app.state.project_registry
             active_conversations = app.state.conversation_service
@@ -229,7 +232,8 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
                     agent_id
                 )
             return EventContext(
-                event_id=f"evt-{sequence}",
+                event_id=f"{stream_id}:evt-{sequence}",
+                stream_id=stream_id,
                 sequence=sequence,
                 project_id=registry.active_project_id,
                 session_id=session_id,
@@ -247,6 +251,8 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             context_resolver=resolve_event_context,
             replay_capacity=settings.sse_replay_capacity,
             client_capacity=settings.sse_client_queue_capacity,
+            stream_id=stream_id,
+            observer=facade.state_projection.observe,
         )
         broker.start()
         app.state.event_broker = broker

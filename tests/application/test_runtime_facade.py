@@ -24,6 +24,13 @@ from manyselves.application.models import (
     SendMessageCommand,
 )
 from manyselves.application.runtime_facade import RuntimeFacade
+from manyselves.application.runtime_state import RuntimeStateProjection
+from manyselves.interfaces.types import (
+    ApiDebugMessage,
+    Checkpoint,
+    QueueUpdateMessage,
+    ToolCallMessage,
+)
 
 
 class MutableClock:
@@ -140,7 +147,72 @@ def test_runtime_snapshot_has_exact_locked_fields() -> None:
         "agent_statuses",
         "active_session_id",
         "controller_client_id",
+        "queues",
+        "tasks",
+        "tools",
+        "debug",
+        "checkpoints",
     }
+
+
+def test_runtime_snapshot_has_authoritative_empty_recovery_collections() -> None:
+    snapshot = RuntimeFacade(make_host(ready=False)).snapshot()
+
+    assert snapshot.queues == []
+    assert snapshot.tasks == []
+    assert snapshot.tools == []
+    assert snapshot.debug == []
+    assert snapshot.checkpoints == []
+
+
+def test_runtime_snapshot_projects_real_queue_tool_debug_and_checkpoint_state() -> None:
+    projection = RuntimeStateProjection()
+    projection.observe(
+        QueueUpdateMessage(agent_type="main", queued_messages=["next turn"])
+    )
+    projection.observe(
+        ToolCallMessage(agent_type="main", tool_name="read_file", arguments={})
+    )
+    projection.observe(
+        ApiDebugMessage(
+            model="test-model",
+            tokens_in=10,
+            tokens_out=3,
+            duration_ms=25,
+            status="success",
+        )
+    )
+    projection.observe(
+        Checkpoint(
+            agent_type="main",
+            checkpoint_id="cp-1",
+            description="before turn",
+        )
+    )
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    queue.put_nowait("queued")
+    manager = SimpleNamespace(
+        get_all_agent_statuses=lambda: {"main": "running_tool"},
+        get_agent_session_id=lambda _agent: "session-1",
+        get_loop=lambda _agent: SimpleNamespace(_message_queue=queue),
+        _task_board=SimpleNamespace(get_all=lambda: []),
+        checkpoint_manager=SimpleNamespace(list_checkpoints=lambda _agent: []),
+    )
+    host = SimpleNamespace(
+        is_ready=True,
+        workspace=Path("/workspace"),
+        loop_manager=manager,
+    )
+    snapshot = LegacyRuntimeAdapter(host, state=projection).snapshot(
+        controller_client_id="browser"
+    )
+
+    assert snapshot.queues[0].pending_count == 1
+    assert snapshot.queues[0].queued_messages == ["next turn"]
+    assert snapshot.tools[0].name == "read_file"
+    assert snapshot.tools[0].status == "running"
+    assert snapshot.debug[0].model == "test-model"
+    assert snapshot.checkpoints[0].checkpoint_id == "cp-1"
 
 
 @pytest.mark.asyncio

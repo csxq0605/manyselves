@@ -122,18 +122,19 @@ git commit -m "feat: scaffold typed react client"
 - Create: `frontend/src/features/shell/AppShell.test.tsx`
 
 **Interfaces:**
-- Consumes: `ApiGateway.bootstrap()`, `/api/v1/events`, `EventEnvelope`.
+- Consumes: `ApiGateway.bootstrap()`, `/api/v1/events`, `EventEnvelope`; the
+  bootstrap `streamId`, event `streamId`, and `<streamId>:evt-N` cursor must match.
 - Produces: application providers, reconnecting `EventStream`, global connection states, responsive three-pane shell.
 
 - [ ] **Step 1: Write reconnect and resync tests**
 
 ```ts
 it("reconnects with the last event id and refreshes on resync", async () => {
-  server.send(event({ eventId: "evt-9", sequence: 9, type: "agent.status.changed" }));
+  server.send(event({ streamId: "boot-a", eventId: "boot-a:evt-9", sequence: 9, type: "agent.status.changed" }));
   server.disconnect();
   server.reconnect();
-  expect(server.lastRequestHeader("Last-Event-ID")).toBe("evt-9");
-  server.send(event({ eventId: "evt-10", sequence: 10, type: "stream.resync_required" }));
+  expect(server.lastRequestHeader("Last-Event-ID")).toBe("boot-a:evt-9");
+  server.send(event({ streamId: "boot-a", eventId: "boot-a:evt-10", sequence: 10, type: "stream.resync_required" }));
   await waitFor(() => expect(gateway.bootstrap).toHaveBeenCalledTimes(2));
 });
 

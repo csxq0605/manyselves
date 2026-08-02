@@ -724,7 +724,7 @@ async def test_preview_endpoint_is_bounded_and_has_only_relative_client_urls(api
     )
 
     assert response.status_code == 200
-    assert response.json()["type"] == "pdf"
+    assert response.json()["kind"] == "pdf"
     assert response.json()["rangeUrl"].startswith("/api/v1/projects/p1/files/download?")
     assert str(root) not in response.text
 

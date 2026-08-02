@@ -1,5 +1,6 @@
 """Typed application commands and runtime responses."""
 
+from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -78,3 +79,60 @@ class RuntimeSnapshot(BaseModel):
     agent_statuses: dict[str, str]
     active_session_id: str | None
     controller_client_id: str | None
+    queues: list["RuntimeQueueSnapshot"] = Field(default_factory=list)
+    tasks: list["RuntimeTaskSnapshot"] = Field(default_factory=list)
+    tools: list["RuntimeToolSnapshot"] = Field(default_factory=list)
+    debug: list["RuntimeDebugSnapshot"] = Field(default_factory=list)
+    checkpoints: list["RuntimeCheckpointSnapshot"] = Field(default_factory=list)
+
+
+class RuntimeQueueSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    agent_id: str
+    pending_count: int
+    queued_messages: list[str] = Field(default_factory=list)
+
+
+class RuntimeTaskSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    task_id: str
+    source_agent: str
+    target_agent: str
+    status: str
+    brief: str
+    blocking: bool = False
+    session_id: str | None = None
+
+
+class RuntimeToolSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    agent_id: str
+    name: str
+    status: Literal["running", "completed", "failed"]
+
+
+class RuntimeDebugSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    agent_id: str
+    model: str
+    tokens_in: int
+    tokens_out: int
+    duration_ms: int
+    status: str
+    timestamp: datetime
+
+
+class RuntimeCheckpointSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    checkpoint_id: str
+    agent_id: str
+    timestamp: str
+    epoch: int
+    description: str
+    source: str
+    message_id: str | None = None

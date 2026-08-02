@@ -16,6 +16,7 @@ async def bootstrap(request: Request) -> BootstrapSnapshot:
         registry = request.app.state.project_registry
         runtime = runtime.model_copy(update={"workspace": registry.active_project_id})
         return BootstrapSnapshot(
+            streamId=request.app.state.event_broker.stream_id,
             runtime=runtime,
             project=ProjectSnapshot(id=registry.active_project_id),
             conversations=request.app.state.conversation_service.list("main")[0],

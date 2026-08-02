@@ -39,6 +39,7 @@ from ..schemas.files import (
     FileContent,
     FileEntryResponse,
     FileTreeResponse,
+    PreviewResponse,
     RenameEntryRequest,
     SaveFileRequest,
 )
@@ -344,19 +345,29 @@ async def download_file(
     )
 
 
-@router.get("/preview", response_model=dict)
-async def preview_file(project_id: str, request: Request, path: str = Query()) -> dict:
+@router.get("/preview", response_model=PreviewResponse)
+async def preview_file(
+    project_id: str, request: Request, path: str = Query()
+) -> PreviewResponse:
     files = _file_service(request, project_id)
     content_url = f"/api/v1/projects/{project_id}/files/download?{urlencode({'path': path})}"
     try:
         service = _preview_service(request, files)
         async with request.app.state.runtime_facade.read_transaction():
             capture = service.capture(path)
-        return await asyncio.to_thread(
+        internal = await asyncio.to_thread(
             service.preview_capture,
             capture,
             content_url=content_url,
         )
+        external = dict(internal)
+        external["kind"] = external.pop("type")
+        if external["kind"] == "docx":
+            external["blocks"] = [
+                {"kind": block["type"], **{key: value for key, value in block.items() if key != "type"}}
+                for block in external["blocks"]
+            ]
+        return PreviewResponse.model_validate(external)
     except WorkspaceFileError as error:
         raise _file_error(error) from error
 

@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.routing import APIRoute
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import RequestResponseEndpoint
@@ -33,6 +34,7 @@ from .routes.operations import router as operations_router
 from .routes.projects import router as projects_router
 from .routes.reporting import router as reporting_router
 from .routes.settings import router as settings_router
+from .schemas.common import ErrorEnvelope
 from .settings import WebSettings
 
 API_PREFIX = "/api/v1"
@@ -87,6 +89,10 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         openapi_url=None,
         docs_url=None,
         redoc_url=None,
+        responses={
+            422: {"model": ErrorEnvelope, "description": "Request validation failed"},
+            "default": {"model": ErrorEnvelope, "description": "API error"},
+        },
     )
     app.state.web_settings = settings
     app.state.runtime_host = None
@@ -132,6 +138,60 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.include_router(settings_router, prefix=API_PREFIX)
     app.include_router(operations_router, prefix=API_PREFIX)
     app.include_router(maintenance_router, prefix=API_PREFIX)
+
+    def semantic_openapi() -> dict:
+        """Expose the actual error, auth, preview, and streaming wire semantics."""
+        if app.openapi_schema is not None:
+            return app.openapi_schema
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            routes=app.routes,
+        )
+        for path_item in schema.get("paths", {}).values():
+            for operation in path_item.values():
+                if not isinstance(operation, dict) or "responses" not in operation:
+                    continue
+                if "422" in operation["responses"]:
+                    operation["responses"]["422"] = {
+                        "description": "Request validation failed",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorEnvelope"
+                                }
+                            }
+                        },
+                    }
+                for parameter in operation.get("parameters", []):
+                    if parameter.get("name") == "X-Control-Lease-Token":
+                        parameter["required"] = True
+                security = operation.get("security", [])
+                schemes = {
+                    name
+                    for requirement in security
+                    for name in requirement
+                }
+                if {"DeploymentBearer", "ControlLeaseToken"} <= schemes:
+                    operation["security"] = [
+                        {
+                            "DeploymentBearer": [],
+                            "ControlLeaseToken": [],
+                        }
+                    ]
+        event_response = schema["paths"][f"{API_PREFIX}/events"]["get"]["responses"]["200"]
+        event_response["content"] = {
+            "text/event-stream": {
+                "schema": {"type": "string"},
+                "x-event-envelope": {
+                    "$ref": "#/components/schemas/EventEnvelope"
+                },
+            }
+        }
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = semantic_openapi
     return app
 
 

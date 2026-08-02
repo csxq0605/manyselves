@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -21,6 +22,7 @@ class EventBus(Protocol):
 
 
 ContextResolver = Callable[[Message, int], EventContext]
+MessageObserver = Callable[[Message], None]
 
 
 class EventBrokerClosedError(RuntimeError):
@@ -128,6 +130,8 @@ class EventBroker:
         replay_capacity: int,
         client_capacity: int,
         mapper: EventMapper | None = None,
+        stream_id: str = "test-stream",
+        observer: MessageObserver | None = None,
     ) -> None:
         if (
             isinstance(client_capacity, bool)
@@ -138,13 +142,17 @@ class EventBroker:
         self._bus = bus
         self._context_resolver = context_resolver
         self._mapper = mapper or EventMapper()
+        if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", stream_id) is None:
+            raise ValueError("Stream ID must be an opaque URL-safe identifier")
+        self.stream_id = stream_id
+        self._observer = observer
         self._client_capacity = client_capacity
         self._clients: set[EventClient] = set()
         self._lock = asyncio.Lock()
         self._sequence = 0
         self._started = False
         self._closed = False
-        self.replay = ReplayBuffer(replay_capacity)
+        self.replay = ReplayBuffer(replay_capacity, stream_id=stream_id)
 
     @property
     def client_count(self) -> int:
@@ -167,8 +175,16 @@ class EventBroker:
             sequence = self._sequence + 1
             context = self._context_resolver(message, sequence)
             event = self._mapper.map(message, context=context)
-            if event.sequence != sequence or event.event_id != f"evt-{sequence}":
+            event = event.model_copy(
+                update={
+                    "stream_id": self.stream_id,
+                    "event_id": f"{self.stream_id}:evt-{sequence}",
+                }
+            )
+            if event.sequence != sequence:
                 raise ValueError("Event context must use the broker sequence and event ID")
+            if self._observer is not None:
+                self._observer(message)
             self._sequence = sequence
             self.replay.append(event)
             for client in tuple(self._clients):
@@ -205,7 +221,12 @@ class EventBroker:
         latest = self.replay.snapshot()
         previous = latest[-1] if latest else None
         return EventEnvelope(
-            eventId=previous.event_id if previous is not None else "evt-0",
+            streamId=self.stream_id,
+            eventId=(
+                previous.event_id
+                if previous is not None
+                else f"{self.stream_id}:evt-0"
+            ),
             sequence=previous.sequence if previous is not None else 0,
             type="stream.resync_required",
             timestamp=datetime.now(UTC),

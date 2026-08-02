@@ -47,7 +47,8 @@ def make_event(
     if content is not None:
         payload["content"] = content
     return EventEnvelope(
-        eventId=f"evt-{sequence}",
+        streamId="test-stream",
+        eventId=f"test-stream:evt-{sequence}",
         sequence=sequence,
         type=event_type,
         timestamp=NOW,
@@ -74,7 +75,8 @@ class TrackingBus:
 
 def resolve_context(message: Message, sequence: int) -> EventContext:
     return EventContext(
-        event_id=f"evt-{sequence}",
+        event_id=f"test-stream:evt-{sequence}",
+        stream_id="test-stream",
         sequence=sequence,
         project_id="p1",
         session_id="session-1",
@@ -104,7 +106,7 @@ async def test_sensitive_payload_is_absent_from_live_and_replayed_events() -> No
         )
     )
     live_event = await live.get()
-    replayed = await broker.register("evt-0")
+    replayed = await broker.register("test-stream:evt-0")
     replay_event = await replayed.get()
 
     for event in (live_event, replay_event):
@@ -114,6 +116,73 @@ async def test_sensitive_payload_is_absent_from_live_and_replayed_events() -> No
         assert '"input_tokens":1' in wire
 
     await broker.close()
+
+
+@pytest.mark.asyncio
+async def test_stream_epoch_rejects_an_old_process_cursor_without_collision() -> None:
+    """A low sequence from a previous process must force exactly one resync."""
+    first = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=4,
+        client_capacity=4,
+        stream_id="boot-a",
+    )
+    await first.publish_internal(SystemNotice(agent_type="main", content="old"))
+    old_cursor = (await first.register("boot-a:evt-0"))._events[0].event_id
+
+    second = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=4,
+        client_capacity=4,
+        stream_id="boot-b",
+    )
+    await second.publish_internal(SystemNotice(agent_type="main", content="new"))
+    client = await second.register(old_cursor)
+
+    event = await client.get()
+    assert event.type == "stream.resync_required"
+    assert event.stream_id == "boot-b"
+    assert event.event_id == "boot-b:evt-1"
+    assert event.payload["reason"] == "epoch_mismatch"
+    with pytest.raises(broker_module.EventClientClosed):
+        await client.get()
+
+
+@pytest.mark.asyncio
+async def test_legacy_cursor_forces_exactly_one_malformed_resync() -> None:
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=4,
+        client_capacity=4,
+        stream_id="boot-b",
+    )
+    await broker.publish_internal(SystemNotice(agent_type="main", content="new"))
+
+    client = await broker.register("evt-1")
+    event = await client.get()
+
+    assert event.type == "stream.resync_required"
+    assert event.payload["reason"] == "malformed"
+    with pytest.raises(broker_module.EventClientClosed):
+        await client.get()
+
+
+@pytest.mark.asyncio
+async def test_same_epoch_cursor_replays_in_order() -> None:
+    broker = EventBroker(
+        bus=TrackingBus(),
+        context_resolver=resolve_context,
+        replay_capacity=4,
+        client_capacity=4,
+        stream_id="fixed-epoch",
+    )
+    await broker.publish_internal(SystemNotice(agent_type="main", content="one"))
+    await broker.publish_internal(SystemNotice(agent_type="main", content="two"))
+    replay = await broker.register("fixed-epoch:evt-1")
+    assert (await replay.get()).event_id == "fixed-epoch:evt-2"
 
 
 @pytest.mark.asyncio
@@ -151,7 +220,10 @@ async def test_broker_delivers_monotonic_order_to_multiple_clients_without_cross
     await broker.publish_internal(SystemNotice(agent_type="main", content="one"))
     await broker.publish_internal(SystemNotice(agent_type="main", content="two"))
 
-    assert [(await first.get()).event_id, (await first.get()).event_id] == ["evt-1", "evt-2"]
+    assert [(await first.get()).event_id, (await first.get()).event_id] == [
+        "test-stream:evt-1",
+        "test-stream:evt-2",
+    ]
     assert [(await second.get()).sequence, (await second.get()).sequence] == [1, 2]
 
 
@@ -340,10 +412,10 @@ async def test_register_replays_present_cursor_or_emits_non_replayed_resync() ->
     for number in range(1, 4):
         await broker.publish_internal(SystemNotice(agent_type="main", content=str(number)))
 
-    replayed = await broker.register("evt-2")
-    stale = await broker.register("evt-1")
+    replayed = await broker.register("test-stream:evt-2")
+    stale = await broker.register("test-stream:evt-1")
 
-    assert (await replayed.get()).event_id == "evt-3"
+    assert (await replayed.get()).event_id == "test-stream:evt-3"
     resync = await stale.get()
     assert resync.type == "stream.resync_required"
     assert resync.payload["reason"] == "evicted"
@@ -438,7 +510,10 @@ async def test_last_event_id_eviction_emits_one_line_resync_sse_and_headers(tmp_
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
                 "/api/v1/events",
-                headers={"Authorization": "Bearer test-token", "Last-Event-ID": "evt-1"},
+                headers={
+                    "Authorization": "Bearer test-token",
+                    "Last-Event-ID": f"{app.state.event_broker.stream_id}:evt-1",
+                },
             )
 
     assert response.status_code == 200
@@ -446,7 +521,7 @@ async def test_last_event_id_eviction_emits_one_line_resync_sse_and_headers(tmp_
     assert response.headers["cache-control"] == "no-cache, no-transform"
     assert response.headers["x-accel-buffering"] == "no"
     lines = response.text.splitlines()
-    assert lines[0].startswith("id: evt-")
+    assert lines[0].startswith(f"id: {app.state.event_broker.stream_id}:evt-")
     assert lines[1] == "event: stream.resync_required"
     assert lines[2].startswith("data: {")
     assert "\n" not in lines[2][6:]
@@ -470,12 +545,14 @@ async def test_sse_present_cursor_replays_only_later_events_and_unregisters() ->
         async def is_disconnected(self) -> bool:
             return False
 
-    response = await event_routes.stream_events(RequestStub(), last_event_id="evt-1")
+    response = await event_routes.stream_events(
+        RequestStub(), last_event_id="test-stream:evt-1"
+    )
     iterator = response.body_iterator
     frame = await anext(iterator)
     await iterator.aclose()
 
-    assert frame.startswith("id: evt-2\nevent: system.notice\ndata: {")
+    assert frame.startswith("id: test-stream:evt-2\nevent: system.notice\ndata: {")
     assert broker.client_count == 0
 
 
