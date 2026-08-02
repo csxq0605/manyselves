@@ -3249,7 +3249,14 @@ async def test_maintenance_requires_matching_opaque_token_and_exposes_state(reso
 
     assert quiesced.status_code == 200
     assert health.status_code == 503
-    assert health.json() == {"status": "quiesced"}
+    assert health.json()["error"] == {
+        "code": "MAINTENANCE_QUIESCED",
+        "message": "Runtime mutations are disabled during maintenance",
+        "retryable": True,
+        "details": {},
+    }
+    assert health.json()["requestId"]
+    assert set(health.json()) == {"error", "requestId"}
     assert rejected.status_code == 409
     assert rejected.json()["error"]["code"] == "MAINTENANCE_TOKEN_MISMATCH"
     assert released.status_code == 200
