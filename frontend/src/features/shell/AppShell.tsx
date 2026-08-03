@@ -18,6 +18,11 @@ import { ProjectWorkspace } from "../projects/ProjectWorkspace";
 import { createReportingApi } from "../reporting/reporting-api";
 import { createReportingStore, type ReportingStore } from "../reporting/reporting-store";
 import { ReportingWorkspace } from "../reporting/ReportingWorkspace";
+import { createSettingsApi } from "../settings/settings-api";
+import {
+  createBrowserSettingsStorage,
+  type SettingsStorage,
+} from "../settings/settings-storage";
 import { ConnectionBanner } from "./ConnectionBanner";
 import "./app-shell.css";
 
@@ -31,21 +36,34 @@ const PreviewWorkspace = lazy(async () => {
   return { default: module.PreviewWorkspace };
 });
 
+const SettingsPage = lazy(async () => {
+  const module = await import("../settings/SettingsPage");
+  return { default: module.SettingsPage };
+});
+
 export interface AppShellProps {
   readonly agentStore?: AgentStore;
   readonly bootstrap?: BootstrapSnapshot | undefined;
   readonly gateway?: ApiGateway;
   readonly platform?: PlatformBridge;
   readonly reportingStore?: ReportingStore;
+  readonly settingsStorage?: SettingsStorage;
 }
 
-export function AppShell({ agentStore, bootstrap, gateway, platform, reportingStore }: AppShellProps) {
+export function AppShell({
+  agentStore,
+  bootstrap,
+  gateway,
+  platform,
+  reportingStore,
+  settingsStorage,
+}: AppShellProps) {
   const drafts = useWorkspaceStore((store) => store.drafts);
   const setDraft = useWorkspaceStore((store) => store.setDraft);
   const activeDraftPath = useMemo(() => Object.keys(drafts)[0] ?? "scratchpad.md", [drafts]);
   const activeDraft = drafts[activeDraftPath] ?? "";
   const [openError, setOpenError] = useState<string | null>(null);
-  const [activeWorkspace, setActiveWorkspace] = useState<"project" | "reporting">("project");
+  const [activeWorkspace, setActiveWorkspace] = useState<"project" | "reporting" | "settings">("project");
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [editorSelection, setEditorSelection] = useState<SelectionInput | null>(null);
   const [projectOverride, setProjectOverride] = useState<{
@@ -56,6 +74,12 @@ export function AppShell({ agentStore, bootstrap, gateway, platform, reportingSt
   const operationApi = useMemo(() => gateway ? createOperationApi(gateway) : null, [gateway]);
   const previewApi = useMemo(() => gateway ? createPreviewApi(gateway) : null, [gateway]);
   const reportingApi = useMemo(() => gateway ? createReportingApi(gateway) : null, [gateway]);
+  const settingsApi = useMemo(() => gateway ? createSettingsApi(gateway) : null, [gateway]);
+  const clientSettings = useMemo(() => settingsStorage ?? createBrowserSettingsStorage({
+    localStorage: window.localStorage,
+    root: document.documentElement,
+    sessionStorage: window.sessionStorage,
+  }), [settingsStorage]);
   const [editorStore] = useState(() => createEditorStore());
   const [fallbackAgentStore] = useState(() => createAgentStore(bootstrap?.runtime, bootstrap?.streamId));
   const [fallbackReportingStore] = useState(() => createReportingStore(bootstrap?.streamId ?? null));
@@ -93,6 +117,12 @@ export function AppShell({ agentStore, bootstrap, gateway, platform, reportingSt
             onClick={() => setActiveWorkspace("reporting")}
             type="button"
           >报告中心</button>
+          <button
+            aria-pressed={activeWorkspace === "settings"}
+            disabled={!bootstrap || !settingsApi}
+            onClick={() => setActiveWorkspace("settings")}
+            type="button"
+          >设置</button>
         </div>
         <ConnectionBanner />
       </header>
@@ -103,7 +133,7 @@ export function AppShell({ agentStore, bootstrap, gateway, platform, reportingSt
         <span />
       </div>
 
-      <div className={`workspace-grid ${activeWorkspace === "reporting" ? "workspace-grid--reporting" : ""}`}>
+      <div className={`workspace-grid ${activeWorkspace !== "project" ? `workspace-grid--${activeWorkspace}` : ""}`}>
         {activeWorkspace === "project" ? <nav className="workspace-pane workspace-pane--files" aria-label="服务器工作区">
           <p className="pane-label">服务器工作区</p>
           <h2>项目与文件</h2>
@@ -148,8 +178,16 @@ export function AppShell({ agentStore, bootstrap, gateway, platform, reportingSt
           )}
         </nav> : null}
 
-        <main className={`workspace-pane workspace-pane--main ${activeWorkspace === "reporting" ? "workspace-pane--reporting" : ""}`} aria-label="主工作区">
-          {activeWorkspace === "reporting" && bootstrap && reportingApi && platform ? (
+        <main className={`workspace-pane workspace-pane--main ${activeWorkspace !== "project" ? `workspace-pane--${activeWorkspace}` : ""}`} aria-label="主工作区">
+          {activeWorkspace === "settings" && settingsApi ? (
+            <Suspense fallback={<p role="status">正在加载设置…</p>}>
+              <SettingsPage
+                api={settingsApi}
+                onReconnect={() => window.location.reload()}
+                storage={clientSettings}
+              />
+            </Suspense>
+          ) : activeWorkspace === "reporting" && bootstrap && reportingApi && platform ? (
             <ReportingWorkspace
               api={reportingApi}
               platform={platform}

@@ -150,6 +150,10 @@ select {
   grid-template-columns: minmax(680px, 3.02fr) minmax(230px, 0.98fr);
 }
 
+.workspace-grid--settings {
+  grid-template-columns: minmax(680px, 3.02fr) minmax(230px, 0.98fr);
+}
+
 .workspace-pane {
   min-width: 0;
   padding: 24px;
@@ -174,6 +178,11 @@ select {
 .workspace-pane--reporting {
   padding: 0;
   background: #0b1115;
+}
+
+.workspace-pane--settings {
+  padding: 0;
+  background: #10171d;
 }
 
 .workspace-pane--agents {

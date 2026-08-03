@@ -7,6 +7,7 @@ import { createAgentStore } from "../features/agents/agent-store";
 import { createReportingStore, type ReportingStore } from "../features/reporting/reporting-store";
 import { AppShell } from "../features/shell/AppShell";
 import type { PlatformBridge } from "../platform/types";
+import type { SettingsStorage } from "../features/settings/settings-storage";
 import { useConnectionStore } from "./store-context";
 
 interface EventStreamController {
@@ -20,6 +21,7 @@ export interface AppProps {
   readonly gateway: ApiGateway;
   readonly platform?: PlatformBridge;
   readonly reportingStore?: ReportingStore;
+  readonly settingsStorage?: SettingsStorage;
 }
 
 const knownEventPrefixes = [
@@ -69,6 +71,7 @@ export function App({
   gateway,
   platform,
   reportingStore,
+  settingsStorage,
 }: AppProps) {
   const queryClient = useQueryClient();
   const setConnectionState = useConnectionStore((store) => store.setState);
@@ -180,6 +183,7 @@ export function App({
       key={bootstrap.data?.project.id ?? "waiting-for-bootstrap"}
       {...(platform ? { platform } : {})}
       reportingStore={reports}
+      {...(settingsStorage ? { settingsStorage } : {})}
     />
   );
 }

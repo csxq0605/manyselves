@@ -8,6 +8,10 @@ import { AppProviders } from "./app/providers";
 import { createAppRouter } from "./app/router";
 import { createApiGateway } from "./api/gateway";
 import {
+  createBrowserSettingsStorage,
+  resolveServerUrl,
+} from "./features/settings/settings-storage";
+import {
   BrowserPlatformBridge,
   createDomBrowserPlatformDriver,
 } from "./platform/browser-platform";
@@ -17,7 +21,18 @@ if (!rootElement) {
   throw new Error("Manyselves root element is missing");
 }
 
-const baseUrl = import.meta.env.VITE_API_BASE_URL?.trim() || window.location.origin;
+const settingsStorage = createBrowserSettingsStorage({
+  localStorage: window.localStorage,
+  root: document.documentElement,
+  sessionStorage: window.sessionStorage,
+});
+const savedConnection = settingsStorage.loadConnection();
+settingsStorage.loadPreferences();
+const baseUrl = resolveServerUrl({
+  environmentUrl: import.meta.env.VITE_API_BASE_URL,
+  origin: window.location.origin,
+  savedUrl: savedConnection.serverUrl,
+});
 const fetchImplementation = window.fetch.bind(window);
 const getToken = () => window.sessionStorage.getItem("manyselves.deploymentToken");
 const getLeaseToken = () => window.sessionStorage.getItem("manyselves.controlLeaseToken");
@@ -34,6 +49,7 @@ const router = createAppRouter(
     eventSource={{ baseUrl, fetch: fetchImplementation, getToken }}
     gateway={gateway}
     platform={platform}
+    settingsStorage={settingsStorage}
   />,
 );
 

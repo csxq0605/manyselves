@@ -8,6 +8,7 @@ import { AppProviders } from "../../app/providers";
 import type { EventStreamOptions } from "../../api/event-stream";
 import type { ApiGateway, BootstrapSnapshot } from "../../api/gateway";
 import { createReportingStore } from "../reporting/reporting-store";
+import type { SettingsStorage } from "../settings/settings-storage";
 import type { PlatformBridge } from "../../platform/types";
 import { AppShell } from "./AppShell";
 
@@ -74,6 +75,47 @@ describe("AppShell", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "报告中心" }));
     expect(await screen.findByRole("heading", { name: "报告运行 run-1" })).toBeVisible();
+  });
+
+  it("opens secure server and client settings from the existing shell", async () => {
+    const requestJson = vi.fn(async (path: string) => {
+      if (path === "/api/v1/settings") return {
+        defaults: { maxTokens: 4096, model: "gpt-4.1", provider: "openai", temperature: 0.2 },
+        providers: [{ active: true, apiBase: null, configured: true, defaultModel: "gpt-4.1",
+          enabled: true, id: "openai", name: "OpenAI", provider: "openai" }],
+      };
+      if (path === "/api/v1/settings/presets") return { presets: [] };
+      if (path === "/api/v1/settings/validate") return {
+        availableProviders: ["openai"], errors: [], valid: true,
+      };
+      if (path === "/api/v1/agents") return { agents: [{ id: "main", sessionId: null, status: "idle" }] };
+      if (path === "/api/v1/agents/main/debug") return { agentId: "main", enabled: false, entries: [] };
+      throw new Error(`Unhandled ${path}`);
+    });
+    const storage = {
+      loadConnection: () => ({ serverUrl: "https://api.example", token: "" }),
+      loadPreferences: () => ({ density: "comfortable", fontSize: 15, notifications: true,
+        previewDefault: "auto", theme: "system" }),
+      saveConnection: vi.fn(),
+      savePreferences: vi.fn(),
+    } as SettingsStorage;
+
+    render(
+      <AppProviders>
+        <AppShell
+          bootstrap={bootstrapSnapshot}
+          gateway={{ baseUrl: "https://api.example", requestJson } as unknown as ApiGateway}
+          settingsStorage={storage}
+        />
+      </AppProviders>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "设置" }));
+    expect(await screen.findByRole(
+      "heading",
+      { name: "连接、模型与运行策略" },
+      { timeout: 10_000 },
+    )).toBeVisible();
   });
 
   it("shows offline state without discarding local drafts", () => {
