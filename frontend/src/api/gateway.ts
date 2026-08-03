@@ -35,7 +35,6 @@ export interface ApiGatewayOptions {
   readonly clientId: string;
   readonly fetch: typeof fetch;
   readonly getLeaseToken: () => string | null;
-  readonly getToken: () => string | null;
 }
 
 export interface ApiRequestOptions extends Omit<RequestInit, "body"> {
@@ -116,10 +115,6 @@ export function createApiGateway(options: ApiGatewayOptions): ApiGateway {
   ): Promise<Response> {
     const { json, requireLease, ...requestInit } = init;
     const headers = new Headers(requestInit.headers);
-    const token = options.getToken();
-    if (token) {
-      headers.set("Authorization", `Bearer ${token}`);
-    }
     if (requireLease) {
       const leaseToken = options.getLeaseToken();
       if (leaseToken) {
@@ -133,6 +128,7 @@ export function createApiGateway(options: ApiGatewayOptions): ApiGateway {
     }
     const request: RequestInit = {
       ...requestInit,
+      credentials: "same-origin",
       headers,
     };
     if (body !== undefined) {

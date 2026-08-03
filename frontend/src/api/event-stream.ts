@@ -9,7 +9,6 @@ export interface EventStreamOptions {
   readonly baseUrl: string;
   readonly expectedStreamId: () => string | null;
   readonly fetch: typeof fetch;
-  readonly getToken: () => string | null;
   readonly onEvent: (event: RuntimeEvent) => void;
   readonly onResync: () => Promise<void>;
   readonly onStateChange?: (state: ConnectionState) => void;
@@ -108,16 +107,12 @@ export class EventStream {
         this.abortController = controller;
         try {
           const headers = new Headers({ Accept: "text/event-stream" });
-          const token = this.options.getToken();
-          if (token) {
-            headers.set("Authorization", `Bearer ${token}`);
-          }
           if (this.lastEventId) {
             headers.set("Last-Event-ID", this.lastEventId);
           }
           const response = await this.options.fetch(
             `${this.options.baseUrl.replace(/\/+$/, "")}/api/v1/events`,
-            { headers, signal: controller.signal },
+            { credentials: "same-origin", headers, signal: controller.signal },
           );
           if (response.status === 401) {
             this.options.onStateChange?.("unauthorized");

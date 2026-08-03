@@ -93,7 +93,7 @@ describe("AppShell", () => {
       throw new Error(`Unhandled ${path}`);
     });
     const storage = {
-      loadConnection: () => ({ serverUrl: "https://api.example", token: "" }),
+      loadConnection: () => ({ serverUrl: "https://api.example" }),
       loadPreferences: () => ({ density: "comfortable", fontSize: 15, notifications: true,
         previewDefault: "auto", theme: "system" }),
       saveConnection: vi.fn(),
@@ -153,7 +153,6 @@ describe("AppShell", () => {
           eventSource={{
             baseUrl: "https://api.example/",
             fetch: streamFetch,
-            getToken: () => "stream-token",
           }}
           gateway={gateway}
           createEventStream={(options) => {
@@ -168,7 +167,6 @@ describe("AppShell", () => {
     await waitFor(() => expect(eventStreamOptions).toBeDefined());
     expect(eventStreamOptions?.baseUrl).toBe("https://api.example/");
     expect(eventStreamOptions?.fetch).toBe(streamFetch);
-    expect(eventStreamOptions?.getToken()).toBe("stream-token");
     expect(queryClient.getQueryData(["project"])).toEqual(bootstrapSnapshot.project);
     expect(queryClient.getQueryData(["runtime"])).toEqual(bootstrapSnapshot.runtime);
     expect(queryClient.getQueryData(["agents"])).toEqual(bootstrapSnapshot.agents);

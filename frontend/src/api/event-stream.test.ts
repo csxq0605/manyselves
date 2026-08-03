@@ -59,7 +59,6 @@ describe("EventStream", () => {
       baseUrl: "https://server/",
       expectedStreamId: () => "boot-a",
       fetch: fetchMock,
-      getToken: () => "secret",
       onEvent: (event) => received.push(event),
       onResync: resync,
       random: () => 0.5,
@@ -73,7 +72,8 @@ describe("EventStream", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const firstHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
     const reconnectHeaders = new Headers(fetchMock.mock.calls[1]?.[1]?.headers);
-    expect(firstHeaders.get("Authorization")).toBe("Bearer secret");
+    expect(fetchMock.mock.calls[0]?.[1]?.credentials).toBe("same-origin");
+    expect(firstHeaders.has("Authorization")).toBe(false);
     expect(firstHeaders.get("Last-Event-ID")).toBeNull();
     expect(reconnectHeaders.get("Last-Event-ID")).toBe("boot-a:evt-9");
   });
@@ -84,7 +84,6 @@ describe("EventStream", () => {
       baseUrl: "https://server",
       expectedStreamId: () => "boot-a",
       fetch: vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 })),
-      getToken: () => "expired",
       onEvent: () => undefined,
       onResync: async () => undefined,
       onStateChange: (state) => states.push(state),
@@ -105,7 +104,6 @@ describe("EventStream", () => {
       baseUrl: "https://server",
       expectedStreamId: () => "boot-a",
       fetch: vi.fn<typeof fetch>().mockResolvedValue(sseResponse([])),
-      getToken: () => "secret",
       onEvent: () => undefined,
       onResync: async () => undefined,
       sleep: async (_delay, signal) =>

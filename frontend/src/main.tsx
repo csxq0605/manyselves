@@ -1,13 +1,14 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
-import { App } from "./app/App";
+import { AuthenticatedApp } from "./app/AuthenticatedApp";
 import { getOrCreateBrowserClientId } from "./app/client-config";
 import { AppProviders } from "./app/providers";
 import { createApiGateway } from "./api/gateway";
+import { AuthGate } from "./features/auth/AuthGate";
+import { createAuthApi } from "./features/auth/auth-api";
 import {
   createBrowserSettingsStorage,
-  createElectronSettingsStorage,
   resolveServerUrl,
 } from "./features/settings/settings-storage";
 import {
@@ -21,19 +22,12 @@ if (!rootElement) {
   throw new Error("Manyselves root element is missing");
 }
 
-if (window.manyselvesDesktop) {
-  const token = await window.manyselvesDesktop.secureToken.get();
-  if (token) window.sessionStorage.setItem("manyselves.deploymentToken", token);
-}
 const browserSettingsStorage = createBrowserSettingsStorage({
   ...(window.manyselvesDesktop ? { defaultServerUrl: "http://192.168.8.28:9090" } : {}),
   localStorage: window.localStorage,
   root: document.documentElement,
-  sessionStorage: window.sessionStorage,
 });
-const settingsStorage = window.manyselvesDesktop
-  ? createElectronSettingsStorage(browserSettingsStorage, window.manyselvesDesktop.secureToken)
-  : browserSettingsStorage;
+const settingsStorage = browserSettingsStorage;
 const savedConnection = settingsStorage.loadConnection();
 settingsStorage.loadPreferences();
 const baseUrl = resolveServerUrl({
@@ -42,27 +36,21 @@ const baseUrl = resolveServerUrl({
   savedUrl: savedConnection.serverUrl,
 });
 const fetchImplementation = window.fetch.bind(window);
-const getToken = () => window.sessionStorage.getItem("manyselves.deploymentToken");
 const getLeaseToken = () => window.sessionStorage.getItem("manyselves.controlLeaseToken");
 const gateway = createApiGateway({
   baseUrl,
   clientId: getOrCreateBrowserClientId(window.localStorage),
   fetch: fetchImplementation,
   getLeaseToken,
-  getToken,
 });
+const authApi = createAuthApi({ baseUrl, fetch: fetchImplementation });
 const platform = window.manyselvesDesktop
   ? new ElectronPlatformBridge(window.manyselvesDesktop)
   : new BrowserPlatformBridge(createDomBrowserPlatformDriver());
 createRoot(rootElement).render(
   <StrictMode>
     <AppProviders>
-      <App
-        eventSource={{ baseUrl, fetch: fetchImplementation, getToken }}
-        gateway={gateway}
-        platform={platform}
-        settingsStorage={settingsStorage}
-      />
+      <AuthGate api={authApi}><AuthenticatedApp eventSource={{ baseUrl, fetch: fetchImplementation }} gateway={gateway} platform={platform} settingsStorage={settingsStorage} /></AuthGate>
     </AppProviders>
   </StrictMode>,
 );

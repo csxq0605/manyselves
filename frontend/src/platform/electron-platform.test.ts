@@ -6,7 +6,6 @@ function api(): RendererDesktopApi {
   return {
     notify: vi.fn(), openDownloadedFile: vi.fn(), saveDownload: vi.fn(), selectDirectory: vi.fn().mockResolvedValue(null),
     selectFiles: vi.fn().mockResolvedValue([{ bytes: new Uint8Array([65]), name: "a.txt", size: 1, type: "text/plain" }]),
-    secureToken: { delete: vi.fn(), get: vi.fn(), set: vi.fn() },
   };
 }
 

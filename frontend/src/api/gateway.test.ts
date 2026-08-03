@@ -10,12 +10,11 @@ function gatewayWithResponse(response: Response) {
     clientId: "browser-client",
     fetch: vi.fn<typeof fetch>().mockResolvedValue(response),
     getLeaseToken: () => "lease-token",
-    getToken: () => "secret",
   });
 }
 
 describe("ApiGateway", () => {
-  it("loads bootstrap with bearer authentication", async () => {
+  it("loads bootstrap with the browser session cookie", async () => {
     const snapshot = {
       agents: { main: "Main Agent" },
       conversations: [],
@@ -48,18 +47,18 @@ describe("ApiGateway", () => {
       clientId: "browser-client",
       fetch: fetchMock,
       getLeaseToken: () => null,
-      getToken: () => "secret",
     });
 
     await expect(gateway.bootstrap()).resolves.toEqual(snapshot);
     const [url, init] = fetchMock.mock.calls[0] ?? [];
     const headers = new Headers(init?.headers);
     expect(url).toBe("https://server/api/v1/bootstrap");
-    expect(headers.get("Authorization")).toBe("Bearer secret");
+    expect(init?.credentials).toBe("same-origin");
+    expect(headers.has("Authorization")).toBe(false);
     expect(headers.get("X-Control-Lease-Token")).toBeNull();
   });
 
-  it("sends bearer, control lease, and idempotency headers", async () => {
+  it("sends the control lease and idempotency headers with browser credentials", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -77,7 +76,6 @@ describe("ApiGateway", () => {
       clientId: "browser-client",
       fetch: fetchMock,
       getLeaseToken: () => "lease-token",
-      getToken: () => "secret",
     });
 
     await gateway.sendMessage(
@@ -91,7 +89,8 @@ describe("ApiGateway", () => {
     const headers = new Headers(init?.headers);
     expect(url).toBe("https://server/api/v1/agents/main/messages");
     expect(init?.method).toBe("POST");
-    expect(headers.get("Authorization")).toBe("Bearer secret");
+    expect(init?.credentials).toBe("same-origin");
+    expect(headers.has("Authorization")).toBe(false);
     expect(headers.get("X-Control-Lease-Token")).toBe("lease-token");
     expect(headers.get("Idempotency-Key")).toBe(
       commandId,
@@ -175,7 +174,6 @@ describe("ApiGateway", () => {
       clientId: "browser-client",
       fetch: fetchMock,
       getLeaseToken: () => "lease-token",
-      getToken: () => "secret",
     });
 
     await gateway.requestJson("/api/v1/projects/project-2/activate", {
@@ -188,7 +186,8 @@ describe("ApiGateway", () => {
     const headers = new Headers(init?.headers);
     expect(url).toBe("https://server/api/v1/projects/project-2/activate");
     expect(init?.body).toBe("{}");
-    expect(headers.get("Authorization")).toBe("Bearer secret");
+    expect(init?.credentials).toBe("same-origin");
+    expect(headers.has("Authorization")).toBe(false);
     expect(headers.get("Content-Type")).toBe("application/json");
     expect(headers.get("X-Control-Lease-Token")).toBe("lease-token");
   });

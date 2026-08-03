@@ -14,7 +14,6 @@ export interface RendererDesktopApi {
   saveDownload(input: { readonly bytes: Uint8Array; readonly suggestedName: string }): Promise<string | null>;
   selectDirectory(): Promise<{ readonly files: readonly NativeFileRef[]; readonly name: string; readonly skipped: readonly string[] } | null>;
   selectFiles(): Promise<readonly NativeFileRef[]>;
-  secureToken: { delete(): Promise<void>; get(): Promise<string | null>; set(token: string): Promise<void> };
 }
 
 function toLocalFile(reference: NativeFileRef): LocalFileRef {

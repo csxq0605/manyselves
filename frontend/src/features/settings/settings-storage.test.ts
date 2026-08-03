@@ -9,7 +9,6 @@ import {
 describe("browser settings storage", () => {
   beforeEach(() => {
     localStorage.clear();
-    sessionStorage.clear();
     document.documentElement.removeAttribute("data-density");
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.style.removeProperty("--manyselves-font-size");
@@ -19,7 +18,6 @@ describe("browser settings storage", () => {
     const storage = createBrowserSettingsStorage({
       localStorage,
       root: document.documentElement,
-      sessionStorage,
     });
     const preferences = {
       ...defaultClientPreferences,
@@ -40,22 +38,18 @@ describe("browser settings storage", () => {
     expect(document.documentElement.style.getPropertyValue("--manyselves-font-size")).toBe("17px");
   });
 
-  it("keeps deployment tokens session-scoped and never copies them into local storage", () => {
+  it("persists a server URL without retaining an access token", () => {
     const storage = createBrowserSettingsStorage({
       localStorage,
       root: document.documentElement,
-      sessionStorage,
     });
 
-    storage.saveConnection({ serverUrl: "https://agents.example/", token: "deploy-secret" });
+    storage.saveConnection({ serverUrl: "https://agents.example/" });
 
     expect(storage.loadConnection()).toEqual({
       serverUrl: "https://agents.example",
-      token: "deploy-secret",
     });
-    expect(sessionStorage.getItem("manyselves.deploymentToken")).toBe("deploy-secret");
     expect(localStorage.getItem("manyselves.serverUrl.v1")).toBe("https://agents.example");
-    expect(JSON.stringify({ ...localStorage })).not.toContain("deploy-secret");
   });
 
   it("falls back safely when persisted preferences are malformed", () => {
@@ -63,7 +57,6 @@ describe("browser settings storage", () => {
     const storage = createBrowserSettingsStorage({
       localStorage,
       root: document.documentElement,
-      sessionStorage,
     });
 
     expect(storage.loadPreferences()).toEqual(defaultClientPreferences);

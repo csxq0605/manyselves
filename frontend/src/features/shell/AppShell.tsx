@@ -79,7 +79,6 @@ export function AppShell({
   const clientSettings = useMemo(() => settingsStorage ?? createBrowserSettingsStorage({
     localStorage: window.localStorage,
     root: document.documentElement,
-    sessionStorage: window.sessionStorage,
   }), [settingsStorage]);
   const [editorStore] = useState(() => createEditorStore());
   const [fallbackAgentStore] = useState(() => createAgentStore(bootstrap?.runtime, bootstrap?.streamId));
@@ -186,7 +185,6 @@ export function AppShell({
             <Suspense fallback={<p role="status">正在加载设置…</p>}>
               <SettingsPage
                 api={settingsApi}
-                onReconnect={() => window.location.reload()}
                 storage={clientSettings}
               />
             </Suspense>

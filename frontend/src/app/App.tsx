@@ -17,8 +17,9 @@ interface EventStreamController {
 
 export interface AppProps {
   readonly createEventStream?: (options: EventStreamOptions) => EventStreamController;
-  readonly eventSource?: Pick<EventStreamOptions, "baseUrl" | "fetch" | "getToken">;
+  readonly eventSource?: Pick<EventStreamOptions, "baseUrl" | "fetch">;
   readonly gateway: ApiGateway;
+  readonly onUnauthorized?: () => void;
   readonly platform?: PlatformBridge;
   readonly reportingStore?: ReportingStore;
   readonly settingsStorage?: SettingsStorage;
@@ -69,6 +70,7 @@ export function App({
   createEventStream = (options) => new EventStream(options),
   eventSource,
   gateway,
+  onUnauthorized,
   platform,
   reportingStore,
   settingsStorage,
@@ -85,7 +87,6 @@ export function App({
       eventSource ?? {
         baseUrl: window.location.origin,
         fetch: window.fetch.bind(window),
-        getToken: () => window.sessionStorage.getItem("manyselves.deploymentToken"),
       },
     [eventSource],
   );
@@ -110,12 +111,12 @@ export function App({
     if (!bootstrap.error) {
       return;
     }
-    setConnectionState(
-      bootstrap.error instanceof ApiError && bootstrap.error.status === 401
-        ? "unauthorized"
-        : "offline",
-    );
-  }, [bootstrap.error, setConnectionState]);
+    if (bootstrap.error instanceof ApiError && bootstrap.error.status === 401) {
+      onUnauthorized?.();
+      return;
+    }
+    setConnectionState("offline");
+  }, [bootstrap.error, onUnauthorized, setConnectionState]);
 
   useEffect(() => {
     if (!bootstrapStreamId) {
@@ -126,7 +127,6 @@ export function App({
       baseUrl: resolvedEventSource.baseUrl,
       expectedStreamId: () => streamId.current,
       fetch: resolvedEventSource.fetch,
-      getToken: resolvedEventSource.getToken,
       onEvent: (event) => {
         const wasRefreshRequested = agentStore.getState().refreshRequested;
         const wasReportingRefreshRequested = reports.getState().refreshRequested;
@@ -160,7 +160,13 @@ export function App({
           refetchType: "active",
         });
       },
-      onStateChange: setConnectionState,
+      onStateChange: (state) => {
+        if (state === "unauthorized") {
+          onUnauthorized?.();
+          return;
+        }
+        setConnectionState(state);
+      },
     });
     void stream.start();
     return () => stream.stop();
@@ -172,6 +178,7 @@ export function App({
     queryClient,
     reports,
     resolvedEventSource,
+    onUnauthorized,
     setConnectionState,
   ]);
 

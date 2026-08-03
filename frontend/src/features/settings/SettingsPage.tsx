@@ -4,7 +4,6 @@ import { ClientPreferences } from "./ClientPreferences";
 import { ModelSettings } from "./ModelSettings";
 import { PresetSettings } from "./PresetSettings";
 import { ProviderSettings, type RestartRequest } from "./ProviderSettings";
-import { ServerConnectionForm } from "./ServerConnectionForm";
 import type {
   AgentDebugResponse,
   AgentListResponse,
@@ -20,7 +19,6 @@ import "./settings.css";
 
 export interface SettingsPageProps {
   readonly api: SettingsApi;
-  readonly onReconnect?: () => void;
   readonly storage: SettingsStorage;
 }
 
@@ -36,14 +34,13 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "设置操作失败";
 }
 
-export function SettingsPage({ api, onReconnect, storage }: SettingsPageProps) {
+export function SettingsPage({ api, storage }: SettingsPageProps) {
   const [loaded, setLoaded] = useState<LoadedSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingRestart, setPendingRestart] = useState<RestartRequest | null>(null);
   const [busy, setBusy] = useState(false);
   const [preferences] = useState(() => storage.loadPreferences());
-  const [connection] = useState(() => storage.loadConnection());
 
   useEffect(() => {
     let active = true;
@@ -112,14 +109,6 @@ export function SettingsPage({ api, onReconnect, storage }: SettingsPageProps) {
         <h1>设置无法加载</h1>
         <p role="alert">{error}</p>
         <p>仍可更新服务器地址和访问令牌，然后重新连接。</p>
-        <ServerConnectionForm
-          initialValue={connection}
-          tokenScope={storage.tokenScope ?? "session"}
-          onSave={(value) => {
-            storage.saveConnection(value);
-            onReconnect?.();
-          }}
-        />
       </section>
     );
   }
@@ -241,15 +230,6 @@ export function SettingsPage({ api, onReconnect, storage }: SettingsPageProps) {
           onSave={(value) => {
             storage.savePreferences(value);
             setNotice("客户端偏好已保存");
-          }}
-        />
-        <ServerConnectionForm
-          initialValue={connection}
-          tokenScope={storage.tokenScope ?? "session"}
-          onSave={(value) => {
-            storage.saveConnection(value);
-            setNotice("连接信息已保存，正在重新连接");
-            onReconnect?.();
           }}
         />
       </div>

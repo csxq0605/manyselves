@@ -1,0 +1,19 @@
+:root { color: #202124; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+
+.login-page { align-items: center; background: #f6f7f8; display: flex; justify-content: center; min-height: 100vh; padding: 24px; }
+.login-card { background: #fff; border: 1px solid #e1e3e6; border-radius: 8px; box-shadow: 0 1px 2px rgb(32 33 36 / 6%); box-sizing: border-box; padding: 32px; width: min(100%, 384px); }
+.login-mark { display: flex; gap: 5px; margin-bottom: 22px; }
+.login-mark i { background: #202124; border-radius: 50%; height: 8px; position: relative; width: 8px; }
+.login-mark i + i::before { background: #bbc4ce; content: ""; height: 1px; position: absolute; right: 8px; top: 3px; width: 5px; }
+.login-label { color: #6b6f76; font: 600 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .08em; margin: 0 0 12px; }
+.login-card h1 { font-size: 24px; letter-spacing: -.02em; line-height: 1.2; margin: 0; }
+.login-summary { color: #6b6f76; font-size: 14px; margin: 8px 0 28px; }
+.login-card form { display: grid; gap: 8px; }
+.login-card label { font-size: 13px; font-weight: 600; margin-top: 8px; }
+.login-card input { border: 1px solid #c8ccd1; border-radius: 5px; box-sizing: border-box; color: #202124; font: inherit; min-height: 40px; padding: 8px 10px; width: 100%; }
+.login-card input:focus-visible, .login-card button:focus-visible { outline: 3px solid rgb(52 120 246 / 35%); outline-offset: 2px; }
+.login-card button { background: #2f6fed; border: 1px solid #285fc9; border-radius: 5px; color: #fff; cursor: pointer; font: 600 14px/1 system-ui, sans-serif; margin-top: 16px; min-height: 40px; }
+.login-card button:disabled { cursor: wait; opacity: .65; }
+.login-error { color: #b42318; font-size: 13px; margin: 8px 0 0; }
+@media (max-width: 480px) { .login-page { align-items: start; padding: 16px; } .login-card { margin-top: max(8vh, 24px); padding: 24px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
