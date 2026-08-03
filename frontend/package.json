@@ -7,13 +7,14 @@
     "node": ">=22"
   },
   "scripts": {
+    "check:api": "node scripts/check-generated-api.mjs",
     "dev": "vite",
     "e2e": "node scripts/run-e2e.mjs",
     "generate:api": "openapi-typescript ../frontend-contract/openapi.json -o src/api/generated/schema.ts",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest",
     "build": "tsc --noEmit && vite build",
-    "verify": "npm run generate:api && npm run lint && npm run test -- --run && npm run build"
+    "verify": "npm run check:api && npm run lint && npm run test -- --run && npm run build && npm run e2e"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
