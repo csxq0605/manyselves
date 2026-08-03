@@ -22,7 +22,6 @@ from ..schemas.operations import (
     PythonRunRequest,
 )
 from ..security import require_authenticated_session, require_control_lease_header
-from ..session_auth import SessionPrincipal
 
 router = APIRouter(prefix="/operations", dependencies=[Depends(require_authenticated_session)])
 
@@ -77,7 +76,6 @@ async def run_python(
     body: PythonRunRequest,
     request: Request,
     command_id: UUID | None = Header(default=None, alias="Idempotency-Key"),
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
@@ -105,7 +103,6 @@ async def get_operation(operation_id: str, request: Request):
 async def interrupt_operation(
     operation_id: str,
     request: Request,
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:

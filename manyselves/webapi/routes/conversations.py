@@ -22,7 +22,6 @@ from ..schemas.conversations import (
     ConversationResponse,
 )
 from ..security import require_authenticated_session, require_control_lease_header
-from ..session_auth import SessionPrincipal
 
 router = APIRouter(prefix="/conversations", dependencies=[Depends(require_authenticated_session)])
 
@@ -82,7 +81,6 @@ async def messages(request: Request, agent_id: str = Query("main", alias="agentI
 async def create_conversation(
     body: ConversationCreateRequest,
     request: Request,
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
@@ -107,7 +105,6 @@ async def rename_conversation(
     session_id: str,
     body: ConversationRenameRequest,
     request: Request,
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
@@ -122,7 +119,6 @@ async def activate_conversation(
     session_id: str,
     request: Request,
     agent_id: str = Query("main", alias="agentId"),
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
@@ -146,7 +142,6 @@ async def delete_conversation(
     session_id: str,
     request: Request,
     agent_id: str = Query("main", alias="agentId"),
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
@@ -170,7 +165,6 @@ async def delete_conversation(
 async def clear_conversation(
     request: Request,
     agent_id: str = Query("main", alias="agentId"),
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:

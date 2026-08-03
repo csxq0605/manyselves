@@ -26,7 +26,6 @@ from ..schemas.reporting import (
     ReportingStartRequest,
 )
 from ..security import require_authenticated_session, require_control_lease_header
-from ..session_auth import SessionPrincipal
 
 router = APIRouter(prefix="/reporting", dependencies=[Depends(require_authenticated_session)])
 
@@ -88,7 +87,6 @@ async def start_run(
     body: ReportingStartRequest,
     request: Request,
     command_id: UUID = Header(alias="Idempotency-Key"),
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
@@ -104,7 +102,6 @@ async def resume_run(
     body: ReportingResumeRequest,
     request: Request,
     command_id: UUID = Header(alias="Idempotency-Key"),
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
@@ -127,7 +124,6 @@ async def resume_decision(
     body: ReportingDecisionRequest,
     request: Request,
     command_id: UUID = Header(alias="Idempotency-Key"),
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
@@ -145,7 +141,6 @@ async def revise(
     body: ReportingRevisionRequest,
     request: Request,
     command_id: UUID = Header(alias="Idempotency-Key"),
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
@@ -163,7 +158,6 @@ async def cancel_run(
     run_id: str,
     request: Request,
     command_id: UUID = Header(alias="Idempotency-Key"),
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:

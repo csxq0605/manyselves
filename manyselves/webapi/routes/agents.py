@@ -39,7 +39,6 @@ from ..schemas.agents import (
     SendMessageRequest,
 )
 from ..security import require_authenticated_session, require_control_lease_header
-from ..session_auth import SessionPrincipal
 
 router = APIRouter(prefix="/agents", dependencies=[Depends(require_authenticated_session)])
 
@@ -125,7 +124,6 @@ async def update_agent_debug(
     agent_id: str,
     body: AgentDebugUpdate,
     request: Request,
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ) -> AgentDebugResponse:
     try:
@@ -152,7 +150,6 @@ async def send_message(
     body: SendMessageRequest,
     request: Request,
     command_id: UUID = Header(alias="Idempotency-Key"),
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
@@ -183,7 +180,6 @@ async def edit_resend(
     body: EditResendRequest,
     request: Request,
     command_id: UUID = Header(alias="Idempotency-Key"),
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     service = request.app.state.conversation_service
@@ -220,7 +216,6 @@ async def send_file_context(
     body: FileContextRequest,
     request: Request,
     command_id: UUID = Header(alias="Idempotency-Key"),
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
@@ -247,7 +242,6 @@ async def interrupt(
     agent_id: str,
     request: Request,
     command_id: UUID = Header(alias="Idempotency-Key"),
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
@@ -270,7 +264,6 @@ async def rollback(
     body: RollbackRequest,
     request: Request,
     command_id: UUID = Header(alias="Idempotency-Key"),
-    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     service = request.app.state.conversation_service

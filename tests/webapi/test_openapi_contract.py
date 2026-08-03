@@ -2,12 +2,14 @@
 
 import json
 import re
+from inspect import signature
 from pathlib import Path
 
 from fastapi.routing import APIRoute
 from pydantic import SecretStr
 
 from manyselves.webapi.main import create_app, generate_operation_id
+from manyselves.webapi.security import require_authenticated_session
 from manyselves.webapi.settings import WebSettings
 from scripts.export_openapi import render_openapi_document, write_or_check
 
@@ -36,6 +38,37 @@ def test_openapi_has_required_resources() -> None:
     }
 
     assert required <= set(schema["paths"])
+
+
+def test_business_routes_declare_the_session_dependency_once_at_router_level() -> None:
+    """Duplicate route and endpoint dependencies would verify the session twice."""
+    app = create_app(_test_settings())
+    anonymous_prefixes = ("/api/v1/auth/", "/api/v1/health/")
+    business_routes = []
+    for included_router in app.routes:
+        router = included_router.original_router
+        for route in router.routes:
+            if not isinstance(route, APIRoute):
+                continue
+            path = f"{included_router.include_context.prefix}{route.path}"
+            if path.startswith(anonymous_prefixes):
+                continue
+            dependencies = (
+                *included_router.include_context.dependencies,
+                *route.dependant.dependencies,
+            )
+            business_routes.append((path, route, dependencies))
+
+    assert business_routes
+    for path, route, dependencies in business_routes:
+        session_dependencies = [
+            dependency
+            for dependency in dependencies
+            if getattr(dependency, "dependency", getattr(dependency, "call", None))
+            is require_authenticated_session
+        ]
+        assert len(session_dependencies) == 1, path
+        assert "_access" not in signature(route.endpoint).parameters
 
 
 def test_all_operations_have_unique_operation_ids() -> None:
