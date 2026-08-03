@@ -24,6 +24,7 @@ from .dependencies import resolve_runtime_host
 from .events.broker import EventBroker
 from .events.mapper import EventContext
 from .settings import WebSettings
+from .session_auth import SessionSigner
 
 
 @dataclass(slots=True)
@@ -178,6 +179,11 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         if settings is None:
             settings = WebSettings()
             app.state.web_settings = settings
+
+        app.state.session_signer = SessionSigner(
+            settings.data_root / ".manyselves" / "auth" / "session.key",
+            settings.session_ttl_seconds,
+        )
 
         host = await resolve_runtime_host(app)
         facade = RuntimeFacade(
