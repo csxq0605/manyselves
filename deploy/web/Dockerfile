@@ -9,4 +9,4 @@ RUN npm run build
 FROM nginxinc/nginx-unprivileged:1.29-alpine
 COPY --from=builder /app/frontend/dist /usr/share/nginx/html
 COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
-EXPOSE 8080
+EXPOSE 9090

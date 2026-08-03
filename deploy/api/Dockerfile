@@ -16,6 +16,6 @@ COPY --from=builder --chown=manyselves:manyselves /app/manyselves /app/manyselve
 COPY --chown=manyselves:manyselves --chmod=755 deploy/api/entrypoint.sh deploy/api/healthcheck.py deploy/api/init_config.py /app/deploy/api/
 ENV PATH="/app/.venv/bin:$PATH" DATA_ROOT=/data/manyselves PYTHONUNBUFFERED=1
 USER manyselves
-EXPOSE 8000
+EXPOSE 9000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 CMD ["python", "/app/deploy/api/healthcheck.py"]
 ENTRYPOINT ["/app/deploy/api/entrypoint.sh"]

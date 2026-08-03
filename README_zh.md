@@ -91,10 +91,10 @@ uv run manyselves
 
 ```bash
 cp deploy/env.example deploy/.env
-# 设置长随机访问令牌、Provider Key、准确的浏览器 Origin 和绝对数据目录。
+# 设置长随机访问令牌、Provider Key 和绝对数据目录。
 docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build --wait
 uv run python scripts/verify_deployment.py \
-  --url https://manyselves.example.internal \
+  --url http://192.168.8.28:9090 \
   --token-env MANYSELVES_ACCESS_TOKEN
 ```
 

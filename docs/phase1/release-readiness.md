@@ -6,7 +6,7 @@ Decision date: 2026-08-03. Candidate implementation commit: `02bb2a2` on `featur
 
 The Phase 1 repository implementation is complete and deployable for a controlled Linux pilot. Automated browser, Electron, API, persistence, recovery, dependency, secret, Compose, backup/restore, and real-stack deployment checks have evidence.
 
-Final automated results include 1,956 repository tests passed / 14 skipped, 35 release/deploy tests passed, 140 React tests, 11 browser flows, 5 Electron unit tests, 2 Electron application flows, deterministic OpenAPI, protected-core freeze, a 113-row machine-valid matrix, and an 8/8 live deployment verification.
+Final automated results include 1,957 repository tests passed / 14 skipped, 36 release/deploy tests passed, 140 React tests, 11 browser flows, 5 Electron unit tests, 2 Electron application flows, deterministic OpenAPI, protected-core freeze, a 113-row machine-valid matrix, and an 8/8 live deployment verification. The reviewed direct-LAN layout was rebuilt and reverified with FastAPI internal on `9000` and Nginx on host port `9090`.
 
 Production release decision: **NO-GO pending external acceptance**.
 
@@ -20,8 +20,8 @@ The repository-wide Ruff command also reports 127 legacy GUI/Reporting findings.
 
 ## Candidate artifacts
 
-- API image: `sha256:83bceffd5c84963eeb827c5dc1c7b23fecbdd65341a84a053fcad03f713cc6c6`
-- Web image: `sha256:aad90bc46261f0c5da7c7118b241a298b681f95d248d334424099a388bebef02`
+- API image: `sha256:5c1b01ac8dc81ca37747863434499c65c369764a55d9d3322f2f394a037124f0`
+- Web image: `sha256:4b3ee00271500f3a8dcd589eedd1929c2d384e7dba144afe038546a416a82d24`
 - Backup drill digest: `CE7E0D61280F1477123D5DB3248DF7D99F22E020B365389157A2B7178E548B7B`
 
 ## Rollback

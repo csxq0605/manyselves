@@ -26,7 +26,7 @@ if (window.manyselvesDesktop) {
   if (token) window.sessionStorage.setItem("manyselves.deploymentToken", token);
 }
 const browserSettingsStorage = createBrowserSettingsStorage({
-  ...(window.manyselvesDesktop ? { defaultServerUrl: "http://127.0.0.1:8000" } : {}),
+  ...(window.manyselvesDesktop ? { defaultServerUrl: "http://192.168.8.28:9090" } : {}),
   localStorage: window.localStorage,
   root: document.documentElement,
   sessionStorage: window.sessionStorage,

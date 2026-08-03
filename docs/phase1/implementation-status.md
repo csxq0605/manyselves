@@ -16,9 +16,9 @@ This file separates implemented code, automated evidence, and external productio
 ## Current facts
 
 - React and Electron use the versioned FastAPI boundary; the existing PyQt/application runtime remains supported.
-- The Linux Compose stack builds and becomes healthy with one Gunicorn worker and one authoritative Runtime.
+- The Linux Compose stack builds and becomes healthy with one Gunicorn worker and one authoritative Runtime; FastAPI is internal on `9000`, while Nginx is the only host-published service on `9090`.
 - The public deployment verifier passes all 8 checks against the real local Linux-container stack.
-- The full repository suite passes: 1,956 passed and 14 skipped; release/deploy subset: 35 passed.
+- The full repository suite passes: 1,957 passed and 14 skipped; current release/deploy subset: 36 passed.
 - Legacy-vs-service runtime and old-workspace Reporting golden tests pass.
 - Python, frontend, and desktop dependency audits report zero known vulnerabilities after lock updates.
 - Gitleaks 8.30.1 passes all 172 commits after ten exact, reviewed test-fixture fingerprints were documented in `.gitleaksignore`.

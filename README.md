@@ -99,10 +99,10 @@ release limitations are in [Phase 1 known limitations](docs/phase1/known-limitat
 
 ```bash
 cp deploy/env.example deploy/.env
-# Set a long access token, provider key, exact browser origin, and absolute data directory.
+# Set a long access token, provider key, and absolute data directory.
 docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build --wait
 uv run python scripts/verify_deployment.py \
-  --url https://manyselves.example.internal \
+  --url http://192.168.8.28:9090 \
   --token-env MANYSELVES_ACCESS_TOKEN
 ```
 

@@ -5,7 +5,7 @@
 - [x] Docker Engine 28.5.1 / Compose 2.40.2 build both images.
 - [x] API and web containers become healthy.
 - [x] API runs as UID 999 with one Gunicorn master and exactly one worker.
-- [x] API is not published directly; web binds `127.0.0.1:8080`.
+- [x] API port `9000` is not published directly; the local drill overrides the web bind to `127.0.0.1:9090`.
 - [x] Deployment verifier passes live, ready, single runtime, project, conversation, file round trip, SSE, and artifact download.
 - [x] Verifier removes its temporary file and releases the controller lease.
 - [x] Online backup, manifest validation, restore-to-new-directory, and post-backup readiness were exercised.
@@ -16,11 +16,11 @@ This drill used Docker Desktop's Linux engine. It is strong packaging evidence b
 
 - [ ] Record distribution, kernel, Docker/Compose versions, UTC start/end, operator, and reviewer.
 - [ ] Create a dedicated non-root account and `0700` data/backup directories.
-- [ ] Configure an enterprise TLS reverse proxy and private source-network restrictions.
-- [ ] Set the exact HTTPS origin in `MANYSELVES_ALLOWED_ORIGINS`.
+- [ ] Restrict TCP `9090` to the trusted `192.168.8.0/24` LAN; do not publish TCP `9000`.
+- [ ] Confirm `MANYSELVES_ALLOWED_ORIGINS` is exactly `["http://192.168.8.28:9090"]`.
 - [ ] Build or pull immutable image digests; run the Trivy command below.
 - [ ] Start Compose with `up -d --wait`; verify exactly one API worker.
-- [ ] Run `scripts/verify_deployment.py` against the HTTPS URL.
+- [ ] Run `scripts/verify_deployment.py` against `http://192.168.8.28:9090`.
 - [ ] Complete one browser and one packaged Electron smoke flow.
 - [ ] Complete one deterministic Agent flow and one Reporting resume/download flow.
 - [ ] Restart containers and re-run the verifier to prove persistence.
@@ -35,6 +35,6 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
 
 export MANYSELVES_ACCESS_TOKEN='your-deployment-token'
 uv run python scripts/verify_deployment.py \
-  --url https://manyselves.example.internal \
+  --url http://192.168.8.28:9090 \
   --token-env MANYSELVES_ACCESS_TOKEN
 ```
