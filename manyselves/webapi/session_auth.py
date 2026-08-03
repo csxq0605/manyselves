@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import secrets
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,31 +76,107 @@ def _decode(value: str) -> bytes:
 
 
 def _load_or_create_key(key_path: Path) -> bytes:
-    """Read a stable key, creating its owner-only file exactly once."""
-    key_path.parent.mkdir(parents=True, exist_ok=True)
+    """Read a stable key or atomically publish one complete private key."""
+    key_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _harden_permissions(key_path.parent, is_directory=True)
     try:
-        descriptor = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        return _read_key(key_path)
+        if key_path.exists():
+            _harden_permissions(key_path, is_directory=False)
+            return _read_key(key_path)
+    except OSError as error:
+        raise RuntimeError("Unable to securely access the session key") from error
 
+    temporary_path = _create_private_temporary_key(key_path)
     key = secrets.token_bytes(32)
     try:
-        with os.fdopen(descriptor, "wb") as key_file:
-            key_file.write(key)
-            key_file.flush()
-            os.fsync(key_file.fileno())
-        if os.name != "nt":
-            os.chmod(key_path, 0o600)
+        _write_key(temporary_path, key)
+        _harden_permissions(temporary_path, is_directory=False)
+        try:
+            os.link(temporary_path, key_path)
+        except FileExistsError:
+            _remove_temporary_key(temporary_path)
+            _harden_permissions(key_path, is_directory=False)
+            return _read_key(key_path)
+        _remove_temporary_key(temporary_path)
+        _harden_permissions(key_path, is_directory=False)
+        return key
     except BaseException:
+        _remove_temporary_key(temporary_path)
         raise
-    return key
+
+
+def _create_private_temporary_key(key_path: Path) -> Path:
+    """Reserve a same-directory private temporary path without publishing a final key."""
+    for _attempt in range(10):
+        temporary_path = key_path.with_name(f".{key_path.name}.{secrets.token_hex(16)}.tmp")
+        try:
+            descriptor = os.open(temporary_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        os.close(descriptor)
+        return temporary_path
+    raise RuntimeError("Unable to securely create a temporary session key")
+
+
+def _write_key(key_path: Path, key: bytes) -> None:
+    """Write all key bytes durably before its path can be published."""
+    descriptor = os.open(key_path, os.O_WRONLY | os.O_TRUNC)
+    with os.fdopen(descriptor, "wb") as key_file:
+        key_file.write(key)
+        key_file.flush()
+        os.fsync(key_file.fileno())
+
+
+def _remove_temporary_key(key_path: Path) -> None:
+    """Remove an unpublished key, failing safely if cleanup cannot complete."""
+    try:
+        key_path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise RuntimeError("Unable to remove a temporary session key") from error
+
+
+def _harden_permissions(path: Path, *, is_directory: bool) -> None:
+    """Restrict session storage to the current user or fail before use."""
+    if _running_on_windows():
+        _harden_windows_permissions(path)
+        return
+    try:
+        os.chmod(path, 0o700 if is_directory else 0o600)
+    except OSError as error:
+        raise RuntimeError("Unable to securely configure session permissions") from error
+
+
+def _running_on_windows() -> bool:
+    """Keep the platform boundary injectable for focused permission tests."""
+    return os.name == "nt"
+
+
+def _harden_windows_permissions(path: Path) -> None:
+    """Replace inherited NTFS permissions with a DACL for the current user only."""
+    try:
+        current_user = subprocess.run(
+            ["whoami"], capture_output=True, check=True, text=True
+        ).stdout.strip()
+        if not current_user:
+            raise RuntimeError("Current Windows user is unavailable")
+        subprocess.run(
+            ["icacls", str(path), "/inheritance:r", "/grant:r", f"{current_user}:(F)"],
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError, RuntimeError) as error:
+        raise RuntimeError("Unable to securely configure session permissions") from error
 
 
 def _read_key(key_path: Path) -> bytes:
-    """Read a concurrently created key after its writer has completed creation."""
-    for _attempt in range(20):
+    """Read an atomically published session key with no partial-file retry path."""
+    try:
         key = key_path.read_bytes()
-        if len(key) == 32:
-            return key
-        time.sleep(0.01)
-    raise ValueError("Session key file has an invalid length")
+    except OSError as error:
+        raise RuntimeError("Unable to securely read the session key") from error
+    if len(key) != 32:
+        raise ValueError("Session key file has an invalid length")
+    return key

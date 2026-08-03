@@ -84,6 +84,46 @@ async def test_login_sets_http_only_strict_cookie(async_client: httpx.AsyncClien
 
 
 @pytest.mark.asyncio
+async def test_login_rejects_invalid_credentials_without_echoing_them(
+    async_client: httpx.AsyncClient,
+) -> None:
+    """A rejected login must not disclose submitted credentials in its error envelope."""
+    response = await async_client.post(
+        "/api/v1/auth/login",
+        json={"username": "wrong-user", "password": "wrong-password"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "AUTH_INVALID"
+    assert "wrong-user" not in response.text
+    assert "wrong-password" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_login_uses_a_secure_cookie_when_configured(tmp_path: Path) -> None:
+    """A production HTTPS deployment must be able to prohibit HTTP cookie transport."""
+    app = create_app(
+        WebSettings(
+            data_root=tmp_path,
+            initial_project_id="project-1",
+            access_token=SecretStr("test-token"),
+            session_cookie_secure=True,
+        )
+    )
+    app.dependency_overrides[get_runtime_host] = FakeRuntimeHost
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="https://test") as client:
+            response = await client.post(
+                "/api/v1/auth/login",
+                json={"username": "admin", "password": "yuanxi@2026"},
+            )
+
+    assert response.status_code == 204
+    assert "Secure" in response.headers["set-cookie"]
+
+
+@pytest.mark.asyncio
 async def test_session_returns_authenticated_principal_after_login(
     async_client: httpx.AsyncClient,
 ) -> None:
