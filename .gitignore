@@ -4,7 +4,7 @@ __pycache__/
 *.egg-info/
 dist/
 node_modules/
-release/
+/desktop/release/
 test-results/
 /deploy/data/
 /deploy/backups/
