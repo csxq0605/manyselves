@@ -1,5 +1,6 @@
 import type { ApiGateway } from "../../api/gateway";
 import type { components } from "../../api/generated/schema";
+import { createUuid } from "../../app/uuid";
 
 export type OperationAccepted = components["schemas"]["OperationAcceptedResponse"];
 export type PythonOperation = components["schemas"]["PythonOperationResponse"];
@@ -22,7 +23,7 @@ export function createOperationApi(gateway: ApiGateway): OperationApi {
     run: (path, arguments_ = []) => gateway.requestJson<OperationAccepted>(
       "/api/v1/operations/python",
       {
-        headers: { "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Idempotency-Key": createUuid() },
         json: { arguments: [...arguments_], path },
         method: "POST",
         requireLease: true,

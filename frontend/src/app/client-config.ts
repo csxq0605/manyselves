@@ -1,8 +1,10 @@
+import { createUuid } from "./uuid";
+
 const clientIdStorageKey = "manyselves.clientId.v1";
 
 export function getOrCreateBrowserClientId(
   storage: Pick<Storage, "getItem" | "setItem">,
-  randomUuid: () => string = () => crypto.randomUUID(),
+  randomUuid: () => string = createUuid,
 ): string {
   const existing = storage.getItem(clientIdStorageKey);
   if (existing) {

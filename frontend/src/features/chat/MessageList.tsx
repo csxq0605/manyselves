@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { ApiError } from "../../api/gateway";
+import { createUuid } from "../../app/uuid";
 import type { RuntimeMessageView } from "../agents/event-reducer";
 import type { ConversationApi } from "../conversations/conversation-api";
 import { normalizeMessages, type ChatMessage } from "./message-model";
@@ -32,7 +33,7 @@ export interface MessageListProps {
 }
 
 function newId(): string {
-  return crypto.randomUUID();
+  return createUuid();
 }
 
 export function MessageList({

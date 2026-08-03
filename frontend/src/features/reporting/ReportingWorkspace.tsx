@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "zustand";
 
+import { createUuid } from "../../app/uuid";
 import type { PlatformBridge } from "../../platform/types";
 import type {
   ReportingApi,
@@ -30,8 +31,7 @@ export interface ReportingWorkspaceProps {
 }
 
 function commandId(): string {
-  return globalThis.crypto?.randomUUID?.()
-    ?? `report-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return createUuid();
 }
 
 function outputName(path: string): string {

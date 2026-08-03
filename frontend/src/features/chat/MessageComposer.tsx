@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useStore } from "zustand";
 
+import { createUuid } from "../../app/uuid";
 import type { SelectionInput } from "../editor/selection-context";
 import type { ConversationApi } from "../conversations/conversation-api";
 import { CommandPalette } from "./CommandPalette";
@@ -33,7 +34,7 @@ export interface MessageComposerProps {
 }
 
 function newId(): string {
-  return crypto.randomUUID();
+  return createUuid();
 }
 
 export function MessageComposer({
