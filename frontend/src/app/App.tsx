@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { EventStream, type EventStreamOptions, type RuntimeEvent } from "../api/event-stream";
 import { ApiError, type ApiGateway } from "../api/gateway";
+import { createAgentStore } from "../features/agents/agent-store";
 import { AppShell } from "../features/shell/AppShell";
 import type { PlatformBridge } from "../platform/types";
 import { useConnectionStore } from "./store-context";
@@ -21,13 +22,19 @@ export interface AppProps {
 
 const knownEventPrefixes = [
   "agent.",
+  "checkpoint.",
   "conversation.",
+  "debug.",
   "file.",
   "operation.",
   "project.",
+  "queue.",
   "reporting.",
   "runtime.",
   "system.",
+  "task.",
+  "tool.",
+  "user.",
 ] as const;
 
 function eventQueryKey(event: RuntimeEvent): readonly string[] | null {
@@ -37,6 +44,15 @@ function eventQueryKey(event: RuntimeEvent): readonly string[] | null {
   }
   if (prefix === "file.") {
     return ["files"];
+  }
+  if (prefix === "agent.") {
+    return event.type.startsWith("agent.message.") ? ["conversation-messages"] : ["agents"];
+  }
+  if (prefix === "conversation." || prefix === "user.") {
+    return ["conversation-messages"];
+  }
+  if (["checkpoint.", "debug.", "queue.", "runtime.", "system.", "task.", "tool."].includes(prefix)) {
+    return ["runtime"];
   }
   return [prefix.slice(0, -1)];
 }
@@ -51,6 +67,7 @@ export function App({
   const setConnectionState = useConnectionStore((store) => store.setState);
   const streamId = useRef<string | null>(null);
   const unknownEventTypes = useRef(new Set<string>());
+  const [agentStore] = useState(() => createAgentStore());
   const resolvedEventSource = useMemo(
     () =>
       eventSource ?? {
@@ -63,6 +80,7 @@ export function App({
   const bootstrap = useQuery({
     queryFn: async () => {
       const snapshot = await gateway.bootstrap();
+      agentStore.getState().hydrate(snapshot.runtime, snapshot.streamId);
       queryClient.setQueryData(["project"], snapshot.project);
       queryClient.setQueryData(["runtime"], snapshot.runtime);
       queryClient.setQueryData(["conversations"], snapshot.conversations);
@@ -97,10 +115,19 @@ export function App({
       fetch: resolvedEventSource.fetch,
       getToken: resolvedEventSource.getToken,
       onEvent: (event) => {
+        const wasRefreshRequested = agentStore.getState().refreshRequested;
+        agentStore.getState().applyEvent(event);
+        if (!wasRefreshRequested && agentStore.getState().refreshRequested) {
+          setConnectionState("resyncing");
+          void queryClient.invalidateQueries({
+            queryKey: ["bootstrap"],
+            refetchType: "active",
+          });
+          return;
+        }
         const queryKey = eventQueryKey(event);
         if (queryKey) {
           void queryClient.invalidateQueries({ queryKey });
-          void queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
           return;
         }
         if (!unknownEventTypes.current.has(event.type)) {
@@ -120,6 +147,7 @@ export function App({
     void stream.start();
     return () => stream.stop();
   }, [
+    agentStore,
     bootstrapStreamId,
     createEventStream,
     gateway,
@@ -130,6 +158,7 @@ export function App({
 
   return (
     <AppShell
+      agentStore={agentStore}
       bootstrap={bootstrap.data}
       gateway={gateway}
       key={bootstrap.data?.project.id ?? "waiting-for-bootstrap"}

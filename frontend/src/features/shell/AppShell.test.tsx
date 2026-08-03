@@ -92,4 +92,48 @@ describe("AppShell", () => {
 
     expect(bootstrap).toHaveBeenCalledTimes(2);
   });
+
+  it("projects SSE runtime events and refreshes bootstrap on a real sequence gap", async () => {
+    const bootstrap = vi.fn().mockResolvedValue(bootstrapSnapshot);
+    const gateway = { bootstrap } as unknown as ApiGateway;
+    let eventStreamOptions: EventStreamOptions | undefined;
+
+    render(
+      <AppProviders>
+        <App
+          gateway={gateway}
+          createEventStream={(options) => {
+            eventStreamOptions = options;
+            return { start: async () => undefined, stop: () => undefined };
+          }}
+        />
+      </AppProviders>,
+    );
+
+    expect(await screen.findByText("project-1")).toBeVisible();
+    await waitFor(() => expect(eventStreamOptions).toBeDefined());
+    eventStreamOptions?.onEvent({
+      agentId: "Researcher",
+      eventId: "boot-a:evt-10",
+      payload: { agent_type: "Researcher", status: "running" },
+      schemaVersion: 1,
+      sequence: 10,
+      streamId: "boot-a",
+      timestamp: "2026-08-03T08:00:00Z",
+      type: "agent.status.changed",
+    });
+
+    expect(await screen.findByText("researcher")).toBeVisible();
+    eventStreamOptions?.onEvent({
+      eventId: "boot-a:evt-12",
+      payload: { content: "gap" },
+      schemaVersion: 1,
+      sequence: 12,
+      streamId: "boot-a",
+      timestamp: "2026-08-03T08:00:01Z",
+      type: "system.notice",
+    });
+
+    await waitFor(() => expect(bootstrap).toHaveBeenCalledTimes(2));
+  });
 });

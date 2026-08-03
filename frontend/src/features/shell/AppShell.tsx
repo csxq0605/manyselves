@@ -4,6 +4,8 @@ import { useStore } from "zustand";
 import { useWorkspaceStore } from "../../app/store-context";
 import type { ApiGateway, BootstrapSnapshot } from "../../api/gateway";
 import type { PlatformBridge } from "../../platform/types";
+import { createAgentStore, type AgentStore } from "../agents/agent-store";
+import { AgentSidebar } from "../agents/AgentSidebar";
 import { createEditorFileApi } from "../editor/editor-api";
 import { createEditorStore } from "../editor/editor-store";
 import { isEditableTextPath } from "../editor/editable-files";
@@ -27,12 +29,13 @@ const PreviewWorkspace = lazy(async () => {
 });
 
 export interface AppShellProps {
+  readonly agentStore?: AgentStore;
   readonly bootstrap?: BootstrapSnapshot | undefined;
   readonly gateway?: ApiGateway;
   readonly platform?: PlatformBridge;
 }
 
-export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
+export function AppShell({ agentStore, bootstrap, gateway, platform }: AppShellProps) {
   const drafts = useWorkspaceStore((store) => store.drafts);
   const setDraft = useWorkspaceStore((store) => store.setDraft);
   const activeDraftPath = useMemo(() => Object.keys(drafts)[0] ?? "scratchpad.md", [drafts]);
@@ -48,6 +51,9 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
   const operationApi = useMemo(() => gateway ? createOperationApi(gateway) : null, [gateway]);
   const previewApi = useMemo(() => gateway ? createPreviewApi(gateway) : null, [gateway]);
   const [editorStore] = useState(() => createEditorStore());
+  const [fallbackAgentStore] = useState(() => createAgentStore(bootstrap?.runtime, bootstrap?.streamId));
+  const runtimeStore = agentStore ?? fallbackAgentStore;
+  const runtimeState = useStore(runtimeStore);
   const activeEditorPath = useStore(editorStore, (store) => store.activePath);
   const hasDirtyEditorDrafts = useStore(
     editorStore,
@@ -173,6 +179,7 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
               currentSelection={activeEditorSelection}
               gateway={gateway}
               key={conversationProjectId || bootstrap.project.id}
+              liveMessages={Object.values(runtimeState.messages)}
               projectId={conversationProjectId || bootstrap.project.id}
             />
           ) : (
@@ -184,18 +191,7 @@ export function AppShell({ bootstrap, gateway, platform }: AppShellProps) {
         </main>
 
         <aside className="workspace-pane workspace-pane--agents" aria-label="智能体与控制">
-          <p className="pane-label">运行状态</p>
-          <h2>Agent 与控制</h2>
-          <dl className="status-list">
-            <div>
-              <dt>控制权</dt>
-              <dd>观察者</dd>
-            </div>
-            <div>
-              <dt>主 Agent</dt>
-              <dd>{bootstrap?.runtime.agent_statuses.main ?? "等待同步"}</dd>
-            </div>
-          </dl>
+          <AgentSidebar state={runtimeState} />
         </aside>
       </div>
     </div>

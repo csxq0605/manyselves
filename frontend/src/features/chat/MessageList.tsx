@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { ApiError } from "../../api/gateway";
+import type { RuntimeMessageView } from "../agents/event-reducer";
 import type { ConversationApi } from "../conversations/conversation-api";
 import { normalizeMessages, type ChatMessage } from "./message-model";
 
@@ -24,6 +25,7 @@ type HistoryMutationAttempt = EditAttempt | RollbackAttempt;
 export interface MessageListProps {
   readonly agentId: string;
   readonly api: ConversationApi;
+  readonly liveMessages?: readonly RuntimeMessageView[] | undefined;
   readonly messages: readonly Record<string, unknown>[];
   readonly onHistoryChanged?: (() => void) | undefined;
   readonly requestEdit?: ((message: ChatMessage) => string | null) | undefined;
@@ -36,6 +38,7 @@ function newId(): string {
 export function MessageList({
   agentId,
   api,
+  liveMessages = [],
   messages,
   onHistoryChanged,
   requestEdit = (message) => window.prompt("编辑消息后重新发送", message.content),
@@ -52,6 +55,15 @@ export function MessageList({
   const history = historyOverride?.source === messages
     ? historyOverride.history
     : normalizeMessages(messages);
+  const historicalMessageIds = new Set(
+    history.flatMap((message) => (
+      message.role === "assistant" && message.messageId ? [message.messageId] : []
+    )),
+  );
+  const visibleLiveMessages = liveMessages.filter(
+    (message) => message.agentId === agentId.toLowerCase()
+      && !historicalMessageIds.has(message.id),
+  );
 
   async function refreshHistory() {
     const refreshed = await api.messages(agentId);
@@ -128,7 +140,7 @@ export function MessageList({
 
   return (
     <section aria-label="消息历史" className="message-list">
-      {history.length === 0 ? <p className="pane-muted">当前会话还没有消息。</p> : (
+      {history.length === 0 && visibleLiveMessages.length === 0 ? <p className="pane-muted">当前会话还没有消息。</p> : (
         <ol>
           {history.map((message) => (
             <li className={`message message--${message.role}`} key={message.id}>
@@ -151,6 +163,16 @@ export function MessageList({
                   type="button"
                 >回滚 {message.content}</button>
               ) : null}
+            </li>
+          ))}
+          {visibleLiveMessages.map((message) => (
+            <li className="message message--assistant message--live" key={`live-${message.id}`}>
+              <header>
+                <strong>{message.agentId}</strong>
+                <time>{message.timestamp}</time>
+              </header>
+              <p>{message.content || "正在生成…"}</p>
+              <small>{message.status === "streaming" ? "流式生成中" : "已完成"}</small>
             </li>
           ))}
         </ol>

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ConversationApi } from "../conversations/conversation-api";
+import type { RuntimeMessageView } from "../agents/event-reducer";
 import { MessageList } from "./MessageList";
 
 function fakeApi(overrides: Partial<ConversationApi> = {}): ConversationApi {
@@ -24,6 +25,44 @@ function fakeApi(overrides: Partial<ConversationApi> = {}): ConversationApi {
 }
 
 describe("MessageList", () => {
+  it("shows live streaming messages and removes them when authoritative history contains the message ID", () => {
+    const liveMessages: RuntimeMessageView[] = [{
+      agentId: "main",
+      content: "streaming answer",
+      id: "message-live",
+      sessionId: "session-1",
+      status: "streaming",
+      thinking: "",
+      timestamp: "2026-08-03T08:00:00Z",
+    }];
+    const { rerender } = render(
+      <MessageList
+        agentId="main"
+        api={fakeApi()}
+        liveMessages={liveMessages}
+        messages={[{ content: "question", message_id: "message-live", role: "user" }]}
+      />,
+    );
+
+    expect(screen.getByText("streaming answer")).toBeVisible();
+    expect(screen.getByText("流式生成中")).toBeVisible();
+
+    rerender(
+      <MessageList
+        agentId="main"
+        api={fakeApi()}
+        liveMessages={liveMessages}
+        messages={[
+          { content: "question", message_id: "message-live", role: "user" },
+          { content: "server answer", message_id: "message-live", role: "agent" },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("server answer")).toBeVisible();
+    expect(screen.queryByText("streaming answer")).not.toBeInTheDocument();
+  });
+
   it("keeps later history visible until edit-resend is confirmed by the server", async () => {
     let accept!: () => void;
     const editResend = vi.fn(() => new Promise<{ commandId: string; status: "accepted" }>((resolve) => {

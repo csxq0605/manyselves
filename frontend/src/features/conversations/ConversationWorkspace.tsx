@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
 import type { ApiGateway } from "../../api/gateway";
+import type { RuntimeMessageView } from "../agents/event-reducer";
 import type { SelectionInput } from "../editor/selection-context";
 import { createFileApi } from "../files/file-api";
 import { MessageComposer } from "../chat/MessageComposer";
@@ -16,6 +17,7 @@ export interface ConversationWorkspaceProps {
   readonly currentEditorPath?: string | null | undefined;
   readonly currentSelection?: SelectionInput | null | undefined;
   readonly gateway: ApiGateway;
+  readonly liveMessages?: readonly RuntimeMessageView[] | undefined;
   readonly projectId: string;
 }
 
@@ -24,6 +26,7 @@ export function ConversationWorkspace({
   currentEditorPath,
   currentSelection,
   gateway,
+  liveMessages = [],
   projectId,
 }: ConversationWorkspaceProps) {
   const client = useQueryClient();
@@ -50,6 +53,9 @@ export function ConversationWorkspace({
   const activeConversation = conversations.data?.conversations.find(
     (item) => item.sessionId === activeSessionId,
   ) ?? null;
+  const activeLiveMessages = liveMessages.filter(
+    (message) => message.sessionId === null || message.sessionId === activeSessionId,
+  );
 
   function refresh(activeId?: string) {
     if (activeId) {
@@ -87,6 +93,7 @@ export function ConversationWorkspace({
         <MessageList
           agentId={agentId}
           api={api}
+          liveMessages={activeLiveMessages}
           messages={messages.data.messages}
           onHistoryChanged={() => void messages.refetch()}
         />
