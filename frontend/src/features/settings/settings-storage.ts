@@ -16,13 +16,21 @@ export interface ServerConnection {
 }
 
 export interface SettingsStorage {
+  readonly tokenScope?: "secure-device" | "session";
   loadConnection(): ServerConnection;
   loadPreferences(): ClientPreferences;
   saveConnection(value: ServerConnection): void;
   savePreferences(value: ClientPreferences): void;
 }
 
+export interface SecureTokenAdapter {
+  delete(): Promise<void>;
+  get(): Promise<string | null>;
+  set(token: string): Promise<void>;
+}
+
 export interface BrowserSettingsStorageOptions {
+  readonly defaultServerUrl?: string;
   readonly localStorage: Pick<Storage, "getItem" | "removeItem" | "setItem">;
   readonly root: HTMLElement;
   readonly sessionStorage: Pick<Storage, "getItem" | "removeItem" | "setItem">;
@@ -82,9 +90,10 @@ export function createBrowserSettingsStorage(
   options: BrowserSettingsStorageOptions,
 ): SettingsStorage {
   return {
+    tokenScope: "session",
     loadConnection() {
       return {
-        serverUrl: options.localStorage.getItem(serverUrlKey) ?? window.location.origin,
+        serverUrl: options.localStorage.getItem(serverUrlKey) ?? options.defaultServerUrl ?? window.location.origin,
         token: options.sessionStorage.getItem(tokenKey) ?? "",
       };
     },
@@ -121,5 +130,21 @@ export function createBrowserSettingsStorage(
       options.localStorage.setItem(preferenceKey, JSON.stringify({ version: 1, value }));
       applyPreferences(options.root, value);
     },
+  };
+}
+
+export function createElectronSettingsStorage(
+  base: SettingsStorage,
+  secureToken: SecureTokenAdapter,
+): SettingsStorage {
+  return {
+    tokenScope: "secure-device",
+    loadConnection: () => base.loadConnection(),
+    loadPreferences: () => base.loadPreferences(),
+    saveConnection(value) {
+      base.saveConnection(value);
+      void (value.token ? secureToken.set(value.token) : secureToken.delete());
+    },
+    savePreferences: (value) => base.savePreferences(value),
   };
 }

@@ -1,9 +1,10 @@
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useStore } from "zustand";
 
 import { useWorkspaceStore } from "../../app/store-context";
 import type { ApiGateway, BootstrapSnapshot } from "../../api/gateway";
 import type { PlatformBridge } from "../../platform/types";
+import { installDesktopShortcutActions } from "../../platform/desktop-shortcuts";
 import { createAgentStore, type AgentStore } from "../agents/agent-store";
 import { AgentSidebar } from "../agents/AgentSidebar";
 import { createEditorFileApi } from "../editor/editor-api";
@@ -92,6 +93,8 @@ export function AppShell({
     (store) => store.tabs.some((tab) => tab.dirty),
   );
 
+  useEffect(() => platform?.kind === "electron" ? installDesktopShortcutActions() : undefined, [platform]);
+
   const bootstrapProjectId = bootstrap?.project.id ?? "";
   const conversationProjectId = projectOverride?.sourceProjectId === bootstrapProjectId
     ? projectOverride.targetProjectId
@@ -119,7 +122,7 @@ export function AppShell({
           >报告中心</button>
           <button
             aria-pressed={activeWorkspace === "settings"}
-            disabled={!bootstrap || !settingsApi}
+            disabled={!settingsApi}
             onClick={() => setActiveWorkspace("settings")}
             type="button"
           >设置</button>

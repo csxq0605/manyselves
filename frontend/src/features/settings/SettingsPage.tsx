@@ -111,6 +111,15 @@ export function SettingsPage({ api, onReconnect, storage }: SettingsPageProps) {
       <section className="settings-workspace settings-workspace--error">
         <h1>设置无法加载</h1>
         <p role="alert">{error}</p>
+        <p>仍可更新服务器地址和访问令牌，然后重新连接。</p>
+        <ServerConnectionForm
+          initialValue={connection}
+          tokenScope={storage.tokenScope ?? "session"}
+          onSave={(value) => {
+            storage.saveConnection(value);
+            onReconnect?.();
+          }}
+        />
       </section>
     );
   }
@@ -236,6 +245,7 @@ export function SettingsPage({ api, onReconnect, storage }: SettingsPageProps) {
         />
         <ServerConnectionForm
           initialValue={connection}
+          tokenScope={storage.tokenScope ?? "session"}
           onSave={(value) => {
             storage.saveConnection(value);
             setNotice("连接信息已保存，正在重新连接");

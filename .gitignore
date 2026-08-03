@@ -3,6 +3,9 @@ __pycache__/
 .venv/
 *.egg-info/
 dist/
+node_modules/
+release/
+test-results/
 .uv-cache
 .build-tmp/
 .worktrees/

@@ -9,23 +9,33 @@ import { createAppRouter } from "./app/router";
 import { createApiGateway } from "./api/gateway";
 import {
   createBrowserSettingsStorage,
+  createElectronSettingsStorage,
   resolveServerUrl,
 } from "./features/settings/settings-storage";
 import {
   BrowserPlatformBridge,
   createDomBrowserPlatformDriver,
 } from "./platform/browser-platform";
+import { ElectronPlatformBridge } from "./platform/electron-platform";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
   throw new Error("Manyselves root element is missing");
 }
 
-const settingsStorage = createBrowserSettingsStorage({
+if (window.manyselvesDesktop) {
+  const token = await window.manyselvesDesktop.secureToken.get();
+  if (token) window.sessionStorage.setItem("manyselves.deploymentToken", token);
+}
+const browserSettingsStorage = createBrowserSettingsStorage({
+  ...(window.manyselvesDesktop ? { defaultServerUrl: "http://127.0.0.1:8000" } : {}),
   localStorage: window.localStorage,
   root: document.documentElement,
   sessionStorage: window.sessionStorage,
 });
+const settingsStorage = window.manyselvesDesktop
+  ? createElectronSettingsStorage(browserSettingsStorage, window.manyselvesDesktop.secureToken)
+  : browserSettingsStorage;
 const savedConnection = settingsStorage.loadConnection();
 settingsStorage.loadPreferences();
 const baseUrl = resolveServerUrl({
@@ -43,7 +53,9 @@ const gateway = createApiGateway({
   getLeaseToken,
   getToken,
 });
-const platform = new BrowserPlatformBridge(createDomBrowserPlatformDriver());
+const platform = window.manyselvesDesktop
+  ? new ElectronPlatformBridge(window.manyselvesDesktop)
+  : new BrowserPlatformBridge(createDomBrowserPlatformDriver());
 const router = createAppRouter(
   <App
     eventSource={{ baseUrl, fetch: fetchImplementation, getToken }}

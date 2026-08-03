@@ -21,7 +21,7 @@ it("never hydrates a saved deployment token into the DOM and can clear it explic
     serverUrl: "https://agents.example",
     token: "deployment-secret",
   });
-  await user.click(screen.getByRole("button", { name: "清除会话令牌" }));
+  await user.click(screen.getByRole("button", { name: "清除访问令牌" }));
   expect(onSave).toHaveBeenLastCalledWith({
     serverUrl: "https://agents.example",
     token: "",
