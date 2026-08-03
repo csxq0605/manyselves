@@ -14,9 +14,10 @@ from ...application.project_registry import (
 )
 from ..errors import ApiError
 from ..schemas.projects import ProjectListResponse, ProjectRequest, ProjectResponse
-from ..security import require_control_lease_header, require_deployment_access
+from ..security import require_authenticated_session, require_control_lease_header
+from ..session_auth import SessionPrincipal
 
-router = APIRouter(prefix="/projects")
+router = APIRouter(prefix="/projects", dependencies=[Depends(require_authenticated_session)])
 
 
 def _response(record: ProjectRecord) -> ProjectResponse:
@@ -74,7 +75,7 @@ async def list_projects(request: Request) -> ProjectListResponse:
 async def create_project(
     body: ProjectRequest,
     request: Request,
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ) -> ProjectResponse:
     facade = request.app.state.runtime_facade
@@ -91,7 +92,7 @@ async def rename_project(
     project_id: str,
     body: ProjectRequest,
     request: Request,
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ) -> ProjectResponse:
     facade = request.app.state.runtime_facade
@@ -107,7 +108,7 @@ async def rename_project(
 async def delete_project(
     project_id: str,
     request: Request,
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ) -> Response:
     facade = request.app.state.runtime_facade
@@ -124,7 +125,7 @@ async def delete_project(
 async def activate_project(
     project_id: str,
     request: Request,
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ) -> ProjectResponse:
     facade = request.app.state.runtime_facade

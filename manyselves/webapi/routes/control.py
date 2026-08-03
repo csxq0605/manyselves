@@ -6,9 +6,9 @@ from ...application.control import ControlLeaseHeld, ControlLeaseRequired
 from ..dependencies import get_runtime_facade
 from ..errors import ApiError
 from ..schemas.control import LeaseAcquireRequest, LeaseResponse, LeaseTokenRequest
-from ..security import require_deployment_access
+from ..security import require_authenticated_session
 
-router = APIRouter(dependencies=[Depends(require_deployment_access)])
+router = APIRouter(dependencies=[Depends(require_authenticated_session)])
 
 
 def _lease_error(error: ControlLeaseHeld | ControlLeaseRequired) -> ApiError:

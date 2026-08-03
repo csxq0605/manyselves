@@ -11,9 +11,10 @@ from ...application.errors import (
 )
 from ..errors import ApiError
 from ..schemas.maintenance import MaintenanceReleaseRequest, MaintenanceResponse
-from ..security import require_control_lease_header, require_deployment_access
+from ..security import require_authenticated_session, require_control_lease_header
+from ..session_auth import SessionPrincipal
 
-router = APIRouter(prefix="/maintenance")
+router = APIRouter(prefix="/maintenance", dependencies=[Depends(require_authenticated_session)])
 
 
 def _error(error: Exception) -> ApiError:
@@ -33,7 +34,7 @@ def _error(error: Exception) -> ApiError:
 @router.post("/quiesce", response_model=MaintenanceResponse)
 async def quiesce(
     request: Request,
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
@@ -47,7 +48,7 @@ async def quiesce(
 async def release(
     body: MaintenanceReleaseRequest,
     request: Request,
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:

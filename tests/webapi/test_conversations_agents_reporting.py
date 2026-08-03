@@ -28,6 +28,7 @@ from manyselves.interfaces.types import (
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.settings import WebSettings
+from tests.webapi.auth_helpers import login
 
 
 class _Backend:
@@ -330,15 +331,14 @@ async def resources(tmp_path: Path):
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await login(client)
             lease = await client.post(
                 "/api/v1/control/lease",
-                headers={"Authorization": "Bearer test-token"},
                 json={"clientId": "browser"},
             )
             assert lease.status_code == 201
             client.headers.update(
                 {
-                    "Authorization": "Bearer test-token",
                     "X-Control-Lease-Token": lease.json()["leaseToken"],
                 }
             )

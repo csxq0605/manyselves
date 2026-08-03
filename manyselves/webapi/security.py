@@ -1,18 +1,12 @@
-"""Deployment authentication dependencies for mutating routes."""
+"""Session and runtime-control dependencies for business routes."""
 
-import secrets
+from fastapi import Request, Security, status
+from fastapi.security import APIKeyHeader
 
-from fastapi import Depends, Security, status
-from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
-
-from .dependencies import get_web_settings
 from .errors import ApiError
-from .settings import WebSettings
+from .routes.auth import SESSION_COOKIE_NAME
+from .session_auth import SessionPrincipal
 
-deployment_bearer = HTTPBearer(
-    auto_error=False,
-    scheme_name="DeploymentBearer",
-)
 control_lease_token = APIKeyHeader(
     name="X-Control-Lease-Token",
     auto_error=False,
@@ -20,40 +14,19 @@ control_lease_token = APIKeyHeader(
 )
 
 
-def _tokens_equal(left: str, right: str) -> bool:
-    """Compare arbitrary token text in constant time without logging either value."""
-    return secrets.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
-
-
-def require_deployment_access(
-    credentials: HTTPAuthorizationCredentials | None = Security(deployment_bearer),
-    settings: WebSettings | None = Depends(get_web_settings),
-) -> None:
-    """Require the configured deployment bearer token for a mutation."""
-    if credentials is None or credentials.scheme.casefold() != "bearer":
+def require_authenticated_session(request: Request) -> SessionPrincipal:
+    """Require a valid browser session for a business API request."""
+    value = request.cookies.get(SESSION_COOKIE_NAME)
+    signer = request.app.state.session_signer
+    principal = None if signer is None else signer.verify(value or "")
+    if principal is None:
         raise ApiError(
             status_code=status.HTTP_401_UNAUTHORIZED,
             code="AUTH_REQUIRED",
-            message="Bearer access token is required",
+            message="An authenticated session is required",
             retryable=False,
         )
-
-    token = credentials.credentials
-    if not token:
-        raise ApiError(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            code="AUTH_REQUIRED",
-            message="Bearer access token is required",
-            retryable=False,
-        )
-
-    if settings is None or not _tokens_equal(settings.access_token.get_secret_value(), token):
-        raise ApiError(
-            status_code=status.HTTP_403_FORBIDDEN,
-            code="AUTH_INVALID",
-            message="Bearer access token is invalid",
-            retryable=False,
-        )
+    return principal
 
 
 def require_control_lease_header(

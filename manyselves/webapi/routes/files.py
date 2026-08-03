@@ -43,9 +43,13 @@ from ..schemas.files import (
     RenameEntryRequest,
     SaveFileRequest,
 )
-from ..security import require_control_lease_header, require_deployment_access
+from ..security import require_authenticated_session, require_control_lease_header
+from ..session_auth import SessionPrincipal
 
-router = APIRouter(prefix="/projects/{project_id}/files")
+router = APIRouter(
+    prefix="/projects/{project_id}/files",
+    dependencies=[Depends(require_authenticated_session)],
+)
 _STREAM_CHUNK_SIZE = 64 * 1024
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -209,7 +213,7 @@ async def save_file(
     body: SaveFileRequest,
     request: Request,
     path: str = Query(),
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ) -> FileContent:
     files = _file_service(request, project_id)
@@ -225,7 +229,7 @@ async def create_entry(
     project_id: str,
     body: CreateEntryRequest,
     request: Request,
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ) -> FileEntryResponse:
     files = _file_service(request, project_id)
@@ -247,7 +251,7 @@ async def rename_entry(
     project_id: str,
     body: RenameEntryRequest,
     request: Request,
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ) -> FileEntryResponse:
     files = _file_service(request, project_id)
@@ -265,7 +269,7 @@ async def delete_entry(
     project_id: str,
     request: Request,
     path: str = Query(),
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
     if_match: str = Header(alias="If-Match"),
 ) -> Response:
@@ -283,7 +287,7 @@ async def upload_file(
     project_id: str,
     request: Request,
     path: str = Query(),
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ) -> FileEntryResponse:
     files = _file_service(request, project_id)

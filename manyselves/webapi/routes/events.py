@@ -16,9 +16,10 @@ from ..events.broker import (
     EventClientClosed,
 )
 from ..events.models import EventEnvelope
-from ..security import require_deployment_access
+from ..security import require_authenticated_session
+from ..session_auth import SessionPrincipal
 
-router = APIRouter(prefix="/events")
+router = APIRouter(prefix="/events", dependencies=[Depends(require_authenticated_session)])
 SSE_HEARTBEAT_SECONDS = 15.0
 
 
@@ -140,7 +141,7 @@ class _EventStreamBody(AsyncIterator[str]):
 async def stream_events(
     request: Request,
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
 ) -> StreamingResponse:
     """Stream runtime notifications with replay or an explicit bootstrap requirement."""
     broker = getattr(request.app.state, "event_broker", None)

@@ -11,6 +11,7 @@ from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import app as exported_app
 from manyselves.webapi.main import create_app
 from manyselves.webapi.settings import WebSettings
+from tests.webapi.auth_helpers import login
 
 
 class FakeRuntimeHost:
@@ -158,6 +159,7 @@ async def test_bootstrap_returns_one_coherent_snapshot(
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await login(client)
             response = await client.get("/api/v1/bootstrap")
             stream_id = app.state.event_broker.stream_id
 
@@ -210,6 +212,7 @@ async def test_bootstrap_sanitizes_recoverable_runtime_tool_snapshot(
         )
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await login(client)
             response = await client.get("/api/v1/bootstrap")
 
     assert response.status_code == 200
@@ -257,6 +260,7 @@ async def test_bootstrap_sanitizes_tool_and_debug_identity_strings(
         )
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await login(client)
             response = await client.get("/api/v1/bootstrap")
 
     assert response.status_code == 200

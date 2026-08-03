@@ -11,6 +11,7 @@ from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.schemas.control import LeaseAcquireRequest, LeaseResponse, LeaseTokenRequest
 from manyselves.webapi.settings import WebSettings
+from tests.webapi.auth_helpers import login
 
 
 class FakeRuntimeHost:
@@ -49,13 +50,13 @@ async def async_client(tmp_path: Path):
 
 @pytest.fixture
 async def authed_client(async_client: httpx.AsyncClient):
-    """A client carrying the deployment bearer credential."""
-    async_client.headers["Authorization"] = "Bearer test-token"
+    """A client authenticated through the public browser-session endpoint."""
+    await login(async_client)
     yield async_client
 
 
 @pytest.mark.asyncio
-async def test_mutation_rejects_missing_access_token(async_client: httpx.AsyncClient) -> None:
+async def test_business_route_rejects_missing_session(async_client: httpx.AsyncClient) -> None:
     """Without authentication, any caller could become the runtime controller."""
     response = await async_client.post(
         "/api/v1/control/lease",
@@ -68,7 +69,7 @@ async def test_mutation_rejects_missing_access_token(async_client: httpx.AsyncCl
     assert response.json() == {
         "error": {
             "code": "AUTH_REQUIRED",
-            "message": "Bearer access token is required",
+            "message": "An authenticated session is required",
             "retryable": False,
             "details": {},
         },
@@ -77,16 +78,18 @@ async def test_mutation_rejects_missing_access_token(async_client: httpx.AsyncCl
 
 
 @pytest.mark.asyncio
-async def test_mutation_rejects_invalid_access_token(async_client: httpx.AsyncClient) -> None:
-    """Accepting a non-matching bearer credential would expose mutations."""
+async def test_business_route_rejects_a_bearer_header_without_a_session(
+    async_client: httpx.AsyncClient,
+) -> None:
+    """A legacy Authorization header must not establish an administrative session."""
     response = await async_client.post(
         "/api/v1/control/lease",
         headers={"Authorization": "Bearer wrong-token"},
         json={"clientId": "c-1"},
     )
 
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "AUTH_INVALID"
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "AUTH_REQUIRED"
     assert response.json()["requestId"] == response.headers["x-request-id"]
 
 

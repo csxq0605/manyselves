@@ -18,7 +18,7 @@ def _contract_settings() -> WebSettings:
     return WebSettings(
         data_root=Path("openapi-contract-data"),
         initial_project_id="openapi-contract-project",
-        access_token=SecretStr("not-a-deployment-secret"),
+        access_token=SecretStr("not-a-session-secret"),
         allowed_origins=[],
     )
 

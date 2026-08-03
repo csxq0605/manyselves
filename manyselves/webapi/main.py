@@ -5,7 +5,7 @@ import re
 from collections.abc import Callable
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -23,7 +23,7 @@ from .errors import (
 )
 from .lifespan import application_lifespan
 from .routes.agents import router as agents_router
-from .routes.auth import router as auth_router
+from .routes.auth import SESSION_COOKIE_NAME, router as auth_router
 from .routes.bootstrap import router as bootstrap_router
 from .routes.control import router as control_router
 from .routes.conversations import router as conversations_router
@@ -36,6 +36,7 @@ from .routes.projects import router as projects_router
 from .routes.reporting import router as reporting_router
 from .routes.settings import router as settings_router
 from .schemas.common import ErrorEnvelope
+from .security import require_authenticated_session
 from .settings import WebSettings
 
 API_PREFIX = "/api/v1"
@@ -131,7 +132,11 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
 
     app.include_router(health_router, prefix=API_PREFIX)
     app.include_router(auth_router, prefix=API_PREFIX)
-    app.include_router(bootstrap_router, prefix=API_PREFIX)
+    app.include_router(
+        bootstrap_router,
+        prefix=API_PREFIX,
+        dependencies=[Depends(require_authenticated_session)],
+    )
     app.include_router(control_router, prefix=API_PREFIX)
     app.include_router(projects_router, prefix=API_PREFIX)
     app.include_router(files_router, prefix=API_PREFIX)
@@ -152,7 +157,15 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
             version=app.version,
             routes=app.routes,
         )
-        for path_item in schema.get("paths", {}).values():
+        schema.setdefault("components", {}).setdefault("securitySchemes", {})[
+            "SessionCookie"
+        ] = {
+            "type": "apiKey",
+            "in": "cookie",
+            "name": SESSION_COOKIE_NAME,
+        }
+        anonymous_prefixes = (f"{API_PREFIX}/auth/", f"{API_PREFIX}/health/")
+        for path, path_item in schema.get("paths", {}).items():
             for operation in path_item.values():
                 if not isinstance(operation, dict) or "responses" not in operation:
                     continue
@@ -176,13 +189,17 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
                     for requirement in security
                     for name in requirement
                 }
-                if {"DeploymentBearer", "ControlLeaseToken"} <= schemes:
+                if path.startswith(anonymous_prefixes):
+                    continue
+                if "ControlLeaseToken" in schemes:
                     operation["security"] = [
                         {
-                            "DeploymentBearer": [],
+                            "SessionCookie": [],
                             "ControlLeaseToken": [],
                         }
                     ]
+                else:
+                    operation["security"] = [{"SessionCookie": []}]
         event_response = schema["paths"][f"{API_PREFIX}/events"]["get"]["responses"]["200"]
         event_response["content"] = {
             "text/event-stream": {

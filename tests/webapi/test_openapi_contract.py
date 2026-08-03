@@ -92,7 +92,7 @@ def test_rendered_openapi_is_deterministic_and_contains_no_settings() -> None:
     assert first == second
     assert first.endswith("\n")
     assert json.loads(first)["openapi"]
-    assert "not-a-deployment-secret" not in first
+    assert "not-a-session-secret" not in first
     assert "openapi-contract-data" not in first
     assert "openapi-contract-project" not in first
 
@@ -117,10 +117,12 @@ def test_openapi_locks_errors_security_sse_and_preview_semantics() -> None:
     assert "ErrorEnvelope" in components["schemas"]
     assert "EventEnvelope" in components["schemas"]
     assert "PreviewResponse" in components["schemas"]
-    assert components["securitySchemes"]["DeploymentBearer"] == {
-        "type": "http",
-        "scheme": "bearer",
+    assert components["securitySchemes"]["SessionCookie"] == {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "manyselves_session",
     }
+    assert "DeploymentBearer" not in components["securitySchemes"]
     assert components["securitySchemes"]["ControlLeaseToken"] == {
         "type": "apiKey",
         "in": "header",
@@ -129,8 +131,12 @@ def test_openapi_locks_errors_security_sse_and_preview_semantics() -> None:
 
     mutation = schema["paths"]["/api/v1/settings/providers/{provider_id}"]["patch"]
     assert mutation["security"] == [
-        {"DeploymentBearer": [], "ControlLeaseToken": []}
+        {"SessionCookie": [], "ControlLeaseToken": []}
     ]
+    assert schema["paths"]["/api/v1/projects"]["get"]["security"] == [
+        {"SessionCookie": []}
+    ]
+    assert "Authorization" not in json.dumps(schema)
     assert mutation["responses"]["422"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/ErrorEnvelope"
     }

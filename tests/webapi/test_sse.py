@@ -36,6 +36,7 @@ from manyselves.webapi.events.models import EventEnvelope
 from manyselves.webapi.main import create_app
 from manyselves.webapi.routes import events as event_routes
 from manyselves.webapi.settings import WebSettings
+from tests.webapi.auth_helpers import login
 
 NOW = datetime(2026, 7, 31, 10, 30, tzinfo=UTC)
 
@@ -620,7 +621,7 @@ def settings(tmp_path: Path, **updates: object) -> WebSettings:
 
 
 @pytest.mark.asyncio
-async def test_events_endpoint_requires_bearer_authentication(tmp_path: Path) -> None:
+async def test_events_endpoint_requires_session_authentication(tmp_path: Path) -> None:
     app = create_app(settings(tmp_path))
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -643,10 +644,10 @@ async def test_last_event_id_eviction_emits_one_line_resync_sse_and_headers(tmp_
             )
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await login(client)
             response = await client.get(
                 "/api/v1/events",
                 headers={
-                    "Authorization": "Bearer test-token",
                     "Last-Event-ID": f"{stream_id}:evt-1",
                 },
             )

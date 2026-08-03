@@ -16,6 +16,7 @@ from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.routes import files as file_routes
 from manyselves.webapi.settings import WebSettings
+from tests.webapi.auth_helpers import login
 
 
 class SwitchableRuntimeHost:
@@ -63,18 +64,17 @@ async def api(tmp_path: Path):
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await login(client)
             yield client, host, tmp_path
 
 
 async def acquire_controller(client: httpx.AsyncClient) -> dict[str, str]:
     response = await client.post(
         "/api/v1/control/lease",
-        headers={"Authorization": "Bearer test-token"},
         json={"clientId": "controller"},
     )
     assert response.status_code == 201
     return {
-        "Authorization": "Bearer test-token",
         "X-Control-Lease-Token": response.json()["leaseToken"],
     }
 
@@ -308,12 +308,13 @@ async def test_queued_activation_snapshots_rollback_state_only_after_lock(api) -
 
 @pytest.mark.asyncio
 async def test_every_project_and_file_mutation_requires_auth_and_lease(api) -> None:
-    """Deployment authentication alone must not authorize workspace mutations."""
+    """A session alone must not authorize workspace mutations."""
     client, _, _ = api
+    client.cookies.clear()
     no_auth = await client.post("/api/v1/projects", json={"projectId": "p2"})
+    await login(client)
     no_lease = await client.post(
         "/api/v1/projects",
-        headers={"Authorization": "Bearer test-token"},
         json={"projectId": "p2"},
     )
 

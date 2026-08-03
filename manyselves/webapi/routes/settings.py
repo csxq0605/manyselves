@@ -26,9 +26,10 @@ from ..schemas.settings import (
     SettingsResponse,
     SettingsValidationResponse,
 )
-from ..security import require_control_lease_header, require_deployment_access
+from ..security import require_authenticated_session, require_control_lease_header
+from ..session_auth import SessionPrincipal
 
-router = APIRouter(prefix="/settings")
+router = APIRouter(prefix="/settings", dependencies=[Depends(require_authenticated_session)])
 
 
 def _service(request: Request) -> SettingsService:
@@ -89,7 +90,7 @@ async def get_settings(request: Request):
 async def update_defaults(
     body: SettingsDefaultsUpdate,
     request: Request,
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     manager = request.app.state.runtime_host.config_manager
@@ -124,7 +125,7 @@ async def update_provider(
     provider_id: str,
     body: ProviderSettingsUpdate,
     request: Request,
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     manager = request.app.state.runtime_host.config_manager
@@ -173,7 +174,7 @@ async def update_provider(
 async def create_provider(
     body: ProviderSettingsCreate,
     request: Request,
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     manager = request.app.state.runtime_host.config_manager
@@ -206,7 +207,7 @@ async def create_provider(
 async def remove_provider(
     provider_id: str,
     request: Request,
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ):
     manager = request.app.state.runtime_host.config_manager
@@ -259,7 +260,7 @@ async def list_provider_presets() -> PresetListResponse:
 @router.post("/presets/sync", response_model=PresetSyncResponse)
 async def synchronize_provider_presets(
     request: Request,
-    _access: None = Depends(require_deployment_access),
+    _access: SessionPrincipal = Depends(require_authenticated_session),
     lease_token: str = Depends(require_control_lease_header),
 ) -> PresetSyncResponse:
     try:
