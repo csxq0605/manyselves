@@ -15,6 +15,9 @@ import { createOperationApi } from "../preview/operation-api";
 import { createPreviewApi } from "../preview/preview-api";
 import { PythonRunAction } from "../preview/PythonRunAction";
 import { ProjectWorkspace } from "../projects/ProjectWorkspace";
+import { createReportingApi } from "../reporting/reporting-api";
+import { createReportingStore, type ReportingStore } from "../reporting/reporting-store";
+import { ReportingWorkspace } from "../reporting/ReportingWorkspace";
 import { ConnectionBanner } from "./ConnectionBanner";
 import "./app-shell.css";
 
@@ -33,14 +36,16 @@ export interface AppShellProps {
   readonly bootstrap?: BootstrapSnapshot | undefined;
   readonly gateway?: ApiGateway;
   readonly platform?: PlatformBridge;
+  readonly reportingStore?: ReportingStore;
 }
 
-export function AppShell({ agentStore, bootstrap, gateway, platform }: AppShellProps) {
+export function AppShell({ agentStore, bootstrap, gateway, platform, reportingStore }: AppShellProps) {
   const drafts = useWorkspaceStore((store) => store.drafts);
   const setDraft = useWorkspaceStore((store) => store.setDraft);
   const activeDraftPath = useMemo(() => Object.keys(drafts)[0] ?? "scratchpad.md", [drafts]);
   const activeDraft = drafts[activeDraftPath] ?? "";
   const [openError, setOpenError] = useState<string | null>(null);
+  const [activeWorkspace, setActiveWorkspace] = useState<"project" | "reporting">("project");
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [editorSelection, setEditorSelection] = useState<SelectionInput | null>(null);
   const [projectOverride, setProjectOverride] = useState<{
@@ -50,9 +55,12 @@ export function AppShell({ agentStore, bootstrap, gateway, platform }: AppShellP
   const editorApi = useMemo(() => gateway ? createEditorFileApi(gateway) : null, [gateway]);
   const operationApi = useMemo(() => gateway ? createOperationApi(gateway) : null, [gateway]);
   const previewApi = useMemo(() => gateway ? createPreviewApi(gateway) : null, [gateway]);
+  const reportingApi = useMemo(() => gateway ? createReportingApi(gateway) : null, [gateway]);
   const [editorStore] = useState(() => createEditorStore());
   const [fallbackAgentStore] = useState(() => createAgentStore(bootstrap?.runtime, bootstrap?.streamId));
+  const [fallbackReportingStore] = useState(() => createReportingStore(bootstrap?.streamId ?? null));
   const runtimeStore = agentStore ?? fallbackAgentStore;
+  const reports = reportingStore ?? fallbackReportingStore;
   const runtimeState = useStore(runtimeStore);
   const activeEditorPath = useStore(editorStore, (store) => store.activePath);
   const hasDirtyEditorDrafts = useStore(
@@ -73,6 +81,19 @@ export function AppShell({ agentStore, bootstrap, gateway, platform }: AppShellP
           <p className="app-header__eyebrow">MULTI-AGENT OPERATIONS</p>
           <strong className="app-header__brand">Manyselves</strong>
         </div>
+        <div aria-label="工作区切换" className="app-header__workspace-switch" role="group">
+          <button
+            aria-pressed={activeWorkspace === "project"}
+            onClick={() => setActiveWorkspace("project")}
+            type="button"
+          >项目工作区</button>
+          <button
+            aria-pressed={activeWorkspace === "reporting"}
+            disabled={!bootstrap || !reportingApi || !platform}
+            onClick={() => setActiveWorkspace("reporting")}
+            type="button"
+          >报告中心</button>
+        </div>
         <ConnectionBanner />
       </header>
 
@@ -82,8 +103,8 @@ export function AppShell({ agentStore, bootstrap, gateway, platform }: AppShellP
         <span />
       </div>
 
-      <div className="workspace-grid">
-        <nav className="workspace-pane workspace-pane--files" aria-label="服务器工作区">
+      <div className={`workspace-grid ${activeWorkspace === "reporting" ? "workspace-grid--reporting" : ""}`}>
+        {activeWorkspace === "project" ? <nav className="workspace-pane workspace-pane--files" aria-label="服务器工作区">
           <p className="pane-label">服务器工作区</p>
           <h2>项目与文件</h2>
           {bootstrap && gateway && platform ? (
@@ -125,10 +146,17 @@ export function AppShell({ agentStore, bootstrap, gateway, platform }: AppShellP
               <p className="pane-muted">项目、文件树与导入操作将在此处显示。</p>
             </>
           )}
-        </nav>
+        </nav> : null}
 
-        <main className="workspace-pane workspace-pane--main" aria-label="主工作区">
-          {bootstrap && editorApi && gateway && platform && previewApi && previewPath ? (
+        <main className={`workspace-pane workspace-pane--main ${activeWorkspace === "reporting" ? "workspace-pane--reporting" : ""}`} aria-label="主工作区">
+          {activeWorkspace === "reporting" && bootstrap && reportingApi && platform ? (
+            <ReportingWorkspace
+              api={reportingApi}
+              platform={platform}
+              projectId={bootstrap.project.id}
+              store={reports}
+            />
+          ) : bootstrap && editorApi && gateway && platform && previewApi && previewPath ? (
             <Suspense fallback={<p role="status">正在加载预览器…</p>}>
               <PreviewWorkspace
                 api={previewApi}
@@ -168,26 +196,28 @@ export function AppShell({ agentStore, bootstrap, gateway, platform }: AppShellP
               </label>
             </>
           )}
-          {operationApi && activeEditorPath?.toLowerCase().endsWith(".py") && !previewPath ? (
+          {activeWorkspace === "project" && operationApi && activeEditorPath?.toLowerCase().endsWith(".py") && !previewPath ? (
             <PythonRunAction api={operationApi} path={activeEditorPath} />
           ) : null}
           {openError ? <p role="alert">{openError}</p> : null}
-          {bootstrap && gateway ? (
-            <ConversationWorkspace
-              agentId="main"
-              currentEditorPath={activeEditorPath}
-              currentSelection={activeEditorSelection}
-              gateway={gateway}
-              key={conversationProjectId || bootstrap.project.id}
-              liveMessages={Object.values(runtimeState.messages)}
-              projectId={conversationProjectId || bootstrap.project.id}
-            />
-          ) : (
-            <section className="conversation-placeholder" aria-label="对话区域">
-              <p className="pane-label">对话</p>
-              <p>连接 Runtime 后，Agent 消息和操作进度会出现在这里。</p>
-            </section>
-          )}
+          {activeWorkspace === "project" ? (
+            bootstrap && gateway ? (
+              <ConversationWorkspace
+                agentId="main"
+                currentEditorPath={activeEditorPath}
+                currentSelection={activeEditorSelection}
+                gateway={gateway}
+                key={conversationProjectId || bootstrap.project.id}
+                liveMessages={Object.values(runtimeState.messages)}
+                projectId={conversationProjectId || bootstrap.project.id}
+              />
+            ) : (
+              <section className="conversation-placeholder" aria-label="对话区域">
+                <p className="pane-label">对话</p>
+                <p>连接 Runtime 后，Agent 消息和操作进度会出现在这里。</p>
+              </section>
+            )
+          ) : null}
         </main>
 
         <aside className="workspace-pane workspace-pane--agents" aria-label="智能体与控制">

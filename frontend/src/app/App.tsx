@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { EventStream, type EventStreamOptions, type RuntimeEvent } from "../api/event-stream";
 import { ApiError, type ApiGateway } from "../api/gateway";
 import { createAgentStore } from "../features/agents/agent-store";
+import { createReportingStore, type ReportingStore } from "../features/reporting/reporting-store";
 import { AppShell } from "../features/shell/AppShell";
 import type { PlatformBridge } from "../platform/types";
 import { useConnectionStore } from "./store-context";
@@ -18,6 +19,7 @@ export interface AppProps {
   readonly eventSource?: Pick<EventStreamOptions, "baseUrl" | "fetch" | "getToken">;
   readonly gateway: ApiGateway;
   readonly platform?: PlatformBridge;
+  readonly reportingStore?: ReportingStore;
 }
 
 const knownEventPrefixes = [
@@ -29,6 +31,7 @@ const knownEventPrefixes = [
   "operation.",
   "project.",
   "queue.",
+  "report.",
   "reporting.",
   "runtime.",
   "system.",
@@ -51,6 +54,9 @@ function eventQueryKey(event: RuntimeEvent): readonly string[] | null {
   if (prefix === "conversation." || prefix === "user.") {
     return ["conversation-messages"];
   }
+  if (prefix === "report.") {
+    return ["reporting"];
+  }
   if (["checkpoint.", "debug.", "queue.", "runtime.", "system.", "task.", "tool."].includes(prefix)) {
     return ["runtime"];
   }
@@ -62,12 +68,15 @@ export function App({
   eventSource,
   gateway,
   platform,
+  reportingStore,
 }: AppProps) {
   const queryClient = useQueryClient();
   const setConnectionState = useConnectionStore((store) => store.setState);
   const streamId = useRef<string | null>(null);
   const unknownEventTypes = useRef(new Set<string>());
   const [agentStore] = useState(() => createAgentStore());
+  const [fallbackReportingStore] = useState(() => createReportingStore());
+  const reports = reportingStore ?? fallbackReportingStore;
   const resolvedEventSource = useMemo(
     () =>
       eventSource ?? {
@@ -81,6 +90,7 @@ export function App({
     queryFn: async () => {
       const snapshot = await gateway.bootstrap();
       agentStore.getState().hydrate(snapshot.runtime, snapshot.streamId);
+      reports.getState().resetStream(snapshot.streamId);
       queryClient.setQueryData(["project"], snapshot.project);
       queryClient.setQueryData(["runtime"], snapshot.runtime);
       queryClient.setQueryData(["conversations"], snapshot.conversations);
@@ -116,8 +126,13 @@ export function App({
       getToken: resolvedEventSource.getToken,
       onEvent: (event) => {
         const wasRefreshRequested = agentStore.getState().refreshRequested;
+        const wasReportingRefreshRequested = reports.getState().refreshRequested;
         agentStore.getState().applyEvent(event);
-        if (!wasRefreshRequested && agentStore.getState().refreshRequested) {
+        reports.getState().applyEvent(event);
+        if (
+          (!wasRefreshRequested && agentStore.getState().refreshRequested)
+          || (!wasReportingRefreshRequested && reports.getState().refreshRequested)
+        ) {
           setConnectionState("resyncing");
           void queryClient.invalidateQueries({
             queryKey: ["bootstrap"],
@@ -152,6 +167,7 @@ export function App({
     createEventStream,
     gateway,
     queryClient,
+    reports,
     resolvedEventSource,
     setConnectionState,
   ]);
@@ -163,6 +179,7 @@ export function App({
       gateway={gateway}
       key={bootstrap.data?.project.id ?? "waiting-for-bootstrap"}
       {...(platform ? { platform } : {})}
+      reportingStore={reports}
     />
   );
 }

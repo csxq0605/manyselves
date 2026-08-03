@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "e2e": "playwright test",
+    "e2e": "node scripts/run-e2e.mjs",
     "generate:api": "openapi-typescript ../frontend-contract/openapi.json -o src/api/generated/schema.ts",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest",

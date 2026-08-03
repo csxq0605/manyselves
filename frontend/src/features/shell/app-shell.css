@@ -65,6 +65,32 @@ select {
   letter-spacing: -0.04em;
 }
 
+.app-header__workspace-switch {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.app-header__workspace-switch button {
+  padding: 7px 11px;
+  border: 1px solid #465668;
+  border-radius: 4px;
+  background: transparent;
+  color: #aebdcb;
+  cursor: pointer;
+}
+
+.app-header__workspace-switch button[aria-pressed="true"] {
+  border-color: #75d1cb;
+  background: #193536;
+  color: #effffd;
+}
+
+.app-header__workspace-switch button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .connection-banner {
   display: inline-flex;
   align-items: center;
@@ -120,6 +146,10 @@ select {
   min-height: calc(100vh - 121px);
 }
 
+.workspace-grid--reporting {
+  grid-template-columns: minmax(680px, 3.02fr) minmax(230px, 0.98fr);
+}
+
 .workspace-pane {
   min-width: 0;
   padding: 24px;
@@ -139,6 +169,11 @@ select {
 
 .workspace-pane--main {
   background: #fff;
+}
+
+.workspace-pane--reporting {
+  padding: 0;
+  background: #0b1115;
 }
 
 .workspace-pane--agents {

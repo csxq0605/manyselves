@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 
@@ -6,6 +7,8 @@ import { App } from "../../app/App";
 import { AppProviders } from "../../app/providers";
 import type { EventStreamOptions } from "../../api/event-stream";
 import type { ApiGateway, BootstrapSnapshot } from "../../api/gateway";
+import { createReportingStore } from "../reporting/reporting-store";
+import type { PlatformBridge } from "../../platform/types";
 import { AppShell } from "./AppShell";
 
 const bootstrapSnapshot: BootstrapSnapshot = {
@@ -34,6 +37,45 @@ const bootstrapSnapshot: BootstrapSnapshot = {
 };
 
 describe("AppShell", () => {
+  it("opens the project-scoped reporting workspace from the existing shell", async () => {
+    const requestJson = vi.fn(async (path: string) => {
+      if (path === "/api/v1/reporting/runs") {
+        return { runs: [{ active: false, run_id: "run-1", status: "completed" }] };
+      }
+      if (path === "/api/v1/reporting/runs/run-1") {
+        return {
+          checkpoint: { activity: "delivery", status: "completed" }, evidence: {},
+          outputs: [{ exists: true, path: "Outputs/Reports/report.docx", sha256: "abc", size: 4 }],
+          revision: {}, run: { active: false, run_id: "run-1", status: "completed" },
+          state: { activity: "delivery", status: "completed" }, waitingInput: [],
+        };
+      }
+      throw new Error(`Unhandled ${path}`);
+    });
+    const gateway = {
+      baseUrl: "https://api.example",
+      requestJson,
+    } as unknown as ApiGateway;
+    const platform = {
+      kind: "browser", notify: vi.fn(), openDownloadedFile: vi.fn(), saveDownload: vi.fn(),
+      selectDirectory: vi.fn(), selectFiles: vi.fn(),
+    } as PlatformBridge;
+
+    render(
+      <AppProviders>
+        <AppShell
+          bootstrap={bootstrapSnapshot}
+          gateway={gateway}
+          platform={platform}
+          reportingStore={createReportingStore("boot-a")}
+        />
+      </AppProviders>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "报告中心" }));
+    expect(await screen.findByRole("heading", { name: "报告运行 run-1" })).toBeVisible();
+  });
+
   it("shows offline state without discarding local drafts", () => {
     render(
       <AppProviders
@@ -135,5 +177,56 @@ describe("AppShell", () => {
     });
 
     await waitFor(() => expect(bootstrap).toHaveBeenCalledTimes(2));
+  });
+
+  it("projects reporting SSE events into the hydrated reporting snapshot", async () => {
+    const bootstrap = vi.fn().mockResolvedValue(bootstrapSnapshot);
+    const gateway = {
+      baseUrl: "https://api.example",
+      bootstrap,
+    } as unknown as ApiGateway;
+    const reportingStore = createReportingStore("boot-a");
+    reportingStore.getState().hydrateSnapshot("run-1", {
+      checkpoint: { activity: "dispatch", specialist_modules: [], status: "in_progress" },
+      evidence: {}, outputs: [], revision: {},
+      run: { active: true, run_id: "run-1", status: "running" },
+      state: { activity: "dispatch", specialist_modules: [], status: "in_progress" },
+      waitingInput: [],
+    });
+    let eventStreamOptions: EventStreamOptions | undefined;
+
+    render(
+      <AppProviders>
+        <App
+          gateway={gateway}
+          reportingStore={reportingStore}
+          createEventStream={(options) => {
+            eventStreamOptions = options;
+            return { start: async () => undefined, stop: () => undefined };
+          }}
+        />
+      </AppProviders>,
+    );
+
+    expect(await screen.findByText("project-1")).toBeVisible();
+    eventStreamOptions?.onEvent({
+      eventId: "boot-a:evt-7",
+      payload: {
+        result_path: "Work/runs/run-1/results/module-2.4.json",
+        run_id: "run-1",
+        sender: "module-2.4-specialist",
+        status: "completed",
+        task_id: "module-2.4",
+      },
+      schemaVersion: 1,
+      sequence: 7,
+      streamId: "boot-a",
+      timestamp: "2026-08-03T08:00:07Z",
+      type: "reporting.agent_result.changed",
+    });
+
+    await waitFor(() => expect(
+      reportingStore.getState().snapshots["run-1"]?.agents["module-2.4-specialist"]?.status,
+    ).toBe("completed"));
   });
 });
