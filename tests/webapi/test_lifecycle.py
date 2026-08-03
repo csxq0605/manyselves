@@ -77,6 +77,16 @@ async def test_lifespan_starts_and_stops_one_runtime(
 
 
 @pytest.mark.asyncio
+async def test_live_does_not_claim_runtime_readiness(web_settings: WebSettings) -> None:
+    app = create_app(web_settings)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/api/v1/health/live")
+    assert response.status_code == 200
+    assert response.json() == {"status": "live"}
+
+
 async def test_ready_is_503_until_runtime_is_ready(web_settings: WebSettings) -> None:
     """Reporting readiness before lifespan startup would route work to no runtime."""
     app = create_app(web_settings)

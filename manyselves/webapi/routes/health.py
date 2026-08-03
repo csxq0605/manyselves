@@ -8,6 +8,12 @@ from ..schemas.common import ErrorEnvelope
 router = APIRouter()
 
 
+@router.get("/health/live", status_code=status.HTTP_200_OK)
+async def liveness() -> dict[str, str]:
+    """Report that the API process is alive without claiming runtime readiness."""
+    return {"status": "live"}
+
+
 @router.get(
     "/health/ready",
     status_code=status.HTTP_200_OK,

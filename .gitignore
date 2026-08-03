@@ -6,6 +6,7 @@ dist/
 node_modules/
 release/
 test-results/
+/deploy/data/
 .uv-cache
 .build-tmp/
 .worktrees/

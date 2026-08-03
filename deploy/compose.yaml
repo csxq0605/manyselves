@@ -1,0 +1,52 @@
+name: manyselves-phase1
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/api/Dockerfile
+    image: ${MANYSELVES_API_IMAGE:-manyselves-api:phase1}
+    environment:
+      ACCESS_TOKEN: ${MANYSELVES_ACCESS_TOKEN:?set MANYSELVES_ACCESS_TOKEN}
+      ALLOWED_ORIGINS: ${MANYSELVES_ALLOWED_ORIGINS:-["http://localhost:8080"]}
+      ANTHROPIC_API_KEY: ${MANYSELVES_ANTHROPIC_API_KEY:-}
+      CONFIG_PATH: /data/manyselves/manyselves.config.yaml
+      DATA_ROOT: /data/manyselves
+      DEEPSEEK_API_KEY: ${MANYSELVES_DEEPSEEK_API_KEY:-}
+      INITIAL_PROJECT_ID: ${MANYSELVES_INITIAL_PROJECT_ID:-default}
+      MANYSELVES_BOOTSTRAP_PROVIDER: ${MANYSELVES_BOOTSTRAP_PROVIDER:-openai}
+      OPENAI_API_KEY: ${MANYSELVES_OPENAI_API_KEY:-}
+      OPENROUTER_API_KEY: ${MANYSELVES_OPENROUTER_API_KEY:-}
+    volumes:
+      - ${MANYSELVES_DATA_DIR:?set MANYSELVES_DATA_DIR}:/data/manyselves
+    expose: ["8000"]
+    deploy:
+      replicas: 1
+    healthcheck:
+      test: ["CMD", "python", "/app/deploy/api/healthcheck.py"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=256m"]
+    restart: unless-stopped
+    stop_grace_period: 60s
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web/Dockerfile
+    image: ${MANYSELVES_WEB_IMAGE:-manyselves-web:phase1}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - ${MANYSELVES_HTTP_BIND:-127.0.0.1}:${MANYSELVES_HTTP_PORT:-8080}:8080
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+      - /var/cache/nginx:rw,noexec,nosuid,size=32m
+      - /var/run:rw,noexec,nosuid,size=4m
+    restart: unless-stopped
+    stop_grace_period: 30s

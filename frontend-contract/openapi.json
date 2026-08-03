@@ -3917,6 +3917,49 @@
         "summary": "Stream Events"
       }
     },
+    "/api/v1/health/live": {
+      "get": {
+        "description": "Report that the API process is alive without claiming runtime readiness.",
+        "operationId": "get_api_v1_health_live",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Get Api V1 Health Live",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "summary": "Liveness"
+      }
+    },
     "/api/v1/health/ready": {
       "get": {
         "description": "Report whether the lifespan-owned runtime can accept work.",
