@@ -1,11 +1,9 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { RouterProvider } from "react-router-dom";
 
 import { App } from "./app/App";
 import { getOrCreateBrowserClientId } from "./app/client-config";
 import { AppProviders } from "./app/providers";
-import { createAppRouter } from "./app/router";
 import { createApiGateway } from "./api/gateway";
 import {
   createBrowserSettingsStorage,
@@ -56,19 +54,15 @@ const gateway = createApiGateway({
 const platform = window.manyselvesDesktop
   ? new ElectronPlatformBridge(window.manyselvesDesktop)
   : new BrowserPlatformBridge(createDomBrowserPlatformDriver());
-const router = createAppRouter(
-  <App
-    eventSource={{ baseUrl, fetch: fetchImplementation, getToken }}
-    gateway={gateway}
-    platform={platform}
-    settingsStorage={settingsStorage}
-  />,
-);
-
 createRoot(rootElement).render(
   <StrictMode>
     <AppProviders>
-      <RouterProvider router={router} />
+      <App
+        eventSource={{ baseUrl, fetch: fetchImplementation, getToken }}
+        gateway={gateway}
+        platform={platform}
+        settingsStorage={settingsStorage}
+      />
     </AppProviders>
   </StrictMode>,
 );

@@ -19,7 +19,7 @@ function rendererUrl(): string {
 }
 
 function requireTrustedSender(url: string): void {
-  if (!isTrustedRendererUrl(url, process.env.MANYSELVES_DESKTOP_DEV_URL)) {
+  if (!isTrustedRendererUrl(url, rendererUrl())) {
     throw new Error("UNTRUSTED_IPC_SENDER");
   }
 }

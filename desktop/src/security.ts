@@ -19,10 +19,17 @@ export function createWindowOptions(preloadPath = fileURLToPath(new URL("./prelo
   };
 }
 
-export function isTrustedRendererUrl(url: string, developmentUrl?: string): boolean {
+export function isTrustedRendererUrl(url: string, trustedUrl?: string): boolean {
+  if (!trustedUrl) return false;
   const parsed = new URL(url);
-  if (developmentUrl && parsed.origin === new URL(developmentUrl).origin) return true;
-  return parsed.protocol === "file:" && parsed.pathname.endsWith("/index.html");
+  const trusted = new URL(trustedUrl);
+  if (trusted.protocol === "http:" || trusted.protocol === "https:") {
+    return parsed.origin === trusted.origin;
+  }
+  return trusted.protocol === "file:"
+    && parsed.protocol === "file:"
+    && parsed.host === trusted.host
+    && parsed.pathname === trusted.pathname;
 }
 
 export function hardenNavigation(contents: WebContents, trustedUrl: () => string): void {

@@ -1,0 +1,12 @@
+# Exact historical false positives: deterministic idempotency keys and
+# deliberately fake secret-like values used to test redaction behavior.
+6325e6b815a45867fc6fdf7649ea566ca65a166a:frontend/src/features/reporting/reporting-api.test.ts:generic-api-key:28
+6325e6b815a45867fc6fdf7649ea566ca65a166a:frontend/src/features/reporting/reporting-api.test.ts:generic-api-key:34
+6325e6b815a45867fc6fdf7649ea566ca65a166a:frontend/src/features/reporting/reporting-api.test.ts:generic-api-key:40
+6325e6b815a45867fc6fdf7649ea566ca65a166a:frontend/src/features/reporting/reporting-api.test.ts:generic-api-key:46
+82aa44265dedb45b0d9896bf8e6131f66a4aebcf:tests/webapi/test_lifecycle.py:generic-api-key:148
+67082946ecfd27db783ae71799180b3ab793fb65:tests/webapi/test_event_mapper.py:generic-api-key:349
+67082946ecfd27db783ae71799180b3ab793fb65:tests/webapi/test_event_mapper.py:generic-api-key:349
+67082946ecfd27db783ae71799180b3ab793fb65:tests/webapi/test_event_mapper.py:generic-api-key:349
+9bfa9180832ab30f04d32b22b2e86fe33528dfd6:tests/webapi/test_conversations_agents_reporting.py:generic-api-key:333
+9972cd8ab9119ba7a911bd89723ab1ec5590a3f5:docs/superpowers/plans/2026-07-31-manyselves-phase1-02-fastapi-sse.md:generic-api-key:301
