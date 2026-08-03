@@ -256,7 +256,7 @@ Then back up, stop services, restore into a new empty data directory, start serv
 Run:
 
 ```powershell
-uv run python scripts/verify_deployment.py --url https://pilot.example.internal --token-env MANYSLEVES_ACCESS_TOKEN
+uv run python scripts/verify_deployment.py --url https://pilot.example.internal --token-env MANYSELVES_ACCESS_TOKEN
 uv run python scripts/verify_phase1_matrix.py docs/phase1/feature-parity.csv --allow-status tested
 ```
 

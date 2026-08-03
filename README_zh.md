@@ -82,6 +82,22 @@ export DEEPSEEK_API_KEY="sk-..."
 uv run manyselves
 ```
 
+## 浏览器、Electron 与服务器部署
+
+第一阶段同时保留 PyQt 桌面入口，并提供 React 浏览器客户端、Electron
+客户端和单 Runtime FastAPI 服务。Linux 服务器安装、启动、备份恢复、升级与回滚请见
+[Compose 部署手册](docs/deployment/linux-compose.md)；明确的能力边界请见
+[第一阶段已知限制](docs/phase1/known-limitations.md)。
+
+```bash
+cp deploy/env.example deploy/.env
+# 设置长随机访问令牌、Provider Key、准确的浏览器 Origin 和绝对数据目录。
+docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build --wait
+uv run python scripts/verify_deployment.py \
+  --url https://manyselves.example.internal \
+  --token-env MANYSELVES_ACCESS_TOKEN
+```
+
 ## 配置与本地状态
 
 规范配置文件固定为仓库根目录的 `manyselves.config.yaml`，从任何目录启动

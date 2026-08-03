@@ -31,6 +31,47 @@ curl --fail http://127.0.0.1:8080/api/v1/health/ready
 
 The API is deliberately fixed to one Gunicorn worker and Compose replica. Increasing either creates multiple process-local runtimes and is unsupported.
 
+## Cloud firewall and HTTPS
+
+For an Internet-connected VM, allow inbound SSH only from the administrator network and HTTPS 443 from the enterprise network. Do not open 8000 or 8080 in the cloud security group. Keep `MANYSELVES_HTTP_BIND=127.0.0.1` and place the organization's Caddy, Nginx, ingress, or load balancer in front of it.
+
+A minimal external Nginx location is:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+}
+```
+
+Use the organization's normal certificate mechanism. Set `MANYSELVES_ALLOWED_ORIGINS` to the exact public origin, for example `["https://manyselves.example.internal"]`; do not use `*`.
+
+## User access modes
+
+1. **Browser (recommended):** users open the HTTPS URL. In “服务器连接”, enter that same URL and the deployment token. Browser token state is session-scoped, so a new browser profile may need the token again.
+2. **Electron (optional):** install the packaged client, enter the HTTPS server URL and deployment token. The token is stored with Electron `safeStorage` on that device; project files remain on the server.
+3. **PyQt fallback:** run `uv run manyselves` on an operator workstation for legacy/local workflows. It is not the server process and should not point multiple desktop processes at one live server data directory.
+
+All connected users can observe state. Exactly one client holds the mutation lease at a time. Normal UI actions acquire/renew it; after an abnormal client loss, wait for the configured lease TTL (default 30 seconds) before another client takes control.
+
+## Multiple enterprise scenarios
+
+One stack supports one active scenario at a time. For concurrent scenarios, use a unique Compose project name, HTTPS hostname/route, loopback port, deployment token, and data directory for every stack:
+
+```bash
+docker compose -p manyselves-energy \
+  -f deploy/compose.yaml --env-file deploy/energy.env up -d --wait
+docker compose -p manyselves-audit \
+  -f deploy/compose.yaml --env-file deploy/audit.env up -d --wait
+```
+
+For example, `energy.env` can use port 8081 and `/srv/manyselves/energy/data`, while `audit.env` uses port 8082 and `/srv/manyselves/audit/data`. Never attach two API containers or two stacks to the same data directory.
+
 ## TLS, logs, and routine operation
 
 Proxy HTTPS to `127.0.0.1:8080`, preserve `Authorization`, `X-Control-Lease-Token`, `Last-Event-ID`, and `X-Request-ID`, and disable buffering for `/api/v1/events`. Set `MANYSELVES_ALLOWED_ORIGINS` to the exact browser origin. Nginx inside the stack already disables SSE buffering and serves hashed assets immutably while keeping `index.html` uncached.
@@ -38,7 +79,23 @@ Proxy HTTPS to `127.0.0.1:8080`, preserve `Authorization`, `X-Control-Lease-Toke
 ```bash
 docker compose -f deploy/compose.yaml --env-file deploy/.env ps
 docker compose -f deploy/compose.yaml --env-file deploy/.env logs -f --tail 200 api web
+docker compose -f deploy/compose.yaml --env-file deploy/.env restart
+docker compose -f deploy/compose.yaml --env-file deploy/.env stop
+docker compose -f deploy/compose.yaml --env-file deploy/.env start
 ```
+
+After installation, restart, restore, or upgrade, run the public verifier:
+
+```bash
+set -a
+. deploy/.env
+set +a
+uv run python scripts/verify_deployment.py \
+  --url https://manyselves.example.internal \
+  --token-env MANYSELVES_ACCESS_TOKEN
+```
+
+The verifier creates one temporary server file, reads/downloads it, verifies SSE, removes the file, and releases its control lease.
 
 ## Backup and restore
 

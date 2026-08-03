@@ -89,6 +89,23 @@ export DEEPSEEK_API_KEY="sk-..."
 uv run manyselves
 ```
 
+## Browser, Electron, and server deployment
+
+Phase 1 supports the existing PyQt desktop, a React browser client, and a secure
+Electron client against one FastAPI Runtime. For Linux server installation,
+daily operation, backup/restore, and upgrade/rollback, follow
+[the Compose deployment guide](docs/deployment/linux-compose.md). The concise
+release limitations are in [Phase 1 known limitations](docs/phase1/known-limitations.md).
+
+```bash
+cp deploy/env.example deploy/.env
+# Set a long access token, provider key, exact browser origin, and absolute data directory.
+docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build --wait
+uv run python scripts/verify_deployment.py \
+  --url https://manyselves.example.internal \
+  --token-env MANYSELVES_ACCESS_TOKEN
+```
+
 ## Configuration and local state
 
 The canonical application configuration is the repository-root

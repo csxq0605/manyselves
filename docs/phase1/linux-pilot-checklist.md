@@ -33,8 +33,8 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
   aquasec/trivy:latest image --severity HIGH,CRITICAL --ignore-unfixed \
   --exit-code 1 manyselves-api:phase1
 
-export MANYSLEVES_ACCESS_TOKEN='your-deployment-token'
+export MANYSELVES_ACCESS_TOKEN='your-deployment-token'
 uv run python scripts/verify_deployment.py \
   --url https://manyselves.example.internal \
-  --token-env MANYSLEVES_ACCESS_TOKEN
+  --token-env MANYSELVES_ACCESS_TOKEN
 ```
