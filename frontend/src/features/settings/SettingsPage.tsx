@@ -108,7 +108,7 @@ export function SettingsPage({ api, storage }: SettingsPageProps) {
       <section className="settings-workspace settings-workspace--error">
         <h1>设置无法加载</h1>
         <p role="alert">{error}</p>
-        <p>仍可更新服务器地址和访问令牌，然后重新连接。</p>
+        <p>请检查服务状态后重试，或重新登录。</p>
       </section>
     );
   }

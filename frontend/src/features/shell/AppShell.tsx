@@ -49,6 +49,7 @@ export interface AppShellProps {
   readonly platform?: PlatformBridge;
   readonly reportingStore?: ReportingStore;
   readonly settingsStorage?: SettingsStorage;
+  readonly onLogout?: () => void;
 }
 
 export function AppShell({
@@ -58,6 +59,7 @@ export function AppShell({
   platform,
   reportingStore,
   settingsStorage,
+  onLogout,
 }: AppShellProps) {
   const drafts = useWorkspaceStore((store) => store.drafts);
   const setDraft = useWorkspaceStore((store) => store.setDraft);
@@ -127,6 +129,7 @@ export function AppShell({
           >设置</button>
         </div>
         <ConnectionBanner />
+        {onLogout ? <button onClick={onLogout} type="button">退出登录</button> : null}
       </header>
 
       <div className="route-rail" aria-hidden="true">

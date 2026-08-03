@@ -1,4 +1,4 @@
-:root { color: #202124; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.login-page { color: #202124; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 
 .login-page { align-items: center; background: #f6f7f8; display: flex; justify-content: center; min-height: 100vh; padding: 24px; }
 .login-card { background: #fff; border: 1px solid #e1e3e6; border-radius: 8px; box-shadow: 0 1px 2px rgb(32 33 36 / 6%); box-sizing: border-box; padding: 32px; width: min(100%, 384px); }
@@ -16,4 +16,4 @@
 .login-card button:disabled { cursor: wait; opacity: .65; }
 .login-error { color: #b42318; font-size: 13px; margin: 8px 0 0; }
 @media (max-width: 480px) { .login-page { align-items: start; padding: 16px; } .login-card { margin-top: max(8vh, 24px); padding: 24px; } }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
+@media (prefers-reduced-motion: reduce) { .login-page, .login-page *, .login-page *::before, .login-page *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; } }

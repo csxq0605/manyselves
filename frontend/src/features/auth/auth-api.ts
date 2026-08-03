@@ -15,13 +15,17 @@ export interface CreateAuthApiOptions {
   readonly fetch: typeof fetch;
 }
 
+export class AuthRequestError extends Error {
+  constructor(readonly status: number) { super("Authentication request failed"); }
+}
+
 function endpoint(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}${path}`;
 }
 
 async function requireSuccess(response: Response): Promise<void> {
   if (!response.ok) {
-    throw new Error("Authentication request failed");
+    throw new AuthRequestError(response.status);
   }
 }
 

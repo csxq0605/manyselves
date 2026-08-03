@@ -10,7 +10,7 @@ import { buildPreloadApi } from "./preload.js";
 describe("preload bridge", () => {
   it("exposes only approved bridge methods", () => {
     expect(Object.keys(buildPreloadApi(vi.fn())).sort()).toEqual([
-      "notify", "openDownloadedFile", "saveDownload", "secureToken", "selectDirectory", "selectFiles",
+      "notify", "openDownloadedFile", "saveDownload", "selectDirectory", "selectFiles",
     ]);
   });
 });

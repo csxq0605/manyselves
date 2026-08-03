@@ -3,6 +3,7 @@ import { createContext, useContext } from "react";
 import type { SessionResponse } from "./auth-api";
 
 export interface AuthenticatedSession {
+  readonly logout: () => Promise<void>;
   readonly returnToLogin: () => void;
   readonly session: SessionResponse;
 }

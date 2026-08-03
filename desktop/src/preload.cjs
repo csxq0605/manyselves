@@ -7,9 +7,6 @@ const channels = Object.freeze({
   selectDirectory: "manyselves:select-directory",
   selectFiles: "manyselves:select-files",
   shortcut: "manyselves:shortcut",
-  tokenDelete: "manyselves:token-delete",
-  tokenGet: "manyselves:token-get",
-  tokenSet: "manyselves:token-set",
 });
 const api = Object.freeze({
   notify: (input) => ipcRenderer.invoke(channels.notify, input),
@@ -17,11 +14,6 @@ const api = Object.freeze({
   saveDownload: (input) => ipcRenderer.invoke(channels.saveDownload, input),
   selectDirectory: () => ipcRenderer.invoke(channels.selectDirectory),
   selectFiles: () => ipcRenderer.invoke(channels.selectFiles),
-  secureToken: Object.freeze({
-    delete: () => ipcRenderer.invoke(channels.tokenDelete),
-    get: () => ipcRenderer.invoke(channels.tokenGet),
-    set: (token) => ipcRenderer.invoke(channels.tokenSet, token),
-  }),
 });
 contextBridge.exposeInMainWorld("manyselvesDesktop", api);
 ipcRenderer.on(channels.shortcut, (_event, action) => {

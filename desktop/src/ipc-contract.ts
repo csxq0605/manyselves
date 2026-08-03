@@ -7,9 +7,6 @@ export const channels = {
   selectDirectory: "manyselves:select-directory",
   selectFiles: "manyselves:select-files",
   shortcut: "manyselves:shortcut",
-  tokenDelete: "manyselves:token-delete",
-  tokenGet: "manyselves:token-get",
-  tokenSet: "manyselves:token-set",
 } as const;
 
 export const notificationSchema = z.object({
@@ -21,7 +18,6 @@ export const saveDownloadSchema = z.object({
   bytes: z.instanceof(Uint8Array),
   suggestedName: z.string().min(1).max(255),
 }).strict();
-export const tokenSchema = z.string().min(1).max(16_384);
 
 export interface NativeFileRef {
   readonly bytes: Uint8Array;
@@ -43,9 +39,4 @@ export interface DesktopPreloadApi {
   saveDownload(input: z.infer<typeof saveDownloadSchema>): Promise<string | null>;
   selectDirectory(): Promise<NativeDirectoryRef | null>;
   selectFiles(): Promise<readonly NativeFileRef[]>;
-  secureToken: {
-    delete(): Promise<void>;
-    get(): Promise<string | null>;
-    set(token: string): Promise<void>;
-  };
 }

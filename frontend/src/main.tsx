@@ -1,10 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { AuthenticatedApp } from "./app/AuthenticatedApp";
 import { getOrCreateBrowserClientId } from "./app/client-config";
 import { AppProviders } from "./app/providers";
-import { createApiGateway } from "./api/gateway";
 import { AuthGate } from "./features/auth/AuthGate";
 import { createAuthApi } from "./features/auth/auth-api";
 import {
@@ -37,12 +37,12 @@ const baseUrl = resolveServerUrl({
 });
 const fetchImplementation = window.fetch.bind(window);
 const getLeaseToken = () => window.sessionStorage.getItem("manyselves.controlLeaseToken");
-const gateway = createApiGateway({
+const gatewayOptions = {
   baseUrl,
   clientId: getOrCreateBrowserClientId(window.localStorage),
   fetch: fetchImplementation,
   getLeaseToken,
-});
+};
 const authApi = createAuthApi({ baseUrl, fetch: fetchImplementation });
 const platform = window.manyselvesDesktop
   ? new ElectronPlatformBridge(window.manyselvesDesktop)
@@ -50,7 +50,7 @@ const platform = window.manyselvesDesktop
 createRoot(rootElement).render(
   <StrictMode>
     <AppProviders>
-      <AuthGate api={authApi}><AuthenticatedApp eventSource={{ baseUrl, fetch: fetchImplementation }} gateway={gateway} platform={platform} settingsStorage={settingsStorage} /></AuthGate>
+      <BrowserRouter><AuthGate api={authApi}><Routes><Route path="/app/*" element={<AuthenticatedApp eventSource={{ baseUrl, fetch: fetchImplementation }} gatewayOptions={gatewayOptions} platform={platform} settingsStorage={settingsStorage} />} /><Route path="*" element={<Navigate replace to="/app" />} /></Routes></AuthGate></BrowserRouter>
     </AppProviders>
   </StrictMode>,
 );

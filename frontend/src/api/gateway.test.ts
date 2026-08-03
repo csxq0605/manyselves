@@ -204,4 +204,18 @@ describe("ApiGateway", () => {
 
     await expect(gateway.requestVoid("/entry", { method: "DELETE" })).resolves.toBeUndefined();
   });
+
+  it("notifies the authentication boundary for every REST 401", async () => {
+    const onUnauthorized = vi.fn();
+    const gateway = createApiGateway({
+      baseUrl: "https://server/",
+      clientId: "browser-client",
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 })),
+      getLeaseToken: () => null,
+      onUnauthorized,
+    });
+
+    await expect(gateway.requestJson("/api/v1/projects")).rejects.toMatchObject({ status: 401 });
+    expect(onUnauthorized).toHaveBeenCalledOnce();
+  });
 });

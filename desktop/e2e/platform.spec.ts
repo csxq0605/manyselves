@@ -9,6 +9,10 @@ async function launch(): Promise<{ app: ElectronApplication; page: Page }> {
   const page = await app.firstWindow();
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path === "/api/v1/auth/session") return route.fulfill({
+      body: JSON.stringify({ authenticated: true, expiresAt: "2026-08-04T00:00:00Z", username: "admin" }),
+      contentType: "application/json",
+    });
     if (path === "/api/v1/bootstrap") return route.fulfill({
       body: JSON.stringify({
         agents: { main: "Main Agent" }, conversations: [], maintenance: {}, project: { id: "project-1" },
@@ -33,7 +37,7 @@ test("loads React through the allowlisted preload without renderer Node access",
     await expect(page.getByText("Manyselves")).toBeVisible();
     expect(await page.evaluate(() => typeof process)).toBe("undefined");
     expect(await page.evaluate(() => Object.keys(window.manyselvesDesktop ?? {}).sort())).toEqual([
-      "notify", "openDownloadedFile", "saveDownload", "secureToken", "selectDirectory", "selectFiles",
+      "notify", "openDownloadedFile", "saveDownload", "selectDirectory", "selectFiles",
     ]);
     const preferences = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.webContents.getLastWebPreferences());
     expect(preferences).toMatchObject({ contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true });

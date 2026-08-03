@@ -20,6 +20,7 @@ export interface AppProps {
   readonly eventSource?: Pick<EventStreamOptions, "baseUrl" | "fetch">;
   readonly gateway: ApiGateway;
   readonly onUnauthorized?: () => void;
+  readonly onLogout?: () => void;
   readonly platform?: PlatformBridge;
   readonly reportingStore?: ReportingStore;
   readonly settingsStorage?: SettingsStorage;
@@ -71,6 +72,7 @@ export function App({
   eventSource,
   gateway,
   onUnauthorized,
+  onLogout,
   platform,
   reportingStore,
   settingsStorage,
@@ -190,6 +192,7 @@ export function App({
       key={bootstrap.data?.project.id ?? "waiting-for-bootstrap"}
       {...(platform ? { platform } : {})}
       reportingStore={reports}
+      {...(onLogout ? { onLogout } : {})}
       {...(settingsStorage ? { settingsStorage } : {})}
     />
   );

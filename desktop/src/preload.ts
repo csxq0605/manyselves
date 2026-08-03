@@ -9,11 +9,6 @@ export function buildPreloadApi(invoke = ipcRenderer.invoke.bind(ipcRenderer)): 
     saveDownload: (input: Parameters<DesktopPreloadApi["saveDownload"]>[0]) => invoke(channels.saveDownload, input),
     selectDirectory: () => invoke(channels.selectDirectory),
     selectFiles: () => invoke(channels.selectFiles),
-    secureToken: Object.freeze({
-      delete: () => invoke(channels.tokenDelete),
-      get: () => invoke(channels.tokenGet),
-      set: (token: string) => invoke(channels.tokenSet, token),
-    }),
   });
 }
 

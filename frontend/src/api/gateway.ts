@@ -35,6 +35,7 @@ export interface ApiGatewayOptions {
   readonly clientId: string;
   readonly fetch: typeof fetch;
   readonly getLeaseToken: () => string | null;
+  readonly onUnauthorized?: () => void;
 }
 
 export interface ApiRequestOptions extends Omit<RequestInit, "body"> {
@@ -136,7 +137,9 @@ export function createApiGateway(options: ApiGatewayOptions): ApiGateway {
     }
     const response = await options.fetch(`${baseUrl}${path}`, request);
     if (!response.ok) {
-      throw await toApiError(response);
+      const error = await toApiError(response);
+      if (error.status === 401) options.onUnauthorized?.();
+      throw error;
     }
     return response;
   }
