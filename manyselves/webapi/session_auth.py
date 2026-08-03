@@ -1,13 +1,14 @@
 """Signed local-browser sessions backed by a process-independent key file."""
 
 import base64
+import ctypes
 import hashlib
 import hmac
 import json
 import os
 import secrets
-import subprocess
 import time
+from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -88,6 +89,7 @@ def _load_or_create_key(key_path: Path) -> bytes:
 
     temporary_path = _create_private_temporary_key(key_path)
     key = secrets.token_bytes(32)
+    published = False
     try:
         _write_key(temporary_path, key)
         _harden_permissions(temporary_path, is_directory=False)
@@ -97,11 +99,14 @@ def _load_or_create_key(key_path: Path) -> bytes:
             _remove_temporary_key(temporary_path)
             _harden_permissions(key_path, is_directory=False)
             return _read_key(key_path)
+        published = True
         _remove_temporary_key(temporary_path)
         _harden_permissions(key_path, is_directory=False)
         return key
     except BaseException:
         _remove_temporary_key(temporary_path)
+        if published:
+            _remove_published_key(key_path)
         raise
 
 
@@ -137,6 +142,16 @@ def _remove_temporary_key(key_path: Path) -> None:
         raise RuntimeError("Unable to remove a temporary session key") from error
 
 
+def _remove_published_key(key_path: Path) -> None:
+    """Remove a key this process published when its final ACL cannot be verified."""
+    try:
+        key_path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise RuntimeError("Unable to remove an unverified session key") from error
+
+
 def _harden_permissions(path: Path, *, is_directory: bool) -> None:
     """Restrict session storage to the current user or fail before use."""
     if _running_on_windows():
@@ -154,21 +169,202 @@ def _running_on_windows() -> bool:
 
 
 def _harden_windows_permissions(path: Path) -> None:
-    """Replace inherited NTFS permissions with a DACL for the current user only."""
+    """Replace and verify a protected DACL that grants only the process token SID."""
     try:
-        current_user = subprocess.run(
-            ["whoami"], capture_output=True, check=True, text=True
-        ).stdout.strip()
-        if not current_user:
-            raise RuntimeError("Current Windows user is unavailable")
-        subprocess.run(
-            ["icacls", str(path), "/inheritance:r", "/grant:r", f"{current_user}:(F)"],
-            capture_output=True,
-            check=True,
-            text=True,
-        )
-    except (OSError, subprocess.SubprocessError, RuntimeError) as error:
+        _replace_windows_dacl(path, is_directory=path.is_dir())
+        if not _windows_dacl_is_current_user_only(path, is_directory=path.is_dir()):
+            raise RuntimeError("Windows DACL verification failed")
+    except (OSError, RuntimeError) as error:
         raise RuntimeError("Unable to securely configure session permissions") from error
+
+
+def _replace_windows_dacl(path: Path, *, is_directory: bool) -> None:
+    """Write a protected DACL with exactly one current-user allow ACE."""
+    advapi32, _kernel32 = _windows_security_libraries()
+    sid_buffer = _windows_current_user_sid(advapi32, _kernel32)
+    sid = ctypes.c_void_p(ctypes.addressof(sid_buffer))
+    sid_length = advapi32.GetLengthSid(sid)
+    if sid_length == 0:
+        _raise_windows_error("GetLengthSid")
+    ace_size = _align_dword(8 + sid_length)
+    acl_buffer = ctypes.create_string_buffer(8 + ace_size)
+    acl = ctypes.c_void_p(ctypes.addressof(acl_buffer))
+    if not advapi32.InitializeAcl(acl, ctypes.sizeof(acl_buffer), 2):
+        _raise_windows_error("InitializeAcl")
+    ace_flags = 0x03 if is_directory else 0
+    if not advapi32.AddAccessAllowedAceEx(acl, 2, ace_flags, 0x10000000, sid):
+        _raise_windows_error("AddAccessAllowedAceEx")
+    result = advapi32.SetNamedSecurityInfoW(
+        str(path), 1, 0x00000004 | 0x80000000, None, None, acl, None
+    )
+    if result != 0:
+        raise OSError(result, "SetNamedSecurityInfoW failed")
+
+
+def _windows_dacl_is_current_user_only(path: Path, *, is_directory: bool) -> bool:
+    """Read back every ACE and accept only the expected current-user protected DACL."""
+    advapi32, kernel32 = _windows_security_libraries()
+    sid_buffer = _windows_current_user_sid(advapi32, kernel32)
+    current_sid = ctypes.c_void_p(ctypes.addressof(sid_buffer))
+    dacl = ctypes.c_void_p()
+    descriptor = ctypes.c_void_p()
+    result = advapi32.GetNamedSecurityInfoW(
+        str(path), 1, 0x00000004, None, None, ctypes.byref(dacl), None, ctypes.byref(descriptor)
+    )
+    if result != 0:
+        raise OSError(result, "GetNamedSecurityInfoW failed")
+    try:
+        if not dacl.value:
+            return False
+        info = _AclSizeInformation()
+        if not advapi32.GetAclInformation(dacl, ctypes.byref(info), ctypes.sizeof(info), 2):
+            _raise_windows_error("GetAclInformation")
+        if info.ace_count == 0:
+            return False
+        ace_flags: list[int] = []
+        for index in range(info.ace_count):
+            ace = ctypes.c_void_p()
+            if not advapi32.GetAce(dacl, index, ctypes.byref(ace)):
+                _raise_windows_error("GetAce")
+            if not ace.value:
+                return False
+            ace_type = ctypes.c_ubyte.from_address(ace.value).value
+            flags = ctypes.c_ubyte.from_address(ace.value + 1).value
+            access_mask = ctypes.c_uint32.from_address(ace.value + 4).value
+            ace_sid = ctypes.c_void_p(ace.value + 8)
+            if (
+                ace_type != 0
+                or access_mask == 0
+                or not advapi32.EqualSid(current_sid, ace_sid)
+            ):
+                return False
+            ace_flags.append(flags)
+        if not is_directory:
+            return ace_flags == [0]
+        return 0 in ace_flags and any(flags & 0x03 for flags in ace_flags)
+    finally:
+        if descriptor.value:
+            kernel32.LocalFree(descriptor)
+
+
+class _AclSizeInformation(ctypes.Structure):
+    _fields_ = [
+        ("ace_count", wintypes.DWORD),
+        ("acl_bytes_in_use", wintypes.DWORD),
+        ("acl_bytes_free", wintypes.DWORD),
+    ]
+
+
+def _windows_security_libraries():
+    """Load only the system security DLLs; no executable lookup is involved."""
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _configure_windows_security_api(advapi32, kernel32)
+    return advapi32, kernel32
+
+
+def _configure_windows_security_api(advapi32, kernel32) -> None:
+    """Declare pointer-safe signatures for the Windows Security API calls used here."""
+    void_pointer = ctypes.c_void_p
+    dword = wintypes.DWORD
+    advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, dword, ctypes.POINTER(void_pointer)]
+    advapi32.OpenProcessToken.restype = wintypes.BOOL
+    advapi32.GetTokenInformation.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        void_pointer,
+        dword,
+        ctypes.POINTER(dword),
+    ]
+    advapi32.GetTokenInformation.restype = wintypes.BOOL
+    advapi32.GetLengthSid.argtypes = [void_pointer]
+    advapi32.GetLengthSid.restype = dword
+    advapi32.CopySid.argtypes = [dword, void_pointer, void_pointer]
+    advapi32.CopySid.restype = wintypes.BOOL
+    advapi32.InitializeAcl.argtypes = [void_pointer, dword, dword]
+    advapi32.InitializeAcl.restype = wintypes.BOOL
+    advapi32.AddAccessAllowedAceEx.argtypes = [void_pointer, dword, dword, dword, void_pointer]
+    advapi32.AddAccessAllowedAceEx.restype = wintypes.BOOL
+    advapi32.SetNamedSecurityInfoW.argtypes = [
+        wintypes.LPWSTR,
+        dword,
+        dword,
+        void_pointer,
+        void_pointer,
+        void_pointer,
+        void_pointer,
+    ]
+    advapi32.SetNamedSecurityInfoW.restype = dword
+    advapi32.GetNamedSecurityInfoW.argtypes = [
+        wintypes.LPWSTR,
+        dword,
+        dword,
+        ctypes.POINTER(void_pointer),
+        ctypes.POINTER(void_pointer),
+        ctypes.POINTER(void_pointer),
+        ctypes.POINTER(void_pointer),
+        ctypes.POINTER(void_pointer),
+    ]
+    advapi32.GetNamedSecurityInfoW.restype = dword
+    advapi32.GetAclInformation.argtypes = [void_pointer, void_pointer, dword, dword]
+    advapi32.GetAclInformation.restype = wintypes.BOOL
+    advapi32.GetAce.argtypes = [void_pointer, dword, ctypes.POINTER(void_pointer)]
+    advapi32.GetAce.restype = wintypes.BOOL
+    advapi32.EqualSid.argtypes = [void_pointer, void_pointer]
+    advapi32.EqualSid.restype = wintypes.BOOL
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [void_pointer]
+    kernel32.LocalFree.restype = void_pointer
+
+
+def _windows_current_user_sid(advapi32, kernel32):
+    """Copy the current process token's user SID into Python-owned memory."""
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):
+        _raise_windows_error("OpenProcessToken")
+    try:
+        required_size = wintypes.DWORD()
+        advapi32.GetTokenInformation(token, 1, None, 0, ctypes.byref(required_size))
+        if required_size.value == 0:
+            _raise_windows_error("GetTokenInformation")
+        token_user = ctypes.create_string_buffer(required_size.value)
+        if not advapi32.GetTokenInformation(
+            token,
+            1,
+            ctypes.cast(token_user, ctypes.c_void_p),
+            required_size,
+            ctypes.byref(required_size),
+        ):
+            _raise_windows_error("GetTokenInformation")
+        source_sid = ctypes.cast(token_user, ctypes.POINTER(ctypes.c_void_p)).contents.value
+        if not source_sid:
+            raise RuntimeError("Current Windows user SID is unavailable")
+        sid_length = advapi32.GetLengthSid(ctypes.c_void_p(source_sid))
+        if sid_length == 0:
+            _raise_windows_error("GetLengthSid")
+        sid_buffer = ctypes.create_string_buffer(sid_length)
+        if not advapi32.CopySid(
+            sid_length,
+            ctypes.c_void_p(ctypes.addressof(sid_buffer)),
+            ctypes.c_void_p(source_sid),
+        ):
+            _raise_windows_error("CopySid")
+        return sid_buffer
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def _align_dword(value: int) -> int:
+    """Round a variable-size ACL record to the Windows DWORD boundary."""
+    return (value + 3) & ~3
+
+
+def _raise_windows_error(operation: str) -> None:
+    """Raise the Windows API failure while preserving its system error code."""
+    raise OSError(ctypes.get_last_error(), f"{operation} failed")
 
 
 def _read_key(key_path: Path) -> bytes:
