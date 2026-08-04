@@ -93,7 +93,7 @@ git commit -m "fix: preserve model credential ownership"
 - Produces: `ProviderConnectionTestResponse{ok, providerId, model, message}` with secret-safe messages.
 - Does not save config, replace Runtime, or require a control lease.
 
-- [ ] **Step 1: Write failing success and secret-safe failure tests**
+- [x] **Step 1: Write failing success and secret-safe failure tests**
 
 ```python
 @pytest.mark.asyncio
@@ -110,23 +110,23 @@ async def test_provider_test_failure_never_returns_key(authed_client):
     assert "provider-secret" not in response.text
 ```
 
-- [ ] **Step 2: Run the focused tests and verify the missing route**
+- [x] **Step 2: Run the focused tests and verify the missing route**
 
 Run: `uv run pytest tests/webapi/test_conversations_agents_reporting.py -q -k "provider_connection_test or provider_test"`
 
 Expected: FAIL with 404.
 
-- [ ] **Step 3: Implement a bounded provider probe**
+- [x] **Step 3: Implement a bounded provider probe**
 
 Resolve the existing effective provider config, create the provider through the same registry/factory used by Runtime, execute the cheapest supported model-list or minimal completion probe with the existing timeout policy, and map exceptions to a generic safe message. Do not write YAML and do not replace the live LoopManager.
 
-- [ ] **Step 4: Run provider settings tests**
+- [x] **Step 4: Run provider settings tests**
 
 Run: `uv run pytest tests/webapi/test_conversations_agents_reporting.py -q -k "provider or settings"`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the connection test endpoint**
+- [x] **Step 5: Commit the connection test endpoint**
 
 ```bash
 git add manyselves/application/settings_service.py manyselves/webapi/schemas/settings.py manyselves/webapi/routes/settings.py tests/webapi/test_conversations_agents_reporting.py frontend-contract/openapi.json
