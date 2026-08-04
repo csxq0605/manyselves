@@ -177,7 +177,7 @@ def test_deployment_verifier_cleans_temp_file_lease_and_session_after_check_fail
         ("POST", "/api/v1/auth/logout"),
     ]
     temporary_cleanup = deployment.requests[-3][2]
-    assert temporary_cleanup["params"]["path"].startswith("Work/.phase1-deployment-verifier-")
+    assert temporary_cleanup["params"]["path"].startswith("Inputs/.phase1-deployment-verifier-")
     assert temporary_cleanup["headers"] == {
         "X-Control-Lease-Token": "lease-1", "If-Match": '"revision-1"',
     }
@@ -297,3 +297,17 @@ def test_linux_compose_docs_create_privileged_paths_then_switch_to_service_accou
     assert "sudo install -d -m 0700 -o manyselves -g manyselves /srv/manyselves/data /srv/manyselves/backups" in docs
     assert "sudo -iu manyselves" in docs
     assert "Run every extraction and Compose command below from that configured service-account session." in docs
+
+
+def test_smoke_environment_is_loopback_and_phase1_scoped() -> None:
+    smoke = Path("deploy/smoke.env.example").read_text("utf-8")
+    compose = Path("deploy/compose.yaml").read_text("utf-8")
+
+    assert "MANYSELVES_HTTP_BIND=127.0.0.1" in smoke
+    assert "MANYSELVES_HTTP_PORT=19090" in smoke
+    assert "MANYSELVES_DATA_DIR=./.smoke-data" in smoke
+    assert 'MANYSELVES_ALLOWED_ORIGINS=["http://127.0.0.1:19090"]' in smoke
+    assert "MANYSELVES_ACCESS_TOKEN" not in smoke
+    assert "MANYSELVES_ACCESS_TOKEN" not in compose
+    for forbidden in ("redis:", "mysql:", "milvus:", "minio:"):
+        assert forbidden not in compose.casefold()

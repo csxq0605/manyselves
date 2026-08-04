@@ -108,7 +108,7 @@ def verify_deployment(
         ), 201).json()
         lease_token = lease["leaseToken"]
         mutation_headers = {"X-Control-Lease-Token": lease_token}
-        path = f"Work/.phase1-deployment-verifier-{uuid4().hex}.txt"
+        path = f"Inputs/.phase1-deployment-verifier-{uuid4().hex}.txt"
         payload = b"manyselves phase1 deployment verifier\n"
         created = _checked(client.request(
             "POST",

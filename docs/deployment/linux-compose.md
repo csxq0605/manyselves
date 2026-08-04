@@ -124,6 +124,25 @@ podman compose -f deploy/compose.yaml --env-file deploy/.env up -d
 
 If the installed Compose provider is the standalone command, replace `podman compose` with `podman-compose`. Some Podman Compose versions do not support `--wait`; use `podman ps` and the health checks below instead. Do not increase API workers or replicas, because that would create multiple process-local runtimes.
 
+### Isolated smoke stack before replacing the LAN stack
+
+Use the committed smoke environment when you want to verify the release on the server without taking over `192.168.8.28:9090`. It publishes only loopback `127.0.0.1:19090`, keeps data in `./.smoke-data`, and uses the same images as the normal stack:
+
+```bash
+podman build -f deploy/api/Dockerfile -t localhost/manyselves-api:phase1 .
+podman build -f deploy/web/Dockerfile -t localhost/manyselves-web:phase1 .
+podman compose -p manyselves-phase1-smoke -f deploy/compose.yaml --env-file deploy/smoke.env.example config
+podman compose -p manyselves-phase1-smoke -f deploy/compose.yaml --env-file deploy/smoke.env.example up -d --no-build
+podman ps --filter name=manyselves-phase1-smoke
+uv run python scripts/verify_deployment.py \
+  --url http://127.0.0.1:19090 \
+  --username admin \
+  --password yuanxi@2026
+podman compose -p manyselves-phase1-smoke -f deploy/compose.yaml --env-file deploy/smoke.env.example down
+```
+
+If your server uses `podman-compose`, replace `podman compose` with `podman-compose` in the four Compose commands above. The smoke project name is intentionally different from the normal `manyselves-phase1` stack.
+
 ## Option B: transfer prebuilt Linux images
 
 Transfer Linux container images and the release source archive, not the whole WSL distribution. Confirm the server architecture with `uname -m`; the example below is for `x86_64`/`linux/amd64`.

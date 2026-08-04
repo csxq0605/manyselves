@@ -219,7 +219,7 @@ Run: `podman build -f deploy/web/Dockerfile -t localhost/manyselves-web:phase1 .
 
 Expected: both builds finish successfully and the Web image contains the newly generated Vite bundle.
 
-- [ ] **Step 2: Render and validate Compose configuration**
+- [x] **Step 2: Render and validate Compose configuration**
 
 Run: `podman-compose -f deploy/compose.yaml --env-file deploy/smoke.env.example config`
 
@@ -233,7 +233,7 @@ Run: `podman ps --filter name=manyselves-phase1-smoke`
 
 Expected: API is healthy and Web is running on loopback port 19090 without replacing the standard stack.
 
-- [ ] **Step 4: Run the deployment verifier through Nginx**
+- [x] **Step 4: Run the deployment verifier through Nginx**
 
 Run: `uv run python scripts/verify_deployment.py --base-url http://127.0.0.1:19090 --username admin --password yuanxi@2026`
 
@@ -245,7 +245,7 @@ Run: `podman-compose -p manyselves-phase1-smoke -f deploy/compose.yaml --env-fil
 
 Expected: only containers/networks with project name `manyselves-phase1-smoke` are removed; persistent user data and unrelated containers remain untouched.
 
-- [ ] **Step 6: Commit deployable image and verification changes**
+- [x] **Step 6: Commit deployable image and verification changes**
 
 ```bash
 git add deploy docs/deployment/linux-compose.md scripts/verify_deployment.py tests/release/test_deployment_verifier.py
