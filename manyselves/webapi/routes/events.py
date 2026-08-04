@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, Header, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 from starlette.responses import StreamingResponse
 
 from ..errors import ApiError
@@ -15,15 +15,52 @@ from ..events.broker import (
     EventClient,
     EventClientClosed,
 )
-from ..events.models import EventEnvelope
+from ..events.models import EventEnvelope, EventLogEntry, EventLogResponse
+from ..events.sanitizer import EventPayloadSanitizer
 from ..security import require_authenticated_session
 
 router = APIRouter(prefix="/events", dependencies=[Depends(require_authenticated_session)])
 SSE_HEARTBEAT_SECONDS = 15.0
+_LOG_MESSAGE_FIELDS = (
+    "message", "content", "brief", "description", "status", "action", "reason", "name", "tool_name",
+)
+_LOG_MESSAGE_LIMIT = 500
 
 
 def _frame(event: EventEnvelope) -> str:
     return f"id: {event.event_id}\nevent: {event.type}\ndata: {event.to_json()}\n\n"
+
+
+def _log_level(event: EventEnvelope) -> str:
+    event_type = event.type.casefold()
+    status_value = event.payload.get("status")
+    payload_status = status_value.casefold() if isinstance(status_value, str) else ""
+    if "error" in event_type or "failed" in event_type or payload_status in {"error", "failed"}:
+        return "error"
+    if any(marker in event_type for marker in ("warning", "waiting", "interrupt", "cancel")):
+        return "warning"
+    return "info"
+
+
+def _log_message(event: EventEnvelope) -> str:
+    sanitized = EventPayloadSanitizer().sanitize_mapping(event.payload)
+    for field in _LOG_MESSAGE_FIELDS:
+        value = sanitized.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:_LOG_MESSAGE_LIMIT]
+    return event.type
+
+
+def _log_entry(event: EventEnvelope) -> EventLogEntry:
+    return EventLogEntry(
+        eventId=event.event_id,
+        timestamp=event.timestamp,
+        level=_log_level(event),
+        type=event.type,
+        message=_log_message(event),
+        agentId=event.agent_id,
+        sessionId=event.session_id,
+    )
 
 
 class _EventStreamBody(AsyncIterator[str]):
@@ -118,6 +155,28 @@ class _EventStreamBody(AsyncIterator[str]):
             except asyncio.CancelledError:
                 pass
         await self._broker.unregister(self._client)
+
+
+@router.get("/logs", response_model=EventLogResponse)
+async def list_event_logs(
+    request: Request,
+    project_id: str = Query(alias="projectId", min_length=1, max_length=128),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> EventLogResponse:
+    """Return a bounded project event projection; never expose filesystem logs."""
+    broker = getattr(request.app.state, "event_broker", None)
+    if broker is None:
+        raise ApiError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="EVENT_STREAM_NOT_READY",
+            message="Event stream is not ready",
+            retryable=True,
+        )
+    matching = tuple(
+        event for event in broker.replay.snapshot() if event.project_id == project_id
+    )
+    entries = tuple(_log_entry(event) for event in reversed(matching[-limit:]))
+    return EventLogResponse(projectId=project_id, entries=entries)
 
 
 @router.get(

@@ -692,6 +692,90 @@
         "title": "EventEnvelope",
         "type": "object"
       },
+      "EventLogEntry": {
+        "description": "One bounded, sanitized event projection for the project log page.",
+        "properties": {
+          "agentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentid"
+          },
+          "eventId": {
+            "title": "Eventid",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "sessionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionid"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "eventId",
+          "timestamp",
+          "level",
+          "type",
+          "message"
+        ],
+        "title": "EventLogEntry",
+        "type": "object"
+      },
+      "EventLogResponse": {
+        "description": "Project-scoped event log response without access to server log files.",
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/EventLogEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "entries"
+        ],
+        "title": "EventLogResponse",
+        "type": "object"
+      },
       "FileContent": {
         "properties": {
           "content": {
@@ -4351,6 +4435,75 @@
           }
         ],
         "summary": "Stream Events"
+      }
+    },
+    "/api/v1/events/logs": {
+      "get": {
+        "description": "Return a bounded project event projection; never expose filesystem logs.",
+        "operationId": "get_api_v1_events_logs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Projectid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventLogResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "List Event Logs"
       }
     },
     "/api/v1/health/live": {

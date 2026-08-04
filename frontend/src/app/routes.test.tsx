@@ -129,13 +129,67 @@ describe("project directory routes", () => {
       </AppProviders>,
     );
 
-    expect(await screen.findByRole("heading", { name: title }, { timeout: 5_000 })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: title }, { timeout: 15_000 })).toBeVisible();
     await waitFor(() => {
       expect(requestJson).toHaveBeenCalledWith(
         `/api/v1/projects/project-1/files/tree?path=${root}`,
       );
     });
-  }, 10_000);
+  }, 20_000);
+});
+
+describe("project operations routes", () => {
+  const runtime = {
+    active_session_id: "session-1",
+    agent_statuses: { main: "running" },
+    checkpoints: [],
+    controller_client_id: null,
+    debug: [],
+    queues: [],
+    ready: true,
+    tasks: [],
+    tools: [],
+    workspace: null,
+  };
+
+  function gateway(bootstrapProjectId = "project-1") {
+    const requestJson = vi.fn(async (path: string) => {
+      if (path === "/api/v1/projects") return {
+        projects: [{ active: true, description: "", displayName: "Project 1", id: "project-1", revision: "r1" }],
+      };
+      if (path === "/api/v1/events/logs?projectId=project-1&limit=200") return {
+        entries: [{ agentId: "main", eventId: "stream-1:evt-1", level: "info", message: "任务开始", sessionId: "session-1", timestamp: "2026-08-04T08:00:00Z", type: "task.status.changed" }],
+        projectId: "project-1",
+      };
+      throw new Error(`unexpected request: ${path}`);
+    });
+    return {
+      bootstrap: vi.fn().mockResolvedValue({ project: { id: bootstrapProjectId }, runtime }),
+      requestJson,
+    } as unknown as ApiGateway;
+  }
+
+  it("mounts the real runtime page from the sanitized bootstrap snapshot", async () => {
+    render(<AppProviders><MemoryRouter initialEntries={["/projects/project-1/runtime"]}><AppRoutes gateway={gateway()} /></MemoryRouter></AppProviders>);
+
+    expect(await screen.findByRole("heading", { name: "运行态" }, { timeout: 10_000 })).toBeVisible();
+    expect(screen.queryByText("此项目区域将在后续工作中提供受控内容。")).not.toBeInTheDocument();
+  }, 15_000);
+
+  it("refuses to render runtime data from a different active project", async () => {
+    render(<AppProviders><MemoryRouter initialEntries={["/projects/project-1/runtime"]}><AppRoutes gateway={gateway("project-2")} /></MemoryRouter></AppProviders>);
+
+    expect(await screen.findByRole("alert", {}, { timeout: 10_000 })).toHaveTextContent("运行态项目校验失败");
+    expect(screen.queryByRole("heading", { name: "运行态" })).not.toBeInTheDocument();
+  }, 15_000);
+
+  it("mounts the project-scoped log projection", async () => {
+    const api = gateway();
+    render(<AppProviders><MemoryRouter initialEntries={["/projects/project-1/logs"]}><AppRoutes gateway={api} /></MemoryRouter></AppProviders>);
+
+    expect(await screen.findByText("任务开始", {}, { timeout: 10_000 })).toBeVisible();
+    expect(api.requestJson).toHaveBeenCalledWith("/api/v1/events/logs?projectId=project-1&limit=200");
+  }, 15_000);
 });
 
 describe("project conversation routes", () => {

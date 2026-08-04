@@ -2,6 +2,7 @@ import type { ReportingSnapshotView } from "./reporting-store";
 
 export interface OutputArtifactsProps {
   readonly onDownload: (path: string) => Promise<unknown>;
+  readonly outputsHref: string;
   readonly snapshot: ReportingSnapshotView;
 }
 
@@ -9,7 +10,7 @@ function filename(path: string): string {
   return path.split("/").at(-1) || "report-output";
 }
 
-export function OutputArtifacts({ onDownload, snapshot }: OutputArtifactsProps) {
+export function OutputArtifacts({ onDownload, outputsHref, snapshot }: OutputArtifactsProps) {
   const verified = snapshot.verification.status === "passed";
   return (
     <section className="reporting-card" aria-label="交付产物">
@@ -20,6 +21,7 @@ export function OutputArtifacts({ onDownload, snapshot }: OutputArtifactsProps) 
       <p className={`reporting-verification reporting-verification--${snapshot.verification.status}`}>
         {snapshot.verification.message}
       </p>
+      <a className="reporting-output-link" href={outputsHref}>在项目“输出”中预览、下载或删除</a>
       {snapshot.outputs.length === 0 ? <p className="reporting-empty">尚无交付文件。</p> : null}
       <ul className="reporting-output-list">
         {snapshot.outputs.map((output) => (

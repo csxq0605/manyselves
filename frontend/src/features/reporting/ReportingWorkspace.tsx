@@ -293,7 +293,11 @@ export function ReportingWorkspace({ api, platform, projectId, store }: Reportin
               <PlanView snapshot={snapshot} />
               <EvidenceView snapshot={snapshot} />
               <RevisionView onSubmit={revise} snapshot={snapshot} />
-              <OutputArtifacts onDownload={download} snapshot={snapshot} />
+              <OutputArtifacts
+                onDownload={download}
+                outputsHref={`/projects/${encodeURIComponent(projectId)}/outputs`}
+                snapshot={snapshot}
+              />
             </div>
           </>
         ) : null}

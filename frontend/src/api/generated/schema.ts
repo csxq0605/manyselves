@@ -355,6 +355,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/events/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Event Logs
+         * @description Return a bounded project event projection; never expose filesystem logs.
+         */
+        get: operations["get_api_v1_events_logs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health/live": {
         parameters: {
             query?: never;
@@ -1140,6 +1160,42 @@ export interface components {
             timestamp: string;
             /** Type */
             type: string;
+        };
+        /**
+         * EventLogEntry
+         * @description One bounded, sanitized event projection for the project log page.
+         */
+        EventLogEntry: {
+            /** Agentid */
+            agentId?: string | null;
+            /** Eventid */
+            eventId: string;
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "info" | "warning" | "error";
+            /** Message */
+            message: string;
+            /** Sessionid */
+            sessionId?: string | null;
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+            /** Type */
+            type: string;
+        };
+        /**
+         * EventLogResponse
+         * @description Project-scoped event log response without access to server log files.
+         */
+        EventLogResponse: {
+            /** Entries */
+            entries: components["schemas"]["EventLogEntry"][];
+            /** Projectid */
+            projectId: string;
         };
         /** FileContent */
         FileContent: {
@@ -2927,6 +2983,47 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": string;
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_events_logs: {
+        parameters: {
+            query: {
+                projectId: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventLogResponse"];
                 };
             };
             /** @description Request validation failed */

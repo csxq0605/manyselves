@@ -631,6 +631,66 @@ async def test_events_endpoint_requires_session_authentication(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_event_logs_endpoint_requires_session_authentication(tmp_path: Path) -> None:
+    app = create_app(settings(tmp_path))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/events/logs", params={"projectId": "p1"})
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "AUTH_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_event_logs_are_project_scoped_bounded_and_sanitized(tmp_path: Path) -> None:
+    host = FakeRuntimeHost()
+    app = create_app(settings(tmp_path, sse_replay_capacity=8))
+    app.dependency_overrides[get_runtime_host] = lambda: host
+
+    async with app.router.lifespan_context(app):
+        await app.state.event_broker.publish_internal(
+            SystemNotice(agent_type="main", content="Bearer server-secret")
+        )
+        app.state.project_registry.create(
+            "p2", ProjectMetadata(display_name="p2", description="")
+        )
+        app.state.project_registry.activate("p2")
+        await app.state.event_broker.publish_internal(
+            Error(source="provider", message="provider failed", details={"password": "hidden"})
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await login(client)
+            p1 = await client.get(
+                "/api/v1/events/logs", params={"projectId": "p1", "limit": 1}
+            )
+            p2 = await client.get(
+                "/api/v1/events/logs", params={"projectId": "p2"}
+            )
+
+    assert p1.status_code == 200
+    assert p1.json()["projectId"] == "p1"
+    assert len(p1.json()["entries"]) == 1
+    p1_entry = p1.json()["entries"][0]
+    assert p1_entry["eventId"].endswith(":evt-1")
+    assert p1_entry["agentId"] == "main"
+    assert p1_entry["level"] == "info"
+    assert p1_entry["message"] == "[REDACTED]"
+    assert p1_entry["sessionId"] == "session-1"
+    assert p1_entry["type"] == "system.notice"
+    assert p1_entry["timestamp"].endswith("Z")
+    assert p2.status_code == 200
+    assert p2.json()["projectId"] == "p2"
+    assert len(p2.json()["entries"]) == 1
+    assert p2.json()["entries"][0]["level"] == "error"
+    assert p2.json()["entries"][0]["message"] == "provider failed"
+    wire = json.dumps(p2.json())
+    assert "payload" not in wire
+    assert "hidden" not in wire
+
+
+@pytest.mark.asyncio
 async def test_last_event_id_eviction_emits_one_line_resync_sse_and_headers(tmp_path: Path) -> None:
     host = FakeRuntimeHost()
     app = create_app(settings(tmp_path))

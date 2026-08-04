@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createApiGateway } from "../../api/gateway";
-import { createProjectApi } from "./project-api";
+import { createProjectApi, type Project } from "./project-api";
+
+function deferredProject() {
+  let resolve!: (project: Project) => void;
+  const promise = new Promise<Project>((next) => { resolve = next; });
+  return { promise, resolve };
+}
 
 describe("project API metadata operations", () => {
   it("acquires a browser control lease before a real project mutation", async () => {
@@ -53,5 +59,34 @@ describe("project API metadata operations", () => {
       method: "DELETE",
       requireLease: true,
     });
+  });
+
+  it("serializes project activation across API instances sharing one gateway", async () => {
+    const projectB = deferredProject();
+    const projectC = deferredProject();
+    const requestJson = vi.fn((path: string) => (
+      path.endsWith("/project-b/activate") ? projectB.promise : projectC.promise
+    ));
+    const gateway = { requestJson } as never;
+    const first = createProjectApi(gateway).activate("project-b");
+    const second = createProjectApi(gateway).activate("project-c");
+
+    await Promise.resolve();
+    expect(requestJson).toHaveBeenCalledTimes(1);
+    expect(requestJson).toHaveBeenCalledWith("/api/v1/projects/project-b/activate", {
+      method: "POST",
+      requireLease: true,
+    });
+
+    projectB.resolve({ active: true, description: "", displayName: "B", id: "project-b", revision: "b" });
+    await first;
+    await vi.waitFor(() => expect(requestJson).toHaveBeenCalledTimes(2));
+    expect(requestJson).toHaveBeenLastCalledWith("/api/v1/projects/project-c/activate", {
+      method: "POST",
+      requireLease: true,
+    });
+
+    projectC.resolve({ active: true, description: "", displayName: "C", id: "project-c", revision: "c" });
+    await second;
   });
 });

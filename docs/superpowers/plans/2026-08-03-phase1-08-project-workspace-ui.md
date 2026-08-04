@@ -327,6 +327,8 @@ git commit -m "feat: bind browser conversations to projects"
 
 ### Task 5: Outputs, Runtime, and Logs pages
 
+**Current checkpoint (2026-08-04):** complete. Outputs remains the controlled `Outputs/` projection with preview/download/delete only; Runtime is a read-only sanitized bootstrap projection; Logs is a bounded, project-scoped, filterable event projection with no generic server-log or filesystem-path API. Independent review found and drove a fix for cross-project activation ordering and Runtime project-identity validation; final review PASS. Gates: Linux backend 358 passed, frontend 214 passed, targeted E2E 3 passed, Ruff/lint/build/check:api passed.
+
 **Files:**
 - Create: `frontend/src/features/runtime/RuntimePage.tsx`
 - Create: `frontend/src/features/runtime/RuntimePage.test.tsx`
@@ -346,7 +348,7 @@ git commit -m "feat: bind browser conversations to projects"
 - Produces: read-only Runtime page and read-only/filterable log projection; no raw `Work/` or `.manyselves` browser.
 - Produces: Outputs page actions preview/download/delete only.
 
-- [ ] **Step 1: Write failing read-only page tests**
+- [x] **Step 1: Write failing read-only page tests**
 
 ```tsx
 it("shows runtime status without filesystem controls", () => {
@@ -356,7 +358,7 @@ it("shows runtime status without filesystem controls", () => {
 });
 ```
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run: `npm test -- --run src/features/runtime src/features/logs src/features/reporting`
 
@@ -364,11 +366,11 @@ Working directory: `frontend`
 
 Expected: FAIL because the routed pages do not exist.
 
-- [ ] **Step 3: Implement controlled projections**
+- [x] **Step 3: Implement controlled projections**
 
 Runtime page renders current task, Agent status, queue, tool calls, progress, and errors from the existing sanitized snapshot. Logs page renders sanitized project/runtime events with timestamp, level/type, and message, plus a download action for the same sanitized projection. Do not add a generic server log-file path API and do not expose raw debug values rejected by the existing sanitizer.
 
-- [ ] **Step 4: Run runtime, SSE, reporting, and E2E tests**
+- [x] **Step 4: Run runtime, SSE, reporting, and E2E tests**
 
 Run: `uv run pytest tests/webapi/test_sse.py tests/webapi/test_event_sanitizer.py tests/webapi/test_conversations_agents_reporting.py -q`
 
@@ -380,7 +382,7 @@ Working directory for npm commands: `frontend`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit read-only operations pages**
+- [x] **Step 5: Commit read-only operations pages**
 
 ```bash
 git add frontend/src/features/runtime frontend/src/features/logs frontend/src/features/reporting frontend/e2e manyselves/webapi/routes/events.py manyselves/webapi/events/models.py tests/webapi/test_sse.py

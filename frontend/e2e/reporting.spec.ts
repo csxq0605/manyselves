@@ -1,181 +1,90 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-const bootstrap = {
-  agents: { main: "Main Agent" }, conversations: [], maintenance: {}, project: { id: "project-1" },
-  runtime: { active_session_id: "session-1", agent_statuses: { main: "idle" }, checkpoints: [],
-    controller_client_id: null, debug: [], queues: [], ready: true, tasks: [], tools: [], workspace: null },
-  settings: { control_lease_seconds: 30, sse_client_queue_capacity: 128, sse_replay_capacity: 512 },
-  streamId: "stream-reporting",
-};
+import { installBaseServer, json } from "./fixtures/server";
 
-type Mode = "active" | "cancelled" | "completed" | "empty" | "failed" | "revision" | "waiting";
-
-async function json(route: Route, body: unknown, status = 200) {
-  await route.fulfill({ body: JSON.stringify(body), contentType: "application/json", status });
-}
-
-function run(mode: Mode, runId = "run-1") {
-  const status = mode === "active" ? "running"
-    : mode === "cancelled" ? "cancelled"
-      : mode === "failed" ? "failed"
-        : mode === "waiting" ? "needs_user_decision" : "completed";
-  return {
-    active: mode === "active",
-    ...(mode === "failed" ? { error: "output verification failed" } : {}),
-    run_id: runId,
-    status,
-  };
-}
-
-function snapshot(mode: Mode, runId = "run-1") {
-  const completed = mode === "completed" || mode === "revision";
-  const failed = mode === "failed";
-  return {
-    checkpoint: {
-      activity: completed ? "delivery" : failed ? "delivery" : "dispatch",
-      completed_modules: completed ? ["2.1", "2.2", "2.3", "2.4", "2.5"] : ["2.1"],
-      preparation_refs: {
-        coverage: `Work/runs/${runId}/context/coverage.json`,
-        source_ledger: `Work/runs/${runId}/context/source-ledger.json`,
-      },
-      run_id: runId,
-      specialist_modules: ["2.1", "2.4"],
-      status: completed ? "completed" : failed ? "failed" : "in_progress",
-    },
-    evidence: { selected_action: mode === "waiting" ? null : "supplement" },
-    outputs: completed ? [{
-      exists: true, path: "Outputs/Reports/report.docx", sha256: "verified-sha", size: 2048,
-    }] : failed ? [{
-      exists: false, path: "Outputs/Reports/broken.docx", sha256: null, size: 0,
-    }] : [],
-    revision: mode === "revision"
-      ? { baseline_version_id: "run-1", feedback: "修正保护边界", target_module_ids: ["2.2"] }
-      : {},
-    run: run(mode, runId),
-    state: {
-      activity: completed ? "delivery" : "dispatch",
-      completed_modules: completed ? ["2.1", "2.2", "2.3", "2.4", "2.5"] : ["2.1"],
-      preparation_refs: {
-        coverage: `Work/runs/${runId}/context/coverage.json`,
-        source_ledger: `Work/runs/${runId}/context/source-ledger.json`,
-      },
-      specialist_modules: ["2.1", "2.4"],
-      status: completed ? "completed" : failed ? "failed" : "in_progress",
-    },
-    waitingInput: mode === "waiting" ? [{
-      affected_modules: ["2.3"],
-      allowed_actions: ["supplement", "draft", "skip", "stop"],
-      decision_id: "decision-1",
-      missing_items: ["缺少保护定值单"],
-      status: "pending",
-    }] : [],
-  };
-}
-
-async function mockReporting(page: Page, initialMode: Mode) {
-  let mode = initialMode;
-  let activeRunId = "run-1";
-  let eventRequests = 0;
-  await page.route("**/api/v1/**", async (route) => {
+async function installOperationsServer(page: Page) {
+  let outputExists = true;
+  await installBaseServer(page, async (route: Route, path: string) => {
     const request = route.request();
     const url = new URL(request.url());
-    const path = url.pathname;
-    if (path === "/api/v1/bootstrap") return json(route, bootstrap);
-    if (path === "/api/v1/events") {
-      eventRequests += 1;
-      return route.fulfill({ body: "", contentType: "text/event-stream", status: 200 });
+    if (path === "/api/v1/auth/session") {
+      await json(route, { authenticated: true, expiresAt: "2030-01-01T00:00:00Z", username: "admin" });
+      return true;
     }
-    if (path === "/api/v1/projects" && request.method() === "GET") {
-      return json(route, { projects: [{ active: true, id: "project-1" }] });
+    if (path === "/api/v1/control/lease") {
+      await json(route, { actorId: "admin", clientId: "browser", expiresAt: "2030-01-01T00:01:00Z", leaseToken: "lease-1" }, 201);
+      return true;
     }
-    if (path.endsWith("/files/tree")) return json(route, { entries: [] });
+    if (path.endsWith("/files/tree") && url.searchParams.get("path") === "Outputs") {
+      await json(route, { entries: outputExists ? [{
+        kind: "file", modifiedAt: "2026-08-04T08:00:00Z", name: "energy-report.md",
+        path: "Outputs/energy-report.md", revision: "a".repeat(64), size: 128,
+      }] : [] });
+      return true;
+    }
+    if (path.endsWith("/files/preview")) {
+      await json(route, { content: "# 能源分析报告", kind: "markdown", path: "Outputs/energy-report.md", truncated: false });
+      return true;
+    }
     if (path.endsWith("/files/download")) {
-      return route.fulfill({ body: "docx", contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", status: 200 });
+      await route.fulfill({ body: "# 能源分析报告", contentType: "text/markdown", status: 200 });
+      return true;
     }
-    if (path === "/api/v1/conversations") {
-      return json(route, { activeSessionId: "session-1", conversations: [] });
+    if (path.endsWith("/files/entries") && request.method() === "DELETE") {
+      outputExists = false;
+      await route.fulfill({ status: 204 });
+      return true;
     }
-    if (path === "/api/v1/conversations/messages") {
-      return json(route, { messages: [], sessionId: "session-1" });
+    if (path === "/api/v1/events/logs") {
+      expect(url.searchParams.get("projectId")).toBe("project-1");
+      await json(route, { entries: [
+        { agentId: "main", eventId: "stream-1:evt-1", level: "info", message: "任务开始", sessionId: "session-1", timestamp: "2026-08-04T08:00:00Z", type: "task.status.changed" },
+        { agentId: "researcher", eventId: "stream-1:evt-2", level: "error", message: "工具失败", sessionId: "session-1", timestamp: "2026-08-04T08:01:00Z", type: "tool.failed" },
+      ], projectId: "project-1" });
+      return true;
     }
-    if (path === "/api/v1/reporting/runs" && request.method() === "GET") {
-      return json(route, { runs: mode === "empty" ? [] : [run(mode, activeRunId)] });
-    }
-    if (path === "/api/v1/reporting/runs" && request.method() === "POST") {
-      mode = "active";
-      activeRunId = "run-new";
-      return json(route, { commandId: "command-start", runId: activeRunId, status: "accepted", taskId: "task-new" }, 202);
-    }
-    if (path === "/api/v1/reporting/decisions/decision-1/resume") {
-      mode = "completed";
-      return json(route, { commandId: "command-decision", runId: activeRunId, status: "accepted" }, 202);
-    }
-    if (path.endsWith("/resume") && path.includes("/reporting/runs/")) {
-      mode = "completed";
-      return json(route, { commandId: "command-resume", runId: activeRunId, status: "accepted" }, 202);
-    }
-    if (path.endsWith("/cancel")) {
-      mode = "cancelled";
-      return json(route, { commandId: "command-cancel", runId: activeRunId, status: "accepted" }, 202);
-    }
-    if (path === "/api/v1/reporting/revisions") {
-      mode = "revision";
-      activeRunId = "run-revision";
-      return json(route, { commandId: "command-revision", runId: activeRunId, status: "accepted" }, 202);
-    }
-    if (path.startsWith("/api/v1/reporting/runs/") && request.method() === "GET") {
-      return json(route, snapshot(mode, decodeURIComponent(path.split("/").at(-1) ?? activeRunId)));
-    }
-    return route.fulfill({ body: `Unhandled ${request.method()} ${path}`, status: 404 });
+    return false;
   });
-  return { eventRequests: () => eventRequests };
 }
 
-test("resolves waiting input, verifies delivery, downloads, refreshes and revises", async ({ page }) => {
-  const server = await mockReporting(page, "waiting");
-  await page.goto("/");
-  await page.getByRole("button", { name: "报告中心" }).click();
+test("keeps project outputs limited to preview, download and delete", async ({ page }) => {
+  await installOperationsServer(page);
+  await page.goto("/projects/project-1/outputs");
 
-  await expect(page.getByRole("heading", { name: "等待用户决定" })).toBeVisible();
-  await page.getByLabel("补充信息").fill("保护定值单已上传至 Inputs");
-  await page.getByRole("button", { name: "继续流程" }).click();
-  await expect(page.getByText("服务端已验证交付文件")).toBeVisible();
-  await expect(page.getByText("module-2.4-specialist")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "输出" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "上传本地文件" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /编辑 energy-report\.md/ })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "预览 energy-report.md" }).click();
+  await expect(page.getByRole("heading", { name: "Outputs/energy-report.md" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "能源分析报告" })).toBeVisible();
+  await page.getByRole("button", { name: "关闭预览" }).click();
 
   const download = page.waitForEvent("download");
-  await page.getByRole("button", { name: "下载 report.docx" }).click();
-  await expect((await download).suggestedFilename()).toBe("report.docx");
+  await page.getByRole("button", { name: "下载 energy-report.md" }).click();
+  await expect((await download).suggestedFilename()).toBe("energy-report.md");
 
-  await page.reload();
-  await page.getByRole("button", { name: "报告中心" }).click();
-  await expect(page.getByText("服务端已验证交付文件")).toBeVisible();
-  await expect.poll(server.eventRequests).toBeGreaterThan(1);
-
-  await page.getByLabel("目标模块").selectOption("2.2");
-  await page.getByLabel("修订反馈").fill("修正保护边界");
-  await page.getByRole("button", { name: "创建修订运行" }).click();
-  await expect(page.getByRole("heading", { name: "报告运行 run-revision" })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "删除 energy-report.md" }).click();
+  await expect(page.getByText("此目录还没有文件")).toBeVisible();
 });
 
-test("keeps invalid output failed until a checkpoint resume succeeds", async ({ page }) => {
-  await mockReporting(page, "failed");
-  await page.goto("/");
-  await page.getByRole("button", { name: "报告中心" }).click();
+test("shows live runtime and filterable sanitized project logs", async ({ page }) => {
+  await installOperationsServer(page);
+  await page.goto("/projects/project-1/runtime");
 
-  await expect(page.getByText("output verification failed").first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "下载 broken.docx" })).toHaveCount(0);
-  await page.getByRole("button", { name: "从检查点恢复 / 重试" }).click();
-  await expect(page.getByText("服务端已验证交付文件")).toBeVisible();
-});
+  await expect(page.getByRole("heading", { name: "运行态" })).toBeVisible();
+  await expect(page.getByText("Review evidence")).toBeVisible();
+  await expect(page.getByText("read_file")).toBeVisible();
+  await expect(page.locator("#main-outlet").getByRole("button", { name: /上传|编辑|删除/ })).toHaveCount(0);
 
-test("creates and cancels a report run through named commands", async ({ page }) => {
-  await mockReporting(page, "empty");
-  await page.goto("/");
-  await page.getByRole("button", { name: "报告中心" }).click();
+  await page.getByRole("link", { name: "日志" }).click();
+  await expect(page.getByText("任务开始")).toBeVisible();
+  await page.getByLabel("日志级别").selectOption("error");
+  await expect(page.getByText("任务开始")).toHaveCount(0);
+  await expect(page.getByText("工具失败")).toBeVisible();
 
-  await page.getByLabel("报告要求").fill("生成本项目供配电安全咨询报告");
-  await page.getByRole("button", { name: "开始报告运行" }).click();
-  await expect(page.getByRole("heading", { name: "报告运行 run-new" })).toBeVisible();
-  await page.getByRole("button", { name: "取消运行" }).click();
-  await expect(page.getByText("已取消").last()).toBeVisible();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "下载日志" }).click();
+  await expect((await download).suggestedFilename()).toBe("project-1-events.json");
 });

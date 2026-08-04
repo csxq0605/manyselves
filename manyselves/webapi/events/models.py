@@ -40,3 +40,31 @@ class EventEnvelope(BaseModel):
             ensure_ascii=False,
             separators=(",", ":"),
         )
+
+
+class EventLogEntry(BaseModel):
+    """One bounded, sanitized event projection for the project log page."""
+
+    event_id: str = Field(alias="eventId")
+    timestamp: datetime
+    level: Literal["info", "warning", "error"]
+    type: str
+    message: str
+    agent_id: str | None = Field(default=None, alias="agentId")
+    session_id: str | None = Field(default=None, alias="sessionId")
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime) -> datetime:
+        return value.astimezone(UTC)
+
+
+class EventLogResponse(BaseModel):
+    """Project-scoped event log response without access to server log files."""
+
+    project_id: str = Field(alias="projectId")
+    entries: tuple[EventLogEntry, ...]
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True)

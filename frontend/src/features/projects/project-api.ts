@@ -14,13 +14,25 @@ export interface ProjectApi {
   update(projectId: string, input: ProjectUpdateInput): Promise<Project>;
 }
 
+const activationQueues = new WeakMap<ApiGateway, Promise<void>>();
+
+function activateProject(gateway: ApiGateway, projectId: string): Promise<Project> {
+  const previous = activationQueues.get(gateway) ?? Promise.resolve();
+  const activation = previous.then(() => gateway.requestJson<Project>(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/activate`,
+    { method: "POST", requireLease: true },
+  ));
+  const tail = activation.then(() => undefined, () => undefined);
+  activationQueues.set(gateway, tail);
+  void tail.then(() => {
+    if (activationQueues.get(gateway) === tail) activationQueues.delete(gateway);
+  });
+  return activation;
+}
+
 export function createProjectApi(gateway: ApiGateway): ProjectApi {
   return {
-    activate: (projectId) =>
-      gateway.requestJson<Project>(
-        `/api/v1/projects/${encodeURIComponent(projectId)}/activate`,
-        { method: "POST", requireLease: true },
-      ),
+    activate: (projectId) => activateProject(gateway, projectId),
     create: (input) =>
       gateway.requestJson<Project>("/api/v1/projects", {
         json: input,

@@ -1,0 +1,25 @@
+.runtime-page, .logs-page { max-width: 1040px; }
+.operations-header { align-items: center; border-bottom: 1px solid #dcddd9; display: flex; gap: 24px; justify-content: space-between; margin-bottom: 20px; padding-bottom: 18px; }
+.operations-header p { color: #6b6f76; font-family: "SFMono-Regular", Cascadia Mono, monospace; font-size: 11px; letter-spacing: .08em; margin: 0; }
+.operations-header h1 { font-size: clamp(26px, 4vw, 38px); letter-spacing: -.04em; margin: 3px 0 0; }
+.runtime-page__readiness { background: #f1f1ee; border-radius: 999px; color: #6b6f76; font-size: 12px; padding: 6px 10px; }
+.runtime-page__readiness--ready { background: #e7f5eb; color: #24723b; }
+.runtime-page__summary { align-items: center; background: #f6f6f3; border: 1px solid #dcddd9; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 14px; padding: 14px 16px; }
+.runtime-page__summary span { color: #6b6f76; font-size: 13px; }
+.runtime-page__grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.operations-card { background: #fff; border: 1px solid #dcddd9; border-radius: 8px; padding: 16px; }
+.operations-card h2 { font-size: 15px; margin: 0 0 14px; }
+.operations-empty { color: #7a7d82; font-size: 13px; margin: 0; }
+.operations-list { display: grid; gap: 0; list-style: none; margin: 0; padding: 0; }
+.operations-list li { align-items: center; border-top: 1px solid #ecece9; display: grid; gap: 4px 12px; grid-template-columns: minmax(0, 1fr) auto; padding: 10px 0; }
+.operations-list li:first-child { border-top: 0; padding-top: 0; }
+.operations-list li:last-child { padding-bottom: 0; }
+.operations-list span, .operations-list small { color: #6b6f76; font-size: 12px; }
+.operations-list small { grid-column: 1 / -1; }
+.operations-list--compact li { grid-template-columns: auto minmax(0, 1fr) auto; }
+.runtime-page__signal { background: #a5a7a4; border-radius: 50%; height: 8px; width: 8px; }
+.runtime-page__signal--running, .runtime-page__signal--thinking { background: #2f7ee6; }
+.runtime-page__signal--waiting { background: #c88a1d; }
+.runtime-page__signal--error { background: #c53b3b; }
+.runtime-page__errors { margin-top: 14px; }
+@media (max-width: 760px) { .runtime-page__grid { grid-template-columns: 1fr; } .operations-header { align-items: flex-start; flex-direction: column; } }

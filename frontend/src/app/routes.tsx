@@ -18,6 +18,16 @@ const ConversationPage = lazy(async () => {
   return { default: module.ConversationPage };
 });
 
+const RuntimeRoutePage = lazy(async () => {
+  const module = await import("../features/runtime/RuntimePage");
+  return { default: module.RuntimeRoutePage };
+});
+
+const LogsRoutePage = lazy(async () => {
+  const module = await import("../features/logs/LogsPage");
+  return { default: module.LogsRoutePage };
+});
+
 export const lastProjectRouteStorageKey = "manyselves.lastProjectRoute.v1";
 
 function Placeholder({ title }: { readonly title: string }) {
@@ -117,8 +127,16 @@ export function AppRoutes({ gateway, onLogout, platform }: { readonly gateway: A
         <ConversationPage gateway={gateway} />
       </Suspense>
     )} />
-    <Route path="/projects/:projectId/runtime" element={<Placeholder title="运行态" />} />
-    <Route path="/projects/:projectId/logs" element={<Placeholder title="日志" />} />
+    <Route path="/projects/:projectId/runtime" element={(
+      <Suspense fallback={<Placeholder title="正在加载运行态…" />}>
+        <RuntimeRoutePage gateway={gateway} />
+      </Suspense>
+    )} />
+    <Route path="/projects/:projectId/logs" element={(
+      <Suspense fallback={<Placeholder title="正在加载日志…" />}>
+        <LogsRoutePage gateway={gateway} {...(platform ? { platform } : {})} />
+      </Suspense>
+    )} />
     <Route path="/projects/:projectId/:section" element={(
       <Suspense fallback={<Placeholder title="正在加载项目文件…" />}>
         <ProjectDirectoryPage gateway={gateway} {...(platform ? { platform } : {})} />

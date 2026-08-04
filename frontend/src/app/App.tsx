@@ -133,6 +133,9 @@ export function App({
         const wasReportingRefreshRequested = reports.getState().refreshRequested;
         agentStore.getState().applyEvent(event);
         reports.getState().applyEvent(event);
+        if (event.projectId) {
+          void queryClient.invalidateQueries({ queryKey: ["event-logs", event.projectId] });
+        }
         if (
           (!wasRefreshRequested && agentStore.getState().refreshRequested)
           || (!wasReportingRefreshRequested && reports.getState().refreshRequested)
@@ -156,10 +159,10 @@ export function App({
       },
       onResync: async () => {
         setConnectionState("resyncing");
-        await queryClient.invalidateQueries({
-          queryKey: ["bootstrap"],
-          refetchType: "active",
-        });
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["bootstrap"], refetchType: "active" }),
+          queryClient.invalidateQueries({ queryKey: ["event-logs"], refetchType: "active" }),
+        ]);
       },
       onStateChange: (state) => {
         if (state === "unauthorized") {
