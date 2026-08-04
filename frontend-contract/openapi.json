@@ -5334,6 +5334,38 @@
               "title": "Path",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "conflict",
+            "required": false,
+            "schema": {
+              "default": "reject",
+              "enum": [
+                "reject",
+                "replace",
+                "keep-both"
+              ],
+              "title": "Conflict",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "baseRevision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Baserevision"
+            }
           }
         ],
         "responses": {

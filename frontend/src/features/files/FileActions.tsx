@@ -58,6 +58,8 @@ export function FileActions({
         projectId,
         work.path,
         work.file.file,
+        "reject",
+        undefined,
         work.controller.signal,
       );
       if (work.controller.signal.aborted) {

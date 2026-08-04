@@ -10,7 +10,10 @@ from datetime import datetime, timezone
 from io import BufferedReader
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from threading import RLock
+from typing import Literal
 from urllib.parse import unquote
+
+_UPLOAD_CONFLICTS = frozenset({"reject", "replace", "keep-both"})
 
 
 class WorkspaceFileError(RuntimeError):
@@ -31,6 +34,14 @@ class FileRevisionConflict(WorkspaceFileError):  # noqa: N818 - locked applicati
 
     def __init__(self) -> None:
         super().__init__("File changed since the supplied base revision")
+
+
+class FileAlreadyExists(WorkspaceFileError):  # noqa: N818 - stable upload conflict
+    code = "FILE_ALREADY_EXISTS"
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        super().__init__("A file already exists at the requested workspace path")
 
 
 class DestinationExists(WorkspaceFileError):  # noqa: N818 - locked application error name
@@ -247,10 +258,22 @@ class WorkspaceFiles:
             else:
                 path.unlink()
 
-    async def upload(self, relative_path: str, chunks: AsyncIterator[bytes]) -> FileEntry:
+    async def upload(
+        self,
+        relative_path: str,
+        chunks: AsyncIterator[bytes],
+        *,
+        conflict: Literal["reject", "replace", "keep-both"] = "reject",
+        base_revision: str | None = None,
+    ) -> FileEntry:
+        if conflict not in _UPLOAD_CONFLICTS:
+            raise ValueError("Unsupported upload conflict mode")
         destination = self.resolve(relative_path)
-        self._require_new_destination(destination)
         self._require_existing_directory(destination.parent)
+        if conflict == "reject":
+            self._require_upload_destination(destination)
+        elif conflict == "replace":
+            self._require_matching_file(relative_path, base_revision)
         fd, temp_name = tempfile.mkstemp(prefix=".manyselves-tmp-", dir=destination.parent)
         temp = Path(temp_name)
         size = 0
@@ -264,12 +287,16 @@ class WorkspaceFiles:
                 stream.flush()
                 os.fsync(stream.fileno())
             with self._mutation_lock:
-                self._require_new_destination(destination)
-                temp.replace(destination)
+                final_destination = self._final_upload_destination(
+                    relative_path,
+                    conflict=conflict,
+                    base_revision=base_revision,
+                )
+                temp.replace(final_destination)
         except BaseException:
             temp.unlink(missing_ok=True)
             raise
-        return self.entry(relative_path)
+        return self.entry(self.relative(final_destination))
 
     def entry(self, relative_path: str) -> FileEntry:
         path = self.resolve(relative_path)
@@ -335,6 +362,49 @@ class WorkspaceFiles:
         if path.exists() or path.is_symlink():
             raise DestinationExists()
         self._require_existing_directory(path.parent)
+
+    def _require_upload_destination(self, destination: Path) -> None:
+        if destination.exists() or destination.is_symlink():
+            raise FileAlreadyExists(self.relative(destination))
+        self._require_existing_directory(destination.parent)
+
+    def _require_matching_file(
+        self,
+        relative_path: str,
+        base_revision: str | None,
+    ) -> Path:
+        current = self._existing_file(relative_path)
+        if base_revision is None or self._entry_revision(current) != base_revision:
+            raise FileRevisionConflict()
+        return current
+
+    def _final_upload_destination(
+        self,
+        relative_path: str,
+        *,
+        conflict: str,
+        base_revision: str | None,
+    ) -> Path:
+        destination = self.resolve(relative_path)
+        self._require_existing_directory(destination.parent)
+        if conflict == "reject":
+            self._require_upload_destination(destination)
+            return destination
+        if conflict == "replace":
+            return self._require_matching_file(relative_path, base_revision)
+        return self._keep_both_destination(destination)
+
+    def _keep_both_destination(self, destination: Path) -> Path:
+        if not destination.exists() and not destination.is_symlink():
+            return destination
+        stem = destination.stem
+        suffix = destination.suffix
+        index = 1
+        while True:
+            candidate = destination.with_name(f"{stem} ({index}){suffix}")
+            if not candidate.exists() and not candidate.is_symlink():
+                return candidate
+            index += 1
 
     def _require_existing_directory(self, path: Path) -> None:
         if not path.exists():

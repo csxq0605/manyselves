@@ -4,6 +4,7 @@ import asyncio
 import mimetypes
 from collections.abc import AsyncIterator, Callable
 from io import BufferedReader
+from pathlib import PurePosixPath
 from typing import ParamSpec, TypeVar
 from urllib.parse import quote, urlencode
 
@@ -22,6 +23,7 @@ from ...application.preview_service import (
 from ...application.project_registry import InvalidProjectId, ProjectRegistryError
 from ...application.workspace_files import (
     DestinationExists,
+    FileAlreadyExists,
     FileEntry,
     FileRevisionConflict,
     TextFile,
@@ -42,6 +44,7 @@ from ..schemas.files import (
     PreviewResponse,
     RenameEntryRequest,
     SaveFileRequest,
+    UploadConflict,
 )
 from ..security import require_authenticated_session, require_control_lease_header
 
@@ -52,6 +55,8 @@ router = APIRouter(
 _STREAM_CHUNK_SIZE = 64 * 1024
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+_PAGE_ROOTS = frozenset({"Inputs", "Knowledge", "Templates", "Outputs"})
+_WRITABLE_PAGE_ROOTS = frozenset({"Inputs", "Knowledge", "Templates"})
 
 
 async def _to_thread_non_abandoning(
@@ -137,6 +142,51 @@ def _content_response(content: TextFile) -> FileContent:
     )
 
 
+def _require_visible_path(
+    files: WorkspaceFiles,
+    path: str,
+    *,
+    allow_root: bool = False,
+) -> str | None:
+    files.resolve(path, allow_root=allow_root)
+    if not path and allow_root:
+        return None
+    parts = PurePosixPath(path).parts
+    if not parts or parts[0] not in _PAGE_ROOTS:
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="WORKSPACE_SECTION_NOT_VISIBLE",
+            message="Workspace section is not available through the project file pages",
+            retryable=False,
+        )
+    return parts[0]
+
+
+def _require_writable_path(files: WorkspaceFiles, path: str) -> None:
+    section = _require_visible_path(files, path)
+    if section not in _WRITABLE_PAGE_ROOTS or len(PurePosixPath(path).parts) < 2:
+        raise _mutation_forbidden()
+
+
+def _require_regular_file(files: WorkspaceFiles, path: str) -> None:
+    if files.entry(path).kind != "file":
+        raise _mutation_forbidden()
+
+
+def _mutation_forbidden() -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_403_FORBIDDEN,
+        code="WORKSPACE_MUTATION_FORBIDDEN",
+        message="This workspace entry cannot be changed through the project file pages",
+        retryable=False,
+    )
+
+
+def _is_page_entry(entry: FileEntry) -> bool:
+    parts = PurePosixPath(entry.path).parts
+    return bool(parts) and parts[0] in _PAGE_ROOTS
+
+
 def _file_error(error: Exception) -> ApiError:
     if isinstance(error, ControlLeaseRequired):
         return ApiError(
@@ -156,7 +206,7 @@ def _file_error(error: Exception) -> ApiError:
         code = status.HTTP_400_BAD_REQUEST
     elif isinstance(error, WorkspaceEntryNotFound):
         code = status.HTTP_404_NOT_FOUND
-    elif isinstance(error, (DestinationExists, FileRevisionConflict)):
+    elif isinstance(error, (DestinationExists, FileAlreadyExists, FileRevisionConflict)):
         code = status.HTTP_409_CONFLICT
     elif isinstance(error, (UploadTooLarge, TextFileTooLarge, PreviewTooLarge)):
         code = status.HTTP_413_CONTENT_TOO_LARGE
@@ -171,11 +221,13 @@ def _file_error(error: Exception) -> ApiError:
     else:
         raise error
     assert isinstance(error, WorkspaceFileError)
+    details = {"path": error.path} if isinstance(error, FileAlreadyExists) else None
     return ApiError(
         status_code=code,
         code=error.code,
         message=str(error),
         retryable=False,
+        details=details,
     )
 
 
@@ -187,8 +239,11 @@ async def file_tree(
 ) -> FileTreeResponse:
     files = _file_service(request, project_id)
     try:
+        _require_visible_path(files, path, allow_root=True)
         async with request.app.state.runtime_facade.read_transaction():
             entries = await _to_thread_non_abandoning(files.list_tree, path)
+            if not path:
+                entries = [entry for entry in entries if _is_page_entry(entry)]
             return FileTreeResponse(entries=[_entry_response(item) for item in entries])
     except WorkspaceFileError as error:
         raise _file_error(error) from error
@@ -198,6 +253,7 @@ async def file_tree(
 async def read_file(project_id: str, request: Request, path: str = Query()) -> FileContent:
     files = _file_service(request, project_id)
     try:
+        _require_visible_path(files, path)
         async with request.app.state.runtime_facade.read_transaction():
             return _content_response(files.read_text(path))
     except (WorkspaceFileError, UnicodeDecodeError) as error:
@@ -216,6 +272,7 @@ async def save_file(
 ) -> FileContent:
     files = _file_service(request, project_id)
     try:
+        _require_writable_path(files, path)
         async with request.app.state.runtime_facade.mutation_transaction(lease_token):
             return _content_response(files.write_text(path, body.content, body.base_revision))
     except (ControlLeaseRequired, RuntimeNotReadyError, WorkspaceFileError) as error:
@@ -231,13 +288,11 @@ async def create_entry(
 ) -> FileEntryResponse:
     files = _file_service(request, project_id)
     try:
+        _require_writable_path(files, body.path)
+        if body.kind != "file":
+            raise _mutation_forbidden()
         async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            if body.kind == "file":
-                entry = files.entry(files.create_file(body.path, body.content).path)
-            else:
-                if body.content:
-                    raise WorkspaceEntryTypeError()
-                entry = files.create_directory(body.path)
+            entry = files.entry(files.create_file(body.path, body.content).path)
             return _entry_response(entry)
     except (ControlLeaseRequired, RuntimeNotReadyError, WorkspaceFileError) as error:
         raise _file_error(error) from error
@@ -252,10 +307,11 @@ async def rename_entry(
 ) -> FileEntryResponse:
     files = _file_service(request, project_id)
     try:
+        _require_writable_path(files, body.source)
+        _require_writable_path(files, body.destination)
         async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            return _entry_response(
-                files.rename(body.source, body.destination, body.base_revision)
-            )
+            _require_regular_file(files, body.source)
+            return _entry_response(files.rename(body.source, body.destination, body.base_revision))
     except (ControlLeaseRequired, RuntimeNotReadyError, WorkspaceFileError) as error:
         raise _file_error(error) from error
 
@@ -270,7 +326,9 @@ async def delete_entry(
 ) -> Response:
     files = _file_service(request, project_id)
     try:
+        _require_visible_path(files, path)
         async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+            _require_regular_file(files, path)
             files.delete(path, _if_match_revision(if_match))
     except (ControlLeaseRequired, RuntimeNotReadyError, WorkspaceFileError) as error:
         raise _file_error(error) from error
@@ -282,15 +340,29 @@ async def upload_file(
     project_id: str,
     request: Request,
     path: str = Query(),
+    conflict: UploadConflict = Query(default="reject"),
+    base_revision: str | None = Query(
+        default=None,
+        alias="baseRevision",
+        pattern=r"^[0-9a-f]{64}$",
+    ),
     lease_token: str = Depends(require_control_lease_header),
 ) -> FileEntryResponse:
     files = _file_service(request, project_id)
     try:
+        _require_writable_path(files, path)
         content_length = request.headers.get("Content-Length")
         if content_length is not None and int(content_length) > files.max_upload_bytes:
             raise UploadTooLarge()
         async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            return _entry_response(await files.upload(path, request.stream()))
+            return _entry_response(
+                await files.upload(
+                    path,
+                    request.stream(),
+                    conflict=conflict,
+                    base_revision=base_revision,
+                )
+            )
     except ValueError as error:
         raise ApiError(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -311,6 +383,7 @@ async def download_file(
     files = _file_service(request, project_id)
     opened = None
     try:
+        _require_visible_path(files, path)
         async with request.app.state.runtime_facade.read_transaction():
             opened = files.open_download(path)
             byte_range = _parse_range(request.headers.get("Range"), opened.size)
@@ -344,12 +417,11 @@ async def download_file(
 
 
 @router.get("/preview", response_model=PreviewResponse)
-async def preview_file(
-    project_id: str, request: Request, path: str = Query()
-) -> PreviewResponse:
+async def preview_file(project_id: str, request: Request, path: str = Query()) -> PreviewResponse:
     files = _file_service(request, project_id)
-    content_url = f"/api/v1/projects/{project_id}/files/download?{urlencode({'path': path})}"
     try:
+        _require_visible_path(files, path)
+        content_url = f"/api/v1/projects/{project_id}/files/download?{urlencode({'path': path})}"
         service = _preview_service(request, files)
         async with request.app.state.runtime_facade.read_transaction():
             capture = service.capture(path)
@@ -362,7 +434,10 @@ async def preview_file(
         external["kind"] = external.pop("type")
         if external["kind"] == "docx":
             external["blocks"] = [
-                {"kind": block["type"], **{key: value for key, value in block.items() if key != "type"}}
+                {
+                    "kind": block["type"],
+                    **{key: value for key, value in block.items() if key != "type"},
+                }
                 for block in external["blocks"]
             ]
         return PreviewResponse.model_validate(external)
@@ -445,9 +520,13 @@ def _if_match_revision(value: str) -> str:
 
 
 def _content_disposition(name: str) -> str:
-    fallback = "".join(
-        character if 32 <= ord(character) < 127 and character not in {'"', "\\"} else "_"
-        for character in name
-    ).replace("\r", "_").replace("\n", "_")
+    fallback = (
+        "".join(
+            character if 32 <= ord(character) < 127 and character not in {'"', "\\"} else "_"
+            for character in name
+        )
+        .replace("\r", "_")
+        .replace("\n", "_")
+    )
     fallback = fallback or "download"
-    return f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{quote(name, safe="")}'
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(name, safe='')}"

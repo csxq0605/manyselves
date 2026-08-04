@@ -161,9 +161,7 @@ async def test_legacy_project_metadata_update_uses_a_deterministic_fallback_revi
     """A project created before sidecars existed must be editable without a migration write first."""
     client, _, root = api
     headers = await acquire_controller(client)
-    fallback_revision = hashlib.sha256(
-        b'{"displayName":"p1","description":""}'
-    ).hexdigest()
+    fallback_revision = hashlib.sha256(b'{"displayName":"p1","description":""}').hexdigest()
 
     updated = await client.patch(
         "/api/v1/projects/p1",
@@ -217,9 +215,7 @@ async def test_project_activation_requires_idle_runtime(api) -> None:
     client, host, _ = api
     headers = await acquire_controller(client)
     assert (
-        await client.post(
-            "/api/v1/projects", headers=headers, json=project_create_payload("p2")
-        )
+        await client.post("/api/v1/projects", headers=headers, json=project_create_payload("p2"))
     ).status_code == 201
     host.statuses = {"main": "thinking"}
 
@@ -450,9 +446,7 @@ async def test_file_create_read_revision_save_tree_rename_and_delete(api) -> Non
         headers=headers,
         json={"path": "Inputs/a.txt", "kind": "file", "content": "one"},
     )
-    read = await client.get(
-        "/api/v1/projects/p1/files/content", params={"path": "Inputs/a.txt"}
-    )
+    read = await client.get("/api/v1/projects/p1/files/content", params={"path": "Inputs/a.txt"})
     saved = await client.put(
         "/api/v1/projects/p1/files/content",
         params={"path": "Inputs/a.txt"},
@@ -525,9 +519,7 @@ async def test_http_rename_and_delete_reject_stale_revisions_without_side_effect
         params={"path": "Inputs/a.txt"},
         headers={**headers, "If-Match": f'"{stale_revision}"'},
     )
-    current = await client.get(
-        "/api/v1/projects/p1/files/content", params={"path": "Inputs/a.txt"}
-    )
+    current = await client.get("/api/v1/projects/p1/files/content", params={"path": "Inputs/a.txt"})
 
     assert saved.status_code == 200
     assert renamed.status_code == 409
@@ -694,6 +686,188 @@ async def test_upload_is_bounded_and_download_supports_byte_ranges(api) -> None:
     assert partial.headers["accept-ranges"] == "bytes"
     assert too_large.status_code == 413
     assert too_large.json()["error"]["code"] == "UPLOAD_TOO_LARGE"
+
+
+@pytest.mark.asyncio
+async def test_upload_conflict_modes_are_revision_safe_and_path_sanitized(api) -> None:
+    """Reject, keep-both, and replace must expose only logical paths and honor revisions."""
+    client, _, root = api
+    headers = await acquire_controller(client)
+    uploaded = await client.post(
+        "/api/v1/projects/p1/files/upload",
+        params={"path": "Inputs/data.txt"},
+        headers=headers,
+        content=b"one",
+    )
+    rejected = await client.post(
+        "/api/v1/projects/p1/files/upload",
+        params={"path": "Inputs/data.txt"},
+        headers=headers,
+        content=b"rejected",
+    )
+    kept = await client.post(
+        "/api/v1/projects/p1/files/upload",
+        params={"path": "Inputs/data.txt", "conflict": "keep-both"},
+        headers=headers,
+        content=b"two",
+    )
+    replaced = await client.post(
+        "/api/v1/projects/p1/files/upload",
+        params={
+            "path": "Inputs/data.txt",
+            "conflict": "replace",
+            "baseRevision": uploaded.json()["revision"],
+        },
+        headers=headers,
+        content=b"three",
+    )
+    stale = await client.post(
+        "/api/v1/projects/p1/files/upload",
+        params={
+            "path": "Inputs/data.txt",
+            "conflict": "replace",
+            "baseRevision": uploaded.json()["revision"],
+        },
+        headers=headers,
+        content=b"stale",
+    )
+
+    assert uploaded.status_code == 201
+    assert rejected.status_code == 409
+    assert rejected.json()["error"] == {
+        "code": "FILE_ALREADY_EXISTS",
+        "message": "A file already exists at the requested workspace path",
+        "retryable": False,
+        "details": {"path": "Inputs/data.txt"},
+    }
+    assert str(root.resolve()) not in rejected.text
+    assert str(root.resolve()).replace("\\", "\\\\") not in rejected.text
+    assert kept.status_code == 201
+    assert kept.json()["path"] == "Inputs/data (1).txt"
+    assert replaced.status_code == 201
+    assert replaced.json()["path"] == "Inputs/data.txt"
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "FILE_REVISION_CONFLICT"
+    assert (root / "p1" / "Inputs" / "data.txt").read_bytes() == b"three"
+    assert (root / "p1" / "Inputs" / "data (1).txt").read_bytes() == b"two"
+
+
+@pytest.mark.asyncio
+async def test_outputs_writes_uploads_and_directory_mutations_are_forbidden(api) -> None:
+    """Bypassing the React capabilities must not edit Outputs or mutate directory rows."""
+    client, _, root = api
+    headers = await acquire_controller(client)
+    output = root / "p1" / "Outputs" / "Reports" / "report.txt"
+    output.write_text("generated", encoding="utf-8")
+    output_revision = hashlib.sha256(b"generated").hexdigest()
+    directory_revision = WorkspaceFiles(root / "p1").entry("Outputs/Reports").revision
+    input_directory = root / "p1" / "Inputs" / "existing"
+    input_directory.mkdir()
+    input_directory_revision = WorkspaceFiles(root / "p1").entry("Inputs/existing").revision
+
+    saved = await client.put(
+        "/api/v1/projects/p1/files/content",
+        params={"path": "Outputs/Reports/report.txt"},
+        headers=headers,
+        json={"baseRevision": output_revision, "content": "client edit"},
+    )
+    uploaded = await client.post(
+        "/api/v1/projects/p1/files/upload",
+        params={"path": "Outputs/Reports/client.txt"},
+        headers=headers,
+        content=b"client upload",
+    )
+    uploaded_beside_fixed_root = await client.post(
+        "/api/v1/projects/p1/files/upload",
+        params={"path": "Inputs", "conflict": "keep-both"},
+        headers=headers,
+        content=b"must not escape the fixed root",
+    )
+    created_output_file = await client.post(
+        "/api/v1/projects/p1/files/entries",
+        headers=headers,
+        json={"path": "Outputs/Reports/client.txt", "kind": "file", "content": "client"},
+    )
+    created_directory = await client.post(
+        "/api/v1/projects/p1/files/entries",
+        headers=headers,
+        json={"path": "Inputs/client-folder", "kind": "directory"},
+    )
+    renamed_directory = await client.post(
+        "/api/v1/projects/p1/files/rename",
+        headers=headers,
+        json={
+            "source": "Outputs/Reports",
+            "destination": "Outputs/Renamed",
+            "baseRevision": directory_revision,
+        },
+    )
+    deleted_directory = await client.delete(
+        "/api/v1/projects/p1/files/entries",
+        params={"path": "Outputs/Reports"},
+        headers={**headers, "If-Match": directory_revision},
+    )
+    renamed_writable_directory = await client.post(
+        "/api/v1/projects/p1/files/rename",
+        headers=headers,
+        json={
+            "source": "Inputs/existing",
+            "destination": "Inputs/renamed",
+            "baseRevision": input_directory_revision,
+        },
+    )
+    deleted_writable_directory = await client.delete(
+        "/api/v1/projects/p1/files/entries",
+        params={"path": "Inputs/existing"},
+        headers={**headers, "If-Match": input_directory_revision},
+    )
+
+    for response in (
+        saved,
+        uploaded,
+        uploaded_beside_fixed_root,
+        created_output_file,
+        created_directory,
+        renamed_directory,
+        deleted_directory,
+        renamed_writable_directory,
+        deleted_writable_directory,
+    ):
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "WORKSPACE_MUTATION_FORBIDDEN"
+    assert output.read_text(encoding="utf-8") == "generated"
+    assert not (root / "p1" / "Inputs" / "client-folder").exists()
+    assert not (root / "p1" / "Inputs (1)").exists()
+    assert input_directory.is_dir()
+    assert (root / "p1" / "Outputs" / "Reports").is_dir()
+
+    deleted_output_file = await client.delete(
+        "/api/v1/projects/p1/files/entries",
+        params={"path": "Outputs/Reports/report.txt"},
+        headers={**headers, "If-Match": output_revision},
+    )
+    assert deleted_output_file.status_code == 204
+    assert not output.exists()
+
+
+@pytest.mark.asyncio
+async def test_file_routes_hide_non_page_roots_but_keep_output_directories_visible(api) -> None:
+    """The browser API must retain Outputs children while never exposing Work or metadata."""
+    client, _, root = api
+    (root / "p1" / "Work" / "private.json").write_text("secret", encoding="utf-8")
+
+    tree = await client.get("/api/v1/projects/p1/files/tree")
+    hidden = await client.get(
+        "/api/v1/projects/p1/files/content",
+        params={"path": "Work/private.json"},
+    )
+
+    paths = {entry["path"] for entry in tree.json()["entries"]}
+    assert tree.status_code == 200
+    assert {"Outputs/Reports", "Outputs/Modules", "Outputs/Reviews"} <= paths
+    assert not any(path == "Work" or path.startswith("Work/") for path in paths)
+    assert hidden.status_code == 403
+    assert hidden.json()["error"]["code"] == "WORKSPACE_SECTION_NOT_VISIBLE"
 
 
 @pytest.mark.asyncio

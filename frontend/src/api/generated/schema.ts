@@ -3762,6 +3762,8 @@ export interface operations {
         parameters: {
             query: {
                 path: string;
+                conflict?: "reject" | "replace" | "keep-both";
+                baseRevision?: string | null;
             };
             header?: never;
             path: {

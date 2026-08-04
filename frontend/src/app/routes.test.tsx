@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { render, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
@@ -101,4 +101,37 @@ describe("authenticated root route restore", () => {
       "/projects/project-1/conversations/conversation-1",
     ));
   });
+});
+
+describe("project directory routes", () => {
+  it.each([
+    ["inputs", "输入", "Inputs"],
+    ["knowledge", "知识库", "Knowledge"],
+    ["templates", "输出模板", "Templates"],
+    ["outputs", "输出", "Outputs"],
+  ] as const)("mounts the shared %s directory page", async (section, title, root) => {
+    const requestJson = vi.fn(async (path: string) => {
+      if (path === "/api/v1/projects") {
+        return { projects: [{ active: true, description: "", displayName: "Project 1", id: "project-1", revision: "r1" }] };
+      }
+      if (path.includes("/files/tree")) return { entries: [] };
+      throw new Error(`unexpected request: ${path}`);
+    });
+    const gateway = { requestJson } as unknown as ApiGateway;
+
+    render(
+      <AppProviders>
+        <MemoryRouter initialEntries={[`/projects/project-1/${section}`]}>
+          <AppRoutes gateway={gateway} />
+        </MemoryRouter>
+      </AppProviders>,
+    );
+
+    expect(await screen.findByRole("heading", { name: title }, { timeout: 5_000 })).toBeVisible();
+    await waitFor(() => {
+      expect(requestJson).toHaveBeenCalledWith(
+        `/api/v1/projects/project-1/files/tree?path=${root}`,
+      );
+    });
+  }, 10_000);
 });

@@ -1,11 +1,17 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import type { ApiGateway, BootstrapSnapshot } from "../api/gateway";
 import { ProjectHomePage } from "../features/projects/ProjectHomePage";
 import { createProjectApi, type Project, type ProjectApi } from "../features/projects/project-api";
 import { AppLayout } from "../features/shell/AppLayout";
+import type { PlatformBridge } from "../platform/types";
+
+const ProjectDirectoryPage = lazy(async () => {
+  const module = await import("../features/files/ProjectDirectoryPage");
+  return { default: module.ProjectDirectoryPage };
+});
 
 export const lastProjectRouteStorageKey = "manyselves.lastProjectRoute.v1";
 
@@ -95,19 +101,20 @@ function NotFound() {
   return <section className="route-placeholder"><h1>页面未找到</h1><p>该地址不是可用的工作台路由。</p><Link to="/">返回项目</Link></section>;
 }
 
-export function AppRoutes({ gateway, onLogout }: { readonly gateway: ApiGateway; readonly onLogout?: () => void }) {
+export function AppRoutes({ gateway, onLogout, platform }: { readonly gateway: ApiGateway; readonly onLogout?: () => void; readonly platform?: PlatformBridge }) {
   const projectApi = createProjectApi(gateway);
   return <Routes><Route element={<ProjectRouteLayout projectApi={projectApi} {...(onLogout ? { onLogout } : {})} />}>
     <Route path="/" element={<ProjectLanding gateway={gateway} projectApi={projectApi} />} />
     <Route path="/knowledge" element={<Placeholder title="全局知识库" />} />
     <Route path="/projects/:projectId" element={<ProjectHomePage />} />
     <Route path="/projects/:projectId/conversations/:conversationId" element={<Placeholder title="项目对话" />} />
-    <Route path="/projects/:projectId/inputs" element={<Placeholder title="输入" />} />
-    <Route path="/projects/:projectId/knowledge" element={<Placeholder title="知识库" />} />
-    <Route path="/projects/:projectId/templates" element={<Placeholder title="输出模板" />} />
-    <Route path="/projects/:projectId/outputs" element={<Placeholder title="输出" />} />
     <Route path="/projects/:projectId/runtime" element={<Placeholder title="运行态" />} />
     <Route path="/projects/:projectId/logs" element={<Placeholder title="日志" />} />
+    <Route path="/projects/:projectId/:section" element={(
+      <Suspense fallback={<Placeholder title="正在加载项目文件…" />}>
+        <ProjectDirectoryPage gateway={gateway} {...(platform ? { platform } : {})} />
+      </Suspense>
+    )} />
     <Route path="/settings/models" element={<Placeholder title="模型设置" />} />
     <Route path="*" element={<NotFound />} />
   </Route></Routes>;

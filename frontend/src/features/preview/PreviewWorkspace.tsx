@@ -53,7 +53,7 @@ export function PreviewWorkspace({ api, onClose, path, platform, projectId }: Pr
     <section aria-label={`文件预览 ${path}`} className="preview-workspace">
       <div className="workspace-heading">
         <div><p className="pane-label">安全预览</p><h2>{path}</h2></div>
-        <button onClick={onClose} type="button">返回编辑器</button>
+        <button onClick={onClose} type="button">关闭预览</button>
       </div>
       {error ? <p role="alert">{error}</p> : null}
       {!preview && !error ? <p role="status">正在加载预览…</p> : null}

@@ -18,9 +18,12 @@ from manyselves.application.preview_service import (
 )
 from manyselves.application.workspace_files import (
     DestinationExists,
+    FileAlreadyExists,
     FileRevisionConflict,
     UnsafeWorkspacePath,
     UploadTooLarge,
+    WorkspaceEntryNotFound,
+    WorkspaceEntryTypeError,
     WorkspaceFiles,
 )
 
@@ -28,7 +31,10 @@ from manyselves.application.workspace_files import (
 @pytest.fixture
 def workspace_files(tmp_path: Path) -> WorkspaceFiles:
     project = tmp_path / "p1"
-    (project / "Inputs").mkdir(parents=True)
+    for name in ("Inputs", "Knowledge", "Templates", "Work", "Outputs"):
+        (project / name).mkdir(parents=True)
+    for name in ("Modules", "Reviews", "Reports"):
+        (project / "Outputs" / name).mkdir()
     (project / "Inputs" / "a.txt").write_text("initial", encoding="utf-8")
     return WorkspaceFiles(project, max_text_bytes=1024, max_upload_bytes=8)
 
@@ -222,6 +228,155 @@ async def test_upload_limit_is_checked_while_streaming(workspace_files: Workspac
     assert not (workspace_files.project_root / "Inputs" / "large.bin").exists()
 
 
+@pytest.mark.asyncio
+async def test_upload_reject_reports_only_the_project_relative_logical_path(
+    workspace_files: WorkspaceFiles,
+) -> None:
+    """A duplicate-upload response must identify the logical entry without leaking its host path."""
+
+    async def chunks(value: bytes):
+        yield value
+
+    with pytest.raises(FileAlreadyExists) as duplicate:
+        await workspace_files.upload("Inputs/a.txt", chunks(b"replacement"))
+
+    assert duplicate.value.path == "Inputs/a.txt"
+    assert str(workspace_files.project_root) not in str(duplicate.value)
+    assert workspace_files.read_text("Inputs/a.txt").content == "initial"
+
+
+@pytest.mark.asyncio
+async def test_keep_both_uses_the_first_available_deterministic_number(
+    workspace_files: WorkspaceFiles,
+) -> None:
+    """Keep-both must fill the first numbered gap without overwriting either server file."""
+
+    async def chunks(value: bytes):
+        yield value
+
+    await workspace_files.upload("Inputs/data.txt", chunks(b"one"))
+    await workspace_files.upload("Inputs/data.txt", chunks(b"two"), conflict="keep-both")
+    result = await workspace_files.upload(
+        "Inputs/data.txt",
+        chunks(b"three"),
+        conflict="keep-both",
+    )
+
+    assert result.path == "Inputs/data (2).txt"
+    assert workspace_files.read_text("Inputs/data.txt").content == "one"
+    assert workspace_files.read_text("Inputs/data (1).txt").content == "two"
+    assert workspace_files.read_text("Inputs/data (2).txt").content == "three"
+
+
+@pytest.mark.asyncio
+async def test_replace_upload_requires_and_matches_the_existing_file_revision(
+    workspace_files: WorkspaceFiles,
+) -> None:
+    """Replace must atomically overwrite only the regular file revision selected by the client."""
+
+    async def chunks(value: bytes):
+        yield value
+
+    current = workspace_files.entry("Inputs/a.txt")
+    replaced = await workspace_files.upload(
+        "Inputs/a.txt",
+        chunks(b"updated"),
+        conflict="replace",
+        base_revision=current.revision,
+    )
+
+    assert replaced.path == "Inputs/a.txt"
+    assert replaced.revision != current.revision
+    assert workspace_files.read_text("Inputs/a.txt").content == "updated"
+
+    with pytest.raises(FileRevisionConflict):
+        await workspace_files.upload(
+            "Inputs/a.txt",
+            chunks(b"lost update"),
+            conflict="replace",
+            base_revision=current.revision,
+        )
+    assert workspace_files.read_text("Inputs/a.txt").content == "updated"
+
+
+@pytest.mark.asyncio
+async def test_replace_requires_an_existing_regular_file_and_base_revision(
+    workspace_files: WorkspaceFiles,
+) -> None:
+    """Replace must not create a missing path, target a directory, or accept no revision."""
+
+    async def chunks():
+        yield b"value"
+
+    with pytest.raises(FileRevisionConflict):
+        await workspace_files.upload("Inputs/a.txt", chunks(), conflict="replace")
+    with pytest.raises(WorkspaceEntryNotFound):
+        await workspace_files.upload(
+            "Inputs/missing.txt",
+            chunks(),
+            conflict="replace",
+            base_revision="0" * 64,
+        )
+    with pytest.raises(WorkspaceEntryTypeError):
+        await workspace_files.upload(
+            "Inputs",
+            chunks(),
+            conflict="replace",
+            base_revision=workspace_files.entry("Inputs").revision,
+        )
+
+    assert not (workspace_files.project_root / "Inputs" / "missing.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_replace_rechecks_revision_after_streaming_and_cleans_its_temp(
+    workspace_files: WorkspaceFiles,
+) -> None:
+    """A final-race revision change must preserve the winner and remove streamed temporary bytes."""
+    selected = workspace_files.entry("Inputs/a.txt")
+    target = workspace_files.project_root / "Inputs" / "a.txt"
+
+    async def racing_chunks():
+        target.write_text("server won", encoding="utf-8")
+        yield b"stale"
+
+    with pytest.raises(FileRevisionConflict):
+        await workspace_files.upload(
+            "Inputs/a.txt",
+            racing_chunks(),
+            conflict="replace",
+            base_revision=selected.revision,
+        )
+
+    assert target.read_text(encoding="utf-8") == "server won"
+    assert list(target.parent.glob(".manyselves-tmp-*")) == []
+
+
+@pytest.mark.asyncio
+async def test_generic_service_preserves_internal_roots_and_directory_crud(
+    workspace_files: WorkspaceFiles,
+) -> None:
+    """Browser policy must not restrict Runtime and Reporting callers of WorkspaceFiles."""
+    work = workspace_files.create_file("Work/runtime-state.json", "one")
+    output = workspace_files.create_file("Outputs/Reports/report.txt", "generated")
+
+    async def chunks():
+        yield b"upload"
+
+    workspace_files.write_text("Work/runtime-state.json", "two", work.revision)
+    workspace_files.write_text("Outputs/Reports/report.txt", "revised", output.revision)
+    uploaded = await workspace_files.upload("Outputs/Reports/upload.bin", chunks())
+    directory = workspace_files.create_directory("Work/run")
+    renamed = workspace_files.rename("Work/run", "Work/run-renamed", directory.revision)
+
+    assert workspace_files.read_text("Work/runtime-state.json").content == "two"
+    assert workspace_files.read_text("Outputs/Reports/report.txt").content == "revised"
+    assert uploaded.path == "Outputs/Reports/upload.bin"
+    assert "Work" in {entry.path for entry in workspace_files.list_tree()}
+    workspace_files.delete("Work/run-renamed", renamed.revision)
+    assert not (workspace_files.project_root / "Work" / "run-renamed").exists()
+
+
 def test_preview_dtos_are_bounded_passive_and_path_sanitized(
     workspace_files: WorkspaceFiles,
 ) -> None:
@@ -232,7 +387,8 @@ def test_preview_dtos_are_bounded_passive_and_path_sanitized(
     service = PreviewService(workspace_files, max_preview_bytes=1024, row_limit=2, column_limit=2)
 
     svg_dto = service.preview(
-        "Inputs/unsafe.svg", content_url="/api/v1/projects/p1/files/download?path=Inputs%2Funsafe.svg"
+        "Inputs/unsafe.svg",
+        content_url="/api/v1/projects/p1/files/download?path=Inputs%2Funsafe.svg",
     )
     markdown_dto = service.preview(
         "Inputs/unsafe.md", content_url="/api/v1/projects/p1/files/download?path=Inputs%2Funsafe.md"

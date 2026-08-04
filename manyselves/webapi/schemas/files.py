@@ -5,6 +5,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
+UploadConflict = Literal["reject", "replace", "keep-both"]
+
 
 class FileContent(BaseModel):
     model_config = ConfigDict(populate_by_name=True)

@@ -2,6 +2,7 @@ import type { ApiGateway } from "../../api/gateway";
 import type { components } from "../../api/generated/schema";
 
 export type FileEntry = components["schemas"]["FileEntryResponse"];
+export type UploadConflict = "reject" | "replace" | "keep-both";
 type FileTreeResponse = components["schemas"]["FileTreeResponse"];
 type CreateEntryRequest = components["schemas"]["CreateEntryRequest"];
 type RenameEntryRequest = components["schemas"]["RenameEntryRequest"];
@@ -12,7 +13,14 @@ export interface FileApi {
   download(projectId: string, path: string): Promise<Blob>;
   listTree(projectId: string, path?: string): Promise<FileEntry[]>;
   renameEntry(projectId: string, input: RenameEntryRequest): Promise<FileEntry>;
-  upload(projectId: string, path: string, file: File, signal?: AbortSignal): Promise<FileEntry>;
+  upload(
+    projectId: string,
+    path: string,
+    file: File,
+    conflict: UploadConflict,
+    baseRevision?: string,
+    signal?: AbortSignal,
+  ): Promise<FileEntry>;
 }
 
 function projectFilesPath(projectId: string, suffix: string): string {
@@ -55,10 +63,12 @@ export function createFileApi(gateway: ApiGateway): FileApi {
         method: "POST",
         requireLease: true,
       }),
-    upload: (projectId, path, file, signal) => {
+    upload: (projectId, path, file, conflict, baseRevision, signal) => {
       const request = { body: file, method: "POST", requireLease: true, ...(signal ? { signal } : {}) };
+      const query = new URLSearchParams({ path, conflict });
+      if (baseRevision !== undefined) query.set("baseRevision", baseRevision);
       return gateway.requestJson<FileEntry>(
-        withPath(projectFilesPath(projectId, "/upload"), path),
+        `${projectFilesPath(projectId, "/upload")}?${query.toString()}`,
         request,
       );
     },
