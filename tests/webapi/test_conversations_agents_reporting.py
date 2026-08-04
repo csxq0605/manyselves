@@ -2565,6 +2565,19 @@ async def test_settings_reports_and_rejects_environment_owned_credentials(resour
     assert host.replace_calls == []
     assert "replacement-secret" not in response.text
 
+    combined = await client.patch(
+        "/api/v1/settings",
+        json={
+            "activeProviderId": "provider-1",
+            "apiKey": "combined-replacement-secret",
+            "model": "next-model",
+            "provider": "openai",
+        },
+    )
+    assert combined.status_code == 409
+    assert combined.json()["error"]["code"] == "CREDENTIAL_MANAGED_BY_ENVIRONMENT"
+    assert "combined-replacement-secret" not in combined.text
+
 
 @pytest.mark.asyncio
 async def test_provider_connection_test_does_not_persist_or_restart(
@@ -2642,6 +2655,17 @@ async def test_settings_defaults_reject_explicit_null(resources) -> None:
     response = await client.patch("/api/v1/settings", json={"model": None})
 
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["apiBase", "apiKey"])
+async def test_combined_provider_fields_require_active_provider(resources, field: str) -> None:
+    client, host, _, _ = resources
+
+    response = await client.patch("/api/v1/settings", json={field: "new-value"})
+
+    assert response.status_code == 422
+    assert host.replace_calls == []
 
 
 @pytest.mark.asyncio
@@ -3164,6 +3188,34 @@ async def test_settings_mutations_apply_to_live_runtime_and_model_only_does_not_
     assert secret not in provider.text
     assert provider.json()["providers"][0]["configured"] is True
     assert model.json()["defaults"]["model"] == "next-model"
+
+
+@pytest.mark.asyncio
+async def test_combined_model_settings_update_is_atomic_and_restarts_once(resources) -> None:
+    client, host, _, secret = resources
+    provider = host.config_manager.config.providers.configurations[0]
+
+    response = await client.patch(
+        "/api/v1/settings",
+        json={
+            "activeProviderId": "provider-1",
+            "apiBase": "https://combined.invalid/v1",
+            "apiKey": "combined-secret",
+            "model": "combined-model",
+            "provider": "openai",
+        },
+    )
+
+    assert response.status_code == 200
+    assert host.replace_calls == [False]
+    assert provider.api_base == "https://combined.invalid/v1"
+    assert provider.api_key == "combined-secret"
+    assert provider.yaml_api_key == "combined-secret"
+    assert provider.default_model == "combined-model"
+    assert host.config_manager.config.agents.defaults.model == "combined-model"
+    assert host.config_manager.config.agents.defaults.provider == "openai"
+    assert secret not in response.text
+    assert "combined-secret" not in response.text
 
 
 @pytest.mark.asyncio

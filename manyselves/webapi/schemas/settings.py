@@ -1,6 +1,13 @@
 """Non-secret settings DTOs."""
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 from ...config.schema import CredentialSource
 
@@ -51,6 +58,8 @@ class ProviderSettingsUpdate(BaseModel):
 class SettingsDefaultsUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
     active_provider_id: str | None = Field(default=None, alias="activeProviderId")
+    api_key: SecretStr | None = Field(default=None, alias="apiKey", repr=False)
+    api_base: str | None = Field(default=None, alias="apiBase")
     model: str | None = None
     provider: str | None = None
 
@@ -60,6 +69,13 @@ class SettingsDefaultsUpdate(BaseModel):
         if value is None:
             raise ValueError("field may be omitted but must not be null")
         return value
+
+    @model_validator(mode="after")
+    def require_active_provider_for_provider_fields(self):
+        provider_fields = {"api_base", "api_key"}
+        if self.model_fields_set & provider_fields and self.active_provider_id is None:
+            raise ValueError("activeProviderId is required with apiBase or apiKey")
+        return self
 
 
 class ProviderSettingsCreate(BaseModel):

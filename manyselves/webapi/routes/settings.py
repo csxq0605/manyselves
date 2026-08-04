@@ -83,6 +83,15 @@ def _error(error: Exception) -> ApiError:
     raise error
 
 
+def _replace_provider_secret(provider, secret) -> None:
+    if provider.credential_source == "environment":
+        raise CredentialManagedByEnvironmentError()
+    value = secret.get_secret_value() if secret is not None else None
+    provider.api_key = value
+    provider.yaml_api_key = value
+    provider.credential_source = "yaml" if value else "none"
+
+
 @router.get("", response_model=SettingsResponse)
 async def get_settings(request: Request):
     facade = request.app.state.runtime_facade
@@ -100,21 +109,38 @@ async def update_defaults(
     try:
         async with request.app.state.runtime_facade.mutation_transaction(lease_token):
             def mutation(config) -> None:
+                selected = None
                 if body.active_provider_id is not None:
-                    if not any(
-                        item.id == body.active_provider_id
-                        for item in config.providers.configurations
-                    ):
+                    selected = next(
+                        (
+                            item
+                            for item in config.providers.configurations
+                            if item.id == body.active_provider_id
+                        ),
+                        None,
+                    )
+                    if selected is None:
                         raise KeyError(body.active_provider_id)
                     config.providers.active = body.active_provider_id
+                    if "api_base" in body.model_fields_set:
+                        selected.api_base = body.api_base
+                    if "api_key" in body.model_fields_set:
+                        _replace_provider_secret(selected, body.api_key)
+                    if body.model is not None:
+                        selected.default_model = body.model
                 if body.model is not None:
                     config.agents.defaults.model = body.model
                 if body.provider is not None:
                     config.agents.defaults.provider = body.provider
 
+            provider_fields = {"active_provider_id", "api_base", "api_key", "provider"}
+            provider_model_changed = (
+                body.active_provider_id is not None
+                and "model" in body.model_fields_set
+            )
             restart = (
                 "provider_defaults_changed"
-                if body.model_fields_set & {"active_provider_id", "provider"}
+                if body.model_fields_set & provider_fields or provider_model_changed
                 else None
             )
             await _service(request).mutate(mutation, restart_reason=restart)
@@ -147,15 +173,10 @@ async def update_provider(
                 updates = body.model_dump(exclude_unset=True)
                 secret_present = "api_key" in updates
                 secret = updates.pop("api_key", None)
-                if secret_present and provider.credential_source == "environment":
-                    raise CredentialManagedByEnvironmentError()
                 for key, value in updates.items():
                     setattr(provider, key, value)
                 if secret_present:
-                    value = secret.get_secret_value() if secret is not None else None
-                    provider.api_key = value
-                    provider.yaml_api_key = value
-                    provider.credential_source = "yaml" if value else "none"
+                    _replace_provider_secret(provider, secret)
 
             restart_fields = {
                 "provider",

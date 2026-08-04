@@ -15,7 +15,7 @@ export interface ModelSettingsInput {
 
 export interface ModelSettingsProps {
   readonly busy: boolean;
-  readonly onSave: (input: ModelSettingsInput) => Promise<void>;
+  readonly onSave: (input: ModelSettingsInput) => Promise<boolean>;
   readonly onTest: (providerId: string) => Promise<ProviderConnectionTestResponse>;
   readonly settings: SettingsResponse;
 }
@@ -127,13 +127,17 @@ export function ModelSettings({ busy, onSave, onTest, settings }: ModelSettingsP
         <button
           className="settings-button settings-button--primary"
           disabled={busy || !model.trim()}
-          onClick={() => void onSave({
-            apiBase: apiBase.trim() || null,
-            ...(apiKey.trim() && !environmentManaged ? { apiKey: apiKey.trim() } : {}),
-            model: model.trim(),
-            provider: selected.provider,
-            providerId: selected.id,
-          }).then(() => setApiKey(""))}
+          onClick={() => {
+            void onSave({
+              apiBase: apiBase.trim() || null,
+              ...(apiKey.trim() && !environmentManaged ? { apiKey: apiKey.trim() } : {}),
+              model: model.trim(),
+              provider: selected.provider,
+              providerId: selected.id,
+            }).then((saved) => {
+              if (saved) setApiKey("");
+            });
+          }}
           type="button"
         >保存</button>
       </div>

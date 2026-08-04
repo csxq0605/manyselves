@@ -2948,6 +2948,30 @@
             ],
             "title": "Activeproviderid"
           },
+          "apiBase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apibase"
+          },
+          "apiKey": {
+            "anyOf": [
+              {
+                "format": "password",
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apikey"
+          },
           "model": {
             "anyOf": [
               {

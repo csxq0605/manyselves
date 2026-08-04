@@ -8,15 +8,23 @@ import type {
 
 export interface ProviderSettingsProps {
   readonly busy: boolean;
-  readonly onCreate: (input: ProviderSettingsCreate) => Promise<void>;
-  readonly onRemove: (providerId: string) => Promise<void>;
-  readonly onUpdate: (providerId: string, input: ProviderSettingsUpdate) => Promise<void>;
+  readonly onCreate: (input: ProviderSettingsCreate) => Promise<boolean>;
+  readonly onRemove: (providerId: string) => Promise<boolean>;
+  readonly onUpdate: (providerId: string, input: ProviderSettingsUpdate) => Promise<boolean>;
   readonly providers: SettingsResponse["providers"];
+  readonly requestRestart: (description: string, action: () => Promise<boolean>) => Promise<boolean>;
 }
 
 const providerTypes = ["openai", "anthropic", "deepseek", "google", "openrouter", "groq", "custom"] as const;
 
-export function ProviderSettings({ busy, onCreate, onRemove, onUpdate, providers }: ProviderSettingsProps) {
+export function ProviderSettings({
+  busy,
+  onCreate,
+  onRemove,
+  onUpdate,
+  providers,
+  requestRestart,
+}: ProviderSettingsProps) {
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<(typeof providerTypes)[number]>("openai");
 
@@ -43,15 +51,19 @@ export function ProviderSettings({ busy, onCreate, onRemove, onUpdate, providers
                 <button
                   className="settings-button settings-button--quiet"
                   disabled={busy}
-                  onClick={() => void onUpdate(item.id, { enabled: !item.enabled })}
+                  onClick={() => void requestRestart(
+                    `${item.enabled ? "停用" : "启用"}“${item.name}”提供商`,
+                    () => onUpdate(item.id, { enabled: !item.enabled }),
+                  )}
                   type="button"
                 >{item.enabled ? "停用" : "启用"}</button>
                 <button
                   className="settings-button settings-button--danger"
                   disabled={busy}
-                  onClick={() => {
-                    if (window.confirm(`确认删除“${item.name}”提供商？`)) void onRemove(item.id);
-                  }}
+                  onClick={() => void requestRestart(
+                    `删除“${item.name}”提供商`,
+                    () => onRemove(item.id),
+                  )}
                   type="button"
                 >删除</button>
               </div>
@@ -74,7 +86,12 @@ export function ProviderSettings({ busy, onCreate, onRemove, onUpdate, providers
         <button
           className="settings-button settings-button--secondary"
           disabled={busy || !name.trim()}
-          onClick={() => void onCreate({ enabled: true, name: name.trim(), provider }).then(() => setName(""))}
+          onClick={() => void requestRestart(
+            `创建“${name.trim()}”提供商`,
+            () => onCreate({ enabled: true, name: name.trim(), provider }),
+          ).then((created) => {
+            if (created) setName("");
+          })}
           type="button"
         >创建</button>
       </div>

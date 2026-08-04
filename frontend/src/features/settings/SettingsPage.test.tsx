@@ -63,16 +63,53 @@ describe("SettingsPage", () => {
     await user.clear(screen.getByLabelText("默认模型"));
     await user.type(screen.getByLabelText("默认模型"), "gpt-5");
     await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByRole("dialog", { name: "确认重启 Agent" })).toBeVisible();
+    expect(api.updateDefaults).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "确认并应用" }));
 
-    await waitFor(() => expect(api.updateProvider).toHaveBeenCalledWith("openai-primary", {
-      apiKey: "new-provider-key",
-      defaultModel: "gpt-5",
-    }));
-    expect(api.updateDefaults).toHaveBeenCalledWith({
+    await waitFor(() => expect(api.updateDefaults).toHaveBeenCalledWith({
       activeProviderId: "openai-primary",
+      apiBase: "https://api.openai.com/v1",
+      apiKey: "new-provider-key",
       model: "gpt-5",
       provider: "openai",
-    });
+    }));
+    expect(api.updateProvider).not.toHaveBeenCalled();
+  });
+
+  it("keeps a newly typed key available when saving fails", async () => {
+    const user = userEvent.setup();
+    const api = createApi();
+    vi.mocked(api.updateDefaults).mockRejectedValueOnce(new Error("save failed"));
+    render(<SettingsPage api={api} storage={storage} />);
+
+    const keyInput = await screen.findByLabelText("API Key");
+    await user.type(keyInput, "retry-this-key");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    await user.click(await screen.findByRole("button", { name: "确认并应用" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("save failed");
+    expect(keyInput).toHaveValue("retry-this-key");
+  });
+
+  it("uses the same restart confirmation for advanced provider changes", async () => {
+    const user = userEvent.setup();
+    const api = createApi();
+    render(<SettingsPage api={api} storage={storage} />);
+
+    await screen.findByLabelText("模型提供商");
+    await user.click(screen.getByText("高级设置"));
+    await user.click(screen.getByRole("button", { name: "停用" }));
+
+    expect(await screen.findByRole("dialog", { name: "确认重启 Agent" })).toHaveTextContent(
+      "停用“OpenAI Primary”提供商",
+    );
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    expect(api.updateProvider).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "停用" }));
+    await user.click(await screen.findByRole("button", { name: "确认并应用" }));
+    await waitFor(() => expect(api.updateProvider).toHaveBeenCalledWith("openai-primary", { enabled: false }));
   });
 
   it("saves client preferences without an access token field", async () => {

@@ -2123,6 +2123,10 @@ export interface components {
         SettingsDefaultsUpdate: {
             /** Activeproviderid */
             activeProviderId?: string | null;
+            /** Apibase */
+            apiBase?: string | null;
+            /** Apikey */
+            apiKey?: string | null;
             /** Model */
             model?: string | null;
             /** Provider */

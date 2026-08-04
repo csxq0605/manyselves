@@ -31,6 +31,12 @@ interface LoadedSettings {
   readonly validation: SettingsValidationResponse;
 }
 
+interface RestartRequest {
+  readonly action: () => Promise<boolean>;
+  readonly description: string;
+  readonly resolve: (confirmed: boolean) => void;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "设置操作失败";
 }
@@ -40,6 +46,7 @@ export function SettingsPage({ api, storage }: SettingsPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [restartRequest, setRestartRequest] = useState<RestartRequest | null>(null);
   const [preferences] = useState(() => storage.loadPreferences());
 
   useEffect(() => {
@@ -69,71 +76,97 @@ export function SettingsPage({ api, storage }: SettingsPageProps) {
     return () => { active = false; };
   }, [api]);
 
-  async function run(action: () => Promise<void>): Promise<void> {
+  async function run(action: () => Promise<void>): Promise<boolean> {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
       await action();
+      return true;
     } catch (actionError) {
       setError(errorMessage(actionError));
+      return false;
     } finally {
       setBusy(false);
     }
+  }
+
+  function requestRestart(
+    description: string,
+    action: () => Promise<boolean>,
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      setRestartRequest({ action, description, resolve });
+    });
+  }
+
+  function cancelRestart(): void {
+    restartRequest?.resolve(false);
+    setRestartRequest(null);
+  }
+
+  async function confirmRestart(): Promise<void> {
+    const request = restartRequest;
+    if (!request) return;
+    setRestartRequest(null);
+    request.resolve(await request.action());
   }
 
   function replaceSettings(settings: SettingsResponse): void {
     setLoaded((current) => current ? { ...current, settings } : current);
   }
 
-  async function createProvider(input: ProviderSettingsCreate): Promise<void> {
-    await run(async () => {
+  async function createProvider(input: ProviderSettingsCreate): Promise<boolean> {
+    return run(async () => {
       replaceSettings(await api.createProvider(input));
       setNotice("提供商已创建");
     });
   }
 
-  async function updateProvider(providerId: string, input: ProviderSettingsUpdate): Promise<void> {
-    await run(async () => {
+  async function updateProvider(providerId: string, input: ProviderSettingsUpdate): Promise<boolean> {
+    return run(async () => {
       replaceSettings(await api.updateProvider(providerId, input));
       setNotice("提供商设置已保存");
     });
   }
 
-  async function removeProvider(providerId: string): Promise<void> {
-    await run(async () => {
+  async function removeProvider(providerId: string): Promise<boolean> {
+    return run(async () => {
       replaceSettings(await api.removeProvider(providerId));
       setNotice("提供商已删除");
     });
   }
 
-  async function saveModel(input: ModelSettingsInput): Promise<void> {
-    if (!loaded) return;
-    await run(async () => {
-      const currentProvider = loaded.settings.providers.find((item) => item.id === input.providerId);
-      if (!currentProvider) throw new Error("所选模型提供商已不存在");
-      let nextSettings = loaded.settings;
-      const providerUpdate: ProviderSettingsUpdate = {};
-      if ((currentProvider.apiBase ?? null) !== input.apiBase) providerUpdate.apiBase = input.apiBase;
-      if ((currentProvider.defaultModel ?? "") !== input.model) providerUpdate.defaultModel = input.model;
-      if (input.apiKey) providerUpdate.apiKey = input.apiKey;
-      if (Object.keys(providerUpdate).length > 0) {
-        nextSettings = await api.updateProvider(input.providerId, providerUpdate);
-      }
-      if (
-        nextSettings.defaults.model !== input.model
-        || nextSettings.defaults.provider !== input.provider
-        || !nextSettings.providers.find((item) => item.id === input.providerId)?.active
-      ) {
-        nextSettings = await api.updateDefaults({
-          activeProviderId: input.providerId,
-          model: input.model,
-          provider: input.provider,
-        });
-      }
-      replaceSettings(nextSettings);
+  async function saveModel(input: ModelSettingsInput): Promise<boolean> {
+    if (!loaded) return false;
+    const currentProvider = loaded.settings.providers.find((item) => item.id === input.providerId);
+    if (!currentProvider) {
+      setError("所选模型提供商已不存在");
+      return false;
+    }
+    const changed = (
+      (currentProvider.apiBase ?? null) !== input.apiBase
+      || (currentProvider.defaultModel ?? "") !== input.model
+      || loaded.settings.defaults.model !== input.model
+      || loaded.settings.defaults.provider !== input.provider
+      || !currentProvider.active
+      || Boolean(input.apiKey)
+    );
+    if (!changed) {
+      setError(null);
+      setNotice("模型设置没有变化");
+      return true;
+    }
+    return requestRestart("保存模型设置", () => run(async () => {
+      replaceSettings(await api.updateDefaults({
+        activeProviderId: input.providerId,
+        apiBase: input.apiBase,
+        ...(input.apiKey ? { apiKey: input.apiKey } : {}),
+        model: input.model,
+        provider: input.provider,
+      }));
       setNotice("模型设置已保存");
-    });
+    }));
   }
 
   async function testConnection(providerId: string): Promise<ProviderConnectionTestResponse> {
@@ -200,15 +233,18 @@ export function SettingsPage({ api, storage }: SettingsPageProps) {
             onRemove={removeProvider}
             onUpdate={updateProvider}
             providers={loaded.settings.providers}
+            requestRestart={requestRestart}
           />
           <PresetSettings
             presets={loaded.presets}
-            onSync={() => run(async () => {
-              const result = await api.syncPresets();
-              const presets = await api.listPresets();
-              setLoaded((current) => current ? { ...current, presets: presets.presets } : current);
-              setNotice(`已同步 ${result.downloaded} 个预设`);
-            })}
+            onSync={async () => {
+              await run(async () => {
+                const result = await api.syncPresets();
+                const presets = await api.listPresets();
+                setLoaded((current) => current ? { ...current, presets: presets.presets } : current);
+                setNotice(`已同步 ${result.downloaded} 个预设`);
+              });
+            }}
           />
           <section className="settings-card" aria-labelledby="validation-title">
             <div className="settings-card__heading">
@@ -260,6 +296,34 @@ export function SettingsPage({ api, storage }: SettingsPageProps) {
           />
         </div>
       </details>
+
+      {restartRequest ? (
+        <div className="settings-dialog-backdrop" role="presentation">
+          <section
+            aria-describedby="restart-dialog-description"
+            aria-labelledby="restart-dialog-title"
+            aria-modal="true"
+            className="settings-dialog"
+            role="dialog"
+          >
+            <div className="settings-dialog__icon" aria-hidden="true">↻</div>
+            <div>
+              <h2 id="restart-dialog-title">确认重启 Agent</h2>
+              <p id="restart-dialog-description">
+                将{restartRequest.description}。应用配置时会重启 Agent，正在运行的任务可能会中断。
+              </p>
+            </div>
+            <div className="settings-actions settings-dialog__actions">
+              <button className="settings-button settings-button--secondary" onClick={cancelRestart} type="button">
+                取消
+              </button>
+              <button className="settings-button settings-button--primary" onClick={() => void confirmRestart()} type="button">
+                确认并应用
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }
