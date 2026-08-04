@@ -144,7 +144,7 @@ git commit -m "test: cover light web user journeys"
 **Interfaces:**
 - Verifies: old workspace compatibility, one Runtime, shared-session clients, path and secret safety, rollback, and exact feature matrix.
 
-- [ ] **Step 1: Add compatibility and scope-gate tests**
+- [x] **Step 1: Add compatibility and scope-gate tests**
 
 ```python
 def test_workspace_v1_opens_without_directory_migration(workspace_v1: Path, app) -> None:
@@ -177,7 +177,7 @@ Working directory: `frontend`
 
 Expected: API check, ESLint, all Vitest tests, TypeScript/Vite build, and all Playwright tests PASS.
 
-- [ ] **Step 4: Review changes against the approved spec**
+- [x] **Step 4: Review changes against the approved spec**
 
 Run: `git diff --check`
 
@@ -185,7 +185,7 @@ Run: `rg -n "deploymentToken|Access Token|引用服务器文件|artifact-gateway
 
 Expected: `git diff --check` returns no output. The search returns no active UI/deployment references; any historical design text is evaluated separately and not changed mechanically.
 
-- [ ] **Step 5: Commit compatibility and security gates**
+- [x] **Step 5: Commit compatibility and security gates**
 
 ```bash
 git add tests/release
