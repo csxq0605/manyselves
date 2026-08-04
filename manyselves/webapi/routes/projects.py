@@ -101,7 +101,7 @@ async def create_project(
             return _response(
                 registry.create(
                     body.project_id,
-                    ProjectMetadata(body.display_name or body.project_id, body.description),
+                    ProjectMetadata(body.display_name, body.description),
                 )
             )
     except (

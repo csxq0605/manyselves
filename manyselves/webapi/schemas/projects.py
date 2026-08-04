@@ -12,8 +12,8 @@ class ProjectCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     project_id: str = Field(alias="projectId")
-    display_name: DisplayName | None = Field(default=None, alias="displayName")
-    description: Description = ""
+    display_name: DisplayName = Field(alias="displayName")
+    description: Description
 
 
 class ProjectUpdateRequest(BaseModel):

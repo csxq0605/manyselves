@@ -77,7 +77,7 @@ class ProjectMetadataStore:
     def write(self, project_root: Path, metadata: ProjectMetadata, revision: str | None) -> str:
         """Replace metadata atomically after optional optimistic-concurrency validation."""
         root = self._root(project_root)
-        normalized = self._normalized(metadata)
+        normalized = self.validate(metadata)
         path = self._metadata_path(root)
         current_revision = self.revision(root)
         if revision is not None and revision != current_revision:
@@ -100,6 +100,10 @@ class ProjectMetadataStore:
             temporary.unlink(missing_ok=True)
             raise
         return hashlib.sha256(raw).hexdigest()
+
+    def validate(self, metadata: ProjectMetadata) -> ProjectMetadata:
+        """Normalize fields before a caller creates filesystem state for them."""
+        return self._normalized(metadata)
 
     def _root(self, project_root: Path) -> Path:
         root = Path(project_root)

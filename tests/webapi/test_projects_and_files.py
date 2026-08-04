@@ -179,6 +179,34 @@ async def test_legacy_project_metadata_update_uses_a_deterministic_fallback_revi
 
 
 @pytest.mark.asyncio
+async def test_project_create_requires_metadata_without_leaving_a_retry_conflict(api) -> None:
+    """Omitted metadata must be rejected before it can reserve a project directory."""
+    client, _, root = api
+    headers = await acquire_controller(client)
+
+    missing_metadata = await client.post(
+        "/api/v1/projects",
+        headers=headers,
+        json={"projectId": "x" * 121},
+    )
+    assert missing_metadata.status_code == 422
+    assert not (root / ("x" * 121)).exists()
+
+    retried = await client.post(
+        "/api/v1/projects",
+        headers=headers,
+        json={
+            "projectId": "x" * 121,
+            "displayName": "Corrected metadata",
+            "description": "",
+        },
+    )
+
+    assert retried.status_code == 201
+    assert (root / ("x" * 121)).is_dir()
+
+
+@pytest.mark.asyncio
 async def test_project_activation_requires_idle_runtime(api) -> None:
     """Switching workspaces while an agent runs could split runtime and file state."""
     client, host, _ = api

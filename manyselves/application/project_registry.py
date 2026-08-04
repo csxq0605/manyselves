@@ -94,15 +94,23 @@ class ProjectRegistry:
         root = self.project_root(project_id)
         return self._record(root)
 
-    def create(self, project_id: str, metadata: ProjectMetadata | None = None) -> ProjectRecord:
+    def create(self, project_id: str, metadata: ProjectMetadata) -> ProjectRecord:
         project_id = self._validate_id(project_id)
+        metadata = self._metadata.validate(metadata)
         root = self._path_for(project_id)
         if root.exists() or root.is_symlink():
             raise ProjectAlreadyExists()
-        ensure_project_structure(root)
-        if metadata is not None:
+        try:
+            root.mkdir()
+        except FileExistsError as error:
+            raise ProjectAlreadyExists() from error
+        try:
+            ensure_project_structure(root)
             self._metadata.write(root, metadata, revision=None)
-        return self._record(root)
+            return self._record(root)
+        except BaseException:
+            shutil.rmtree(root)
+            raise
 
     def update_metadata(
         self,

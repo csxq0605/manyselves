@@ -71,6 +71,28 @@ def test_write_rejects_invalid_display_metadata(
     assert not (project_root / ".manyselves" / "project.json").exists()
 
 
+def test_create_rolls_back_invalid_metadata_and_allows_a_retry(tmp_path: Path) -> None:
+    """Leaving a failed create directory behind would turn a corrected retry into a false conflict."""
+    contract = _metadata_contract()
+    registry_module = importlib.import_module("manyselves.application.project_registry")
+    registry = registry_module.ProjectRegistry(tmp_path, "primary")
+    project_root = tmp_path / "new-project"
+
+    with pytest.raises(contract.InvalidProjectMetadata):
+        registry.create(
+            "new-project",
+            contract.ProjectMetadata(display_name="x" * 121, description=""),
+        )
+
+    assert not project_root.exists()
+    retried = registry.create(
+        "new-project",
+        contract.ProjectMetadata(display_name="Retry succeeds", description=""),
+    )
+    assert retried.id == "new-project"
+    assert project_root.is_dir()
+
+
 def test_write_rejects_stale_revision_without_overwriting_current_metadata(tmp_path: Path) -> None:
     """Dropping the revision comparison would let a stale pencil edit overwrite a newer one."""
     project_root = tmp_path / "analysis"
