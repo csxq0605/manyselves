@@ -77,6 +77,7 @@ class ReportingService:
         task_board: TaskBoard,
         llm_provider: LLMProvider,
         agent_defaults: AgentDefaults | None = None,
+        global_root: Path | None = None,
     ):
         if llm_provider is None:
             raise ValueError(
@@ -87,6 +88,9 @@ class ReportingService:
         self.task_board = task_board
         self.llm_provider = llm_provider
         self.agent_defaults = agent_defaults or AgentDefaults()
+        self.global_root = (
+            Path(global_root).resolve() if global_root is not None else None
+        )
         self.store = ReportingStore(self.workspace)
         self.decisions = EvidenceDecisionStore(self.workspace)
         self.agents = load_packaged_agents()
@@ -105,6 +109,7 @@ class ReportingService:
                 self.llm_provider,
                 self.agent_defaults,
                 timeout=None,
+                global_root=self.global_root,
             )
             self._active_agent_runners[workflow_id] = runner
         return runner

@@ -30,11 +30,11 @@ from manyselves.core.reporting.agentic_models import (
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
+from manyselves.core.reporting.assets import validate_final_report_markdown
 from manyselves.core.reporting.input_contracts import (
     ReviewCompletionRecord,
     ValidationReport,
 )
-from manyselves.core.reporting.assets import validate_final_report_markdown
 from manyselves.core.reporting.models import (
     CoverageMatrix,
     ProjectManifest,
@@ -360,6 +360,50 @@ class _ToolBackedModuleReviewRunner(_ScriptedRunner):
         )
         assert result.payload is not None
         return result.payload
+
+
+def test_module_dispatch_uses_configured_global_knowledge_root(tmp_path: Path) -> None:
+    global_root = tmp_path / "global"
+    global_root.mkdir()
+    content = "2.1.1 shared global protection rule"
+    (global_root / "shared.md").write_text(content, encoding="utf-8")
+    service = _FakeService(tmp_path)
+    service.global_root = global_root
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+    runner._load_template_skill = lambda state: True
+    runner._role_skill_context = lambda state, role: "template guidance"
+    state = {
+        "run_id": "run-global-dispatch",
+        "request": SimpleNamespace(
+            instruction="analyse module",
+            missing_evidence_policy="draft",
+            execution_requirements=[],
+            user_supplements=[],
+        ),
+        "preparation_refs": {
+            "coverage": "Work/coverage.json",
+            "evidence": "Work/evidence.jsonl",
+            "manifest": "Work/manifest.json",
+        },
+    }
+
+    dispatch = runner._build_module_dispatch(state, ("2.1",))
+    manifest = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-global-dispatch/context-manifests/knowledge-sources.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert "shared global protection rule" in dispatch.module_tasks[0].inline_context
+    assert manifest["sources"] == [
+        {
+            "logicalPath": "GlobalKnowledge/shared.md",
+            "namespace": "global",
+            "sha256": hashlib.sha256(content.encode()).hexdigest(),
+        }
+    ]
 
 
 def test_preparation_resume_uses_hash_verified_run_snapshot(tmp_path: Path) -> None:

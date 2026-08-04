@@ -33,9 +33,18 @@ class ReportingStateInvalidError(RuntimeError):
 class ReportingFacade:
     """Use ReportingRunController commands and read its unchanged durable files."""
 
-    def __init__(self, workspace: Path, controller: Any | None) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        controller: Any | None,
+        *,
+        global_root: Path | None = None,
+    ) -> None:
         self.workspace = Path(workspace).resolve()
         self.controller = controller
+        self.global_root = (
+            Path(global_root).resolve() if global_root is not None else None
+        )
         self._commands: OrderedDict[UUID, tuple[tuple[Any, ...], dict[str, Any]]] = OrderedDict()
 
     @classmethod
@@ -46,12 +55,20 @@ class ReportingFacade:
         selected_workspace = workspace or getattr(host, "workspace", None)
         if selected_workspace is None:
             raise RuntimeError("Runtime workspace is unavailable")
-        return cls(selected_workspace, controller)
+        return cls(
+            selected_workspace,
+            controller,
+            global_root=getattr(host, "global_knowledge_root", None),
+        )
 
     def rebind(self, host: Any, workspace: Path) -> None:
         """Follow the reporting boundary recreated by a project activation."""
         self.workspace = Path(workspace).resolve()
         self.controller = self._runtime_controller(host)
+        global_root = getattr(host, "global_knowledge_root", None)
+        self.global_root = (
+            Path(global_root).resolve() if global_root is not None else None
+        )
 
     @staticmethod
     def _runtime_controller(host: Any) -> Any | None:

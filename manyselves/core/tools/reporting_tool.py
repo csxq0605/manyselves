@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
 from uuid import uuid4
@@ -390,11 +389,13 @@ class RunReportingWorkflowTool(Tool):
         llm_provider: LLMProvider,
         agent_defaults: AgentDefaults | None = None,
         controller: ReportingRunController | None = None,
+        global_root: Path | None = None,
     ):
         self.workspace = Path(workspace).resolve()
         service = ReportingService(
             self.workspace, bus=bus, task_board=task_board,
             llm_provider=llm_provider, agent_defaults=agent_defaults,
+            global_root=global_root,
         )
         self.controller = controller or ReportingRunController(service, bus, task_board)
 
@@ -509,6 +510,7 @@ class ResumeReportingWorkflowTool(Tool):
         llm_provider: LLMProvider,
         agent_defaults: AgentDefaults | None = None,
         controller: ReportingRunController | None = None,
+        global_root: Path | None = None,
     ):
         self.workspace = Path(workspace).resolve()
         service = ReportingService(
@@ -517,6 +519,7 @@ class ResumeReportingWorkflowTool(Tool):
             task_board=task_board,
             llm_provider=llm_provider,
             agent_defaults=agent_defaults,
+            global_root=global_root,
         )
         self.controller = controller or ReportingRunController(service, bus, task_board)
 
@@ -571,6 +574,7 @@ class ReviseReportingWorkflowTool(Tool):
         llm_provider: LLMProvider,
         agent_defaults: AgentDefaults | None = None,
         controller: ReportingRunController | None = None,
+        global_root: Path | None = None,
     ):
         self.workspace = Path(workspace).resolve()
         service = ReportingService(
@@ -579,6 +583,7 @@ class ReviseReportingWorkflowTool(Tool):
             task_board=task_board,
             llm_provider=llm_provider,
             agent_defaults=agent_defaults,
+            global_root=global_root,
         )
         self.controller = controller or ReportingRunController(service, bus, task_board)
 

@@ -76,6 +76,10 @@ class _FakeLoopManager:
         self.stop_errors = [] if stop_errors is None else list(stop_errors)
         self.stop_calls = 0
         self.running = False
+        self.global_knowledge_root: Path | None = None
+
+    def set_global_knowledge_root(self, root: Path | None) -> None:
+        self.global_knowledge_root = None if root is None else Path(root).resolve()
 
     async def start(self) -> None:
         self.events.append("loops:start")
@@ -313,6 +317,21 @@ def test_create_uses_the_injected_config_manager_across_the_backend_graph() -> N
     assert host.config_manager is config_manager
     assert host.backend.config_manager is config_manager
     assert host.backend.bus is host.bus
+
+
+@pytest.mark.asyncio
+async def test_start_threads_optional_global_knowledge_root_into_loop_manager(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    host, _, _, created = _host(events)
+    global_root = tmp_path / ".manyselves/global-knowledge"
+
+    host.set_global_knowledge_root(global_root)
+    await host.start(tmp_path / "project")
+
+    assert created[0].global_knowledge_root == global_root.resolve()
+    await host.stop()
 
 
 @pytest.mark.asyncio

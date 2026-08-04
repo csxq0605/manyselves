@@ -906,7 +906,9 @@ class ReportWorkflowRunner:
                     special_topic_plan.model_dump(mode="json"),
                 )
                 special_topic_knowledge = KnowledgeContextBuilder(
-                    self.service.workspace, run_id
+                    self.service.workspace,
+                    run_id,
+                    global_root=getattr(self.service, "global_root", None),
                 ).build_special_topics(special_topic_plan)
                 state["special_topic_plan"] = special_topic_plan
                 state["special_topic_plan_ref"] = (
@@ -994,7 +996,7 @@ class ReportWorkflowRunner:
                     *(
                         [
                             "special_topic_analysis 必须严格按 special_topic_plan 的顺序输出全部且仅输出对应的 ### 4.n 子标题；逐节满足 Inputs 中的简要要求，并形成自足分析",
-                            "专项分析可使用已内联的项目 Knowledge 和模型世界知识补充机理、方案权衡与行业实践；必须区分当前项目事实、可追溯参考和通用专业判断，禁止把通用知识写成客户事实",
+                            "专项分析可使用已内联的项目/全局 Knowledge 和模型世界知识补充机理、方案权衡与行业实践；必须区分当前项目事实、可追溯参考和通用专业判断，禁止把通用知识写成客户事实",
                         ]
                         if special_topic_plan is not None
                         else [
@@ -2259,7 +2261,11 @@ class ReportWorkflowRunner:
         """Build Main's deterministic fixed-module dispatch."""
 
         request = state["request"]
-        knowledge = KnowledgeContextBuilder(self.service.workspace, state["run_id"])
+        knowledge = KnowledgeContextBuilder(
+            self.service.workspace,
+            state["run_id"],
+            global_root=getattr(self.service, "global_root", None),
+        )
         if not self._load_template_skill(state):
             raise AgentWorkflowError(
                 "fixed template-writing Skill must exist before module dispatch"
@@ -2284,7 +2290,7 @@ class ReportWorkflowRunner:
                 ],
                 constraints=[
                     f"仅分析目标模块 {module_id}",
-                    "inline_context 已注入项目 Knowledge 与 Template Distiller 产出的固定模板写作 Skill；按其分析语言、叙述节奏、推理链、建议方法和图证规则写作，不得重复打开同一内容",
+                    "inline_context 已注入项目/全局 Knowledge 与 Template Distiller 产出的固定模板写作 Skill；按其分析语言、叙述节奏、推理链、建议方法和图证规则写作，不得重复打开同一内容",
                     "R-* 是优先参考而非认知边界；可使用模型世界知识解释机理、备选原因和行业实践，但不能把它补成客户事实",
                     "每个固定子模块必须形成带标题的完整正文，至少包含适用的现状、结论、风险机理和可执行建议",
                     f"缺失证据策略={request.missing_evidence_policy}",
@@ -2672,7 +2678,9 @@ class ReportWorkflowRunner:
         special_topic_context = ""
         if special_topic_plan is not None:
             special_topic_knowledge = KnowledgeContextBuilder(
-                self.service.workspace, state["run_id"]
+                self.service.workspace,
+                state["run_id"],
+                global_root=getattr(self.service, "global_root", None),
             ).build_special_topics(special_topic_plan)
             state["special_topic_knowledge_ref"] = (
                 special_topic_knowledge.path.as_posix()
@@ -2752,7 +2760,7 @@ class ReportWorkflowRunner:
                 *(
                     [
                         "第四章不设固定主题；逐节执行 Inputs 专项问题计划中的简要要求，标题、顺序和数量不得自行增删",
-                        "专项问题分析可使用已内联的项目 Knowledge 和模型世界知识补充机理、备选解释、方案权衡、行业实践与验证方法；必须把通用判断与当前项目事实明确区分",
+                        "专项问题分析可使用已内联的项目/全局 Knowledge 和模型世界知识补充机理、备选解释、方案权衡、行业实践与验证方法；必须把通用判断与当前项目事实明确区分",
                     ]
                     if special_topic_plan is not None
                     else []

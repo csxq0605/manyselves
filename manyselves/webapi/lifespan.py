@@ -205,6 +205,9 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         registry.ensure_initial()
         app.state.project_registry = registry
         active_workspace = registry.project_root(settings.initial_project_id)
+        set_global_root = getattr(host, "set_global_knowledge_root", None)
+        if callable(set_global_root):
+            set_global_root(app.state.global_knowledge_service.root)
         await host.start(active_workspace)
         bus = getattr(host, "bus", None)
         if bus is None:

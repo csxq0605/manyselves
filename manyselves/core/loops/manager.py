@@ -17,8 +17,8 @@ from ...interfaces.types import (
     RollbackStatus,
     normalize_agent_id,
 )
-from ..checkpoints import CheckpointManager
 from ..artifacts import ArtifactGateway, ArtifactGrant
+from ..checkpoints import CheckpointManager
 from ..reporting.config import load_packaged_agents
 from ..reporting.prompts import PromptAssembler
 from ..tools import (
@@ -68,6 +68,7 @@ class LoopManager:
         self.workspace = Path(workspace).resolve()
         self.config_manager = config_manager
         self.bus = bus
+        self.global_knowledge_root: Path | None = None
 
         self._loops: dict[str, AgentLoop] = {}
         self._running = False
@@ -83,6 +84,12 @@ class LoopManager:
         # Subscribe to restart requests and file rollback requests
         self.bus.subscribe(RestartRequest, self._handle_restart_request)
         self.bus.subscribe(FileRollbackRequest, self._handle_file_rollback_request)
+
+    def set_global_knowledge_root(self, root: Path | None) -> None:
+        """Configure the optional server-global knowledge root before startup."""
+        self.global_knowledge_root = (
+            Path(root).resolve() if root is not None else None
+        )
 
     @property
     def is_running(self) -> bool:
@@ -313,6 +320,7 @@ class LoopManager:
                 task_board=self._task_board,
                 llm_provider=reporting_provider,
                 agent_defaults=self.config_manager.config.agents.defaults,
+                global_root=self.global_knowledge_root,
             )
             registry.register(run_reporting_tool)
             registry.register(CancelReportingWorkflowTool(run_reporting_tool.controller))
@@ -325,6 +333,7 @@ class LoopManager:
                     llm_provider=reporting_provider,
                     agent_defaults=self.config_manager.config.agents.defaults,
                     controller=run_reporting_tool.controller,
+                    global_root=self.global_knowledge_root,
                 )
             )
             registry.register(
@@ -335,6 +344,7 @@ class LoopManager:
                     llm_provider=reporting_provider,
                     agent_defaults=self.config_manager.config.agents.defaults,
                     controller=run_reporting_tool.controller,
+                    global_root=self.global_knowledge_root,
                 )
             )
             registry.register(ProjectSkillEvolutionTool(self.workspace))

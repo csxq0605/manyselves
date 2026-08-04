@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, FastAPI, filesystem storage, existing ReferenceLibrary/KnowledgeContextBuilder/SourceLedger, React 19, TanStack Query.
 
-**Current checkpoint (2026-08-04):** Task 1 is complete in commit `0d6f8b1`. Task 2 is implemented and awaiting its isolated commit: references carry `project/global` namespace metadata, logical paths remain `Knowledge/...` or `GlobalKnowledge/...`, and project entries win case-insensitive path and content conflicts before global content is parsed. Gates: composite retrieval/tools/source-ledger/knowledge-context 23 passed, targeted Ruff passed.
+**Current checkpoint (2026-08-04):** Task 1 is complete in `0d6f8b1`; Task 2 is complete in `554bdd5` (focused composite/research/source-ledger/knowledge-context 23 passed, targeted Ruff passed). Task 3 is active: freeze the composite source set per run, write namespaced SHA-256 provenance, and thread the optional fixed global root through runtime construction without changing Agent/workflow protocols.
 
 ## Global Constraints
 
@@ -139,7 +139,7 @@ Run: `uv run pytest tests/reporting/research/test_reference_library.py tests/rep
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit composite retrieval**
+- [x] **Step 6: Commit composite retrieval**
 
 ```bash
 git add manyselves/core/reporting/research manyselves/core/tools/reporting_research_tools.py tests/reporting/research/test_reference_library.py tests/reporting/test_reporting_research_tools.py
@@ -165,7 +165,7 @@ git commit -m "feat: compose project and global knowledge"
 - Produces: `KnowledgeContextBuilder(workspace: Path, run_id: str, *, global_root: Path | None = None)`.
 - Produces: `Work/runs/<run-id>/context-manifests/knowledge-sources.json` containing logical path, namespace, and SHA-256 for selected documents.
 
-- [ ] **Step 1: Write failing provenance and mutation-stability tests**
+- [x] **Step 1: Write failing provenance and mutation-stability tests**
 
 ```python
 def test_context_manifest_records_project_and_global_sources(tmp_path: Path) -> None:
@@ -181,21 +181,21 @@ def test_started_builder_does_not_ingest_later_global_upload(tmp_path: Path) -> 
     assert "late.md" not in builder.build_module("2.1").text
 ```
 
-- [ ] **Step 2: Run context/workflow tests and verify failure**
+- [x] **Step 2: Run context/workflow tests and verify failure**
 
 Run: `uv run pytest tests/reporting/research/test_knowledge_context.py tests/reporting/test_agent_runner.py tests/reporting/test_agent_workflow.py -q -k "knowledge or global"`
 
 Expected: FAIL because source freezing and manifests do not exist.
 
-- [ ] **Step 3: Implement source freeze and manifest writing**
+- [x] **Step 3: Implement source freeze and manifest writing**
 
 Freeze the composite document list at first use, before scoring. Write the manifest through `ReportingStore` beneath the current run. Register logical namespaced paths in `SourceLedger`; keep existing `R-*` IDs and deterministic budgets. Context wording must say “project/global knowledge reference” rather than mislabel global content as project-local.
 
-- [ ] **Step 4: Thread the configured global root through Runtime construction**
+- [x] **Step 4: Thread the configured global root through Runtime construction**
 
 Pass `settings.data_root / ".manyselves" / "global-knowledge"` through `RuntimeHost`/`ReportingFacade` construction into every `ReferenceLibrary` and `KnowledgeContextBuilder` creation. Make the parameter optional so desktop and legacy tests without a configured server data root retain project-only behavior.
 
-- [ ] **Step 5: Run reporting and application regression tests**
+- [x] **Step 5: Run reporting and application regression tests**
 
 Run: `uv run pytest tests/reporting/research tests/reporting/test_reporting_research_tools.py tests/reporting/test_agent_runner.py tests/reporting/test_agent_workflow.py tests/application/test_runtime_host.py -q`
 

@@ -51,6 +51,7 @@ class RuntimeHost:
 
         self._loop_manager: LoopManager | None = None
         self._workspace: Path | None = None
+        self._global_knowledge_root: Path | None = None
         self._bus_task: asyncio.Task[None] | None = None
         self._bus_shutdown = False
         self._producers_stopped = False
@@ -81,6 +82,21 @@ class RuntimeHost:
     def loop_manager(self) -> LoopManager | None:
         """Loop manager created for the selected workspace, if any."""
         return self._loop_manager
+
+    @property
+    def global_knowledge_root(self) -> Path | None:
+        """Optional server-global knowledge root shared by reporting runtimes."""
+        return self._global_knowledge_root
+
+    def set_global_knowledge_root(self, root: Path | None) -> None:
+        """Set the optional global root and propagate it to the current manager."""
+        self._global_knowledge_root = (
+            Path(root).resolve() if root is not None else None
+        )
+        manager = self._loop_manager
+        setter = getattr(manager, "set_global_knowledge_root", None)
+        if callable(setter):
+            setter(self._global_knowledge_root)
 
     @property
     def persistence_ready(self) -> bool:
@@ -321,6 +337,9 @@ class RuntimeHost:
 
     def _bind_manager(self, manager: LoopManager | None, workspace: Path | None) -> None:
         """Change host/backend manager ownership together without an await boundary."""
+        setter = getattr(manager, "set_global_knowledge_root", None)
+        if callable(setter):
+            setter(self._global_knowledge_root)
         self._loop_manager = manager
         self._workspace = workspace
         self.backend.set_loop_manager(manager)

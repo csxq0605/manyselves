@@ -194,6 +194,42 @@ def test_submit_result_exposes_only_the_role_output_schema(tmp_path: Path) -> No
     )
 
 
+@pytest.mark.asyncio
+async def test_agent_reference_tools_receive_the_optional_global_root(tmp_path: Path) -> None:
+    global_root = tmp_path / "global"
+    global_root.mkdir()
+    (global_root / "standard.md").write_text(
+        "shared protection baseline", encoding="utf-8"
+    )
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+        global_root=global_root,
+    )
+    envelope = TaskEnvelope(
+        task_id="module-2.1",
+        run_id="run-global-tools",
+        agent_id="module-2.1-specialist",
+        objective="analyse 2.1",
+        allowed_outputs=["module_submission"],
+    )
+
+    registry = runner._tools(
+        load_packaged_agents()["module-2.1-specialist"],
+        envelope,
+        "session-global-tools",
+        "workflow-global-tools",
+    )
+    search = registry.get("search_reference_library")
+    assert search is not None
+    result = await search(query="protection baseline")
+
+    assert result["hits"][0]["namespace"] == "global"
+    assert result["hits"][0]["locator"] == "GlobalKnowledge/standard.md"
+
+
 def test_module_authoring_schema_and_example_use_current_identity(
     tmp_path: Path,
 ) -> None:

@@ -1,16 +1,17 @@
-"""Deterministically assemble project Knowledge for report-writing tasks."""
+"""Deterministically assemble project/global Knowledge for report-writing tasks."""
 
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..models import SpecialTopicPlan
 from ..source_ledger import SourceLedger
 from ..store import ReportingStore
-from ..models import SpecialTopicPlan
 from ..taxonomy import REPORT_TAXONOMY
 from .reference_library import ReferenceDocument, ReferenceLibrary
 
@@ -63,32 +64,73 @@ class KnowledgeContextBuilder:
     )
     MAX_DOCUMENTS_PER_SUBMODULE = 3
 
-    def __init__(self, workspace: Path, run_id: str):
+    def __init__(
+        self,
+        workspace: Path,
+        run_id: str,
+        *,
+        global_root: Path | None = None,
+    ):
         self.workspace = Path(workspace).resolve()
         self.run_id = run_id
-        self.library = ReferenceLibrary(self.workspace)
+        self.library = ReferenceLibrary(self.workspace, global_root=global_root)
         self.ledger = SourceLedger(self.workspace, run_id)
         self.store = ReportingStore(self.workspace)
         self._documents: tuple[ReferenceDocument, ...] | None = None
 
-    def _load_documents(self) -> tuple[ReferenceDocument, ...]:
+    @property
+    def _manifest_path(self) -> Path:
+        return (
+            self.workspace
+            / "Work/runs"
+            / self.run_id
+            / "context-manifests/knowledge-sources.json"
+        )
+
+    def freeze_sources(self) -> tuple[ReferenceDocument, ...]:
+        """Freeze the run's composite knowledge sources on first use."""
         if self._documents is not None:
             return self._documents
-        if not self.library.root.is_dir():
-            self._documents = ()
+        current = self.library.documents()
+        if self._manifest_path.is_file():
+            payload = json.loads(self._manifest_path.read_text(encoding="utf-8"))
+            frozen: list[ReferenceDocument] = []
+            current_by_identity = {
+                (document.namespace, document.relative_path, document.content_sha256): document
+                for document in current
+            }
+            for item in payload.get("sources", []):
+                identity = (
+                    item.get("namespace"),
+                    item.get("logicalPath"),
+                    item.get("sha256"),
+                )
+                document = current_by_identity.get(identity)
+                if document is None:
+                    raise ValueError(
+                        "knowledge source snapshot no longer matches the frozen run"
+                    )
+                frozen.append(document)
+            self._documents = tuple(frozen)
             return self._documents
-        documents: list[ReferenceDocument] = []
-        supported = self.library.TEXT_SUFFIXES | self.library.DOCUMENT_SUFFIXES
-        for path in sorted(self.library.root.rglob("*")):
-            if not path.is_file() or path.suffix.casefold() not in supported:
-                continue
-            try:
-                relative = path.relative_to(self.workspace).as_posix()
-                documents.append(self.library.open(relative))
-            except (OSError, ValueError):
-                continue
-        self._documents = tuple(documents)
+        self._documents = current
+        self.store.write_json(
+            f"Work/runs/{self.run_id}/context-manifests/knowledge-sources.json",
+            {
+                "sources": [
+                    {
+                        "logicalPath": document.relative_path,
+                        "namespace": document.namespace,
+                        "sha256": document.content_sha256,
+                    }
+                    for document in self._documents
+                ]
+            },
+        )
         return self._documents
+
+    def _load_documents(self) -> tuple[ReferenceDocument, ...]:
+        return self.freeze_sources()
 
     @staticmethod
     def _score(document: ReferenceDocument, terms: tuple[str, ...]) -> int:
@@ -153,7 +195,10 @@ class KnowledgeContextBuilder:
 
     def _register(self, document: ReferenceDocument) -> str:
         return self.ledger.register_local(
-            document.title, document.relative_path, document.text
+            document.title,
+            document.relative_path,
+            document.text,
+            namespace=document.namespace,
         ).id
 
     def build_module(self, module_id: str) -> KnowledgeContext:
@@ -161,7 +206,7 @@ class KnowledgeContextBuilder:
         header_lines = [
             f"# 模块 {module_id} 确定性知识上下文",
             "",
-            "以下内容是可追溯的项目知识参考，不是模型认知边界，也不得作为客户现场事实。",
+            "以下内容是可追溯的项目/全局知识参考，不是模型认知边界，也不得作为客户现场事实。",
             "可结合模型已有专业知识解释机理、提出备选原因、比较方案和补充行业实践；涉及本项目是否存在、具体数值、设备状态或合规结论时仍必须依赖 E-* 项目证据。",
         ]
         header = "\n".join(header_lines).strip()
@@ -185,7 +230,7 @@ class KnowledgeContextBuilder:
             block_lines = [f"## {submodule_id} {submodule.title}"]
             if not documents:
                 block_lines.append(
-                    "未检索到项目 Knowledge 匹配项；可使用模型专业知识继续分析，"
+                    "未检索到项目/全局 Knowledge 匹配项；可使用模型专业知识继续分析，"
                     "但通用知识或假设不得写成客户现场事实。"
                 )
             else:
@@ -286,7 +331,7 @@ class KnowledgeContextBuilder:
             "# 专项问题分析知识上下文",
             "",
             f"要求来源：{plan.source_ref.as_posix()}",
-            "以下 R-* 内容是可追溯的项目知识参考，不是客户现场事实，也不是模型认知边界。",
+            "以下 R-* 内容是可追溯的项目/全局知识参考，不是客户现场事实，也不是模型认知边界。",
             "可使用模型已有专业知识补充机理、方案比较、行业实践与验证思路；"
             "当前项目是否存在某问题、具体数值、设备状态及合规结论仍只能由 E-* 项目证据支持。",
         ]
@@ -307,7 +352,7 @@ class KnowledgeContextBuilder:
                 lines.extend(
                     [
                         "",
-                        "未检索到项目 Knowledge 匹配项；可使用模型专业知识补充分析，"
+                        "未检索到项目/全局 Knowledge 匹配项；可使用模型专业知识补充分析，"
                         "但必须明确其为通用工程判断，不得写成客户事实。",
                     ]
                 )
