@@ -97,3 +97,12 @@ class SettingsValidationResponse(BaseModel):
     valid: bool
     available_providers: list[str] = Field(alias="availableProviders")
     errors: list[str]
+
+
+class ProviderConnectionTestResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    ok: bool
+    provider_id: str = Field(alias="providerId")
+    model: str | None
+    message: str

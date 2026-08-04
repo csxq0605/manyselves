@@ -1670,6 +1670,41 @@
         "title": "ProjectUpdateRequest",
         "type": "object"
       },
+      "ProviderConnectionTestResponse": {
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "providerId": {
+            "title": "Providerid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "providerId",
+          "model",
+          "message"
+        ],
+        "title": "ProviderConnectionTestResponse",
+        "type": "object"
+      },
       "ProviderPresetResponse": {
         "properties": {
           "baseUrl": {
@@ -7145,6 +7180,60 @@
           }
         ],
         "summary": "Update Provider"
+      }
+    },
+    "/api/v1/settings/providers/{provider_id}/test": {
+      "post": {
+        "operationId": "post_api_v1_settings_providers_provider_id_test",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "title": "Provider Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderConnectionTestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Test Provider Connection"
       }
     },
     "/api/v1/settings/validate": {

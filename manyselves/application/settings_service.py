@@ -4,14 +4,29 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from contextlib import suppress
+from dataclasses import dataclass
+from inspect import isawaitable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..core.providers.base import Message
+from ..core.providers.factory import ProviderFactory
 from .async_ownership import await_owned
 from .errors import RuntimeConsistencyFailedError
 
 if TYPE_CHECKING:
     from .runtime_host import RuntimeHost
+
+
+@dataclass(frozen=True)
+class ProviderConnectionResult:
+    """Secret-free result of one bounded provider probe."""
+
+    ok: bool
+    provider_id: str
+    model: str | None
+    message: str
 
 
 class SettingsService:
@@ -87,6 +102,70 @@ class SettingsService:
         if not available:
             errors.append("At least one enabled provider must be configured")
         return not errors, available, errors
+
+    async def test_provider_connection(
+        self,
+        provider_id: str,
+        *,
+        timeout_seconds: float = 15.0,
+    ) -> ProviderConnectionResult:
+        """Probe a provider without mutating configuration or live Runtime state."""
+        provider_config = next(
+            (
+                item.model_copy(deep=True)
+                for item in self.manager.config.providers.configurations
+                if item.id == provider_id
+            ),
+            None,
+        )
+        if provider_config is None:
+            raise KeyError(provider_id)
+        if not provider_config.api_key:
+            return ProviderConnectionResult(
+                ok=False,
+                provider_id=provider_id,
+                model=provider_config.default_model,
+                message="API key is not configured",
+            )
+
+        provider = None
+        try:
+            provider = ProviderFactory.create_provider(
+                provider_config.provider,
+                provider_config.api_key,
+                provider_config.api_base,
+                provider_config.default_model,
+            )
+            async with asyncio.timeout(timeout_seconds):
+                await provider.chat(
+                    [Message(role="user", content="Reply with OK.")],
+                    temperature=0,
+                    max_tokens=1,
+                )
+        except Exception:
+            result = ProviderConnectionResult(
+                ok=False,
+                provider_id=provider_id,
+                model=provider_config.default_model,
+                message="Connection failed",
+            )
+        else:
+            result = ProviderConnectionResult(
+                ok=True,
+                provider_id=provider_id,
+                model=provider.model,
+                message="Connection succeeded",
+            )
+        finally:
+            client = getattr(provider, "client", None)
+            close = getattr(client, "close", None)
+            if close is not None:
+                with suppress(Exception):
+                    close_result = close()
+                    if isawaitable(close_result):
+                        async with asyncio.timeout(1.0):
+                            await close_result
+        return result
 
     def _restore(self, snapshot: Any) -> None:
         if hasattr(self.manager, "_config"):

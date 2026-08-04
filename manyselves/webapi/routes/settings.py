@@ -19,6 +19,7 @@ from ..schemas.settings import (
     AgentDefaultsResponse,
     PresetListResponse,
     PresetSyncResponse,
+    ProviderConnectionTestResponse,
     ProviderPresetResponse,
     ProviderSettingsCreate,
     ProviderSettingsResponse,
@@ -202,6 +203,27 @@ async def create_provider(
                 mutation, restart_reason="provider_created"
             )
             return _settings(manager)
+    except Exception as error:
+        raise _error(error) from error
+
+
+@router.post(
+    "/providers/{provider_id}/test",
+    response_model=ProviderConnectionTestResponse,
+)
+async def test_provider_connection(
+    provider_id: str,
+    request: Request,
+) -> ProviderConnectionTestResponse:
+    try:
+        async with request.app.state.runtime_facade.read_transaction():
+            result = await _service(request).test_provider_connection(provider_id)
+        return ProviderConnectionTestResponse(
+            ok=result.ok,
+            providerId=result.provider_id,
+            model=result.model,
+            message=result.message,
+        )
     except Exception as error:
         raise _error(error) from error
 

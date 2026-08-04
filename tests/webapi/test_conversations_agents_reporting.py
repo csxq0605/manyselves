@@ -2567,6 +2567,63 @@ async def test_settings_reports_and_rejects_environment_owned_credentials(resour
 
 
 @pytest.mark.asyncio
+async def test_provider_connection_test_does_not_persist_or_restart(
+    resources,
+    monkeypatch,
+) -> None:
+    client, host, _, _ = resources
+    save_calls: list[bool] = []
+    host.config_manager.save_config = lambda: save_calls.append(True)
+
+    class ConnectedProvider:
+        model = "test-model"
+
+        async def chat(self, *args, **kwargs):
+            return SimpleNamespace(content="OK")
+
+    monkeypatch.setattr(
+        "manyselves.application.settings_service.ProviderFactory.create_provider",
+        lambda *args, **kwargs: ConnectedProvider(),
+    )
+
+    response = await client.post("/api/v1/settings/providers/provider-1/test")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "providerId": "provider-1",
+        "model": "test-model",
+        "message": "Connection succeeded",
+    }
+    assert save_calls == []
+    assert host.replace_calls == []
+
+
+@pytest.mark.asyncio
+async def test_provider_test_failure_never_returns_key(resources, monkeypatch) -> None:
+    client, host, _, secret = resources
+
+    class BrokenProvider:
+        model = "test-model"
+
+        async def chat(self, *args, **kwargs):
+            raise RuntimeError(f"upstream rejected {secret}")
+
+    monkeypatch.setattr(
+        "manyselves.application.settings_service.ProviderFactory.create_provider",
+        lambda *args, **kwargs: BrokenProvider(),
+    )
+
+    response = await client.post("/api/v1/settings/providers/provider-1/test")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert response.json()["message"] == "Connection failed"
+    assert secret not in response.text
+    assert host.replace_calls == []
+
+
+@pytest.mark.asyncio
 async def test_settings_rejects_null_required_fields_and_can_clear_secret(resources) -> None:
     client, _, _, _ = resources
 
