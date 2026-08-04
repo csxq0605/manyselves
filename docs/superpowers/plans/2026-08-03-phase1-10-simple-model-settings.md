@@ -222,7 +222,7 @@ git commit -m "feat: simplify model settings experience"
 - Documents: YAML-editable fields, environment-owned credential behavior, and restart requirement.
 - Verifies: failed persistence leaves old config/live Runtime coherent or Runtime explicitly unavailable under existing consistency rules.
 
-- [ ] **Step 1: Add a release characterization for environment-owned credentials**
+- [x] **Step 1: Add a release characterization for environment-owned credentials**
 
 ```python
 def test_environment_provider_key_survives_ui_model_update_without_yaml_leak(runtime):
@@ -231,23 +231,23 @@ def test_environment_provider_key_survives_ui_model_update_without_yaml_leak(run
     assert "env-secret" not in runtime.config_path.read_text()
 ```
 
-- [ ] **Step 2: Run release failure tests**
+- [x] **Step 2: Run release failure tests**
 
 Run: `uv run pytest tests/release/test_failure_recovery.py -q -k "provider or config or environment"`
 
 Expected: PASS after Tasks 1-3; if it fails, fix the settings transaction rather than weakening the assertion.
 
-- [ ] **Step 3: Document the two supported administration paths**
+- [x] **Step 3: Document the two supported administration paths**
 
 Document the simple UI path and direct `manyselves.config.yaml` path. State that environment keys override YAML, appear read-only in UI, and require an API container restart when changed. Do not instruct users to edit raw YAML in the browser.
 
-- [ ] **Step 4: Run documentation/deployment checks**
+- [x] **Step 4: Run documentation/deployment checks**
 
 Run: `uv run pytest tests/release/test_failure_recovery.py tests/release/test_deployment_verifier.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit settings documentation**
+- [x] **Step 5: Commit settings documentation**
 
 ```bash
 git add deploy/env.example docs/deployment/linux-compose.md README_zh.md tests/release/test_failure_recovery.py
