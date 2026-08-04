@@ -6,13 +6,17 @@ import ast
 import asyncio
 import errno
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from manyselves.application.settings_service import SettingsService
 from manyselves.application.workspace_files import (
     FileRevisionConflict,
     WorkspaceFiles,
 )
+from manyselves.config.manager import ConfigManager
+from manyselves.config.schema import Settings
 
 RECOVERY_EVIDENCE = {
     "provider_timeout": "tests/webapi/test_security_and_control.py::test_internal_errors_use_a_non_secret_error_envelope",
@@ -25,6 +29,62 @@ RECOVERY_EVIDENCE = {
     "report_waiting_user": "tests/reporting/test_service_boundary.py::test_service_retains_same_identity_registry_while_waiting_for_user",
     "invalid_checkpoint": "tests/webapi/test_conversations_agents_reporting.py::test_missing_checkpoint_fails_before_durable_truncation",
 }
+
+
+class _SettingsRuntimeHost:
+    def __init__(self, manager: ConfigManager) -> None:
+        self.config_manager = manager
+        self.replace_calls: list[bool] = []
+
+    async def replace_loop_manager(self, *, recovery: bool = False):
+        self.replace_calls.append(recovery)
+        return SimpleNamespace(cancellation_requested=False, error=None)
+
+
+@pytest.mark.asyncio
+async def test_environment_provider_key_survives_ui_model_update_without_yaml_leak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "manyselves.config.yaml"
+    config_path.write_text(
+        "agents:\n"
+        "  defaults:\n"
+        "    model: old-model\n"
+        "    provider: openai\n"
+        "providers:\n"
+        "  active: openai\n"
+        "  configurations:\n"
+        "    - id: openai\n"
+        "      name: OpenAI\n"
+        "      provider: openai\n"
+        "      enabled: true\n"
+        "      api_key: yaml-fallback-secret\n"
+        "      default_model: old-model\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "environment-secret")
+    manager = ConfigManager(Settings(config_path=config_path))
+    host = _SettingsRuntimeHost(manager)
+
+    def update_model(config) -> None:
+        config.agents.defaults.model = "gpt-5"
+        config.providers.configurations[0].default_model = "gpt-5"
+
+    await SettingsService(host).mutate(
+        update_model,
+        restart_reason="provider_defaults_changed",
+    )
+
+    provider = manager.config.providers.configurations[0]
+    persisted = config_path.read_text(encoding="utf-8")
+    assert provider.api_key == "environment-secret"
+    assert provider.credential_source == "environment"
+    assert provider.default_model == "gpt-5"
+    assert manager.config.agents.defaults.model == "gpt-5"
+    assert host.replace_calls == [False]
+    assert "environment-secret" not in persisted
+    assert "yaml-fallback-secret" in persisted
 
 
 @pytest.mark.parametrize(("fault", "node_id"), RECOVERY_EVIDENCE.items())

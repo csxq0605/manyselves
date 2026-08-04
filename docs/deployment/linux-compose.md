@@ -90,6 +90,22 @@ MANYSELVES_INITIAL_PROJECT_ID=default
 
 Set `MANYSELVES_BOOTSTRAP_PROVIDER` and the matching provider key. The entrypoint creates a provider skeleton only when `manyselves.config.yaml` is absent; it does not write the environment key into that YAML or replace an existing configuration.
 
+### Model configuration ownership
+
+There are two supported administration paths, backed by the same `manyselves.config.yaml` model:
+
+1. Open **设置 → 模型设置** to select the provider, API URL, API Key, and default model. The browser never reads an existing secret. A typed key is sent once, persisted by the API, and the Agent Runtime is restarted only after confirmation.
+2. Stop or carefully coordinate the API container and edit `/srv/manyselves/data/manyselves.config.yaml` on the server. The browser does not provide a raw YAML editor. Provider URLs, enabled state, default models, and agent defaults are ordinary YAML configuration fields.
+
+Provider keys supplied by Compose environment variables (`MANYSELVES_OPENAI_API_KEY`, `MANYSELVES_ANTHROPIC_API_KEY`, `MANYSELVES_DEEPSEEK_API_KEY`, or `MANYSELVES_OPENROUTER_API_KEY`) have higher precedence than YAML. The UI reports such a key as **由服务器环境管理**, never returns its value, and refuses to overwrite it. After changing an environment-owned key in `deploy/.env`, recreate the API container so the process receives the new environment; a browser refresh alone is insufficient:
+
+```bash
+podman compose -f deploy/compose.yaml --env-file deploy/.env up -d --force-recreate api
+# Docker users: docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --force-recreate api
+```
+
+The provider key may be empty during installation, but Agent calls cannot succeed until the active provider has a valid key. Keep `deploy/.env` mode `0600`, never upload it through the project file UI, and never place keys in source control.
+
 Docker commands:
 
 ```bash
@@ -172,6 +188,8 @@ podman compose -f deploy/compose.yaml --env-file deploy/.env restart
 podman compose -f deploy/compose.yaml --env-file deploy/.env stop
 podman compose -f deploy/compose.yaml --env-file deploy/.env start
 ```
+
+Use `restart` for ordinary process recovery. When `deploy/.env` changes, use `up -d --force-recreate api`; a plain restart may retain the container's old environment.
 
 Nginx serves port `9090`, proxies to `api:9000`, forwards browser cookies and origins normally, disables SSE buffering, serves hashed assets immutably, and keeps `index.html` uncached. Keep `MANYSELVES_ALLOWED_ORIGINS` equal to the exact browser origin, never `*`.
 

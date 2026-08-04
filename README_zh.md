@@ -91,11 +91,15 @@ uv run manyselves
 
 ```bash
 cp deploy/env.example deploy/.env
-# 设置长随机访问令牌、Provider Key 和绝对数据目录。
+# 设置管理员账号、可选的 Provider Key 和绝对数据目录。
 docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build --wait
+set -a
+. deploy/.env
+set +a
 uv run python scripts/verify_deployment.py \
   --url http://192.168.8.28:9090 \
-  --token-env MANYSELVES_ACCESS_TOKEN
+  --username "$MANYSELVES_ADMIN_USERNAME" \
+  --password-env MANYSELVES_ADMIN_PASSWORD
 ```
 
 ## 配置与本地状态
@@ -103,6 +107,17 @@ uv run python scripts/verify_deployment.py \
 规范配置文件固定为仓库根目录的 `manyselves.config.yaml`，从任何目录启动
 Manyselves 都使用同一默认文件；规范 Python 包名为 `manyselves`。显式传入的
 配置路径仍优先。
+
+模型配置有两个受支持入口：日常操作使用浏览器的“设置 → 模型设置”；服务器
+管理员也可以直接维护 `manyselves.config.yaml`。二者使用同一个配置模型，项目
+不会额外引入设置数据库，也不会在浏览器中提供原始 YAML 编辑器。模型提供商、
+API 地址、启停状态、默认模型及 Agent 默认参数可以写入 YAML。
+
+Provider API Key 可以在模型设置页首次填写，也可以通过服务器环境变量提供。
+环境变量密钥优先级高于 YAML，页面仅显示“由服务器环境管理”，不会回显或允许
+覆盖。修改 `deploy/.env` 中的密钥后，需要使用 Compose 重建 API 容器；仅刷新
+浏览器不会生效。未填写 Provider Key 仍可启动和管理项目，但真正调用 Agent 模型
+时会失败。
 
 应用偏好写入仓库根目录 `.manyselves/`；项目状态和交付物只写入所选项目目录。
 
