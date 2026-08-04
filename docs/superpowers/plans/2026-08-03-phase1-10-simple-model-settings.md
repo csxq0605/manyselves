@@ -153,7 +153,7 @@ git commit -m "feat: add model provider connection test"
 - Produces: `/settings/models` main form and a native collapsed `<details>` advanced section.
 - Produces: no ServerConnection form, runtime control-plane heading, or dark-only settings theme.
 
-- [ ] **Step 1: Write failing simple-form tests**
+- [x] **Step 1: Write failing simple-form tests**
 
 ```tsx
 it("renders only the approved primary model fields", async () => {
@@ -175,7 +175,7 @@ it("locks an environment-managed key without displaying it", async () => {
 });
 ```
 
-- [ ] **Step 2: Run focused tests and verify current settings fail**
+- [x] **Step 2: Run focused tests and verify current settings fail**
 
 Run: `npm test -- --run src/features/settings`
 
@@ -183,11 +183,11 @@ Working directory: `frontend`
 
 Expected: FAIL because provider/preset/connection panels are all top-level and credential source is absent.
 
-- [ ] **Step 3: Implement the simple form and advanced disclosure**
+- [x] **Step 3: Implement the simple form and advanced disclosure**
 
 Use one selected active provider. Save API key only when the user typed a new non-empty value; never hydrate a secret. Connection test displays inline success/error and does not trigger a Runtime restart. Saving model/base URL/key continues through current settings mutations and existing restart confirmation only when backend reports restart-required. Place provider creation/removal, presets, client density, timeouts, and other low-frequency controls under one closed-by-default `<details>` section.
 
-- [ ] **Step 4: Regenerate schema and run settings tests/E2E**
+- [x] **Step 4: Regenerate schema and run settings tests/E2E**
 
 Run: `npm run generate:api`
 
@@ -203,7 +203,7 @@ Working directory: `frontend`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit simplified settings**
+- [x] **Step 5: Commit simplified settings**
 
 ```bash
 git add frontend/src/features/settings frontend/src/app/routes.tsx frontend/src/api/generated/schema.ts frontend/e2e/settings.spec.ts
