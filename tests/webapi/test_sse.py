@@ -11,8 +11,6 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from pydantic import SecretStr
-
 from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import (
     AgentResponse,
@@ -612,7 +610,6 @@ def settings(tmp_path: Path, **updates: object) -> WebSettings:
     values = {
         "data_root": tmp_path,
         "initial_project_id": "p1",
-        "access_token": SecretStr("test-token"),
         "sse_replay_capacity": 2,
         "sse_client_queue_capacity": 2,
     }

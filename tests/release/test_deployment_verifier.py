@@ -27,8 +27,16 @@ class FakeDeployment:
         self.temporary = b""
         self.deleted = False
         self.released = False
+        self.logged_out = False
+        self.requests: list[tuple[str, str, dict[str, Any]]] = []
 
     def request(self, method: str, path: str, **kwargs: Any) -> FakeResponse:
+        self.requests.append((method, path, kwargs))
+        if path.endswith("/auth/login"):
+            return FakeResponse(204)
+        if path.endswith("/auth/logout"):
+            self.logged_out = True
+            return FakeResponse(204)
         if path.endswith("/health/live"):
             return FakeResponse(body={"status": "live"})
         if path.endswith("/health/ready"):
@@ -66,9 +74,14 @@ class FakeDeployment:
         raise AssertionError("injected clients are not owned by the verifier")
 
 
-def test_deployment_verifier_checks_runtime_persistence_and_cleanup() -> None:
+def test_deployment_verifier_logs_in_before_protected_checks() -> None:
     deployment = FakeDeployment()
-    result = verify_deployment("https://pilot.example.internal", "token", client=deployment)
+    result = verify_deployment(
+        "https://pilot.example.internal",
+        "admin",
+        "yuanxi@2026",
+        client=deployment,
+    )
     assert result.checks == {
         "live": True, "ready": True, "single_runtime": True, "project": True,
         "conversation": True, "file_round_trip": True, "sse": True, "artifact_download": True,
@@ -76,3 +89,11 @@ def test_deployment_verifier_checks_runtime_persistence_and_cleanup() -> None:
     assert result.passed
     assert deployment.deleted
     assert deployment.released
+    assert deployment.logged_out
+    assert deployment.requests[0] == (
+        "POST",
+        "/api/v1/auth/login",
+        {"json": {"username": "admin", "password": "yuanxi@2026"}},
+    )
+    assert deployment.requests[1][1] == "/api/v1/health/live"
+    assert "Authorization" not in deployment.requests[1][2].get("headers", {})

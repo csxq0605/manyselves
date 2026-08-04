@@ -11,6 +11,9 @@ def test_compose_has_one_api_replica_and_persistent_data() -> None:
     assert any("/data/manyselves" in volume for volume in api["volumes"])
     assert api["read_only"] is True
     assert api["environment"]["CONFIG_PATH"] == "/data/manyselves/manyselves.config.yaml"
+    assert api["environment"]["ADMIN_USERNAME"] == "${MANYSELVES_ADMIN_USERNAME:-admin}"
+    assert api["environment"]["ADMIN_PASSWORD"] == "${MANYSELVES_ADMIN_PASSWORD:-yuanxi@2026}"
+    assert "ACCESS_TOKEN" not in api["environment"]
     assert api["expose"] == ["9000"]
     assert "ports" not in api
 
@@ -28,6 +31,7 @@ def test_nginx_disables_sse_buffering_and_caches_safely() -> None:
     assert 'location = /api/v1/events' in config
     assert "listen 9090" in config
     assert config.count("proxy_pass http://api:9000") == 2
+    assert "proxy_set_header Authorization" not in config
 
 
 def test_lan_defaults_use_the_reviewed_server_ip_and_ports() -> None:
@@ -39,6 +43,9 @@ def test_lan_defaults_use_the_reviewed_server_ip_and_ports() -> None:
     assert 'MANYSELVES_ALLOWED_ORIGINS=["http://192.168.8.28:9090"]' in environment
     assert "MANYSELVES_HTTP_BIND=0.0.0.0" in environment
     assert "MANYSELVES_HTTP_PORT=9090" in environment
+    assert "MANYSELVES_ADMIN_USERNAME=admin" in environment
+    assert "MANYSELVES_ADMIN_PASSWORD=yuanxi@2026" in environment
+    assert "MANYSELVES_ACCESS_TOKEN" not in environment
     assert '["http://192.168.8.28:9090"]' in compose
     assert "EXPOSE 9090" in web_dockerfile
     assert 'defaultServerUrl: "http://192.168.8.28:9090"' in frontend_main

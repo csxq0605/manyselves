@@ -6,8 +6,6 @@ from inspect import signature
 from pathlib import Path
 
 from fastapi.routing import APIRoute
-from pydantic import SecretStr
-
 from manyselves.webapi.main import create_app, generate_operation_id
 from manyselves.webapi.security import require_authenticated_session
 from manyselves.webapi.settings import WebSettings
@@ -20,7 +18,6 @@ def _test_settings() -> WebSettings:
     return WebSettings(
         data_root=Path("/manyselves/openapi-contract"),
         initial_project_id="openapi-contract-project",
-        access_token=SecretStr("openapi-contract-secret"),
         allowed_origins=["https://openapi.invalid"],
     )
 

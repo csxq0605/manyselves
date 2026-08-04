@@ -10,8 +10,6 @@ from uuid import UUID
 
 import httpx
 import pytest
-from pydantic import SecretStr
-
 from manyselves.application.errors import RuntimeConsistencyFailedError
 from manyselves.application.models import EditResendCommand
 from manyselves.config import ConfigManager
@@ -323,7 +321,6 @@ async def resources(tmp_path: Path):
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = lambda: host
@@ -799,7 +796,6 @@ async def test_shutdown_stops_producers_before_draining_resource_consumers(tmp_p
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = lambda: host
@@ -854,7 +850,6 @@ async def test_shutdown_retries_one_transient_producer_stop_before_draining(
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = lambda: host
@@ -917,7 +912,6 @@ async def test_shutdown_cancellation_waits_for_definite_producer_cleanup_then_pr
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = lambda: host
@@ -1001,7 +995,6 @@ async def test_shutdown_cancellation_during_begin_establishes_orderly_drain_befo
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = lambda: host
@@ -1120,7 +1113,6 @@ async def test_shutdown_cancellation_during_resource_close_finishes_pipeline_onc
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = lambda: host
@@ -1251,7 +1243,6 @@ async def test_shutdown_cancellation_during_stop_bus_finishes_bus_once(tmp_path:
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = lambda: host
@@ -1307,7 +1298,6 @@ async def test_shutdown_cancellation_during_legacy_stop_finishes_host_once(tmp_p
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = lambda: host
@@ -1378,7 +1368,6 @@ async def test_shutdown_owned_stage_failure_stops_before_dependencies(
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = lambda: host
@@ -1474,7 +1463,6 @@ async def test_shutdown_retries_producer_self_cancellation_without_cancelling_ca
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = lambda: host
@@ -1521,7 +1509,6 @@ async def test_failed_normal_shutdown_blocks_new_runtime_until_cleanup_finishes(
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = build_host
@@ -1586,7 +1573,6 @@ async def test_failed_service_close_attempts_safe_siblings_and_retries_only_pend
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = build_host
@@ -1657,7 +1643,6 @@ async def test_cancelled_pending_shutdown_cleanup_finishes_before_propagating_ca
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = build_host

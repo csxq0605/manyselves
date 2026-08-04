@@ -21,7 +21,7 @@
 
 ## Execution order and gates
 
-- [ ] **Plan 07 — Session authentication**
+- [x] **Plan 07 — Session authentication**
 
 Plan: `docs/superpowers/plans/2026-08-03-phase1-07-session-authentication.md`
 

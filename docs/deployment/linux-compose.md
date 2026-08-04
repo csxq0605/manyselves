@@ -1,41 +1,65 @@
-# Linux Docker Compose deployment
+# Linux Docker/Podman Compose deployment
 
-Phase 1 runs one authoritative Agent Runtime per Compose stack. It is suitable for one enterprise team sharing one active scenario; run a separate stack and data directory for each concurrently active scenario. It is not a multi-tenant or per-user-RBAC deployment.
+Phase 1 runs one authoritative Agent Runtime per Compose stack. It is suitable for one trusted enterprise team sharing one active scenario; it is not a public, multi-tenant, or per-user-RBAC deployment.
 
 ## Prerequisites and trust boundary
 
-- 64-bit Linux, Docker Engine 27+ and Docker Compose v2.
-- A dedicated non-root service account and the trusted `192.168.8.0/24` enterprise LAN.
-- One provider API key and one independently generated deployment access token.
-- A dedicated absolute data directory owned by the service account. This directory is the authoritative store; container layers are disposable.
+- A 64-bit Linux server on the trusted LAN, such as `192.168.8.28`.
+- Docker Compose v2, `podman compose`, or `podman-compose`.
+- A dedicated non-root service account and an absolute data directory owned by that account.
+- One configured model provider and its API key. The API key is required only when an Agent actually calls that provider.
+- Administrator credentials stored only in `deploy/.env`; the reviewed defaults are `admin / yuanxi@2026`.
 
-The API permits server-side Python and Agent tools. Do not expose this deployment to the public Internet. Phase 1 uses direct HTTP only inside the trusted LAN, one deployment token, and one controller lease; it does not provide user accounts or tenant isolation.
+Only publish TCP `9090` to the trusted LAN. FastAPI/Gunicorn listens on TCP `9000` only inside the Compose network. This IP-only layout has no TLS, so never expose it to the public Internet or an untrusted Wi-Fi/VPN segment.
 
-## Install and start
+## Option A: upload the source and build on the server
+
+Upload or extract the repository into `/opt/manyselves`, then run:
 
 ```bash
+cd /opt/manyselves
 install -d -m 0700 /srv/manyselves/data /srv/manyselves/backups
 cp deploy/env.example deploy/.env
 chmod 0600 deploy/.env
 ```
 
-Edit `deploy/.env`: set an absolute `MANYSELVES_DATA_DIR`, a random `MANYSELVES_ACCESS_TOKEN`, the matching `MANYSELVES_BOOTSTRAP_PROVIDER`, and that provider's key. Keep the reviewed defaults `MANYSELVES_HTTP_BIND=0.0.0.0`, `MANYSELVES_HTTP_PORT=9090`, and `MANYSELVES_ALLOWED_ORIGINS=["http://192.168.8.28:9090"]`. The entrypoint creates a provider skeleton only when `manyselves.config.yaml` is absent; it never writes the environment key into that skeleton or replaces an existing file.
+Edit `deploy/.env`. Keep these reviewed LAN values unless the server address or port changes:
+
+```dotenv
+MANYSELVES_ADMIN_USERNAME=admin
+MANYSELVES_ADMIN_PASSWORD=yuanxi@2026
+MANYSELVES_ALLOWED_ORIGINS=["http://192.168.8.28:9090"]
+MANYSELVES_DATA_DIR=/srv/manyselves/data
+MANYSELVES_HTTP_BIND=0.0.0.0
+MANYSELVES_HTTP_PORT=9090
+MANYSELVES_INITIAL_PROJECT_ID=default
+```
+
+Set `MANYSELVES_BOOTSTRAP_PROVIDER` and the matching provider key. The entrypoint creates a provider skeleton only when `manyselves.config.yaml` is absent; it does not write the environment key into that YAML or replace an existing configuration.
+
+Docker commands:
 
 ```bash
 docker compose -f deploy/compose.yaml --env-file deploy/.env config
 docker compose -f deploy/compose.yaml --env-file deploy/.env build
 docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --wait
-curl --fail http://127.0.0.1:9090/api/v1/health/live
-curl --fail http://127.0.0.1:9090/api/v1/health/ready
 ```
 
-The API is deliberately fixed to one Gunicorn worker and Compose replica. Increasing either creates multiple process-local runtimes and is unsupported.
+Podman commands:
 
-## Transfer prebuilt images from WSL or Docker Desktop
+```bash
+podman compose -f deploy/compose.yaml --env-file deploy/.env config
+podman compose -f deploy/compose.yaml --env-file deploy/.env build
+podman compose -f deploy/compose.yaml --env-file deploy/.env up -d
+```
 
-Transfer the Linux Docker images, not the complete WSL distribution. The reviewed images are `linux/amd64`; confirm the server reports `x86_64` from `uname -m`. An ARM server requires separately built `linux/arm64` images.
+If the installed Compose provider is the standalone command, replace `podman compose` with `podman-compose`. Some Podman Compose versions do not support `--wait`; use `podman ps` and the health checks below instead. Do not increase API workers or replicas, because that would create multiple process-local runtimes.
 
-From WSL at the reviewed repository commit:
+## Option B: transfer prebuilt Linux images
+
+Transfer Linux container images and the release source archive, not the whole WSL distribution. Confirm the server architecture with `uname -m`; the example below is for `x86_64`/`linux/amd64`.
+
+On the build computer:
 
 ```bash
 docker save --output manyselves-phase1-linux-amd64.tar \
@@ -43,73 +67,55 @@ docker save --output manyselves-phase1-linux-amd64.tar \
 git archive --format=tar.gz --output manyselves-phase1-release.tar.gz HEAD
 sha256sum manyselves-phase1-linux-amd64.tar manyselves-phase1-release.tar.gz \
   > manyselves-phase1-transfer.sha256
-scp manyselves-phase1-linux-amd64.tar manyselves-phase1-release.tar.gz \
-  manyselves-phase1-transfer.sha256 USER@192.168.8.28:/tmp/
 ```
 
-On the Linux server:
+Upload the three files to the server. On the server:
 
 ```bash
 cd /tmp
 sha256sum --check manyselves-phase1-transfer.sha256
-sudo install -d -o MANYSELVES_USER -g MANYSELVES_USER -m 0750 /opt/manyselves
-sudo -u MANYSELVES_USER tar -xzf manyselves-phase1-release.tar.gz -C /opt/manyselves
-docker load --input manyselves-phase1-linux-amd64.tar
+install -d -m 0750 /opt/manyselves
+tar -xzf manyselves-phase1-release.tar.gz -C /opt/manyselves
+podman load --input manyselves-phase1-linux-amd64.tar
 cd /opt/manyselves
 cp deploy/env.example deploy/.env
 chmod 0600 deploy/.env
 ```
 
-Replace `USER` and `MANYSELVES_USER`, then edit `deploy/.env` as described above. Start the loaded immutable tags without rebuilding:
+Edit `deploy/.env` as described above. If the loaded image names include `localhost/`, set `MANYSELVES_API_IMAGE` and `MANYSELVES_WEB_IMAGE` in that file to the exact names shown by `podman images`, then start without rebuilding:
 
 ```bash
-docker compose -f deploy/compose.yaml --env-file deploy/.env config
-docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --no-build --wait
+podman compose -f deploy/compose.yaml --env-file deploy/.env up -d --no-build
+```
+
+## Health, browser access, and uploads
+
+```bash
+curl --fail http://127.0.0.1:9090/api/v1/health/live
 curl --fail http://127.0.0.1:9090/api/v1/health/ready
 ```
 
-Do not use `wsl --export` for this Linux-server workflow. It moves an entire Windows WSL filesystem and configuration, is much larger, and is not the deployable artifact consumed by Docker Engine on the server.
+From a browser computer on the trusted LAN, open `http://192.168.8.28:9090`. The unauthenticated homepage is the login page. Sign in with the administrator username and password from `deploy/.env`.
 
-## LAN firewall and ports
+Every upload action selects files from the computer running that browser. The browser sends their bytes to the API and the authoritative copy remains under the server data directory. The UI does not expose a general server-file browser and does not synchronize a workstation directory.
 
-The only host-published port is TCP `9090`, served by the stack's Nginx container. Allow it only from the trusted enterprise LAN, for example `192.168.8.0/24`. FastAPI/Gunicorn listens on TCP `9000` inside the Compose network and must not be added to `ports`, the host firewall, or the cloud security group.
-
-Users connect directly to `http://192.168.8.28:9090`; no domain name is required. Because Phase 1 has no TLS in this layout, never expose TCP `9090` to the public Internet or an untrusted Wi-Fi/VPN segment. If public or cross-network access is needed later, add an approved TLS reverse proxy and change the exact allowed origin as a separate deployment change.
-
-## User access modes
-
-1. **Browser (recommended):** users open `http://192.168.8.28:9090`. In “服务器连接”, enter that same URL and the deployment token. Browser token state is session-scoped, so a new browser profile may need the token again.
-2. **Electron (optional):** install the packaged client, confirm `http://192.168.8.28:9090`, and enter the deployment token. The token is stored with Electron `safeStorage` on that device; project files remain on the server.
-3. **PyQt fallback:** run `uv run manyselves` on an operator workstation for legacy/local workflows. It is not the server process and should not point multiple desktop processes at one live server data directory.
-
-All connected users can observe state. Exactly one client holds the mutation lease at a time. Normal UI actions acquire/renew it; after an abnormal client loss, wait for the configured lease TTL (default 30 seconds) before another client takes control.
-
-## Multiple enterprise scenarios
-
-One stack supports one active scenario at a time. For concurrent scenarios, use a unique Compose project name, host port, deployment token, allowed origin, and data directory for every stack:
-
-```bash
-docker compose -p manyselves-energy \
-  -f deploy/compose.yaml --env-file deploy/energy.env up -d --wait
-docker compose -p manyselves-audit \
-  -f deploy/compose.yaml --env-file deploy/audit.env up -d --wait
-```
-
-For example, `energy.env` can use port 9091, origin `http://192.168.8.28:9091`, and `/srv/manyselves/energy/data`, while `audit.env` uses port/origin 9092 and `/srv/manyselves/audit/data`. Never attach two API containers or two stacks to the same data directory.
+All signed-in users can observe the shared state. Exactly one client holds the mutation lease at a time; after an abnormal client loss, wait for the configured lease TTL before another client takes control.
 
 ## Logs and routine operation
 
-Nginx inside the stack proxies to `api:9000`, preserves the required authentication/control headers, disables SSE buffering, serves hashed assets immutably, and keeps `index.html` uncached. `MANYSELVES_ALLOWED_ORIGINS` must remain the exact browser origin, never `*`.
+Docker users can replace `podman compose` below with `docker compose`:
 
 ```bash
-docker compose -f deploy/compose.yaml --env-file deploy/.env ps
-docker compose -f deploy/compose.yaml --env-file deploy/.env logs -f --tail 200 api web
-docker compose -f deploy/compose.yaml --env-file deploy/.env restart
-docker compose -f deploy/compose.yaml --env-file deploy/.env stop
-docker compose -f deploy/compose.yaml --env-file deploy/.env start
+podman compose -f deploy/compose.yaml --env-file deploy/.env ps
+podman compose -f deploy/compose.yaml --env-file deploy/.env logs -f --tail 200 api web
+podman compose -f deploy/compose.yaml --env-file deploy/.env restart
+podman compose -f deploy/compose.yaml --env-file deploy/.env stop
+podman compose -f deploy/compose.yaml --env-file deploy/.env start
 ```
 
-After installation, restart, restore, or upgrade, run the public verifier:
+Nginx serves port `9090`, proxies to `api:9000`, forwards browser cookies and origins normally, disables SSE buffering, serves hashed assets immutably, and keeps `index.html` uncached. Keep `MANYSELVES_ALLOWED_ORIGINS` equal to the exact browser origin, never `*`.
+
+After installation, restart, restore, or upgrade, run the public verifier from the release source directory:
 
 ```bash
 set -a
@@ -117,31 +123,37 @@ set -a
 set +a
 uv run python scripts/verify_deployment.py \
   --url http://192.168.8.28:9090 \
-  --token-env MANYSELVES_ACCESS_TOKEN
+  --username "$MANYSELVES_ADMIN_USERNAME" \
+  --password-env MANYSELVES_ADMIN_PASSWORD
 ```
 
-The verifier creates one temporary server file, reads/downloads it, verifies SSE, removes the file, and releases its control lease.
+The verifier logs in once, checks health, the single Runtime, projects, conversations, a reversible file round trip, SSE, and an artifact download; it then removes its temporary file, releases the control lease, and logs out.
+
+## Multiple active scenarios
+
+One stack owns one active Runtime and one data directory. For scenarios that must run concurrently, use a unique Compose project name, host port, allowed origin, credentials, and data directory for each stack. Never attach two API containers to the same data directory.
 
 ## Backup and restore
 
-For an online-consistent backup, set `MANYSELVES_API_URL` to the LAN URL in addition to the data directory and token. The backup script acquires a controller lease, enters maintenance, creates a SHA-256 manifest archive, and releases maintenance in a trap/finally block.
+For an online-consistent backup, load the server-only credentials from `deploy/.env`, set the API URL, and run the backup script. It logs in, acquires the controller lease, enters maintenance, creates the archive, then releases maintenance and the lease and logs out in its cleanup path.
 
 ```bash
-export MANYSELVES_DATA_DIR=/srv/manyselves/data
+set -a
+. deploy/.env
+set +a
 export MANYSELVES_API_URL=http://192.168.8.28:9090
-export MANYSELVES_ACCESS_TOKEN='...'
 deploy/backup/backup.sh /srv/manyselves/backups
 ```
 
-Restore is offline and guarded. It verifies all paths and hashes, rejects symbolic links and non-empty targets by default, and with `--force` preserves the previous target as a timestamped sibling.
+Restore is offline and guarded. It verifies paths and hashes, rejects unsafe archive members, and preserves the previous target as a timestamped sibling when `--force` is used.
 
 ```bash
-docker compose -f deploy/compose.yaml --env-file deploy/.env down
+podman compose -f deploy/compose.yaml --env-file deploy/.env down
 export MANYSELVES_SERVICES_STOPPED=yes
 deploy/backup/restore.sh /srv/manyselves/backups/manyselves-YYYYMMDDTHHMMSSZ.tar.gz --force
-docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --wait
+podman compose -f deploy/compose.yaml --env-file deploy/.env up -d
 ```
 
 ## Upgrade and rollback
 
-Back up first, record the current image digests, build or pull the new version, then recreate the stack against the same data directory. For rollback, stop the stack, select the previous immutable image tags/digests, restore only if the upgrade changed authoritative data, and start with `--wait`. Phase 1 persistence remains the existing workspace/config format and requires no one-way migration.
+Back up first and record the current image names and digests. Recreate the stack with the new immutable images against the same data directory. To roll back, stop the stack, select the previous image tags/digests, restore only if the upgrade changed authoritative data, start the previous stack, and run the public verifier again.

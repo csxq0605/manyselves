@@ -11,7 +11,6 @@ class WebSettings(BaseSettings):
 
     data_root: Path
     initial_project_id: str
-    access_token: SecretStr
     admin_username: str = "admin"
     admin_password: SecretStr = SecretStr("yuanxi@2026")
     session_ttl_seconds: int = 12 * 60 * 60

@@ -99,11 +99,16 @@ release limitations are in [Phase 1 known limitations](docs/phase1/known-limitat
 
 ```bash
 cp deploy/env.example deploy/.env
-# Set a long access token, provider key, and absolute data directory.
+# Set the provider key and absolute data directory. The reviewed LAN login
+# defaults are admin / yuanxi@2026 and can be changed only on the server.
 docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build --wait
+set -a
+. deploy/.env
+set +a
 uv run python scripts/verify_deployment.py \
   --url http://192.168.8.28:9090 \
-  --token-env MANYSELVES_ACCESS_TOKEN
+  --username "$MANYSELVES_ADMIN_USERNAME" \
+  --password-env MANYSELVES_ADMIN_PASSWORD
 ```
 
 ## Configuration and local state

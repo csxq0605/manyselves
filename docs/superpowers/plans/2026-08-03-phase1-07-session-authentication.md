@@ -36,7 +36,7 @@
 - Produces: `SESSION_COOKIE_NAME = "manyselves_session"`.
 - Produces: `POST /api/v1/auth/login`, `GET /api/v1/auth/session`, `POST /api/v1/auth/logout`.
 
-- [ ] **Step 1: Write failing signer and route tests**
+- [x] **Step 1: Write failing signer and route tests**
 
 ```python
 def test_session_signer_rejects_tampering(tmp_path: Path) -> None:
@@ -57,13 +57,13 @@ async def test_login_sets_http_only_cookie(async_client: httpx.AsyncClient) -> N
     assert "SameSite=strict" in response.headers["set-cookie"]
 ```
 
-- [ ] **Step 2: Run the focused tests and verify the missing-module failure**
+- [x] **Step 2: Run the focused tests and verify the missing-module failure**
 
 Run: `uv run pytest tests/webapi/test_auth.py -q`
 
 Expected: FAIL because `manyselves.webapi.session_auth` and the auth routes do not exist.
 
-- [ ] **Step 3: Implement the signer, settings, schemas, and routes**
+- [x] **Step 3: Implement the signer, settings, schemas, and routes**
 
 Add these settings and contracts exactly:
 
@@ -97,13 +97,13 @@ settings.data_root / ".manyselves" / "auth" / "session.key"
 
 Login returns 204 and sets the cookie; session returns 200 for a valid cookie and 401 `AUTH_REQUIRED` otherwise; logout always returns 204 and deletes the cookie.
 
-- [ ] **Step 4: Run signer and route tests**
+- [x] **Step 4: Run signer and route tests**
 
 Run: `uv run pytest tests/webapi/test_auth.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the session primitive**
+- [x] **Step 5: Commit the session primitive**
 
 ```bash
 git add manyselves/webapi/session_auth.py manyselves/webapi/schemas/auth.py manyselves/webapi/routes/auth.py manyselves/webapi/settings.py manyselves/webapi/lifespan.py manyselves/webapi/main.py tests/webapi/test_auth.py
@@ -139,7 +139,7 @@ git commit -m "feat: add server session authentication"
 - Produces: `require_authenticated_session(request: Request) -> SessionPrincipal`.
 - Produces: cookie-based OpenAPI security scheme `SessionCookie`.
 
-- [ ] **Step 1: Replace bearer characterization tests with cookie characterization tests**
+- [x] **Step 1: Replace bearer characterization tests with cookie characterization tests**
 
 ```python
 async def login(client: httpx.AsyncClient) -> None:
@@ -158,13 +158,13 @@ async def test_business_route_rejects_missing_session(async_client: httpx.AsyncC
 
 Update all web API fixtures to call `login(client)` instead of assigning an Authorization header. Health and auth routes remain anonymous; bootstrap, projects, files, conversations, events, agents, reporting, settings, operations, maintenance, and control require a session.
 
-- [ ] **Step 2: Run the WebAPI suite and verify bearer-dependent failures**
+- [x] **Step 2: Run the WebAPI suite and verify bearer-dependent failures**
 
 Run: `uv run pytest tests/webapi -q`
 
 Expected: FAIL on missing cookie dependency and obsolete bearer OpenAPI assertions.
 
-- [ ] **Step 3: Implement cookie dependency and route protection**
+- [x] **Step 3: Implement cookie dependency and route protection**
 
 Replace `require_deployment_access` with:
 
@@ -184,7 +184,7 @@ def require_authenticated_session(request: Request) -> SessionPrincipal:
 
 Apply the dependency at router level wherever possible so read and mutation routes are protected consistently. Keep `X-Control-Lease-Token` as the independent Runtime mutation-control mechanism. Replace `DeploymentBearer` OpenAPI rewriting with a cookie API-key scheme named `SessionCookie` using cookie name `manyselves_session`.
 
-- [ ] **Step 4: Regenerate and verify the API contract**
+- [x] **Step 4: Regenerate and verify the API contract**
 
 Run: `uv run python scripts/export_openapi.py`
 
@@ -192,7 +192,7 @@ Run: `uv run pytest tests/webapi -q`
 
 Expected: PASS, with no `DeploymentBearer` or Authorization requirement in `frontend-contract/openapi.json`.
 
-- [ ] **Step 5: Commit cookie protection and contract changes**
+- [x] **Step 5: Commit cookie protection and contract changes**
 
 ```bash
 git add manyselves/webapi tests/webapi scripts/export_openapi.py frontend-contract/openapi.json
@@ -227,7 +227,7 @@ git commit -m "refactor: protect APIs with session cookies"
 - Produces: `AuthGate` that renders `LoginPage` before bootstrapping Runtime state.
 - Produces: gateway and SSE requests using `credentials: "same-origin"` and no token callback.
 
-- [ ] **Step 1: Install React Router and lock the dependency**
+- [x] **Step 1: Install React Router and lock the dependency**
 
 Run: `npm install react-router-dom@^7 --save`
 
@@ -235,7 +235,7 @@ Working directory: `frontend`
 
 Expected: `package.json` and `package-lock.json` contain `react-router-dom` and no unrelated dependency upgrades.
 
-- [ ] **Step 2: Write failing login and transport tests**
+- [x] **Step 2: Write failing login and transport tests**
 
 ```tsx
 it("shows the login page before bootstrap when session is absent", async () => {
@@ -251,7 +251,7 @@ it("sends cookies and never sets Authorization", async () => {
 });
 ```
 
-- [ ] **Step 3: Run focused frontend tests and verify failure**
+- [x] **Step 3: Run focused frontend tests and verify failure**
 
 Run: `npm test -- --run src/features/auth src/api/gateway.test.ts src/api/event-stream.test.ts src/features/settings/settings-storage.test.ts`
 
@@ -259,7 +259,7 @@ Working directory: `frontend`
 
 Expected: FAIL because auth components do not exist and gateway still accepts `getToken`.
 
-- [ ] **Step 4: Implement AuthGate and remove token storage**
+- [x] **Step 4: Implement AuthGate and remove token storage**
 
 Define:
 
@@ -273,7 +273,7 @@ export interface AuthApi {
 
 The login form contains only username, password, and login button, defaults the visible username to `admin`, does not default or embed the password, and maps all credential failures to one non-secret error. `App` must not call bootstrap or start SSE until `AuthGate` reports an authenticated session. Gateway and event stream always use same-origin credentials. Remove `ServerConnection.token`, `tokenKey`, secure token adapters, and every sessionStorage access to `manyselves.deploymentToken`.
 
-- [ ] **Step 5: Run focused tests, typecheck, and lint**
+- [x] **Step 5: Run focused tests, typecheck, and lint**
 
 Run: `npm test -- --run src/features/auth src/api/gateway.test.ts src/api/event-stream.test.ts src/features/settings/settings-storage.test.ts`
 
@@ -285,7 +285,7 @@ Working directory: `frontend`
 
 Expected: all commands PASS.
 
-- [ ] **Step 6: Commit the login shell**
+- [x] **Step 6: Commit the login shell**
 
 ```bash
 git add frontend/package.json frontend/package-lock.json frontend/src
@@ -309,7 +309,7 @@ git commit -m "feat: add browser login and cookie transport"
 - Produces: deployment environment names `MANYSELVES_ADMIN_USERNAME` and `MANYSELVES_ADMIN_PASSWORD`.
 - Produces: verifier and backup clients that login once and retain a cookie jar.
 
-- [ ] **Step 1: Write failing deployment verifier tests**
+- [x] **Step 1: Write failing deployment verifier tests**
 
 ```python
 def test_verifier_logs_in_before_protected_checks(fake_http: FakeHttp) -> None:
@@ -318,17 +318,17 @@ def test_verifier_logs_in_before_protected_checks(fake_http: FakeHttp) -> None:
     assert "Authorization" not in fake_http.requests[1].headers
 ```
 
-- [ ] **Step 2: Run release tests and verify token assumptions fail**
+- [x] **Step 2: Run release tests and verify token assumptions fail**
 
 Run: `uv run pytest tests/release/test_deployment_verifier.py -q`
 
 Expected: FAIL because the verifier still requires a bearer token.
 
-- [ ] **Step 3: Update deployment environment and clients**
+- [x] **Step 3: Update deployment environment and clients**
 
 Remove `MANYSELVES_ACCESS_TOKEN`. Add the two administrator variables with the approved defaults in `env.example`, pass them only to the API container, and keep Nginx at 9090/API at 9000. Nginx must forward Cookie and Origin normally and no longer needs explicit Authorization forwarding. Python verifier and backup scripts must login, retain cookies, acquire the existing control lease, perform work, and logout/clean up.
 
-- [ ] **Step 4: Run deployment and contract checks**
+- [x] **Step 4: Run deployment and contract checks**
 
 Run: `uv run pytest tests/release/test_deployment_verifier.py tests/webapi/test_openapi_contract.py -q`
 
@@ -336,7 +336,7 @@ Run: `uv run python scripts/verify_deployment.py --help`
 
 Expected: PASS; help names username/password and contains no access-token option.
 
-- [ ] **Step 5: Commit deployment auth migration**
+- [x] **Step 5: Commit deployment auth migration**
 
 ```bash
 git add deploy scripts/verify_deployment.py tests/release/test_deployment_verifier.py docs/deployment/linux-compose.md

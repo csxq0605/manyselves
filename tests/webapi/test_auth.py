@@ -5,8 +5,6 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from pydantic import SecretStr
-
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.session_auth import SessionSigner
@@ -30,6 +28,13 @@ class FakeRuntimeHost:
         self.is_ready = False
 
 
+def test_web_settings_do_not_require_a_legacy_access_token(tmp_path: Path) -> None:
+    """Session-authenticated deployments need only administrator credentials."""
+    settings = WebSettings(data_root=tmp_path, initial_project_id="project-1")
+
+    assert settings.admin_username == "admin"
+
+
 @pytest.fixture
 async def async_client(tmp_path: Path):
     """Exercise auth with the actual route registration and lifespan setup."""
@@ -37,7 +42,6 @@ async def async_client(tmp_path: Path):
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = FakeRuntimeHost
@@ -106,7 +110,6 @@ async def test_login_uses_a_secure_cookie_when_configured(tmp_path: Path) -> Non
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
             session_cookie_secure=True,
         )
     )

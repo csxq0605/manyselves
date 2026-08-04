@@ -5,8 +5,6 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from pydantic import SecretStr
-
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.schemas.control import LeaseAcquireRequest, LeaseResponse, LeaseTokenRequest
@@ -38,7 +36,6 @@ async def async_client(tmp_path: Path):
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
     app.dependency_overrides[get_runtime_host] = FakeRuntimeHost
@@ -213,7 +210,6 @@ async def test_internal_errors_use_a_non_secret_error_envelope(tmp_path: Path) -
         WebSettings(
             data_root=tmp_path,
             initial_project_id="project-1",
-            access_token=SecretStr("test-token"),
         )
     )
 

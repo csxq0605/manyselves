@@ -7,7 +7,8 @@ services:
       dockerfile: deploy/api/Dockerfile
     image: ${MANYSELVES_API_IMAGE:-manyselves-api:phase1}
     environment:
-      ACCESS_TOKEN: ${MANYSELVES_ACCESS_TOKEN:?set MANYSELVES_ACCESS_TOKEN}
+      ADMIN_USERNAME: ${MANYSELVES_ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${MANYSELVES_ADMIN_PASSWORD:-yuanxi@2026}
       ALLOWED_ORIGINS: ${MANYSELVES_ALLOWED_ORIGINS:-["http://192.168.8.28:9090"]}
       ANTHROPIC_API_KEY: ${MANYSELVES_ANTHROPIC_API_KEY:-}
       CONFIG_PATH: /data/manyselves/manyselves.config.yaml

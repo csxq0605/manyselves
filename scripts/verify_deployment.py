@@ -55,15 +55,20 @@ def _checked(response: Response, expected: int = 200) -> Response:
     return response
 
 
-def verify_deployment(url: str, token: str, *, client: Client | None = None) -> VerificationResult:
+def verify_deployment(
+    url: str,
+    username: str,
+    password: str,
+    *,
+    client: Client | None = None,
+) -> VerificationResult:
     """Run a reversible public-API smoke drill and return every named Gate E check."""
-    if not token:
-        raise ValueError("Deployment access token is required")
+    if not username or not password:
+        raise ValueError("Deployment administrator username and password are required")
     owned_client = client is None
     if client is None:
         client = httpx.Client(
             base_url=url.rstrip("/"),
-            headers={"Authorization": f"Bearer {token}"},
             timeout=httpx.Timeout(10, read=10),
         )
     checks = {name: False for name in (
@@ -75,7 +80,14 @@ def verify_deployment(url: str, token: str, *, client: Client | None = None) -> 
     project_id: str | None = None
     path: str | None = None
     revision: str | None = None
+    login_attempted = False
     try:
+        login_attempted = True
+        _checked(client.request(
+            "POST",
+            "/api/v1/auth/login",
+            json={"username": username, "password": password},
+        ), 204)
         live = _checked(client.request("GET", "/api/v1/health/live")).json()
         checks["live"] = live.get("status") == "live"
         ready = _checked(client.request("GET", "/api/v1/health/ready")).json()
@@ -122,20 +134,33 @@ def verify_deployment(url: str, token: str, *, client: Client | None = None) -> 
         details["streamId"] = str(bootstrap.get("streamId", ""))
     finally:
         if path and revision and project_id and lease_token:
-            response = client.request(
-                "DELETE",
-                f"/api/v1/projects/{project_id}/files/entries",
-                params={"path": path},
-                headers={"X-Control-Lease-Token": lease_token, "If-Match": f'"{revision}"'},
-            )
-            if response.status_code != 204:
-                details["cleanup"] = f"temporary verifier file cleanup returned {response.status_code}"
+            try:
+                response = client.request(
+                    "DELETE",
+                    f"/api/v1/projects/{project_id}/files/entries",
+                    params={"path": path},
+                    headers={"X-Control-Lease-Token": lease_token, "If-Match": f'"{revision}"'},
+                )
+                if response.status_code != 204:
+                    details["cleanup"] = f"temporary verifier file cleanup returned {response.status_code}"
+            except Exception as error:
+                details["cleanup"] = f"temporary verifier file cleanup failed: {error}"
         if lease_token:
-            response = client.request(
-                "DELETE", "/api/v1/control/lease", json={"leaseToken": lease_token},
-            )
-            if response.status_code != 204:
-                details["leaseRelease"] = f"lease release returned {response.status_code}"
+            try:
+                response = client.request(
+                    "DELETE", "/api/v1/control/lease", json={"leaseToken": lease_token},
+                )
+                if response.status_code != 204:
+                    details["leaseRelease"] = f"lease release returned {response.status_code}"
+            except Exception as error:
+                details["leaseRelease"] = f"lease release failed: {error}"
+        if login_attempted:
+            try:
+                response = client.request("POST", "/api/v1/auth/logout")
+                if response.status_code != 204:
+                    details["logout"] = f"logout returned {response.status_code}"
+            except Exception as error:
+                details["logout"] = f"logout failed: {error}"
         if owned_client:
             client.close()
     return VerificationResult(checks=checks, details=details)
@@ -144,9 +169,12 @@ def verify_deployment(url: str, token: str, *, client: Client | None = None) -> 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", required=True)
-    parser.add_argument("--token-env", default="MANYSELVES_ACCESS_TOKEN")
+    parser.add_argument("--username", default=os.environ.get("MANYSELVES_ADMIN_USERNAME", "admin"))
+    parser.add_argument("--password", help="administrator password; prefer --password-env")
+    parser.add_argument("--password-env", default="MANYSELVES_ADMIN_PASSWORD")
     args = parser.parse_args()
-    result = verify_deployment(args.url, os.environ.get(args.token_env, ""))
+    password = args.password or os.environ.get(args.password_env, "")
+    result = verify_deployment(args.url, args.username, password)
     print(json.dumps({**asdict(result), "passed": result.passed}, indent=2, sort_keys=True))
     return 0 if result.passed else 1
 

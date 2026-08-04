@@ -7,8 +7,6 @@ import json
 import sys
 from pathlib import Path
 
-from pydantic import SecretStr
-
 from manyselves.webapi.main import create_app
 from manyselves.webapi.settings import WebSettings
 
@@ -18,7 +16,6 @@ def _contract_settings() -> WebSettings:
     return WebSettings(
         data_root=Path("openapi-contract-data"),
         initial_project_id="openapi-contract-project",
-        access_token=SecretStr("not-a-session-secret"),
         allowed_origins=[],
     )
 

@@ -24,7 +24,9 @@ def test_compose_does_not_publish_api_or_persist_deployment_secrets() -> None:
     bootstrap = Path("deploy/api/init_config.py").read_text(encoding="utf-8")
     assert "127.0.0.1:8000" not in compose
     assert "api_key" not in bootstrap.casefold()
-    assert "MANYSELVES_ACCESS_TOKEN" in compose
+    assert "MANYSELVES_ACCESS_TOKEN" not in compose
+    assert "MANYSELVES_ADMIN_USERNAME" in compose
+    assert "MANYSELVES_ADMIN_PASSWORD" in compose
     assert "read_only: true" in compose
 
 

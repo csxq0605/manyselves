@@ -8,8 +8,6 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from pydantic import SecretStr
-
 from manyselves.application.preview_service import PreviewService
 from manyselves.application.workspace_files import WorkspaceFiles
 from manyselves.webapi.dependencies import get_runtime_host
@@ -54,7 +52,6 @@ async def api(tmp_path: Path):
         WebSettings(
             data_root=tmp_path,
             initial_project_id="p1",
-            access_token=SecretStr("test-token"),
             upload_size_limit_bytes=16,
             preview_size_limit_bytes=1024,
         )

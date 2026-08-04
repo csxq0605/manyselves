@@ -33,8 +33,10 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
   aquasec/trivy:latest image --severity HIGH,CRITICAL --ignore-unfixed \
   --exit-code 1 manyselves-api:phase1
 
-export MANYSELVES_ACCESS_TOKEN='your-deployment-token'
+export MANYSELVES_ADMIN_USERNAME=admin
+export MANYSELVES_ADMIN_PASSWORD='change-this-before-production'
 uv run python scripts/verify_deployment.py \
   --url http://192.168.8.28:9090 \
-  --token-env MANYSELVES_ACCESS_TOKEN
+  --username "$MANYSELVES_ADMIN_USERNAME" \
+  --password-env MANYSELVES_ADMIN_PASSWORD
 ```

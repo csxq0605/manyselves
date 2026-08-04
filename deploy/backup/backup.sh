@@ -4,26 +4,49 @@ set -eu
 DATA_ROOT=${MANYSELVES_DATA_DIR:?set MANYSELVES_DATA_DIR}
 OUTPUT_DIR=${1:-./backups}
 API_URL=${MANYSELVES_API_URL:-}
-ACCESS_TOKEN=${MANYSELVES_ACCESS_TOKEN:-}
+ADMIN_USERNAME=${MANYSELVES_ADMIN_USERNAME:-admin}
+ADMIN_PASSWORD=${MANYSELVES_ADMIN_PASSWORD:-}
+COOKIE_JAR=""
 LEASE_TOKEN=""
 MAINTENANCE_TOKEN=""
 
-release_maintenance() {
+cleanup() {
+  trap - EXIT INT TERM
+  set +e
   if [ -n "$MAINTENANCE_TOKEN" ]; then
-    curl --fail --silent --show-error -X POST "$API_URL/api/v1/maintenance/release" \
-      -H "Authorization: Bearer $ACCESS_TOKEN" -H "X-Control-Lease-Token: $LEASE_TOKEN" \
-      -H "Content-Type: application/json" -d "{\"maintenanceToken\":\"$MAINTENANCE_TOKEN\"}" >/dev/null
+    curl --fail --silent --show-error --cookie "$COOKIE_JAR" -X POST \
+      "$API_URL/api/v1/maintenance/release" \
+      -H "X-Control-Lease-Token: $LEASE_TOKEN" -H "Content-Type: application/json" \
+      -d "{\"maintenanceToken\":\"$MAINTENANCE_TOKEN\"}" >/dev/null
+  fi
+  if [ -n "$LEASE_TOKEN" ]; then
+    curl --fail --silent --show-error --cookie "$COOKIE_JAR" -X DELETE \
+      "$API_URL/api/v1/control/lease" -H "Content-Type: application/json" \
+      -d "{\"leaseToken\":\"$LEASE_TOKEN\"}" >/dev/null
+  fi
+  if [ -n "$COOKIE_JAR" ]; then
+    curl --silent --show-error --cookie "$COOKIE_JAR" -X POST \
+      "$API_URL/api/v1/auth/logout" >/dev/null
+    rm -f "$COOKIE_JAR"
   fi
 }
-trap release_maintenance EXIT INT TERM
+trap cleanup EXIT INT TERM
 
 if [ -n "$API_URL" ]; then
-  [ -n "$ACCESS_TOKEN" ] || { echo "MANYSELVES_ACCESS_TOKEN is required with MANYSELVES_API_URL" >&2; exit 2; }
-  LEASE_TOKEN=$(curl --fail --silent --show-error -X POST "$API_URL/api/v1/control/lease" \
-    -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
-    -d '{"clientId":"phase1-backup","actorId":"operator-backup"}' | python -c 'import json,sys; print(json.load(sys.stdin)["leaseToken"])')
-  MAINTENANCE_TOKEN=$(curl --fail --silent --show-error -X POST "$API_URL/api/v1/maintenance/quiesce" \
-    -H "Authorization: Bearer $ACCESS_TOKEN" -H "X-Control-Lease-Token: $LEASE_TOKEN" | \
+  [ -n "$ADMIN_PASSWORD" ] || {
+    echo "MANYSELVES_ADMIN_PASSWORD is required with MANYSELVES_API_URL" >&2
+    exit 2
+  }
+  COOKIE_JAR=$(mktemp)
+  curl --fail --silent --show-error --cookie-jar "$COOKIE_JAR" -X POST \
+    "$API_URL/api/v1/auth/login" -H "Content-Type: application/json" \
+    -d "{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}" >/dev/null
+  LEASE_TOKEN=$(curl --fail --silent --show-error --cookie "$COOKIE_JAR" -X POST \
+    "$API_URL/api/v1/control/lease" -H "Content-Type: application/json" \
+    -d '{"clientId":"phase1-backup","actorId":"operator-backup"}' | \
+    python -c 'import json,sys; print(json.load(sys.stdin)["leaseToken"])')
+  MAINTENANCE_TOKEN=$(curl --fail --silent --show-error --cookie "$COOKIE_JAR" -X POST \
+    "$API_URL/api/v1/maintenance/quiesce" -H "X-Control-Lease-Token: $LEASE_TOKEN" | \
     python -c 'import json,sys; print(json.load(sys.stdin)["maintenanceToken"])')
 fi
 
