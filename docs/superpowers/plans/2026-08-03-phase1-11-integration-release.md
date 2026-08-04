@@ -36,7 +36,7 @@
 - Produces: one generated OpenAPI document and one matching TypeScript schema with no handwritten duplicate DTOs.
 - Produces: application boot order `AuthGate -> Bootstrap/SSE -> Router pages`.
 
-- [ ] **Step 1: Add contract assertions for required and forbidden semantics**
+- [x] **Step 1: Add contract assertions for required and forbidden semantics**
 
 ```python
 def test_phase1_redesign_contract(app_schema: dict) -> None:
@@ -48,7 +48,7 @@ def test_phase1_redesign_contract(app_schema: dict) -> None:
     assert "DeploymentBearer" not in app_schema["components"]["securitySchemes"]
 ```
 
-- [ ] **Step 2: Export and regenerate contracts**
+- [x] **Step 2: Export and regenerate contracts**
 
 Run: `uv run python scripts/export_openapi.py`
 
@@ -56,7 +56,7 @@ Run: `npm run generate:api`
 
 Working directory for npm command: `frontend`
 
-- [ ] **Step 3: Run API-generation and application boot tests**
+- [x] **Step 3: Run API-generation and application boot tests**
 
 Run: `uv run pytest tests/webapi/test_openapi_contract.py -q`
 
@@ -68,7 +68,7 @@ Working directory for npm commands: `frontend`
 
 Expected: PASS; unauthenticated application tests must not bootstrap Runtime or start SSE.
 
-- [ ] **Step 4: Commit contract integration**
+- [x] **Step 4: Commit contract integration**
 
 ```bash
 git add scripts/export_openapi.py frontend-contract/openapi.json frontend/src/api/generated/schema.ts frontend/src/app tests/webapi/test_openapi_contract.py
@@ -93,7 +93,7 @@ git commit -m "chore: integrate light web API contracts"
 - Consumes: production React routes and mocked FastAPI contracts.
 - Produces: E2E coverage for login, navigation, browser upload, project conversation, Runtime, outputs, global knowledge, settings, and failure recovery.
 
-- [ ] **Step 1: Add the login-to-output golden journey**
+- [x] **Step 1: Add the login-to-output golden journey**
 
 ```ts
 test("login, upload local input, run, and download output", async ({ page }) => {
@@ -112,11 +112,11 @@ test("login, upload local input, run, and download output", async ({ page }) => 
 
 The fixture must verify multipart bytes came from the Playwright client, the logical destination is `Inputs/input.md`, no local absolute path appears in the request body/UI, and final output is surfaced only after a completed event.
 
-- [ ] **Step 2: Add navigation and permission-matrix journeys**
+- [x] **Step 2: Add navigation and permission-matrix journeys**
 
 Assert all six fixed entries, separate Templates/Outputs routes, no folder mutation menu, no output upload/edit, no server-file picker, and no `.manyselves` text. Add global knowledge project-priority and environment-managed model-key states.
 
-- [ ] **Step 3: Run the complete E2E suite**
+- [x] **Step 3: Run the complete E2E suite**
 
 Run: `npm run e2e`
 
@@ -124,7 +124,7 @@ Working directory: `frontend`
 
 Expected: every Playwright test PASS with no console errors, blank page, or uncaught request rejection.
 
-- [ ] **Step 4: Commit end-to-end coverage**
+- [x] **Step 4: Commit end-to-end coverage**
 
 ```bash
 git add frontend/e2e

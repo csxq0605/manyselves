@@ -148,13 +148,13 @@ function ScopedProjectDirectoryPage({
     }
   }
 
-  async function uploadSelected(selected: FileList | null) {
-    if (!selected || selected.length === 0) return;
+  async function uploadSelected(selected: readonly File[]) {
+    if (selected.length === 0) return;
     const controller = new AbortController();
     uploadControllerRef.current = controller;
     setUploading(true);
     try {
-      for (const file of Array.from(selected)) {
+      for (const file of selected) {
         if (disposedRef.current || controller.signal.aborted) break;
         await uploadOne(file, joinPath(activeCapabilities.root, file.name), controller.signal);
       }
@@ -221,7 +221,7 @@ function ScopedProjectDirectoryPage({
               className="project-directory__file-input"
               multiple
               onChange={(event) => {
-                const selected = event.currentTarget.files;
+                const selected = Array.from(event.currentTarget.files ?? []);
                 event.currentTarget.value = "";
                 void uploadSelected(selected);
               }}

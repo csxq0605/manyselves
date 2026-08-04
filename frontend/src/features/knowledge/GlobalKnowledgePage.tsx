@@ -118,13 +118,13 @@ export function GlobalKnowledgePage({ api, gateway, platform }: GlobalKnowledgeP
     }
   }
 
-  async function uploadSelected(selected: FileList | null) {
-    if (!selected?.length) return;
+  async function uploadSelected(selected: readonly File[]) {
+    if (!selected.length) return;
     const controller = new AbortController();
     uploadController.current = controller;
     setUploading(true);
     try {
-      for (const file of Array.from(selected)) {
+      for (const file of selected) {
         if (controller.signal.aborted || disposed.current) break;
         await uploadOne(file, controller.signal);
       }
@@ -183,7 +183,7 @@ export function GlobalKnowledgePage({ api, gateway, platform }: GlobalKnowledgeP
       <div><p className="project-directory__eyebrow">企业共享范围</p><h1>全局知识库</h1><p className="global-knowledge__summary">所有项目可引用；检索在运行时按需执行。</p></div>
       <div className="project-directory__actions">
         <input aria-label="选择本地文件" className="project-directory__file-input" multiple onChange={(event) => {
-          const selected = event.currentTarget.files;
+          const selected = Array.from(event.currentTarget.files ?? []);
           event.currentTarget.value = "";
           void uploadSelected(selected);
         }} ref={inputRef} type="file" />
