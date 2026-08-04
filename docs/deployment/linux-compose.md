@@ -12,18 +12,23 @@ Phase 1 runs one authoritative Agent Runtime per Compose stack. It is suitable f
 
 Only publish TCP `9090` to the trusted LAN. FastAPI/Gunicorn listens on TCP `9000` only inside the Compose network. This IP-only layout has no TLS, so never expose it to the public Internet or an untrusted Wi-Fi/VPN segment.
 
+Create the dedicated `manyselves` account before installation. Run the directory creation commands below as a root-capable administrator; do not make `/opt` or `/srv` writable by a regular login account. All archive extraction, image loading, and Compose commands then run as `manyselves` so containers and persistent files have one non-root owner.
+
 ## Option A: upload the source and build on the server
 
-Upload or extract the repository into `/opt/manyselves`, then run:
+Upload a source archive to `/tmp/manyselves-source.tar.gz`. As an administrator, create the service-owned paths once:
 
 ```bash
-cd /opt/manyselves
-install -d -m 0700 /srv/manyselves/data /srv/manyselves/backups
+sudo install -d -m 0750 -o manyselves -g manyselves /opt/manyselves
+sudo install -d -m 0700 -o manyselves -g manyselves /srv/manyselves/data /srv/manyselves/backups
+sudo chown manyselves:manyselves /tmp/manyselves-source.tar.gz
+sudo -u manyselves -H sh -c 'cd /opt/manyselves
+tar -xzf /tmp/manyselves-source.tar.gz
 cp deploy/env.example deploy/.env
-chmod 0600 deploy/.env
+chmod 0600 deploy/.env'
 ```
 
-Edit `deploy/.env`. Keep these reviewed LAN values unless the server address or port changes:
+Edit `/opt/manyselves/deploy/.env` as `manyselves`. Keep these reviewed LAN values unless the server address or port changes:
 
 ```dotenv
 MANYSELVES_ADMIN_USERNAME=admin
@@ -40,17 +45,17 @@ Set `MANYSELVES_BOOTSTRAP_PROVIDER` and the matching provider key. The entrypoin
 Docker commands:
 
 ```bash
-docker compose -f deploy/compose.yaml --env-file deploy/.env config
-docker compose -f deploy/compose.yaml --env-file deploy/.env build
-docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --wait
+sudo -u manyselves -H sh -c 'cd /opt/manyselves && docker compose -f deploy/compose.yaml --env-file deploy/.env config'
+sudo -u manyselves -H sh -c 'cd /opt/manyselves && docker compose -f deploy/compose.yaml --env-file deploy/.env build'
+sudo -u manyselves -H sh -c 'cd /opt/manyselves && docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --wait'
 ```
 
 Podman commands:
 
 ```bash
-podman compose -f deploy/compose.yaml --env-file deploy/.env config
-podman compose -f deploy/compose.yaml --env-file deploy/.env build
-podman compose -f deploy/compose.yaml --env-file deploy/.env up -d
+sudo -u manyselves -H sh -c 'cd /opt/manyselves && podman compose -f deploy/compose.yaml --env-file deploy/.env config'
+sudo -u manyselves -H sh -c 'cd /opt/manyselves && podman compose -f deploy/compose.yaml --env-file deploy/.env build'
+sudo -u manyselves -H sh -c 'cd /opt/manyselves && podman compose -f deploy/compose.yaml --env-file deploy/.env up -d'
 ```
 
 If the installed Compose provider is the standalone command, replace `podman compose` with `podman-compose`. Some Podman Compose versions do not support `--wait`; use `podman ps` and the health checks below instead. Do not increase API workers or replicas, because that would create multiple process-local runtimes.
@@ -72,20 +77,22 @@ sha256sum manyselves-phase1-linux-amd64.tar manyselves-phase1-release.tar.gz \
 Upload the three files to the server. On the server:
 
 ```bash
-cd /tmp
+sudo install -d -m 0750 -o manyselves -g manyselves /opt/manyselves
+sudo install -d -m 0700 -o manyselves -g manyselves /srv/manyselves/data /srv/manyselves/backups
+sudo chown manyselves:manyselves /tmp/manyselves-phase1-linux-amd64.tar /tmp/manyselves-phase1-release.tar.gz /tmp/manyselves-phase1-transfer.sha256
+sudo -u manyselves -H sh -c 'cd /tmp
 sha256sum --check manyselves-phase1-transfer.sha256
-install -d -m 0750 /opt/manyselves
 tar -xzf manyselves-phase1-release.tar.gz -C /opt/manyselves
 podman load --input manyselves-phase1-linux-amd64.tar
 cd /opt/manyselves
 cp deploy/env.example deploy/.env
-chmod 0600 deploy/.env
+chmod 0600 deploy/.env'
 ```
 
 Edit `deploy/.env` as described above. If the loaded image names include `localhost/`, set `MANYSELVES_API_IMAGE` and `MANYSELVES_WEB_IMAGE` in that file to the exact names shown by `podman images`, then start without rebuilding:
 
 ```bash
-podman compose -f deploy/compose.yaml --env-file deploy/.env up -d --no-build
+sudo -u manyselves -H sh -c 'cd /opt/manyselves && podman compose -f deploy/compose.yaml --env-file deploy/.env up -d --no-build'
 ```
 
 ## Health, browser access, and uploads

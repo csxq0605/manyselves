@@ -10,19 +10,34 @@ COOKIE_JAR=""
 LEASE_TOKEN=""
 MAINTENANCE_TOKEN=""
 
+login_json() {
+  ADMIN_USERNAME="$ADMIN_USERNAME" ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+    python -c 'import json, os; print(json.dumps({"username": os.environ["ADMIN_USERNAME"], "password": os.environ["ADMIN_PASSWORD"]}))'
+}
+
+maintenance_json() {
+  MAINTENANCE_TOKEN="$MAINTENANCE_TOKEN" \
+    python -c 'import json, os; print(json.dumps({"maintenanceToken": os.environ["MAINTENANCE_TOKEN"]}))'
+}
+
+lease_json() {
+  LEASE_TOKEN="$LEASE_TOKEN" \
+    python -c 'import json, os; print(json.dumps({"leaseToken": os.environ["LEASE_TOKEN"]}))'
+}
+
 cleanup() {
   trap - EXIT INT TERM
   set +e
   if [ -n "$MAINTENANCE_TOKEN" ]; then
-    curl --fail --silent --show-error --cookie "$COOKIE_JAR" -X POST \
+    maintenance_json | curl --fail --silent --show-error --cookie "$COOKIE_JAR" -X POST \
       "$API_URL/api/v1/maintenance/release" \
       -H "X-Control-Lease-Token: $LEASE_TOKEN" -H "Content-Type: application/json" \
-      -d "{\"maintenanceToken\":\"$MAINTENANCE_TOKEN\"}" >/dev/null
+      --data-binary @- >/dev/null
   fi
   if [ -n "$LEASE_TOKEN" ]; then
-    curl --fail --silent --show-error --cookie "$COOKIE_JAR" -X DELETE \
+    lease_json | curl --fail --silent --show-error --cookie "$COOKIE_JAR" -X DELETE \
       "$API_URL/api/v1/control/lease" -H "Content-Type: application/json" \
-      -d "{\"leaseToken\":\"$LEASE_TOKEN\"}" >/dev/null
+      --data-binary @- >/dev/null
   fi
   if [ -n "$COOKIE_JAR" ]; then
     curl --silent --show-error --cookie "$COOKIE_JAR" -X POST \
@@ -38,9 +53,9 @@ if [ -n "$API_URL" ]; then
     exit 2
   }
   COOKIE_JAR=$(mktemp)
-  curl --fail --silent --show-error --cookie-jar "$COOKIE_JAR" -X POST \
+  login_json | curl --fail --silent --show-error --cookie-jar "$COOKIE_JAR" -X POST \
     "$API_URL/api/v1/auth/login" -H "Content-Type: application/json" \
-    -d "{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}" >/dev/null
+    --data-binary @- >/dev/null
   LEASE_TOKEN=$(curl --fail --silent --show-error --cookie "$COOKIE_JAR" -X POST \
     "$API_URL/api/v1/control/lease" -H "Content-Type: application/json" \
     -d '{"clientId":"phase1-backup","actorId":"operator-backup"}' | \

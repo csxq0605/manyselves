@@ -80,14 +80,14 @@ def verify_deployment(
     project_id: str | None = None
     path: str | None = None
     revision: str | None = None
-    login_attempted = False
+    logged_in = False
     try:
-        login_attempted = True
         _checked(client.request(
             "POST",
             "/api/v1/auth/login",
             json={"username": username, "password": password},
         ), 204)
+        logged_in = True
         live = _checked(client.request("GET", "/api/v1/health/live")).json()
         checks["live"] = live.get("status") == "live"
         ready = _checked(client.request("GET", "/api/v1/health/ready")).json()
@@ -154,7 +154,7 @@ def verify_deployment(
                     details["leaseRelease"] = f"lease release returned {response.status_code}"
             except Exception as error:
                 details["leaseRelease"] = f"lease release failed: {error}"
-        if login_attempted:
+        if logged_in:
             try:
                 response = client.request("POST", "/api/v1/auth/logout")
                 if response.status_code != 204:
