@@ -175,7 +175,7 @@ git commit -m "feat: add light project navigation shell"
 - Produces: `WorkspaceFiles.upload(relative_path: str, chunks: AsyncIterator[bytes], *, conflict: Literal["reject", "replace", "keep-both"] = "reject", base_revision: str | None = None) -> FileEntry`.
 - Produces: server conflict code `FILE_ALREADY_EXISTS` and response details containing only the relative logical path.
 
-- [ ] **Step 1: Write failing permission and upload-conflict tests**
+- [x] **Step 1: Write failing permission and upload-conflict tests**
 
 ```ts
 expect(SECTION_CAPABILITIES.templates.root).toBe("Templates");
@@ -199,7 +199,7 @@ async def test_keep_both_generates_a_server_side_name(files: WorkspaceFiles) -> 
     assert result.path == "Inputs/data (1).txt"
 ```
 
-- [ ] **Step 2: Run focused frontend and backend tests and verify failure**
+- [x] **Step 2: Run focused frontend and backend tests and verify failure**
 
 Run: `npm test -- --run src/features/files/ProjectDirectoryPage.test.tsx src/features/projects/ProjectWorkspace.test.tsx`
 
@@ -209,15 +209,15 @@ Run: `uv run pytest tests/application/test_workspace_files.py tests/webapi/test_
 
 Expected: FAIL because capability mapping and conflict modes do not exist.
 
-- [ ] **Step 3: Implement server conflict modes and section allow-lists**
+- [x] **Step 3: Implement server conflict modes and section allow-lists**
 
 Server routes must derive the authorized root from the page/API operation, not trust a client-provided absolute directory. Sanitize names, stream to a `.manyselves-tmp-*` sibling, enforce existing limits, fsync/replace on success, and remove temporary files on disconnect. `keep-both` chooses `name (1).ext`, then increments deterministically. Outputs reject upload/write/replace regardless of client input.
 
-- [ ] **Step 4: Implement the shared directory page**
+- [x] **Step 4: Implement the shared directory page**
 
 Use one `ProjectDirectoryPage` for Input, Knowledge, Templates, and Outputs. Text/code rows offer edit; PDF, DOCX, spreadsheets, and images offer preview; Outputs offer preview/download/delete only. Existing subdirectories render as expandable navigation but expose no create/rename/delete menu. Outputs display `Reports`, `Modules`, and `Reviews` without flattening or hiding them.
 
-- [ ] **Step 5: Run file tests and build**
+- [x] **Step 5: Run file tests and build**
 
 Run: `uv run pytest tests/application/test_workspace_files.py tests/webapi/test_projects_and_files.py -q`
 
@@ -229,7 +229,7 @@ Working directory for npm commands: `frontend`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit directory capabilities and upload conflicts**
+- [x] **Step 6: Commit directory capabilities and upload conflicts**
 
 ```bash
 git add manyselves/application/workspace_files.py manyselves/webapi/routes/files.py manyselves/webapi/schemas/files.py tests/application/test_workspace_files.py tests/webapi/test_projects_and_files.py frontend/src/features/files frontend/src/features/editor/editable-files.ts frontend/src/features/preview frontend/src/features/projects
@@ -237,6 +237,8 @@ git commit -m "feat: add capability-based project file pages"
 ```
 
 ### Task 4: Project-bound conversations and browser-computer attachments
+
+**Current checkpoint (2026-08-04):** implementation and automated functional gates are complete, but the task remains **in progress** until the Codex-light visual/UI audit, final independent review, and commit are complete. See `docs/phase1/implementation-status.md`.
 
 **Files:**
 - Modify: `frontend/src/features/chat/MessageComposer.tsx`
@@ -258,7 +260,7 @@ git commit -m "feat: add capability-based project file pages"
 - Produces: composer attachments `{path, name, size}` created only after browser-file upload to `Inputs/`.
 - Produces: top-level new-conversation flow that selects/creates a project before creating a session.
 
-- [ ] **Step 1: Write failing project-binding and composer tests**
+- [x] **Step 1: Write failing project-binding and composer tests**
 
 ```tsx
 it("plus opens the browser file picker and uploads to project Inputs", async () => {
@@ -286,7 +288,7 @@ async def test_conversation_project_mismatch_is_rejected(authed_client):
     assert response.json()["error"]["code"] == "CONVERSATION_PROJECT_MISMATCH"
 ```
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run: `npm test -- --run src/features/chat/MessageComposer.test.tsx src/features/conversations`
 
@@ -296,15 +298,15 @@ Run: `uv run pytest tests/webapi/test_conversations_agents_reporting.py -q -k "c
 
 Expected: FAIL because server references still exist and conversation project identity is not explicit.
 
-- [ ] **Step 3: Implement project-bound conversation contracts**
+- [x] **Step 3: Implement project-bound conversation contracts**
 
 Persist the project ID in session metadata and validate it before mutation. Existing session files remain compatible by binding legacy sessions to their containing project workspace. Top-level new conversation requires a project choice; project-home creation uses the current route project. Keep project activation through existing `RuntimeFacade` transaction and return existing Runtime busy errors rather than introducing parallel runtimes.
 
-- [ ] **Step 4: Implement browser attachment flow**
+- [x] **Step 4: Implement browser attachment flow**
 
 Use an actual hidden `<input type="file" multiple>` and drag/drop surface. Upload selected `File` objects through multipart to current `Inputs/`; only successful server responses become chips. Removing a chip does not call delete. Sending includes the logical uploaded references as focused inputs and never includes a local absolute path.
 
-- [ ] **Step 5: Run conversation tests and E2E**
+- [x] **Step 5: Run conversation tests and E2E**
 
 Run: `uv run pytest tests/webapi/test_conversations_agents_reporting.py -q`
 

@@ -1,6 +1,6 @@
 # Phase 1 implementation status
 
-Updated: 2026-08-03. Branch: `feature/react-fastapi-manyselves`.
+Updated: 2026-08-04. Active implementation branch: `codex/phase1-light-web`.
 
 This file separates implemented code, automated evidence, and external production acceptance. “Implemented” never means a reviewer or production pilot was fabricated.
 
@@ -12,6 +12,24 @@ This file separates implemented code, automated evidence, and external productio
 | 04 | React conversations, agents, reporting, settings | Complete | Gate C full parity evidence passes |
 | 05 | Secure Electron client, Compose, backup/restore | Complete | Gate D package/E2E/deployment evidence passes |
 | 06 | Compatibility, recovery, security, deployment verifier, release record | Complete in repository | Gate E automated checks pass except the external image scanner could not be downloaded; clean-host pilot and row-by-row product acceptance remain external |
+
+## Light-web redesign and stabilization (Plans 07-11)
+
+This is the authoritative handoff checkpoint for the active redesign cycle. A task is not marked complete until its code is committed and its listed verification/review gates have passed.
+
+| Plan / task | Scope | Status | Evidence / remaining work |
+|---|---|---|---|
+| 07 | Cookie session authentication and simple administrator login | Complete | Implemented and committed before the Plan 08 cycle; login is the URL entry page and the browser no longer asks users for an access token |
+| 08 / Task 1 | Project metadata and project API | Complete | Implemented, tested, committed, independent review PASS |
+| 08 / Task 2 | Codex-light shell, project navigation, control-lease lifecycle | Complete | Commit `efa726d`; independent review PASS |
+| 08 / Task 3 | Inputs, Knowledge, Templates, Outputs pages and upload conflicts | Complete | Commit `05d9043`; Linux backend 57 passed, OpenAPI 11 passed, frontend 193 passed, lint/build/check:api passed, independent review PASS |
+| 08 / Task 4 | Project-bound conversations and browser-computer attachments | **In progress** | Implementation is uncommitted. Current gates: backend 121 passed, OpenAPI 11 passed, frontend 199 passed, conversations E2E 2 passed, lint/build/check:api passed. Remaining: Codex-light visual/UI styling audit, final independent review, exact staging and commit |
+| 08 / Task 5 | Outputs, Runtime, and Logs pages | Pending | Do not start until Task 4 is committed |
+| 09 | Global knowledge library | Pending | Not implemented in this redesign cycle |
+| 10 | Simple model settings | Pending | Not implemented in this redesign cycle |
+| 11 | Integration, Podman deployment, release acceptance | Pending | Not implemented in this redesign cycle |
+
+**Current handoff rule:** do not claim Plan 08 or Phase 1 redesign complete. Resume at Plan 08 Task 4 UI/UX audit; preserve the untracked `.venv-wsl/` directory and do not stage it.
 
 ## Current facts
 
