@@ -260,7 +260,7 @@ Working directory: `frontend`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the global knowledge UI**
+- [x] **Step 5: Commit the global knowledge UI**
 
 ```bash
 git add frontend/src/features/knowledge frontend/src/app/routes.tsx frontend/src/features/shell/Sidebar.tsx frontend/src/api/generated/schema.ts frontend/e2e/workspace.spec.ts
