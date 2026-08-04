@@ -295,4 +295,5 @@ def test_linux_compose_docs_create_privileged_paths_then_switch_to_service_accou
 
     assert "sudo install -d -m 0750 -o manyselves -g manyselves /opt/manyselves" in docs
     assert "sudo install -d -m 0700 -o manyselves -g manyselves /srv/manyselves/data /srv/manyselves/backups" in docs
-    assert "sudo -u manyselves -H sh -c 'cd /opt/manyselves" in docs
+    assert "sudo -iu manyselves" in docs
+    assert "Run every extraction and Compose command below from that configured service-account session." in docs

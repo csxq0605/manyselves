@@ -14,6 +14,50 @@ Only publish TCP `9090` to the trusted LAN. FastAPI/Gunicorn listens on TCP `900
 
 Create the dedicated `manyselves` account before installation. Run the directory creation commands below as a root-capable administrator; do not make `/opt` or `/srv` writable by a regular login account. All archive extraction, image loading, and Compose commands then run as `manyselves` so containers and persistent files have one non-root owner.
 
+## Select one non-root container-engine context
+
+Choose exactly one engine path before extracting a release. Run every extraction and Compose command below from that configured service-account session. Do not use sudo for individual Docker or Podman commands after this setup: mixing a root-owned engine context with the manyselves user will split images, networks, and persistent ownership.
+
+### Docker: group-managed daemon or rootless Docker
+
+For the normal Docker daemon, add the service account to the Docker group, start a fresh login session, and verify it can contact the daemon:
+
+~~~bash
+sudo usermod -aG docker manyselves
+sudo -iu manyselves
+id -nG
+docker info
+~~~
+
+The docker group is equivalent to root-level control of the host. Use it only for this trusted service account. If that privilege is not acceptable, use rootless Docker instead of the group-managed daemon:
+
+~~~bash
+sudo loginctl enable-linger manyselves
+sudo -iu manyselves
+dockerd-rootless-setuptool.sh install
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock
+docker context create manyselves-rootless --docker "host=$DOCKER_HOST" || true
+docker context use manyselves-rootless
+docker info
+~~~
+
+Keep DOCKER_HOST in the service account environment according to the rootless Docker installer instructions.
+
+### Rootless Podman
+
+Use rootless Podman instead of either Docker path when it is the selected engine. Enable the service user systemd session, enter a login shell as that user, set its runtime directory, and verify the rootless engine:
+
+~~~bash
+sudo loginctl enable-linger manyselves
+sudo -iu manyselves
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+test -d "$XDG_RUNTIME_DIR"
+podman info
+~~~
+
+Keep that manyselves login session, including XDG_RUNTIME_DIR, for the Podman extraction, podman load, and podman compose commands below.
+
 ## Option A: upload the source and build on the server
 
 Upload a source archive to `/tmp/manyselves-source.tar.gz`. As an administrator, create the service-owned paths once:
@@ -22,10 +66,12 @@ Upload a source archive to `/tmp/manyselves-source.tar.gz`. As an administrator,
 sudo install -d -m 0750 -o manyselves -g manyselves /opt/manyselves
 sudo install -d -m 0700 -o manyselves -g manyselves /srv/manyselves/data /srv/manyselves/backups
 sudo chown manyselves:manyselves /tmp/manyselves-source.tar.gz
-sudo -u manyselves -H sh -c 'cd /opt/manyselves
+sudo -iu manyselves
+# Continue in the configured Docker or rootless Podman service-account session:
+cd /opt/manyselves
 tar -xzf /tmp/manyselves-source.tar.gz
 cp deploy/env.example deploy/.env
-chmod 0600 deploy/.env'
+chmod 0600 deploy/.env
 ```
 
 Edit `/opt/manyselves/deploy/.env` as `manyselves`. Keep these reviewed LAN values unless the server address or port changes:
@@ -45,17 +91,17 @@ Set `MANYSELVES_BOOTSTRAP_PROVIDER` and the matching provider key. The entrypoin
 Docker commands:
 
 ```bash
-sudo -u manyselves -H sh -c 'cd /opt/manyselves && docker compose -f deploy/compose.yaml --env-file deploy/.env config'
-sudo -u manyselves -H sh -c 'cd /opt/manyselves && docker compose -f deploy/compose.yaml --env-file deploy/.env build'
-sudo -u manyselves -H sh -c 'cd /opt/manyselves && docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --wait'
+docker compose -f deploy/compose.yaml --env-file deploy/.env config
+docker compose -f deploy/compose.yaml --env-file deploy/.env build
+docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --wait
 ```
 
 Podman commands:
 
 ```bash
-sudo -u manyselves -H sh -c 'cd /opt/manyselves && podman compose -f deploy/compose.yaml --env-file deploy/.env config'
-sudo -u manyselves -H sh -c 'cd /opt/manyselves && podman compose -f deploy/compose.yaml --env-file deploy/.env build'
-sudo -u manyselves -H sh -c 'cd /opt/manyselves && podman compose -f deploy/compose.yaml --env-file deploy/.env up -d'
+podman compose -f deploy/compose.yaml --env-file deploy/.env config
+podman compose -f deploy/compose.yaml --env-file deploy/.env build
+podman compose -f deploy/compose.yaml --env-file deploy/.env up -d
 ```
 
 If the installed Compose provider is the standalone command, replace `podman compose` with `podman-compose`. Some Podman Compose versions do not support `--wait`; use `podman ps` and the health checks below instead. Do not increase API workers or replicas, because that would create multiple process-local runtimes.
@@ -80,19 +126,24 @@ Upload the three files to the server. On the server:
 sudo install -d -m 0750 -o manyselves -g manyselves /opt/manyselves
 sudo install -d -m 0700 -o manyselves -g manyselves /srv/manyselves/data /srv/manyselves/backups
 sudo chown manyselves:manyselves /tmp/manyselves-phase1-linux-amd64.tar /tmp/manyselves-phase1-release.tar.gz /tmp/manyselves-phase1-transfer.sha256
-sudo -u manyselves -H sh -c 'cd /tmp
+sudo -iu manyselves
+# Continue in the configured Docker or rootless Podman service-account session:
+cd /tmp
 sha256sum --check manyselves-phase1-transfer.sha256
 tar -xzf manyselves-phase1-release.tar.gz -C /opt/manyselves
+# Use exactly the image loader for the selected engine:
 podman load --input manyselves-phase1-linux-amd64.tar
+# Docker users run this instead: docker load --input manyselves-phase1-linux-amd64.tar
 cd /opt/manyselves
 cp deploy/env.example deploy/.env
-chmod 0600 deploy/.env'
+chmod 0600 deploy/.env
 ```
 
 Edit `deploy/.env` as described above. If the loaded image names include `localhost/`, set `MANYSELVES_API_IMAGE` and `MANYSELVES_WEB_IMAGE` in that file to the exact names shown by `podman images`, then start without rebuilding:
 
 ```bash
-sudo -u manyselves -H sh -c 'cd /opt/manyselves && podman compose -f deploy/compose.yaml --env-file deploy/.env up -d --no-build'
+podman compose -f deploy/compose.yaml --env-file deploy/.env up -d --no-build
+# Docker users run this instead: docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --no-build
 ```
 
 ## Health, browser access, and uploads

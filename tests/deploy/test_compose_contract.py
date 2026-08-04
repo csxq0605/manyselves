@@ -49,3 +49,16 @@ def test_lan_defaults_use_the_reviewed_server_ip_and_ports() -> None:
     assert '["http://192.168.8.28:9090"]' in compose
     assert "EXPOSE 9090" in web_dockerfile
     assert 'defaultServerUrl: "http://192.168.8.28:9090"' in frontend_main
+
+
+def test_linux_deployment_docs_prepare_one_non_root_engine_context() -> None:
+    docs = Path("docs/deployment/linux-compose.md").read_text("utf-8")
+
+    assert "Choose exactly one engine path" in docs
+    assert "sudo usermod -aG docker manyselves" in docs
+    assert "docker group is equivalent to root-level control" in docs
+    assert "dockerd-rootless-setuptool.sh install" in docs
+    assert "loginctl enable-linger manyselves" in docs
+    assert "XDG_RUNTIME_DIR=/run/user/$(id -u)" in docs
+    assert "podman info" in docs
+    assert "Run every extraction and Compose command below from that configured service-account session." in docs

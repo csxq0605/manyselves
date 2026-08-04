@@ -59,4 +59,30 @@ The only production Python module changed from the Task 3 baseline is `manyselve
 
 - This Windows host has no `sh`, so `sh -n deploy/backup/backup.sh` could not be run locally. The POSIX script’s behavior is covered by Python-level JSON round-trip and command-contract tests.
 - WSL remains unavailable in this environment; retain the Linux/container validation as the existing release gate.
+
+## Fix round 2: cleanup execution and non-root engine setup (2026-08-04)
+
+### Scope
+
+- Follow-up commit: fix: verify backup cleanup and rootless engine setup.
+- Changed the Linux deployment guide and deployment/release tests only. The backup production scripts already continued cleanup correctly; this round adds execution-level regression coverage rather than changing their behavior.
+- No Agent, Loop, Reporting, Runtime orchestration, or Plan 08 files changed.
+
+### TDD and verification
+
+- RED: the new engine-context documentation tests failed because the guide had no mutually exclusive Docker/rootless Docker/rootless Podman setup or service-session instructions.
+- RED harness investigation: a Git Bash PATH fake did not execute because Windows temporary files have no POSIX executable bit. The harness was changed to source Bash functions through BASH_ENV, which works on both Git Bash and Linux CI; this is a test-harness correction, not a product change.
+- GREEN: uv run pytest tests/deploy/test_backup_client_cleanup.py tests/deploy/test_compose_contract.py tests/release/test_deployment_verifier.py -q passed with 14 tests.
+- Git Bash shell syntax, PowerShell backup parser, and git diff --check passed.
+
+### Added execution evidence
+
+- The POSIX test runs backup.sh in Git Bash with fake curl and rm functions. It forces maintenance release to fail, then proves lease release, logout, and cookie-file deletion still occur in order.
+- The PowerShell test runs backup.ps1 in an isolated PowerShell process with mocked HTTP commands. It forces both archive failure and maintenance release failure, then proves its finally path still releases the lease and logs out.
+- The Linux guide now makes an explicit one-engine choice: Docker group (with its root-equivalent privilege stated), rootless Docker, or rootless Podman. Rootless Podman setup includes linger, a service-user login session, XDG_RUNTIME_DIR, and podman info before the extraction and Compose steps.
+
+### Environment qualification
+
+- WSL remains unavailable with E_ACCESSDENIED, but Git for Windows Bash is available and was used for the real POSIX cleanup test and shell syntax check.
+- The PowerShell test provides a local replacement for WebRequestSession because this Windows PowerShell environment does not expose that type until web cmdlets are loaded; the backup script itself is unchanged and the mocked client calls execute in a separate process.
 - `uv run ruff` could not run because Ruff is not installed in the resolved environment (`program not found`); no dependency changes were made to expand scope.
