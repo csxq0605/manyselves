@@ -2,9 +2,12 @@ import type { components } from "./generated/schema";
 
 type AcceptedCommandResponse = components["schemas"]["AcceptedCommandResponse"];
 type ErrorEnvelope = components["schemas"]["ErrorEnvelope"];
-type SendMessageRequest = components["schemas"]["SendMessageRequest"];
 type LeaseResponse = components["schemas"]["LeaseResponse"];
+type SendMessageRequest = components["schemas"]["SendMessageRequest"];
 export type BootstrapSnapshot = components["schemas"]["BootstrapSnapshot"];
+
+const heartbeatRetryDelayMs = 5_000;
+const maximumHeartbeatDelayMs = 60_000;
 
 export class ApiError extends Error {
   readonly code: string;
@@ -46,6 +49,12 @@ export interface ApiRequestOptions extends Omit<RequestInit, "body"> {
   readonly requireLease?: boolean;
 }
 
+export interface ControlLeaseLifecycle {
+  release(): Promise<void>;
+  start(): void;
+  stop(): void;
+}
+
 export interface ApiGateway {
   readonly baseUrl: string;
   readonly clientId: string;
@@ -61,10 +70,9 @@ export interface ApiGateway {
   ): Promise<AcceptedCommandResponse>;
 }
 
-export interface ControlLeaseLifecycle {
-  release(): Promise<void>;
-  start(): void;
-  stop(): void;
+interface LeaseVersion {
+  readonly generation: number;
+  readonly token: string;
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -78,12 +86,12 @@ function isErrorEnvelope(value: unknown): value is ErrorEnvelope {
   const envelope = value as Partial<ErrorEnvelope>;
   const error = envelope.error;
   return (
-    typeof envelope.requestId === "string" &&
-    typeof error === "object" &&
-    error !== null &&
-    typeof error.code === "string" &&
-    typeof error.message === "string" &&
-    typeof error.retryable === "boolean"
+    typeof envelope.requestId === "string"
+    && typeof error === "object"
+    && error !== null
+    && typeof error.code === "string"
+    && typeof error.message === "string"
+    && typeof error.retryable === "boolean"
   );
 }
 
@@ -94,7 +102,6 @@ async function toApiError(response: Response): Promise<ApiError> {
   } catch {
     payload = null;
   }
-
   if (isErrorEnvelope(payload)) {
     return new ApiError({
       code: payload.error.code,
@@ -105,7 +112,6 @@ async function toApiError(response: Response): Promise<ApiError> {
       status: response.status,
     });
   }
-
   return new ApiError({
     code: "HTTP_ERROR",
     details: {},
@@ -118,40 +124,22 @@ async function toApiError(response: Response): Promise<ApiError> {
 
 export function createApiGateway(options: ApiGatewayOptions): ApiGateway {
   const baseUrl = normalizeBaseUrl(options.baseUrl);
-  let acquisition: Promise<void> | null = null;
+  let acquisitionOrRenewal: Promise<void> | null = null;
+  let heartbeatWork: Promise<void> | null = null;
   let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   let mounted = false;
+  let disposed = false;
+  let disposedLeaseToken: string | null = null;
+  let releaseWork: Promise<void> | null = null;
+  let generation = 0;
   let token = options.getLeaseToken();
 
-  async function sendRequest(
-    path: string,
-    init: ApiRequestOptions = {},
-  ): Promise<Response> {
-    const { json, requireLease, ...requestInit } = init;
-    const headers = new Headers(requestInit.headers);
-    if (requireLease && token) {
-      headers.set("X-Control-Lease-Token", token);
-    }
-    let body = requestInit.body;
-    if (json !== undefined) {
-      headers.set("Content-Type", "application/json");
-      body = JSON.stringify(json);
-    }
-    const request: RequestInit = {
-      ...requestInit,
-      credentials: "same-origin",
-      headers,
-    };
-    if (body !== undefined) {
-      request.body = body;
-    }
-    const response = await options.fetch(`${baseUrl}${path}`, request);
-    if (!response.ok) {
-      const error = await toApiError(response);
-      if (error.status === 401) options.onUnauthorized?.();
-      throw error;
-    }
-    return response;
+  function currentLease(): LeaseVersion | null {
+    return token ? { generation, token } : null;
+  }
+
+  function matches(lease: LeaseVersion): boolean {
+    return generation === lease.generation && token === lease.token;
   }
 
   function clearHeartbeat(): void {
@@ -160,83 +148,200 @@ export function createApiGateway(options: ApiGatewayOptions): ApiGateway {
       heartbeatTimer = null;
     }
   }
-
-  function saveLease(response: LeaseResponse): void {
-    token = response.leaseToken;
-    options.setLeaseToken?.(token);
-    scheduleHeartbeat(response.expiresAt);
-  }
-
-  function clearLease(): void {
+  function clearLease(expected?: LeaseVersion): boolean {
+    if (expected && !matches(expected)) return false;
     token = null;
+    generation += 1;
     options.setLeaseToken?.(null);
     clearHeartbeat();
+    return true;
+  }
+  function trackLeaseWork(work: Promise<void>): Promise<void> {
+    acquisitionOrRenewal = work;
+    void work.then(
+      () => {
+        if (acquisitionOrRenewal === work) acquisitionOrRenewal = null;
+      },
+      () => {
+        if (acquisitionOrRenewal === work) acquisitionOrRenewal = null;
+      },
+    );
+    return work;
+  }
+  function trackHeartbeatWork(work: Promise<void>): Promise<void> {
+    heartbeatWork = work;
+    void work.then(
+      () => {
+        if (heartbeatWork === work) heartbeatWork = null;
+      },
+      () => {
+        if (heartbeatWork === work) heartbeatWork = null;
+      },
+    );
+    return work;
   }
 
-  function scheduleHeartbeat(expiresAt: string): void {
-    clearHeartbeat();
-    if (!mounted || !token) return;
-    const expiresIn = Date.parse(expiresAt) - Date.now();
-    const delay = Math.max(1_000, Math.floor(expiresIn / 2));
-    heartbeatTimer = setTimeout(() => { void heartbeat(); }, delay);
-  }
-
-  async function acquireLease(): Promise<void> {
-    if (token) return;
-    if (acquisition) return acquisition;
-    acquisition = (async () => {
-      const response = await sendRequest("/api/v1/control/lease", {
-        json: { clientId: options.clientId, leaseToken: token },
-        method: "POST",
-      });
-      saveLease(await response.json() as LeaseResponse);
-    })().finally(() => { acquisition = null; });
-    return acquisition;
-  }
-
-  async function renewStoredLease(): Promise<void> {
-    const proof = token;
-    if (!proof || acquisition) return acquisition ?? Promise.resolve();
-    acquisition = (async () => {
-      try {
-        const response = await sendRequest("/api/v1/control/lease", {
-          json: { clientId: options.clientId, leaseToken: proof },
-          method: "POST",
-        });
-        saveLease(await response.json() as LeaseResponse);
-      } catch (error) {
-        if (error instanceof ApiError && error.code === "CONTROL_LEASE_REQUIRED") clearLease();
+  async function sendRequest(
+    path: string,
+    init: ApiRequestOptions = {},
+    leaseToken?: string,
+  ): Promise<Response> {
+    const { json, requireLease, ...requestInit } = init;
+    const headers = new Headers(requestInit.headers);
+    if (requireLease && leaseToken) {
+      headers.set("X-Control-Lease-Token", leaseToken);
+    }
+    let body = requestInit.body;
+    if (json !== undefined) {
+      headers.set("Content-Type", "application/json");
+      body = JSON.stringify(json);
+    }
+    const request: RequestInit = { ...requestInit, credentials: "same-origin", headers };
+    if (body !== undefined) {
+      request.body = body;
+    }
+    const response = await options.fetch(`${baseUrl}${path}`, request);
+    if (!response.ok) {
+      const error = await toApiError(response);
+      if (error.status === 401) {
+        options.onUnauthorized?.();
       }
-    })().finally(() => { acquisition = null; });
-    return acquisition;
+      throw error;
+    }
+    return response;
   }
 
-  async function heartbeat(): Promise<void> {
-    if (!mounted || !token) return;
-    try {
-      const response = await sendRequest("/api/v1/control/lease/heartbeat", {
-        json: { leaseToken: token },
-        method: "POST",
-      });
-      saveLease(await response.json() as LeaseResponse);
-    } catch (error) {
-      if (error instanceof ApiError && error.code === "CONTROL_LEASE_REQUIRED") clearLease();
+  function scheduleHeartbeat(lease: LeaseVersion, expiresAt: string): void {
+    clearHeartbeat();
+    const expires = Date.parse(expiresAt);
+    if (
+      !mounted
+      || disposed
+      || !matches(lease)
+      || !Number.isFinite(expires)
+      || expires <= Date.now()
+    ) {
+      return;
+    }
+    const delay = Math.min(maximumHeartbeatDelayMs, Math.max(1_000, Math.floor((expires - Date.now()) / 2)));
+    heartbeatTimer = setTimeout(() => {
+      void heartbeat(lease);
+    }, delay);
+  }
+
+  function scheduleHeartbeatRetry(lease: LeaseVersion): void {
+    clearHeartbeat();
+    if (!mounted || disposed || !matches(lease)) return;
+    heartbeatTimer = setTimeout(() => {
+      void heartbeat(lease);
+    }, heartbeatRetryDelayMs);
+  }
+
+  function saveLease(response: LeaseResponse, source: LeaseVersion | null): void {
+    if (disposed) {
+      disposedLeaseToken = response.leaseToken;
+      return;
+    }
+    if (source && !matches(source)) return;
+    token = response.leaseToken;
+    generation += 1;
+    options.setLeaseToken?.(token);
+    const updated = currentLease();
+    if (updated) {
+      scheduleHeartbeat(updated, response.expiresAt);
     }
   }
 
+  async function acquireLease(): Promise<void> {
+    if (disposed) throw new Error("Control lease lifecycle is closed");
+    if (acquisitionOrRenewal) return acquisitionOrRenewal;
+    if (token) return;
+    const sourceGeneration = generation;
+    const work = (async () => {
+      const response = await sendRequest("/api/v1/control/lease", {
+        json: { clientId: options.clientId, leaseToken: null },
+        method: "POST",
+      });
+      const acquired = await response.json() as LeaseResponse;
+      if (disposed) {
+        saveLease(acquired, null);
+        return;
+      }
+      if (generation !== sourceGeneration || token !== null) return;
+      saveLease(acquired, null);
+    })();
+    return trackLeaseWork(work);
+  }
+
+  async function renewStoredLease(): Promise<void> {
+    if (disposed || acquisitionOrRenewal) return acquisitionOrRenewal ?? Promise.resolve();
+    const source = currentLease();
+    if (!source) return;
+    const work = (async () => {
+      try {
+        const response = await sendRequest("/api/v1/control/lease", {
+          json: { clientId: options.clientId, leaseToken: source.token },
+          method: "POST",
+        });
+        saveLease(await response.json() as LeaseResponse, source);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === "CONTROL_LEASE_REQUIRED") {
+          clearLease(source);
+        }
+      }
+    })();
+    return trackLeaseWork(work);
+  }
+
+  async function ensureLease(): Promise<LeaseVersion> {
+    if (disposed) throw new Error("Control lease lifecycle is closed");
+    if (acquisitionOrRenewal) await acquisitionOrRenewal;
+    if (disposed) throw new Error("Control lease lifecycle is closed");
+    let lease = currentLease();
+    if (!lease) {
+      await acquireLease();
+      if (disposed) throw new Error("Control lease lifecycle is closed");
+      lease = currentLease();
+    }
+    if (!lease) throw new Error("Control lease acquisition did not return a token");
+    return lease;
+  }
+
+  async function heartbeat(lease: LeaseVersion): Promise<void> {
+    if (!mounted || disposed || !matches(lease)) return;
+    const work = (async () => {
+      try {
+        const response = await sendRequest("/api/v1/control/lease/heartbeat", {
+          json: { leaseToken: lease.token },
+          method: "POST",
+        });
+        saveLease(await response.json() as LeaseResponse, lease);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === "CONTROL_LEASE_REQUIRED") {
+          clearLease(lease);
+        } else {
+          scheduleHeartbeatRetry(lease);
+        }
+      }
+    })();
+    await trackHeartbeatWork(work);
+  }
+
   async function request(path: string, init: ApiRequestOptions = {}, retried = false): Promise<Response> {
-    if (init.requireLease) await acquireLease();
+    const lease = init.requireLease ? await ensureLease() : null;
     try {
-      return await sendRequest(path, init);
+      return await sendRequest(path, init, lease?.token);
     } catch (error) {
       if (
         init.requireLease
+        && lease
         && !retried
         && error instanceof ApiError
         && error.code === "CONTROL_LEASE_REQUIRED"
       ) {
-        clearLease();
-        await acquireLease();
+        if (disposed) throw error;
+        clearLease(lease);
+        if (disposed) throw error;
         return request(path, init, true);
       }
       throw error;
@@ -248,22 +353,38 @@ export function createApiGateway(options: ApiGatewayOptions): ApiGateway {
       mounted = true;
       void renewStoredLease();
     },
-    stop() { mounted = false; clearHeartbeat(); },
+    stop() {
+      mounted = false;
+      clearHeartbeat();
+    },
     async release() {
-      const heldToken = token;
-      controlLease.stop();
-      try {
-        if (heldToken) {
-          await sendRequest("/api/v1/control/lease", {
-            json: { leaseToken: heldToken },
-            method: "DELETE",
-          });
+      if (releaseWork) return releaseWork;
+      disposed = true;
+      mounted = false;
+      clearHeartbeat();
+      const work = (async () => {
+        await Promise.allSettled(
+          [acquisitionOrRenewal, heartbeatWork]
+            .filter((candidate): candidate is Promise<void> => candidate !== null),
+        );
+        const finalLease = currentLease();
+        const finalToken = disposedLeaseToken ?? finalLease?.token;
+        try {
+          if (finalToken) {
+            await sendRequest("/api/v1/control/lease", {
+              json: { leaseToken: finalToken },
+              method: "DELETE",
+            });
+          }
+        } catch {
+          // The server TTL handles a process or network failure during logout.
+        } finally {
+          disposedLeaseToken = null;
+          clearLease();
         }
-      } catch {
-        // Logout and unmount are allowed to rely on the server-side lease TTL.
-      } finally {
-        clearLease();
-      }
+      })();
+      releaseWork = work;
+      return work;
     },
   };
 
@@ -283,15 +404,12 @@ export function createApiGateway(options: ApiGatewayOptions): ApiGateway {
     async requestVoid(path, init) {
       await request(path, init);
     },
-    async sendMessage(agentId, request, idempotencyKey) {
-      const headers = new Headers({
-        "Idempotency-Key": idempotencyKey,
-      });
+    async sendMessage(agentId, requestBody, idempotencyKey) {
       return gateway.requestJson<AcceptedCommandResponse>(
         `/api/v1/agents/${encodeURIComponent(agentId)}/messages`,
         {
-          headers,
-          json: request,
+          headers: new Headers({ "Idempotency-Key": idempotencyKey }),
+          json: requestBody,
           method: "POST",
           requireLease: true,
         },

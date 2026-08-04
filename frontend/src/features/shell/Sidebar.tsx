@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 
 import { ApiError } from "../../api/gateway";
@@ -26,6 +26,9 @@ function errorMessage(error: unknown): string {
 
 export function Sidebar({ onCreateProject, onDeleteProject, onLogout, onUpdateProject, projects, projectsError = false }: SidebarProps) {
   const navigate = useNavigate();
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const invokerRef = useRef<HTMLButtonElement | null>(null);
+  const restoreFocus = useRef(false);
   const [mode, setMode] = useState<"create" | "edit" | "delete" | null>(null);
   const [selected, setSelected] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,11 +38,59 @@ export function Sidebar({ onCreateProject, onDeleteProject, onLogout, onUpdatePr
   const [description, setDescription] = useState("");
   const [confirmation, setConfirmation] = useState("");
 
-  function open(nextMode: "create" | "edit" | "delete", project?: Project) {
+  function open(nextMode: "create" | "edit" | "delete", project: Project | undefined, invoker: HTMLButtonElement) {
+    invokerRef.current = invoker;
     setMode(nextMode); setSelected(project ?? null); setError(null); setPending(false); setConfirmation("");
     setProjectId(project?.id ?? ""); setDisplayName(project?.displayName ?? ""); setDescription(project?.description ?? "");
   }
-  function close() { if (!pending) setMode(null); }
+  function close() {
+    if (pending) return;
+    restoreFocus.current = true;
+    setMode(null);
+  }
+  useEffect(() => {
+    if (!mode && restoreFocus.current) {
+      restoreFocus.current = false;
+      invokerRef.current?.focus();
+    }
+  }, [mode]);
+  useEffect(() => {
+    if (!mode) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusable = () => Array.from(dialog.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), textarea:not([disabled])"));
+    const focusInitial = () => {
+      if (window.matchMedia?.("(max-width: 700px)").matches) return;
+      focusable()[0]?.focus();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (!pending) {
+          restoreFocus.current = true;
+          setMode(null);
+        }
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const targets = focusable();
+      const first = targets[0];
+      const last = targets.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    const keepFocusInside = (event: FocusEvent) => {
+      if (event.target instanceof Node && !dialog.contains(event.target)) focusable()[0]?.focus();
+    };
+    queueMicrotask(focusInitial);
+    document.addEventListener("focusin", keepFocusInside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("focusin", keepFocusInside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [mode, pending]);
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (pending) return;
@@ -64,6 +115,7 @@ export function Sidebar({ onCreateProject, onDeleteProject, onLogout, onUpdatePr
         await onDeleteProject(selected.id);
         navigate("/");
       }
+      restoreFocus.current = true;
       setMode(null);
     } catch (reason) {
       setError(errorMessage(reason));
@@ -81,17 +133,17 @@ export function Sidebar({ onCreateProject, onDeleteProject, onLogout, onUpdatePr
         <NavLink to="/knowledge">全局知识库</NavLink>
       </nav>
       <section className="sidebar__projects" aria-labelledby="projects-title">
-        <div className="sidebar__section-heading"><h2 id="projects-title">项目</h2><button aria-label="新建项目" onClick={() => open("create")} type="button">+</button></div>
+        <div className="sidebar__section-heading"><h2 id="projects-title">项目</h2><button aria-label="新建项目" onClick={(event) => open("create", undefined, event.currentTarget)} type="button">+</button></div>
         {projectsError ? <p aria-live="polite" role="alert">项目列表加载失败</p> : null}
         <ul>{projects.map((project) => <li className="project-node" key={project.id}>
           <div className="project-node__row"><NavLink end to={`/projects/${encodeURIComponent(project.id)}`}>{project.displayName}</NavLink>
-            <button aria-label={`编辑 ${project.displayName}`} onClick={() => open("edit", project)} type="button">✎</button>
-            <button aria-label={`更多 ${project.displayName}`} onClick={() => open("delete", project)} type="button">⋯</button>
+            <button aria-label={`编辑 ${project.displayName}`} onClick={(event) => open("edit", project, event.currentTarget)} type="button">✎</button>
+            <button aria-label={`更多 ${project.displayName}`} onClick={(event) => open("delete", project, event.currentTarget)} type="button">⋯</button>
           </div>
           <ul className="project-node__sections">{sections.map(([section, label]) => <li key={section}><NavLink to={`/projects/${encodeURIComponent(project.id)}/${section}`}>{label}</NavLink></li>)}</ul>
         </li>)}</ul>
       </section>
-      {mode ? <div aria-labelledby="project-dialog-title" aria-modal="true" className="project-dialog" role="dialog"><form onSubmit={(event) => void submit(event)}>
+      {mode ? <div aria-labelledby="project-dialog-title" aria-modal="true" className="project-dialog" ref={dialogRef} role="dialog"><form onSubmit={(event) => void submit(event)}>
         <h3 id="project-dialog-title">{mode === "create" ? "新建项目" : mode === "edit" ? "编辑项目" : "删除项目"}</h3>
         {mode === "delete" ? <label>输入“{selected?.displayName}”确认删除<input autoComplete="off" name="confirmation" onChange={(event) => setConfirmation(event.target.value)} value={confirmation} /></label> : <>
           <label>项目标识<input autoComplete="off" disabled={mode === "edit"} name="projectId" onChange={(event) => setProjectId(event.target.value)} value={projectId} /></label>

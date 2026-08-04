@@ -10,7 +10,7 @@ export function AppLayout(props: AppLayoutProps) {
     <div className="light-app">
       <a className="skip-link" href="#main-outlet">跳转到主内容</a>
       <Sidebar {...props} />
-      <main className="light-app__outlet" id="main-outlet"><Outlet /></main>
+      <main className="light-app__outlet" id="main-outlet" tabIndex={-1}><Outlet /></main>
     </div>
   );
 }

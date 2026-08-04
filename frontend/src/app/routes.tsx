@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 
-import type { ApiGateway } from "../api/gateway";
+import type { ApiGateway, BootstrapSnapshot } from "../api/gateway";
 import { ProjectHomePage } from "../features/projects/ProjectHomePage";
 import { createProjectApi, type Project, type ProjectApi } from "../features/projects/project-api";
 import { AppLayout } from "../features/shell/AppLayout";
@@ -13,7 +13,7 @@ function Placeholder({ title }: { readonly title: string }) {
   return <section className="route-placeholder"><h1>{title}</h1><p>此项目区域将在后续工作中提供受控内容。</p></section>;
 }
 
-function savedProjectRoute(value: string | null, projects: readonly Project[]): string | null {
+function savedProjectRoute(value: string | null, projects: readonly Project[], bootstrap: BootstrapSnapshot | undefined): string | null {
   if (!value) return null;
   const match = /^\/projects\/([^/?#]+)(?:\/conversations\/([^/?#]+))?$/.exec(value);
   if (!match) return null;
@@ -21,7 +21,21 @@ function savedProjectRoute(value: string | null, projects: readonly Project[]): 
     const encodedProjectId = match[1];
     if (!encodedProjectId) return null;
     const projectId = decodeURIComponent(encodedProjectId);
-    return projects.some((project) => project.id === projectId) ? value : null;
+    if (!projects.some((project) => project.id === projectId)) return null;
+    const encodedConversationId = match[2];
+    if (!encodedConversationId) return value;
+    const conversationId = decodeURIComponent(encodedConversationId);
+    if (
+      conversationId === "new"
+      || bootstrap?.project.id !== projectId
+      || !bootstrap.conversations.some((conversation) => (
+        typeof conversation === "object"
+        && conversation !== null
+        && "sessionId" in conversation
+        && conversation.sessionId === conversationId
+      ))
+    ) return `/projects/${encodedProjectId}`;
+    return value;
   } catch {
     return null;
   }
@@ -33,6 +47,7 @@ function storedRoute(): string | null {
 
 function persistRoute(pathname: string): void {
   if (!/^\/projects\/[^/?#]+(?:\/conversations\/[^/?#]+)?$/.test(pathname)) return;
+  if (pathname.endsWith("/conversations/new")) return;
   try { window.localStorage.setItem(lastProjectRouteStorageKey, pathname); } catch { /* browser storage can be unavailable */ }
 }
 
@@ -42,11 +57,20 @@ function RoutePersistence() {
   return null;
 }
 
-function ProjectLanding({ projectApi }: { readonly projectApi: ProjectApi }) {
+function ProjectLanding({ gateway, projectApi }: { readonly gateway: ApiGateway; readonly projectApi: ProjectApi }) {
+  const savedValue = storedRoute();
+  const needsConversationValidation = /\/conversations\/[^/?#]+$/.test(savedValue ?? "");
   const projects = useQuery({ queryFn: () => projectApi.list(), queryKey: ["projects"] });
-  if (projects.isPending) return <Placeholder title="正在加载项目" />;
+  const bootstrap = useQuery<BootstrapSnapshot>({
+    enabled: needsConversationValidation,
+    queryFn: () => gateway.bootstrap(),
+    queryKey: ["bootstrap"],
+  });
+  if (projects.isPending || (needsConversationValidation && bootstrap.isPending)) {
+    return <Placeholder title="正在加载项目…" />;
+  }
   if (projects.isError) return <section className="route-placeholder"><h1>项目不可用</h1><p aria-live="polite">无法加载项目列表，请稍后重试。</p></section>;
-  const saved = savedProjectRoute(storedRoute(), projects.data);
+  const saved = savedProjectRoute(savedValue, projects.data, bootstrap.data);
   if (saved) return <Navigate replace to={saved} />;
   const active = projects.data.find((project) => project.active) ?? projects.data[0];
   if (active) return <Navigate replace to={`/projects/${encodeURIComponent(active.id)}`} />;
@@ -74,7 +98,7 @@ function NotFound() {
 export function AppRoutes({ gateway, onLogout }: { readonly gateway: ApiGateway; readonly onLogout?: () => void }) {
   const projectApi = createProjectApi(gateway);
   return <Routes><Route element={<ProjectRouteLayout projectApi={projectApi} {...(onLogout ? { onLogout } : {})} />}>
-    <Route path="/" element={<ProjectLanding projectApi={projectApi} />} />
+    <Route path="/" element={<ProjectLanding gateway={gateway} projectApi={projectApi} />} />
     <Route path="/knowledge" element={<Placeholder title="全局知识库" />} />
     <Route path="/projects/:projectId" element={<ProjectHomePage />} />
     <Route path="/projects/:projectId/conversations/:conversationId" element={<Placeholder title="项目对话" />} />

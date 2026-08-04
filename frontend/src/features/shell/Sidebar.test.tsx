@@ -100,4 +100,29 @@ describe("Sidebar", () => {
     expect(create).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toBeVisible();
   });
+
+  it("closes a project modal on Escape and restores focus to its invoking button", async () => {
+    const user = userEvent.setup();
+    renderSidebar();
+    const invoke = screen.getByRole("button", { name: "编辑 Energy team" });
+
+    await user.click(invoke);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(invoke).toHaveFocus();
+  });
+
+  it("restores focus after a successful metadata save", async () => {
+    const user = userEvent.setup();
+    renderSidebar();
+    const invoke = screen.getByRole("button", { name: "编辑 Energy team" });
+
+    await user.click(invoke);
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(invoke).toHaveFocus();
+  });
 });

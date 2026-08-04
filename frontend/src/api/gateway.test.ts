@@ -4,6 +4,12 @@ import { ApiError, createApiGateway } from "./gateway";
 
 const commandId = "00000000-0000-4000-8000-000000000001";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
 function gatewayWithResponse(response: Response) {
   return createApiGateway({
     baseUrl: "https://server/",
@@ -14,6 +20,122 @@ function gatewayWithResponse(response: Response) {
 }
 
 describe("ApiGateway", () => {
+  it("waits for a stored-token renewal before the first mutation uses a lease", async () => {
+    let storedToken: string | null = "old-token";
+    const renewal = deferred<Response>();
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockImplementationOnce(() => renewal.promise)
+      .mockResolvedValueOnce(Response.json({ ok: true }));
+    const gateway = createApiGateway({ baseUrl: "https://server", clientId: "browser", fetch: fetchMock, getLeaseToken: () => storedToken, setLeaseToken: (token) => { storedToken = token; } });
+
+    gateway.controlLease.start();
+    const mutation = gateway.requestJson("/api/v1/projects/project-1", { method: "PATCH", requireLease: true });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    renewal.resolve(Response.json({ actorId: "admin", clientId: "browser", expiresAt: "2030-01-01T00:01:00Z", leaseToken: "renewed-token" }, { status: 201 }));
+    await mutation;
+
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("X-Control-Lease-Token")).toBe("renewed-token");
+    gateway.controlLease.stop();
+  });
+
+  it("retries an old 423 with a newer renewal token without reacquiring", async () => {
+    let storedToken: string | null = "old-token";
+    const business = deferred<Response>();
+    const renewal = deferred<Response>();
+    let leaseCalls = 0;
+    const fetchMock = vi.fn<typeof fetch>((url) => {
+      if (String(url).endsWith("/projects/project-1") && fetchMock.mock.calls.filter(([callUrl]) => String(callUrl).endsWith("/projects/project-1")).length === 1) return business.promise;
+      if (String(url).endsWith("/control/lease")) {
+        leaseCalls += 1;
+        return leaseCalls === 1 ? renewal.promise : Promise.resolve(Response.json({ actorId: "admin", clientId: "browser", expiresAt: "2030-01-01T00:01:00Z", leaseToken: "unexpected-token" }, { status: 201 }));
+      }
+      return Promise.resolve(Response.json({ ok: true }));
+    });
+    const gateway = createApiGateway({ baseUrl: "https://server", clientId: "browser", fetch: fetchMock, getLeaseToken: () => storedToken, setLeaseToken: (token) => { storedToken = token; } });
+
+    const mutation = gateway.requestJson("/api/v1/projects/project-1", { method: "PATCH", requireLease: true });
+    await Promise.resolve();
+    gateway.controlLease.start();
+    renewal.resolve(Response.json({ actorId: "admin", clientId: "browser", expiresAt: "2030-01-01T00:01:00Z", leaseToken: "new-token" }, { status: 201 }));
+    business.resolve(Response.json({ error: { code: "CONTROL_LEASE_REQUIRED", details: {}, message: "stale", retryable: false }, requestId: "r1" }, { status: 423 }));
+    await mutation;
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["https://server/api/v1/projects/project-1", "https://server/api/v1/control/lease", "https://server/api/v1/projects/project-1"]);
+    expect(new Headers(fetchMock.mock.calls[2]?.[1]?.headers).get("X-Control-Lease-Token")).toBe("new-token");
+    gateway.controlLease.stop();
+  });
+
+  it("makes logout terminal while acquisition is still pending", async () => {
+    let storedToken: string | null = null;
+    const acquisition = deferred<Response>();
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockImplementationOnce(() => acquisition.promise)
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const gateway = createApiGateway({ baseUrl: "https://server", clientId: "browser", fetch: fetchMock, getLeaseToken: () => storedToken, setLeaseToken: (token) => { storedToken = token; } });
+
+    const mutation = gateway.requestJson("/api/v1/projects/project-1", { method: "PATCH", requireLease: true });
+    const logout = gateway.controlLease.release();
+    acquisition.resolve(Response.json({ actorId: "admin", clientId: "browser", expiresAt: "2030-01-01T00:01:00Z", leaseToken: "late-token" }, { status: 201 }));
+    await logout;
+    await expect(mutation).rejects.toThrow();
+
+    expect(storedToken).toBeNull();
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://server/api/v1/control/lease",
+      "https://server/api/v1/control/lease",
+    ]);
+    expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
+      body: JSON.stringify({ leaseToken: "late-token" }),
+      method: "DELETE",
+    }));
+  });
+
+  it("releases the rotated token when logout waits for a pending heartbeat", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
+    let storedToken: string | null = null;
+    const heartbeat = deferred<Response>();
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({
+        actorId: "admin",
+        clientId: "browser",
+        expiresAt: "2030-01-01T00:00:10Z",
+        leaseToken: "lease-1",
+      }, { status: 201 }))
+      .mockResolvedValueOnce(Response.json({ ok: true }))
+      .mockImplementationOnce(() => heartbeat.promise)
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const gateway = createApiGateway({
+      baseUrl: "https://server",
+      clientId: "browser",
+      fetch: fetchMock,
+      getLeaseToken: () => storedToken,
+      setLeaseToken: (next) => { storedToken = next; },
+    });
+
+    gateway.controlLease.start();
+    await gateway.requestJson("/api/v1/projects/project-1", {
+      method: "PATCH",
+      requireLease: true,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    const logout = gateway.controlLease.release();
+    heartbeat.resolve(Response.json({
+      actorId: "admin",
+      clientId: "browser",
+      expiresAt: "2030-01-01T00:00:20Z",
+      leaseToken: "lease-2",
+    }));
+    await logout;
+
+    expect(fetchMock.mock.calls[3]?.[1]).toEqual(expect.objectContaining({
+      body: JSON.stringify({ leaseToken: "lease-2" }),
+      method: "DELETE",
+    }));
+    expect(storedToken).toBeNull();
+    vi.useRealTimers();
+  });
+
   it("does not acquire for reads and deduplicates concurrent lease acquisition", async () => {
     let storedToken: string | null = null;
     let resolveLease: ((response: Response) => void) | undefined;
@@ -31,12 +153,9 @@ describe("ApiGateway", () => {
     resolveLease?.(Response.json({ actorId: "admin", clientId: "browser", expiresAt: "2030-01-01T00:01:00Z", leaseToken: "lease-1" }, { status: 201 }));
     await Promise.all([first, second]);
 
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "https://server/api/v1/projects",
-      "https://server/api/v1/control/lease",
-      "https://server/api/v1/projects/one",
-      "https://server/api/v1/projects/two",
-    ]);
+    const paths = fetchMock.mock.calls.map(([url]) => url);
+    expect(paths.slice(0, 2)).toEqual(["https://server/api/v1/projects", "https://server/api/v1/control/lease"]);
+    expect(paths.slice(2).sort()).toEqual(["https://server/api/v1/projects/one", "https://server/api/v1/projects/two"]);
   });
 
   it("clears a stale lease and retries a 423 mutation exactly once", async () => {
@@ -116,6 +235,66 @@ describe("ApiGateway", () => {
     expect(fetchMock.mock.calls.map(([url]) => url)).toContain("https://server/api/v1/control/lease");
     expect(storedToken).toBeNull();
     vi.useRealTimers();
+  });
+
+  it("retries heartbeat after a transient server failure", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
+    let storedToken: string | null = null;
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({
+        actorId: "admin",
+        clientId: "browser",
+        expiresAt: "2030-01-01T00:00:10Z",
+        leaseToken: "lease-1",
+      }, { status: 201 }))
+      .mockResolvedValueOnce(Response.json({ ok: true }))
+      .mockResolvedValueOnce(new Response(null, { status: 500 }))
+      .mockResolvedValueOnce(Response.json({
+        actorId: "admin",
+        clientId: "browser",
+        expiresAt: "2030-01-01T00:00:20Z",
+        leaseToken: "lease-1",
+      }));
+    const gateway = createApiGateway({
+      baseUrl: "https://server",
+      clientId: "browser",
+      fetch: fetchMock,
+      getLeaseToken: () => storedToken,
+      setLeaseToken: (next) => { storedToken = next; },
+    });
+
+    gateway.controlLease.start();
+    await gateway.requestJson("/api/v1/projects/project-1", {
+      method: "PATCH",
+      requireLease: true,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(fetchMock.mock.calls.filter(([url]) => (
+      url === "https://server/api/v1/control/lease/heartbeat"
+    ))).toHaveLength(2);
+    expect(storedToken).toBe("lease-1");
+    gateway.controlLease.stop();
+    vi.useRealTimers();
+  });
+
+  it("does not claim control on mount when the observer has no stored proof", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const gateway = createApiGateway({
+      baseUrl: "https://server",
+      clientId: "observer",
+      fetch: fetchMock,
+      getLeaseToken: () => null,
+      setLeaseToken: vi.fn(),
+    });
+
+    gateway.controlLease.start();
+    await Promise.resolve();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    gateway.controlLease.stop();
   });
 
   it("loads bootstrap with the browser session cookie", async () => {
