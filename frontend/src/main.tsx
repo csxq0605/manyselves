@@ -37,11 +37,16 @@ const baseUrl = resolveServerUrl({
 });
 const fetchImplementation = window.fetch.bind(window);
 const getLeaseToken = () => window.sessionStorage.getItem("manyselves.controlLeaseToken");
+const setLeaseToken = (token: string | null) => {
+  if (token) window.sessionStorage.setItem("manyselves.controlLeaseToken", token);
+  else window.sessionStorage.removeItem("manyselves.controlLeaseToken");
+};
 const gatewayOptions = {
   baseUrl,
   clientId: getOrCreateBrowserClientId(window.localStorage),
   fetch: fetchImplementation,
   getLeaseToken,
+  setLeaseToken,
 };
 const authApi = createAuthApi({ baseUrl, fetch: fetchImplementation });
 const platform = window.manyselvesDesktop

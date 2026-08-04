@@ -14,6 +14,110 @@ function gatewayWithResponse(response: Response) {
 }
 
 describe("ApiGateway", () => {
+  it("does not acquire for reads and deduplicates concurrent lease acquisition", async () => {
+    let storedToken: string | null = null;
+    let resolveLease: ((response: Response) => void) | undefined;
+    const leaseResponse = new Promise<Response>((resolve) => { resolveLease = resolve; });
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ ok: "read" }))
+      .mockImplementationOnce(() => leaseResponse)
+      .mockResolvedValueOnce(Response.json({ ok: "one" }))
+      .mockResolvedValueOnce(Response.json({ ok: "two" }));
+    const gateway = createApiGateway({ baseUrl: "https://server", clientId: "browser", fetch: fetchMock, getLeaseToken: () => storedToken, setLeaseToken: (token) => { storedToken = token; } });
+
+    await gateway.requestJson("/api/v1/projects");
+    const first = gateway.requestJson("/api/v1/projects/one", { method: "POST", requireLease: true });
+    const second = gateway.requestJson("/api/v1/projects/two", { method: "POST", requireLease: true });
+    resolveLease?.(Response.json({ actorId: "admin", clientId: "browser", expiresAt: "2030-01-01T00:01:00Z", leaseToken: "lease-1" }, { status: 201 }));
+    await Promise.all([first, second]);
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://server/api/v1/projects",
+      "https://server/api/v1/control/lease",
+      "https://server/api/v1/projects/one",
+      "https://server/api/v1/projects/two",
+    ]);
+  });
+
+  it("clears a stale lease and retries a 423 mutation exactly once", async () => {
+    let storedToken: string | null = null;
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ actorId: "admin", clientId: "browser", expiresAt: "2030-01-01T00:01:00Z", leaseToken: "lease-1" }, { status: 201 }))
+      .mockResolvedValueOnce(Response.json({ error: { code: "CONTROL_LEASE_REQUIRED", details: {}, message: "stale", retryable: false }, requestId: "r1" }, { status: 423 }))
+      .mockResolvedValueOnce(Response.json({ actorId: "admin", clientId: "browser", expiresAt: "2030-01-01T00:02:00Z", leaseToken: "lease-2" }, { status: 201 }))
+      .mockResolvedValueOnce(Response.json({ ok: true }));
+    const gateway = createApiGateway({ baseUrl: "https://server", clientId: "browser", fetch: fetchMock, getLeaseToken: () => storedToken, setLeaseToken: (token) => { storedToken = token; } });
+
+    await gateway.requestJson("/api/v1/projects/project-1", { method: "PATCH", requireLease: true });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://server/api/v1/control/lease",
+      "https://server/api/v1/projects/project-1",
+      "https://server/api/v1/control/lease",
+      "https://server/api/v1/projects/project-1",
+    ]);
+    expect(new Headers(fetchMock.mock.calls[3]?.[1]?.headers).get("X-Control-Lease-Token")).toBe("lease-2");
+  });
+
+  it("does not loop when the single stale-lease retry also receives 423", async () => {
+    let storedToken: string | null = null;
+    const required = () => Response.json({ error: { code: "CONTROL_LEASE_REQUIRED", details: {}, message: "stale", retryable: false }, requestId: "r1" }, { status: 423 });
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ actorId: "admin", clientId: "browser", expiresAt: "2030-01-01T00:01:00Z", leaseToken: "lease-1" }, { status: 201 }))
+      .mockResolvedValueOnce(required())
+      .mockResolvedValueOnce(Response.json({ actorId: "admin", clientId: "browser", expiresAt: "2030-01-01T00:02:00Z", leaseToken: "lease-2" }, { status: 201 }))
+      .mockResolvedValueOnce(required());
+    const gateway = createApiGateway({ baseUrl: "https://server", clientId: "browser", fetch: fetchMock, getLeaseToken: () => storedToken, setLeaseToken: (token) => { storedToken = token; } });
+
+    await expect(gateway.requestJson("/api/v1/projects/project-1", { method: "PATCH", requireLease: true })).rejects.toMatchObject({ code: "CONTROL_LEASE_REQUIRED", status: 423 });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("renews a stored same-client proof on authenticated mount without acquiring when absent", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ actorId: "admin", clientId: "browser", expiresAt: "2030-01-01T00:01:00Z", leaseToken: "renewed" }, { status: 201 }));
+    const gateway = createApiGateway({ baseUrl: "https://server", clientId: "browser", fetch: fetchMock, getLeaseToken: () => "proof-token", setLeaseToken: vi.fn() });
+
+    gateway.controlLease.start();
+    await Promise.resolve();
+
+    expect(fetchMock).toHaveBeenCalledWith("https://server/api/v1/control/lease", expect.objectContaining({ body: JSON.stringify({ clientId: "browser", leaseToken: "proof-token" }) }));
+    gateway.controlLease.stop();
+  });
+
+  it("surfaces a held lease without attempting the business mutation", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ error: { code: "CONTROL_LEASE_HELD", details: {}, message: "held", retryable: false }, requestId: "r1" }, { status: 409 }));
+    const gateway = createApiGateway({ baseUrl: "https://server", clientId: "browser", fetch: fetchMock, getLeaseToken: () => null, setLeaseToken: vi.fn() });
+
+    await expect(gateway.requestJson("/api/v1/projects/project-1", { method: "PATCH", requireLease: true })).rejects.toMatchObject({ code: "CONTROL_LEASE_HELD", status: 409 });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("heartbeats an acquired lease while mounted and releases it best-effort", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
+    let storedToken: string | null = null;
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ actorId: "admin", clientId: "browser", expiresAt: "2030-01-01T00:00:10Z", leaseToken: "lease-1" }, { status: 201 }))
+      .mockResolvedValueOnce(Response.json({ ok: true }))
+      .mockResolvedValueOnce(Response.json({ actorId: "admin", clientId: "browser", expiresAt: "2030-01-01T00:00:20Z", leaseToken: "lease-1" }))
+      .mockResolvedValueOnce(new Response(null, { status: 500 }));
+    const gateway = createApiGateway({ baseUrl: "https://server", clientId: "browser", fetch: fetchMock, getLeaseToken: () => storedToken, setLeaseToken: (token) => { storedToken = token; } });
+    const lifecycle = (gateway as unknown as { controlLease?: { release(): Promise<void>; start(): void; stop(): void } }).controlLease;
+    expect(lifecycle).toBeDefined();
+    if (!lifecycle) return;
+
+    lifecycle.start();
+    await gateway.requestJson("/api/v1/projects/project-1", { method: "PATCH", requireLease: true });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await lifecycle.release();
+    lifecycle.stop();
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toContain("https://server/api/v1/control/lease/heartbeat");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toContain("https://server/api/v1/control/lease");
+    expect(storedToken).toBeNull();
+    vi.useRealTimers();
+  });
+
   it("loads bootstrap with the browser session cookie", async () => {
     const snapshot = {
       agents: { main: "Main Agent" },

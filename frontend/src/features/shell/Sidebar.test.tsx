@@ -1,11 +1,12 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AppProviders } from "../../app/providers";
-import type { Project, ProjectApi } from "../projects/project-api";
-import { Sidebar } from "./Sidebar";
+import type { Project } from "../projects/project-api";
+import { Sidebar, type SidebarProps } from "./Sidebar";
 
 const projects: Project[] = [{
   active: true,
@@ -15,8 +16,15 @@ const projects: Project[] = [{
   revision: "a".repeat(64),
 }];
 
-function renderSidebar(api?: ProjectApi) {
-  return render(<AppProviders><MemoryRouter initialEntries={["/projects/energy-team/outputs"]}><Sidebar projects={projects} {...(api ? { api } : {})} /></MemoryRouter></AppProviders>);
+function renderSidebar(overrides: Partial<SidebarProps> = {}) {
+  const props: SidebarProps = {
+    onCreateProject: vi.fn().mockResolvedValue(projects[0]),
+    onDeleteProject: vi.fn().mockResolvedValue(undefined),
+    onUpdateProject: vi.fn().mockResolvedValue(projects[0]),
+    projects,
+    ...overrides,
+  };
+  return render(<AppProviders><MemoryRouter initialEntries={["/projects/energy-team/outputs"]}><Sidebar {...props} /></MemoryRouter></AppProviders>);
 }
 
 describe("Sidebar", () => {
@@ -36,9 +44,8 @@ describe("Sidebar", () => {
 
   it("updates metadata without changing a project's stable identifier", async () => {
     const update = vi.fn().mockResolvedValue(projects[0]);
-    const api: ProjectApi = { activate: vi.fn(), create: vi.fn(), delete: vi.fn(), list: vi.fn().mockResolvedValue(projects), update };
     const user = userEvent.setup();
-    renderSidebar(api);
+    renderSidebar({ onUpdateProject: update });
 
     await user.click(screen.getByRole("button", { name: "编辑 Energy team" }));
     await user.clear(screen.getByRole("textbox", { name: "显示名称" }));
@@ -53,9 +60,8 @@ describe("Sidebar", () => {
 
   it("only deletes after the displayed name is typed exactly", async () => {
     const remove = vi.fn().mockResolvedValue(undefined);
-    const api: ProjectApi = { activate: vi.fn(), create: vi.fn(), delete: remove, list: vi.fn().mockResolvedValue(projects), update: vi.fn() };
     const user = userEvent.setup();
-    renderSidebar(api);
+    renderSidebar({ onDeleteProject: remove });
 
     await user.click(screen.getByRole("button", { name: "更多 Energy team" }));
     await user.type(screen.getByRole("textbox"), "wrong");
@@ -67,5 +73,31 @@ describe("Sidebar", () => {
     await user.click(screen.getByRole("button", { name: "删除项目" }));
 
     expect(remove).toHaveBeenCalledWith("energy-team");
+  });
+
+  it("delegates a valid create to its explicit callback without requiring a ProjectApi", async () => {
+    const onCreateProject = vi.fn().mockResolvedValue(projects[0]);
+    const user = userEvent.setup();
+    render(<AppProviders><MemoryRouter><Sidebar {...({ onCreateProject, onDeleteProject: vi.fn(), onUpdateProject: vi.fn(), projects } as ComponentProps<typeof Sidebar>)} /></MemoryRouter></AppProviders>);
+
+    await user.click(screen.getByRole("button", { name: "新建项目" }));
+    await user.type(screen.getByRole("textbox", { name: "项目标识" }), "new-project");
+    await user.type(screen.getByRole("textbox", { name: "显示名称" }), "New project");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onCreateProject).toHaveBeenCalledWith({ description: "", displayName: "New project", projectId: "new-project" });
+  });
+
+  it("does not submit a blank project identifier", async () => {
+    const create = vi.fn().mockResolvedValue(projects[0]);
+    const user = userEvent.setup();
+    renderSidebar({ onCreateProject: create });
+
+    await user.click(screen.getByRole("button", { name: "新建项目" }));
+    await user.type(screen.getByRole("textbox", { name: "显示名称" }), "New project");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(create).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toBeVisible();
   });
 });

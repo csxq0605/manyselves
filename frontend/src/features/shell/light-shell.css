@@ -2,6 +2,8 @@
 button, input, textarea { font: inherit; }
 :focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 .light-app { background: #f7f7f5; display: grid; grid-template-columns: 238px minmax(0, 1fr); min-height: 100vh; }
+.skip-link { background: #fff; color: #202123; left: 12px; padding: 8px 10px; position: fixed; top: -48px; z-index: 10; }
+.skip-link:focus { top: 12px; }
 .sidebar { background: #f1f1ee; border-right: 1px solid #dcddd9; box-sizing: border-box; display: flex; flex-direction: column; padding: 18px 12px; }
 .sidebar__brand { display: grid; font-weight: 700; gap: 3px; letter-spacing: -.02em; margin: 0 8px 24px; }
 .sidebar__brand small, .project-home__eyebrow { color: #6b6f76; font-family: "SFMono-Regular", Cascadia Mono, monospace; font-size: 10px; letter-spacing: .08em; }
@@ -22,8 +24,8 @@ button, input, textarea { font: inherit; }
 .project-home h1, .route-placeholder h1 { font-size: clamp(26px, 4vw, 38px); letter-spacing: -.04em; margin: 8px 0; }
 .project-home p, .route-placeholder p { color: #6b6f76; line-height: 1.6; }
 .project-home button, .project-dialog button:first-of-type { background: #2563eb; border: 1px solid #2563eb; border-radius: 5px; color: #fff; cursor: pointer; margin-top: 12px; padding: 8px 12px; }
-.project-dialog { align-items: center; background: rgb(32 33 35 / 28%); display: grid; inset: 0; justify-items: center; padding: 20px; position: fixed; z-index: 3; }
-.project-dialog form { background: #fff; border: 1px solid #d9dad7; border-radius: 8px; box-shadow: 0 18px 45px rgb(32 33 35 / 18%); display: grid; gap: 12px; max-width: 420px; padding: 20px; width: 100%; }
+.project-dialog { align-items: center; background: rgb(32 33 35 / 28%); box-sizing: border-box; display: grid; inset: 0; justify-items: center; overscroll-behavior: contain; padding: 20px; position: fixed; z-index: 3; }
+.project-dialog form { background: #fff; border: 1px solid #d9dad7; border-radius: 8px; box-shadow: 0 18px 45px rgb(32 33 35 / 18%); box-sizing: border-box; display: grid; gap: 12px; max-height: calc(100dvh - 40px); max-width: 420px; overflow: auto; overscroll-behavior: contain; padding: 20px; width: min(100%, 420px); }
 .project-dialog h3 { margin: 0; }
 .project-dialog label { display: grid; font-size: 13px; gap: 5px; }
 .project-dialog input, .project-dialog textarea { border: 1px solid #c8c9c5; border-radius: 4px; padding: 7px; }

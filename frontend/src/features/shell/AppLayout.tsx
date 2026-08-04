@@ -1,16 +1,16 @@
 import { Outlet } from "react-router-dom";
 
-import type { ProjectApi } from "../projects/project-api";
-import { Sidebar } from "./Sidebar";
+import { Sidebar, type SidebarProps } from "./Sidebar";
 import "./light-shell.css";
 
-export interface AppLayoutProps { readonly onLogout?: () => void; readonly projectApi: ProjectApi; }
+export type AppLayoutProps = SidebarProps;
 
-export function AppLayout({ onLogout, projectApi }: AppLayoutProps) {
+export function AppLayout(props: AppLayoutProps) {
   return (
     <div className="light-app">
-      <Sidebar api={projectApi} {...(onLogout ? { onLogout } : {})} />
-      <main className="light-app__outlet"><Outlet /></main>
+      <a className="skip-link" href="#main-outlet">跳转到主内容</a>
+      <Sidebar {...props} />
+      <main className="light-app__outlet" id="main-outlet"><Outlet /></main>
     </div>
   );
 }

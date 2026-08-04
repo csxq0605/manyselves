@@ -7,8 +7,7 @@ import { AppLayout } from "./AppLayout";
 
 describe("AppLayout", () => {
   it("composes the navigation rail with its routed outlet", () => {
-    const projectApi = { activate: vi.fn(), create: vi.fn(), delete: vi.fn(), list: vi.fn().mockResolvedValue([]), update: vi.fn() };
-    render(<AppProviders><MemoryRouter initialEntries={["/projects/p1"]}><Routes><Route element={<AppLayout projectApi={projectApi} />}><Route path="/projects/:projectId" element={<h1>Project outlet</h1>} /></Route></Routes></MemoryRouter></AppProviders>);
+    render(<AppProviders><MemoryRouter initialEntries={["/projects/p1"]}><Routes><Route element={<AppLayout onCreateProject={vi.fn()} onDeleteProject={vi.fn()} onUpdateProject={vi.fn()} projects={[]} />}><Route path="/projects/:projectId" element={<h1>Project outlet</h1>} /></Route></Routes></MemoryRouter></AppProviders>);
 
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Project outlet" })).toBeVisible();

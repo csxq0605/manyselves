@@ -3,6 +3,7 @@ import type { components } from "./generated/schema";
 type AcceptedCommandResponse = components["schemas"]["AcceptedCommandResponse"];
 type ErrorEnvelope = components["schemas"]["ErrorEnvelope"];
 type SendMessageRequest = components["schemas"]["SendMessageRequest"];
+type LeaseResponse = components["schemas"]["LeaseResponse"];
 export type BootstrapSnapshot = components["schemas"]["BootstrapSnapshot"];
 
 export class ApiError extends Error {
@@ -36,6 +37,7 @@ export interface ApiGatewayOptions {
   readonly fetch: typeof fetch;
   readonly getLeaseToken: () => string | null;
   readonly onUnauthorized?: () => void;
+  readonly setLeaseToken?: (token: string | null) => void;
 }
 
 export interface ApiRequestOptions extends Omit<RequestInit, "body"> {
@@ -47,6 +49,7 @@ export interface ApiRequestOptions extends Omit<RequestInit, "body"> {
 export interface ApiGateway {
   readonly baseUrl: string;
   readonly clientId: string;
+  readonly controlLease: ControlLeaseLifecycle;
   bootstrap(): Promise<BootstrapSnapshot>;
   requestBlob(path: string, init?: ApiRequestOptions): Promise<Blob>;
   requestJson<T>(path: string, init?: ApiRequestOptions): Promise<T>;
@@ -56,6 +59,12 @@ export interface ApiGateway {
     request: SendMessageRequest,
     idempotencyKey: string,
   ): Promise<AcceptedCommandResponse>;
+}
+
+export interface ControlLeaseLifecycle {
+  release(): Promise<void>;
+  start(): void;
+  stop(): void;
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -109,6 +118,10 @@ async function toApiError(response: Response): Promise<ApiError> {
 
 export function createApiGateway(options: ApiGatewayOptions): ApiGateway {
   const baseUrl = normalizeBaseUrl(options.baseUrl);
+  let acquisition: Promise<void> | null = null;
+  let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  let mounted = false;
+  let token = options.getLeaseToken();
 
   async function sendRequest(
     path: string,
@@ -116,11 +129,8 @@ export function createApiGateway(options: ApiGatewayOptions): ApiGateway {
   ): Promise<Response> {
     const { json, requireLease, ...requestInit } = init;
     const headers = new Headers(requestInit.headers);
-    if (requireLease) {
-      const leaseToken = options.getLeaseToken();
-      if (leaseToken) {
-        headers.set("X-Control-Lease-Token", leaseToken);
-      }
+    if (requireLease && token) {
+      headers.set("X-Control-Lease-Token", token);
     }
     let body = requestInit.body;
     if (json !== undefined) {
@@ -144,20 +154,134 @@ export function createApiGateway(options: ApiGatewayOptions): ApiGateway {
     return response;
   }
 
+  function clearHeartbeat(): void {
+    if (heartbeatTimer !== null) {
+      clearTimeout(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  }
+
+  function saveLease(response: LeaseResponse): void {
+    token = response.leaseToken;
+    options.setLeaseToken?.(token);
+    scheduleHeartbeat(response.expiresAt);
+  }
+
+  function clearLease(): void {
+    token = null;
+    options.setLeaseToken?.(null);
+    clearHeartbeat();
+  }
+
+  function scheduleHeartbeat(expiresAt: string): void {
+    clearHeartbeat();
+    if (!mounted || !token) return;
+    const expiresIn = Date.parse(expiresAt) - Date.now();
+    const delay = Math.max(1_000, Math.floor(expiresIn / 2));
+    heartbeatTimer = setTimeout(() => { void heartbeat(); }, delay);
+  }
+
+  async function acquireLease(): Promise<void> {
+    if (token) return;
+    if (acquisition) return acquisition;
+    acquisition = (async () => {
+      const response = await sendRequest("/api/v1/control/lease", {
+        json: { clientId: options.clientId, leaseToken: token },
+        method: "POST",
+      });
+      saveLease(await response.json() as LeaseResponse);
+    })().finally(() => { acquisition = null; });
+    return acquisition;
+  }
+
+  async function renewStoredLease(): Promise<void> {
+    const proof = token;
+    if (!proof || acquisition) return acquisition ?? Promise.resolve();
+    acquisition = (async () => {
+      try {
+        const response = await sendRequest("/api/v1/control/lease", {
+          json: { clientId: options.clientId, leaseToken: proof },
+          method: "POST",
+        });
+        saveLease(await response.json() as LeaseResponse);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === "CONTROL_LEASE_REQUIRED") clearLease();
+      }
+    })().finally(() => { acquisition = null; });
+    return acquisition;
+  }
+
+  async function heartbeat(): Promise<void> {
+    if (!mounted || !token) return;
+    try {
+      const response = await sendRequest("/api/v1/control/lease/heartbeat", {
+        json: { leaseToken: token },
+        method: "POST",
+      });
+      saveLease(await response.json() as LeaseResponse);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "CONTROL_LEASE_REQUIRED") clearLease();
+    }
+  }
+
+  async function request(path: string, init: ApiRequestOptions = {}, retried = false): Promise<Response> {
+    if (init.requireLease) await acquireLease();
+    try {
+      return await sendRequest(path, init);
+    } catch (error) {
+      if (
+        init.requireLease
+        && !retried
+        && error instanceof ApiError
+        && error.code === "CONTROL_LEASE_REQUIRED"
+      ) {
+        clearLease();
+        await acquireLease();
+        return request(path, init, true);
+      }
+      throw error;
+    }
+  }
+
+  const controlLease: ControlLeaseLifecycle = {
+    start() {
+      mounted = true;
+      void renewStoredLease();
+    },
+    stop() { mounted = false; clearHeartbeat(); },
+    async release() {
+      const heldToken = token;
+      controlLease.stop();
+      try {
+        if (heldToken) {
+          await sendRequest("/api/v1/control/lease", {
+            json: { leaseToken: heldToken },
+            method: "DELETE",
+          });
+        }
+      } catch {
+        // Logout and unmount are allowed to rely on the server-side lease TTL.
+      } finally {
+        clearLease();
+      }
+    },
+  };
+
   const gateway: ApiGateway = {
     baseUrl,
     clientId: options.clientId,
+    controlLease,
     async bootstrap() {
       return gateway.requestJson<BootstrapSnapshot>("/api/v1/bootstrap");
     },
     async requestBlob(path, init) {
-      return (await sendRequest(path, init)).blob();
+      return (await request(path, init)).blob();
     },
     async requestJson<T>(path: string, init?: ApiRequestOptions) {
-      return (await sendRequest(path, init)).json() as Promise<T>;
+      return (await request(path, init)).json() as Promise<T>;
     },
     async requestVoid(path, init) {
-      await sendRequest(path, init);
+      await request(path, init);
     },
     async sendMessage(agentId, request, idempotencyKey) {
       const headers = new Headers({
