@@ -1795,6 +1795,15 @@
             "title": "Configured",
             "type": "boolean"
           },
+          "credentialSource": {
+            "enum": [
+              "none",
+              "yaml",
+              "environment"
+            ],
+            "title": "Credentialsource",
+            "type": "string"
+          },
           "defaultModel": {
             "anyOf": [
               {
@@ -1829,6 +1838,7 @@
           "provider",
           "enabled",
           "configured",
+          "credentialSource",
           "apiBase",
           "defaultModel",
           "active"

@@ -1,6 +1,7 @@
 """Configuration schema using Pydantic."""
 
 from pathlib import Path
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -8,6 +9,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPOSITORY_ROOT / "manyselves.config.yaml"
+
+CredentialSource = Literal["none", "yaml", "environment"]
 
 
 class Base(BaseModel):
@@ -32,11 +35,20 @@ class ApiConfig(Base):
     id: str = Field(default_factory=lambda: uuid4().hex[:8])
     name: str = "Unnamed"
     provider: str = "custom"  # anthropic | openai | google | deepseek | openrouter | groq | custom
-    api_key: str | None = None
+    api_key: str | None = Field(default=None, repr=False)
     api_base: str | None = None
     enabled: bool = True
     default_model: str | None = None
     extra_headers: dict[str, str] | None = None
+    credential_source: CredentialSource = Field(default="none", exclude=True)
+    yaml_api_key: str | None = Field(default=None, exclude=True, repr=False)
+
+    def model_post_init(self, __context: Any) -> None:
+        """Remember the persisted secret before environment overrides are applied."""
+        if self.yaml_api_key is None and self.api_key:
+            self.yaml_api_key = self.api_key
+        if self.credential_source == "none" and self.api_key:
+            self.credential_source = "yaml"
 
 
 class ProvidersConfig(Base):
@@ -172,6 +184,7 @@ class Settings(BaseSettings):
             env_key = env_map.get(cfg.provider)
             if env_key:
                 cfg.api_key = env_key
+                cfg.credential_source = "environment"
 
     def validate_api_keys(self, config: AppConfig) -> list[str]:
         """Validate that at least one enabled configuration has an API key."""

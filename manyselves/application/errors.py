@@ -27,6 +27,15 @@ class RuntimeConsistencyFailedError(RuntimeError):
         super().__init__("Runtime consistency could not be guaranteed")
 
 
+class CredentialManagedByEnvironmentError(RuntimeError):
+    """A client tried to replace a secret owned by the process environment."""
+
+    code = "CREDENTIAL_MANAGED_BY_ENVIRONMENT"
+
+    def __init__(self) -> None:
+        super().__init__("Provider credential is managed by the environment")
+
+
 class CommandIdConflictError(RuntimeError):
     """A completed command ID was reused for a different mutation."""
 

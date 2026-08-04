@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Request
 from ...application.async_ownership import to_thread_non_abandoning
 from ...application.control import ControlLeaseRequired
 from ...application.errors import (
+    CredentialManagedByEnvironmentError,
     MaintenanceQuiescedError,
     RuntimeConsistencyFailedError,
     RuntimeNotReadyError,
@@ -47,6 +48,7 @@ def _settings(manager) -> SettingsResponse:
                 provider=item.provider,
                 enabled=item.enabled,
                 configured=bool(item.api_key),
+                credentialSource=item.credential_source,
                 apiBase=item.api_base,
                 defaultModel=item.default_model,
                 active=item.id == config.providers.active,
@@ -65,6 +67,8 @@ def _settings(manager) -> SettingsResponse:
 def _error(error: Exception) -> ApiError:
     if isinstance(error, KeyError):
         return ApiError(status_code=404, code="PROVIDER_NOT_FOUND", message="Provider was not found", retryable=False)
+    if isinstance(error, CredentialManagedByEnvironmentError):
+        return ApiError(status_code=409, code=error.code, message=str(error), retryable=False)
     if isinstance(error, ValueError):
         return ApiError(status_code=422, code="INVALID_SETTINGS", message=str(error), retryable=False)
     if isinstance(error, ControlLeaseRequired):
@@ -142,12 +146,15 @@ async def update_provider(
                 updates = body.model_dump(exclude_unset=True)
                 secret_present = "api_key" in updates
                 secret = updates.pop("api_key", None)
+                if secret_present and provider.credential_source == "environment":
+                    raise CredentialManagedByEnvironmentError()
                 for key, value in updates.items():
                     setattr(provider, key, value)
                 if secret_present:
-                    provider.api_key = (
-                        secret.get_secret_value() if secret is not None else ""
-                    )
+                    value = secret.get_secret_value() if secret is not None else None
+                    provider.api_key = value
+                    provider.yaml_api_key = value
+                    provider.credential_source = "yaml" if value else "none"
 
             restart_fields = {
                 "provider",

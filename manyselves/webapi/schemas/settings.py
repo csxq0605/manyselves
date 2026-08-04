@@ -2,6 +2,8 @@
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
+from ...config.schema import CredentialSource
+
 
 class ProviderSettingsResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -10,6 +12,7 @@ class ProviderSettingsResponse(BaseModel):
     provider: str
     enabled: bool
     configured: bool
+    credential_source: CredentialSource = Field(alias="credentialSource")
     api_base: str | None = Field(alias="apiBase")
     default_model: str | None = Field(alias="defaultModel")
     active: bool

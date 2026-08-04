@@ -2546,6 +2546,27 @@ async def test_settings_masks_all_provider_secrets(resources) -> None:
 
 
 @pytest.mark.asyncio
+async def test_settings_reports_and_rejects_environment_owned_credentials(resources) -> None:
+    client, host, _, secret = resources
+    provider = host.config_manager.config.providers.configurations[0]
+    provider.credential_source = "environment"
+    provider.yaml_api_key = None
+
+    current = await client.get("/api/v1/settings")
+    response = await client.patch(
+        "/api/v1/settings/providers/provider-1",
+        json={"apiKey": "replacement-secret"},
+    )
+
+    assert current.json()["providers"][0]["credentialSource"] == "environment"
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "CREDENTIAL_MANAGED_BY_ENVIRONMENT"
+    assert provider.api_key == secret
+    assert host.replace_calls == []
+    assert "replacement-secret" not in response.text
+
+
+@pytest.mark.asyncio
 async def test_settings_rejects_null_required_fields_and_can_clear_secret(resources) -> None:
     client, _, _, _ = resources
 

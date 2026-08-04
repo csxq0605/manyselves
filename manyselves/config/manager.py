@@ -10,8 +10,10 @@ from .schema import ApiConfig, AppConfig, Settings
 class ConfigManager:
     """Manages application configuration."""
 
-    def __init__(self, config_path: Path | None = None):
-        if config_path:
+    def __init__(self, config_path: Path | Settings | None = None):
+        if isinstance(config_path, Settings):
+            self._settings = config_path
+        elif config_path:
             self._settings = Settings(config_path=config_path)
         else:
             self._settings = Settings()
@@ -83,6 +85,16 @@ class ConfigManager:
 
         raise ValueError(f"No enabled configuration found for provider '{provider}'")
 
+    def get_provider_state(self, identifier: str) -> ApiConfig:
+        """Return provider state by configuration ID, then provider type."""
+        for cfg in self.config.providers.configurations:
+            if cfg.id == identifier:
+                return cfg
+        for cfg in self.config.providers.configurations:
+            if cfg.provider == identifier:
+                return cfg
+        raise KeyError(identifier)
+
     def save_config(self) -> None:
         """Save configuration to file."""
         import yaml
@@ -90,8 +102,18 @@ class ConfigManager:
         config_path = self._settings.config_path
         config_dict = self.config.model_dump(mode="json", exclude_none=True)
         providers = config_dict.get("providers", {})
+        configurations = providers.get("configurations", [])
+        for persisted, runtime in zip(
+            configurations,
+            self.config.providers.configurations,
+            strict=True,
+        ):
+            if runtime.yaml_api_key is None:
+                persisted.pop("api_key", None)
+            else:
+                persisted["api_key"] = runtime.yaml_api_key
         config_dict["providers"] = {
-            "configurations": providers.get("configurations", []),
+            "configurations": configurations,
             "active": self.config.providers.active,
         }
 
