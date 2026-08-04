@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import textwrap
+from pathlib import Path
 
 import pytest
-
 
 ROOT = Path(__file__).parents[2]
 
@@ -106,6 +105,7 @@ def test_backup_sh_continues_cleanup_after_maintenance_release_failure(tmp_path:
     ]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows PowerShell paths")
 def test_backup_ps1_continues_cleanup_after_maintenance_release_failure(tmp_path: Path) -> None:
     events = tmp_path / "events.log"
     harness = tmp_path / "backup-harness.ps1"

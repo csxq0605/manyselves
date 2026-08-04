@@ -1282,7 +1282,8 @@ async def test_persisted_rollback_failure_blocks_runtime_recovery(
         assert "provider-secret" not in diagnostic
         assert config.config.providers.configurations[0].api_key == "provider-secret"
         assert config_path.read_bytes() != original_bytes
-        assert b"transient-secret" in config_path.read_bytes()
+        assert b"transient-secret" not in config_path.read_bytes()
+        assert b"provider-secret" in config_path.read_bytes()
         assert len(created) == 2
         assert host.is_ready is False
         assert host.loop_manager is None
