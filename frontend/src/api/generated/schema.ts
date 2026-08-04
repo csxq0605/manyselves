@@ -375,6 +375,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/global-knowledge/files/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Global Knowledge File */
+        get: operations["get_api_v1_global_knowledge_files_content"];
+        /** Save Global Knowledge File */
+        put: operations["put_api_v1_global_knowledge_files_content"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/global-knowledge/files/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download Global Knowledge File */
+        get: operations["get_api_v1_global_knowledge_files_download"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/global-knowledge/files/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Global Knowledge File */
+        delete: operations["delete_api_v1_global_knowledge_files_entries"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/global-knowledge/files/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview Global Knowledge File */
+        get: operations["get_api_v1_global_knowledge_files_preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/global-knowledge/files/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Global Knowledge Tree */
+        get: operations["get_api_v1_global_knowledge_files_tree"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/global-knowledge/files/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload Global Knowledge File */
+        post: operations["post_api_v1_global_knowledge_files_upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health/live": {
         parameters: {
             query?: never;
@@ -1254,6 +1357,69 @@ export interface components {
         FileTreeResponse: {
             /** Entries */
             entries: components["schemas"]["FileEntryResponse"][];
+        };
+        /**
+         * GlobalKnowledgeFileContent
+         * @description Revision-aware UTF-8 content from the global library.
+         */
+        GlobalKnowledgeFileContent: {
+            /** Content */
+            content: string;
+            /**
+             * Modifiedat
+             * Format: date-time
+             */
+            modifiedAt: string;
+            /** Path */
+            path: string;
+            /** Revision */
+            revision: string;
+            /** Size */
+            size: number;
+        };
+        /**
+         * GlobalKnowledgeFileEntryResponse
+         * @description One logical global-library entry.
+         */
+        GlobalKnowledgeFileEntryResponse: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "file" | "directory";
+            /**
+             * Modifiedat
+             * Format: date-time
+             */
+            modifiedAt: string;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Revision */
+            revision: string;
+            /** Size */
+            size: number | null;
+        };
+        /** GlobalKnowledgeFileTreeResponse */
+        GlobalKnowledgeFileTreeResponse: {
+            /** Entries */
+            entries: components["schemas"]["GlobalKnowledgeFileEntryResponse"][];
+        };
+        /**
+         * GlobalKnowledgePreviewResponse
+         * @description Typed preview for a logical global-library file.
+         */
+        GlobalKnowledgePreviewResponse: components["schemas"]["PdfPreview"] | components["schemas"]["ImagePreview"] | components["schemas"]["SpreadsheetPreview"] | components["schemas"]["DocxPreview"] | components["schemas"]["MarkdownPreview"] | components["schemas"]["TextPreview"] | components["schemas"]["UnsupportedFilePreview"];
+        /**
+         * GlobalKnowledgeSaveRequest
+         * @description Revision-aware global-library text update.
+         */
+        GlobalKnowledgeSaveRequest: {
+            /** Baserevision */
+            baseRevision: string;
+            /** Content */
+            content: string;
         };
         /** ImagePreview */
         ImagePreview: {
@@ -3024,6 +3190,292 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EventLogResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_global_knowledge_files_content: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalKnowledgeFileContent"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    put_api_v1_global_knowledge_files_content: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GlobalKnowledgeSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalKnowledgeFileContent"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_global_knowledge_files_download: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_api_v1_global_knowledge_files_entries: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header: {
+                "If-Match": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_global_knowledge_files_preview: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalKnowledgePreviewResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_global_knowledge_files_tree: {
+        parameters: {
+            query?: {
+                path?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalKnowledgeFileTreeResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    post_api_v1_global_knowledge_files_upload: {
+        parameters: {
+            query: {
+                path: string;
+                conflict?: "reject" | "replace" | "keep-both";
+                baseRevision?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalKnowledgeFileEntryResponse"];
                 };
             };
             /** @description Request validation failed */

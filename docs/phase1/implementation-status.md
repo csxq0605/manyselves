@@ -28,11 +28,11 @@ This is the authoritative handoff checkpoint for the active redesign cycle. A ta
 | 09 / Task 1 | Global knowledge file service and API | Complete | Commit `0d6f8b1`; fixed hidden data-root storage, logical safe-file API, session authentication and control-lease mutations. Gates: service/API/OpenAPI 21 passed, existing project-file regression 25 passed, targeted Ruff passed |
 | 09 / Task 2 | Composite retrieval with project priority | Complete | Commit `554bdd5`; namespaced safe opening, project-first path/content de-duplication, deterministic ranking, tool namespace output and ledger metadata. Gates: focused composite/research/source-ledger/knowledge-context 23 passed, targeted Ruff passed |
 | 09 / Task 3 | Run-stable knowledge provenance | Complete | Commit `10bb616`; source list freeze, logical namespaced SHA-256 manifest, Agent/workflow use and optional Runtime global-root threading. Gates: required reporting/application regression 129 passed, lifecycle/manager/global-knowledge/golden supplement 38 passed, targeted Ruff passed |
-| 09 / Task 4 | React global knowledge page | In progress | Task 3 is committed; next scope is the browser-upload global knowledge page using the shared file capabilities |
+| 09 / Task 4 | React global knowledge page | Implementation complete; commit pending | Real `/knowledge` workspace with browser upload, conflict replace/keep-both, logical tree, text edit, preview/parse failure retention, download and revision-aware delete. Gates: focused knowledge/files 28 passed, full frontend 222 passed with one worker after parallel resource-timeout noise, workspace E2E 3 passed, check:api/lint/build passed |
 | 10 | Simple model settings | Pending | Not implemented in this redesign cycle |
 | 11 | Integration, Podman deployment, release acceptance | Pending | Not implemented in this redesign cycle |
 
-**Current handoff rule:** Plan 08 and Plan 09 Tasks 1-3 are complete. Continue only Plan 09 Task 4: the React global knowledge page. Do not claim the full Phase 1 redesign complete while Plans 09-11 remain pending. Preserve the untracked `.venv-wsl/` directory and do not stage it. The user-confirmed screenshot, not the discarded page-local conversation-list layout, is the visual baseline.
+**Current handoff rule:** Plan 08 and Plan 09 Tasks 1-3 are complete. Task 4 implementation and gates are complete but its commit must be recorded before Plan 09 closes. Do not claim the full Phase 1 redesign complete while Plans 10-11 remain pending. Preserve the untracked `.venv-wsl/` directory and do not stage it. The user-confirmed screenshot, not the discarded page-local conversation-list layout, is the visual baseline.
 
 ## Current facts
 

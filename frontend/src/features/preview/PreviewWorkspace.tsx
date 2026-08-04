@@ -7,12 +7,13 @@ import { PreviewPane } from "./PreviewPane";
 export interface PreviewWorkspaceProps {
   readonly api: PreviewApi;
   readonly onClose: () => void;
+  readonly onError?: (() => void) | undefined;
   readonly path: string;
   readonly platform: PlatformBridge;
   readonly projectId: string;
 }
 
-export function PreviewWorkspace({ api, onClose, path, platform, projectId }: PreviewWorkspaceProps) {
+export function PreviewWorkspace({ api, onClose, onError, path, platform, projectId }: PreviewWorkspaceProps) {
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [objectUrl, setObjectUrl] = useState<string | undefined>();
   const [error, setError] = useState<string | null>(null);
@@ -31,13 +32,16 @@ export function PreviewWorkspace({ api, onClose, path, platform, projectId }: Pr
         }
       }
     }).catch(() => {
-      if (!cancelled) setError("文件预览加载失败");
+      if (!cancelled) {
+        setError("文件预览加载失败");
+        onError?.();
+      }
     });
     return () => {
       cancelled = true;
       if (createdObjectUrl) URL.revokeObjectURL(createdObjectUrl);
     };
-  }, [api, path, projectId]);
+  }, [api, onError, path, projectId]);
 
   async function downloadUnsupported() {
     if (!preview || preview.kind !== "unsupported") return;

@@ -138,6 +138,31 @@ describe("project directory routes", () => {
   }, 20_000);
 });
 
+describe("global knowledge route", () => {
+  it("mounts the real global knowledge workspace", async () => {
+    const requestJson = vi.fn(async (path: string) => {
+      if (path === "/api/v1/projects") return {
+        projects: [{ active: true, description: "", displayName: "Project 1", id: "project-1", revision: "r1" }],
+      };
+      if (path === "/api/v1/global-knowledge/files/tree?path=") return { entries: [] };
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    render(
+      <AppProviders>
+        <MemoryRouter initialEntries={["/knowledge"]}>
+          <AppRoutes gateway={{ requestJson } as unknown as ApiGateway} />
+        </MemoryRouter>
+      </AppProviders>,
+    );
+
+    expect(await screen.findByRole("heading", { name: "全局知识库" }, { timeout: 15_000 })).toBeVisible();
+    await waitFor(() => expect(requestJson).toHaveBeenCalledWith(
+      "/api/v1/global-knowledge/files/tree?path=",
+    ));
+  }, 20_000);
+});
+
 describe("project operations routes", () => {
   const runtime = {
     active_session_id: "session-1",

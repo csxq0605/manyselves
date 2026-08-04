@@ -15,7 +15,7 @@ export interface FileListProps {
 
 function ancestorsBelowRoot(path: string, root: string): readonly string[] {
   const segments = path.split("/");
-  const rootDepth = root.split("/").length;
+  const rootDepth = root ? root.split("/").length : 0;
   return segments
     .slice(rootDepth, -1)
     .map((_, index) => segments.slice(0, rootDepth + index + 1).join("/"));
@@ -30,7 +30,8 @@ export function FileList({ capabilities, entries, onDelete, onDownload, onEdit, 
   return (
     <ul aria-label={`${capabilities.label}文件`} className="file-list">
       {visibleEntries.map((entry) => {
-        const depth = Math.max(0, entry.path.split("/").length - capabilities.root.split("/").length - 1);
+        const rootDepth = capabilities.root ? capabilities.root.split("/").length : 0;
+        const depth = Math.max(0, entry.path.split("/").length - rootDepth - 1);
         if (entry.kind === "directory") {
           const isExpanded = expanded.has(entry.path);
           return (

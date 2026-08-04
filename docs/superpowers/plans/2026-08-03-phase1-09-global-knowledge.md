@@ -223,7 +223,7 @@ git commit -m "feat: snapshot global knowledge provenance per run"
 - Consumes: global knowledge API from Task 1 and shared file components from Plan 08.
 - Produces: `/knowledge` page with upload, text edit, preview, replace, delete, download, and indexing/source state.
 
-- [ ] **Step 1: Write failing global knowledge page tests**
+- [x] **Step 1: Write failing global knowledge page tests**
 
 ```tsx
 it("uses browser file upload and never renders a server path picker", async () => {
@@ -234,7 +234,7 @@ it("uses browser file upload and never renders a server path picker", async () =
 });
 ```
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run: `npm test -- --run src/features/knowledge`
 
@@ -242,11 +242,11 @@ Working directory: `frontend`
 
 Expected: FAIL because the page does not exist.
 
-- [ ] **Step 3: Implement the page using shared file capabilities**
+- [x] **Step 3: Implement the page using shared file capabilities**
 
 Use the same FileList, preview, text editor, upload conflict, and delete confirmation components as project knowledge. The UI title is “全局知识库”; API paths remain logical and never render `.manyselves`. Display parse/index failure without deleting the uploaded file. Do not add vector-database controls.
 
-- [ ] **Step 4: Regenerate frontend schema and run tests/E2E**
+- [x] **Step 4: Regenerate frontend schema and run tests/E2E**
 
 Run: `npm run generate:api`
 

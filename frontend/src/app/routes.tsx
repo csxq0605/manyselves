@@ -13,6 +13,11 @@ const ProjectDirectoryPage = lazy(async () => {
   return { default: module.ProjectDirectoryPage };
 });
 
+const GlobalKnowledgePage = lazy(async () => {
+  const module = await import("../features/knowledge/GlobalKnowledgePage");
+  return { default: module.GlobalKnowledgePage };
+});
+
 const ConversationPage = lazy(async () => {
   const module = await import("../features/conversations/ConversationPage");
   return { default: module.ConversationPage };
@@ -120,7 +125,11 @@ export function AppRoutes({ gateway, onLogout, platform }: { readonly gateway: A
   const projectApi = createProjectApi(gateway);
   return <Routes><Route element={<ProjectRouteLayout projectApi={projectApi} {...(onLogout ? { onLogout } : {})} />}>
     <Route path="/" element={<ProjectLanding gateway={gateway} projectApi={projectApi} />} />
-    <Route path="/knowledge" element={<Placeholder title="全局知识库" />} />
+    <Route path="/knowledge" element={(
+      <Suspense fallback={<Placeholder title="正在加载全局知识库…" />}>
+        <GlobalKnowledgePage gateway={gateway} {...(platform ? { platform } : {})} />
+      </Suspense>
+    )} />
     <Route path="/projects/:projectId" element={<ProjectHomePage />} />
     <Route path="/projects/:projectId/conversations/:conversationId" element={(
       <Suspense fallback={<Placeholder title="正在加载项目对话…" />}>

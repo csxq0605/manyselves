@@ -6,7 +6,7 @@ export interface SectionCapabilities {
   readonly edit: boolean;
   readonly label: string;
   readonly preview: boolean;
-  readonly root: "Inputs" | "Knowledge" | "Templates" | "Outputs";
+  readonly root: string;
   readonly upload: boolean;
 }
 

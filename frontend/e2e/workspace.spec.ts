@@ -24,14 +24,32 @@ async function mockRuntime(page: Page) {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
+    if (path === "/api/v1/auth/session") {
+      return json(route, { authenticated: true, expiresAt: "2030-01-01T00:00:00Z", username: "admin" });
+    }
     if (path === "/api/v1/bootstrap") return json(route, bootstrap);
     if (path === "/api/v1/events") {
       return route.fulfill({ body: "", contentType: "text/event-stream", status: 200 });
     }
     if (path === "/api/v1/projects" && request.method() === "GET") {
-      return json(route, { projects: [{ active: true, id: "project-1" }] });
+      return json(route, { projects: [{ active: true, description: "", displayName: "Energy", id: "project-1", revision }] });
     }
-    if (path.endsWith("/files/tree")) return json(route, { entries: files });
+    if (path === "/api/v1/global-knowledge/files/tree") {
+      return json(route, { entries: [{
+        kind: "file", modifiedAt: "2026-08-04T00:00:00Z", name: "standard.md",
+        path: "standard.md", revision, size: 18,
+      }] });
+    }
+    if (path === "/api/v1/global-knowledge/files/preview") {
+      return json(route, { content: "# Shared standard", kind: "markdown", path: "standard.md", truncated: false });
+    }
+    if (path.endsWith("/files/tree")) {
+      const root = url.searchParams.get("path") ?? "";
+      return json(route, { entries: files.map((entry) => ({
+        ...entry,
+        path: root ? `${root}/${entry.name}` : entry.name,
+      })) });
+    }
     if (path.endsWith("/files/content") && request.method() === "GET") {
       const filePath = url.searchParams.get("path") ?? "";
       const content = filePath === "script.py" ? "print('ready')" : "# Notes\nhello";
@@ -39,8 +57,8 @@ async function mockRuntime(page: Page) {
     }
     if (path.endsWith("/files/preview")) {
       const filePath = url.searchParams.get("path");
-      if (filePath === "data.csv") {
-        return json(route, { kind: "spreadsheet", path: "data.csv", sheets: [
+      if (filePath?.endsWith("data.csv")) {
+        return json(route, { kind: "spreadsheet", path: filePath, sheets: [
           { columnCount: 2, name: "CSV", rowCount: 2, rows: [["meter", "value"], ["A-1", "42"]], truncated: false },
         ] });
       }
@@ -63,29 +81,36 @@ async function mockRuntime(page: Page) {
   });
 }
 
-test("opens the server workspace and previews a bounded spreadsheet", async ({ page }) => {
+test("opens a project knowledge directory and previews a bounded spreadsheet", async ({ page }) => {
   await mockRuntime(page);
-  await page.goto("/");
+  await page.goto("/projects/project-1/knowledge");
 
-  await expect(page.getByRole("combobox", { name: "项目" })).toHaveValue("project-1");
-  await page.getByRole("treeitem", { name: "data.csv" }).click();
-  await page.getByRole("button", { name: "预览" }).click();
-  await expect(page.getByRole("heading", { name: "data.csv" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "知识库" })).toBeVisible();
+  await page.getByRole("button", { name: "预览 data.csv" }).click();
+  await expect(page.getByRole("heading", { name: "Knowledge/data.csv" })).toBeVisible();
   await expect(page.getByText("A-1")).toBeVisible();
   await expect(page.getByText("2 行 × 2 列")).toBeVisible();
-  await page.getByRole("button", { name: "返回编辑器" }).click();
-  await expect(page.getByRole("tab", { name: "data.csv" })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: "关闭预览" }).click();
+  await expect(page.getByRole("button", { name: "预览 data.csv" })).toBeVisible();
 });
 
-test("runs and interrupts Python only after trusted-server confirmation", async ({ page }) => {
+test("opens global knowledge as a real browser-file workspace", async ({ page }) => {
   await mockRuntime(page);
-  page.on("dialog", (dialog) => dialog.accept());
   await page.goto("/");
 
-  await page.getByRole("treeitem", { name: "script.py" }).click();
-  await expect(page.getByText("script.py", { exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: "在可信服务器运行" }).click();
-  await expect(page.getByText("ready", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "中断运行" }).click();
-  await expect(page.getByRole("status", { name: "" }).filter({ hasText: "interrupted" })).toBeVisible();
+  await page.getByRole("link", { name: "全局知识库" }).click();
+  await expect(page.getByRole("heading", { name: "全局知识库" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "上传文件" })).toBeVisible();
+  await expect(page.getByText("服务器文件")).toHaveCount(0);
+  await page.getByRole("button", { name: "预览 standard.md" }).click();
+  await expect(page.getByRole("heading", { name: "Shared standard" })).toBeVisible();
+});
+
+test("opens a project text file in the shared editor", async ({ page }) => {
+  await mockRuntime(page);
+  await page.goto("/projects/project-1/inputs");
+
+  await page.getByRole("button", { name: "编辑 notes.md" }).click();
+  await expect(page.getByRole("tab", { name: "notes.md" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("Inputs/notes.md", { exact: true })).toBeVisible();
 });
