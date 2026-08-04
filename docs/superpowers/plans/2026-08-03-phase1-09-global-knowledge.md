@@ -201,7 +201,7 @@ Run: `uv run pytest tests/reporting/research tests/reporting/test_reporting_rese
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit run-stable global knowledge provenance**
+- [x] **Step 6: Commit run-stable global knowledge provenance**
 
 ```bash
 git add manyselves/core/reporting manyselves/application/reporting_facade.py manyselves/application/runtime_host.py manyselves/webapi/lifespan.py tests/reporting tests/application/test_runtime_host.py
