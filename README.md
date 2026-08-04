@@ -96,6 +96,9 @@ Electron client against one FastAPI Runtime. For Linux server installation,
 daily operation, backup/restore, and upgrade/rollback, follow
 [the Compose deployment guide](docs/deployment/linux-compose.md). The concise
 release limitations are in [Phase 1 known limitations](docs/phase1/known-limitations.md).
+For a server-side preflight that does not replace the LAN stack, use
+`deploy/smoke.env.example` with the isolated `manyselves-phase1-smoke` project
+documented in the Compose guide.
 
 ```bash
 cp deploy/env.example deploy/.env

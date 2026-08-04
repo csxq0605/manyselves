@@ -17,9 +17,8 @@ test("recovers from a transient bootstrap failure without losing the workspace",
   });
 
   await page.goto("/");
-  await expect(page.getByRole("status")).toContainText("连接已中断");
+  await expect(page.getByRole("alert")).toContainText("Unable to load the application.");
   await page.reload();
-  await expect(page.getByText("Manyselves")).toBeVisible();
-  await expect(page.locator(".connection-banner")).not.toContainText("连接已中断");
+  await expect(page.getByRole("link", { name: "新对话" })).toBeVisible();
   expect(bootstraps).toBeGreaterThanOrEqual(2);
 });

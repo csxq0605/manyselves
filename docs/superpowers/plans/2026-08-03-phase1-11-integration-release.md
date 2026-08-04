@@ -161,7 +161,7 @@ def test_hidden_internal_paths_never_enter_public_file_tree(client) -> None:
 
 Add assertions that two clients cannot cause two Runtime instances or concurrent different-project runs, and that session/API/model/global-knowledge secrets never appear in errors, logs, SSE, OpenAPI examples, or file lists.
 
-- [ ] **Step 2: Run Python lint and full Python tests**
+- [x] **Step 2: Run Python lint and full Python tests**
 
 Run: `uv run ruff check manyselves tests scripts deploy`
 
@@ -169,7 +169,7 @@ Run: `uv run pytest -q`
 
 Expected: Ruff PASS and the complete Python suite PASS. Existing intentional skips must be reviewed; no new unexpected skip or xfail is accepted.
 
-- [ ] **Step 3: Run the complete frontend verification pipeline**
+- [x] **Step 3: Run the complete frontend verification pipeline**
 
 Run: `npm run verify`
 
@@ -263,7 +263,7 @@ git commit -m "release: validate phase1 light web deployment"
 **Interfaces:**
 - Produces: one evidence document containing exact commit, commands, results, image IDs, bundle name, and known Phase 1 limits.
 
-- [ ] **Step 1: Record fresh verification evidence**
+- [x] **Step 1: Record fresh verification evidence**
 
 The evidence file must contain the exact output summaries for:
 
@@ -278,11 +278,11 @@ scripts/verify_deployment.py through http://127.0.0.1:9090
 
 Record counts and immutable image IDs; do not copy results from an earlier cycle.
 
-- [ ] **Step 2: Update operator and user documentation**
+- [x] **Step 2: Update operator and user documentation**
 
 Document: URL/login homepage, default credentials, local-browser upload meaning, six project entries, Templates/Outputs distinction, global/project knowledge priority, simple model settings/YAML ownership, backup scope, HTTP LAN warning, and the one-Runtime/no-concurrent-project limitation.
 
-- [ ] **Step 3: Run final status and diff checks**
+- [x] **Step 3: Run final status and diff checks**
 
 Run: `git diff --check`
 
@@ -290,7 +290,7 @@ Run: `git status --short`
 
 Expected: no whitespace errors; only intended tracked changes and the user's pre-existing untracked archives remain.
 
-- [ ] **Step 4: Commit final documentation and evidence**
+- [x] **Step 4: Commit final documentation and evidence**
 
 ```bash
 git add README.md README_zh.md docs/deployment/linux-compose.md docs/release/2026-08-03-phase1-light-web-verification.md

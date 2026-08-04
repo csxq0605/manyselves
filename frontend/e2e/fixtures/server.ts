@@ -44,6 +44,17 @@ export async function installBaseServer(
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (handler && await handler(route, path)) return;
+    if (path === "/api/v1/auth/session") {
+      return json(route, { authenticated: true, expiresAt: "2030-01-01T00:00:00Z", username: "admin" });
+    }
+    if (path === "/api/v1/control/lease") {
+      return json(route, {
+        actorId: "admin",
+        clientId: "browser",
+        expiresAt: "2030-01-01T00:01:00Z",
+        leaseToken: "lease-1",
+      }, 201);
+    }
     if (path === "/api/v1/bootstrap") return json(route, bootstrap);
     if (path === "/api/v1/events") {
       return route.fulfill({ body: "", contentType: "text/event-stream", status: 200 });

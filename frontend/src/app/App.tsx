@@ -174,9 +174,15 @@ export function App({
         setConnectionState(state);
       },
     });
+    let stopped = false;
     void stream.start();
-    setStartedStreamId(bootstrapStreamId);
-    return () => stream.stop();
+    queueMicrotask(() => {
+      if (!stopped) setStartedStreamId(bootstrapStreamId);
+    });
+    return () => {
+      stopped = true;
+      stream.stop();
+    };
   }, [
     agentStore,
     bootstrapStreamId,
