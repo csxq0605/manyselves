@@ -7,6 +7,7 @@ export type PresetListResponse = components["schemas"]["PresetListResponse"];
 export type PresetSyncResponse = components["schemas"]["PresetSyncResponse"];
 export type ProviderSettingsCreate = components["schemas"]["ProviderSettingsCreate"];
 export type ProviderSettingsUpdate = components["schemas"]["ProviderSettingsUpdate"];
+export type ProviderConnectionTestResponse = components["schemas"]["ProviderConnectionTestResponse"];
 export type SettingsDefaultsUpdate = components["schemas"]["SettingsDefaultsUpdate"];
 export type SettingsResponse = components["schemas"]["SettingsResponse"];
 export type SettingsValidationResponse = components["schemas"]["SettingsValidationResponse"];
@@ -19,6 +20,7 @@ export interface SettingsApi {
   listPresets(): Promise<PresetListResponse>;
   removeProvider(providerId: string): Promise<SettingsResponse>;
   syncPresets(): Promise<PresetSyncResponse>;
+  testProviderConnection(providerId: string): Promise<ProviderConnectionTestResponse>;
   updateAgentDebug(agentId: string, enabled: boolean): Promise<AgentDebugResponse>;
   updateDefaults(input: SettingsDefaultsUpdate): Promise<SettingsResponse>;
   updateProvider(providerId: string, input: ProviderSettingsUpdate): Promise<SettingsResponse>;
@@ -46,6 +48,10 @@ export function createSettingsApi(gateway: ApiGateway): SettingsApi {
       method: "POST",
       requireLease: true,
     }),
+    testProviderConnection: (providerId) => gateway.requestJson(
+      `/api/v1/settings/providers/${encodeURIComponent(providerId)}/test`,
+      { method: "POST" },
+    ),
     updateAgentDebug: (agentId, enabled) => gateway.requestJson(
       `/api/v1/agents/${encodeURIComponent(agentId)}/debug`,
       { json: { enabled }, method: "PATCH", requireLease: true },

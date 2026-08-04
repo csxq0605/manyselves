@@ -10,10 +10,10 @@ export function PresetSettings({ onSync, presets }: PresetSettingsProps) {
     <section className="settings-card settings-card--wide" aria-labelledby="preset-settings-title">
       <div className="settings-card__heading">
         <div>
-          <p className="settings-kicker">PROVIDER CATALOG</p>
-          <h2 id="preset-settings-title">Provider 预设</h2>
+          <h3 id="preset-settings-title">提供商预设</h3>
+          <p>查看或同步内置的模型服务配置。</p>
         </div>
-        <button onClick={() => void onSync()} type="button">同步预设</button>
+        <button className="settings-button settings-button--quiet" onClick={() => void onSync()} type="button">同步预设</button>
       </div>
       {presets.length === 0 ? <p className="settings-note">当前没有可用预设。</p> : (
         <ul className="preset-list">

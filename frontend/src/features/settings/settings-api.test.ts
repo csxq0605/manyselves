@@ -40,6 +40,7 @@ describe("settings api", () => {
     await api.validateSettings();
     await api.listAgents();
     await api.getAgentDebug("main");
+    await api.testProviderConnection("provider/one");
 
     expect(requestJson.mock.calls.map(([path, init]) => [path, init?.requireLease])).toEqual([
       ["/api/v1/settings", undefined],
@@ -47,6 +48,7 @@ describe("settings api", () => {
       ["/api/v1/settings/validate", undefined],
       ["/api/v1/agents", undefined],
       ["/api/v1/agents/main/debug", undefined],
+      ["/api/v1/settings/providers/provider%2Fone/test", undefined],
     ]);
   });
 });

@@ -967,6 +967,23 @@ export interface paths {
         patch: operations["patch_api_v1_settings_providers_provider_id"];
         trace?: never;
     };
+    "/api/v1/settings/providers/{provider_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test Provider Connection */
+        post: operations["post_api_v1_settings_providers_provider_id_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings/validate": {
         parameters: {
             query?: never;
@@ -1649,6 +1666,17 @@ export interface components {
             /** Revision */
             revision: string;
         };
+        /** ProviderConnectionTestResponse */
+        ProviderConnectionTestResponse: {
+            /** Message */
+            message: string;
+            /** Model */
+            model: string | null;
+            /** Ok */
+            ok: boolean;
+            /** Providerid */
+            providerId: string;
+        };
         /** ProviderPresetResponse */
         ProviderPresetResponse: {
             /** Baseurl */
@@ -1692,6 +1720,11 @@ export interface components {
             apiBase: string | null;
             /** Configured */
             configured: boolean;
+            /**
+             * Credentialsource
+             * @enum {string}
+             */
+            credentialSource: "none" | "yaml" | "environment";
             /** Defaultmodel */
             defaultModel: string | null;
             /** Enabled */
@@ -4941,6 +4974,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    post_api_v1_settings_providers_provider_id_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderConnectionTestResponse"];
                 };
             };
             /** @description Request validation failed */

@@ -5,6 +5,8 @@ import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import type { ApiGateway, BootstrapSnapshot } from "../api/gateway";
 import { ProjectHomePage } from "../features/projects/ProjectHomePage";
 import { createProjectApi, type Project, type ProjectApi } from "../features/projects/project-api";
+import { createSettingsApi } from "../features/settings/settings-api";
+import type { SettingsStorage } from "../features/settings/settings-storage";
 import { AppLayout } from "../features/shell/AppLayout";
 import type { PlatformBridge } from "../platform/types";
 
@@ -31,6 +33,11 @@ const RuntimeRoutePage = lazy(async () => {
 const LogsRoutePage = lazy(async () => {
   const module = await import("../features/logs/LogsPage");
   return { default: module.LogsRoutePage };
+});
+
+const SettingsPage = lazy(async () => {
+  const module = await import("../features/settings/SettingsPage");
+  return { default: module.SettingsPage };
 });
 
 export const lastProjectRouteStorageKey = "manyselves.lastProjectRoute.v1";
@@ -121,8 +128,9 @@ function NotFound() {
   return <section className="route-placeholder"><h1>页面未找到</h1><p>该地址不是可用的工作台路由。</p><Link to="/">返回项目</Link></section>;
 }
 
-export function AppRoutes({ gateway, onLogout, platform }: { readonly gateway: ApiGateway; readonly onLogout?: () => void; readonly platform?: PlatformBridge }) {
+export function AppRoutes({ gateway, onLogout, platform, settingsStorage }: { readonly gateway: ApiGateway; readonly onLogout?: () => void; readonly platform?: PlatformBridge; readonly settingsStorage?: SettingsStorage }) {
   const projectApi = createProjectApi(gateway);
+  const settingsApi = createSettingsApi(gateway);
   return <Routes><Route element={<ProjectRouteLayout projectApi={projectApi} {...(onLogout ? { onLogout } : {})} />}>
     <Route path="/" element={<ProjectLanding gateway={gateway} projectApi={projectApi} />} />
     <Route path="/knowledge" element={(
@@ -151,7 +159,11 @@ export function AppRoutes({ gateway, onLogout, platform }: { readonly gateway: A
         <ProjectDirectoryPage gateway={gateway} {...(platform ? { platform } : {})} />
       </Suspense>
     )} />
-    <Route path="/settings/models" element={<Placeholder title="模型设置" />} />
+    <Route path="/settings/models" element={settingsStorage ? (
+      <Suspense fallback={<Placeholder title="正在加载模型设置…" />}>
+        <SettingsPage api={settingsApi} storage={settingsStorage} />
+      </Suspense>
+    ) : <Placeholder title="模型设置" />} />
     <Route path="*" element={<NotFound />} />
   </Route></Routes>;
 }

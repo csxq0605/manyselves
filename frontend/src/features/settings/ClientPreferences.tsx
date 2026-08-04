@@ -14,8 +14,8 @@ export function ClientPreferences({ initialValue, onSave }: ClientPreferencesPro
     <section className="settings-card" aria-labelledby="client-preferences-title">
       <div className="settings-card__heading">
         <div>
-          <p className="settings-kicker">LOCAL DISPLAY</p>
-          <h2 id="client-preferences-title">客户端偏好</h2>
+          <h3 id="client-preferences-title">客户端偏好</h3>
+          <p>只影响当前浏览器的显示方式。</p>
         </div>
         <span className="settings-scope">仅本机</span>
       </div>
@@ -71,7 +71,7 @@ export function ClientPreferences({ initialValue, onSave }: ClientPreferencesPro
         />
         允许任务完成通知
       </label>
-      <button onClick={() => onSave(value)} type="button">保存客户端偏好</button>
+      <button className="settings-button settings-button--secondary" onClick={() => onSave(value)} type="button">保存客户端偏好</button>
     </section>
   );
 }

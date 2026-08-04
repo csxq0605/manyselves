@@ -75,6 +75,7 @@ export function App({
   onLogout,
   platform,
   reportingStore,
+  settingsStorage,
 }: AppProps) {
   const queryClient = useQueryClient();
   const setConnectionState = useConnectionStore((store) => store.setState);
@@ -186,5 +187,5 @@ export function App({
     setConnectionState,
   ]);
 
-  return <AppRoutes gateway={gateway} {...(onLogout ? { onLogout } : {})} {...(platform ? { platform } : {})} />;
+  return <AppRoutes gateway={gateway} {...(onLogout ? { onLogout } : {})} {...(platform ? { platform } : {})} {...(settingsStorage ? { settingsStorage } : {})} />;
 }

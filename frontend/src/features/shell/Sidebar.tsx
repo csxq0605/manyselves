@@ -183,7 +183,7 @@ export function Sidebar({ onCreateProject, onDeleteProject, onLogout, onUpdatePr
         <span className="sidebar__identity"><strong>admin</strong><small>系统管理员</small></span>
         <div className="sidebar__account-menu">
           <button aria-expanded={accountMenuOpen} aria-label="账户与设置" onClick={() => setAccountMenuOpen((current) => !current)} type="button"><Icon name="settings" /></button>
-          {accountMenuOpen ? <div><NavLink to="/settings/models">模型设置</NavLink>{onLogout ? <button onClick={onLogout} type="button">退出登录</button> : null}</div> : null}
+          {accountMenuOpen ? <div><NavLink onClick={() => setAccountMenuOpen(false)} to="/settings/models">模型设置</NavLink>{onLogout ? <button onClick={onLogout} type="button">退出登录</button> : null}</div> : null}
         </div>
       </div>
     </aside>

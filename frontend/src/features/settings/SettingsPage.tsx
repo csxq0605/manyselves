@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 
 import { ClientPreferences } from "./ClientPreferences";
-import { ModelSettings } from "./ModelSettings";
+import { ModelSettings, type ModelSettingsInput } from "./ModelSettings";
 import { PresetSettings } from "./PresetSettings";
-import { ProviderSettings, type RestartRequest } from "./ProviderSettings";
+import { ProviderSettings } from "./ProviderSettings";
 import type {
   AgentDebugResponse,
   AgentListResponse,
   PresetListResponse,
+  ProviderConnectionTestResponse,
   ProviderSettingsCreate,
   ProviderSettingsUpdate,
   SettingsApi,
@@ -38,7 +39,6 @@ export function SettingsPage({ api, storage }: SettingsPageProps) {
   const [loaded, setLoaded] = useState<LoadedSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [pendingRestart, setPendingRestart] = useState<RestartRequest | null>(null);
   const [busy, setBusy] = useState(false);
   const [preferences] = useState(() => storage.loadPreferences());
 
@@ -72,6 +72,7 @@ export function SettingsPage({ api, storage }: SettingsPageProps) {
   async function run(action: () => Promise<void>): Promise<void> {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       await action();
     } catch (actionError) {
@@ -86,21 +87,66 @@ export function SettingsPage({ api, storage }: SettingsPageProps) {
   }
 
   async function createProvider(input: ProviderSettingsCreate): Promise<void> {
-    const settings = await api.createProvider(input);
-    replaceSettings(settings);
-    setNotice("Provider 已创建");
+    await run(async () => {
+      replaceSettings(await api.createProvider(input));
+      setNotice("提供商已创建");
+    });
   }
 
   async function updateProvider(providerId: string, input: ProviderSettingsUpdate): Promise<void> {
-    const settings = await api.updateProvider(providerId, input);
-    replaceSettings(settings);
-    setNotice("Provider 设置已应用");
+    await run(async () => {
+      replaceSettings(await api.updateProvider(providerId, input));
+      setNotice("提供商设置已保存");
+    });
   }
 
   async function removeProvider(providerId: string): Promise<void> {
-    const settings = await api.removeProvider(providerId);
-    replaceSettings(settings);
-    setNotice("Provider 已删除");
+    await run(async () => {
+      replaceSettings(await api.removeProvider(providerId));
+      setNotice("提供商已删除");
+    });
+  }
+
+  async function saveModel(input: ModelSettingsInput): Promise<void> {
+    if (!loaded) return;
+    await run(async () => {
+      const currentProvider = loaded.settings.providers.find((item) => item.id === input.providerId);
+      if (!currentProvider) throw new Error("所选模型提供商已不存在");
+      let nextSettings = loaded.settings;
+      const providerUpdate: ProviderSettingsUpdate = {};
+      if ((currentProvider.apiBase ?? null) !== input.apiBase) providerUpdate.apiBase = input.apiBase;
+      if ((currentProvider.defaultModel ?? "") !== input.model) providerUpdate.defaultModel = input.model;
+      if (input.apiKey) providerUpdate.apiKey = input.apiKey;
+      if (Object.keys(providerUpdate).length > 0) {
+        nextSettings = await api.updateProvider(input.providerId, providerUpdate);
+      }
+      if (
+        nextSettings.defaults.model !== input.model
+        || nextSettings.defaults.provider !== input.provider
+        || !nextSettings.providers.find((item) => item.id === input.providerId)?.active
+      ) {
+        nextSettings = await api.updateDefaults({
+          activeProviderId: input.providerId,
+          model: input.model,
+          provider: input.provider,
+        });
+      }
+      replaceSettings(nextSettings);
+      setNotice("模型设置已保存");
+    });
+  }
+
+  async function testConnection(providerId: string): Promise<ProviderConnectionTestResponse> {
+    setBusy(true);
+    setError(null);
+    try {
+      return await api.testProviderConnection(providerId);
+    } catch (testError) {
+      setError(errorMessage(testError));
+      return { message: "连接失败", model: null, ok: false, providerId };
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (error && !loaded) {
@@ -108,149 +154,112 @@ export function SettingsPage({ api, storage }: SettingsPageProps) {
       <section className="settings-workspace settings-workspace--error">
         <h1>设置无法加载</h1>
         <p role="alert">{error}</p>
-        <p>请检查服务状态后重试，或重新登录。</p>
+        <p>请检查服务器状态后重试，或重新登录。</p>
       </section>
     );
   }
-  if (!loaded) {
-    return <p className="settings-loading" role="status">正在读取安全设置…</p>;
-  }
+  if (!loaded) return <p className="settings-loading" role="status">正在读取模型设置…</p>;
 
   return (
-    <div className="settings-workspace" aria-busy={busy}>
+    <main className="settings-workspace" aria-busy={busy}>
       <header className="settings-hero">
         <div>
-          <p className="settings-kicker">RUNTIME CONTROL PLANE</p>
-          <h1>连接、模型与运行策略</h1>
-          <p>服务端配置会影响整个 Agent Runtime；显示偏好只影响当前浏览器。</p>
-        </div>
-        <div className={`settings-health ${loaded.validation.valid ? "settings-health--valid" : ""}`}>
-          <span aria-hidden="true" />
-          <strong>{loaded.validation.valid ? "设置有效" : "需要处理"}</strong>
-          <small>{loaded.validation.availableProviders.length} 个可用 Provider</small>
+          <p className="settings-eyebrow">设置</p>
+          <h1>模型设置</h1>
+          <p>管理服务器上 Agent 使用的模型连接。API Key 始终以安全方式处理。</p>
         </div>
       </header>
 
       {error ? <p className="settings-feedback settings-feedback--error" role="alert">{error}</p> : null}
-      {notice ? <p className="settings-feedback" role="status">{notice}</p> : null}
+      {notice ? <p className="settings-feedback settings-feedback--success" role="status">{notice}</p> : null}
 
-      <div className="settings-grid">
-        <ProviderSettings
-          key={loaded.settings.providers.map((provider) => [
-            provider.id,
-            provider.apiBase,
-            provider.defaultModel,
-            provider.enabled,
-            provider.configured,
-          ].join(":" )).join("|")}
-          onCreate={createProvider}
-          onRemove={removeProvider}
-          onUpdate={updateProvider}
-          providers={loaded.settings.providers}
-          requestRestart={setPendingRestart}
-        />
-        <ModelSettings
-          key={`${loaded.settings.defaults.provider}:${loaded.settings.defaults.model}:${loaded.settings.providers.find((provider) => provider.active)?.id ?? ""}`}
-          settings={loaded.settings}
-          onSaveModel={async (model) => run(async () => {
-            const settings = await api.updateDefaults({ model });
-            replaceSettings(settings);
-            setNotice("默认模型已保存，无需重启 Agent");
-          })}
-          onSelectProvider={(providerId, provider) => setPendingRestart({
-            description: "切换默认 Provider",
-            run: async () => {
-              const settings = await api.updateDefaults({ activeProviderId: providerId, provider });
-              replaceSettings(settings);
-              setNotice("默认 Provider 已切换");
-            },
-          })}
-        />
-        <PresetSettings
-          presets={loaded.presets}
-          onSync={() => run(async () => {
-            const result = await api.syncPresets();
-            const presets = await api.listPresets();
-            setLoaded((current) => current ? { ...current, presets: presets.presets } : current);
-            setNotice(`已同步 ${result.downloaded} 个预设`);
-          })}
-        />
-        <section className="settings-card" aria-labelledby="validation-title">
-          <div className="settings-card__heading">
-            <div>
-              <p className="settings-kicker">SERVER CHECK</p>
-              <h2 id="validation-title">配置校验</h2>
-            </div>
-            <button onClick={() => void run(async () => {
-              const validation = await api.validateSettings();
-              setLoaded((current) => current ? { ...current, validation } : current);
-              setNotice(validation.valid ? "设置有效" : "设置仍需处理");
-            })} type="button">重新校验</button>
-          </div>
-          {loaded.validation.errors.length === 0 ? (
-            <p className="settings-validation-ok">设置有效</p>
-          ) : (
-            <ul>{loaded.validation.errors.map((item) => <li key={item}>{item}</li>)}</ul>
-          )}
-        </section>
-        <section className="settings-card" aria-labelledby="debug-settings-title">
-          <div className="settings-card__heading">
-            <div>
-              <p className="settings-kicker">AGENT TELEMETRY</p>
-              <h2 id="debug-settings-title">Agent 调试模式</h2>
-            </div>
-            <span className="settings-scope">服务端</span>
-          </div>
-          <div className="debug-toggle-list">
-            {loaded.agents.map((agent) => (
-              <label className="settings-check" key={agent.id}>
-                <input
-                  aria-label={`${agent.id} 调试模式`}
-                  checked={loaded.debug[agent.id]?.enabled ?? false}
-                  type="checkbox"
-                  onChange={(event) => {
-                    const enabled = event.target.checked;
-                    void run(async () => {
-                      const debug = await api.updateAgentDebug(agent.id, enabled);
-                      setLoaded((current) => current ? {
-                        ...current,
-                        debug: { ...current.debug, [agent.id]: debug },
-                      } : current);
-                      setNotice(`${agent.id} 调试模式已${enabled ? "开启" : "关闭"}`);
-                    });
-                  }}
-                />
-                <span><strong>{agent.id}</strong><small>{agent.status}</small></span>
-              </label>
-            ))}
-          </div>
-        </section>
-        <ClientPreferences
-          initialValue={preferences}
-          onSave={(value) => {
-            storage.savePreferences(value);
-            setNotice("客户端偏好已保存");
-          }}
-        />
-      </div>
+      <ModelSettings
+        key={loaded.settings.providers.map((provider) => [
+          provider.id,
+          provider.apiBase,
+          provider.defaultModel,
+          provider.configured,
+          provider.credentialSource,
+          provider.active,
+        ].join(":")).join("|") + loaded.settings.defaults.model}
+        busy={busy}
+        onSave={saveModel}
+        onTest={testConnection}
+        settings={loaded.settings}
+      />
 
-      {pendingRestart ? (
-        <div className="restart-backdrop">
-          <div aria-labelledby="restart-dialog-title" aria-modal="true" className="restart-dialog" role="dialog">
-            <p className="settings-kicker">RUNTIME RESTART</p>
-            <h2 id="restart-dialog-title">确认重启 Agent</h2>
-            <p>{pendingRestart.description}将重新启动 Agent，当前正在执行的任务可能被中断。</p>
-            <div className="settings-actions">
-              <button onClick={() => setPendingRestart(null)} type="button">取消</button>
-              <button onClick={() => {
-                const action = pendingRestart.run;
-                setPendingRestart(null);
-                void run(action);
-              }} type="button">确认并应用</button>
+      <details className="settings-advanced">
+        <summary>
+          <span>高级设置</span>
+          <small>提供商管理、预设、校验、调试与本机显示</small>
+        </summary>
+        <div className="settings-advanced__content">
+          <ProviderSettings
+            busy={busy}
+            onCreate={createProvider}
+            onRemove={removeProvider}
+            onUpdate={updateProvider}
+            providers={loaded.settings.providers}
+          />
+          <PresetSettings
+            presets={loaded.presets}
+            onSync={() => run(async () => {
+              const result = await api.syncPresets();
+              const presets = await api.listPresets();
+              setLoaded((current) => current ? { ...current, presets: presets.presets } : current);
+              setNotice(`已同步 ${result.downloaded} 个预设`);
+            })}
+          />
+          <section className="settings-card" aria-labelledby="validation-title">
+            <div className="settings-card__heading">
+              <div><h3 id="validation-title">配置校验</h3><p>检查当前服务端配置是否可供 Runtime 使用。</p></div>
+              <button className="settings-button settings-button--quiet" onClick={() => void run(async () => {
+                const validation = await api.validateSettings();
+                setLoaded((current) => current ? { ...current, validation } : current);
+                setNotice(validation.valid ? "配置有效" : "配置仍需处理");
+              })} type="button">重新校验</button>
             </div>
-          </div>
+            {loaded.validation.errors.length === 0
+              ? <p className="settings-validation-ok">配置有效</p>
+              : <ul>{loaded.validation.errors.map((item) => <li key={item}>{item}</li>)}</ul>}
+          </section>
+          <section className="settings-card" aria-labelledby="debug-settings-title">
+            <div className="settings-card__heading">
+              <div><h3 id="debug-settings-title">Agent 调试模式</h3><p>仅在排查运行问题时开启。</p></div>
+            </div>
+            <div className="debug-toggle-list">
+              {loaded.agents.map((agent) => (
+                <label className="settings-check" key={agent.id}>
+                  <input
+                    aria-label={`${agent.id} 调试模式`}
+                    checked={loaded.debug[agent.id]?.enabled ?? false}
+                    type="checkbox"
+                    onChange={(event) => {
+                      const enabled = event.target.checked;
+                      void run(async () => {
+                        const debug = await api.updateAgentDebug(agent.id, enabled);
+                        setLoaded((current) => current ? {
+                          ...current,
+                          debug: { ...current.debug, [agent.id]: debug },
+                        } : current);
+                        setNotice(`${agent.id} 调试模式已${enabled ? "开启" : "关闭"}`);
+                      });
+                    }}
+                  />
+                  <span><strong>{agent.id}</strong><small>{agent.status}</small></span>
+                </label>
+              ))}
+            </div>
+          </section>
+          <ClientPreferences
+            initialValue={preferences}
+            onSave={(value) => {
+              storage.savePreferences(value);
+              setNotice("客户端偏好已保存");
+            }}
+          />
         </div>
-      ) : null}
-    </div>
+      </details>
+    </main>
   );
 }
