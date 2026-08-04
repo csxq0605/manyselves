@@ -6,6 +6,7 @@ from typing import Any, cast
 
 from fastapi import Request
 
+from ..application.global_knowledge_service import GlobalKnowledgeService
 from ..application.runtime_facade import RuntimeFacade
 from ..application.runtime_host import RuntimeHost
 from .settings import WebSettings
@@ -26,6 +27,14 @@ def get_runtime_facade(request: Request) -> RuntimeFacade | None:
 def get_web_settings(request: Request) -> WebSettings | None:
     """Return settings once startup has validated them."""
     return cast(WebSettings | None, getattr(request.app.state, "web_settings", None))
+
+
+def get_global_knowledge_service(request: Request) -> GlobalKnowledgeService | None:
+    """Return the fixed-root global library only after lifespan initialization."""
+    return cast(
+        GlobalKnowledgeService | None,
+        getattr(request.app.state, "global_knowledge_service", None),
+    )
 
 
 async def resolve_runtime_host(app: Any) -> RuntimeHost:

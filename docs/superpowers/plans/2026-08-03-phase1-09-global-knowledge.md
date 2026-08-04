@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.12, FastAPI, filesystem storage, existing ReferenceLibrary/KnowledgeContextBuilder/SourceLedger, React 19, TanStack Query.
 
+**Current checkpoint (2026-08-04):** Task 1 is implemented and awaiting its isolated commit. The fixed-root service stores only beneath `<data_root>/.manyselves/global-knowledge/`; authenticated routes provide logical list/read/save/upload/replace/preview/download/delete operations, and mutations require the existing control lease. Gates: Task 1 service/API/OpenAPI 21 passed, existing project-file regression 25 passed, targeted Ruff passed.
+
 ## Global Constraints
 
 - Store global knowledge at `<data_root>/.manyselves/global-knowledge/`.
@@ -37,7 +39,7 @@
 - Produces: list/read/preview/upload/write/replace/delete/download operations accepting only relative paths.
 - Produces: `/api/v1/global-knowledge/files` endpoints mirroring safe project-file DTOs without a project ID.
 
-- [ ] **Step 1: Write failing storage isolation and route tests**
+- [x] **Step 1: Write failing storage isolation and route tests**
 
 ```python
 def test_service_root_is_hidden_global_directory(tmp_path: Path) -> None:
@@ -60,17 +62,17 @@ async def test_global_upload_never_creates_a_project(authed_client, tmp_path: Pa
     assert not (tmp_path / ".manyselves" / "Inputs").exists()
 ```
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run: `uv run pytest tests/application/test_global_knowledge_service.py tests/webapi/test_global_knowledge.py -q`
 
 Expected: FAIL because the service and router do not exist.
 
-- [ ] **Step 3: Implement service and API by composition**
+- [x] **Step 3: Implement service and API by composition**
 
 Construct one `WorkspaceFiles` instance whose root is the fixed global directory. Reuse existing path, symlink, upload, revision, preview, and size protections. Do not accept an arbitrary root or absolute path from the request. Apply the session dependency at router level and the existing control lease to mutations. Return only relative logical paths and stable file error envelopes.
 
-- [ ] **Step 4: Run service, API, and OpenAPI tests**
+- [x] **Step 4: Run service, API, and OpenAPI tests**
 
 Run: `uv run pytest tests/application/test_global_knowledge_service.py tests/webapi/test_global_knowledge.py tests/webapi/test_openapi_contract.py -q`
 

@@ -936,6 +936,169 @@
         "title": "FileTreeResponse",
         "type": "object"
       },
+      "GlobalKnowledgeFileContent": {
+        "description": "Revision-aware UTF-8 content from the global library.",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "modifiedAt": {
+            "format": "date-time",
+            "title": "Modifiedat",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "revision",
+          "size",
+          "modifiedAt",
+          "content"
+        ],
+        "title": "GlobalKnowledgeFileContent",
+        "type": "object"
+      },
+      "GlobalKnowledgeFileEntryResponse": {
+        "description": "One logical global-library entry.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "file",
+              "directory"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "modifiedAt": {
+            "format": "date-time",
+            "title": "Modifiedat",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          }
+        },
+        "required": [
+          "path",
+          "name",
+          "kind",
+          "size",
+          "modifiedAt",
+          "revision"
+        ],
+        "title": "GlobalKnowledgeFileEntryResponse",
+        "type": "object"
+      },
+      "GlobalKnowledgeFileTreeResponse": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/GlobalKnowledgeFileEntryResponse"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "title": "GlobalKnowledgeFileTreeResponse",
+        "type": "object"
+      },
+      "GlobalKnowledgePreviewResponse": {
+        "description": "Typed preview for a logical global-library file.",
+        "discriminator": {
+          "mapping": {
+            "docx": "#/components/schemas/DocxPreview",
+            "image": "#/components/schemas/ImagePreview",
+            "markdown": "#/components/schemas/MarkdownPreview",
+            "pdf": "#/components/schemas/PdfPreview",
+            "spreadsheet": "#/components/schemas/SpreadsheetPreview",
+            "text": "#/components/schemas/TextPreview",
+            "unsupported": "#/components/schemas/UnsupportedFilePreview"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/PdfPreview"
+          },
+          {
+            "$ref": "#/components/schemas/ImagePreview"
+          },
+          {
+            "$ref": "#/components/schemas/SpreadsheetPreview"
+          },
+          {
+            "$ref": "#/components/schemas/DocxPreview"
+          },
+          {
+            "$ref": "#/components/schemas/MarkdownPreview"
+          },
+          {
+            "$ref": "#/components/schemas/TextPreview"
+          },
+          {
+            "$ref": "#/components/schemas/UnsupportedFilePreview"
+          }
+        ],
+        "title": "GlobalKnowledgePreviewResponse"
+      },
+      "GlobalKnowledgeSaveRequest": {
+        "additionalProperties": false,
+        "description": "Revision-aware global-library text update.",
+        "properties": {
+          "baseRevision": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Baserevision",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "baseRevision",
+          "content"
+        ],
+        "title": "GlobalKnowledgeSaveRequest",
+        "type": "object"
+      },
       "ImagePreview": {
         "additionalProperties": false,
         "properties": {
@@ -4504,6 +4667,428 @@
           }
         ],
         "summary": "List Event Logs"
+      }
+    },
+    "/api/v1/global-knowledge/files/content": {
+      "get": {
+        "operationId": "get_api_v1_global_knowledge_files_content",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalKnowledgeFileContent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Read Global Knowledge File"
+      },
+      "put": {
+        "operationId": "put_api_v1_global_knowledge_files_content",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GlobalKnowledgeSaveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalKnowledgeFileContent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "ControlLeaseToken": [],
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Save Global Knowledge File"
+      }
+    },
+    "/api/v1/global-knowledge/files/download": {
+      "get": {
+        "operationId": "get_api_v1_global_knowledge_files_download",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Download Global Knowledge File"
+      }
+    },
+    "/api/v1/global-knowledge/files/entries": {
+      "delete": {
+        "operationId": "delete_api_v1_global_knowledge_files_entries",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "ControlLeaseToken": [],
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Delete Global Knowledge File"
+      }
+    },
+    "/api/v1/global-knowledge/files/preview": {
+      "get": {
+        "operationId": "get_api_v1_global_knowledge_files_preview",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalKnowledgePreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Preview Global Knowledge File"
+      }
+    },
+    "/api/v1/global-knowledge/files/tree": {
+      "get": {
+        "operationId": "get_api_v1_global_knowledge_files_tree",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalKnowledgeFileTreeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Global Knowledge Tree"
+      }
+    },
+    "/api/v1/global-knowledge/files/upload": {
+      "post": {
+        "operationId": "post_api_v1_global_knowledge_files_upload",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "conflict",
+            "required": false,
+            "schema": {
+              "default": "reject",
+              "enum": [
+                "reject",
+                "replace",
+                "keep-both"
+              ],
+              "title": "Conflict",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "baseRevision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Baserevision"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalKnowledgeFileEntryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "ControlLeaseToken": [],
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Upload Global Knowledge File"
       }
     },
     "/api/v1/health/live": {

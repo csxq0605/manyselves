@@ -6,6 +6,7 @@ from inspect import signature
 from pathlib import Path
 
 from fastapi.routing import APIRoute
+
 from manyselves.webapi.main import create_app, generate_operation_id
 from manyselves.webapi.security import require_authenticated_session
 from manyselves.webapi.settings import WebSettings
@@ -28,6 +29,7 @@ def test_openapi_has_required_resources() -> None:
         "/api/v1/bootstrap",
         "/api/v1/events",
         "/api/v1/projects",
+        "/api/v1/global-knowledge/files/tree",
         "/api/v1/conversations",
         "/api/v1/agents/{agent_id}/messages",
         "/api/v1/operations/python",
@@ -185,6 +187,10 @@ def test_openapi_locks_errors_security_sse_and_preview_semantics() -> None:
         "/api/v1/projects/{project_id}/files/preview"
     ]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
     assert preview["$ref"] == "#/components/schemas/PreviewResponse"
+    global_preview = schema["paths"][
+        "/api/v1/global-knowledge/files/preview"
+    ]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    assert global_preview["$ref"] == "#/components/schemas/GlobalKnowledgePreviewResponse"
     preview_schema = components["schemas"]["PreviewResponse"]
     assert preview_schema["discriminator"]["propertyName"] == "kind"
     assert len(preview_schema["oneOf"]) == 7

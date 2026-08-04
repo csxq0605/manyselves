@@ -23,12 +23,14 @@ from .errors import (
 )
 from .lifespan import application_lifespan
 from .routes.agents import router as agents_router
-from .routes.auth import SESSION_COOKIE_NAME, router as auth_router
+from .routes.auth import SESSION_COOKIE_NAME
+from .routes.auth import router as auth_router
 from .routes.bootstrap import router as bootstrap_router
 from .routes.control import router as control_router
 from .routes.conversations import router as conversations_router
 from .routes.events import router as events_router
 from .routes.files import router as files_router
+from .routes.global_knowledge import router as global_knowledge_router
 from .routes.health import router as health_router
 from .routes.maintenance import router as maintenance_router
 from .routes.operations import router as operations_router
@@ -105,6 +107,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.state.reporting_facade = None
     app.state.python_run_service = None
     app.state.maintenance_service = None
+    app.state.global_knowledge_service = None
     app.state.session_signer = None
     app.state.lifecycle_lock = asyncio.Lock()
     app.state.lifecycle_active = False
@@ -140,6 +143,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.include_router(control_router, prefix=API_PREFIX)
     app.include_router(projects_router, prefix=API_PREFIX)
     app.include_router(files_router, prefix=API_PREFIX)
+    app.include_router(global_knowledge_router, prefix=API_PREFIX)
     app.include_router(conversations_router, prefix=API_PREFIX)
     app.include_router(events_router, prefix=API_PREFIX)
     app.include_router(agents_router, prefix=API_PREFIX)

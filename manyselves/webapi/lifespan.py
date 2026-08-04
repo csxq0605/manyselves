@@ -13,6 +13,7 @@ from loguru import logger
 from ..application.async_ownership import await_owned
 from ..application.control import ControlLeaseService
 from ..application.conversation_service import ConversationService
+from ..application.global_knowledge_service import GlobalKnowledgeService
 from ..application.maintenance_service import MaintenanceService
 from ..application.project_registry import ProjectRegistry
 from ..application.python_run_service import PythonRunService
@@ -23,8 +24,8 @@ from ..interfaces.types import PeerQueryMessage, PeerReplyMessage
 from .dependencies import resolve_runtime_host
 from .events.broker import EventBroker
 from .events.mapper import EventContext
-from .settings import WebSettings
 from .session_auth import SessionSigner
+from .settings import WebSettings
 
 
 @dataclass(slots=True)
@@ -141,6 +142,7 @@ def _expose_lifecycle_ownership(app: FastAPI, ownership: LifespanCleanupOwnershi
     app.state.event_broker = None if ownership is None else ownership.broker
     if ownership is None:
         app.state.maintenance_service = None
+        app.state.global_knowledge_service = None
 
 
 @asynccontextmanager
@@ -183,6 +185,12 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.session_signer = SessionSigner(
             settings.data_root / ".manyselves" / "auth" / "session.key",
             settings.session_ttl_seconds,
+        )
+        app.state.global_knowledge_service = GlobalKnowledgeService.from_data_root(
+            settings.data_root,
+            max_text_bytes=settings.text_file_size_limit_bytes,
+            max_upload_bytes=settings.upload_size_limit_bytes,
+            max_tree_entries=settings.file_tree_entry_limit,
         )
 
         host = await resolve_runtime_host(app)
