@@ -4,6 +4,11 @@ from fastapi import APIRouter, Depends, Request, Response, status
 
 from ...application.control import ControlLeaseRequired
 from ...application.errors import RuntimeBusyError, RuntimeNotReadyError
+from ...application.project_metadata import (
+    ProjectMetadata,
+    ProjectMetadataError,
+    ProjectMetadataRevisionConflict,
+)
 from ...application.project_registry import (
     ActiveProjectMutation,
     InvalidProjectId,
@@ -13,14 +18,25 @@ from ...application.project_registry import (
     ProjectRegistryError,
 )
 from ..errors import ApiError
-from ..schemas.projects import ProjectListResponse, ProjectRequest, ProjectResponse
+from ..schemas.projects import (
+    ProjectCreateRequest,
+    ProjectListResponse,
+    ProjectResponse,
+    ProjectUpdateRequest,
+)
 from ..security import require_authenticated_session, require_control_lease_header
 
 router = APIRouter(prefix="/projects", dependencies=[Depends(require_authenticated_session)])
 
 
 def _response(record: ProjectRecord) -> ProjectResponse:
-    return ProjectResponse(id=record.id, active=record.active)
+    return ProjectResponse(
+        id=record.id,
+        displayName=record.display_name,
+        description=record.description,
+        revision=record.revision,
+        active=record.active,
+    )
 
 
 def _project_error(error: Exception) -> ApiError:
@@ -47,13 +63,15 @@ def _project_error(error: Exception) -> ApiError:
         )
     if isinstance(error, ProjectNotFound):
         code = status.HTTP_404_NOT_FOUND
-    elif isinstance(error, InvalidProjectId):
+    elif isinstance(error, ProjectMetadataRevisionConflict):
+        code = status.HTTP_409_CONFLICT
+    elif isinstance(error, (InvalidProjectId, ProjectMetadataError)):
         code = status.HTTP_400_BAD_REQUEST
     elif isinstance(error, (ProjectAlreadyExists, ActiveProjectMutation)):
         code = status.HTTP_409_CONFLICT
     else:
         raise error
-    assert isinstance(error, ProjectRegistryError)
+    assert isinstance(error, (ProjectRegistryError, ProjectMetadataError))
     return ApiError(
         status_code=code,
         code=error.code,
@@ -72,7 +90,7 @@ async def list_projects(request: Request) -> ProjectListResponse:
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
-    body: ProjectRequest,
+    body: ProjectCreateRequest,
     request: Request,
     lease_token: str = Depends(require_control_lease_header),
 ) -> ProjectResponse:
@@ -80,15 +98,25 @@ async def create_project(
     registry = request.app.state.project_registry
     try:
         async with facade.mutation_transaction(lease_token):
-            return _response(registry.create(body.project_id))
-    except (ControlLeaseRequired, RuntimeNotReadyError, ProjectRegistryError) as error:
+            return _response(
+                registry.create(
+                    body.project_id,
+                    ProjectMetadata(body.display_name or body.project_id, body.description),
+                )
+            )
+    except (
+        ControlLeaseRequired,
+        RuntimeNotReadyError,
+        ProjectRegistryError,
+        ProjectMetadataError,
+    ) as error:
         raise _project_error(error) from error
 
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
-async def rename_project(
+async def update_project_metadata(
     project_id: str,
-    body: ProjectRequest,
+    body: ProjectUpdateRequest,
     request: Request,
     lease_token: str = Depends(require_control_lease_header),
 ) -> ProjectResponse:
@@ -96,8 +124,19 @@ async def rename_project(
     registry = request.app.state.project_registry
     try:
         async with facade.mutation_transaction(lease_token):
-            return _response(registry.rename(project_id, body.project_id))
-    except (ControlLeaseRequired, RuntimeNotReadyError, ProjectRegistryError) as error:
+            return _response(
+                registry.update_metadata(
+                    project_id,
+                    ProjectMetadata(body.display_name, body.description),
+                    body.revision,
+                )
+            )
+    except (
+        ControlLeaseRequired,
+        RuntimeNotReadyError,
+        ProjectRegistryError,
+        ProjectMetadataError,
+    ) as error:
         raise _project_error(error) from error
 
 

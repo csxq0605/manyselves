@@ -1,6 +1,7 @@
 """Real HTTP contracts for project, file, range, and preview APIs."""
 
 import asyncio
+import hashlib
 import io
 import threading
 from pathlib import Path
@@ -8,6 +9,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+
 from manyselves.application.preview_service import PreviewService
 from manyselves.application.workspace_files import WorkspaceFiles
 from manyselves.webapi.dependencies import get_runtime_host
@@ -77,27 +79,103 @@ async def acquire_controller(client: httpx.AsyncClient) -> dict[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_project_crud_and_bootstrap_never_expose_absolute_paths(api) -> None:
-    """Project DTOs must remain portable and must not disclose server filesystem layout."""
+async def test_project_metadata_crud_never_renames_directories_or_exposes_paths(api) -> None:
+    """Pencil edits must update portable metadata without changing a stable project ID."""
     client, _, root = api
     headers = await acquire_controller(client)
 
-    created = await client.post("/api/v1/projects", headers=headers, json={"projectId": "p2"})
+    created = await client.post(
+        "/api/v1/projects",
+        headers=headers,
+        json={
+            "projectId": "p2",
+            "displayName": "  Project two  ",
+            "description": "Initial description",
+        },
+    )
     listed = await client.get("/api/v1/projects")
-    renamed = await client.patch(
-        "/api/v1/projects/p2", headers=headers, json={"projectId": "renamed"}
+    updated = await client.patch(
+        "/api/v1/projects/p2",
+        headers=headers,
+        json={
+            "displayName": "Project two revised",
+            "description": "Current description",
+            "revision": created.json()["revision"],
+        },
+    )
+    stale = await client.patch(
+        "/api/v1/projects/p2",
+        headers=headers,
+        json={
+            "displayName": "Stale edit",
+            "description": "Stale description",
+            "revision": created.json()["revision"],
+        },
     )
     bootstrap = await client.get("/api/v1/bootstrap")
-    deleted = await client.delete("/api/v1/projects/renamed", headers=headers)
 
     assert created.status_code == 201
     assert listed.status_code == 200
-    assert {item["id"] for item in listed.json()["projects"]} == {"p1", "p2"}
-    assert renamed.status_code == 200
+    assert created.json()["id"] == "p2"
+    assert created.json()["displayName"] == "Project two"
+    assert created.json()["description"] == "Initial description"
+    assert len(created.json()["revision"]) == 64
+    assert listed.json()["projects"] == [
+        {
+            "id": "p1",
+            "displayName": "p1",
+            "description": "",
+            "revision": listed.json()["projects"][0]["revision"],
+            "active": True,
+        },
+        {
+            "id": "p2",
+            "displayName": "Project two",
+            "description": "Initial description",
+            "revision": created.json()["revision"],
+            "active": False,
+        },
+    ]
+    assert updated.status_code == 200
+    assert updated.json()["id"] == "p2"
+    assert updated.json()["displayName"] == "Project two revised"
+    assert updated.json()["description"] == "Current description"
+    assert (root / "p2").is_dir()
+    assert not (root / "renamed").exists()
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "PROJECT_METADATA_REVISION_CONFLICT"
+    deleted = await client.delete("/api/v1/projects/p2", headers=headers)
     assert deleted.status_code == 204
-    serialized = " ".join(response.text for response in (created, listed, renamed, bootstrap))
+    serialized = " ".join(response.text for response in (created, listed, updated, bootstrap))
     assert str(root) not in serialized
     assert "\\" not in created.text
+
+
+@pytest.mark.asyncio
+async def test_legacy_project_metadata_update_uses_a_deterministic_fallback_revision(api) -> None:
+    """A project created before sidecars existed must be editable without a migration write first."""
+    client, _, root = api
+    headers = await acquire_controller(client)
+    fallback_revision = hashlib.sha256(
+        b'{"displayName":"p1","description":""}'
+    ).hexdigest()
+
+    updated = await client.patch(
+        "/api/v1/projects/p1",
+        headers=headers,
+        json={
+            "displayName": "Migrated label",
+            "description": "Now described",
+            "revision": fallback_revision,
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["id"] == "p1"
+    assert updated.json()["displayName"] == "Migrated label"
+    assert updated.json()["description"] == "Now described"
+    assert (root / "p1").is_dir()
+    assert not (root / "p1").is_symlink()
 
 
 @pytest.mark.asyncio
@@ -125,7 +203,11 @@ async def test_project_activation_switches_runtime_before_active_project(api) ->
     listed = await client.get("/api/v1/projects")
 
     assert activated.status_code == 200
-    assert activated.json() == {"id": "p2", "active": True}
+    assert activated.json()["id"] == "p2"
+    assert activated.json()["displayName"] == "p2"
+    assert activated.json()["description"] == ""
+    assert len(activated.json()["revision"]) == 64
+    assert activated.json()["active"] is True
     assert host.workspace == (root / "p2").resolve()
     assert next(item for item in listed.json()["projects"] if item["id"] == "p2")["active"] is True
 

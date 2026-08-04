@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.project_structure import ensure_project_structure, is_project_workspace
+from .project_metadata import ProjectMetadata, ProjectMetadataStore
 
 _PROJECT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
@@ -49,6 +50,9 @@ class ProjectRecord:
     """Portable project metadata without a server filesystem path."""
 
     id: str
+    display_name: str
+    description: str
+    revision: str
     active: bool
 
 
@@ -62,6 +66,7 @@ class ProjectRegistry:
             raise InvalidProjectId()
         self._data_root = self._data_root_input.resolve()
         self._active_project_id = self._validate_id(initial_project_id)
+        self._metadata = ProjectMetadataStore()
 
     @property
     def active_project_id(self) -> str:
@@ -73,7 +78,7 @@ class ProjectRegistry:
         if root.exists() and (root.is_symlink() or not root.is_dir()):
             raise InvalidProjectId()
         ensure_project_structure(root)
-        return ProjectRecord(id=self._active_project_id, active=True)
+        return self._record(root)
 
     def list(self) -> list[ProjectRecord]:
         """Discover canonical workspaces without following symlink entries."""
@@ -82,22 +87,33 @@ class ProjectRegistry:
             if child.is_symlink() or not child.is_dir() or not _PROJECT_ID.fullmatch(child.name):
                 continue
             if child.name == self._active_project_id or is_project_workspace(child):
-                records.append(
-                    ProjectRecord(id=child.name, active=child.name == self._active_project_id)
-                )
+                records.append(self._record(child))
         return records
 
     def get(self, project_id: str) -> ProjectRecord:
         root = self.project_root(project_id)
-        return ProjectRecord(id=root.name, active=root.name == self._active_project_id)
+        return self._record(root)
 
-    def create(self, project_id: str) -> ProjectRecord:
+    def create(self, project_id: str, metadata: ProjectMetadata | None = None) -> ProjectRecord:
         project_id = self._validate_id(project_id)
         root = self._path_for(project_id)
         if root.exists() or root.is_symlink():
             raise ProjectAlreadyExists()
         ensure_project_structure(root)
-        return ProjectRecord(id=project_id, active=False)
+        if metadata is not None:
+            self._metadata.write(root, metadata, revision=None)
+        return self._record(root)
+
+    def update_metadata(
+        self,
+        project_id: str,
+        metadata: ProjectMetadata,
+        revision: str,
+    ) -> ProjectRecord:
+        """Edit display fields while preserving the directory-backed project identity."""
+        root = self.project_root(project_id)
+        self._metadata.write(root, metadata, revision)
+        return self._record(root)
 
     def rename(self, project_id: str, destination_id: str) -> ProjectRecord:
         source = self.project_root(project_id)
@@ -108,7 +124,7 @@ class ProjectRegistry:
         if destination.exists() or destination.is_symlink():
             raise ProjectAlreadyExists()
         source.rename(destination)
-        return ProjectRecord(id=destination_id, active=False)
+        return self._record(destination)
 
     def delete(self, project_id: str) -> None:
         root = self.project_root(project_id)
@@ -119,12 +135,12 @@ class ProjectRegistry:
     def activate(self, project_id: str) -> ProjectRecord:
         root = self.project_root(project_id)
         self._active_project_id = root.name
-        return ProjectRecord(id=root.name, active=True)
+        return self._record(root)
 
     def restore_active(self, project_id: str) -> ProjectRecord:
         """Restore a previously validated active ID during activation rollback."""
         self._active_project_id = self._validate_id(project_id)
-        return ProjectRecord(id=self._active_project_id, active=True)
+        return self._record(self.project_root(self._active_project_id))
 
     def project_root(self, project_id: str) -> Path:
         project_id = self._validate_id(project_id)
@@ -138,6 +154,16 @@ class ProjectRegistry:
 
     def _path_for(self, project_id: str) -> Path:
         return self._data_root / project_id
+
+    def _record(self, root: Path) -> ProjectRecord:
+        metadata = self._metadata.read(root)
+        return ProjectRecord(
+            id=root.name,
+            display_name=metadata.display_name,
+            description=metadata.description,
+            revision=self._metadata.revision(root),
+            active=root.name == self._active_project_id,
+        )
 
     @staticmethod
     def _validate_id(project_id: str) -> str:
