@@ -187,5 +187,13 @@ export function App({
     setConnectionState,
   ]);
 
+  if (!bootstrap.data) {
+    return (
+      <main aria-busy={bootstrap.isPending} className="app-loading">
+        {bootstrap.isError ? <p role="alert">Unable to load the application.</p> : null}
+      </main>
+    );
+  }
+
   return <AppRoutes gateway={gateway} {...(onLogout ? { onLogout } : {})} {...(platform ? { platform } : {})} {...(settingsStorage ? { settingsStorage } : {})} />;
 }

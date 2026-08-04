@@ -2,6 +2,8 @@
 
 import json
 import re
+import subprocess
+import sys
 from inspect import signature
 from pathlib import Path
 
@@ -37,6 +39,40 @@ def test_openapi_has_required_resources() -> None:
     }
 
     assert required <= set(schema["paths"])
+
+
+def test_phase1_redesign_contract_exposes_authenticated_global_knowledge_routes() -> None:
+    """The browser's authenticated knowledge workspace must remain generated-client safe."""
+    schema = create_app(_test_settings()).openapi()
+    paths = schema["paths"]
+
+    required = {
+        "/api/v1/auth/login",
+        "/api/v1/auth/session",
+        "/api/v1/global-knowledge/files/tree",
+        "/api/v1/global-knowledge/files/upload",
+        "/api/v1/global-knowledge/files/content",
+        "/api/v1/global-knowledge/files/preview",
+        "/api/v1/global-knowledge/files/download",
+        "/api/v1/global-knowledge/files/entries",
+    }
+    assert required <= set(paths)
+    assert "SessionCookie" in schema["components"]["securitySchemes"]
+    assert "DeploymentBearer" not in schema["components"]["securitySchemes"]
+
+
+def test_openapi_exporter_defaults_to_the_canonical_artifact() -> None:
+    """Release automation can check the frontend contract without a duplicate path."""
+    repository_root = Path(__file__).resolve().parents[2]
+
+    result = subprocess.run(
+        [sys.executable, "scripts/export_openapi.py", "--check"],
+        capture_output=True,
+        cwd=repository_root,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_business_routes_declare_the_session_dependency_once_at_router_level() -> None:

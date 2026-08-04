@@ -24,7 +24,36 @@ function renderApp(node: ReactNode, queryClient?: QueryClient) {
   return render(<AppProviders {...(queryClient ? { queryClient } : {})}><MemoryRouter>{node}</MemoryRouter></AppProviders>);
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+}
+
 describe("App event projection", () => {
+  it("waits for bootstrap before mounting route pages", async () => {
+    const pendingBootstrap = deferred<BootstrapSnapshot>();
+    const bootstrap = vi.fn(() => pendingBootstrap.promise);
+    const requestJson = vi.fn().mockResolvedValue({ entries: [] });
+
+    render(
+      <AppProviders>
+        <MemoryRouter initialEntries={["/knowledge"]}>
+          <App gateway={{ bootstrap, requestJson } as unknown as ApiGateway} />
+        </MemoryRouter>
+      </AppProviders>,
+    );
+
+    await waitFor(() => expect(bootstrap).toHaveBeenCalledOnce());
+    expect(requestJson).not.toHaveBeenCalled();
+
+    pendingBootstrap.resolve(bootstrapSnapshot);
+
+    await waitFor(() => expect(requestJson).toHaveBeenCalledOnce());
+  });
+
   it("refreshes bootstrap when the event stream requires resync", async () => {
     const bootstrap = vi.fn().mockResolvedValue(bootstrapSnapshot);
     const gateway = { bootstrap, sendMessage: vi.fn() } as unknown as ApiGateway;

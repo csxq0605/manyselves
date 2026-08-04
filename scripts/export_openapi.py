@@ -10,6 +10,10 @@ from pathlib import Path
 from manyselves.webapi.main import create_app
 from manyselves.webapi.settings import WebSettings
 
+DEFAULT_CONTRACT_PATH = (
+    Path(__file__).resolve().parents[1] / "frontend-contract" / "openapi.json"
+)
+
 
 def _contract_settings() -> WebSettings:
     """Return stable, non-sensitive settings used only for schema generation."""
@@ -50,7 +54,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="fail without modifying the artifact when it is missing or stale",
     )
-    parser.add_argument("destination", type=Path, help="OpenAPI JSON artifact path")
+    parser.add_argument(
+        "destination",
+        nargs="?",
+        default=DEFAULT_CONTRACT_PATH,
+        type=Path,
+        help="OpenAPI JSON artifact path (defaults to frontend-contract/openapi.json)",
+    )
     return parser.parse_args(argv)
 
 
