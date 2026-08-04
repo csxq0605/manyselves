@@ -124,6 +124,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Login
+         * @description Establish a browser session after validating the configured administrator.
+         */
+        post: operations["post_api_v1_auth_login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Logout
+         * @description Clear the browser session regardless of whether its value is currently valid.
+         */
+        post: operations["post_api_v1_auth_logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Session
+         * @description Return the authenticated principal represented by the browser cookie.
+         */
+        get: operations["get_api_v1_auth_session"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/bootstrap": {
         parameters: {
             query?: never;
@@ -452,7 +512,7 @@ export interface paths {
         delete: operations["delete_api_v1_projects_project_id"];
         options?: never;
         head?: never;
-        /** Rename Project */
+        /** Update Project Metadata */
         patch: operations["patch_api_v1_projects_project_id"];
         trace?: never;
     };
@@ -1190,6 +1250,19 @@ export interface components {
              */
             leaseToken: string;
         };
+        /**
+         * LoginRequest
+         * @description Credentials accepted to establish the local administrative session.
+         */
+        LoginRequest: {
+            /**
+             * Password
+             * Format: password
+             */
+            password: string;
+            /** Username */
+            username: string;
+        };
         /** MaintenanceReleaseRequest */
         MaintenanceReleaseRequest: {
             /** Maintenancetoken */
@@ -1289,22 +1362,32 @@ export interface components {
             /** Truncated */
             truncated: boolean;
         };
+        /** ProjectCreateRequest */
+        ProjectCreateRequest: {
+            /** Description */
+            description: string;
+            /** Displayname */
+            displayName: string;
+            /** Projectid */
+            projectId: string;
+        };
         /** ProjectListResponse */
         ProjectListResponse: {
             /** Projects */
             projects: components["schemas"]["ProjectResponse"][];
         };
-        /** ProjectRequest */
-        ProjectRequest: {
-            /** Projectid */
-            projectId: string;
-        };
         /** ProjectResponse */
         ProjectResponse: {
             /** Active */
             active: boolean;
+            /** Description */
+            description: string;
+            /** Displayname */
+            displayName: string;
             /** Id */
             id: string;
+            /** Revision */
+            revision: string;
         };
         /**
          * ProjectSnapshot
@@ -1313,6 +1396,15 @@ export interface components {
         ProjectSnapshot: {
             /** Id */
             id: string;
+        };
+        /** ProjectUpdateRequest */
+        ProjectUpdateRequest: {
+            /** Description */
+            description: string;
+            /** Displayname */
+            displayName: string;
+            /** Revision */
+            revision: string;
         };
         /** ProviderPresetResponse */
         ProviderPresetResponse: {
@@ -1731,6 +1823,21 @@ export interface components {
              * @enum {string}
              */
             source: "user" | "main_agent";
+        };
+        /**
+         * SessionResponse
+         * @description The public principal information from a valid browser session.
+         */
+        SessionResponse: {
+            /** Authenticated */
+            authenticated: boolean;
+            /**
+             * Expiresat
+             * Format: date-time
+             */
+            expiresAt: string;
+            /** Username */
+            username: string;
         };
         /** SettingsDefaultsUpdate */
         SettingsDefaultsUpdate: {
@@ -2184,6 +2291,120 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RollbackResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    post_api_v1_auth_login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    post_api_v1_auth_logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_auth_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
                 };
             };
             /** @description Request validation failed */
@@ -3038,7 +3259,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProjectRequest"];
+                "application/json": components["schemas"]["ProjectCreateRequest"];
             };
         };
         responses: {
@@ -3120,7 +3341,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProjectRequest"];
+                "application/json": components["schemas"]["ProjectUpdateRequest"];
             };
         };
         responses: {

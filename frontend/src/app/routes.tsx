@@ -1,0 +1,42 @@
+import { useQuery } from "@tanstack/react-query";
+import { Link, Navigate, Route, Routes } from "react-router-dom";
+
+import type { ApiGateway } from "../api/gateway";
+import { ProjectHomePage } from "../features/projects/ProjectHomePage";
+import { createProjectApi, type ProjectApi } from "../features/projects/project-api";
+import { AppLayout } from "../features/shell/AppLayout";
+
+function Placeholder({ title }: { readonly title: string }) {
+  return <section className="route-placeholder"><h1>{title}</h1><p>此项目区域将在后续工作中提供受控内容。</p></section>;
+}
+
+function ProjectLanding({ projectApi }: { readonly projectApi: ProjectApi }) {
+  const projects = useQuery({ queryFn: () => projectApi.list(), queryKey: ["projects"] });
+  if (projects.isPending) return <Placeholder title="正在加载项目" />;
+  if (projects.isError) return <section className="route-placeholder"><h1>项目不可用</h1><p aria-live="polite">无法加载项目列表，请稍后重试。</p></section>;
+  const active = projects.data.find((project) => project.active) ?? projects.data[0];
+  if (active) return <Navigate replace to={`/projects/${encodeURIComponent(active.id)}`} />;
+  return <section className="route-placeholder"><h1>尚无项目</h1><p>请从侧栏新建项目以开始工作。</p></section>;
+}
+
+function NotFound() {
+  return <section className="route-placeholder"><h1>页面未找到</h1><p>该地址不是可用的工作台路由。</p><Link to="/">返回项目</Link></section>;
+}
+
+export function AppRoutes({ gateway, onLogout }: { readonly gateway: ApiGateway; readonly onLogout?: () => void }) {
+  const projectApi = createProjectApi(gateway);
+  return <Routes><Route element={<AppLayout projectApi={projectApi} {...(onLogout ? { onLogout } : {})} />}>
+    <Route path="/" element={<ProjectLanding projectApi={projectApi} />} />
+    <Route path="/knowledge" element={<Placeholder title="全局知识库" />} />
+    <Route path="/projects/:projectId" element={<ProjectHomePage />} />
+    <Route path="/projects/:projectId/conversations/:conversationId" element={<Placeholder title="项目对话" />} />
+    <Route path="/projects/:projectId/inputs" element={<Placeholder title="输入" />} />
+    <Route path="/projects/:projectId/knowledge" element={<Placeholder title="知识库" />} />
+    <Route path="/projects/:projectId/templates" element={<Placeholder title="输出模板" />} />
+    <Route path="/projects/:projectId/outputs" element={<Placeholder title="输出" />} />
+    <Route path="/projects/:projectId/runtime" element={<Placeholder title="运行态" />} />
+    <Route path="/projects/:projectId/logs" element={<Placeholder title="日志" />} />
+    <Route path="/settings/models" element={<Placeholder title="模型设置" />} />
+    <Route path="*" element={<NotFound />} />
+  </Route></Routes>;
+}

@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter } from "react-router-dom";
 
 import { AuthenticatedApp } from "./app/AuthenticatedApp";
 import { getOrCreateBrowserClientId } from "./app/client-config";
@@ -50,7 +50,7 @@ const platform = window.manyselvesDesktop
 createRoot(rootElement).render(
   <StrictMode>
     <AppProviders>
-      <BrowserRouter><AuthGate api={authApi}><Routes><Route path="/app/*" element={<AuthenticatedApp eventSource={{ baseUrl, fetch: fetchImplementation }} gatewayOptions={gatewayOptions} platform={platform} settingsStorage={settingsStorage} />} /><Route path="*" element={<Navigate replace to="/app" />} /></Routes></AuthGate></BrowserRouter>
+      <BrowserRouter><AuthGate api={authApi}><AuthenticatedApp eventSource={{ baseUrl, fetch: fetchImplementation }} gatewayOptions={gatewayOptions} platform={platform} settingsStorage={settingsStorage} /></AuthGate></BrowserRouter>
     </AppProviders>
   </StrictMode>,
 );

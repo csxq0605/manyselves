@@ -5,7 +5,7 @@ import { EventStream, type EventStreamOptions, type RuntimeEvent } from "../api/
 import { ApiError, type ApiGateway } from "../api/gateway";
 import { createAgentStore } from "../features/agents/agent-store";
 import { createReportingStore, type ReportingStore } from "../features/reporting/reporting-store";
-import { AppShell } from "../features/shell/AppShell";
+import { AppRoutes } from "./routes";
 import type { PlatformBridge } from "../platform/types";
 import type { SettingsStorage } from "../features/settings/settings-storage";
 import { useConnectionStore } from "./store-context";
@@ -73,9 +73,7 @@ export function App({
   gateway,
   onUnauthorized,
   onLogout,
-  platform,
   reportingStore,
-  settingsStorage,
 }: AppProps) {
   const queryClient = useQueryClient();
   const setConnectionState = useConnectionStore((store) => store.setState);
@@ -184,16 +182,5 @@ export function App({
     setConnectionState,
   ]);
 
-  return (
-    <AppShell
-      agentStore={agentStore}
-      bootstrap={bootstrap.data}
-      gateway={gateway}
-      key={bootstrap.data?.project.id ?? "waiting-for-bootstrap"}
-      {...(platform ? { platform } : {})}
-      reportingStore={reports}
-      {...(onLogout ? { onLogout } : {})}
-      {...(settingsStorage ? { settingsStorage } : {})}
-    />
-  );
+  return <AppRoutes gateway={gateway} {...(onLogout ? { onLogout } : {})} />;
 }

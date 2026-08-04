@@ -1224,6 +1224,33 @@
         "title": "PreviewSheet",
         "type": "object"
       },
+      "ProjectCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 1000,
+            "title": "Description",
+            "type": "string"
+          },
+          "displayName": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Displayname",
+            "type": "string"
+          },
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "displayName",
+          "description"
+        ],
+        "title": "ProjectCreateRequest",
+        "type": "object"
+      },
       "ProjectListResponse": {
         "properties": {
           "projects": {
@@ -1240,33 +1267,34 @@
         "title": "ProjectListResponse",
         "type": "object"
       },
-      "ProjectRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "projectId": {
-            "title": "Projectid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "projectId"
-        ],
-        "title": "ProjectRequest",
-        "type": "object"
-      },
       "ProjectResponse": {
         "properties": {
           "active": {
             "title": "Active",
             "type": "boolean"
           },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
             "type": "string"
           }
         },
         "required": [
           "id",
+          "displayName",
+          "description",
+          "revision",
           "active"
         ],
         "title": "ProjectResponse",
@@ -1284,6 +1312,34 @@
           "id"
         ],
         "title": "ProjectSnapshot",
+        "type": "object"
+      },
+      "ProjectUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 1000,
+            "title": "Description",
+            "type": "string"
+          },
+          "displayName": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Displayname",
+            "type": "string"
+          },
+          "revision": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Revision",
+            "type": "string"
+          }
+        },
+        "required": [
+          "displayName",
+          "description",
+          "revision"
+        ],
+        "title": "ProjectUpdateRequest",
         "type": "object"
       },
       "ProviderPresetResponse": {
@@ -4527,7 +4583,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ProjectRequest"
+                "$ref": "#/components/schemas/ProjectCreateRequest"
               }
             }
           },
@@ -4638,7 +4694,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ProjectRequest"
+                "$ref": "#/components/schemas/ProjectUpdateRequest"
               }
             }
           },
@@ -4682,7 +4738,7 @@
             "SessionCookie": []
           }
         ],
-        "summary": "Rename Project"
+        "summary": "Update Project Metadata"
       }
     },
     "/api/v1/projects/{project_id}/activate": {

@@ -92,7 +92,13 @@ export function ProjectWorkspace({
     }
   }
 
-  const projectsForSwitcher = projects.data ?? [{ active: true, id: currentProjectId }];
+  const projectsForSwitcher = projects.data ?? [{
+    active: true,
+    description: "",
+    displayName: currentProjectId,
+    id: currentProjectId,
+    revision: "",
+  }];
   const directory = selectedEntry?.kind === "directory"
     ? selectedEntry.path
     : selectedEntry ? parentPath(selectedEntry.path) : "";

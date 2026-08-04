@@ -20,8 +20,10 @@ describe("ProjectSwitcher", () => {
           status: 409,
         });
       },
-      create: async (projectId) => ({ active: false, id: projectId }),
+      create: async ({ projectId, displayName, description }) => ({ active: false, description, displayName, id: projectId, revision: "r1" }),
+      delete: async () => undefined,
       list: async () => [],
+      update: async (projectId, input) => ({ active: false, ...input, id: projectId }),
     };
     const user = userEvent.setup();
 
@@ -31,8 +33,8 @@ describe("ProjectSwitcher", () => {
         current="p1"
         onActivated={(project) => activated.push(project.id)}
         projects={[
-          { active: true, id: "p1" },
-          { active: false, id: "p2" },
+          { active: true, description: "", displayName: "p1", id: "p1", revision: "r1" },
+          { active: false, description: "", displayName: "p2", id: "p2", revision: "r1" },
         ]}
       />,
     );
@@ -47,9 +49,11 @@ describe("ProjectSwitcher", () => {
   it("asks before leaving a project with local drafts", async () => {
     const activated: string[] = [];
     const api: ProjectApi = {
-      activate: async (projectId) => ({ active: true, id: projectId }),
-      create: async (projectId) => ({ active: false, id: projectId }),
+      activate: async (projectId) => ({ active: true, description: "", displayName: projectId, id: projectId, revision: "r1" }),
+      create: async ({ projectId, displayName, description }) => ({ active: false, description, displayName, id: projectId, revision: "r1" }),
+      delete: async () => undefined,
       list: async () => [],
+      update: async (projectId, input) => ({ active: false, ...input, id: projectId }),
     };
     const confirmActivation = vi.fn(() => false);
     const user = userEvent.setup();
@@ -61,7 +65,7 @@ describe("ProjectSwitcher", () => {
         current="p1"
         hasDirtyDrafts
         onActivated={(project) => activated.push(project.id)}
-        projects={[{ active: true, id: "p1" }, { active: false, id: "p2" }]}
+        projects={[{ active: true, description: "", displayName: "p1", id: "p1", revision: "r1" }, { active: false, description: "", displayName: "p2", id: "p2", revision: "r1" }]}
       />,
     );
 

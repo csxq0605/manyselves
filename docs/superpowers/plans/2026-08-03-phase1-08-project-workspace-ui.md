@@ -36,7 +36,7 @@
 - Produces: `ProjectResponse{id, displayName, description, revision, active}`, `ProjectCreateRequest{projectId, displayName, description}`, and `ProjectUpdateRequest{displayName, description, revision}`.
 - Existing project ID rename endpoint is removed from the ordinary pencil flow; project IDs remain stable.
 
-- [ ] **Step 1: Write failing metadata compatibility and route tests**
+- [x] **Step 1: Write failing metadata compatibility and route tests**
 
 ```python
 def test_missing_metadata_uses_project_id(tmp_path: Path) -> None:
@@ -55,23 +55,23 @@ async def test_patch_updates_display_metadata_without_renaming_directory(authed_
     assert response.json()["displayName"] == "能源管理"
 ```
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run: `uv run pytest tests/application/test_project_metadata.py tests/webapi/test_projects_and_files.py -q -k "metadata or display"`
 
 Expected: FAIL because the metadata store and response fields do not exist.
 
-- [ ] **Step 3: Implement project metadata with atomic revision writes**
+- [x] **Step 3: Implement project metadata with atomic revision writes**
 
 Store JSON at `<project>/.manyselves/project.json`, reject symlinked metadata paths, use the directory name fallback, validate non-empty display names up to 120 characters and descriptions up to 1000 characters, and write via sibling temporary file plus `Path.replace()`. Return a SHA-256 revision and reject stale revisions with the existing conflict envelope style.
 
-- [ ] **Step 4: Run focused and project API tests**
+- [x] **Step 4: Run focused and project API tests**
 
 Run: `uv run pytest tests/application/test_project_metadata.py tests/webapi/test_projects_and_files.py -q`
 
 Expected: PASS, including old projects without metadata.
 
-- [ ] **Step 5: Commit project metadata**
+- [x] **Step 5: Commit project metadata**
 
 ```bash
 git add manyselves/application/project_metadata.py manyselves/application/project_registry.py manyselves/webapi/schemas/projects.py manyselves/webapi/routes/projects.py tests/application/test_project_metadata.py tests/webapi/test_projects_and_files.py
@@ -101,7 +101,7 @@ git commit -m "feat: add stable project display metadata"
 - Produces: routes listed in the approved design and `ProjectSection = "inputs" | "knowledge" | "templates" | "outputs" | "runtime" | "logs"`.
 - Produces: `Sidebar` with `onCreateProject`, project metadata edit, and ellipsis delete callbacks.
 
-- [ ] **Step 1: Write failing shell and routing tests**
+- [x] **Step 1: Write failing shell and routing tests**
 
 ```tsx
 it("renders all six fixed entries for an expanded project", () => {
@@ -118,7 +118,7 @@ it("shows conversations on the project home instead of in the directory tree", (
 });
 ```
 
-- [ ] **Step 2: Run focused tests and verify the old shell fails the contract**
+- [x] **Step 2: Run focused tests and verify the old shell fails the contract**
 
 Run: `npm test -- --run src/features/shell src/features/projects/ProjectHomePage.test.tsx`
 
@@ -126,11 +126,11 @@ Working directory: `frontend`
 
 Expected: FAIL because the router, light shell, and complete tree do not exist.
 
-- [ ] **Step 3: Implement routes and the light shell**
+- [x] **Step 3: Implement routes and the light shell**
 
 Define the route set exactly as the approved spec. `AppLayout` renders `Sidebar` and `<Outlet />`; it must not construct editor, preview, reporting, settings, conversation, or Agent stores. Use a light neutral palette, visible focus rings, a 238px desktop sidebar, responsive stacking/collapse below 700px, and no dark-only settings surfaces. The project row exposes visible pencil and ellipsis buttons. The Outputs entry must be distinct from Output templates.
 
-- [ ] **Step 4: Run shell tests, accessibility assertions, build, and lint**
+- [x] **Step 4: Run shell tests, accessibility assertions, build, and lint**
 
 Run: `npm test -- --run src/features/shell src/features/projects/ProjectHomePage.test.tsx`
 
@@ -142,7 +142,7 @@ Working directory: `frontend`
 
 Expected: PASS with no unused old AppShell imports.
 
-- [ ] **Step 5: Commit the light routed shell**
+- [x] **Step 5: Commit the light routed shell**
 
 ```bash
 git add frontend/src/app frontend/src/features/shell frontend/src/features/projects frontend/src/features/agents frontend/src/main.tsx

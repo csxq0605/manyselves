@@ -11,6 +11,8 @@ export interface CreateProjectDialogProps {
 export function CreateProjectDialog({ api, onCreated }: CreateProjectDialogProps) {
   const [open, setOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -24,10 +26,16 @@ export function CreateProjectDialog({ api, onCreated }: CreateProjectDialogProps
     setSubmitting(true);
     setError(null);
     try {
-      const created = await api.create(normalizedId);
+      const created = await api.create({
+        description: description.trim(),
+        displayName: displayName.trim() || normalizedId,
+        projectId: normalizedId,
+      });
       onCreated(created);
       setOpen(false);
       setProjectId("");
+      setDisplayName("");
+      setDescription("");
     } catch (reason) {
       setError(reason instanceof ApiError ? reason.message : "项目创建失败，请稍后重试");
     } finally {
@@ -46,12 +54,22 @@ export function CreateProjectDialog({ api, onCreated }: CreateProjectDialogProps
               项目标识
               <input
                 aria-label="项目标识"
+                autoComplete="off"
                 autoFocus
+                name="projectId"
                 onChange={(event) => setProjectId(event.target.value)}
                 value={projectId}
               />
             </label>
-            {error ? <p role="alert">{error}</p> : null}
+            <label>
+              显示名称
+              <input aria-label="显示名称" autoComplete="off" name="displayName" onChange={(event) => setDisplayName(event.target.value)} value={displayName} />
+            </label>
+            <label>
+              描述（可选）
+              <textarea aria-label="描述（可选）" autoComplete="off" name="description" onChange={(event) => setDescription(event.target.value)} value={description} />
+            </label>
+            {error ? <p aria-live="polite" role="alert">{error}</p> : null}
             <button disabled={submitting} type="submit">创建</button>
             <button disabled={submitting} onClick={() => setOpen(false)} type="button">取消</button>
           </form>
