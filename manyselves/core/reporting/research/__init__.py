@@ -1,7 +1,12 @@
 """Opt-in project reference and web research primitives."""
 
 from .project_evidence import ProjectEvidenceIndex
-from .reference_library import ReferenceDocument, ReferenceHit, ReferenceLibrary
+from .reference_library import (
+    KnowledgeNamespace,
+    ReferenceDocument,
+    ReferenceHit,
+    ReferenceLibrary,
+)
 from .web import (
     BraveWebResearchBackend,
     DisabledWebResearchBackend,
@@ -13,6 +18,7 @@ from .web import (
 __all__ = [
     "BraveWebResearchBackend",
     "DisabledWebResearchBackend",
+    "KnowledgeNamespace",
     "OpenedWebSource",
     "ProjectEvidenceIndex",
     "ReferenceDocument",

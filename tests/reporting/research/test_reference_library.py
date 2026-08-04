@@ -5,6 +5,11 @@ import pytest
 from manyselves.core.reporting.research.reference_library import ReferenceLibrary
 
 
+def _write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
 def test_reference_search_reads_every_supported_file_beneath_knowledge(tmp_path: Path):
     standards = tmp_path / "Knowledge/标准/低压"
     cases = tmp_path / "Knowledge/案例"
@@ -50,3 +55,65 @@ def test_reference_open_accepts_only_a_path_beneath_knowledge(tmp_path: Path):
     assert document.text == "完整参考正文"
     with pytest.raises(ValueError, match="Knowledge"):
         library.open("Inputs/secret.md")
+
+
+def test_project_document_wins_same_relative_path(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    global_root = tmp_path / "global"
+    _write(project / "Knowledge" / "rules.md", "project priority")
+    _write(global_root / "rules.md", "global priority")
+
+    hits = ReferenceLibrary(project, global_root=global_root).search("priority", limit=10)
+
+    assert [(hit.namespace, hit.relative_path) for hit in hits] == [
+        ("project", "Knowledge/rules.md"),
+    ]
+
+
+def test_global_document_has_namespaced_reference(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    global_root = tmp_path / "global"
+    _write(global_root / "shared.md", "shared standard")
+
+    document = ReferenceLibrary(project, global_root=global_root).open(
+        "GlobalKnowledge/shared.md"
+    )
+
+    assert document.namespace == "global"
+    assert document.relative_path == "GlobalKnowledge/shared.md"
+    assert str(global_root) not in document.relative_path
+
+
+def test_composite_search_deduplicates_equal_content_with_project_priority(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    global_root = tmp_path / "global"
+    _write(project / "Knowledge" / "project-copy.md", "same transformer rule")
+    _write(global_root / "global-copy.md", "same transformer rule")
+    _write(global_root / "unique.md", "unique transformer rule")
+
+    hits = ReferenceLibrary(project, global_root=global_root).search("transformer rule", limit=10)
+
+    assert [(hit.namespace, hit.relative_path) for hit in hits] == [
+        ("project", "Knowledge/project-copy.md"),
+        ("global", "GlobalKnowledge/unique.md"),
+    ]
+
+
+def test_global_reference_rejects_symlink_escape(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    global_root = tmp_path / "global"
+    outside = tmp_path / "outside.md"
+    global_root.mkdir()
+    outside.write_text("outside secret", encoding="utf-8")
+    try:
+        (global_root / "escape.md").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks are not available")
+
+    library = ReferenceLibrary(project, global_root=global_root)
+
+    assert library.search("outside secret") == []
+    with pytest.raises(ValueError, match="GlobalKnowledge"):
+        library.open("GlobalKnowledge/escape.md")

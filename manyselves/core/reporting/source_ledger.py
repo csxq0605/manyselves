@@ -6,7 +6,8 @@ import hashlib
 import json
 import threading
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import Literal
 
 from .agentic_models import SourceKind, SourceRecord
 
@@ -86,21 +87,44 @@ class SourceLedger:
         ]
         return f"{prefix}{max(numbers, default=0) + 1:03d}"
 
-    def register_local(self, title: str, locator: str, content: str) -> SourceRecord:
+    def register_local(
+        self,
+        title: str,
+        locator: str,
+        content: str,
+        *,
+        namespace: Literal["project", "global"] = "project",
+    ) -> SourceRecord:
         locator_path = locator.split("；", 1)[0].split("#", 1)[0]
-        resolved = (self.workspace / locator_path).resolve()
-        knowledge_root = (self.workspace / "Knowledge").resolve()
-        if not resolved.is_relative_to(knowledge_root) or resolved == knowledge_root:
-            raise ValueError("local references must be located beneath project Knowledge")
+        if namespace == "project":
+            resolved = (self.workspace / locator_path).resolve()
+            knowledge_root = (self.workspace / "Knowledge").resolve()
+            if not resolved.is_relative_to(knowledge_root) or resolved == knowledge_root:
+                raise ValueError("local references must be located beneath project Knowledge")
+        else:
+            portable = PurePosixPath(locator_path)
+            if (
+                portable.is_absolute()
+                or "\\" in locator_path
+                or len(portable.parts) < 2
+                or portable.parts[0] != "GlobalKnowledge"
+                or any(part in {"", ".", ".."} for part in portable.parts)
+            ):
+                raise ValueError("global references must use a GlobalKnowledge locator")
+        scope_note = f"knowledge_namespace={namespace}"
         digest = self._digest(content)
         with self._lock:
             records = self._load()
-            for record in records:
+            for index, record in enumerate(records):
                 if (
                     record.kind == SourceKind.LOCAL_REFERENCE
                     and record.locator == locator
                     and record.content_sha256 == digest
                 ):
+                    if record.scope_note != scope_note:
+                        record = record.model_copy(update={"scope_note": scope_note})
+                        records[index] = record
+                        self._persist(records)
                     self._persist_content(record.id, content)
                     return record
             record = SourceRecord(
@@ -108,6 +132,7 @@ class SourceLedger:
                 kind=SourceKind.LOCAL_REFERENCE,
                 title=title,
                 locator=locator,
+                scope_note=scope_note,
                 content_sha256=digest,
             )
             records.append(record)

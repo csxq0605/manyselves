@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, FastAPI, filesystem storage, existing ReferenceLibrary/KnowledgeContextBuilder/SourceLedger, React 19, TanStack Query.
 
-**Current checkpoint (2026-08-04):** Task 1 is implemented and awaiting its isolated commit. The fixed-root service stores only beneath `<data_root>/.manyselves/global-knowledge/`; authenticated routes provide logical list/read/save/upload/replace/preview/download/delete operations, and mutations require the existing control lease. Gates: Task 1 service/API/OpenAPI 21 passed, existing project-file regression 25 passed, targeted Ruff passed.
+**Current checkpoint (2026-08-04):** Task 1 is complete in commit `0d6f8b1`. Task 2 is implemented and awaiting its isolated commit: references carry `project/global` namespace metadata, logical paths remain `Knowledge/...` or `GlobalKnowledge/...`, and project entries win case-insensitive path and content conflicts before global content is parsed. Gates: composite retrieval/tools/source-ledger/knowledge-context 23 passed, targeted Ruff passed.
 
 ## Global Constraints
 
@@ -78,7 +78,7 @@ Run: `uv run pytest tests/application/test_global_knowledge_service.py tests/web
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the global knowledge service**
+- [x] **Step 5: Commit the global knowledge service**
 
 ```bash
 git add manyselves/application/global_knowledge_service.py manyselves/webapi/schemas/global_knowledge.py manyselves/webapi/routes/global_knowledge.py manyselves/webapi/dependencies.py manyselves/webapi/lifespan.py manyselves/webapi/main.py tests/application/test_global_knowledge_service.py tests/webapi/test_global_knowledge.py tests/webapi/test_openapi_contract.py frontend-contract/openapi.json
@@ -100,7 +100,7 @@ git commit -m "feat: add global knowledge file service"
 - Produces: `ReferenceLibrary(workspace: Path, *, global_root: Path | None = None)`.
 - Produces: namespaced logical references `Knowledge/...` and `GlobalKnowledge/...` while physical paths stay hidden.
 
-- [ ] **Step 1: Write failing composite search tests**
+- [x] **Step 1: Write failing composite search tests**
 
 ```python
 def test_project_document_wins_same_relative_path(tmp_path: Path) -> None:
@@ -119,21 +119,21 @@ def test_global_document_has_namespaced_reference(tmp_path: Path) -> None:
     assert document.relative_path == "GlobalKnowledge/shared.md"
 ```
 
-- [ ] **Step 2: Run research-library tests and verify failure**
+- [x] **Step 2: Run research-library tests and verify failure**
 
 Run: `uv run pytest tests/reporting/research/test_reference_library.py tests/reporting/test_reporting_research_tools.py -q`
 
 Expected: FAIL because the library has one project-only root and no namespace.
 
-- [ ] **Step 3: Implement two-root traversal and safe opening**
+- [x] **Step 3: Implement two-root traversal and safe opening**
 
 Keep independent resolved roots and reject every candidate not beneath its selected root. Search project files first, then global files, de-duplicate by casefolded relative subpath and then by content SHA-256, and preserve project entries on conflict. Rank by score, then namespace priority (`project` before `global`), then logical path. Never return the physical global directory.
 
-- [ ] **Step 4: Update research tools to expose source namespace**
+- [x] **Step 4: Update research tools to expose source namespace**
 
 Add `namespace` to tool result records and ledger registration metadata without changing the existing tool names. Secret-safe serialization and output limits remain unchanged.
 
-- [ ] **Step 5: Run research tests**
+- [x] **Step 5: Run research tests**
 
 Run: `uv run pytest tests/reporting/research/test_reference_library.py tests/reporting/test_reporting_research_tools.py -q`
 

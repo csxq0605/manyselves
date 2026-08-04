@@ -5,8 +5,8 @@ import pytest
 
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting.models import EvidenceItem
-from manyselves.core.reporting.research.reference_library import ReferenceLibrary
 from manyselves.core.reporting.research.evidence_memory import EvidenceResearchMemory
+from manyselves.core.reporting.research.reference_library import ReferenceLibrary
 from manyselves.core.reporting.source_ledger import SourceLedger
 from manyselves.core.tools.reporting_research_tools import (
     OpenProjectSourceTool,
@@ -144,6 +144,25 @@ async def test_reference_search_and_open_share_stable_r_id(tmp_path: Path):
     )
 
     assert search_result["hits"][0]["source_id"] == open_result["source_id"] == "R-001"
+
+
+@pytest.mark.asyncio
+async def test_global_reference_tools_expose_namespace_and_ledger_metadata(tmp_path: Path):
+    global_root = tmp_path / "global"
+    global_root.mkdir()
+    (global_root / "standard.md").write_text("shared protection standard", encoding="utf-8")
+    ledger = SourceLedger(tmp_path, "run-1")
+    library = ReferenceLibrary(tmp_path, global_root=global_root)
+
+    search_result = await SearchReferenceLibraryTool(library, ledger)("protection standard")
+    opened = await OpenReferenceTool(library, ledger)(
+        search_result["hits"][0]["locator"]
+    )
+
+    assert search_result["hits"][0]["namespace"] == "global"
+    assert opened["namespace"] == "global"
+    assert opened["locator"] == "GlobalKnowledge/standard.md"
+    assert ledger.records[0].scope_note == "knowledge_namespace=global"
 
 
 @pytest.mark.asyncio

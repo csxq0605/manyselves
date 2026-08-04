@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 
 from ...interfaces.types import ResearchNotePublishedMessage
 from ..loops.bus import MessageBus
 from ..reporting.agentic_models import ResearchNote
-from ..reporting.research.project_evidence import ProjectEvidenceIndex, project_evidence_locator
 from ..reporting.research.evidence_memory import EvidenceResearchMemory
+from ..reporting.research.project_evidence import ProjectEvidenceIndex, project_evidence_locator
 from ..reporting.research.reference_library import ReferenceLibrary
 from ..reporting.research.web import WebResearchBackend
 from ..reporting.source_ledger import SourceLedger
@@ -134,7 +134,7 @@ class OpenProjectSourceTool(Tool):
 class SearchReferenceLibraryTool(Tool):
     name = "search_reference_library"
     description = (
-        "Optionally search project Knowledge for methods, terms, "
+        "Optionally search project and global knowledge for methods, terms, "
         "thresholds, or mechanisms. R-* results are not customer facts."
     )
 
@@ -154,13 +154,17 @@ class SearchReferenceLibraryTool(Tool):
         for hit in hits:
             document = self.library.open(hit.relative_path)
             source = self.ledger.register_local(
-                hit.title, hit.relative_path, document.text
+                hit.title,
+                hit.relative_path,
+                document.text,
+                namespace=hit.namespace,
             )
             payload.append(
                 {
                     "source_id": source.id,
                     "title": hit.title,
                     "locator": hit.relative_path,
+                    "namespace": hit.namespace,
                     "snippet": hit.snippet,
                     "score": hit.score,
                 }
@@ -170,7 +174,7 @@ class SearchReferenceLibraryTool(Tool):
 
 class OpenReferenceTool(Tool):
     name = "open_reference"
-    description = "Open a file beneath project Knowledge and register it as R-*."
+    description = "Open a project/global knowledge reference and register it as R-*."
 
     def __init__(self, library: ReferenceLibrary, ledger: SourceLedger):
         self.library = library
@@ -184,12 +188,16 @@ class OpenReferenceTool(Tool):
         """
         document = self.library.open(locator)
         source = self.ledger.register_local(
-            document.title, document.relative_path, document.text
+            document.title,
+            document.relative_path,
+            document.text,
+            namespace=document.namespace,
         )
         return {
             "source_id": source.id,
             "title": document.title,
             "locator": document.relative_path,
+            "namespace": document.namespace,
             "text": document.text,
         }
 
