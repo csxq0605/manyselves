@@ -78,6 +78,11 @@ async def acquire_controller(client: httpx.AsyncClient) -> dict[str, str]:
     }
 
 
+def project_create_payload(project_id: str) -> dict[str, str]:
+    """Build the required project create contract for activation fixtures."""
+    return {"projectId": project_id, "displayName": project_id, "description": ""}
+
+
 @pytest.mark.asyncio
 async def test_project_metadata_crud_never_renames_directories_or_exposes_paths(api) -> None:
     """Pencil edits must update portable metadata without changing a stable project ID."""
@@ -211,7 +216,11 @@ async def test_project_activation_requires_idle_runtime(api) -> None:
     """Switching workspaces while an agent runs could split runtime and file state."""
     client, host, _ = api
     headers = await acquire_controller(client)
-    assert (await client.post("/api/v1/projects", headers=headers, json={"projectId": "p2"})).status_code == 201
+    assert (
+        await client.post(
+            "/api/v1/projects", headers=headers, json=project_create_payload("p2")
+        )
+    ).status_code == 201
     host.statuses = {"main": "thinking"}
 
     response = await client.post("/api/v1/projects/p2/activate", headers=headers)
@@ -225,7 +234,7 @@ async def test_project_activation_switches_runtime_before_active_project(api) ->
     """Successful activation must align subsequent runtime and file operations."""
     client, host, root = api
     headers = await acquire_controller(client)
-    await client.post("/api/v1/projects", headers=headers, json={"projectId": "p2"})
+    await client.post("/api/v1/projects", headers=headers, json=project_create_payload("p2"))
 
     activated = await client.post("/api/v1/projects/p2/activate", headers=headers)
     listed = await client.get("/api/v1/projects")
@@ -245,7 +254,7 @@ async def test_project_activation_resolves_and_commits_under_one_facade_lock(api
     """Resolving outside the mutation lock would race queued project deletion or rename."""
     client, host, _ = api
     headers = await acquire_controller(client)
-    await client.post("/api/v1/projects", headers=headers, json={"projectId": "p2"})
+    await client.post("/api/v1/projects", headers=headers, json=project_create_payload("p2"))
     registry = host.app.state.project_registry
     facade = host.app.state.runtime_facade
     original_project_root = registry.project_root
@@ -267,7 +276,7 @@ async def test_project_activation_commit_failure_restores_host_and_registry(api)
     """A registry commit failure after host switch must restore the previous coherent state."""
     client, host, root = api
     headers = await acquire_controller(client)
-    await client.post("/api/v1/projects", headers=headers, json={"projectId": "p2"})
+    await client.post("/api/v1/projects", headers=headers, json=project_create_payload("p2"))
     registry = host.app.state.project_registry
     original_activate = registry.activate
 
@@ -290,7 +299,7 @@ async def test_activation_reconciles_new_project_when_runtime_rollback_restores_
     """A failed switch-back that restores the new runtime must retain matching app state."""
     client, host, root = api
     headers = await acquire_controller(client)
-    await client.post("/api/v1/projects", headers=headers, json={"projectId": "p2"})
+    await client.post("/api/v1/projects", headers=headers, json=project_create_payload("p2"))
     registry = host.app.state.project_registry
     original_activate = registry.activate
     original_switch = host.switch_workspace
@@ -323,7 +332,7 @@ async def test_activation_marks_runtime_failed_when_new_state_cannot_reconcile(a
     """A ready runtime must become unavailable if persistence cannot match its workspace."""
     client, host, root = api
     headers = await acquire_controller(client)
-    await client.post("/api/v1/projects", headers=headers, json={"projectId": "p2"})
+    await client.post("/api/v1/projects", headers=headers, json=project_create_payload("p2"))
     registry = host.app.state.project_registry
     original_activate = registry.activate
     original_restore = registry.restore_active
@@ -364,8 +373,8 @@ async def test_queued_activation_snapshots_rollback_state_only_after_lock(api) -
     """A queued activation must not capture rollback state before an earlier commit."""
     client, host, root = api
     headers = await acquire_controller(client)
-    await client.post("/api/v1/projects", headers=headers, json={"projectId": "p2"})
-    await client.post("/api/v1/projects", headers=headers, json={"projectId": "p3"})
+    await client.post("/api/v1/projects", headers=headers, json=project_create_payload("p2"))
+    await client.post("/api/v1/projects", headers=headers, json=project_create_payload("p3"))
     registry = host.app.state.project_registry
     facade = host.app.state.runtime_facade
     first_switched = asyncio.Event()
@@ -418,11 +427,11 @@ async def test_every_project_and_file_mutation_requires_auth_and_lease(api) -> N
     """A session alone must not authorize workspace mutations."""
     client, _, _ = api
     client.cookies.clear()
-    no_auth = await client.post("/api/v1/projects", json={"projectId": "p2"})
+    no_auth = await client.post("/api/v1/projects", json=project_create_payload("p2"))
     await login(client)
     no_lease = await client.post(
         "/api/v1/projects",
-        json={"projectId": "p2"},
+        json=project_create_payload("p2"),
     )
 
     assert no_auth.status_code == 401

@@ -11,6 +11,8 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+
+from manyselves.application.project_metadata import ProjectMetadata
 from manyselves.core.loops.bus import MessageBus
 from manyselves.interfaces.types import (
     AgentResponse,
@@ -716,7 +718,9 @@ async def test_event_context_reads_active_project_and_session_at_processing_time
         await app.state.event_broker.publish_internal(
             SystemNotice(agent_type="main", content="first")
         )
-        app.state.project_registry.create("p2")
+        app.state.project_registry.create(
+            "p2", ProjectMetadata(display_name="p2", description="")
+        )
         app.state.project_registry.activate("p2")
         host.session_id = "session-2"
         await app.state.event_broker.publish_internal(

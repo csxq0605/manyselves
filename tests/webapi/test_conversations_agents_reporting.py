@@ -10,6 +10,7 @@ from uuid import UUID
 
 import httpx
 import pytest
+
 from manyselves.application.errors import RuntimeConsistencyFailedError
 from manyselves.application.models import EditResendCommand
 from manyselves.config import ConfigManager
@@ -1702,7 +1703,10 @@ async def test_cancelled_pending_shutdown_cleanup_finishes_before_propagating_ca
 @pytest.mark.asyncio
 async def test_project_activation_rebinds_project_scoped_resource_services(resources) -> None:
     client, host, original_workspace, _ = resources
-    created_project = await client.post("/api/v1/projects", json={"projectId": "project-2"})
+    created_project = await client.post(
+        "/api/v1/projects",
+        json={"projectId": "project-2", "displayName": "project-2", "description": ""},
+    )
     activated = await client.post("/api/v1/projects/project-2/activate")
     created_conversation = await client.post(
         "/api/v1/conversations", json={"name": "Project Two"}
@@ -1723,7 +1727,10 @@ async def test_project_activation_rebinds_project_scoped_resource_services(resou
 @pytest.mark.asyncio
 async def test_project_activation_rejects_pending_conversation_persistence(resources) -> None:
     client, host, original_workspace, _ = resources
-    await client.post("/api/v1/projects", json={"projectId": "project-2"})
+    await client.post(
+        "/api/v1/projects",
+        json={"projectId": "project-2", "displayName": "project-2", "description": ""},
+    )
     service = host.app.state.conversation_service
     service._pending_writes = 1  # noqa: SLF001 - deterministic queued callback contract
     try:
@@ -1740,7 +1747,10 @@ async def test_project_activation_rejects_pending_conversation_persistence(resou
 @pytest.mark.asyncio
 async def test_project_activation_rejects_queued_agent_work(resources) -> None:
     client, host, original_workspace, _ = resources
-    await client.post("/api/v1/projects", json={"projectId": "project-2"})
+    await client.post(
+        "/api/v1/projects",
+        json={"projectId": "project-2", "displayName": "project-2", "description": ""},
+    )
     queue: asyncio.Queue[str] = asyncio.Queue()
     queue.put_nowait("old-workspace-turn")
     host.loop_manager._loops = {"main": SimpleNamespace(_message_queue=queue)}
