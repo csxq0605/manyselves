@@ -34,10 +34,12 @@ The docker group is equivalent to root-level control of the host. Use it only fo
 ~~~bash
 sudo loginctl enable-linger manyselves
 sudo -iu manyselves
-dockerd-rootless-setuptool.sh install
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
+test -d "$XDG_RUNTIME_DIR"
+systemctl --user is-active default.target
+dockerd-rootless-setuptool.sh install
 export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock
-docker context create manyselves-rootless --docker "host=$DOCKER_HOST" || true
+docker context create manyselves-rootless --docker "host=$DOCKER_HOST"
 docker context use manyselves-rootless
 docker info
 ~~~

@@ -85,4 +85,11 @@ The only production Python module changed from the Task 3 baseline is `manyselve
 
 - WSL remains unavailable with E_ACCESSDENIED, but Git for Windows Bash is available and was used for the real POSIX cleanup test and shell syntax check.
 - The PowerShell test provides a local replacement for WebRequestSession because this Windows PowerShell environment does not expose that type until web cmdlets are loaded; the backup script itself is unchanged and the mocked client calls execute in a separate process.
+
+## Fix round 3: rootless Docker runtime ordering (2026-08-04)
+
+- RED: the deployment contract failed because rootless Docker installed before its XDG runtime directory and user-manager checks, and masked context creation with || true.
+- GREEN: the rootless Docker instructions now enable linger, enter the service account session, export and test XDG_RUNTIME_DIR, verify systemctl --user is-active default.target, then install the daemon.
+- Docker context creation now fails visibly instead of being masked.
+- Verification: uv run pytest tests/deploy/test_compose_contract.py tests/deploy/test_backup_client_cleanup.py -q passed with 6 tests; git diff --check passed.
 - `uv run ruff` could not run because Ruff is not installed in the resolved environment (`program not found`); no dependency changes were made to expand scope.

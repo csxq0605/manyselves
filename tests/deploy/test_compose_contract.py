@@ -53,6 +53,9 @@ def test_lan_defaults_use_the_reviewed_server_ip_and_ports() -> None:
 
 def test_linux_deployment_docs_prepare_one_non_root_engine_context() -> None:
     docs = Path("docs/deployment/linux-compose.md").read_text("utf-8")
+    rootless_docker = docs.split("If that privilege is not acceptable", 1)[1].split(
+        "Keep DOCKER_HOST", 1
+    )[0]
 
     assert "Choose exactly one engine path" in docs
     assert "sudo usermod -aG docker manyselves" in docs
@@ -62,3 +65,14 @@ def test_linux_deployment_docs_prepare_one_non_root_engine_context() -> None:
     assert "XDG_RUNTIME_DIR=/run/user/$(id -u)" in docs
     assert "podman info" in docs
     assert "Run every extraction and Compose command below from that configured service-account session." in docs
+    assert rootless_docker.index("export XDG_RUNTIME_DIR=/run/user/$(id -u)") < rootless_docker.index(
+        'test -d "$XDG_RUNTIME_DIR"'
+    )
+    assert rootless_docker.index('test -d "$XDG_RUNTIME_DIR"') < rootless_docker.index(
+        "systemctl --user is-active default.target"
+    )
+    assert rootless_docker.index(
+        "systemctl --user is-active default.target"
+    ) < rootless_docker.index("dockerd-rootless-setuptool.sh install")
+    assert "docker context create manyselves-rootless" in rootless_docker
+    assert "|| true" not in rootless_docker
