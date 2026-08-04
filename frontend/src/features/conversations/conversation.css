@@ -1,0 +1,257 @@
+.conversation-workspace {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 100dvh;
+  overflow: hidden;
+  position: relative;
+}
+
+.conversation-workspace__main {
+  display: flex;
+  min-height: 0;
+  overflow: auto;
+  padding: 56px clamp(24px, 7vw, 96px) 24px;
+}
+
+.conversation-workspace__main > [role="alert"],
+.conversation-workspace__main > [role="status"] {
+  color: #707070;
+  font-size: 13px;
+  margin: auto;
+}
+
+.conversation-workspace__main > [role="alert"] { color: #b42318; }
+
+.conversation-empty {
+  align-self: flex-end;
+  margin: 0 auto 34px;
+  max-width: 760px;
+  text-align: center;
+}
+
+.conversation-empty__spark {
+  align-items: center;
+  border: 1px solid #dededb;
+  border-radius: 17px;
+  color: #333332;
+  display: inline-flex;
+  font-size: 27px;
+  height: 54px;
+  justify-content: center;
+  margin-bottom: 19px;
+  width: 54px;
+}
+
+.conversation-empty h1 {
+  color: #20201f;
+  font-size: clamp(25px, 3vw, 32px);
+  letter-spacing: -.035em;
+  line-height: 1.2;
+  margin: 0 0 13px;
+}
+
+.conversation-empty p {
+  color: #777775;
+  font-size: clamp(15px, 1.6vw, 19px);
+  line-height: 1.55;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.message-list {
+  margin: 0 auto;
+  max-width: 760px;
+  min-width: 0;
+  width: 100%;
+}
+
+.message-list ol,
+.message-composer ul,
+.conversation-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.message-list ol { display: grid; gap: 25px; }
+.message { color: #292927; line-height: 1.65; min-width: 0; }
+.message header { color: #747472; display: flex; font-size: 11px; gap: 10px; margin-bottom: 6px; }
+.message header strong { color: #41413f; font-size: 12px; }
+.message p { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.message--user { background: #f0f0ed; border-radius: 16px; justify-self: end; max-width: min(78%, 660px); padding: 11px 15px; }
+.message--assistant { justify-self: start; width: 100%; }
+.message--live { border-left: 2px solid #a2b8df; padding-left: 14px; }
+.message--live small, .pane-muted { color: #777775; font-size: 12px; }
+
+.message-list button,
+.conversation-actions button,
+.command-palette button {
+  background: #fff;
+  border: 1px solid #d8d8d5;
+  border-radius: 8px;
+  color: #424240;
+  cursor: pointer;
+  min-height: 32px;
+  padding: 6px 10px;
+}
+
+.message-composer {
+  background: #fff;
+  border: 1px solid #d2d2ce;
+  border-radius: 24px;
+  box-shadow: 0 20px 44px rgb(32 32 30 / 7%);
+  box-sizing: border-box;
+  margin: 0 auto clamp(88px, 15vh, 150px);
+  max-width: 660px;
+  padding: 18px 17px 16px;
+  width: calc(100% - 48px);
+}
+
+.conversation-workspace:has(.message-list) .message-composer {
+  margin-bottom: 58px;
+}
+
+.message-composer > label { display: block; }
+.message-composer > label > span {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.message-composer textarea {
+  background: transparent;
+  border: 0;
+  box-sizing: border-box;
+  color: #252523;
+  font-size: 16px;
+  line-height: 1.6;
+  min-height: 90px;
+  outline: 0;
+  padding: 7px 10px 12px;
+  resize: vertical;
+  width: 100%;
+}
+
+.message-composer textarea::placeholder { color: #989894; }
+.message-composer:focus-within {
+  border-color: #8fa6ce;
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 18%), 0 20px 44px rgb(32 32 30 / 7%);
+}
+.message-composer ul[aria-label="待发送附件"] { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 7px 4px; }
+.message-composer ul[aria-label="待发送附件"] li {
+  align-items: center;
+  background: #f7f7f5;
+  border: 1px solid #dededb;
+  border-radius: 12px;
+  color: #41413f;
+  display: flex;
+  font-size: 13px;
+  gap: 6px;
+  max-width: 100%;
+  padding: 7px 7px 7px 12px;
+}
+.message-composer ul[aria-label="待发送附件"] li span { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-composer ul[aria-label="待发送附件"] li small { color: #777775; }
+.message-composer ul[aria-label="待发送附件"] li button { background: transparent; border: 0; border-radius: 50%; cursor: pointer; height: 25px; padding: 0; width: 25px; }
+.message-composer ul[aria-label="待发送附件"] li button:hover { background: #e7e7e4; }
+
+.message-composer__actions { align-items: center; display: flex; gap: 12px; }
+.message-composer__actions > span { color: #777775; font-size: 15px; }
+.message-composer__actions button {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #d9d9d5;
+  border-radius: 50%;
+  color: #4b4b48;
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 23px;
+  height: 43px;
+  justify-content: center;
+  line-height: 1;
+  padding: 0 0 2px;
+  width: 43px;
+}
+.message-composer__actions button[aria-label="发送"] { background: #232321; border-color: #232321; color: #fff; margin-left: auto; }
+.message-composer__actions button:hover:not(:disabled) { background: #f1f1ee; }
+.message-composer__actions button[aria-label="发送"]:hover:not(:disabled) { background: #3a3a37; }
+.message-composer button:disabled { cursor: not-allowed; opacity: .45; }
+.message-composer [role="alert"] { color: #b42318; font-size: 12px; margin: 9px 8px 0; }
+.message-composer [role="status"] { color: #4f6455; font-size: 12px; margin: 9px 8px 0; }
+
+.command-palette {
+  background: #fff;
+  border: 1px solid #dcddd9;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(32 33 35 / 10%);
+  display: grid;
+  gap: 2px;
+  margin-bottom: 8px;
+  padding: 5px;
+}
+.command-palette button { border: 0; text-align: left; }
+
+.conversation-overflow {
+  bottom: 27px;
+  left: 50%;
+  position: absolute;
+  transform: translateX(-50%);
+  z-index: 2;
+}
+.conversation-overflow > button {
+  align-items: center;
+  background: #232321;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  font-size: 15px;
+  height: 43px;
+  justify-content: center;
+  letter-spacing: 2px;
+  width: 43px;
+}
+.conversation-overflow__panel {
+  background: #fff;
+  border: 1px solid #d9d9d5;
+  border-radius: 14px;
+  bottom: 53px;
+  box-shadow: 0 18px 45px rgb(32 32 30 / 16%);
+  display: grid;
+  gap: 12px;
+  left: 50%;
+  max-height: min(520px, 65dvh);
+  overflow: auto;
+  padding: 12px;
+  position: absolute;
+  transform: translateX(-50%);
+  width: min(390px, calc(100vw - 48px));
+}
+.conversation-list li + li { margin-top: 3px; }
+.conversation-list li > button { background: transparent; border: 0; border-radius: 8px; cursor: pointer; display: grid; gap: 3px; padding: 8px 10px; text-align: left; width: 100%; }
+.conversation-list li > button:hover, .conversation-list li > button[aria-current="true"] { background: #f0f0ed; }
+.conversation-list li span { font-size: 13px; font-weight: 600; }
+.conversation-list li small { color: #777775; }
+.conversation-actions { border-top: 1px solid #e6e6e2; display: grid; gap: 5px; padding-top: 12px; }
+.conversation-actions button { text-align: left; }
+.conversation-actions button:nth-of-type(3) { color: #b42318; }
+
+@media (max-width: 700px) {
+  .conversation-workspace { min-height: calc(100dvh - 220px); }
+  .conversation-workspace__main { padding: 38px 20px 20px; }
+  .conversation-empty { margin-bottom: 22px; }
+  .message-composer { border-radius: 20px; margin-bottom: 78px; width: calc(100% - 28px); }
+  .message-composer__actions > span { font-size: 13px; }
+  .conversation-overflow { bottom: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-workspace * { scroll-behavior: auto !important; transition-duration: 0ms !important; }
+}

@@ -13,6 +13,11 @@ const ProjectDirectoryPage = lazy(async () => {
   return { default: module.ProjectDirectoryPage };
 });
 
+const ConversationPage = lazy(async () => {
+  const module = await import("../features/conversations/ConversationPage");
+  return { default: module.ConversationPage };
+});
+
 export const lastProjectRouteStorageKey = "manyselves.lastProjectRoute.v1";
 
 function Placeholder({ title }: { readonly title: string }) {
@@ -107,7 +112,11 @@ export function AppRoutes({ gateway, onLogout, platform }: { readonly gateway: A
     <Route path="/" element={<ProjectLanding gateway={gateway} projectApi={projectApi} />} />
     <Route path="/knowledge" element={<Placeholder title="全局知识库" />} />
     <Route path="/projects/:projectId" element={<ProjectHomePage />} />
-    <Route path="/projects/:projectId/conversations/:conversationId" element={<Placeholder title="项目对话" />} />
+    <Route path="/projects/:projectId/conversations/:conversationId" element={(
+      <Suspense fallback={<Placeholder title="正在加载项目对话…" />}>
+        <ConversationPage gateway={gateway} />
+      </Suspense>
+    )} />
     <Route path="/projects/:projectId/runtime" element={<Placeholder title="运行态" />} />
     <Route path="/projects/:projectId/logs" element={<Placeholder title="日志" />} />
     <Route path="/projects/:projectId/:section" element={(

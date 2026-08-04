@@ -238,7 +238,7 @@ git commit -m "feat: add capability-based project file pages"
 
 ### Task 4: Project-bound conversations and browser-computer attachments
 
-**Current checkpoint (2026-08-04):** implementation and automated functional gates are complete, but the task remains **in progress** until the Codex-light visual/UI audit, final independent review, and commit are complete. See `docs/phase1/implementation-status.md`.
+**Current checkpoint (2026-08-04):** complete. A visual drift was found and corrected against the user-confirmed Codex-like screenshot: the default conversation surface now uses the centered empty state/composer, and session management is contained by the bottom overflow control instead of a top action strip plus page-local conversation column. StrictMode, inactive-project, requested-session, upload/send, stale-retry, focus, and back-navigation reactivation regressions are covered; final independent review PASS. See `docs/phase1/implementation-status.md`.
 
 **Files:**
 - Modify: `frontend/src/features/chat/MessageComposer.tsx`
@@ -318,7 +318,7 @@ Working directory for npm commands: `frontend`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit project conversations and local upload composer**
+- [x] **Step 6: Commit project conversations and local upload composer**
 
 ```bash
 git add manyselves/application/conversation_service.py manyselves/webapi/schemas/conversations.py manyselves/webapi/routes/conversations.py tests/webapi/test_conversations_agents_reporting.py frontend/src/features/chat frontend/src/features/conversations frontend/e2e/conversations.spec.ts

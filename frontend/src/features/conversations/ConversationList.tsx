@@ -6,25 +6,25 @@ import type { ConversationApi, ConversationListSnapshot } from "./conversation-a
 export interface ConversationListProps {
   readonly agentId: string;
   readonly api: ConversationApi;
-  readonly cacheScope?: string | undefined;
   readonly onActivated?: ((sessionId: string) => void) | undefined;
+  readonly projectId: string;
 }
 
-function queryKey(agentId: string, cacheScope: string | undefined) {
-  return ["conversations", cacheScope ?? "default", agentId] as const;
+function queryKey(projectId: string, agentId: string) {
+  return ["conversations", projectId, agentId] as const;
 }
 
-export function ConversationList({ agentId, api, cacheScope, onActivated }: ConversationListProps) {
+export function ConversationList({ agentId, api, onActivated, projectId }: ConversationListProps) {
   const client = useQueryClient();
   const conversations = useQuery({
-    queryFn: () => api.list(agentId),
-    queryKey: queryKey(agentId, cacheScope),
+    queryFn: () => api.list(projectId, agentId),
+    queryKey: queryKey(projectId, agentId),
   });
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const activation = useMutation({
-    mutationFn: (sessionId: string) => api.activate(sessionId, agentId),
+    mutationFn: (sessionId: string) => api.activate(projectId, sessionId, agentId),
     onError: () => {
       setError("会话切换失败");
       setNotice(null);
@@ -32,7 +32,8 @@ export function ConversationList({ agentId, api, cacheScope, onActivated }: Conv
     onSuccess: (activated) => {
       setError(null);
       setNotice(`${activated.name} 已激活`);
-      client.setQueryData<ConversationListSnapshot>(queryKey(agentId, cacheScope), (current) => current ? {
+      client.setQueryData<ConversationListSnapshot>(queryKey(projectId, agentId), (current) => current ? {
+        ...current,
         activeSessionId: activated.sessionId,
         conversations: current.conversations.map((item) => ({
           ...item,

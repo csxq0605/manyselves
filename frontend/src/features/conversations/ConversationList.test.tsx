@@ -8,14 +8,14 @@ import type { ConversationApi, ConversationListSnapshot, ConversationSummary } f
 import { ConversationList } from "./ConversationList";
 
 const sessions: ConversationSummary[] = [
-  { active: true, name: "需求梳理", preview: "first", sessionId: "s1", timestamp: "2026-08-03T00:00:00Z" },
-  { active: false, name: "方案评审", preview: "second", sessionId: "s2", timestamp: "2026-08-03T00:01:00Z" },
+  { active: true, name: "需求梳理", preview: "first", projectId: "project-1", sessionId: "s1", timestamp: "2026-08-03T00:00:00Z" },
+  { active: false, name: "方案评审", preview: "second", projectId: "project-1", sessionId: "s2", timestamp: "2026-08-03T00:01:00Z" },
 ];
 
 function snapshot(activeSessionId = "s1"): ConversationListSnapshot {
   return { activeSessionId, conversations: sessions.map((item) => ({
     ...item, active: item.sessionId === activeSessionId,
-  })) };
+  })), projectId: "project-1" };
 }
 
 function renderWithQuery(ui: React.ReactNode) {
@@ -25,15 +25,15 @@ function renderWithQuery(ui: React.ReactNode) {
 
 function fakeApi(overrides: Partial<ConversationApi> = {}): ConversationApi {
   return {
-    activate: async (sessionId) => sessions.find((item) => item.sessionId === sessionId)!,
-    clear: async () => ({ activeSessionId: "s3" }),
-    create: async (name) => ({ ...sessions[0]!, active: true, name, sessionId: "s3" }),
-    delete: async () => ({ activeSessionId: "s1" }),
+    activate: async (_projectId, sessionId) => sessions.find((item) => item.sessionId === sessionId)!,
+    clear: async (projectId) => ({ activeSessionId: "s3", projectId }),
+    create: async (projectId, name) => ({ ...sessions[0]!, active: true, name, projectId, sessionId: "s3" }),
+    delete: async (projectId) => ({ activeSessionId: "s1", projectId }),
     editResend: async () => ({ commandId: crypto.randomUUID(), status: "accepted" }),
     interrupt: async () => ({ commandId: crypto.randomUUID(), status: "accepted" }),
     list: async () => snapshot(),
-    messages: async () => ({ messages: [], sessionId: "s1" }),
-    rename: async (sessionId, name) => ({ ...sessions[0]!, name, sessionId }),
+    messages: async (projectId) => ({ messages: [], projectId, sessionId: "s1" }),
+    rename: async (projectId, sessionId, name) => ({ ...sessions[0]!, name, projectId, sessionId }),
     rollback: async () => ({ commandId: crypto.randomUUID(), conversationHistory: [], restoredFiles: 0, status: "accepted" }),
     sendFileContext: async () => ({ commandId: crypto.randomUUID(), status: "accepted" }),
     sendMessage: async () => ({ commandId: crypto.randomUUID(), status: "accepted" }),
@@ -49,7 +49,7 @@ describe("ConversationList", () => {
     }));
     const onActivated = vi.fn();
     const user = userEvent.setup();
-    renderWithQuery(<ConversationList agentId="main" api={fakeApi({ activate })} onActivated={onActivated} />);
+    renderWithQuery(<ConversationList agentId="main" api={fakeApi({ activate })} onActivated={onActivated} projectId="project-1" />);
 
     await user.click(await screen.findByRole("button", { name: /方案评审/ }));
     expect(screen.getByRole("button", { name: /需求梳理/ })).toHaveAttribute("aria-current", "true");
@@ -64,7 +64,7 @@ describe("ConversationList", () => {
     const user = userEvent.setup();
     renderWithQuery(<ConversationList agentId="main" api={fakeApi({
       activate: async () => { throw new Error("busy"); },
-    })} />);
+    })} projectId="project-1" />);
 
     await user.click(await screen.findByRole("button", { name: /方案评审/ }));
     expect(await screen.findByRole("alert")).toHaveTextContent("会话切换失败");
@@ -76,16 +76,16 @@ describe("ConversationActions", () => {
   it("trims names and confirms destructive actions", async () => {
     const effects: string[] = [];
     const api = fakeApi({
-      clear: async () => { effects.push("clear"); return { activeSessionId: "s3" }; },
-      create: async (name) => { effects.push(`create:${name}`); return { ...sessions[0]!, name, sessionId: "s3" }; },
-      delete: async (id) => { effects.push(`delete:${id}`); return { activeSessionId: "s1" }; },
-      rename: async (id, name) => { effects.push(`rename:${id}:${name}`); return { ...sessions[0]!, name, sessionId: id }; },
+      clear: async (projectId) => { effects.push("clear"); return { activeSessionId: "s3", projectId }; },
+      create: async (projectId, name) => { effects.push(`create:${name}`); return { ...sessions[0]!, name, projectId, sessionId: "s3" }; },
+      delete: async (projectId, id) => { effects.push(`delete:${id}`); return { activeSessionId: "s1", projectId }; },
+      rename: async (projectId, id, name) => { effects.push(`rename:${id}:${name}`); return { ...sessions[0]!, name, projectId, sessionId: id }; },
     });
     const names = ["  新会话  ", "  新名称  "];
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
 
-    render(<ConversationActions activeConversation={sessions[1]!} agentId="main" api={api}
+    render(<ConversationActions activeConversation={sessions[1]!} agentId="main" api={api} projectId="project-1"
       requestName={() => names.shift() ?? null} />);
     await user.click(screen.getByRole("button", { name: "新建会话" }));
     await user.click(screen.getByRole("button", { name: "重命名会话" }));

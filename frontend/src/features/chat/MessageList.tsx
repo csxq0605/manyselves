@@ -29,6 +29,7 @@ export interface MessageListProps {
   readonly liveMessages?: readonly RuntimeMessageView[] | undefined;
   readonly messages: readonly Record<string, unknown>[];
   readonly onHistoryChanged?: (() => void) | undefined;
+  readonly projectId: string;
   readonly requestEdit?: ((message: ChatMessage) => string | null) | undefined;
 }
 
@@ -42,6 +43,7 @@ export function MessageList({
   liveMessages = [],
   messages,
   onHistoryChanged,
+  projectId,
   requestEdit = (message) => window.prompt("编辑消息后重新发送", message.content),
 }: MessageListProps) {
   const [historyOverride, setHistoryOverride] = useState<{
@@ -67,7 +69,7 @@ export function MessageList({
   );
 
   async function refreshHistory() {
-    const refreshed = await api.messages(agentId);
+    const refreshed = await api.messages(projectId, agentId);
     setHistoryOverride({ history: normalizeMessages(refreshed.messages), source: messages });
     onHistoryChanged?.();
   }
@@ -79,6 +81,7 @@ export function MessageList({
     try {
       if (attempt.kind === "edit") {
         await api.editResend(
+          projectId,
           agentId,
           attempt.targetMessageId,
           attempt.content,
@@ -89,6 +92,7 @@ export function MessageList({
         setNotice("历史已刷新");
       } else {
         const restored = await api.rollback(
+          projectId,
           agentId,
           attempt.checkpointId,
           attempt.idempotencyKey,

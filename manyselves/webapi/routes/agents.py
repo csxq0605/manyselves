@@ -5,7 +5,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Request, status
 
 from ...application.control import ControlLeaseRequired
-from ...application.conversation_service import ConversationNotFoundError
+from ...application.conversation_service import (
+    ConversationNotFoundError,
+    ConversationProjectMismatchError,
+)
 from ...application.errors import (
     AgentNotFoundError,
     CheckpointNotFoundError,
@@ -43,13 +46,29 @@ from ..security import require_authenticated_session, require_control_lease_head
 router = APIRouter(prefix="/agents", dependencies=[Depends(require_authenticated_session)])
 
 
+def _project_id(request: Request, requested: str | None) -> str:
+    return requested or request.app.state.project_registry.active_project_id
+
+
 def _error(error: Exception) -> ApiError:
+    if isinstance(error, ConversationProjectMismatchError):
+        return ApiError(
+            status_code=409,
+            code=error.code,
+            message="Conversation does not belong to the requested project",
+            retryable=False,
+        )
     if isinstance(error, AgentNotFoundError):
         return ApiError(status_code=404, code=error.code, message=str(error), retryable=False)
     if isinstance(error, CheckpointNotFoundError):
         return ApiError(status_code=404, code=error.code, message=str(error), retryable=False)
     if isinstance(error, ConversationNotFoundError):
-        return ApiError(status_code=404, code=error.code, message="Conversation message was not found", retryable=False)
+        return ApiError(
+            status_code=404,
+            code=error.code,
+            message="Conversation message was not found",
+            retryable=False,
+        )
     if isinstance(error, CommandIdConflictError):
         return ApiError(status_code=409, code=error.code, message=str(error), retryable=False)
     if isinstance(error, ControlLeaseRequired):
@@ -61,7 +80,9 @@ def _error(error: Exception) -> ApiError:
     if isinstance(error, RollbackPreflightUnsupportedError):
         return ApiError(status_code=501, code=error.code, message=str(error), retryable=False)
     if isinstance(error, RuntimeBusyError):
-        return ApiError(status_code=409, code=error.code, message="Runtime has active work", retryable=True)
+        return ApiError(
+            status_code=409, code=error.code, message="Runtime has active work", retryable=True
+        )
     if isinstance(error, MaintenanceQuiescedError):
         return ApiError(status_code=409, code=error.code, message=str(error), retryable=True)
     raise error
@@ -78,7 +99,9 @@ async def list_agents(request: Request):
                 AgentSnapshot(
                     id=agent_id,
                     status=agent_status,
-                    sessionId=manager.get_agent_session_id(agent_id) if manager is not None else None,
+                    sessionId=manager.get_agent_session_id(agent_id)
+                    if manager is not None
+                    else None,
                 )
                 for agent_id, agent_status in snapshot.agent_statuses.items()
             ]
@@ -131,9 +154,7 @@ async def update_agent_debug(
             manager = request.app.state.runtime_host.loop_manager
             if manager is None or manager.get_loop(agent_id) is None:
                 raise AgentNotFoundError(agent_id)
-            request.app.state.runtime_host.backend.set_agent_debug_mode(
-                agent_id, body.enabled
-            )
+            request.app.state.runtime_host.backend.set_agent_debug_mode(agent_id, body.enabled)
             return _debug_response(request, agent_id)
     except (
         AgentNotFoundError,
@@ -153,6 +174,11 @@ async def send_message(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
+        project_id = _project_id(request, body.project_id)
+        request.app.state.conversation_service.require_active_project(
+            agent_id,
+            project_id,
+        )
         return await request.app.state.runtime_facade.send_user_message(
             SendMessageCommand(
                 command_id=command_id,
@@ -169,11 +195,16 @@ async def send_message(
         RuntimeNotReadyError,
         MaintenanceQuiescedError,
         CommandIdConflictError,
+        ConversationProjectMismatchError,
     ) as error:
         raise _error(error) from error
 
 
-@router.post("/{agent_id}/messages/{target_message_id}/edit-resend", response_model=AcceptedCommandResponse, status_code=202)
+@router.post(
+    "/{agent_id}/messages/{target_message_id}/edit-resend",
+    response_model=AcceptedCommandResponse,
+    status_code=202,
+)
 async def edit_resend(
     agent_id: str,
     target_message_id: str,
@@ -192,6 +223,8 @@ async def edit_resend(
         target_message_id=target_message_id,
     )
     try:
+        project_id = _project_id(request, body.project_id)
+        service.require_active_project(agent_id, project_id)
         return await request.app.state.runtime_facade.edit_resend(
             command,
             prepare=lambda: service.prepare_edit_resend(agent_id, target_message_id),
@@ -206,6 +239,7 @@ async def edit_resend(
         ConversationNotFoundError,
         RuntimeConsistencyFailedError,
         RuntimeBusyError,
+        ConversationProjectMismatchError,
     ) as error:
         raise _error(error) from error
 
@@ -219,12 +253,20 @@ async def send_file_context(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
+        project_id = _project_id(request, body.project_id)
+        request.app.state.conversation_service.require_active_project(
+            agent_id,
+            project_id,
+        )
         return await request.app.state.runtime_facade.send_file_context(
             SendFileContextCommand(
                 command_id=command_id,
                 lease_token=lease_token,
                 agent_id=agent_id,
-                file_context=body.model_dump(by_alias=False),
+                file_context=body.model_dump(
+                    by_alias=False,
+                    exclude={"project_id"},
+                ),
             )
         )
     except (
@@ -233,6 +275,7 @@ async def send_file_context(
         RuntimeNotReadyError,
         MaintenanceQuiescedError,
         CommandIdConflictError,
+        ConversationProjectMismatchError,
     ) as error:
         raise _error(error) from error
 
@@ -258,7 +301,9 @@ async def interrupt(
         raise _error(error) from error
 
 
-@router.post("/{agent_id}/rollback", response_model=RollbackResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/{agent_id}/rollback", response_model=RollbackResponse, status_code=status.HTTP_202_ACCEPTED
+)
 async def rollback(
     agent_id: str,
     body: RollbackRequest,
@@ -268,6 +313,8 @@ async def rollback(
 ):
     service = request.app.state.conversation_service
     try:
+        project_id = _project_id(request, body.project_id)
+        service.require_active_project(agent_id, project_id)
         result = await request.app.state.runtime_facade.rollback(
             RollbackCommand(
                 command_id=command_id,
@@ -275,9 +322,7 @@ async def rollback(
                 agent_id=agent_id,
                 checkpoint_id=body.checkpoint_id,
             ),
-            before_restore=lambda: service.prepare_rollback(
-                agent_id, body.target_message_id
-            ),
+            before_restore=lambda: service.prepare_rollback(agent_id, body.target_message_id),
             after_restore=lambda restored, _snapshot: service.apply_rollback(
                 agent_id, body.target_message_id, restored.conversation_history
             ),
@@ -299,5 +344,6 @@ async def rollback(
         RuntimeConsistencyFailedError,
         RuntimeBusyError,
         RollbackPreflightUnsupportedError,
+        ConversationProjectMismatchError,
     ) as error:
         raise _error(error) from error

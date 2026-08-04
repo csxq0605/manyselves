@@ -970,6 +970,13 @@ export interface components {
             /** Streamid */
             streamId: string;
         };
+        /** ConversationActiveSessionResponse */
+        ConversationActiveSessionResponse: {
+            /** Activesessionid */
+            activeSessionId: string;
+            /** Projectid */
+            projectId: string;
+        };
         /** ConversationCreateRequest */
         ConversationCreateRequest: {
             /**
@@ -979,6 +986,8 @@ export interface components {
             agentId: string;
             /** Name */
             name: string;
+            /** Projectid */
+            projectId?: string | null;
         };
         /** ConversationListResponse */
         ConversationListResponse: {
@@ -986,6 +995,8 @@ export interface components {
             activeSessionId: string;
             /** Conversations */
             conversations: components["schemas"]["ConversationResponse"][];
+            /** Projectid */
+            projectId: string;
         };
         /** ConversationMessagesResponse */
         ConversationMessagesResponse: {
@@ -993,6 +1004,8 @@ export interface components {
             messages: {
                 [key: string]: unknown;
             }[];
+            /** Projectid */
+            projectId: string;
             /** Sessionid */
             sessionId: string;
         };
@@ -1005,6 +1018,8 @@ export interface components {
             agentId: string;
             /** Name */
             name: string;
+            /** Projectid */
+            projectId?: string | null;
         };
         /** ConversationResponse */
         ConversationResponse: {
@@ -1017,6 +1032,8 @@ export interface components {
              * @default
              */
             preview: string;
+            /** Projectid */
+            projectId: string;
             /** Sessionid */
             sessionId: string;
             /** Timestamp */
@@ -1057,6 +1074,8 @@ export interface components {
             content: string;
             /** Messageid */
             messageId?: string | null;
+            /** Projectid */
+            projectId?: string | null;
         };
         /**
          * ErrorDetail
@@ -1144,6 +1163,8 @@ export interface components {
             endLine?: number | null;
             /** File */
             file: string;
+            /** Projectid */
+            projectId?: string | null;
             /** Startline */
             startLine?: number | null;
             /**
@@ -1674,6 +1695,8 @@ export interface components {
         RollbackRequest: {
             /** Checkpointid */
             checkpointId: string;
+            /** Projectid */
+            projectId?: string | null;
             /** Targetmessageid */
             targetMessageId?: string | null;
         };
@@ -1817,6 +1840,8 @@ export interface components {
             content: string;
             /** Messageid */
             messageId?: string | null;
+            /** Projectid */
+            projectId?: string | null;
             /**
              * Source
              * @default user
@@ -2592,6 +2617,7 @@ export interface operations {
     get_api_v1_conversations: {
         parameters: {
             query?: {
+                projectId?: string | null;
                 agentId?: string;
             };
             header?: never;
@@ -2674,6 +2700,7 @@ export interface operations {
     post_api_v1_conversations_clear: {
         parameters: {
             query?: {
+                projectId?: string | null;
                 agentId?: string;
             };
             header?: never;
@@ -2688,7 +2715,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConversationActiveSessionResponse"];
                 };
             };
             /** @description Request validation failed */
@@ -2714,6 +2741,7 @@ export interface operations {
     get_api_v1_conversations_messages: {
         parameters: {
             query?: {
+                projectId?: string | null;
                 agentId?: string;
             };
             header?: never;
@@ -2754,6 +2782,7 @@ export interface operations {
     delete_api_v1_conversations_session_id: {
         parameters: {
             query?: {
+                projectId?: string | null;
                 agentId?: string;
             };
             header?: never;
@@ -2770,7 +2799,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConversationActiveSessionResponse"];
                 };
             };
             /** @description Request validation failed */
@@ -2840,6 +2869,7 @@ export interface operations {
     post_api_v1_conversations_session_id_activate: {
         parameters: {
             query?: {
+                projectId?: string | null;
                 agentId?: string;
             };
             header?: never;

@@ -1,5 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
@@ -134,4 +136,93 @@ describe("project directory routes", () => {
       );
     });
   }, 10_000);
+});
+
+describe("project conversation routes", () => {
+  function conversationGateway(initiallyActive = true) {
+    let projectActive = initiallyActive;
+    const requestJson = vi.fn(async (path: string, init?: { readonly method?: string }) => {
+      if (path === "/api/v1/projects") {
+        return { projects: [{ active: projectActive, description: "", displayName: "Project 1", id: "project-1", revision: "r1" }] };
+      }
+      if (path === "/api/v1/projects/project-1/activate" && init?.method === "POST") {
+        projectActive = true;
+        return { active: true, description: "", displayName: "Project 1", id: "project-1", revision: "r2" };
+      }
+      if (path === "/api/v1/conversations" && init?.method === "POST") {
+        if (!projectActive) throw new Error("project not active");
+        return { active: true, name: "新会话", preview: "", projectId: "project-1", sessionId: "s-new", timestamp: "now" };
+      }
+      if (path === "/api/v1/conversations?projectId=project-1&agentId=main") {
+        if (!projectActive) throw new Error("project not active");
+        return {
+          activeSessionId: "s-new",
+          conversations: [{ active: true, name: "需求梳理", preview: "", projectId: "project-1", sessionId: "s-new", timestamp: "now" }],
+          projectId: "project-1",
+        };
+      }
+      if (path === "/api/v1/conversations/messages?projectId=project-1&agentId=main") {
+        return { messages: [], projectId: "project-1", sessionId: "s-new" };
+      }
+      throw new Error(`unexpected request: ${path}`);
+    });
+    return { gateway: { baseUrl: "https://api.example", requestJson } as unknown as ApiGateway, requestJson };
+  }
+
+  it("mounts the real project-bound conversation workspace", async () => {
+    const { gateway } = conversationGateway();
+    render(
+      <AppProviders>
+        <MemoryRouter initialEntries={["/projects/project-1/conversations/s-new"]}>
+          <AppRoutes gateway={gateway} />
+        </MemoryRouter>
+      </AppProviders>,
+    );
+
+    expect(await screen.findByRole("heading", { name: "今天要处理什么？" })).toBeVisible();
+    expect(screen.getByText("当前对话属于“Project 1”项目。Agent 会自动使用项目输入、知识库与输出模板。")).toBeVisible();
+    expect(screen.getByRole("button", { name: "上传本地文件" })).toBeVisible();
+    expect(screen.queryByText("此项目区域将在后续工作中提供受控内容。")).not.toBeInTheDocument();
+  });
+
+  it("creates a conversation for the current project from project home and replaces the new route", async () => {
+    const { gateway, requestJson } = conversationGateway();
+    const user = userEvent.setup();
+    render(
+      <StrictMode><AppProviders>
+        <MemoryRouter initialEntries={["/projects/project-1"]}>
+          <AppRoutes gateway={gateway} />
+          <LocationProbe />
+        </MemoryRouter>
+      </AppProviders></StrictMode>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "新对话" }));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(
+      "/projects/project-1/conversations/s-new",
+    ));
+    expect(requestJson).toHaveBeenCalledWith("/api/v1/conversations", {
+      json: { agentId: "main", name: "新会话", projectId: "project-1" },
+      method: "POST",
+      requireLease: true,
+    });
+    expect(requestJson.mock.calls.filter(([path]) => path === "/api/v1/conversations")).toHaveLength(1);
+  });
+
+  it("activates an inactive route project before loading its conversation", async () => {
+    const { gateway, requestJson } = conversationGateway(false);
+    render(
+      <AppProviders>
+        <MemoryRouter initialEntries={["/projects/project-1/conversations/s-new"]}>
+          <AppRoutes gateway={gateway} />
+        </MemoryRouter>
+      </AppProviders>,
+    );
+
+    expect(await screen.findByRole("heading", { name: "今天要处理什么？" })).toBeVisible();
+    expect(requestJson).toHaveBeenCalledWith("/api/v1/projects/project-1/activate", {
+      method: "POST",
+      requireLease: true,
+    });
+  });
 });

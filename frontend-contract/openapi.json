@@ -250,6 +250,24 @@
         "title": "BootstrapSnapshot",
         "type": "object"
       },
+      "ConversationActiveSessionResponse": {
+        "properties": {
+          "activeSessionId": {
+            "title": "Activesessionid",
+            "type": "string"
+          },
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "activeSessionId"
+        ],
+        "title": "ConversationActiveSessionResponse",
+        "type": "object"
+      },
       "ConversationCreateRequest": {
         "additionalProperties": false,
         "properties": {
@@ -263,6 +281,18 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectid"
           }
         },
         "required": [
@@ -283,9 +313,14 @@
             },
             "title": "Conversations",
             "type": "array"
+          },
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
           }
         },
         "required": [
+          "projectId",
           "conversations",
           "activeSessionId"
         ],
@@ -302,6 +337,10 @@
             "title": "Messages",
             "type": "array"
           },
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
+          },
           "sessionId": {
             "title": "Sessionid",
             "type": "string"
@@ -309,6 +348,7 @@
         },
         "required": [
           "sessionId",
+          "projectId",
           "messages"
         ],
         "title": "ConversationMessagesResponse",
@@ -327,6 +367,18 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectid"
           }
         },
         "required": [
@@ -350,6 +402,10 @@
             "title": "Preview",
             "type": "string"
           },
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
+          },
           "sessionId": {
             "title": "Sessionid",
             "type": "string"
@@ -361,6 +417,7 @@
         },
         "required": [
           "sessionId",
+          "projectId",
           "name",
           "timestamp",
           "active"
@@ -465,6 +522,18 @@
               }
             ],
             "title": "Messageid"
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectid"
           }
         },
         "required": [
@@ -676,6 +745,18 @@
             "minLength": 1,
             "title": "File",
             "type": "string"
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectid"
           },
           "startLine": {
             "anyOf": [
@@ -2088,6 +2169,18 @@
             "title": "Checkpointid",
             "type": "string"
           },
+          "projectId": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectid"
+          },
           "targetMessageId": {
             "anyOf": [
               {
@@ -2495,6 +2588,18 @@
               }
             ],
             "title": "Messageid"
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectid"
           },
           "source": {
             "default": "user",
@@ -3693,6 +3798,23 @@
         "parameters": [
           {
             "in": "query",
+            "name": "projectId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Projectid"
+            }
+          },
+          {
+            "in": "query",
             "name": "agentId",
             "required": false,
             "schema": {
@@ -3800,6 +3922,23 @@
         "parameters": [
           {
             "in": "query",
+            "name": "projectId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Projectid"
+            }
+          },
+          {
+            "in": "query",
             "name": "agentId",
             "required": false,
             "schema": {
@@ -3813,7 +3952,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationActiveSessionResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3852,6 +3993,23 @@
       "get": {
         "operationId": "get_api_v1_conversations_messages",
         "parameters": [
+          {
+            "in": "query",
+            "name": "projectId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Projectid"
+            }
+          },
           {
             "in": "query",
             "name": "agentId",
@@ -3918,6 +4076,23 @@
           },
           {
             "in": "query",
+            "name": "projectId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Projectid"
+            }
+          },
+          {
+            "in": "query",
             "name": "agentId",
             "required": false,
             "schema": {
@@ -3931,7 +4106,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationActiveSessionResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4040,6 +4217,23 @@
             "schema": {
               "title": "Session Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "projectId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Projectid"
             }
           },
           {

@@ -9,6 +9,7 @@ export interface ConversationActionsProps {
   readonly agentId: string;
   readonly api: ConversationApi;
   readonly onChanged?: ((activeSessionId?: string) => void) | undefined;
+  readonly projectId: string;
   readonly requestName?: ((action: NameAction) => string | null) | undefined;
 }
 
@@ -17,6 +18,7 @@ export function ConversationActions({
   agentId,
   api,
   onChanged,
+  projectId,
   requestName = (action) => window.prompt(action === "create" ? "请输入会话名称" : "请输入新名称"),
 }: ConversationActionsProps) {
   const [error, setError] = useState<string | null>(null);
@@ -38,24 +40,30 @@ export function ConversationActions({
   function createConversation() {
     const name = requestName("create")?.trim();
     if (!name) return;
-    void run(async () => (await api.create(name, agentId)).sessionId, "新建会话失败");
+    void run(async () => (await api.create(projectId, name, agentId)).sessionId, "新建会话失败");
   }
 
   function renameConversation() {
     if (!activeConversation) return;
     const name = requestName("rename")?.trim();
     if (!name) return;
-    void run(async () => (await api.rename(activeConversation.sessionId, name, agentId)).sessionId, "重命名失败");
+    void run(
+      async () => (await api.rename(projectId, activeConversation.sessionId, name, agentId)).sessionId,
+      "重命名失败",
+    );
   }
 
   function deleteConversation() {
     if (!activeConversation || !window.confirm(`确定删除会话“${activeConversation.name}”？`)) return;
-    void run(async () => (await api.delete(activeConversation.sessionId, agentId)).activeSessionId, "删除会话失败");
+    void run(
+      async () => (await api.delete(projectId, activeConversation.sessionId, agentId)).activeSessionId,
+      "删除会话失败",
+    );
   }
 
   function clearConversation() {
     if (!activeConversation || !window.confirm(`确定清空会话“${activeConversation.name}”？`)) return;
-    void run(async () => (await api.clear(agentId)).activeSessionId, "清空会话失败");
+    void run(async () => (await api.clear(projectId, agentId)).activeSessionId, "清空会话失败");
   }
 
   return (

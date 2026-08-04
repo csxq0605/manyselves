@@ -362,19 +362,257 @@ async def test_conversation_round_trip_preserves_store_format(resources) -> None
 
     created = await client.post("/api/v1/conversations", json={"name": "Review"})
     session_id = created.json()["sessionId"]
-    renamed = await client.patch(
-        f"/api/v1/conversations/{session_id}", json={"name": "Final"}
-    )
+    renamed = await client.patch(f"/api/v1/conversations/{session_id}", json={"name": "Final"})
 
     assert created.status_code == 201
+    assert created.json()["projectId"] == "project-1"
     assert renamed.status_code == 200
+    assert renamed.json()["projectId"] == "project-1"
     metadata_text = (workspace / ".manyselves/conversations/sessions.json").read_text("utf-8")
     metadata = json.loads(metadata_text)
-    assert any(item["id"] == session_id and item["name"] == "Final" for item in metadata)
+    assert any(
+        item["id"] == session_id and item["name"] == "Final" and item["projectId"] == "project-1"
+        for item in metadata
+    )
     assert not metadata_text.endswith("}\n")  # Store keeps its existing indented JSON bytes.
 
     listed = await client.get("/api/v1/conversations")
+    assert listed.json()["projectId"] == "project-1"
     assert any(item["sessionId"] == session_id for item in listed.json()["conversations"])
+
+
+@pytest.mark.asyncio
+async def test_conversation_project_identity_is_persisted_and_returned(resources) -> None:
+    """Create/list/read must expose the project binding persisted with the session."""
+    client, _, workspace, _ = resources
+
+    created = await client.post(
+        "/api/v1/conversations",
+        json={"projectId": "project-1", "name": "Bound"},
+    )
+    listed = await client.get(
+        "/api/v1/conversations",
+        params={"projectId": "project-1", "agentId": "main"},
+    )
+    messages = await client.get(
+        "/api/v1/conversations/messages",
+        params={"projectId": "project-1", "agentId": "main"},
+    )
+
+    assert created.status_code == 201
+    assert created.json()["projectId"] == "project-1"
+    assert listed.status_code == 200
+    assert listed.json()["projectId"] == "project-1"
+    assert {item["projectId"] for item in listed.json()["conversations"]} == {"project-1"}
+    assert messages.status_code == 200
+    assert messages.json()["projectId"] == "project-1"
+    metadata = json.loads(
+        (workspace / ".manyselves/conversations/sessions.json").read_text("utf-8")
+    )
+    assert (
+        next(item for item in metadata if item["id"] == created.json()["sessionId"])["projectId"]
+        == "project-1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_persisted_project_binding_does_not_rescan_metadata_per_event(
+    resources, monkeypatch
+) -> None:
+    """A bound active session must not reload sessions.json for every bus event."""
+    client, host, _, _ = resources
+    created = await client.post(
+        "/api/v1/conversations",
+        json={"projectId": "project-1", "name": "Cached binding"},
+    )
+    assert created.status_code == 201
+    service = host.app.state.conversation_service
+    original_load = service.store._load_sessions_metadata  # noqa: SLF001
+    load_calls = 0
+
+    def counted_load():
+        nonlocal load_calls
+        load_calls += 1
+        return original_load()
+
+    monkeypatch.setattr(service.store, "_load_sessions_metadata", counted_load)
+    service._persist_current_project_binding("main")  # noqa: SLF001
+    service._persist_current_project_binding("main")  # noqa: SLF001
+
+    assert load_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_conversation_project_mismatch_rejects_every_resource_mutation(resources) -> None:
+    """A client project must be validated before any conversation state can change."""
+    client, _, _, _ = resources
+    created = await client.post(
+        "/api/v1/conversations",
+        json={"projectId": "project-1", "name": "Keep"},
+    )
+    session_id = created.json()["sessionId"]
+
+    mismatches = [
+        await client.get(
+            "/api/v1/conversations",
+            params={"projectId": "project-2", "agentId": "main"},
+        ),
+        await client.get(
+            "/api/v1/conversations/messages",
+            params={"projectId": "project-2", "agentId": "main"},
+        ),
+        await client.post(
+            "/api/v1/conversations",
+            json={"projectId": "project-2", "name": "Wrong"},
+        ),
+        await client.patch(
+            f"/api/v1/conversations/{session_id}",
+            json={"projectId": "project-2", "name": "Wrong"},
+        ),
+        await client.post(
+            f"/api/v1/conversations/{session_id}/activate",
+            params={"projectId": "project-2", "agentId": "main"},
+        ),
+        await client.delete(
+            f"/api/v1/conversations/{session_id}",
+            params={"projectId": "project-2", "agentId": "main"},
+        ),
+        await client.post(
+            "/api/v1/conversations/clear",
+            params={"projectId": "project-2", "agentId": "main"},
+        ),
+    ]
+
+    for response in mismatches:
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "CONVERSATION_PROJECT_MISMATCH"
+    current = await client.get(
+        "/api/v1/conversations",
+        params={"projectId": "project-1", "agentId": "main"},
+    )
+    assert any(
+        item["sessionId"] == session_id and item["name"] == "Keep"
+        for item in current.json()["conversations"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_conversation_binds_to_its_containing_project(resources) -> None:
+    """Metadata without projectId must remain readable and bind on its next mutation."""
+    client, _, workspace, _ = resources
+    await client.post(
+        "/api/v1/projects",
+        json={
+            "projectId": "project-2",
+            "displayName": "project-2",
+            "description": "",
+        },
+    )
+    target = workspace.parent / "project-2"
+    conversations = target / ".manyselves" / "conversations"
+    agent_dir = conversations / "main"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    legacy_id = "legacy-session"
+    (conversations / "sessions.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": legacy_id,
+                    "name": "Legacy",
+                    "timestamp": "2026-08-03T00:00:00",
+                    "preview": "old",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (agent_dir / f"{legacy_id}.jsonl").write_text(
+        json.dumps({"role": "user", "content": "legacy"}) + "\n",
+        encoding="utf-8",
+    )
+    activated = await client.post("/api/v1/projects/project-2/activate")
+
+    listed = await client.get(
+        "/api/v1/conversations",
+        params={"projectId": "project-2", "agentId": "main"},
+    )
+    renamed = await client.patch(
+        f"/api/v1/conversations/{legacy_id}",
+        json={"projectId": "project-2", "name": "Legacy bound"},
+    )
+
+    assert activated.status_code == 200
+    assert listed.status_code == 200
+    legacy = next(item for item in listed.json()["conversations"] if item["sessionId"] == legacy_id)
+    assert legacy["projectId"] == "project-2"
+    assert renamed.status_code == 200
+    assert renamed.json()["projectId"] == "project-2"
+    persisted = json.loads((conversations / "sessions.json").read_text("utf-8"))
+    assert persisted[0]["projectId"] == "project-2"
+
+
+@pytest.mark.asyncio
+async def test_agent_conversation_mutations_validate_project_before_facade(resources) -> None:
+    """Send/edit/file-context/rollback must reject cross-project work before side effects."""
+    client, host, _, _ = resources
+    rejected_send = await client.post(
+        "/api/v1/agents/main/messages",
+        headers={"Idempotency-Key": "20000000-0000-4000-8000-000000000001"},
+        json={"projectId": "project-2", "content": "wrong", "messageId": "m1"},
+    )
+    accepted_send = await client.post(
+        "/api/v1/agents/main/messages",
+        headers={"Idempotency-Key": "20000000-0000-4000-8000-000000000002"},
+        json={"projectId": "project-1", "content": "right", "messageId": "m1"},
+    )
+    await _eventually(lambda: len(host.app.state.conversation_service.messages("main")) == 1)
+    sent_before = list(host.backend.sent)
+    rejected_edit = await client.post(
+        "/api/v1/agents/main/messages/m1/edit-resend",
+        headers={"Idempotency-Key": "20000000-0000-4000-8000-000000000003"},
+        json={"projectId": "project-2", "content": "wrong edit"},
+    )
+    rejected_context = await client.post(
+        "/api/v1/agents/main/file-context",
+        headers={"Idempotency-Key": "20000000-0000-4000-8000-000000000004"},
+        json={"projectId": "project-2", "type": "file", "file": "Inputs/brief.txt"},
+    )
+    rejected_rollback = await client.post(
+        "/api/v1/agents/main/rollback",
+        headers={"Idempotency-Key": "20000000-0000-4000-8000-000000000005"},
+        json={"projectId": "project-2", "checkpointId": "cp-1", "targetMessageId": "m1"},
+    )
+    accepted_context = await client.post(
+        "/api/v1/agents/main/file-context",
+        headers={"Idempotency-Key": "20000000-0000-4000-8000-000000000006"},
+        json={"projectId": "project-1", "type": "file", "file": "Inputs/brief.txt"},
+    )
+
+    assert rejected_send.status_code == 409
+    assert accepted_send.status_code == 202
+    for response in (rejected_send, rejected_edit, rejected_context, rejected_rollback):
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "CONVERSATION_PROJECT_MISMATCH"
+    assert host.backend.rollbacks == []
+    assert host.backend.rollback_preparations == []
+    assert host.backend.sent == [
+        *sent_before,
+        (
+            json.dumps(
+                {
+                    "end_line": None,
+                    "file": "Inputs/brief.txt",
+                    "start_line": None,
+                    "type": "file",
+                },
+                sort_keys=True,
+            ),
+            "main",
+            None,
+            "system",
+        ),
+    ]
+    assert accepted_context.status_code == 202
 
 
 @pytest.mark.asyncio
@@ -398,9 +636,7 @@ async def test_conversation_activation_rejects_active_agent(resources) -> None:
     await client.post("/api/v1/conversations", json={"name": "Second"})
     host.statuses = {"main": "thinking"}
 
-    response = await client.post(
-        f"/api/v1/conversations/{first.json()['sessionId']}/activate"
-    )
+    response = await client.post(f"/api/v1/conversations/{first.json()['sessionId']}/activate")
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "RUNTIME_BUSY"
@@ -490,9 +726,7 @@ async def test_conversation_mutations_restore_exact_store_and_live_state_after_s
     conversations_root = workspace / ".manyselves" / "conversations"
     sessions_path = conversations_root / "sessions.json"
     sessions_before = sessions_path.read_bytes()
-    files_before = {
-        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
-    }
+    files_before = {path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")}
     current_before = dict(service.store._current_session_ids)  # noqa: SLF001
     live_before = dict(host.backend.live_sessions)
     live_histories_before = {
@@ -502,9 +736,7 @@ async def test_conversation_mutations_restore_exact_store_and_live_state_after_s
 
     host.backend.sync_failures_remaining = 1
     if mutation == "create":
-        response = await client.post(
-            "/api/v1/conversations", json={"name": "Must Roll Back"}
-        )
+        response = await client.post("/api/v1/conversations", json={"name": "Must Roll Back"})
     elif mutation == "activate":
         response = await client.post(f"/api/v1/conversations/{target_id}/activate")
     elif mutation == "delete":
@@ -514,9 +746,7 @@ async def test_conversation_mutations_restore_exact_store_and_live_state_after_s
 
     assert response.status_code == 500
     assert sessions_path.read_bytes() == sessions_before
-    files_after = {
-        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
-    }
+    files_after = {path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")}
     assert files_after == files_before
     assert service.store._current_session_ids == current_before  # noqa: SLF001
     assert host.backend.live_sessions == live_before
@@ -535,9 +765,7 @@ async def test_conversation_compensation_restores_exact_divergent_live_session_i
 ) -> None:
     client, host, workspace, _ = resources
     service = host.app.state.conversation_service
-    created = await client.post(
-        "/api/v1/conversations", json={"name": "Durable Session"}
-    )
+    created = await client.post("/api/v1/conversations", json={"name": "Durable Session"})
     assert created.status_code == 201
     service.store.append_message("main", "user", "durable history")
     await service._sync("main", clear_pending=True)  # noqa: SLF001
@@ -553,22 +781,16 @@ async def test_conversation_compensation_restores_exact_divergent_live_session_i
     conversations_root = workspace / ".manyselves" / "conversations"
     sessions_path = conversations_root / "sessions.json"
     sessions_before = sessions_path.read_bytes()
-    files_before = {
-        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
-    }
+    files_before = {path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")}
     current_before = dict(service.store._current_session_ids)  # noqa: SLF001
     assert current_before["main"] == created.json()["sessionId"]
 
     host.backend.sync_failures_remaining = 1
-    response = await client.post(
-        "/api/v1/conversations", json={"name": "Must Compensate"}
-    )
+    response = await client.post("/api/v1/conversations", json={"name": "Must Compensate"})
 
     assert response.status_code == 500
     assert sessions_path.read_bytes() == sessions_before
-    assert {
-        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
-    } == files_before
+    assert {path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")} == files_before
     assert service.store._current_session_ids == current_before  # noqa: SLF001
     assert loop._conversation_history == live_history_before  # noqa: SLF001
     assert loop._current_session_id is None  # noqa: SLF001
@@ -582,9 +804,7 @@ async def test_delete_shared_active_session_restores_every_affected_agent_after_
     client, host, workspace, _ = resources
     service = host.app.state.conversation_service
 
-    replacement = await client.post(
-        "/api/v1/conversations", json={"name": "Replacement"}
-    )
+    replacement = await client.post("/api/v1/conversations", json={"name": "Replacement"})
     replacement_id = replacement.json()["sessionId"]
     service.store.append_message("main", "user", "replacement history")
     shared = await client.post("/api/v1/conversations", json={"name": "Shared"})
@@ -601,9 +821,7 @@ async def test_delete_shared_active_session_restores_every_affected_agent_after_
     conversations_root = workspace / ".manyselves" / "conversations"
     sessions_path = conversations_root / "sessions.json"
     sessions_before = sessions_path.read_bytes()
-    files_before = {
-        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
-    }
+    files_before = {path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")}
     current_before = dict(service.store._current_session_ids)  # noqa: SLF001
     live_before = dict(host.backend.live_sessions)
     live_histories_before = {
@@ -619,27 +837,21 @@ async def test_delete_shared_active_session_restores_every_affected_agent_after_
     assert host.backend.synced[0][2] == replacement_id
     assert host.backend.synced[0][2] != live_before["main"]
     assert sessions_path.read_bytes() == sessions_before
-    assert {
-        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
-    } == files_before
+    assert {path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")} == files_before
     assert service.store._current_session_ids == current_before  # noqa: SLF001
     assert host.backend.live_sessions == live_before
     assert host.backend.live_histories == live_histories_before
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "failure_mode", ["metadata_save", "target_unlink"]
-)
+@pytest.mark.parametrize("failure_mode", ["metadata_save", "target_unlink"])
 async def test_delete_silent_store_failure_restores_exact_store_and_live_state(
     resources, monkeypatch, failure_mode: str
 ) -> None:
     client, host, workspace, _ = resources
     service = host.app.state.conversation_service
 
-    survivor = await client.post(
-        "/api/v1/conversations", json={"name": "Survivor"}
-    )
+    survivor = await client.post("/api/v1/conversations", json={"name": "Survivor"})
     assert survivor.status_code == 201
     service.store.append_message("main", "user", "survivor history")
     target = await client.post("/api/v1/conversations", json={"name": "Target"})
@@ -653,9 +865,7 @@ async def test_delete_silent_store_failure_restores_exact_store_and_live_state(
     sessions_before = sessions_path.read_bytes()
     metadata_before = json.loads(sessions_before)
     assert len(metadata_before) >= 2
-    files_before = {
-        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
-    }
+    files_before = {path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")}
     target_paths = {path for path in files_before if path.stem == target_id}
     assert target_paths
     current_before = dict(service.store._current_session_ids)  # noqa: SLF001
@@ -666,9 +876,7 @@ async def test_delete_silent_store_failure_restores_exact_store_and_live_state(
     }
 
     if failure_mode == "metadata_save":
-        monkeypatch.setattr(
-            service.store, "_save_sessions_metadata", lambda _sessions: None
-        )
+        monkeypatch.setattr(service.store, "_save_sessions_metadata", lambda _sessions: None)
     else:
         original_unlink = Path.unlink
 
@@ -684,9 +892,7 @@ async def test_delete_silent_store_failure_restores_exact_store_and_live_state(
     assert response.status_code == 500
     assert sessions_path.read_bytes() == sessions_before
     assert json.loads(sessions_path.read_bytes()) == metadata_before
-    assert {
-        path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")
-    } == files_before
+    assert {path: path.read_bytes() for path in conversations_root.rglob("*.jsonl")} == files_before
     assert service.store._current_session_ids == current_before  # noqa: SLF001
     assert host.backend.live_sessions == live_before
     assert host.backend.live_histories == live_histories_before
@@ -751,15 +957,11 @@ async def test_conversation_compensation_failure_fails_runtime_closed(
         failed_closed.set()
         return result
 
-    monkeypatch.setattr(
-        service, "_restore_mutation_snapshot", fail_restore, raising=False
-    )
+    monkeypatch.setattr(service, "_restore_mutation_snapshot", fail_restore, raising=False)
     monkeypatch.setattr(facade, "fail_consistency", observe_fail_consistency)
     host.backend.sync_failures_remaining = 1
 
-    response = await client.post(
-        "/api/v1/conversations", json={"name": "sk-sync-secret"}
-    )
+    response = await client.post("/api/v1/conversations", json={"name": "sk-sync-secret"})
 
     assert failed_closed.is_set()
     assert host.is_ready is False
@@ -1049,9 +1251,7 @@ async def test_shutdown_cancellation_during_begin_establishes_orderly_drain_befo
             ):
                 original_close = resource.close
 
-                async def close_resource(
-                    *, stage: str = name, close=original_close
-                ) -> None:
+                async def close_resource(*, stage: str = name, close=original_close) -> None:
                     await close()
                     events.append(stage)
 
@@ -1143,9 +1343,7 @@ async def test_shutdown_cancellation_during_resource_close_finishes_pipeline_onc
             reporting_task = asyncio.create_task(asyncio.Event().wait())
             reporting_watcher = asyncio.create_task(asyncio.Event().wait())
             host.reporting_controller._tasks["shutdown-task"] = reporting_task
-            host.reporting_controller._status_watchers = {
-                "shutdown-task": reporting_watcher
-            }
+            host.reporting_controller._status_watchers = {"shutdown-task": reporting_watcher}
             workspace = app.state.python_run_service.workspace
             script = workspace / "shutdown-process.py"
             script.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
@@ -1177,9 +1375,7 @@ async def test_shutdown_cancellation_during_resource_close_finishes_pipeline_onc
                 original_close = resource.close
                 original_closes.append(original_close)
 
-                async def close_resource(
-                    *, stage: str = name, close=original_close
-                ) -> None:
+                async def close_resource(*, stage: str = name, close=original_close) -> None:
                     events.append(f"{stage}-start")
                     if stage == cancelled_stage:
                         stage_started.set()
@@ -1417,9 +1613,7 @@ async def test_shutdown_owned_stage_failure_stops_before_dependencies(
                     original_close = resource.close
                     originals[name] = original_close
 
-                    async def close_resource(
-                        *, stage: str = name, close=original_close
-                    ) -> None:
+                    async def close_resource(*, stage: str = name, close=original_close) -> None:
                         fail_or_continue(stage)
                         await close()
 
@@ -1601,9 +1795,7 @@ async def test_failed_service_close_attempts_safe_siblings_and_retries_only_pend
             ):
                 original_close = resource.close
 
-                async def close_resource(
-                    *, stage: str = name, close=original_close
-                ) -> None:
+                async def close_resource(*, stage: str = name, close=original_close) -> None:
                     nonlocal reporting_calls
                     events.append(stage)
                     if stage == "reporting":
@@ -1708,9 +1900,7 @@ async def test_project_activation_rebinds_project_scoped_resource_services(resou
         json={"projectId": "project-2", "displayName": "project-2", "description": ""},
     )
     activated = await client.post("/api/v1/projects/project-2/activate")
-    created_conversation = await client.post(
-        "/api/v1/conversations", json={"name": "Project Two"}
-    )
+    created_conversation = await client.post("/api/v1/conversations", json={"name": "Project Two"})
 
     target_workspace = original_workspace.parent / "project-2"
     assert created_project.status_code == 201
@@ -1772,14 +1962,14 @@ async def test_history_replacement_discards_partial_response_buffer(resources) -
 
     blocked = await client.post("/api/v1/conversations", json={"name": "Fresh"})
     assert blocked.status_code == 409
-    await host.bus.publish(
-        Error(agent_type="main", source="agent", message="interrupted")
-    )
+    await host.bus.publish(Error(agent_type="main", source="agent", message="interrupted"))
     await _eventually(lambda: not host.app.state.conversation_service._streams)  # noqa: SLF001
     created = await client.post("/api/v1/conversations", json={"name": "Fresh"})
     await host.bus.publish(AgentResponse(agent_type="main", content="fresh", streaming=False))
     await _eventually(
-        lambda: (workspace / f".manyselves/conversations/main/{created.json()['sessionId']}.jsonl").exists()
+        lambda: (
+            workspace / f".manyselves/conversations/main/{created.json()['sessionId']}.jsonl"
+        ).exists()
     )
 
     text = (
@@ -1857,9 +2047,7 @@ async def test_edit_resend_truncates_durable_and_in_memory_history_before_send(r
             headers={"Idempotency-Key": f"00000000-0000-4000-8000-00000000000{message_id[-1]}"},
             json={"content": content, "messageId": message_id, "source": "user"},
         )
-    await host.bus.publish(
-        AgentResponse(agent_type="main", content="old answer", message_id="a2")
-    )
+    await host.bus.publish(AgentResponse(agent_type="main", content="old answer", message_id="a2"))
     await _eventually(lambda: len(host.backend.sent) == 2)
 
     resent = await client.post(
@@ -1941,7 +2129,9 @@ async def test_edit_resend_rejects_non_idle_agent_state(resources, busy_kind: st
     try:
         response = await client.post(
             "/api/v1/agents/main/messages/m1/edit-resend",
-            headers={"Idempotency-Key": f"01100000-0000-4000-8000-00000000000{2 + ['active', 'stream', 'persistence'].index(busy_kind)}"},
+            headers={
+                "Idempotency-Key": f"01100000-0000-4000-8000-00000000000{2 + ['active', 'stream', 'persistence'].index(busy_kind)}"
+            },
             json={"content": "replacement"},
         )
     finally:
@@ -2066,10 +2256,7 @@ async def test_prepare_compensation_failure_retains_producer_cleanup_diagnostic(
         await service.prepare_edit_resend("main", "m1")
 
     assert raised.value.__cause__ is restore_error
-    assert any(
-        "producer stop failed" in note
-        for note in getattr(restore_error, "__notes__", ())
-    )
+    assert any("producer stop failed" in note for note in getattr(restore_error, "__notes__", ()))
 
 
 @pytest.mark.asyncio
@@ -2174,9 +2361,7 @@ async def test_rollback_truncates_durable_tail_after_checkpoint_restore(resource
     session_id = json.loads(
         (workspace / ".manyselves/conversations/sessions.json").read_text("utf-8")
     )[0]["id"]
-    text = (workspace / f".manyselves/conversations/main/{session_id}.jsonl").read_text(
-        "utf-8"
-    )
+    text = (workspace / f".manyselves/conversations/main/{session_id}.jsonl").read_text("utf-8")
     assert "before" in text
     assert "rollback target" not in text
 
@@ -2364,12 +2549,8 @@ async def test_settings_masks_all_provider_secrets(resources) -> None:
 async def test_settings_rejects_null_required_fields_and_can_clear_secret(resources) -> None:
     client, _, _, _ = resources
 
-    invalid = await client.patch(
-        "/api/v1/settings/providers/provider-1", json={"enabled": None}
-    )
-    cleared = await client.patch(
-        "/api/v1/settings/providers/provider-1", json={"apiKey": None}
-    )
+    invalid = await client.patch("/api/v1/settings/providers/provider-1", json={"enabled": None})
+    cleared = await client.patch("/api/v1/settings/providers/provider-1", json={"apiKey": None})
 
     assert invalid.status_code == 422
     assert cleared.status_code == 200
@@ -2696,7 +2877,9 @@ async def test_python_run_can_be_interrupted_immediately(resources) -> None:
     client, host, workspace, _ = resources
     script = workspace / "Work/slow.py"
     script.parent.mkdir(parents=True, exist_ok=True)
-    script.write_text("import time\nprint('started', flush=True)\ntime.sleep(30)\n", encoding="utf-8")
+    script.write_text(
+        "import time\nprint('started', flush=True)\ntime.sleep(30)\n", encoding="utf-8"
+    )
 
     accepted = await client.post(
         "/api/v1/operations/python",
@@ -2792,7 +2975,7 @@ async def test_python_interrupt_kills_descendants_that_hold_output_pipes(resourc
     script.write_text(
         "import pathlib, subprocess, sys, time\n"
         "ready = pathlib.Path('Work/child-ready')\n"
-        "code = \"import pathlib,signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        'code = "import pathlib,signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); '
         "pathlib.Path('Work/child-ready').write_text('ready'); time.sleep(3)\"\n"
         "child = subprocess.Popen([sys.executable, '-c', code])\n"
         "while not ready.exists(): time.sleep(0.01)\n"
@@ -2829,7 +3012,7 @@ async def test_python_interrupt_kills_descendants_after_parent_exits(resources) 
     script.write_text(
         "import pathlib, subprocess, sys, time\n"
         "ready = pathlib.Path('Work/exited-child-ready')\n"
-        "code = \"import pathlib,signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        'code = "import pathlib,signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); '
         "pathlib.Path('Work/exited-child-ready').write_text('ready'); time.sleep(3)\"\n"
         "child = subprocess.Popen([sys.executable, '-c', code])\n"
         "while not ready.exists(): time.sleep(0.01)\n"
@@ -2845,6 +3028,7 @@ async def test_python_interrupt_kills_descendants_after_parent_exits(resources) 
     await _eventually(pid_path.exists)
     child_pid = int(pid_path.read_text("utf-8"))
     operation = host.app.state.python_run_service.get(accepted.json()["operationId"])
+
     def host_process_exited() -> bool:
         return operation.process is not None and operation.process.returncode is not None
 
@@ -2990,9 +3174,7 @@ async def test_settings_apply_failure_restores_exact_persisted_config_bytes(
 
     assert response.status_code == 500
     assert config_path.read_bytes() == original
-    assert manager.config.providers.configurations[0].api_base == (
-        "https://provider.invalid/v1"
-    )
+    assert manager.config.providers.configurations[0].api_base == ("https://provider.invalid/v1")
 
 
 @pytest.mark.asyncio
@@ -3173,9 +3355,7 @@ async def test_preset_sync_rejects_invalid_lease_before_starting_worker(
         worker_started.set()
         return 5
 
-    monkeypatch.setattr(
-        "manyselves.webapi.routes.settings.sync_presets", sync_that_must_not_run
-    )
+    monkeypatch.setattr("manyselves.webapi.routes.settings.sync_presets", sync_that_must_not_run)
 
     response = await client.post(
         "/api/v1/settings/presets/sync",
@@ -3188,9 +3368,7 @@ async def test_preset_sync_rejects_invalid_lease_before_starting_worker(
 
 
 @pytest.mark.asyncio
-async def test_preset_sync_sanitizes_sync_error(
-    resources, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_preset_sync_sanitizes_sync_error(resources, monkeypatch: pytest.MonkeyPatch) -> None:
     """Worker failures must retain the route's sanitized public envelope."""
     client, _, _, _ = resources
     secret = "Bearer preset-sync-secret"
@@ -3304,12 +3482,8 @@ async def test_maintenance_requires_matching_opaque_token_and_exposes_state(reso
     quiesced = await client.post("/api/v1/maintenance/quiesce")
     token = quiesced.json()["maintenanceToken"]
     health = await client.get("/api/v1/health/ready")
-    rejected = await client.post(
-        "/api/v1/maintenance/release", json={"maintenanceToken": "wrong"}
-    )
-    released = await client.post(
-        "/api/v1/maintenance/release", json={"maintenanceToken": token}
-    )
+    rejected = await client.post("/api/v1/maintenance/release", json={"maintenanceToken": "wrong"})
+    released = await client.post("/api/v1/maintenance/release", json={"maintenanceToken": token})
 
     assert quiesced.status_code == 200
     assert health.status_code == 503
@@ -3390,9 +3564,7 @@ async def test_maintenance_flushes_authoritative_workspace_without_following_sym
     for path in durable:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}", encoding="utf-8")
-    host.config_manager._settings = SimpleNamespace(
-        config_path=workspace / "manyselves.yaml"
-    )
+    host.config_manager._settings = SimpleNamespace(config_path=workspace / "manyselves.yaml")
     service = host.app.state.maintenance_service
     service.config_manager = host.config_manager
     outside = tmp_path / "outside-durable"

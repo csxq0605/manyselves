@@ -11,17 +11,20 @@ class _Strict(BaseModel):
 
 
 class SendMessageRequest(_Strict):
+    project_id: str | None = Field(default=None, alias="projectId", min_length=1)
     content: str = Field(min_length=1)
     source: Literal["user", "main_agent"] = "user"
     message_id: str | None = Field(default=None, alias="messageId")
 
 
 class EditResendRequest(_Strict):
+    project_id: str | None = Field(default=None, alias="projectId", min_length=1)
     content: str = Field(min_length=1)
     message_id: str | None = Field(default=None, alias="messageId")
 
 
 class FileContextRequest(_Strict):
+    project_id: str | None = Field(default=None, alias="projectId", min_length=1)
     type: Literal["file", "selection"]
     file: str = Field(min_length=1)
     start_line: int | None = Field(default=None, alias="startLine", ge=1)
@@ -29,6 +32,7 @@ class FileContextRequest(_Strict):
 
 
 class RollbackRequest(_Strict):
+    project_id: str | None = Field(default=None, alias="projectId", min_length=1)
     checkpoint_id: str = Field(alias="checkpointId", min_length=1)
     target_message_id: str | None = Field(default=None, alias="targetMessageId")
 

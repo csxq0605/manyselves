@@ -49,7 +49,7 @@ export async function installBaseServer(
       return route.fulfill({ body: "", contentType: "text/event-stream", status: 200 });
     }
     if (path === "/api/v1/projects") {
-      return json(route, { projects: [{ active: true, id: "project-1" }] });
+      return json(route, { projects: [{ active: true, description: "", displayName: "能源管理", id: "project-1", revision: "a".repeat(64) }] });
     }
     if (path.endsWith("/files/tree")) return json(route, { entries: [] });
     if (path === "/api/v1/conversations") {

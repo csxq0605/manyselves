@@ -4,21 +4,31 @@ import type { components } from "../../api/generated/schema";
 type AcceptedCommand = components["schemas"]["AcceptedCommandResponse"];
 type FileContextRequest = components["schemas"]["FileContextRequest"];
 type RollbackResponse = components["schemas"]["RollbackResponse"];
+type GeneratedConversationSummary = components["schemas"]["ConversationResponse"];
+type GeneratedConversationListSnapshot = components["schemas"]["ConversationListResponse"];
+type GeneratedConversationMessagesSnapshot = components["schemas"]["ConversationMessagesResponse"];
 
-export type ConversationSummary = components["schemas"]["ConversationResponse"];
-export type ConversationListSnapshot = components["schemas"]["ConversationListResponse"];
-export type ConversationMessagesSnapshot = components["schemas"]["ConversationMessagesResponse"];
+export type ConversationSummary = GeneratedConversationSummary & { readonly projectId: string };
+export type ConversationListSnapshot = Omit<GeneratedConversationListSnapshot, "conversations"> & {
+  readonly conversations: readonly ConversationSummary[];
+  readonly projectId: string;
+};
+export type ConversationMessagesSnapshot = GeneratedConversationMessagesSnapshot & {
+  readonly projectId: string;
+};
 
 export interface ActiveSessionSnapshot {
   readonly activeSessionId: string;
+  readonly projectId: string;
 }
 
 export interface ConversationApi {
-  activate(sessionId: string, agentId: string): Promise<ConversationSummary>;
-  clear(agentId: string): Promise<ActiveSessionSnapshot>;
-  create(name: string, agentId: string): Promise<ConversationSummary>;
-  delete(sessionId: string, agentId: string): Promise<ActiveSessionSnapshot>;
+  activate(projectId: string, sessionId: string, agentId: string): Promise<ConversationSummary>;
+  clear(projectId: string, agentId: string): Promise<ActiveSessionSnapshot>;
+  create(projectId: string, name: string, agentId: string): Promise<ConversationSummary>;
+  delete(projectId: string, sessionId: string, agentId: string): Promise<ActiveSessionSnapshot>;
   editResend(
+    projectId: string,
     agentId: string,
     targetMessageId: string,
     content: string,
@@ -26,21 +36,24 @@ export interface ConversationApi {
     messageId?: string,
   ): Promise<AcceptedCommand>;
   interrupt(agentId: string, idempotencyKey: string): Promise<AcceptedCommand>;
-  list(agentId: string): Promise<ConversationListSnapshot>;
-  messages(agentId: string): Promise<ConversationMessagesSnapshot>;
-  rename(sessionId: string, name: string, agentId: string): Promise<ConversationSummary>;
+  list(projectId: string, agentId: string): Promise<ConversationListSnapshot>;
+  messages(projectId: string, agentId: string): Promise<ConversationMessagesSnapshot>;
+  rename(projectId: string, sessionId: string, name: string, agentId: string): Promise<ConversationSummary>;
   rollback(
+    projectId: string,
     agentId: string,
     checkpointId: string,
     idempotencyKey: string,
     targetMessageId?: string,
   ): Promise<RollbackResponse>;
   sendFileContext(
+    projectId: string,
     agentId: string,
     context: FileContextRequest,
     idempotencyKey: string,
   ): Promise<AcceptedCommand>;
   sendMessage(
+    projectId: string,
     agentId: string,
     content: string,
     idempotencyKey: string,
@@ -48,14 +61,11 @@ export interface ConversationApi {
   ): Promise<AcceptedCommand>;
 }
 
-function agentQuery(agentId: string): string {
-  return new URLSearchParams({ agentId }).toString();
+function projectAgentQuery(projectId: string, agentId: string): string {
+  return new URLSearchParams({ projectId, agentId }).toString();
 }
 
-function commandOptions(
-  idempotencyKey: string,
-  json?: unknown,
-) {
+function commandOptions(idempotencyKey: string, json?: unknown) {
   return {
     headers: { "Idempotency-Key": idempotencyKey },
     ...(json === undefined ? {} : { json }),
@@ -66,26 +76,27 @@ function commandOptions(
 
 export function createConversationApi(gateway: ApiGateway): ConversationApi {
   return {
-    activate: (sessionId, agentId) => gateway.requestJson<ConversationSummary>(
-      `/api/v1/conversations/${encodeURIComponent(sessionId)}/activate?${agentQuery(agentId)}`,
+    activate: (projectId, sessionId, agentId) => gateway.requestJson<ConversationSummary>(
+      `/api/v1/conversations/${encodeURIComponent(sessionId)}/activate?${projectAgentQuery(projectId, agentId)}`,
       { method: "POST", requireLease: true },
     ),
-    clear: (agentId) => gateway.requestJson<ActiveSessionSnapshot>(
-      `/api/v1/conversations/clear?${agentQuery(agentId)}`,
+    clear: (projectId, agentId) => gateway.requestJson<ActiveSessionSnapshot>(
+      `/api/v1/conversations/clear?${projectAgentQuery(projectId, agentId)}`,
       { method: "POST", requireLease: true },
     ),
-    create: (name, agentId) => gateway.requestJson<ConversationSummary>(
+    create: (projectId, name, agentId) => gateway.requestJson<ConversationSummary>(
       "/api/v1/conversations",
-      { json: { agentId, name }, method: "POST", requireLease: true },
+      { json: { projectId, agentId, name }, method: "POST", requireLease: true },
     ),
-    delete: (sessionId, agentId) => gateway.requestJson<ActiveSessionSnapshot>(
-      `/api/v1/conversations/${encodeURIComponent(sessionId)}?${agentQuery(agentId)}`,
+    delete: (projectId, sessionId, agentId) => gateway.requestJson<ActiveSessionSnapshot>(
+      `/api/v1/conversations/${encodeURIComponent(sessionId)}?${projectAgentQuery(projectId, agentId)}`,
       { method: "DELETE", requireLease: true },
     ),
-    editResend: (agentId, targetMessageId, content, idempotencyKey, messageId) =>
+    editResend: (projectId, agentId, targetMessageId, content, idempotencyKey, messageId) =>
       gateway.requestJson<AcceptedCommand>(
         `/api/v1/agents/${encodeURIComponent(agentId)}/messages/${encodeURIComponent(targetMessageId)}/edit-resend`,
         commandOptions(idempotencyKey, {
+          projectId,
           content,
           ...(messageId === undefined ? {} : { messageId }),
         }),
@@ -94,33 +105,35 @@ export function createConversationApi(gateway: ApiGateway): ConversationApi {
       `/api/v1/agents/${encodeURIComponent(agentId)}/interrupt`,
       commandOptions(idempotencyKey),
     ),
-    list: (agentId) => gateway.requestJson<ConversationListSnapshot>(
-      `/api/v1/conversations?${agentQuery(agentId)}`,
+    list: (projectId, agentId) => gateway.requestJson<ConversationListSnapshot>(
+      `/api/v1/conversations?${projectAgentQuery(projectId, agentId)}`,
     ),
-    messages: (agentId) => gateway.requestJson<ConversationMessagesSnapshot>(
-      `/api/v1/conversations/messages?${agentQuery(agentId)}`,
+    messages: (projectId, agentId) => gateway.requestJson<ConversationMessagesSnapshot>(
+      `/api/v1/conversations/messages?${projectAgentQuery(projectId, agentId)}`,
     ),
-    rename: (sessionId, name, agentId) => gateway.requestJson<ConversationSummary>(
+    rename: (projectId, sessionId, name, agentId) => gateway.requestJson<ConversationSummary>(
       `/api/v1/conversations/${encodeURIComponent(sessionId)}`,
-      { json: { agentId, name }, method: "PATCH", requireLease: true },
+      { json: { projectId, agentId, name }, method: "PATCH", requireLease: true },
     ),
-    rollback: (agentId, checkpointId, idempotencyKey, targetMessageId) =>
+    rollback: (projectId, agentId, checkpointId, idempotencyKey, targetMessageId) =>
       gateway.requestJson<RollbackResponse>(
         `/api/v1/agents/${encodeURIComponent(agentId)}/rollback`,
         commandOptions(idempotencyKey, {
+          projectId,
           checkpointId,
           ...(targetMessageId === undefined ? {} : { targetMessageId }),
         }),
       ),
-    sendFileContext: (agentId, context, idempotencyKey) =>
+    sendFileContext: (projectId, agentId, context, idempotencyKey) =>
       gateway.requestJson<AcceptedCommand>(
         `/api/v1/agents/${encodeURIComponent(agentId)}/file-context`,
-        commandOptions(idempotencyKey, context),
+        commandOptions(idempotencyKey, { projectId, ...context }),
       ),
-    sendMessage: (agentId, content, idempotencyKey, messageId) =>
+    sendMessage: (projectId, agentId, content, idempotencyKey, messageId) =>
       gateway.requestJson<AcceptedCommand>(
         `/api/v1/agents/${encodeURIComponent(agentId)}/messages`,
         commandOptions(idempotencyKey, {
+          projectId,
           content,
           ...(messageId === undefined ? {} : { messageId }),
           source: "user",
