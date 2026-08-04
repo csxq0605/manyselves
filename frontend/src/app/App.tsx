@@ -83,6 +83,7 @@ export function App({
   const unknownEventTypes = useRef(new Set<string>());
   const [agentStore] = useState(() => createAgentStore());
   const [fallbackReportingStore] = useState(() => createReportingStore());
+  const [startedStreamId, setStartedStreamId] = useState<string | null>(null);
   const reports = reportingStore ?? fallbackReportingStore;
   const resolvedEventSource = useMemo(
     () =>
@@ -174,6 +175,7 @@ export function App({
       },
     });
     void stream.start();
+    setStartedStreamId(bootstrapStreamId);
     return () => stream.stop();
   }, [
     agentStore,
@@ -187,7 +189,7 @@ export function App({
     setConnectionState,
   ]);
 
-  if (!bootstrap.data) {
+  if (!bootstrap.data || startedStreamId !== bootstrapStreamId) {
     return (
       <main aria-busy={bootstrap.isPending} className="app-loading">
         {bootstrap.isError ? <p role="alert">Unable to load the application.</p> : null}

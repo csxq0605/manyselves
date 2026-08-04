@@ -33,6 +33,30 @@ function deferred<T>() {
 }
 
 describe("App event projection", () => {
+  it("starts SSE before mounting route pages", async () => {
+    const calls: string[] = [];
+    const start = vi.fn(async () => { calls.push("sse"); });
+    const requestJson = vi.fn().mockImplementation(async () => {
+      calls.push("route");
+      return { entries: [] };
+    });
+
+    render(
+      <AppProviders>
+        <MemoryRouter initialEntries={["/knowledge"]}>
+          <App
+            createEventStream={() => ({ start, stop: vi.fn() })}
+            gateway={{ bootstrap: vi.fn().mockResolvedValue(bootstrapSnapshot), requestJson } as unknown as ApiGateway}
+          />
+        </MemoryRouter>
+      </AppProviders>,
+    );
+
+    await waitFor(() => expect(requestJson).toHaveBeenCalledOnce());
+
+    expect(calls).toEqual(["sse", "route"]);
+  });
+
   it("waits for bootstrap before mounting route pages", async () => {
     const pendingBootstrap = deferred<BootstrapSnapshot>();
     const bootstrap = vi.fn(() => pendingBootstrap.promise);

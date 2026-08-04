@@ -57,6 +57,7 @@ def test_phase1_redesign_contract_exposes_authenticated_global_knowledge_routes(
         "/api/v1/global-knowledge/files/entries",
     }
     assert required <= set(paths)
+    assert "/api/v1/global-knowledge/files" not in paths
     assert "SessionCookie" in schema["components"]["securitySchemes"]
     assert "DeploymentBearer" not in schema["components"]["securitySchemes"]
 
