@@ -36,7 +36,7 @@
 - Produces: provider response fields `configured: bool` and `credentialSource: CredentialSource`.
 - Produces: environment-owned API key updates rejected with `CREDENTIAL_MANAGED_BY_ENVIRONMENT`.
 
-- [ ] **Step 1: Write failing precedence and non-persistence tests**
+- [x] **Step 1: Write failing precedence and non-persistence tests**
 
 ```python
 def test_environment_key_is_reported_but_not_written_to_yaml(tmp_path: Path, monkeypatch) -> None:
@@ -57,23 +57,23 @@ async def test_api_rejects_replacing_environment_owned_key(authed_client):
     assert response.json()["error"]["code"] == "CREDENTIAL_MANAGED_BY_ENVIRONMENT"
 ```
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run: `uv run pytest tests/config/test_manager.py tests/webapi/test_conversations_agents_reporting.py -q -k "credential or environment"`
 
 Expected: FAIL because source ownership is not preserved explicitly and environment secrets can enter the in-memory object saved to YAML.
 
-- [ ] **Step 3: Separate effective secrets from persisted YAML values**
+- [x] **Step 3: Separate effective secrets from persisted YAML values**
 
 Track provider credential source during settings load. `ConfigManager.save_config()` must serialize the configured YAML value, never the environment-injected effective value. Settings responses return only `configured` and source. `SettingsService` keeps the existing capture/mutate/validate/save/restart/rollback transaction and returns a stable conflict if an environment-owned key is patched or cleared.
 
-- [ ] **Step 4: Run settings and contract tests**
+- [x] **Step 4: Run settings and contract tests**
 
 Run: `uv run pytest tests/config/test_manager.py tests/webapi/test_conversations_agents_reporting.py tests/webapi/test_openapi_contract.py -q -k "settings or provider or credential or openapi"`
 
 Expected: PASS with no API key in JSON, repr, OpenAPI examples, or YAML when sourced from environment.
 
-- [ ] **Step 5: Commit credential source handling**
+- [x] **Step 5: Commit credential source handling**
 
 ```bash
 git add manyselves/config/schema.py manyselves/config/manager.py manyselves/application/settings_service.py manyselves/webapi/schemas/settings.py manyselves/webapi/routes/settings.py tests/config/test_manager.py tests/webapi/test_conversations_agents_reporting.py tests/webapi/test_openapi_contract.py frontend-contract/openapi.json
