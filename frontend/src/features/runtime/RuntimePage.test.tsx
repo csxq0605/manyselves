@@ -45,6 +45,18 @@ const snapshot: RuntimeSnapshot = {
 };
 
 describe("RuntimePage", () => {
+  it("renders a cockpit summary for tasks, agents, tools, and errors", () => {
+    render(<RuntimePage snapshot={snapshot} />);
+
+    expect(screen.getByText("\u8fd0\u884c\u9a7e\u9a76\u8231")).toBeVisible();
+    expect(screen.getByText("\u8fdb\u884c\u4e2d\u4efb\u52a1")).toBeVisible();
+    expect(screen.getByText("1")).toBeVisible();
+    expect(screen.getByText("\u4efb\u52a1\u5b8c\u6210\u5ea6")).toBeVisible();
+    expect(screen.getByText("0 / 1")).toBeVisible();
+    expect(screen.getByText("Agent \u5728\u7ebf\u72b6\u6001")).toBeVisible();
+    expect(screen.getByText("\u5de5\u5177\u4e0e\u9519\u8bef")).toBeVisible();
+  });
+
   it("shows the sanitized runtime projection without filesystem controls", () => {
     render(<RuntimePage snapshot={snapshot} />);
 

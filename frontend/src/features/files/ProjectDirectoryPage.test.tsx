@@ -47,6 +47,58 @@ const entries: FileEntry[] = [
   },
 ];
 
+const paginatedOutputEntries: FileEntry[] = [
+  {
+    kind: "directory",
+    modifiedAt: "2026-08-04T00:00:00Z",
+    name: "Modules",
+    path: "Outputs/Modules",
+    revision: "d".repeat(64),
+    size: null,
+  },
+  ...Array.from({ length: 21 }, (_, index): FileEntry => ({
+    kind: "file",
+    modifiedAt: "2026-08-04T00:00:00Z",
+    name: `module-${String(index + 1).padStart(2, "0")}.md`,
+    path: `Outputs/Modules/module-${String(index + 1).padStart(2, "0")}.md`,
+    revision: `${index}`.padStart(64, "0"),
+    size: index + 1,
+  })),
+  {
+    kind: "directory",
+    modifiedAt: "2026-08-04T00:00:00Z",
+    name: "Reports",
+    path: "Outputs/Reports",
+    revision: "a".repeat(64),
+    size: null,
+  },
+  {
+    kind: "file",
+    modifiedAt: "2026-08-04T00:00:00Z",
+    name: "summary.md",
+    path: "Outputs/Reports/summary.md",
+    revision: "b".repeat(64),
+    size: 12,
+  },
+  {
+    kind: "directory",
+    modifiedAt: "2026-08-04T00:00:00Z",
+    name: "Reviews",
+    path: "Outputs/Reviews",
+    revision: "e".repeat(64),
+    size: null,
+  },
+];
+
+const paginatedInputEntries: FileEntry[] = Array.from({ length: 21 }, (_, index): FileEntry => ({
+  kind: "file",
+  modifiedAt: "2026-08-04T00:00:00Z",
+  name: `input-${String(index + 1).padStart(2, "0")}.md`,
+  path: `Inputs/input-${String(index + 1).padStart(2, "0")}.md`,
+  revision: `${index}`.padStart(64, "1"),
+  size: index + 1,
+}));
+
 function platform(): PlatformBridge {
   return {
     kind: "browser",
@@ -106,30 +158,48 @@ describe("section capabilities", () => {
 });
 
 describe("ProjectDirectoryPage", () => {
-  it("renders directory rows as navigation without file actions", async () => {
+  it("renders outputs as paginated tabs inside a bounded scroll panel", async () => {
     const user = userEvent.setup();
-    renderDirectory("outputs", fileApi({ listTree: async () => entries }));
+    renderDirectory("outputs", fileApi({ listTree: async () => paginatedOutputEntries }));
 
-    const directory = await screen.findByRole(
-      "button",
-      { name: "展开 Reports" },
-      { timeout: 5_000 },
-    );
-    expect(screen.getByRole("button", { name: "展开 Modules" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "展开 Reviews" })).toBeVisible();
-    expect(screen.queryByRole("group", { name: "Reports 文件操作" })).not.toBeInTheDocument();
-    await user.click(directory);
-    expect(screen.getByRole("group", { name: "summary.md 文件操作" })).toBeVisible();
+    expect(await screen.findByRole("tab", { name: /Modules\s*21/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /Reports\s*1/ })).toBeVisible();
+    expect(screen.getByRole("tab", { name: /Reviews\s*0/ })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Modules output scroll area" })).toHaveClass("output-tabs__viewport");
+    expect(screen.getByText("module-01.md")).toBeVisible();
+    expect(screen.queryByText("module-21.md")).not.toBeInTheDocument();
+    expect(screen.getByText("Page 1 / 2")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("module-21.md")).toBeVisible();
+    expect(screen.queryByText("module-01.md")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /Reports\s*1/ }));
+    expect(screen.getByText("summary.md")).toBeVisible();
   });
 
   it("never offers upload or edit on outputs", async () => {
     const user = userEvent.setup();
-    renderDirectory("outputs", fileApi({ listTree: async () => entries }));
+    const { container } = renderDirectory("outputs", fileApi({ listTree: async () => entries }));
 
-    await user.click(await screen.findByRole("button", { name: "展开 Reports" }));
-    expect(await screen.findByRole("button", { name: "下载 summary.md" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "上传本地文件" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "编辑 summary.md" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("tab", { name: /Reports\s*1/ }));
+    const row = (await screen.findByText("summary.md")).closest("li");
+    expect(row?.querySelectorAll("button")).toHaveLength(3);
+    expect(container.querySelector('input[type="file"]')).not.toBeInTheDocument();
+  });
+
+  it("paginates regular file sections inside a bounded scroll panel", async () => {
+    const user = userEvent.setup();
+    renderDirectory("inputs", fileApi({ listTree: async () => paginatedInputEntries }));
+
+    expect(await screen.findByRole("region", { name: "Inputs file scroll area" })).toHaveClass("file-list__viewport");
+    expect(screen.getByText("input-01.md")).toBeVisible();
+    expect(screen.queryByText("input-21.md")).not.toBeInTheDocument();
+    expect(screen.getByText("Page 1 / 2")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("input-21.md")).toBeVisible();
+    expect(screen.queryByText("input-01.md")).not.toBeInTheDocument();
   });
 
   it("uploads browser File objects from a hidden multiple file input", async () => {

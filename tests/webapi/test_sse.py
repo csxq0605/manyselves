@@ -33,6 +33,8 @@ from manyselves.webapi.events.broker import EventBroker
 from manyselves.webapi.events.identity import ToolIdentityNormalizer
 from manyselves.webapi.events.mapper import EventContext
 from manyselves.webapi.events.models import EventEnvelope
+from manyselves.webapi.events.store import EventStore
+from manyselves.webapi.lifespan import attach_event_persistence
 from manyselves.webapi.main import create_app
 from manyselves.webapi.routes import events as event_routes
 from manyselves.webapi.settings import WebSettings
@@ -688,6 +690,43 @@ async def test_event_logs_are_project_scoped_bounded_and_sanitized(tmp_path: Pat
     wire = json.dumps(p2.json())
     assert "payload" not in wire
     assert "hidden" not in wire
+
+
+@pytest.mark.asyncio
+async def test_event_logs_persist_messages_published_through_runtime_bus(tmp_path: Path) -> None:
+    bus = MessageBus()
+    store = EventStore(tmp_path / "events.db")
+
+    def context(message: Message, sequence: int) -> EventContext:
+        return EventContext(
+            agent_id="main",
+            event_id=f"test-stream:evt-{sequence}",
+            message_id=None,
+            project_id="p1",
+            run_id=None,
+            sequence=sequence,
+            session_id="session-1",
+            stream_id="test-stream",
+        )
+
+    broker = EventBroker(
+        bus=bus,
+        client_capacity=2,
+        context_resolver=context,
+        replay_capacity=8,
+        stream_id="test-stream",
+    )
+    attach_event_persistence(broker, store)
+    broker.start()
+
+    await bus._notify_subscribers(  # noqa: SLF001 - exercise the subscribed bus callback directly
+        SystemNotice(agent_type="main", content="bus-visible")
+    )
+
+    events, total = store.list("p1")
+    assert total == 1
+    assert events[0]["message"] == "bus-visible"
+    assert events[0]["level"] == "info"
 
 
 @pytest.mark.asyncio

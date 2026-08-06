@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -30,6 +30,7 @@ const response: EventLogResponse = {
     },
   ],
   projectId: "project-1",
+  total: 2,
 };
 
 function renderPage(api: LogApi, platform?: PlatformBridge) {
@@ -41,10 +42,19 @@ function renderPage(api: LogApi, platform?: PlatformBridge) {
   );
 }
 
+function fakeApi(overrides: Partial<LogApi> = {}): LogApi {
+  return {
+    list: vi.fn().mockResolvedValue(response),
+    search: vi.fn().mockResolvedValue([]),
+    stats: vi.fn().mockResolvedValue({ total: 0, byLevel: {}, byType: {}, dateRange: { start: null, end: null } }),
+    ...overrides,
+  };
+}
+
 describe("LogsPage", () => {
   it("filters the sanitized read-only event projection", async () => {
     const user = userEvent.setup();
-    renderPage({ list: vi.fn().mockResolvedValue(response) });
+    renderPage(fakeApi());
 
     expect(await screen.findByRole("heading", { name: "日志" })).toBeVisible();
     expect(await screen.findByText("任务开始")).toBeVisible();
@@ -55,6 +65,20 @@ describe("LogsPage", () => {
     expect(screen.getByText("工具执行失败")).toBeVisible();
     expect(screen.queryByRole("button", { name: /上传|新建目录|重命名|编辑|删除/ })).not.toBeInTheDocument();
     expect(screen.queryByText(/Work\/|\.manyselves/)).not.toBeInTheDocument();
+  });
+
+  it("loads a compact page and renders logs inside a scrollable viewport", async () => {
+    const list = vi.fn().mockResolvedValue({
+      ...response,
+      total: 125,
+    });
+    renderPage(fakeApi({ list }));
+
+    const viewport = await screen.findByRole("region", { name: "日志记录滚动区" });
+    expect(viewport).toHaveClass("logs-page__viewport");
+    await waitFor(() => expect(list).toHaveBeenCalledWith("project-1", 50, 0));
+    expect(screen.getByText("共 125 条日志")).toBeVisible();
+    expect(screen.getByText("第 1 / 3 页")).toBeVisible();
   });
 
   it("downloads exactly the sanitized projection currently returned by the API", async () => {
@@ -68,7 +92,7 @@ describe("LogsPage", () => {
       selectDirectory: vi.fn(),
       selectFiles: vi.fn(),
     } satisfies PlatformBridge;
-    renderPage({ list: vi.fn().mockResolvedValue(response) }, platform);
+    renderPage(fakeApi(), platform);
 
     await user.click(await screen.findByRole("button", { name: "下载日志" }));
     expect(saveDownload).toHaveBeenCalledWith({

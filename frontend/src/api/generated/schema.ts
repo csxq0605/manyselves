@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Serve Spa
+         * @description Serve React SPA for all non-API routes.
+         */
+        get: operations["get_root"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents": {
         parameters: {
             query?: never;
@@ -364,9 +384,49 @@ export interface paths {
         };
         /**
          * List Event Logs
-         * @description Return a bounded project event projection; never expose filesystem logs.
+         * @description Return a bounded project event projection with pagination support.
          */
         get: operations["get_api_v1_events_logs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/events/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Event Logs
+         * @description Search event logs by message content.
+         */
+        get: operations["get_api_v1_events_search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/events/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Event Log Stats
+         * @description Get event log statistics for a project.
+         */
+        get: operations["get_api_v1_events_stats"];
         put?: never;
         post?: never;
         delete?: never;
@@ -490,6 +550,30 @@ export interface paths {
          * @description Report that the API process is alive without claiming runtime readiness.
          */
         get: operations["get_api_v1_health_live"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/health/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Provider Status
+         * @description Check if LLM providers are configured.
+         *
+         *     Returns:
+         *         - configured: True if at least one provider is available
+         *         - message: Human-readable status message
+         */
+        get: operations["get_api_v1_health_providers"];
         put?: never;
         post?: never;
         delete?: never;
@@ -932,6 +1016,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/provider-configurations/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Unsaved Provider Configuration
+         * @description Test draft connection details without writing config or rebuilding runtime.
+         */
+        post: operations["post_api_v1_settings_provider_configurations_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/provider-configurations/{provider_config_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upsert Provider Configuration
+         * @description Save one complete provider configuration and apply it live atomically.
+         */
+        put: operations["put_api_v1_settings_provider_configurations_provider_config_id"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings/providers": {
         parameters: {
             query?: never;
@@ -995,6 +1119,26 @@ export interface paths {
         put?: never;
         /** Validate Settings */
         post: operations["post_api_v1_settings_validate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/{full_path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Serve Spa
+         * @description Serve React SPA for all non-API routes.
+         */
+        get: operations["get_full_path"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1316,6 +1460,32 @@ export interface components {
             entries: components["schemas"]["EventLogEntry"][];
             /** Projectid */
             projectId: string;
+            /**
+             * Total
+             * @description Total number of events for pagination
+             * @default 0
+             */
+            total: number;
+        };
+        /**
+         * EventLogStats
+         * @description Event log statistics.
+         */
+        EventLogStats: {
+            /** By Level */
+            by_level: {
+                [key: string]: number;
+            };
+            /** By Type */
+            by_type: {
+                [key: string]: number;
+            };
+            /** Date Range */
+            date_range: {
+                [key: string]: string | null;
+            };
+            /** Total */
+            total: number;
         };
         /** FileContent */
         FileContent: {
@@ -1624,12 +1794,15 @@ export interface components {
         };
         /** ProjectCreateRequest */
         ProjectCreateRequest: {
-            /** Description */
+            /**
+             * Description
+             * @default
+             */
             description: string;
             /** Displayname */
             displayName: string;
             /** Projectid */
-            projectId: string;
+            projectId?: string | null;
         };
         /** ProjectListResponse */
         ProjectListResponse: {
@@ -1666,6 +1839,56 @@ export interface components {
             /** Revision */
             revision: string;
         };
+        /**
+         * ProviderConfigurationUpsert
+         * @description Complete, atomically-applied provider configuration from the settings UI.
+         */
+        ProviderConfigurationUpsert: {
+            /** Apibase */
+            apiBase?: string | null;
+            /** Apikey */
+            apiKey?: string | null;
+            /** Defaultmodel */
+            defaultModel: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Extraheaders */
+            extraHeaders?: {
+                [key: string]: string;
+            } | null;
+            /**
+             * Makeactive
+             * @default true
+             */
+            makeActive: boolean;
+            /** Name */
+            name: string;
+            /** Presetid */
+            presetId?: string | null;
+            /** Protocol */
+            protocol: string;
+        };
+        /**
+         * ProviderConnectionTestRequest
+         * @description Ephemeral provider connection details; never written to configuration.
+         */
+        ProviderConnectionTestRequest: {
+            /** Apibase */
+            apiBase?: string | null;
+            /** Apikey */
+            apiKey?: string | null;
+            /** Defaultmodel */
+            defaultModel: string;
+            /** Extraheaders */
+            extraHeaders?: {
+                [key: string]: string;
+            } | null;
+            /** Protocol */
+            protocol: string;
+        };
         /** ProviderConnectionTestResponse */
         ProviderConnectionTestResponse: {
             /** Message */
@@ -1675,7 +1898,7 @@ export interface components {
             /** Ok */
             ok: boolean;
             /** Providerid */
-            providerId: string;
+            providerId: string | null;
         };
         /** ProviderPresetResponse */
         ProviderPresetResponse: {
@@ -1687,6 +1910,8 @@ export interface components {
             defaultModel: string;
             /** Description */
             description: string;
+            /** Id */
+            id: string;
             /** Name */
             name: string;
             /** Provider */
@@ -1707,8 +1932,14 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+            /** Extraheaders */
+            extraHeaders?: {
+                [key: string]: string;
+            } | null;
             /** Name */
             name: string;
+            /** Presetid */
+            presetId?: string | null;
             /** Provider */
             provider: string;
         };
@@ -1733,6 +1964,8 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            /** Presetid */
+            presetId: string | null;
             /** Provider */
             provider: string;
         };
@@ -1746,6 +1979,10 @@ export interface components {
             defaultModel?: string | null;
             /** Enabled */
             enabled?: boolean | null;
+            /** Extraheaders */
+            extraHeaders?: {
+                [key: string]: string;
+            } | null;
             /** Name */
             name?: string | null;
             /** Provider */
@@ -2248,6 +2485,46 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_root: {
+        parameters: {
+            query?: {
+                full_path?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     get_api_v1_agents: {
         parameters: {
             query?: never;
@@ -3213,6 +3490,7 @@ export interface operations {
             query: {
                 projectId: string;
                 limit?: number;
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -3227,6 +3505,88 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EventLogResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_events_search: {
+        parameters: {
+            query: {
+                projectId: string;
+                q: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventLogEntry"][];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_events_stats: {
+        parameters: {
+            query: {
+                projectId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventLogStats"];
                 };
             };
             /** @description Request validation failed */
@@ -3552,6 +3912,46 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: string;
+                    };
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_health_providers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string | boolean;
                     };
                 };
             };
@@ -4874,6 +5274,92 @@ export interface operations {
             };
         };
     };
+    post_api_v1_settings_provider_configurations_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderConnectionTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderConnectionTestResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    put_api_v1_settings_provider_configurations_provider_config_id: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_config_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderConfigurationUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     post_api_v1_settings_providers: {
         parameters: {
             query?: never;
@@ -5056,6 +5542,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsValidationResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_full_path: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                full_path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Request validation failed */

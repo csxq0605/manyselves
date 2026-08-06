@@ -2546,6 +2546,17 @@ async def test_settings_masks_all_provider_secrets(resources) -> None:
 
 
 @pytest.mark.asyncio
+async def test_settings_exposes_provider_preset_identity(resources) -> None:
+    client, host, _, _ = resources
+    host.config_manager.config.providers.configurations[0].preset_id = "openai-gpt-4o"
+
+    response = await client.get("/api/v1/settings")
+
+    assert response.status_code == 200
+    assert response.json()["providers"][0]["presetId"] == "openai-gpt-4o"
+
+
+@pytest.mark.asyncio
 async def test_settings_reports_and_rejects_environment_owned_credentials(resources) -> None:
     client, host, _, secret = resources
     provider = host.config_manager.config.providers.configurations[0]
@@ -2608,6 +2619,176 @@ async def test_provider_connection_test_does_not_persist_or_restart(
         "model": "test-model",
         "message": "Connection succeeded",
     }
+    assert save_calls == []
+    assert host.replace_calls == []
+
+
+@pytest.mark.asyncio
+async def test_provider_configuration_upsert_syncs_active_runtime_and_defaults(resources) -> None:
+    client, host, _, _ = resources
+
+    response = await client.put(
+        "/api/v1/settings/provider-configurations/mimo-token-plan",
+        json={
+            "presetId": "anthropic-xiaomi-mimo-token-plan-china",
+            "name": "Xiaomi MiMo Token Plan (China)",
+            "protocol": "anthropic",
+            "apiKey": "mimo-secret-never-return",
+            "apiBase": "https://token-plan-cn.xiaomimimo.com/anthropic",
+            "defaultModel": "mimo-v2.5-pro",
+            "extraHeaders": {"X-Client": "manyselves"},
+            "enabled": True,
+            "makeActive": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert "mimo-secret-never-return" not in response.text
+    saved = host.config_manager.config.providers.configurations[-1]
+    assert saved.id == "mimo-token-plan"
+    assert saved.preset_id == "anthropic-xiaomi-mimo-token-plan-china"
+    assert saved.provider == "anthropic"
+    assert saved.api_base == "https://token-plan-cn.xiaomimimo.com/anthropic"
+    assert saved.default_model == "mimo-v2.5-pro"
+    assert saved.extra_headers == {"X-Client": "manyselves"}
+    assert host.config_manager.config.providers.active == "mimo-token-plan"
+    assert host.config_manager.config.agents.defaults.model == "mimo-v2.5-pro"
+    assert host.config_manager.config.agents.defaults.provider == "anthropic"
+    assert host.replace_calls == [False]
+    assert "mimo-token-plan" in host.loop_manager.provider_registry
+
+
+@pytest.mark.asyncio
+async def test_provider_configuration_upsert_reuses_existing_preset_configuration(resources) -> None:
+    client, host, _, _ = resources
+    payload = {
+        "presetId": "anthropic-xiaomi-mimo-token-plan-china",
+        "name": "Xiaomi MiMo Token Plan (China)",
+        "protocol": "anthropic",
+        "apiKey": "mimo-secret-never-return",
+        "apiBase": "https://token-plan-cn.xiaomimimo.com/anthropic",
+        "defaultModel": "mimo-v2.5-pro",
+        "enabled": True,
+        "makeActive": True,
+    }
+
+    first = await client.put(
+        "/api/v1/settings/provider-configurations/mimo-token-plan",
+        json=payload,
+    )
+    second = await client.put(
+        "/api/v1/settings/provider-configurations/a-different-client-id",
+        json=payload,
+    )
+
+    assert first.status_code == second.status_code == 200
+    matching = [
+        item
+        for item in host.config_manager.config.providers.configurations
+        if item.preset_id == "anthropic-xiaomi-mimo-token-plan-china"
+    ]
+    assert [item.id for item in matching] == ["mimo-token-plan"]
+    assert host.config_manager.config.providers.active == "mimo-token-plan"
+
+
+@pytest.mark.asyncio
+async def test_mimo_save_does_not_overwrite_another_anthropic_configuration(resources) -> None:
+    client, _, _, _ = resources
+    claude = await client.put(
+        "/api/v1/settings/provider-configurations/claude-official",
+        json={
+            "presetId": "anthropic-claude-official",
+            "name": "Claude Official",
+            "protocol": "anthropic",
+            "apiKey": "claude-secret-never-return",
+            "apiBase": "https://api.anthropic.com",
+            "defaultModel": "claude-sonnet-4-20250514",
+            "enabled": True,
+            "makeActive": True,
+        },
+    )
+    mimo = await client.put(
+        "/api/v1/settings/provider-configurations/mimo-cn",
+        json={
+            "presetId": "anthropic-xiaomi-mimo-token-plan-china",
+            "name": "Xiaomi MiMo Token Plan (China)",
+            "protocol": "anthropic",
+            "apiKey": "mimo-secret-never-return",
+            "apiBase": "https://token-plan-cn.xiaomimimo.com/anthropic",
+            "defaultModel": "mimo-v2.5-pro",
+            "enabled": True,
+            "makeActive": True,
+        },
+    )
+
+    assert claude.status_code == mimo.status_code == 200
+    providers = {provider["id"]: provider for provider in mimo.json()["providers"]}
+    assert providers["claude-official"]["apiBase"] == "https://api.anthropic.com"
+    assert providers["claude-official"]["defaultModel"] == "claude-sonnet-4-20250514"
+    assert providers["mimo-cn"]["apiBase"] == "https://token-plan-cn.xiaomimimo.com/anthropic"
+    assert providers["mimo-cn"]["defaultModel"] == "mimo-v2.5-pro"
+    assert providers["mimo-cn"]["active"] is True
+    assert providers["claude-official"]["active"] is False
+
+
+@pytest.mark.asyncio
+async def test_provider_configuration_upsert_rejects_unconfigured_active_provider(resources) -> None:
+    client, host, _, _ = resources
+
+    response = await client.put(
+        "/api/v1/settings/provider-configurations/mimo-token-plan",
+        json={
+            "presetId": "anthropic-xiaomi-mimo-token-plan-china",
+            "name": "Xiaomi MiMo Token Plan (China)",
+            "protocol": "anthropic",
+            "apiBase": "https://token-plan-cn.xiaomimimo.com/anthropic",
+            "defaultModel": "mimo-v2.5-pro",
+            "enabled": True,
+            "makeActive": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_SETTINGS"
+    assert len(host.config_manager.config.providers.configurations) == 1
+    assert host.replace_calls == []
+
+
+@pytest.mark.asyncio
+async def test_unsaved_provider_configuration_test_never_persists_or_restarts(
+    resources,
+    monkeypatch,
+) -> None:
+    client, host, _, _ = resources
+    save_calls: list[bool] = []
+    host.config_manager.save_config = lambda: save_calls.append(True)
+
+    class ConnectedProvider:
+        model = "mimo-v2.5-pro"
+
+        async def chat(self, *args, **kwargs):
+            return SimpleNamespace(content="OK")
+
+    monkeypatch.setattr(
+        "manyselves.application.settings_service.ProviderFactory.create_provider",
+        lambda *args, **kwargs: ConnectedProvider(),
+    )
+
+    response = await client.post(
+        "/api/v1/settings/provider-configurations/test",
+        json={
+            "protocol": "anthropic",
+            "apiKey": "ephemeral-secret-never-return",
+            "apiBase": "https://token-plan-cn.xiaomimimo.com/anthropic",
+            "defaultModel": "mimo-v2.5-pro",
+            "extraHeaders": {"X-Client": "manyselves"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert response.json()["providerId"] is None
+    assert "ephemeral-secret-never-return" not in response.text
     assert save_calls == []
     assert host.replace_calls == []
 

@@ -41,6 +41,29 @@ def test_openapi_has_required_resources() -> None:
     assert required <= set(schema["paths"])
 
 
+def test_openapi_exposes_full_provider_configuration_contract() -> None:
+    schema = create_app(_test_settings()).openapi()
+    paths = schema["paths"]
+    components = schema["components"]["schemas"]
+
+    upsert = components["ProviderConfigurationUpsert"]
+    assert {
+        "presetId",
+        "name",
+        "protocol",
+        "apiBase",
+        "apiKey",
+        "defaultModel",
+        "extraHeaders",
+        "enabled",
+        "makeActive",
+    } <= set(upsert["properties"])
+    assert "/api/v1/settings/provider-configurations/{provider_config_id}" in paths
+    assert "/api/v1/settings/provider-configurations/test" in paths
+    assert {"type": "string"} in components["ProviderSettingsResponse"]["properties"]["presetId"]["anyOf"]
+    assert components["ProviderConnectionTestResponse"]["properties"]["providerId"]["anyOf"]
+
+
 def test_phase1_redesign_contract_exposes_authenticated_global_knowledge_routes() -> None:
     """The browser's authenticated knowledge workspace must remain generated-client safe."""
     schema = create_app(_test_settings()).openapi()

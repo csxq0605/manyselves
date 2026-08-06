@@ -98,9 +98,11 @@ async def create_project(
     registry = request.app.state.project_registry
     try:
         async with facade.mutation_transaction(lease_token):
+            # 如果没有提供 project_id，自动生成 UUID
+            project_id = body.project_id or ProjectRegistry.generate_id()
             return _response(
                 registry.create(
-                    body.project_id,
+                    project_id,
                     ProjectMetadata(body.display_name, body.description),
                 )
             )

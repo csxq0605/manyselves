@@ -11,6 +11,7 @@ import { createPreviewApi } from "../preview/preview-api";
 import { PreviewWorkspace } from "../preview/PreviewWorkspace";
 import { createFileApi, type FileApi, type FileEntry, type UploadConflict } from "./file-api";
 import { FileList } from "./FileList";
+import { OutputTabs } from "./OutputTabs";
 import {
   isProjectFileSection,
   SECTION_CAPABILITIES,
@@ -241,14 +242,25 @@ function ScopedProjectDirectoryPage({
       {operationError ? <p role="alert">{operationError}</p> : null}
       {files.data && files.data.length === 0 && !files.isError ? <p className="project-directory__empty">此目录还没有文件</p> : null}
       {files.data && files.data.length > 0 ? (
-        <FileList
-          capabilities={capabilities}
-          entries={files.data}
-          onDelete={(entry) => void deleteFile(entry)}
-          onDownload={(entry) => void downloadFile(entry)}
-          onEdit={(entry) => void editFile(entry)}
-          onPreview={(entry) => setPreviewPath(entry.path)}
-        />
+        capabilities.root === "Outputs" ? (
+          <OutputTabs
+            capabilities={capabilities}
+            entries={files.data}
+            onDelete={(entry) => void deleteFile(entry)}
+            onDownload={(entry) => void downloadFile(entry)}
+            onEdit={(entry) => void editFile(entry)}
+            onPreview={(entry) => setPreviewPath(entry.path)}
+          />
+        ) : (
+          <FileList
+            capabilities={capabilities}
+            entries={files.data}
+            onDelete={(entry) => void deleteFile(entry)}
+            onDownload={(entry) => void downloadFile(entry)}
+            onEdit={(entry) => void editFile(entry)}
+            onPreview={(entry) => setPreviewPath(entry.path)}
+          />
+        )
       ) : null}
 
       {previewPath && platform ? (

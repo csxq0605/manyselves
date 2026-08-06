@@ -11,9 +11,10 @@ Description = Annotated[str, StringConstraints(max_length=1000)]
 class ProjectCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    project_id: str = Field(alias="projectId")
+    # project_id 可选，如果不提供则自动生成 UUID
+    project_id: str | None = Field(default=None, alias="projectId")
     display_name: DisplayName = Field(alias="displayName")
-    description: Description
+    description: Description = ""
 
 
 class ProjectUpdateRequest(BaseModel):

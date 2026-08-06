@@ -24,7 +24,7 @@ class ProviderConnectionResult:
     """Secret-free result of one bounded provider probe."""
 
     ok: bool
-    provider_id: str
+    provider_id: str | None
     model: str | None
     message: str
 
@@ -120,6 +120,21 @@ class SettingsService:
         )
         if provider_config is None:
             raise KeyError(provider_id)
+        return await self.test_provider_configuration(
+            provider_config,
+            provider_id=provider_id,
+            timeout_seconds=timeout_seconds,
+        )
+
+    async def test_provider_configuration(
+        self,
+        provider_config: Any,
+        *,
+        provider_id: str | None = None,
+        timeout_seconds: float = 15.0,
+    ) -> ProviderConnectionResult:
+        """Probe provided connection details without persisting or activating them."""
+        provider_config = provider_config.model_copy(deep=True)
         if not provider_config.api_key:
             return ProviderConnectionResult(
                 ok=False,
@@ -135,6 +150,7 @@ class SettingsService:
                 provider_config.api_key,
                 provider_config.api_base,
                 provider_config.default_model,
+                provider_config.extra_headers,
             )
             async with asyncio.timeout(timeout_seconds):
                 await provider.chat(

@@ -9,6 +9,7 @@ Phase 1 runs one authoritative Agent Runtime per Compose stack. It is suitable f
 - A dedicated non-root service account and an absolute data directory owned by that account.
 - One configured model provider and its API key. The API key is required only when an Agent actually calls that provider.
 - Administrator credentials stored only in `deploy/.env`; the reviewed defaults are `admin / yuanxi@2026`.
+- CentOS/RHEL hosts with SELinux enabled are supported by the default Compose volume labels.
 
 Only publish TCP `9090` to the trusted LAN. FastAPI/Gunicorn listens on TCP `9000` only inside the Compose network. This IP-only layout has no TLS, so never expose it to the public Internet or an untrusted Wi-Fi/VPN segment.
 
@@ -76,6 +77,10 @@ cp deploy/env.example deploy/.env
 chmod 0600 deploy/.env
 ```
 
+### CentOS/RHEL SELinux note
+
+`deploy/compose.yaml` labels the persistent data bind mount with `:Z`, so a single ManySelves stack can write `/srv/manyselves/data` on SELinux-enabled CentOS/RHEL hosts. Keep one data directory per Compose project; if you deliberately share a directory between multiple stacks, change the volume label to `:z` and audit ownership carefully.
+
 Edit `/opt/manyselves/deploy/.env` as `manyselves`. Keep these reviewed LAN values unless the server address or port changes:
 
 ```dotenv
@@ -86,9 +91,11 @@ MANYSELVES_DATA_DIR=/srv/manyselves/data
 MANYSELVES_HTTP_BIND=0.0.0.0
 MANYSELVES_HTTP_PORT=9090
 MANYSELVES_INITIAL_PROJECT_ID=default
+MANYSELVES_BOOTSTRAP_PROVIDER=openai
+MANYSELVES_OPENAI_API_KEY=
 ```
 
-Set `MANYSELVES_BOOTSTRAP_PROVIDER` and the matching provider key. The entrypoint creates a provider skeleton only when `manyselves.config.yaml` is absent; it does not write the environment key into that YAML or replace an existing configuration.
+Set `MANYSELVES_BOOTSTRAP_PROVIDER` and, if desired, the matching `MANYSELVES_*_API_KEY`. The Compose file maps prefixed provider keys such as `MANYSELVES_OPENAI_API_KEY` to the runtime variable names expected by the Python provider layer. The entrypoint creates a provider skeleton only when `manyselves.config.yaml` is absent; it does not write the environment key into that YAML or replace an existing configuration.
 
 ### Model configuration ownership
 

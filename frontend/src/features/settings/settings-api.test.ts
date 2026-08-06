@@ -13,6 +13,13 @@ describe("settings api", () => {
     await api.updateProvider("provider/one", { apiKey: "one-use-secret" });
     await api.createProvider({ enabled: true, name: "OpenAI", provider: "openai" });
     await api.removeProvider("provider/one");
+    await api.upsertProviderConfiguration("provider/one", {
+      defaultModel: "gpt-5.2",
+      enabled: true,
+      makeActive: true,
+      name: "OpenAI",
+      protocol: "openai",
+    });
     await api.syncPresets();
     await api.updateAgentDebug("agent/main", true);
 
@@ -25,6 +32,7 @@ describe("settings api", () => {
       ["/api/v1/settings/providers/provider%2Fone", "PATCH", true],
       ["/api/v1/settings/providers", "POST", true],
       ["/api/v1/settings/providers/provider%2Fone", "DELETE", true],
+      ["/api/v1/settings/provider-configurations/provider%2Fone", "PUT", true],
       ["/api/v1/settings/presets/sync", "POST", true],
       ["/api/v1/agents/agent%2Fmain/debug", "PATCH", true],
     ]);
@@ -41,6 +49,7 @@ describe("settings api", () => {
     await api.listAgents();
     await api.getAgentDebug("main");
     await api.testProviderConnection("provider/one");
+    await api.testProviderConfiguration({ defaultModel: "gpt-5.2", protocol: "openai" });
 
     expect(requestJson.mock.calls.map(([path, init]) => [path, init?.requireLease])).toEqual([
       ["/api/v1/settings", undefined],
@@ -49,6 +58,7 @@ describe("settings api", () => {
       ["/api/v1/agents", undefined],
       ["/api/v1/agents/main/debug", undefined],
       ["/api/v1/settings/providers/provider%2Fone/test", undefined],
+      ["/api/v1/settings/provider-configurations/test", undefined],
     ]);
   });
 });

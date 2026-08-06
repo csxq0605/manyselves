@@ -27,6 +27,7 @@ class OpenAICompatProvider(LLMProvider):
         api_base: str | None = None,
         model: str = "gpt-4o",
         provider_type: str = "openai",
+        extra_headers: dict[str, str] | None = None,
     ):
         super().__init__(api_key, api_base, model)
         self.provider_type = provider_type
@@ -35,7 +36,12 @@ class OpenAICompatProvider(LLMProvider):
         # Keep retries visible and bounded in AgentLoop. The SDK default is two
         # hidden retries, which would multiply application retries and make
         # cancellation/retry status impossible to explain in the GUI.
-        self.client = AsyncOpenAI(api_key=api_key, base_url=api_base, max_retries=0)
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=api_base,
+            default_headers=extra_headers,
+            max_retries=0,
+        )
 
     def _convert_messages(self, messages: list[Message]) -> list[dict]:
         """Convert internal messages to OpenAI Chat Completions format.

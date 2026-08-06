@@ -10,12 +10,14 @@ from pydantic import (
 )
 
 from ...config.schema import CredentialSource
+from ...core.providers.factory import ALL_PROVIDER_TYPES
 
 
 class ProviderSettingsResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     id: str
     name: str
+    preset_id: str | None = Field(alias="presetId")
     provider: str
     enabled: bool
     configured: bool
@@ -46,6 +48,7 @@ class ProviderSettingsUpdate(BaseModel):
     api_base: str | None = Field(default=None, alias="apiBase")
     enabled: bool | None = None
     default_model: str | None = Field(default=None, alias="defaultModel")
+    extra_headers: dict[str, str] | None = Field(default=None, alias="extraHeaders")
 
     @field_validator("name", "provider", "enabled")
     @classmethod
@@ -83,15 +86,60 @@ class ProviderSettingsCreate(BaseModel):
 
     name: str = Field(min_length=1)
     provider: str = Field(min_length=1)
+    preset_id: str | None = Field(default=None, alias="presetId")
     api_key: SecretStr | None = Field(default=None, alias="apiKey", repr=False)
     api_base: str | None = Field(default=None, alias="apiBase")
     enabled: bool = True
     default_model: str | None = Field(default=None, alias="defaultModel")
+    extra_headers: dict[str, str] | None = Field(default=None, alias="extraHeaders")
+
+
+class ProviderConfigurationUpsert(BaseModel):
+    """Complete, atomically-applied provider configuration from the settings UI."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    preset_id: str | None = Field(default=None, alias="presetId")
+    name: str = Field(min_length=1)
+    protocol: str = Field(min_length=1)
+    api_key: SecretStr | None = Field(default=None, alias="apiKey", repr=False)
+    api_base: str | None = Field(default=None, alias="apiBase")
+    default_model: str = Field(min_length=1, alias="defaultModel")
+    extra_headers: dict[str, str] | None = Field(default=None, alias="extraHeaders")
+    enabled: bool = True
+    make_active: bool = Field(default=True, alias="makeActive")
+
+    @field_validator("protocol")
+    @classmethod
+    def require_supported_protocol(cls, value: str) -> str:
+        if value not in ALL_PROVIDER_TYPES:
+            raise ValueError(f"unsupported protocol: {value}")
+        return value
+
+
+class ProviderConnectionTestRequest(BaseModel):
+    """Ephemeral provider connection details; never written to configuration."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    protocol: str = Field(min_length=1)
+    api_key: SecretStr | None = Field(default=None, alias="apiKey", repr=False)
+    api_base: str | None = Field(default=None, alias="apiBase")
+    default_model: str = Field(min_length=1, alias="defaultModel")
+    extra_headers: dict[str, str] | None = Field(default=None, alias="extraHeaders")
+
+    @field_validator("protocol")
+    @classmethod
+    def require_supported_protocol(cls, value: str) -> str:
+        if value not in ALL_PROVIDER_TYPES:
+            raise ValueError(f"unsupported protocol: {value}")
+        return value
 
 
 class ProviderPresetResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    id: str
     name: str
     provider: str
     category: str
@@ -119,6 +167,6 @@ class ProviderConnectionTestResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     ok: bool
-    provider_id: str = Field(alias="providerId")
+    provider_id: str | None = Field(alias="providerId")
     model: str | None
     message: str

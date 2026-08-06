@@ -25,6 +25,27 @@ export function ConversationPage({ gateway }: { readonly gateway: ApiGateway }) 
       queryClient.setQueryData<Awaited<ReturnType<typeof projectApi.list>>>(["projects"], (current) => (
         current?.map((project) => ({ ...project, active: project.id === activated.id }))
       ));
+      // 清空所有会话相关的缓存，避免项目切换后显示旧项目的会话
+      queryClient.removeQueries({ queryKey: ["conversations"] });
+      queryClient.removeQueries({ queryKey: ["conversation-messages"] });
+      // 清空 localStorage 中保存的活跃会话 ID，避免尝试激活其他项目的会话
+      const savedState = localStorage.getItem("manyselves-active-conversation");
+      if (savedState) {
+        try {
+          const parsed = JSON.parse(savedState);
+          if (parsed.state?.activeSessionIds) {
+            // 只保留当前项目的活跃会话 ID
+            const currentProjectSessionId = parsed.state.activeSessionIds[projectId!];
+            parsed.state.activeSessionIds = currentProjectSessionId
+              ? { [projectId!]: currentProjectSessionId }
+              : {};
+            localStorage.setItem("manyselves-active-conversation", JSON.stringify(parsed));
+          }
+        } catch {
+          // 解析失败时，清空整个状态
+          localStorage.removeItem("manyselves-active-conversation");
+        }
+      }
       return activated;
     },
     queryKey: ["project-activation", projectId, routeProject?.revision],
@@ -40,6 +61,8 @@ export function ConversationPage({ gateway }: { readonly gateway: ApiGateway }) 
     let cancelled = false;
     void createRef.current.promise.then((created) => {
       if (!cancelled) {
+        // 先刷新会话列表缓存，确保新会话可见
+        queryClient.invalidateQueries({ queryKey: ["conversations", projectId, "main"] });
         navigate(`/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(created.sessionId)}`, {
           replace: true,
         });
@@ -48,7 +71,7 @@ export function ConversationPage({ gateway }: { readonly gateway: ApiGateway }) 
       if (!cancelled) setError("新建会话失败");
     });
     return () => { cancelled = true; };
-  }, [api, conversationId, navigate, projectId, projectReady]);
+  }, [api, conversationId, navigate, projectId, projectReady, queryClient]);
 
   if (!projectId || !conversationId) return <p role="alert">会话路由无效</p>;
   if (projects.isPending) return <p role="status">正在加载项目…</p>;

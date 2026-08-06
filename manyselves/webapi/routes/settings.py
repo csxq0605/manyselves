@@ -19,7 +19,9 @@ from ..schemas.settings import (
     AgentDefaultsResponse,
     PresetListResponse,
     PresetSyncResponse,
+    ProviderConfigurationUpsert,
     ProviderConnectionTestResponse,
+    ProviderConnectionTestRequest,
     ProviderPresetResponse,
     ProviderSettingsCreate,
     ProviderSettingsResponse,
@@ -46,6 +48,7 @@ def _settings(manager) -> SettingsResponse:
             ProviderSettingsResponse(
                 id=item.id,
                 name=item.name,
+                presetId=item.preset_id,
                 provider=item.provider,
                 enabled=item.enabled,
                 configured=bool(item.api_key),
@@ -90,6 +93,29 @@ def _replace_provider_secret(provider, secret) -> None:
     provider.api_key = value
     provider.yaml_api_key = value
     provider.credential_source = "yaml" if value else "none"
+
+
+def _is_usable_provider(provider) -> bool:
+    return provider.enabled and bool(provider.api_key)
+
+
+def _sync_defaults_with_provider(config, provider) -> None:
+    config.agents.defaults.model = provider.default_model or ""
+    config.agents.defaults.provider = provider.provider
+
+
+def _replace_inactive_active_provider(config, removed_provider_id: str) -> None:
+    replacement = next(
+        (
+            item
+            for item in config.providers.configurations
+            if item.id != removed_provider_id and _is_usable_provider(item)
+        ),
+        None,
+    )
+    config.providers.active = replacement.id if replacement is not None else None
+    if replacement is not None:
+        _sync_defaults_with_provider(config, replacement)
 
 
 @router.get("", response_model=SettingsResponse)
@@ -177,6 +203,11 @@ async def update_provider(
                     setattr(provider, key, value)
                 if secret_present:
                     _replace_provider_secret(provider, secret)
+                if config.providers.active == provider.id:
+                    if _is_usable_provider(provider):
+                        _sync_defaults_with_provider(config, provider)
+                    else:
+                        _replace_inactive_active_provider(config, provider.id)
 
             restart_fields = {
                 "provider",
@@ -211,19 +242,124 @@ async def create_provider(
                 provider = ApiConfig(
                     name=body.name,
                     provider=body.provider,
+                    preset_id=body.preset_id,
                     api_key=secret,
                     api_base=body.api_base,
                     enabled=body.enabled,
                     default_model=body.default_model,
+                    extra_headers=body.extra_headers,
                 )
                 config.providers.configurations.append(provider)
                 if config.providers.active is None and provider.enabled and provider.api_key:
                     config.providers.active = provider.id
+                    _sync_defaults_with_provider(config, provider)
 
             await _service(request).mutate(
                 mutation, restart_reason="provider_created"
             )
             return _settings(manager)
+    except Exception as error:
+        raise _error(error) from error
+
+
+@router.put(
+    "/provider-configurations/{provider_config_id}",
+    response_model=SettingsResponse,
+)
+async def upsert_provider_configuration(
+    provider_config_id: str,
+    body: ProviderConfigurationUpsert,
+    request: Request,
+    lease_token: str = Depends(require_control_lease_header),
+) -> SettingsResponse:
+    """Save one complete provider configuration and apply it live atomically."""
+    manager = request.app.state.runtime_host.config_manager
+    try:
+        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+            def mutation(config) -> None:
+                if not provider_config_id.strip():
+                    raise ValueError("provider configuration ID cannot be empty")
+
+                provider = next(
+                    (
+                        item
+                        for item in config.providers.configurations
+                        if item.id == provider_config_id
+                    ),
+                    None,
+                )
+                if provider is None and body.preset_id is not None:
+                    provider = next(
+                        (
+                            item
+                            for item in config.providers.configurations
+                            if item.preset_id == body.preset_id
+                        ),
+                        None,
+                    )
+                if provider is None:
+                    provider = ApiConfig(id=provider_config_id)
+                    config.providers.configurations.append(provider)
+
+                provider.preset_id = body.preset_id
+                provider.name = body.name
+                provider.provider = body.protocol
+                provider.api_base = body.api_base
+                provider.default_model = body.default_model
+                provider.extra_headers = body.extra_headers
+                provider.enabled = body.enabled
+                if "api_key" in body.model_fields_set:
+                    _replace_provider_secret(provider, body.api_key)
+
+                if body.make_active:
+                    if not _is_usable_provider(provider):
+                        raise ValueError(
+                            "An active provider must be enabled and have an API key"
+                        )
+                    config.providers.active = provider.id
+                    _sync_defaults_with_provider(config, provider)
+                elif config.providers.active == provider.id:
+                    if _is_usable_provider(provider):
+                        _sync_defaults_with_provider(config, provider)
+                    else:
+                        _replace_inactive_active_provider(config, provider.id)
+
+            await _service(request).mutate(
+                mutation,
+                restart_reason="provider_configuration_changed",
+            )
+            return _settings(manager)
+    except Exception as error:
+        raise _error(error) from error
+
+
+@router.post(
+    "/provider-configurations/test",
+    response_model=ProviderConnectionTestResponse,
+)
+async def test_unsaved_provider_configuration(
+    body: ProviderConnectionTestRequest,
+    request: Request,
+) -> ProviderConnectionTestResponse:
+    """Test draft connection details without writing config or rebuilding runtime."""
+    try:
+        api_key = body.api_key.get_secret_value() if body.api_key is not None else None
+        provider = ApiConfig(
+            name="Connection test",
+            provider=body.protocol,
+            api_key=api_key,
+            api_base=body.api_base,
+            default_model=body.default_model,
+            extra_headers=body.extra_headers,
+        )
+        async with request.app.state.runtime_facade.read_transaction():
+            result = await _service(request).test_provider_configuration(provider)
+        return ProviderConnectionTestResponse(
+            ok=result.ok,
+            providerId=result.provider_id,
+            model=result.model,
+            message=result.message,
+        )
     except Exception as error:
         raise _error(error) from error
 
@@ -266,15 +402,7 @@ async def remove_provider(
                     item for item in existing if item.id != provider_id
                 ]
                 if config.providers.active == provider_id:
-                    replacement = next(
-                        (
-                            item.id
-                            for item in config.providers.configurations
-                            if item.enabled and item.api_key
-                        ),
-                        None,
-                    )
-                    config.providers.active = replacement
+                    _replace_inactive_active_provider(config, provider_id)
 
             await _service(request).mutate(
                 mutation, restart_reason="provider_removed"
@@ -289,6 +417,7 @@ async def list_provider_presets() -> PresetListResponse:
     return PresetListResponse(
         presets=[
             ProviderPresetResponse(
+                id=item.id,
                 name=item.name,
                 provider=item.provider,
                 category=item.category,

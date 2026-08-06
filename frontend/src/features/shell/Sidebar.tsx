@@ -2,15 +2,17 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { ApiError } from "../../api/gateway";
+import { useConversationStore } from "../../store/conversation-store";
 import type { Project, ProjectCreateInput, ProjectUpdateInput } from "../projects/project-api";
 
-export type ProjectSection = "inputs" | "knowledge" | "templates" | "outputs" | "runtime" | "logs";
+export type ProjectSection = "inputs" | "knowledge" | "templates" | "outputs" | "runtime" | "logs" | "history";
 
-type IconName = "archive" | "book" | "edit" | "file-out" | "folder" | "knowledge" | "logs" | "more" | "output" | "plus" | "runtime" | "settings";
+type IconName = "archive" | "book" | "edit" | "file-out" | "folder" | "history" | "knowledge" | "logs" | "more" | "output" | "plus" | "runtime" | "settings";
 
 const sections: readonly (readonly [ProjectSection, string, IconName])[] = [
   ["inputs", "输入", "archive"], ["knowledge", "知识库", "book"], ["templates", "输出模板", "file-out"],
   ["outputs", "输出", "output"], ["runtime", "运行态", "runtime"], ["logs", "日志", "logs"],
+  ["history", "历史会话", "history"],
 ];
 
 function Icon({ name }: { readonly name: IconName }) {
@@ -25,6 +27,7 @@ function Icon({ name }: { readonly name: IconName }) {
     {name === "output" ? <><path {...common} d="M6 3h9l4 4v14H6zM15 3v5h4" /><path {...common} d="m9 14 2 2 4-4" /></> : null}
     {name === "runtime" ? <path {...common} d="M3 12h4l2.5-7 5 14 2.5-7h4" /> : null}
     {name === "logs" ? <><path {...common} d="M6 4h12v16H6z" /><path {...common} d="M9 8h6M9 12h6M9 16h4M3 7h3M3 11h3M3 15h3" /></> : null}
+    {name === "history" ? <><path {...common} d="M12 8v4l3 3" /><circle {...common} cx="12" cy="12" r="9" /><path {...common} d="M12 3a9 9 0 1 0 9 9" /></> : null}
     {name === "plus" ? <path {...common} d="M12 5v14M5 12h14" /> : null}
     {name === "more" ? <><circle cx="5" cy="12" fill="currentColor" r="1.4" /><circle cx="12" cy="12" fill="currentColor" r="1.4" /><circle cx="19" cy="12" fill="currentColor" r="1.4" /></> : null}
     {name === "settings" ? <><circle {...common} cx="12" cy="12" r="3" /><path {...common} d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1M18.7 18.7l-2.1-2.1M7.4 7.4 5.3 5.3" /></> : null}
@@ -47,6 +50,7 @@ function errorMessage(error: unknown): string {
 export function Sidebar({ onCreateProject, onDeleteProject, onLogout, onUpdateProject, projects, projectsError = false }: SidebarProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const getActiveSession = useConversationStore((state) => state.getActiveSession);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const invokerRef = useRef<HTMLButtonElement | null>(null);
   const restoreFocus = useRef(false);
@@ -152,6 +156,28 @@ export function Sidebar({ onCreateProject, onDeleteProject, onLogout, onUpdatePr
     try { return decodeURIComponent(match[1]); } catch { return home; }
   })();
 
+  // Get current conversation ID from URL or global state
+  const currentConversationId = (() => {
+    const match = /\/conversations\/([^/?#]+)/.exec(location.pathname);
+    if (match?.[1]) return match[1];
+    return null;
+  })();
+
+  // Get active session from global state
+  const activeSessionId = currentConversationId ?? getActiveSession(routeProjectId);
+
+  // Helper to build conversation URL
+  const buildConversationUrl = (projectId: string, section?: string) => {
+    const sessionId = getActiveSession(projectId);
+    if (sessionId && sessionId !== "new") {
+      if (section) {
+        return `/projects/${encodeURIComponent(projectId)}/conversations/${sessionId}/${section}`;
+      }
+      return `/projects/${encodeURIComponent(projectId)}/conversations/${sessionId}`;
+    }
+    return `/projects/${encodeURIComponent(projectId)}`;
+  };
+
   return (
     <aside className="sidebar" aria-label="项目导航">
       <nav aria-label="主导航" className="sidebar__top">
@@ -162,7 +188,7 @@ export function Sidebar({ onCreateProject, onDeleteProject, onLogout, onUpdatePr
         <div className="sidebar__section-heading"><h2 id="projects-title">项目</h2><button aria-label="新建项目" onClick={(event) => open("create", undefined, event.currentTarget)} type="button"><Icon name="plus" /></button></div>
         {projectsError ? <p aria-live="polite" role="alert">项目列表加载失败</p> : null}
         <ul>{projects.map((project) => <li className="project-node" key={project.id}>
-          <div className={`project-node__row${routeProjectId === project.id ? " project-node__row--selected" : ""}`}><NavLink end to={`/projects/${encodeURIComponent(project.id)}`}><Icon name="folder" /><span>{project.displayName}</span></NavLink>
+          <div className={`project-node__row${routeProjectId === project.id ? " project-node__row--selected" : ""}`}><NavLink end to={buildConversationUrl(project.id)}><Icon name="folder" /><span>{project.displayName}</span></NavLink>
             <button aria-label={`编辑 ${project.displayName}`} onClick={(event) => open("edit", project, event.currentTarget)} type="button"><Icon name="edit" /></button>
             <button aria-label={`更多 ${project.displayName}`} onClick={(event) => open("delete", project, event.currentTarget)} type="button"><Icon name="more" /></button>
           </div>

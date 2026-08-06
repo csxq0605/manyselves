@@ -2038,10 +2038,13 @@ class AgentLoop:
                     terminal_payload = _report_workflow_terminal_payload(
                         self._current_message
                     )
+                    # Only block if the current message is truly a failed report-workflow terminal message
+                    # AND it's not a fresh user message (source != "report-workflow")
                     if (
                         self.agent_id == "main"
                         and terminal_payload is not None
                         and terminal_payload.get("status") == "failed"
+                        and str(getattr(self._current_message, "source", "") or "") == "report-workflow"
                     ):
                         raise PermissionError(
                             "A failed report-workflow terminal turn is explanation-only. "

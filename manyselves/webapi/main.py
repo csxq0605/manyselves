@@ -3,6 +3,7 @@
 import asyncio
 import re
 from collections.abc import Callable
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Request
@@ -10,9 +11,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.routing import APIRoute
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import RequestResponseEndpoint
-from starlette.responses import Response
+from starlette.responses import FileResponse, Response
 
 from .errors import (
     ApiError,
@@ -152,6 +154,19 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.include_router(operations_router, prefix=API_PREFIX)
     app.include_router(maintenance_router, prefix=API_PREFIX)
 
+    # 挂载 React 前端静态文件
+    frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
+    if frontend_dist.exists():
+        # 挂载静态资源（CSS、JS、图片等）
+        app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
+
+        # SPA fallback: 所有未匹配的路由返回 index.html
+        @app.get("/")
+        @app.get("/{full_path:path}")
+        async def serve_spa(full_path: str = ""):
+            """Serve React SPA for all non-API routes."""
+            return FileResponse(frontend_dist / "index.html")
+
     def semantic_openapi() -> dict:
         """Expose the actual error, auth, preview, and streaming wire semantics."""
         if app.openapi_schema is not None:
@@ -220,4 +235,5 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     return app
 
 
+# For tests and direct imports - create a default app instance
 app = create_app()

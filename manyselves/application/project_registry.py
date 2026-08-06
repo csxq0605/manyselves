@@ -2,13 +2,16 @@
 
 import re
 import shutil
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.project_structure import ensure_project_structure, is_project_workspace
 from .project_metadata import ProjectMetadata, ProjectMetadataStore
 
+# 项目 ID 格式：UUID 或传统格式（字母数字开头，可包含点、下划线、连字符）
 _PROJECT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+_UUID_PATTERN = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z", re.IGNORECASE)
 
 
 class ProjectRegistryError(RuntimeError):
@@ -175,6 +178,18 @@ class ProjectRegistry:
 
     @staticmethod
     def _validate_id(project_id: str) -> str:
-        if project_id in {".", ".."} or not _PROJECT_ID.fullmatch(project_id):
+        """验证项目 ID 格式，支持 UUID 或传统格式"""
+        if project_id in {".", ".."}:
+            raise InvalidProjectId()
+        # 支持 UUID 格式
+        if _UUID_PATTERN.fullmatch(project_id):
+            return project_id
+        # 支持传统格式
+        if not _PROJECT_ID.fullmatch(project_id):
             raise InvalidProjectId()
         return project_id
+
+    @staticmethod
+    def generate_id() -> str:
+        """生成新的项目 ID (UUID)"""
+        return str(uuid.uuid4())

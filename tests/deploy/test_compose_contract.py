@@ -2,6 +2,8 @@ from pathlib import Path
 
 import yaml
 
+from manyselves.webapi.settings import WebSettings
+
 
 def test_compose_has_one_api_replica_and_persistent_data() -> None:
     compose = yaml.safe_load(Path("deploy/compose.yaml").read_text("utf-8"))
@@ -10,9 +12,9 @@ def test_compose_has_one_api_replica_and_persistent_data() -> None:
     assert api["deploy"]["replicas"] == 1
     assert any("/data/manyselves" in volume for volume in api["volumes"])
     assert api["read_only"] is True
-    assert api["environment"]["CONFIG_PATH"] == "/data/manyselves/manyselves.config.yaml"
-    assert api["environment"]["ADMIN_USERNAME"] == "${MANYSELVES_ADMIN_USERNAME:-admin}"
-    assert api["environment"]["ADMIN_PASSWORD"] == "${MANYSELVES_ADMIN_PASSWORD:-yuanxi@2026}"
+    assert api["environment"]["CONFIG_PATH"] == "${MANYSELVES_CONFIG_PATH:-/data/manyselves/manyselves.config.yaml}"
+    assert api["environment"]["MANYSELVES_ADMIN_USERNAME"] == "${MANYSELVES_ADMIN_USERNAME:-admin}"
+    assert api["environment"]["MANYSELVES_ADMIN_PASSWORD"] == "${MANYSELVES_ADMIN_PASSWORD:-yuanxi@2026}"
     assert "ACCESS_TOKEN" not in api["environment"]
     assert api["expose"] == ["9000"]
     assert "ports" not in api
@@ -49,6 +51,37 @@ def test_lan_defaults_use_the_reviewed_server_ip_and_ports() -> None:
     assert '["http://192.168.8.28:9090"]' in compose
     assert "EXPOSE 9090" in web_dockerfile
     assert 'defaultServerUrl: "http://192.168.8.28:9090"' in frontend_main
+
+
+def test_deploy_env_example_uses_parseable_json_origins(monkeypatch) -> None:
+    environment = Path("deploy/env.example").read_text("utf-8")
+    origin_line = next(
+        line for line in environment.splitlines()
+        if line.startswith("MANYSELVES_ALLOWED_ORIGINS=")
+    )
+
+    monkeypatch.setenv("MANYSELVES_ALLOWED_ORIGINS", origin_line.split("=", 1)[1])
+
+    assert WebSettings().allowed_origins == ["http://192.168.8.28:9090"]
+
+
+def test_compose_maps_prefixed_provider_keys_to_runtime_environment() -> None:
+    compose = yaml.safe_load(Path("deploy/compose.yaml").read_text("utf-8"))
+    environment = compose["services"]["api"]["environment"]
+
+    assert environment["OPENAI_API_KEY"] == "${MANYSELVES_OPENAI_API_KEY:-}"
+    assert environment["ANTHROPIC_API_KEY"] == "${MANYSELVES_ANTHROPIC_API_KEY:-}"
+    assert environment["DEEPSEEK_API_KEY"] == "${MANYSELVES_DEEPSEEK_API_KEY:-}"
+    assert environment["OPENROUTER_API_KEY"] == "${MANYSELVES_OPENROUTER_API_KEY:-}"
+
+
+def test_cent_os_docs_cover_selinux_volume_labeling() -> None:
+    docs = Path("docs/deployment/linux-compose.md").read_text("utf-8")
+
+    assert "CentOS" in docs
+    assert "SELinux" in docs
+    assert ":Z" in docs
+    assert "MANYSELVES_DATA_DIR=/srv/manyselves/data" in docs
 
 
 def test_linux_deployment_docs_prepare_one_non_root_engine_context() -> None:

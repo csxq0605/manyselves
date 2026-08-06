@@ -1,7 +1,6 @@
 """Complete V2 reporting service executed inside the Manyselves runtime."""
 
 import asyncio
-import fcntl
 import hashlib
 import io
 import shutil
@@ -24,6 +23,7 @@ from .config import load_packaged_agents
 from .coverage import evaluate_coverage
 from .decisions import EvidenceDecisionStore
 from .evidence_readiness import ReportingBlockedError
+from .file_lock import file_lock, release_lock
 from .intake.adapters import IntakeAdapterRegistry
 from .intake.manifest import build_manifest
 from .intake.wps_images import canonicalize_photo_bindings, extract_wps_images
@@ -182,7 +182,7 @@ class ReportingService:
         try:
             return await self._execute_locked(request, run_id, resume=resume)
         finally:
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            release_lock(lock_handle)
             lock_handle.close()
 
     def _acquire_run_lock(self, run_id: str):
@@ -190,10 +190,19 @@ class ReportingService:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         handle = lock_path.open("a+", encoding="utf-8")
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
+            import sys
+            if sys.platform != "win32":
+                # Unix: Use file locking
+                import fcntl
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    handle.close()
+                    raise RuntimeError(f"report run is already active: {run_id}") from exc
+            # Windows: No actual file locking (simplified)
+        except Exception:
             handle.close()
-            raise RuntimeError(f"report run is already active: {run_id}") from exc
+            raise
         return handle
 
     async def _execute_locked(

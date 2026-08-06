@@ -5,6 +5,8 @@ export type AgentDebugResponse = components["schemas"]["AgentDebugResponse"];
 export type AgentListResponse = components["schemas"]["AgentListResponse"];
 export type PresetListResponse = components["schemas"]["PresetListResponse"];
 export type PresetSyncResponse = components["schemas"]["PresetSyncResponse"];
+export type ProviderConfigurationUpsert = components["schemas"]["ProviderConfigurationUpsert"];
+export type ProviderConnectionTestRequest = components["schemas"]["ProviderConnectionTestRequest"];
 export type ProviderSettingsCreate = components["schemas"]["ProviderSettingsCreate"];
 export type ProviderSettingsUpdate = components["schemas"]["ProviderSettingsUpdate"];
 export type ProviderConnectionTestResponse = components["schemas"]["ProviderConnectionTestResponse"];
@@ -20,10 +22,12 @@ export interface SettingsApi {
   listPresets(): Promise<PresetListResponse>;
   removeProvider(providerId: string): Promise<SettingsResponse>;
   syncPresets(): Promise<PresetSyncResponse>;
+  testProviderConfiguration(input: ProviderConnectionTestRequest): Promise<ProviderConnectionTestResponse>;
   testProviderConnection(providerId: string): Promise<ProviderConnectionTestResponse>;
   updateAgentDebug(agentId: string, enabled: boolean): Promise<AgentDebugResponse>;
   updateDefaults(input: SettingsDefaultsUpdate): Promise<SettingsResponse>;
   updateProvider(providerId: string, input: ProviderSettingsUpdate): Promise<SettingsResponse>;
+  upsertProviderConfiguration(providerConfigId: string, input: ProviderConfigurationUpsert): Promise<SettingsResponse>;
   validateSettings(): Promise<SettingsValidationResponse>;
 }
 
@@ -48,6 +52,10 @@ export function createSettingsApi(gateway: ApiGateway): SettingsApi {
       method: "POST",
       requireLease: true,
     }),
+    testProviderConfiguration: (input) => gateway.requestJson(
+      "/api/v1/settings/provider-configurations/test",
+      { json: input, method: "POST" },
+    ),
     testProviderConnection: (providerId) => gateway.requestJson(
       `/api/v1/settings/providers/${encodeURIComponent(providerId)}/test`,
       { method: "POST" },
@@ -64,6 +72,10 @@ export function createSettingsApi(gateway: ApiGateway): SettingsApi {
     updateProvider: (providerId, input) => gateway.requestJson(
       `/api/v1/settings/providers/${encodeURIComponent(providerId)}`,
       { json: input, method: "PATCH", requireLease: true },
+    ),
+    upsertProviderConfiguration: (providerConfigId, input) => gateway.requestJson(
+      `/api/v1/settings/provider-configurations/${encodeURIComponent(providerConfigId)}`,
+      { json: input, method: "PUT", requireLease: true },
     ),
     validateSettings: () => gateway.requestJson("/api/v1/settings/validate", {
       method: "POST",

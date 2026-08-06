@@ -8,6 +8,67 @@ import type { ApiGateway } from "../../api/gateway";
 import { ConversationWorkspace } from "./ConversationWorkspace";
 
 describe("ConversationWorkspace", () => {
+  it("passes runtime snapshot summaries into the floating agent panel", async () => {
+    const requestJson = vi.fn(async (path: string) => {
+      if (path.startsWith("/api/v1/conversations/messages")) {
+        return {
+          messages: [
+            { content: "read", role: "tool_call", timestamp: "2026-08-05T22:20:12" },
+            { content: "server history", message_id: "m1", role: "agent" },
+          ],
+          projectId: "project-1",
+          sessionId: "s1",
+        };
+      }
+      if (path.startsWith("/api/v1/conversations?")) {
+        return {
+          activeSessionId: "s1",
+          conversations: [{ active: true, name: "runtime", preview: "server", projectId: "project-1", sessionId: "s1", timestamp: "now" }],
+          projectId: "project-1",
+        };
+      }
+      if (path.includes("/files/tree")) return { entries: [] };
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const gateway = {
+      bootstrap: async () => ({
+        project: { active: true, description: "", displayName: "Project 1", id: "project-1", revision: "r1" },
+        runtime: {
+          active_session_id: "s1",
+          agent_statuses: { main: "running", researcher: "waiting" },
+          checkpoints: [],
+          controller_client_id: null,
+          debug: [],
+          queues: [],
+          ready: true,
+          tasks: [
+            { blocking: false, brief: "Build report", session_id: "s1", source_agent: "main", status: "running", target_agent: "researcher", task_id: "task-1" },
+            { blocking: false, brief: "Done task", session_id: "s1", source_agent: "main", status: "completed", target_agent: "main", task_id: "task-2" },
+          ],
+          tools: [{ agentId: "researcher", arguments: {}, name: "read_file", status: "running", toolCallId: "tool-1" }],
+          workspace: null,
+        },
+      }),
+      requestJson,
+    } as unknown as ApiGateway;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+
+    render(<QueryClientProvider client={client}>
+      <ConversationWorkspace agentId="main" gateway={gateway} projectId="project-1" />
+    </QueryClientProvider>);
+
+    const toggle = await screen.findByRole("button", { name: "\u5c55\u5f00 Agent \u8fd0\u884c\u6001" });
+    expect(toggle).toHaveTextContent("1 \u8fdb\u884c\u4e2d");
+    expect(toggle).toHaveTextContent("1/2 \u5b8c\u6210");
+
+    await user.click(toggle);
+
+    expect(screen.getByText("Build report")).toBeVisible();
+    expect(screen.getByText("\u670d\u52a1\u5c31\u7eea")).toBeVisible();
+    expect(screen.getByText("1 \u4e2a\u5de5\u5177\u8fd0\u884c\u4e2d")).toBeVisible();
+  });
+
   it("loads the authoritative active conversation and history", async () => {
     const requestJson = vi.fn(async (path: string) => {
       if (path.startsWith("/api/v1/conversations/messages")) {

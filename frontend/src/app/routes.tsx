@@ -35,6 +35,11 @@ const LogsRoutePage = lazy(async () => {
   return { default: module.LogsRoutePage };
 });
 
+const HistoryRoutePage = lazy(async () => {
+  const module = await import("../features/history/HistoryPage");
+  return { default: module.HistoryRoutePage };
+});
+
 const SettingsPage = lazy(async () => {
   const module = await import("../features/settings/SettingsPage");
   return { default: module.SettingsPage };
@@ -152,6 +157,11 @@ export function AppRoutes({ gateway, onLogout, platform, settingsStorage }: { re
     <Route path="/projects/:projectId/logs" element={(
       <Suspense fallback={<Placeholder title="正在加载日志…" />}>
         <LogsRoutePage gateway={gateway} {...(platform ? { platform } : {})} />
+      </Suspense>
+    )} />
+    <Route path="/projects/:projectId/history" element={(
+      <Suspense fallback={<Placeholder title="正在加载历史会话…" />}>
+        <HistoryRoutePage gateway={gateway} />
       </Suspense>
     )} />
     <Route path="/projects/:projectId/:section" element={(

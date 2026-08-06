@@ -38,3 +38,31 @@ async def readiness(request: Request) -> dict[str, str]:
             retryable=True,
         )
     return {"status": "ready"}
+
+
+@router.get("/health/providers", status_code=status.HTTP_200_OK)
+async def provider_status(request: Request) -> dict[str, str | bool]:
+    """Check if LLM providers are configured.
+
+    Returns:
+        - configured: True if at least one provider is available
+        - message: Human-readable status message
+    """
+    host = getattr(request.app.state, "runtime_host", None)
+    if host is None or host.loop_manager is None:
+        return {
+            "configured": False,
+            "message": "Runtime not initialized",
+        }
+
+    available = host.loop_manager._provider_manager.get_available_providers()
+    if not available:
+        return {
+            "configured": False,
+            "message": "No LLM providers configured. Configure in UI settings.",
+        }
+
+    return {
+        "configured": True,
+        "message": f"{len(available)} provider(s) available",
+    }

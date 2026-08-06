@@ -16,7 +16,11 @@
 }
 
 .settings-hero {
+  align-items: flex-start;
   border-bottom: 1px solid #dcddd9;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
   margin-bottom: 24px;
   padding-bottom: 20px;
 }
@@ -42,6 +46,19 @@
   font-size: 11px;
   letter-spacing: .06em;
   margin: 0;
+}
+
+.settings-version {
+  background: #f3f3f0;
+  border: 1px solid #dededb;
+  border-radius: 999px;
+  color: #5f6368;
+  flex: 0 0 auto;
+  font-family: "SFMono-Regular", Cascadia Mono, monospace;
+  font-size: 12px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  white-space: nowrap;
 }
 
 .model-settings {
@@ -107,6 +124,60 @@
 .settings-fields--two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+
+.provider-configuration__fields,
+.provider-configuration__advanced-fields {
+  display: grid;
+  gap: 15px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.provider-configuration__active { margin: -4px 0 0; }
+
+.provider-configuration__advanced {
+  border-top: 1px solid #ecece9;
+  padding-top: 14px;
+}
+
+.provider-configuration__advanced summary {
+  color: #41413f;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.provider-configuration__advanced-fields { margin-top: 14px; }
+
+.provider-configuration textarea {
+  background: #fff;
+  border: 1px solid #c8c9c5;
+  border-radius: 7px;
+  box-sizing: border-box;
+  color: #202123;
+  font: inherit;
+  min-height: 76px;
+  padding: 8px 10px;
+  resize: vertical;
+  width: 100%;
+}
+
+.provider-configuration textarea:focus {
+  border-color: #8fa6ce;
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 14%);
+  outline: 0;
+}
+
+.provider-configuration__legacy {
+  border-top: 1px solid #ecece9;
+  display: grid;
+  gap: 10px;
+  padding-top: 16px;
+}
+
+.provider-configuration__legacy h3,
+.provider-configuration__legacy p { margin: 0; }
+.provider-configuration__legacy h3 { font-size: 14px; }
+.provider-configuration__legacy p { color: #6b6f76; font-size: 12px; }
 
 .model-settings label,
 .settings-card label {
@@ -346,8 +417,11 @@
 .settings-dialog__actions { grid-column: 1 / -1; justify-content: flex-end; }
 
 @media (max-width: 760px) {
+  .settings-hero { flex-direction: column; gap: 12px; }
   .model-settings__fields,
   .settings-fields--two,
+  .provider-configuration__fields,
+  .provider-configuration__advanced-fields,
   .settings-advanced__content,
   .provider-create { grid-template-columns: 1fr; }
   .provider-create h4 { grid-column: auto; }
@@ -359,4 +433,190 @@
 
 @media (prefers-reduced-motion: reduce) {
   .settings-workspace * { scroll-behavior: auto !important; transition-duration: 0ms !important; }
+}
+
+/* Enhanced Model Settings */
+.enhanced-model-settings .model-settings__content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.enhanced-model-settings .model-settings__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .enhanced-model-settings .model-settings__row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.enhanced-model-settings .model-settings__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.enhanced-model-settings .model-settings__label {
+  color: #495057;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.enhanced-model-settings .model-settings__select,
+.enhanced-model-settings .model-settings__input {
+  border: 1px solid #ced4da;
+  border-radius: 6px;
+  font-size: 14px;
+  padding: 10px 12px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  width: 100%;
+}
+
+.enhanced-model-settings .model-settings__select:focus,
+.enhanced-model-settings .model-settings__input:focus {
+  border-color: #4a90e2;
+  box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.1);
+  outline: none;
+}
+
+.enhanced-model-settings .model-settings__select:disabled,
+.enhanced-model-settings .model-settings__input:disabled {
+  background: #f8f9fa;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.enhanced-model-settings .custom-mode-badge {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 4px;
+  color: #856404;
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+.enhanced-model-settings .required {
+  color: #dc3545;
+  font-weight: 500;
+}
+
+.enhanced-model-settings .field-hint {
+  color: #28a745;
+  display: block;
+  font-size: 12px;
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+.enhanced-model-settings .model-settings__result {
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+.enhanced-model-settings .model-settings__result--success {
+  background: #d4edda;
+  border: 1px solid #c3e6cb;
+  color: #155724;
+}
+
+.enhanced-model-settings .model-settings__result--error {
+  background: #f8d7da;
+  border: 1px solid #f5c6cb;
+  color: #721c24;
+}
+
+.enhanced-model-settings .model-settings__actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .enhanced-model-settings .model-settings__label {
+    color: #adb5bd;
+  }
+
+  .enhanced-model-settings .model-settings__select,
+  .enhanced-model-settings .model-settings__input {
+    background: #1a1a1a;
+    border-color: #495057;
+    color: #e9ecef;
+  }
+
+  .enhanced-model-settings .model-settings__select:focus,
+  .enhanced-model-settings .model-settings__input:focus {
+    border-color: #4a90e2;
+    box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.2);
+  }
+
+  .enhanced-model-settings .custom-mode-badge {
+    background: #856404;
+    border-color: #ffc107;
+    color: #fff3cd;
+  }
+}
+
+/* Collapsible Section */
+.collapsible-section {
+  margin-top: 24px;
+}
+
+.collapsible-section__header {
+  align-items: center;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  color: #495057;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 16px;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+  width: 100%;
+}
+
+.collapsible-section__header:hover {
+  background: #e9ecef;
+}
+
+.collapsible-section__header:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.2);
+}
+
+.collapsible-section__title {
+  font-size: 15px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.collapsible-section__icon {
+  font-size: 12px;
+  transition: transform 0.2s ease;
+}
+
+.collapsible-section__content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .collapsible-section__header {
+    background: #2a2a2a;
+    border-color: #495057;
+    color: #adb5bd;
+  }
+
+  .collapsible-section__header:hover {
+    background: #3a3a3a;
+  }
 }

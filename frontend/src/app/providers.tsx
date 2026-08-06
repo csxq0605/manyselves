@@ -29,7 +29,11 @@ export function AppProviders({
       providedQueryClient ??
       new QueryClient({
         defaultOptions: {
-          queries: { retry: false, staleTime: 30_000 },
+          queries: {
+            retry: false,
+            staleTime: 300_000,  // 5分钟内数据被认为是新鲜的
+            gcTime: 600_000,     // 10分钟后垃圾回收
+          },
         },
       }),
   );

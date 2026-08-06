@@ -767,6 +767,12 @@
           "projectId": {
             "title": "Projectid",
             "type": "string"
+          },
+          "total": {
+            "default": 0,
+            "description": "Total number of events for pagination",
+            "title": "Total",
+            "type": "integer"
           }
         },
         "required": [
@@ -774,6 +780,51 @@
           "entries"
         ],
         "title": "EventLogResponse",
+        "type": "object"
+      },
+      "EventLogStats": {
+        "description": "Event log statistics.",
+        "properties": {
+          "by_level": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Level",
+            "type": "object"
+          },
+          "by_type": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Type",
+            "type": "object"
+          },
+          "date_range": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Date Range",
+            "type": "object"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "by_level",
+          "by_type",
+          "date_range"
+        ],
+        "title": "EventLogStats",
         "type": "object"
       },
       "FileContent": {
@@ -1556,6 +1607,7 @@
         "additionalProperties": false,
         "properties": {
           "description": {
+            "default": "",
             "maxLength": 1000,
             "title": "Description",
             "type": "string"
@@ -1567,14 +1619,19 @@
             "type": "string"
           },
           "projectId": {
-            "title": "Projectid",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectid"
           }
         },
         "required": [
-          "projectId",
-          "displayName",
-          "description"
+          "displayName"
         ],
         "title": "ProjectCreateRequest",
         "type": "object"
@@ -1670,6 +1727,153 @@
         "title": "ProjectUpdateRequest",
         "type": "object"
       },
+      "ProviderConfigurationUpsert": {
+        "additionalProperties": false,
+        "description": "Complete, atomically-applied provider configuration from the settings UI.",
+        "properties": {
+          "apiBase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apibase"
+          },
+          "apiKey": {
+            "anyOf": [
+              {
+                "format": "password",
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apikey"
+          },
+          "defaultModel": {
+            "minLength": 1,
+            "title": "Defaultmodel",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "extraHeaders": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraheaders"
+          },
+          "makeActive": {
+            "default": true,
+            "title": "Makeactive",
+            "type": "boolean"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "presetId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Presetid"
+          },
+          "protocol": {
+            "minLength": 1,
+            "title": "Protocol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "protocol",
+          "defaultModel"
+        ],
+        "title": "ProviderConfigurationUpsert",
+        "type": "object"
+      },
+      "ProviderConnectionTestRequest": {
+        "additionalProperties": false,
+        "description": "Ephemeral provider connection details; never written to configuration.",
+        "properties": {
+          "apiBase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apibase"
+          },
+          "apiKey": {
+            "anyOf": [
+              {
+                "format": "password",
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apikey"
+          },
+          "defaultModel": {
+            "minLength": 1,
+            "title": "Defaultmodel",
+            "type": "string"
+          },
+          "extraHeaders": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraheaders"
+          },
+          "protocol": {
+            "minLength": 1,
+            "title": "Protocol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "defaultModel"
+        ],
+        "title": "ProviderConnectionTestRequest",
+        "type": "object"
+      },
       "ProviderConnectionTestResponse": {
         "properties": {
           "message": {
@@ -1692,8 +1896,15 @@
             "type": "boolean"
           },
           "providerId": {
-            "title": "Providerid",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Providerid"
           }
         },
         "required": [
@@ -1723,6 +1934,10 @@
             "title": "Description",
             "type": "string"
           },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -1737,6 +1952,7 @@
           }
         },
         "required": [
+          "id",
           "name",
           "provider",
           "category",
@@ -1791,10 +2007,35 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "extraHeaders": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraheaders"
+          },
           "name": {
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "presetId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Presetid"
           },
           "provider": {
             "minLength": 1,
@@ -1862,6 +2103,17 @@
             "title": "Name",
             "type": "string"
           },
+          "presetId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Presetid"
+          },
           "provider": {
             "title": "Provider",
             "type": "string"
@@ -1870,6 +2122,7 @@
         "required": [
           "id",
           "name",
+          "presetId",
           "provider",
           "enabled",
           "configured",
@@ -1929,6 +2182,20 @@
               }
             ],
             "title": "Enabled"
+          },
+          "extraHeaders": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraheaders"
           },
           "name": {
             "anyOf": [
@@ -3264,6 +3531,60 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/": {
+      "get": {
+        "description": "Serve React SPA for all non-API routes.",
+        "operationId": "get_root",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "full_path",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Full Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Serve Spa"
+      }
+    },
     "/api/v1/agents": {
       "get": {
         "operationId": "get_api_v1_agents",
@@ -4671,7 +4992,7 @@
     },
     "/api/v1/events/logs": {
       "get": {
-        "description": "Return a bounded project event projection; never expose filesystem logs.",
+        "description": "Return a bounded project event projection with pagination support.",
         "operationId": "get_api_v1_events_logs",
         "parameters": [
           {
@@ -4694,6 +5015,17 @@
               "maximum": 500,
               "minimum": 1,
               "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
               "type": "integer"
             }
           }
@@ -4736,6 +5068,147 @@
           }
         ],
         "summary": "List Event Logs"
+      }
+    },
+    "/api/v1/events/search": {
+      "get": {
+        "description": "Search event logs by message content.",
+        "operationId": "get_api_v1_events_search",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Projectid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EventLogEntry"
+                  },
+                  "title": "Response Get Api V1 Events Search",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Search Event Logs"
+      }
+    },
+    "/api/v1/events/stats": {
+      "get": {
+        "description": "Get event log statistics for a project.",
+        "operationId": "get_api_v1_events_stats",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Projectid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventLogStats"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Get Event Log Stats"
       }
     },
     "/api/v1/global-knowledge/files/content": {
@@ -5201,6 +5674,56 @@
           }
         },
         "summary": "Liveness"
+      }
+    },
+    "/api/v1/health/providers": {
+      "get": {
+        "description": "Check if LLM providers are configured.\n\nReturns:\n    - configured: True if at least one provider is available\n    - message: Human-readable status message",
+        "operationId": "get_api_v1_health_providers",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "boolean"
+                      }
+                    ]
+                  },
+                  "title": "Response Get Api V1 Health Providers",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "summary": "Provider Status"
       }
     },
     "/api/v1/health/ready": {
@@ -7034,6 +7557,126 @@
         "summary": "Synchronize Provider Presets"
       }
     },
+    "/api/v1/settings/provider-configurations/test": {
+      "post": {
+        "description": "Test draft connection details without writing config or rebuilding runtime.",
+        "operationId": "post_api_v1_settings_provider_configurations_test",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderConnectionTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderConnectionTestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Test Unsaved Provider Configuration"
+      }
+    },
+    "/api/v1/settings/provider-configurations/{provider_config_id}": {
+      "put": {
+        "description": "Save one complete provider configuration and apply it live atomically.",
+        "operationId": "put_api_v1_settings_provider_configurations_provider_config_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_config_id",
+            "required": true,
+            "schema": {
+              "title": "Provider Config Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderConfigurationUpsert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "ControlLeaseToken": [],
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Upsert Provider Configuration"
+      }
+    },
     "/api/v1/settings/providers": {
       "post": {
         "operationId": "post_api_v1_settings_providers",
@@ -7301,6 +7944,59 @@
           }
         ],
         "summary": "Validate Settings"
+      }
+    },
+    "/{full_path}": {
+      "get": {
+        "description": "Serve React SPA for all non-API routes.",
+        "operationId": "get_full_path",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "full_path",
+            "required": true,
+            "schema": {
+              "title": "Full Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "API error"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Serve Spa"
       }
     }
   }

@@ -108,6 +108,13 @@ class LoopManager:
         # Initialize providers
         await self._initialize_providers()
 
+        # Create loops only if providers are available
+        available = self._provider_manager.get_available_providers()
+        if not available:
+            logger.warning("No LLM providers available. Service started in degraded mode.")
+            logger.info("You can configure providers in the UI settings and restart the service.")
+            return
+
         # Create loops
         await self._create_loops()
 
@@ -129,6 +136,7 @@ class LoopManager:
                     cfg.api_key,
                     cfg.api_base,
                     cfg.default_model,
+                    cfg.extra_headers,
                 )
                 self._provider_manager.register_provider(cfg.id, provider)
                 logger.info("Initialized {} provider: {}", cfg.provider, cfg.name)

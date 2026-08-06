@@ -7,11 +7,15 @@ import json
 import sys
 from pathlib import Path
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
 from manyselves.webapi.main import create_app
 from manyselves.webapi.settings import WebSettings
 
 DEFAULT_CONTRACT_PATH = (
-    Path(__file__).resolve().parents[1] / "frontend-contract" / "openapi.json"
+    REPOSITORY_ROOT / "frontend-contract" / "openapi.json"
 )
 
 

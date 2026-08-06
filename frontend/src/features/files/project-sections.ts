@@ -28,3 +28,8 @@ export const SECTION_CAPABILITIES = {
 export function isProjectFileSection(value: string | undefined): value is ProjectFileSection {
   return value !== undefined && Object.hasOwn(SECTION_CAPABILITIES, value);
 }
+
+// Check if section is a file section (not history, runtime, logs)
+export function isFileBasedSection(section: string | undefined): boolean {
+  return isProjectFileSection(section);
+}

@@ -5,12 +5,16 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProjectApi } from "./project-api";
 import { CreateProjectDialog } from "./CreateProjectDialog";
 
+function createdProject({ projectId, displayName, description }: Parameters<ProjectApi["create"]>[0]) {
+  return { active: false, description, displayName, id: projectId ?? displayName, revision: "r1" };
+}
+
 describe("CreateProjectDialog", () => {
   it("creates a named project and reports it to the workspace", async () => {
     const created: string[] = [];
     const api: ProjectApi = {
       activate: async (projectId) => ({ active: true, description: "", displayName: projectId, id: projectId, revision: "r1" }),
-      create: async ({ projectId, displayName, description }) => ({ active: false, description, displayName, id: projectId, revision: "r1" }),
+      create: async (input) => createdProject(input),
       delete: async () => undefined,
       list: async () => [],
       update: async (projectId, input) => ({ active: false, ...input, id: projectId }),

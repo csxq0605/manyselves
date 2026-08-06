@@ -57,7 +57,9 @@ class EventLogEntry(BaseModel):
 
     @field_validator("timestamp", mode="before")
     @classmethod
-    def normalize_timestamp(cls, value: datetime) -> datetime:
+    def normalize_timestamp(cls, value: datetime | str) -> datetime:
+        if isinstance(value, str):
+            value = datetime.fromisoformat(value)
         return value.astimezone(UTC)
 
 
@@ -66,5 +68,6 @@ class EventLogResponse(BaseModel):
 
     project_id: str = Field(alias="projectId")
     entries: tuple[EventLogEntry, ...]
+    total: int = Field(default=0, description="Total number of events for pagination")
 
     model_config = ConfigDict(populate_by_name=True, frozen=True)

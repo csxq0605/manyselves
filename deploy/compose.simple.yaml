@@ -1,0 +1,56 @@
+name: manyselves-phase1-simple
+
+# 简化版 Docker Compose（局域网环境）
+# 无严格权限限制，适合开发/测试环境
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/api/Dockerfile.simple
+    image: ${MANYSELVES_API_IMAGE:-manyselves-api:simple}
+    container_name: manyselves-api
+    environment:
+      # 管理员配置
+      ADMIN_USERNAME: ${MANYSELVES_ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${MANYSELVES_ADMIN_PASSWORD:-yuanxi@2026}
+
+      # API Keys
+      OPENAI_API_KEY: ${MANYSELVES_OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${MANYSELVES_ANTHROPIC_API_KEY:-}
+
+      # 配置文件路径（源码配置）
+      CONFIG_PATH: ${MANYSELVES_CONFIG_PATH:-/app/deploy/config/manyselves.config.yaml}
+      DATA_ROOT: /data/manyselves
+
+      # 其他配置
+      INITIAL_PROJECT_ID: ${MANYSELVES_INITIAL_PROJECT_ID:-default}
+      MANYSELVES_BOOTSTRAP_PROVIDER: ${MANYSELVES_BOOTSTRAP_PROVIDER:-openai}
+      ALLOWED_ORIGINS: ${MANYSELVES_ALLOWED_ORIGINS:-["http://localhost:9090"]}
+    volumes:
+      # 数据目录（完全访问权限）
+      - ${MANYSELVES_DATA_DIR:-./data/manyselves}:/data/manyselves
+      # 源码配置文件（只读）
+      - ../deploy/config:/app/deploy/config:ro
+    ports:
+      - "${MANYSELVES_API_PORT:-9000}:9000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "/app/deploy/api/healthcheck.py"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web/Dockerfile
+    image: ${MANYSELVES_WEB_IMAGE:-manyselves-web:simple}
+    container_name: manyselves-web
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${MANYSELVES_HTTP_BIND:-0.0.0.0}:${MANYSELVES_HTTP_PORT:-9090}:9090"
+    restart: unless-stopped

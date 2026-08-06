@@ -92,8 +92,26 @@ uv run manyselves
 ## Browser, Electron, and server deployment
 
 Phase 1 supports the existing PyQt desktop, a React browser client, and a secure
-Electron client against one FastAPI Runtime. For Linux server installation,
-daily operation, backup/restore, and upgrade/rollback, follow
+Electron client against one FastAPI Runtime.
+
+### Local Python deployment (no Docker)
+
+For local development or simple deployment without Docker:
+
+```bash
+# Quick start
+python run_web.py
+
+# Or use the startup script
+./start.sh  # Linux/macOS
+start.bat    # Windows
+```
+
+See [Local Run Guide](docs/RUN_LOCAL.md) for detailed instructions.
+
+### Docker deployment
+
+For Linux server installation, daily operation, backup/restore, and upgrade/rollback, follow
 [the Compose deployment guide](docs/deployment/linux-compose.md). The concise
 release limitations are in [Phase 1 known limitations](docs/phase1/known-limitations.md).
 For a server-side preflight that does not replace the LAN stack, use

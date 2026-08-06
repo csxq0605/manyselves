@@ -122,12 +122,13 @@ class RuntimeHost:
                     "Runtime host has already been stopped.",
                 )
 
+            # 检查 API Key 配置（允许为空，用户可在界面上配置）
             is_valid, available = self.config_manager.validate_api_keys()
             if not is_valid:
-                logger.warning("No API keys configured.")
-                raise RuntimeStartupError("NO_PROVIDER_KEYS", "No API keys configured.")
+                logger.warning("No API keys configured. You can configure them in the UI settings.")
+            else:
+                logger.info("Available providers: {}", available)
 
-            logger.info("Available providers: {}", available)
             self._state = _LifecycleState.STARTING
 
             try:

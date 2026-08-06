@@ -6,6 +6,10 @@ import { ApiError } from "../../api/gateway";
 import type { ProjectApi } from "./project-api";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 
+function createdProject({ projectId, displayName, description }: Parameters<ProjectApi["create"]>[0]) {
+  return { active: false, description, displayName, id: projectId ?? displayName, revision: "r1" };
+}
+
 describe("ProjectSwitcher", () => {
   it("keeps the current project selected when activation is rejected", async () => {
     const activated: string[] = [];
@@ -20,7 +24,7 @@ describe("ProjectSwitcher", () => {
           status: 409,
         });
       },
-      create: async ({ projectId, displayName, description }) => ({ active: false, description, displayName, id: projectId, revision: "r1" }),
+      create: async (input) => createdProject(input),
       delete: async () => undefined,
       list: async () => [],
       update: async (projectId, input) => ({ active: false, ...input, id: projectId }),
@@ -50,7 +54,7 @@ describe("ProjectSwitcher", () => {
     const activated: string[] = [];
     const api: ProjectApi = {
       activate: async (projectId) => ({ active: true, description: "", displayName: projectId, id: projectId, revision: "r1" }),
-      create: async ({ projectId, displayName, description }) => ({ active: false, description, displayName, id: projectId, revision: "r1" }),
+      create: async (input) => createdProject(input),
       delete: async () => undefined,
       list: async () => [],
       update: async (projectId, input) => ({ active: false, ...input, id: projectId }),

@@ -2,9 +2,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ApiGateway } from "../../api/gateway";
+import { useConversationStore } from "../../store/conversation-store";
 import type { RuntimeMessageView } from "../agents/event-reducer";
 import { MessageComposer } from "../chat/MessageComposer";
-import { MessageList } from "../chat/MessageList";
+import { MessageList, type MessageListRuntimeSummary } from "../chat/MessageList";
 import { createConversationMessageStore } from "../chat/message-store";
 import { createFileApi } from "../files/file-api";
 import { ConversationActions } from "./ConversationActions";
@@ -21,6 +22,10 @@ export interface ConversationWorkspaceProps {
   readonly requestedSessionId?: string | undefined;
 }
 
+function isRuntimeTaskComplete(status: string): boolean {
+  return ["completed", "done", "success", "succeeded"].includes(status.toLowerCase());
+}
+
 export function ConversationWorkspace({
   agentId,
   gateway,
@@ -34,12 +39,14 @@ export function ConversationWorkspace({
   const api = useMemo(() => createConversationApi(gateway), [gateway]);
   const fileApi = useMemo(() => createFileApi(gateway), [gateway]);
   const [messageStore] = useState(() => createConversationMessageStore());
+  const setActiveSession = useConversationStore((state) => state.setActiveSession);
   const activationAttemptRef = useRef<{ readonly key: string; readonly promise: ReturnType<typeof api.activate> } | null>(null);
   const [activationError, setActivationError] = useState<string | null>(null);
   const [overflowOpen, setOverflowOpen] = useState(false);
   const conversations = useQuery({
     queryFn: () => api.list(projectId, agentId),
     queryKey: ["conversations", projectId, agentId],
+    placeholderData: (previousData) => previousData,  // 切换时保留之前的数据
   });
   const activeSessionId = conversations.data?.activeSessionId ?? null;
   const sessionReady = !requestedSessionId || requestedSessionId === activeSessionId;
@@ -47,7 +54,32 @@ export function ConversationWorkspace({
     enabled: activeSessionId !== null && sessionReady,
     queryFn: () => api.messages(projectId, agentId),
     queryKey: ["conversation-messages", projectId, agentId, activeSessionId],
+    placeholderData: (previousData) => previousData,  // 切换时保留之前的数据
   });
+  const runtime = useQuery({
+    enabled: typeof gateway.bootstrap === "function",
+    queryFn: () => gateway.bootstrap(),
+    queryKey: ["conversation-runtime-summary", projectId],
+    refetchInterval: 5_000,
+  });
+  const runtimeSummary: MessageListRuntimeSummary | undefined = runtime.data?.project.id === projectId
+    ? (() => {
+      const activeTasks = runtime.data.runtime.tasks.filter((task) => !isRuntimeTaskComplete(task.status));
+      return {
+        activeTasks: activeTasks.length,
+        agentStatuses: runtime.data.runtime.agent_statuses,
+        completedTasks: runtime.data.runtime.tasks.length - activeTasks.length,
+        currentTasks: activeTasks.slice(0, 4).map((task) => ({
+          agentPath: `${task.source_agent} -> ${task.target_agent}`,
+          brief: task.brief || task.task_id,
+          status: task.blocking ? `${task.status} · blocking` : task.status,
+        })),
+        ready: runtime.data.runtime.ready,
+        runningTools: runtime.data.runtime.tools.filter((tool) => tool.status === "running").length,
+        totalTasks: runtime.data.runtime.tasks.length,
+      };
+    })()
+    : undefined;
   const activeConversation = conversations.data?.conversations.find(
     (item) => item.sessionId === activeSessionId,
   ) ?? null;
@@ -57,9 +89,35 @@ export function ConversationWorkspace({
   const requestedSessionMissing = Boolean(
     requestedSessionId
     && conversations.data
-    && !conversations.data.conversations.some((item) => item.sessionId === requestedSessionId),
+    && !conversations.data.conversations.some((item) => item.sessionId === requestedSessionId)
+    && conversations.isSuccess  // 确保查询成功，而不是正在加载
   );
+
+  // 如果请求的会话不属于当前项目，清空 localStorage 并导航到项目首页
+  useEffect(() => {
+    if (requestedSessionMissing && requestedSessionId && projectId) {
+      const savedState = localStorage.getItem("manyselves-active-conversation");
+      if (savedState) {
+        try {
+          const parsed = JSON.parse(savedState);
+          if (parsed.state?.activeSessionIds) {
+            delete parsed.state.activeSessionIds[projectId];
+            localStorage.setItem("manyselves-active-conversation", JSON.stringify(parsed));
+          }
+        } catch {
+          localStorage.removeItem("manyselves-active-conversation");
+        }
+      }
+    }
+  }, [requestedSessionMissing, requestedSessionId, projectId]);
   const hasMessages = Boolean(messages.data?.messages.length || activeLiveMessages.length);
+
+  // Save active session to global state when it changes
+  useEffect(() => {
+    if (activeSessionId && !requestedSessionMissing) {
+      setActiveSession(projectId, activeSessionId);
+    }
+  }, [activeSessionId, projectId, requestedSessionMissing, setActiveSession]);
 
   useEffect(() => {
     if (!requestedSessionId || !conversations.data || requestedSessionId === activeSessionId) return;
@@ -130,6 +188,7 @@ export function ConversationWorkspace({
             messages={messages.data.messages}
             onHistoryChanged={() => void messages.refetch()}
             projectId={projectId}
+            runtimeSummary={runtimeSummary}
           />
         ) : null}
       </div>

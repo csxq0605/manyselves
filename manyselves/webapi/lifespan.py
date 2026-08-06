@@ -145,6 +145,19 @@ def _expose_lifecycle_ownership(app: FastAPI, ownership: LifespanCleanupOwnershi
         app.state.global_knowledge_service = None
 
 
+def attach_event_persistence(broker: EventBroker, event_store: Any) -> None:
+    """Persist events emitted by the broker before it subscribes to the bus."""
+    original_publish_internal = broker.publish_internal
+
+    async def publish_with_persistence(message) -> None:
+        await original_publish_internal(message)
+        snapshot = broker.replay.snapshot()
+        if snapshot:
+            event_store.append(snapshot[-1])
+
+    broker.publish_internal = publish_with_persistence  # type: ignore[method-assign]
+
+
 @asynccontextmanager
 async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Start and stop exactly one runtime host for this app instance."""
@@ -201,10 +214,14 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.runtime_host = host
         app.state.runtime_facade = facade
         app.state.event_broker = None
-        registry = ProjectRegistry(settings.data_root, settings.initial_project_id)
+        # 创建项目注册表，使用 UUID 作为默认项目 ID
+        initial_project_id = settings.get_initial_project_id()
+        registry = ProjectRegistry(settings.data_root, initial_project_id)
         registry.ensure_initial()
         app.state.project_registry = registry
-        active_workspace = registry.project_root(settings.initial_project_id)
+        # 设置初始项目 ID 到设置中，确保持久化
+        settings.initial_project_id = initial_project_id
+        active_workspace = registry.project_root(initial_project_id)
         set_global_root = getattr(host, "set_global_knowledge_root", None)
         if callable(set_global_root):
             set_global_root(app.state.global_knowledge_service.root)
@@ -281,8 +298,17 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             stream_id=stream_id,
             observer=facade.state_projection.observe,
         )
+
+        # Initialize EventStore for persistent event logging
+        from .events.store import EventStore
+        event_db_path = settings.event_db_path or (settings.data_root / ".manyselves" / "events.db")
+        event_store = EventStore(event_db_path)
+        attach_event_persistence(broker, event_store)
+
         broker.start()
         app.state.event_broker = broker
+        app.state.event_store = event_store
+
         ownership = _lifecycle_ownership(
             host=host,
             facade=facade,

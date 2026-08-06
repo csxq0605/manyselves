@@ -34,6 +34,7 @@ class ApiConfig(Base):
 
     id: str = Field(default_factory=lambda: uuid4().hex[:8])
     name: str = "Unnamed"
+    preset_id: str | None = None
     provider: str = "custom"  # anthropic | openai | google | deepseek | openrouter | groq | custom
     api_key: str | None = Field(default=None, repr=False)
     api_base: str | None = None
@@ -69,8 +70,8 @@ class MinerUAPIConfig(Base):
 class AgentDefaults(Base):
     """Default agent configuration."""
 
-    model: str = "anthropic/claude-sonnet-4.5"
-    provider: str = "auto"
+    model: str = "mimo-v2.5-pro"
+    provider: str = "openai"
     max_tokens: int = 8192
     temperature: float = 0.1
     max_tool_iterations: int = 200
