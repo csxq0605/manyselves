@@ -24,7 +24,7 @@ interface ProviderDraft {
 }
 
 export interface ProviderConfigurationFormProps {
-  readonly api: Pick<SettingsApi, "testProviderConfiguration" | "upsertProviderConfiguration"> &
+  readonly api: Pick<SettingsApi, "testProviderConfiguration" | "testProviderConnection" | "upsertProviderConfiguration"> &
     Partial<Pick<SettingsApi, "removeProvider">>;
   readonly busy?: boolean;
   readonly onSaved: (settings: SettingsResponse) => Promise<void> | void;
@@ -60,6 +60,7 @@ function providerForPreset(settings: SettingsResponse, presetId: string | null) 
 function initialPresetId(settings: SettingsResponse, presets: PresetListResponse["presets"]): string {
   const active = activeProvider(settings);
   if (active?.presetId && presetForId(presets, active.presetId)) return active.presetId;
+  if (active) return CUSTOM_PRESET_ID;
   return presets[0]?.id ?? CUSTOM_PRESET_ID;
 }
 
@@ -70,7 +71,10 @@ function makeDraft(
 ): ProviderDraft {
   const presetId = selectedPresetId === CUSTOM_PRESET_ID ? null : selectedPresetId;
   const preset = presetForId(presets, presetId);
-  const existing = providerForPreset(settings, presetId);
+  const active = activeProvider(settings);
+  const existing = presetId === null && active && (!active.presetId || !presetForId(presets, active.presetId))
+    ? active
+    : providerForPreset(settings, presetId);
   const defaultConfigurationId = preset ? `preset-${preset.id}` : `custom-${Date.now()}`;
 
   return {
@@ -85,6 +89,17 @@ function makeDraft(
     presetId,
     protocol: existing?.provider ?? preset?.provider ?? settings.defaults.provider,
   };
+}
+
+function draftMatchesConfiguredProvider(draft: ProviderDraft, provider: SettingsResponse["providers"][number]) {
+  return draft.apiKey.trim() === ""
+    && draft.apiBase.trim() === (provider.apiBase ?? "")
+    && draft.defaultModel.trim() === (provider.defaultModel ?? "")
+    && draft.enabled === provider.enabled
+    && draft.extraHeaders.trim() === ""
+    && draft.name.trim() === provider.name
+    && draft.presetId === provider.presetId
+    && draft.protocol.trim() === provider.provider;
 }
 
 function parseExtraHeaders(value: string): { headers?: Record<string, string>; error?: string } {
@@ -161,6 +176,21 @@ export function ProviderConfigurationForm({
   }
 
   async function testConnection() {
+    if (configuredProvider?.configured && draftMatchesConfiguredProvider(draft, configuredProvider)) {
+      setIsTesting(true);
+      setActionError(null);
+      setTestResult(null);
+      try {
+        const result = await api.testProviderConnection(configuredProvider.id);
+        setTestResult(result);
+      } catch (error) {
+        setActionError(error instanceof Error ? error.message : "杩炴帴娴嬭瘯澶辫触");
+      } finally {
+        setIsTesting(false);
+      }
+      return;
+    }
+
     const payload = requestPayload(true);
     if (!payload) return;
     if (!("apiKey" in payload) || !payload.apiKey) {
@@ -206,7 +236,9 @@ export function ProviderConfigurationForm({
     setActionError(null);
     try {
       const saved = await api.upsertProviderConfiguration(draft.configurationId, payload);
-      setDraft((current) => ({ ...current, apiKey: "" }));
+      const nextPresetId = initialPresetId(saved, orderedPresets);
+      setSelectedPresetId(nextPresetId);
+      setDraft(makeDraft(saved, orderedPresets, nextPresetId));
       await onSaved(saved);
       setTestResult(null);
     } catch (error) {

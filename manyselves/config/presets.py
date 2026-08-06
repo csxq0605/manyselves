@@ -206,6 +206,17 @@ def _builtin_presets() -> list[ProviderPreset]:
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # Xiaomi MiMo 预设从 cc-switch 加载，只保留 Token Plan 版本
         ProviderPreset(
+            name="Xiaomi MiMo Token Plan (China)",
+            provider="anthropic",
+            category="cn_official",
+            id="anthropic-xiaomi-mimo-token-plan-china",
+            base_url="https://token-plan-cn.xiaomimimo.com/anthropic",
+            default_model="mimo-v2.5-pro",
+            website_url="https://xiaomimimo.com",
+            description="Xiaomi MiMo Token Plan",
+            icon_color="#FF6900",
+        ),
+        ProviderPreset(
             name="DeepSeek",
             provider="openai",
             category="domestic",

@@ -167,6 +167,21 @@ def test_builtin_presets():
     assert providers <= {"anthropic", "openai"}
 
 
+def test_builtin_presets_include_offline_mimo_token_plan():
+    presets = _builtin_presets()
+    mimo = next(
+        preset
+        for preset in presets
+        if preset.id == "anthropic-xiaomi-mimo-token-plan-china"
+    )
+
+    assert mimo.name == "Xiaomi MiMo Token Plan (China)"
+    assert mimo.provider == "anthropic"
+    assert mimo.category == "cn_official"
+    assert mimo.base_url == "https://token-plan-cn.xiaomimimo.com/anthropic"
+    assert mimo.default_model == "mimo-v2.5-pro"
+
+
 def test_builtin_presets_structure():
     presets = _builtin_presets()
     for p in presets:

@@ -1,52 +1,43 @@
-# 快速部署指南
+# ManySelves 离线部署快速指南
 
-## 一键部署（推荐）
-
-### Windows WSL 本地构建
+## 1. 本地 WSL 构建
 
 ```bash
 cd /mnt/d/yuanxi-algo/manyselves
 chmod +x scripts/build-local.sh
-./scripts/build-local.sh
+./scripts/build-local.sh --version v0.0.1
 ```
 
-### 传输到服务器
+产物默认在 `/tmp/manyselves-release-v0.0.1/`：
+
+- `manyselves-v0.0.1-linux-amd64-images.tar`
+- `manyselves-v0.0.1-source.tar.gz`
+- `manyselves-v0.0.1.sha256`
+
+## 2. 上传到 CentOS
 
 ```bash
-scp manyselves-images.tar manyselves-deploy.tar.gz \
-  algo_001@192.168.8.28:/home/algo_001/
+scp /tmp/manyselves-release-v0.0.1/manyselves-v0.0.1-* \
+  manyselves@SERVER:/tmp/
 ```
 
-### 服务器部署
+## 3. CentOS Podman 启动
 
 ```bash
-ssh algo_001@192.168.8.28
-
-# 解压部署文件
-mkdir -p ~/manyselves
-tar -xzf manyselves-deploy.tar.gz -C ~/manyselves --strip-components=0
-cd ~/manyselves
-
-# 运行部署脚本
-chmod +x scripts/deploy-server.sh
-./scripts/deploy-server.sh
+sudo -iu manyselves
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+cd /tmp
+sha256sum -c manyselves-v0.0.1.sha256
+tar -xzf manyselves-v0.0.1-source.tar.gz
+cd manyselves-v0.0.1
+bash scripts/deploy-centos-podman.sh \
+  --version v0.0.1 \
+  --artifact-dir /tmp \
+  --public-host SERVER
 ```
 
-首次运行会提示设置 API Key：
+如果首次运行提示目录或 rootless Podman 权限不足，按脚本打印的 `sudo install`、`usermod --add-subuids`、`loginctl enable-linger` 命令让管理员执行一次即可。
 
-```bash
-vi ~/manyselves/deploy/.env
-# 修改：MANYSELVES_OPENAI_API_KEY=tp-你的密钥
-```
+## 4. 访问
 
-再次运行：
-
-```bash
-./scripts/deploy-server.sh
-```
-
-访问：`http://192.168.8.28:9090`
-
-## 详细文档
-
-查看 [docs/DEPLOY.md](docs/DEPLOY.md) 了解完整部署流程。
+打开 `http://SERVER:9090`，使用 `deploy/.env` 中的管理员账号登录。

@@ -154,40 +154,38 @@ If your server uses `podman-compose`, replace `podman compose` with `podman-comp
 
 Transfer Linux container images and the release source archive, not the whole WSL distribution. Confirm the server architecture with `uname -m`; the example below is for `x86_64`/`linux/amd64`.
 
-On the build computer:
+On the build computer, create a versioned offline release:
 
 ```bash
-docker save --output manyselves-phase1-linux-amd64.tar \
-  manyselves-api:phase1 manyselves-web:phase1
-git archive --format=tar.gz --output manyselves-phase1-release.tar.gz HEAD
-sha256sum manyselves-phase1-linux-amd64.tar manyselves-phase1-release.tar.gz \
-  > manyselves-phase1-transfer.sha256
+./scripts/build-local.sh --version v0.0.1
 ```
 
-Upload the three files to the server. On the server:
+Upload the files from `/tmp/manyselves-release-v0.0.1/` to the server. On the server, prepare the service-owned paths once:
 
 ```bash
 sudo install -d -m 0750 -o manyselves -g manyselves /opt/manyselves
 sudo install -d -m 0700 -o manyselves -g manyselves /srv/manyselves/data /srv/manyselves/backups
-sudo chown manyselves:manyselves /tmp/manyselves-phase1-linux-amd64.tar /tmp/manyselves-phase1-release.tar.gz /tmp/manyselves-phase1-transfer.sha256
+sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 manyselves
+sudo loginctl enable-linger manyselves
 sudo -iu manyselves
-# Continue in the configured Docker or rootless Podman service-account session:
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
 cd /tmp
-sha256sum --check manyselves-phase1-transfer.sha256
-tar -xzf manyselves-phase1-release.tar.gz -C /opt/manyselves
-# Use exactly the image loader for the selected engine:
-podman load --input manyselves-phase1-linux-amd64.tar
-# Docker users run this instead: docker load --input manyselves-phase1-linux-amd64.tar
-cd /opt/manyselves
-cp deploy/env.example deploy/.env
-chmod 0600 deploy/.env
+sha256sum --check manyselves-v0.0.1.sha256
+tar -xzf manyselves-v0.0.1-source.tar.gz
+cd manyselves-v0.0.1
+bash scripts/deploy-centos-podman.sh \
+  --version v0.0.1 \
+  --artifact-dir /tmp \
+  --install-dir /opt/manyselves \
+  --data-dir /srv/manyselves/data \
+  --public-host 192.168.8.28 \
+  --port 9090
 ```
 
-Edit `deploy/.env` as described above. If the loaded image names include `localhost/`, set `MANYSELVES_API_IMAGE` and `MANYSELVES_WEB_IMAGE` in that file to the exact names shown by `podman images`, then start without rebuilding:
+The helper keeps an existing `deploy/.env` when redeploying the same version, updates the image tags and LAN origin, fixes rootless Podman bind-mount ownership with `podman unshare`, and starts the stack without rebuilding:
 
 ```bash
 podman compose -f deploy/compose.yaml --env-file deploy/.env up -d --no-build
-# Docker users run this instead: docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --no-build
 ```
 
 ## Health, browser access, and uploads

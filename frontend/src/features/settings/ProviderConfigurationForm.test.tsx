@@ -45,6 +45,12 @@ const settings: SettingsResponse = {
 
 function createApi() {
   return {
+    testProviderConnection: vi.fn().mockResolvedValue({
+      message: "Connection succeeded",
+      model: "mimo-v2.5-pro",
+      ok: true,
+      providerId: "claude-official",
+    }),
     testProviderConfiguration: vi.fn().mockResolvedValue({
       message: "Connection succeeded",
       model: "mimo-v2.5-pro",
@@ -125,5 +131,52 @@ describe("ProviderConfigurationForm", () => {
       }),
     ));
     expect(api.upsertProviderConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("tests a saved provider without requiring API key re-entry", async () => {
+    const user = userEvent.setup();
+    const api = createApi();
+    render(
+      <ProviderConfigurationForm
+        api={api}
+        presets={[claudePreset]}
+        settings={settings}
+        onSaved={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "测试连接" }));
+
+    await waitFor(() => expect(api.testProviderConnection).toHaveBeenCalledWith("claude-official"));
+    expect(api.testProviderConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("keeps an active provider editable when its preset is unavailable offline", () => {
+    const savedProvider = settings.providers[0]!;
+    const offlineSettings: SettingsResponse = {
+      ...settings,
+      providers: [{
+        ...savedProvider,
+        apiBase: mimoPreset.baseUrl,
+        defaultModel: mimoPreset.defaultModel,
+        id: "mimo-cn",
+        name: mimoPreset.name,
+        presetId: mimoPreset.id,
+      }],
+    };
+
+    render(
+      <ProviderConfigurationForm
+        api={createApi()}
+        presets={[claudePreset]}
+        settings={offlineSettings}
+        onSaved={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByRole("combobox")[0]).toHaveValue("__custom__");
+    expect(screen.getByDisplayValue(mimoPreset.name)).toBeVisible();
+    expect(screen.getByDisplayValue(mimoPreset.baseUrl)).toBeVisible();
+    expect(screen.getByDisplayValue(mimoPreset.defaultModel)).toBeVisible();
   });
 });

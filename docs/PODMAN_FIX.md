@@ -1,185 +1,31 @@
-# Podman 镜像命名问题解决
+# Podman 部署注意事项
 
-## 🔍 问题分析
+CentOS/RHEL 推荐使用 `scripts/deploy-centos-podman.sh`，不要手动用宽权限修复挂载目录。
 
-### Podman vs Docker 镜像命名差异
+## rootless Podman 必备条件
 
-| 工具 | 镜像名称 |
-|------|---------|
-| **Docker** | `manyselves-api:phase1` |
-| **Podman** | `localhost/manyselves-api:phase1` |
-
-**原因：** Podman 默认将没有仓库前缀的镜像视为本地镜像，自动添加 `localhost/` 前缀。
-
----
-
-## ✅ 解决方案
-
-### 1. 修改 Docker Compose 镜像名称
-
-**之前：**
-
-```yaml
-services:
-  api:
-    image: manyselves-api:phase1
-```
-
-**现在：**
-
-```yaml
-services:
-  api:
-    image: docker.io/library/manyselves-api:phase1
-```
-
-**效果：**
-- Docker: 保持 `docker.io/library/manyselves-api:phase1`
-- Podman: 不再添加 `localhost/` 前缀
-
----
-
-### 2. 更新构建脚本
-
-**scripts/build-local.sh：**
+管理员先执行：
 
 ```bash
-docker save -o manyselves-images.tar \
-  docker.io/library/manyselves-api:phase1 \
-  docker.io/library/manyselves-web:phase1
+sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 manyselves
+sudo loginctl enable-linger manyselves
 ```
 
----
-
-### 3. 更新部署脚本
-
-**scripts/deploy-server.sh：**
+服务用户重新登录后执行：
 
 ```bash
-podman load -i manyselves-images.tar
-
-# 检查是否有 localhost/ 前缀（向后兼容）
-if podman images | grep -q "localhost/manyselves-api"; then
-  echo "检测到 localhost/ 前缀，重新 tag 镜像..."
-  podman tag localhost/manyselves-api:phase1 manyselves-api:phase1
-  podman tag localhost/manyselves-web:phase1 manyselves-web:phase1
-fi
+sudo -iu manyselves
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+podman system migrate
 ```
 
----
+## 数据目录权限
 
-## 📋 修改的文件
-
-| 文件 | 修改内容 |
-|------|---------|
-| `deploy/compose.yaml` | 镜像名称添加 `docker.io/library/` 前缀 |
-| `deploy/compose.simple.yaml` | 镜像名称添加 `docker.io/library/` 前缀 |
-| `scripts/build-local.sh` | 保存镜像时使用完整名称 |
-| `scripts/deploy-server.sh` | 添加自动重新 tag 逻辑（向后兼容） |
-
----
-
-## 🚀 使用方法
-
-### 本地构建（Docker）
+不要使用 `chmod 777`。脚本会自动检测 API 镜像内的运行 UID/GID，并执行：
 
 ```bash
-./scripts/build-local.sh
+podman unshare chown -R <container_uid>:<container_gid> /srv/manyselves/data
+podman unshare chmod -R u+rwX,g+rwX,o-rwx /srv/manyselves/data
 ```
 
-生成的镜像：
-- `docker.io/library/manyselves-api:phase1`
-- `docker.io/library/manyselves-web:phase1`
-
-### 服务器部署（Podman）
-
-```bash
-./scripts/deploy-server.sh
-```
-
-镜像加载后：
-- ✅ 不会出现 `localhost/` 前缀
-- ✅ 与配置文件一致
-
----
-
-## 🔧 验证
-
-### 本地 Docker
-
-```bash
-docker images | grep manyselves
-# 输出：
-# docker.io/library/manyselves-api   phase1   ...
-# docker.io/library/manyselves-web   phase1   ...
-```
-
-### 服务器 Podman
-
-```bash
-podman images | grep manyselves
-# 输出：
-# docker.io/library/manyselves-api   phase1   ...
-# docker.io/library/manyselves-web   phase1   ...
-```
-
-**不再出现 `localhost/` 前缀！**
-
----
-
-## 📝 为什么使用 `docker.io/library/`？
-
-### 镜像仓库命名规则
-
-```
-[仓库地址]/[命名空间]/[镜像名]:[标签]
-```
-
-示例：
-- `docker.io/library/manyselves-api:phase1` (完整名称)
-- `manyselves-api:phase1` (简写，Docker 默认)
-
-### Podman 行为
-
-| 输入 | Podman 解析 |
-|------|------------|
-| `manyselves-api:phase1` | `localhost/manyselves-api:phase1` (本地镜像) |
-| `docker.io/library/manyselves-api:phase1` | 保持不变 (明确指定仓库) |
-
----
-
-## ⚠️ 注意事项
-
-### 兼容性
-
-- ✅ Docker：完全兼容
-- ✅ Podman：完全兼容
-- ✅ 其他容器运行时：应该兼容
-
-### 镜像推送
-
-如果需要推送到私有仓库：
-
-```bash
-# 推送到私有仓库
-docker tag docker.io/library/manyselves-api:phase1 \
-  your-registry.com/manyselves-api:phase1
-
-docker push your-registry.com/manyselves-api:phase1
-```
-
----
-
-## 🔄 回退方案
-
-如果需要恢复之前的命名方式：
-
-```bash
-# 重新 tag 为简短名称
-docker tag docker.io/library/manyselves-api:phase1 \
-  manyselves-api:phase1
-
-# 或在 Podman 中
-podman tag docker.io/library/manyselves-api:phase1 \
-  manyselves-api:phase1
-```
+Compose 文件中的挂载带有 `:Z`，用于 CentOS/RHEL SELinux 标签隔离。
