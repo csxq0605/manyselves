@@ -2266,12 +2266,15 @@ class SubmitResultTool(_ResultTool):
             return await self._submit_once(payload)
         except (ValidationError, SubmissionValidationError) as exc:
             self._validation_failures += 1
-            issues = self._validation_issues(exc, payload)
+            feedback_payload, _transport_normalization = (
+                self._normalize_payload_transport(payload)
+            )
+            issues = self._validation_issues(exc, feedback_payload)
             fingerprint = self._correction_fingerprint(exc, issues)
             count = self._validation_fingerprints.get(fingerprint, 0) + 1
             self._validation_fingerprints[fingerprint] = count
             affected_part_ids = self._affected_result_part_ids(issues)
-            submission_kind = self._submission_kind_hint(payload)
+            submission_kind = self._submission_kind_hint(feedback_payload)
             correction_ref = (
                 f"Work/runs/{self.run_id}/submissions/{self.task_id}/correction-state.json"
             )
@@ -2479,7 +2482,10 @@ class SubmitResultTool(_ResultTool):
                 "raw_payload": payload,
             },
         )
-        if not isinstance(payload, dict):
+        normalized_transport_payload, transport_normalization = (
+            self._normalize_payload_transport(payload)
+        )
+        if not isinstance(normalized_transport_payload, dict):
             raise SubmissionValidationError(
                 "submit_result payload must be the JSON object required by the tool schema",
                 field="payload",
@@ -2492,7 +2498,9 @@ class SubmitResultTool(_ResultTool):
                     "text fields."
                 ),
             )
-        normalized_payload = self._normalize_runtime_review_fields(payload)
+        normalized_payload = self._normalize_runtime_review_fields(
+            normalized_transport_payload
+        )
         submission_kind = str(normalized_payload.get("kind", ""))
         if self.allowed_outputs and submission_kind not in self.allowed_outputs:
             raise SubmissionValidationError(
@@ -2666,6 +2674,7 @@ class SubmitResultTool(_ResultTool):
                 "accepted": True,
                 "submission_kind": getattr(result.payload, "kind", None),
                 "raw_payload": payload,
+                "transport_normalization": transport_normalization,
                 "validation_errors": [],
                 "affected_part_ids": [],
                 "validation_failures": self._validation_failures,
@@ -2676,6 +2685,7 @@ class SubmitResultTool(_ResultTool):
             "status": "completed",
             "accepted": True,
             "submission_kind": getattr(result.payload, "kind", None),
+            "transport_normalization": transport_normalization,
             "result_path": relative,
             "next_action": "finish_task",
             "instruction": (
@@ -2683,6 +2693,30 @@ class SubmitResultTool(_ResultTool):
                 "it again; finish the current task turn."
             ),
         }
+
+    @staticmethod
+    def _normalize_payload_transport(
+        payload: dict | str,
+    ) -> tuple[dict | str, str | None]:
+        """Decode one exact JSON-object wrapper without repairing its semantics.
+
+        Some providers serialize a schema-valid object into the ``payload`` string
+        slot even though the tool schema requires an object.  Accepting one complete
+        JSON document is lossless transport normalization: the decoded value still
+        passes through the same allowed-kind, Pydantic, evidence, Claim, and input
+        contract gates.  We deliberately do not strip fences, extract substrings,
+        recursively decode, or coerce non-object JSON values.
+        """
+
+        if not isinstance(payload, str):
+            return payload, None
+        try:
+            decoded = json.loads(payload)
+        except (TypeError, ValueError):
+            return payload, None
+        if not isinstance(decoded, dict):
+            return payload, None
+        return decoded, "single_json_object_decode_v1"
 
 
 class _ResultPartTool(Tool):

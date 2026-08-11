@@ -1,10 +1,10 @@
 # Manyselves 输入输出成本、并行调度、加速与 Agent 编排计划 V2
 
 > 2026-08-11 架构更新：成本控制重新成为 Agent 优化的硬约束。37 个固定叶子仍是
-> 独立 task、artifact 和 completion。Wave 1 采用模块共享上下文 discovery batch，
-> Wave 2 采用模块共享 inbox batch；Wave 3 写作则保留 37 个真实独立 Agent
-> dispatch/session/result，以满足单叶失败隔离。默认完整路径的三波初始 dispatch 为
-> `5 + 非空目标模块 + 37`。每个 dispatch 内的检索/工具/提交 Provider turns 仍由
+> 独立 task、artifact 和 completion。Wave 1 的 37 个 discovery、Wave 2 的每个非空
+> leaf inbox、Wave 3 的 37 个 author 都采用真实独立 Agent dispatch/session/result，
+> 以满足单叶失败隔离。共享 Knowledge/Evidence 通过内容寻址引用和按叶收窄的确定性
+> 上下文包复用。每个 dispatch 内的检索/工具/提交 Provider turns 仍由
 > UsageLedger 按实际请求计数，不把 dispatch 数伪装成网络调用数。
 
 ## 1. 当前基线与规划边界
@@ -21,7 +21,7 @@
 - main 的 evidence/photo traceability、默认 `draft`、decision reconciliation 和 MessageBus 日志汇总已经进入当前分支。
 - 当前 V2 工作树以显式 cost-worktree `PYTHONPATH` 和
   `QT_QPA_PLATFORM=offscreen` 运行全量非集成回归，结果为
-  `1526 passed, 6 deselected`；`compileall` 与 `git diff --check` 通过。
+  `1530 passed, 6 deselected`；`git diff --check` 通过。
 - 尚无当前 V2 基线的真实 Provider 完整报告、真实 Token/金额对比、DOCX 目视检查和匹配 receipt，因此本文中的降本、加速数字都是验收目标，不是已实现结果。
 
 本文件取代 `experimental-parallel-agent-deployment-plan.md` 作为后续实施顺序；旧文件保留为合并 main 之前的设计记录。
@@ -174,9 +174,9 @@ Main conversation/control plane
 Coordinator / single-writer reducer
   ├─ deterministic preparation workers
   │    └─ preparation snapshot + evidence/photo binding barrier
-  ├─ Wave 1A: 37 logical leaf discoveries / 5 module-shared Agent batches
+  ├─ Wave 1A: 37 independent leaf discoveries / configured concurrency
   │    └─ per-leaf completion → 5 module-local discovery reducers → Barrier 1
-  ├─ sparse Wave 2: logical target-leaf inboxes / at most 5 module-shared calls → Barrier 2
+  ├─ sparse Wave 2: one independent dispatch per non-empty target-leaf inbox → Barrier 2
   ├─ Wave 3: 37 independent leaf author dispatches / configured concurrency
   │    └─ per-leaf result/completion → authoring barrier → ModuleSubmission
   ├─ bounded module lanes
@@ -206,8 +206,8 @@ Event planes
 | Task kind | 默认能力 | 输出策略 | 并行边界 |
 | --- | --- | --- | --- |
 | deterministic preparation/preflight/render | 不调用 LLM | 稳定 artifact/completion | 文件级 worker，reducer 单写 |
-| Wave 1A leaf discovery | 紧凑 typed 档 | 模块 batch 内含独立 leaf submissions | 5 个模块可并行；每叶 completion 独立恢复 |
-| Wave 2 leaf response | 紧凑 typed 档 | 模块 batch 回答非空 leaf inbox，再按 request_id 拆分 | 最多 5 个目标模块并行；每叶 response 独立恢复 |
+| Wave 1A leaf discovery | 紧凑 typed 档 | 一个 leaf 对应一个 Provider task/submission | 配置化限并发；每叶 completion 独立恢复 |
+| Wave 2 leaf response | 紧凑 typed 档 | 一个非空 leaf inbox 对应一个 Provider task/submission | 配置化限并发；每叶 response 独立恢复 |
 | Wave 3 leaf author | 高能力写作档 | 单叶 session 写唯一正文并提交 typed result | 全局按 `submodule_task_concurrency` 并行；完成和恢复均按 leaf |
 | module auditor | 高能力审查档 | finding/verdict | 不同模块 session 可并行，同模块串行 |
 | specialist revision | 高能力局部档 | changed sections only | 不同模块可并行 |

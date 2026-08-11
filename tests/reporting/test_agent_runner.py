@@ -1523,7 +1523,7 @@ class RepeatedInvalidSubmissionProvider(LLMProvider):
 
 
 class StringThenNativeSubmissionProvider(LLMProvider):
-    """Retry one stringified payload using the correction's native-object example."""
+    """Submit one losslessly decodable JSON-object wrapper."""
 
     def __init__(self):
         super().__init__("test", model="string-then-native")
@@ -1571,22 +1571,6 @@ class StringThenNativeSubmissionProvider(LLMProvider):
                         id="stringified-submit",
                         name="submit_result",
                         arguments={"payload": json.dumps(self.candidate())},
-                    )
-                ],
-            )
-        if self.calls == 3:
-            self.correction = messages[-1].content
-            assert '"field": "payload"' in self.correction
-            assert '"received_type": "string"' in self.correction
-            assert '"kind": "module_submission"' in self.correction
-            assert "Do not quote or JSON-stringify" in self.correction
-            return LLMResponse(
-                content="",
-                tool_calls=[
-                    LLMToolCall(
-                        id="native-submit",
-                        name="submit_result",
-                        arguments={"payload": self.candidate()},
                     )
                 ],
             )
@@ -2771,7 +2755,7 @@ async def test_reporting_agent_runner_stops_after_repeated_identical_submission_
 
 
 @pytest.mark.asyncio
-async def test_reporting_agent_runner_recovers_string_payload_with_concrete_feedback(
+async def test_reporting_agent_runner_accepts_lossless_string_payload_without_retry(
     tmp_path: Path,
 ) -> None:
     bus = MessageBus()
@@ -2803,8 +2787,8 @@ async def test_reporting_agent_runner_recovers_string_payload_with_concrete_feed
     assert result.status is AgentRunStatus.COMPLETED
     assert result.payload is not None
     assert result.payload.module_id == "2.1"
-    assert provider.calls == 3
-    assert provider.correction
+    assert provider.calls == 2
+    assert not provider.correction
 
 
 def test_conversation_trace_is_a_small_manifest_for_compressed_cas_content(

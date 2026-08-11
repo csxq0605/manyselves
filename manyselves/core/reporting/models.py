@@ -291,8 +291,8 @@ class ReportRequest(ReportingModel):
         ge=1,
         le=14,
         description=(
-            "Maximum logical leaf results returned by one module-scoped Agent dispatch. "
-            "Every leaf remains independently persisted and recoverable."
+            "Deprecated request-compatibility field. Active Wave 1/2/3 execution always "
+            "uses one independently dispatched and recoverable task per leaf."
         ),
     )
     preparation_mode: Literal[

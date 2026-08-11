@@ -5138,7 +5138,7 @@ class ReportWorkflowRunner:
             )
         return payload
 
-    async def _submodule_discovery_batch(
+    async def _legacy_submodule_discovery_batch(
         self,
         submodule_ids: tuple[str, ...],
         state: dict,
@@ -5146,7 +5146,7 @@ class ReportWorkflowRunner:
         *,
         allow_cross_module_interfaces: bool = True,
     ) -> dict[str, SubmoduleDiscoverySubmission]:
-        """Share module context in one physical call, then return exact leaf results."""
+        """Legacy compatibility helper; active workflows never batch leaf calls."""
 
         ordered = tuple(dict.fromkeys(submodule_ids))
         if not ordered:
@@ -5253,7 +5253,7 @@ class ReportWorkflowRunner:
                 )
         return discoveries
 
-    async def _run_batched_submodule_discovery_stage(
+    async def _legacy_run_batched_submodule_discovery_stage(
         self,
         submodule_ids: tuple[str, ...],
         *,
@@ -5265,7 +5265,7 @@ class ReportWorkflowRunner:
         context_sha256: dict[str, str],
         allow_cross_module_interfaces: bool,
     ) -> dict[str, SubmoduleDiscoverySubmission]:
-        """Dispatch module-local microbatches while committing every leaf separately."""
+        """Legacy compatibility helper; active workflows use the leaf scheduler."""
 
         ordered = tuple(dict.fromkeys(submodule_ids))
         batch_size = int(getattr(state["request"], "submodule_batch_size", 14))
@@ -5286,7 +5286,7 @@ class ReportWorkflowRunner:
         async def run_module(module_id: str, leaves: list[str]) -> None:
             for index in range(0, len(leaves), batch_size):
                 batch = tuple(leaves[index : index + batch_size])
-                payloads = await self._submodule_discovery_batch(
+                payloads = await self._legacy_submodule_discovery_batch(
                     batch,
                     state,
                     workflow_id,
@@ -5521,7 +5521,7 @@ class ReportWorkflowRunner:
             )
         return payload
 
-    async def _module_interface_response(
+    async def _legacy_module_interface_response(
         self,
         module_id: str,
         *,
@@ -5531,6 +5531,8 @@ class ReportWorkflowRunner:
         workflow_id: str,
         target_submodule_ids: tuple[str, ...] | None = None,
     ) -> ModuleInterfaceResponseSubmission:
+        """Legacy module-wide response helper; active Wave 2 is leaf-scoped."""
+
         specialist_id = f"module-{module_id}-specialist"
         planned = next(
             item
@@ -5621,7 +5623,7 @@ class ReportWorkflowRunner:
             )
         return payload
 
-    async def _run_batched_submodule_interface_response_stage(
+    async def _legacy_run_batched_submodule_interface_response_stage(
         self,
         pending_submodule_ids: tuple[str, ...],
         *,
@@ -5633,7 +5635,7 @@ class ReportWorkflowRunner:
         state: dict,
         workflow_id: str,
     ) -> dict[str, SubmoduleInterfaceResponseSubmission]:
-        """Answer all pending leaf inboxes in one shared call per owning module."""
+        """Legacy compatibility helper; active Wave 2 dispatches each leaf inbox."""
 
         pending = tuple(dict.fromkeys(pending_submodule_ids))
         by_module: dict[str, list[str]] = {}
@@ -5661,7 +5663,7 @@ class ReportWorkflowRunner:
                 },
             )
             inbox_ref = inbox_path.relative_to(self.service.workspace).as_posix()
-            response = await self._module_interface_response(
+            response = await self._legacy_module_interface_response(
                 module_id,
                 inbox_ref=inbox_ref,
                 discovery_ref=module_discovery_refs[module_id],
@@ -5850,15 +5852,29 @@ class ReportWorkflowRunner:
                 discoveries[submodule_id] = payload
         if pending:
             discoveries.update(
-                await self._run_batched_submodule_discovery_stage(
+                await self._run_scheduled_submodule_stage(
                     tuple(pending),
-                    state=state,
+                    run_id=run_id,
                     workflow_id=workflow_id,
                     task_kind="submodule_discovery_local",
-                    wave="module-local-discovery",
-                    artifact_refs=discovery_refs,
-                    context_sha256=discovery_contexts,
-                    allow_cross_module_interfaces=False,
+                    concurrency=state["request"].submodule_task_concurrency,
+                    execute=lambda submodule_id: self._submodule_discovery(
+                        submodule_id,
+                        state,
+                        workflow_id,
+                        allow_cross_module_interfaces=False,
+                    ),
+                    persist=lambda submodule_id, payload: (
+                        self._persist_submodule_task_completion(
+                            state=state,
+                            task_kind="submodule_discovery_local",
+                            wave="module-local-discovery",
+                            submodule_id=submodule_id,
+                            artifact_ref=discovery_refs[submodule_id],
+                            context_sha256=discovery_contexts[submodule_id],
+                            payload=payload,
+                        )
+                    ),
                 )
             )
 
@@ -6057,15 +6073,29 @@ class ReportWorkflowRunner:
                 discoveries[submodule_id] = payload
         if pending_discovery:
             discoveries.update(
-                await self._run_batched_submodule_discovery_stage(
+                await self._run_scheduled_submodule_stage(
                     tuple(pending_discovery),
-                    state=state,
+                    run_id=run_id,
                     workflow_id=workflow_id,
                     task_kind="submodule_discovery",
-                    wave="wave-1a",
-                    artifact_refs=discovery_refs,
-                    context_sha256=discovery_contexts,
-                    allow_cross_module_interfaces=True,
+                    concurrency=state["request"].submodule_task_concurrency,
+                    execute=lambda submodule_id: self._submodule_discovery(
+                        submodule_id,
+                        state,
+                        workflow_id,
+                        allow_cross_module_interfaces=True,
+                    ),
+                    persist=lambda submodule_id, payload: (
+                        self._persist_submodule_task_completion(
+                            state=state,
+                            task_kind="submodule_discovery",
+                            wave="wave-1a",
+                            submodule_id=submodule_id,
+                            artifact_ref=discovery_refs[submodule_id],
+                            context_sha256=discovery_contexts[submodule_id],
+                            payload=payload,
+                        )
+                    ),
                 )
             )
         ordered_discoveries = [discoveries[item] for item in submodule_ids]
@@ -6233,15 +6263,30 @@ class ReportWorkflowRunner:
                 responses[submodule_id] = payload
         if pending_responses:
             responses.update(
-                await self._run_batched_submodule_interface_response_stage(
+                await self._run_scheduled_submodule_stage(
                     tuple(pending_responses),
-                    inboxes=inboxes,
-                    discovery_refs=discovery_refs,
-                    module_discovery_refs=module_discovery_refs,
-                    response_refs=response_refs,
-                    response_contexts=response_contexts,
-                    state=state,
+                    run_id=run_id,
                     workflow_id=workflow_id,
+                    task_kind="submodule_interface_response",
+                    concurrency=state["request"].submodule_task_concurrency,
+                    execute=lambda submodule_id: self._submodule_interface_response(
+                        submodule_id,
+                        inbox_ref=inbox_refs[submodule_id],
+                        discovery_ref=discovery_refs[submodule_id],
+                        state=state,
+                        workflow_id=workflow_id,
+                    ),
+                    persist=lambda submodule_id, payload: (
+                        self._persist_submodule_task_completion(
+                            state=state,
+                            task_kind="submodule_interface_response",
+                            wave="wave-2",
+                            submodule_id=submodule_id,
+                            artifact_ref=response_refs[submodule_id],
+                            context_sha256=response_contexts[submodule_id],
+                            payload=payload,
+                        )
+                    ),
                 )
             )
         ordered_responses = [responses[item] for item in inboxes]
@@ -6517,7 +6562,7 @@ class ReportWorkflowRunner:
         if pending_responses:
             response_results = await asyncio.gather(
                 *(
-                    self._module_interface_response(
+                    self._legacy_module_interface_response(
                         module_id,
                         inbox_ref=inbox_refs[module_id],
                         discovery_ref=discovery_refs[module_id],

@@ -217,7 +217,7 @@ async def test_execution_mode_gates_leaf_authoring_and_module_lane_expansion(
 
 
 @pytest.mark.asyncio
-async def test_submodule_three_wave_batches_agent_dispatches_and_keeps_37_leaf_results(
+async def test_submodule_three_wave_dispatches_independent_wave_one_and_two_leaves(
     tmp_path: Path,
 ) -> None:
     runner = object.__new__(ReportWorkflowRunner)
@@ -244,38 +244,35 @@ async def test_submodule_three_wave_batches_agent_dispatches_and_keeps_37_leaf_r
         module_id = REPORT_TAXONOMY[
             envelope.agent_id.removeprefix("module-").removesuffix("-specialist")
         ].id
-        if envelope.allowed_outputs == ["submodule_discovery_batch_submission"]:
-            return SubmoduleDiscoveryBatchSubmission(
+        if envelope.allowed_outputs == ["submodule_discovery_submission"]:
+            submodule_id = envelope.target_submodule_ids[0]
+            return SubmoduleDiscoverySubmission(
                 module_id=module_id,
-                discoveries=[
-                    SubmoduleDiscoverySubmission(
-                        module_id=module_id,
-                        submodule_id=submodule_id,
-                        discovery_summary=f"{submodule_id} 独立发现。",
-                        evidence_ids=["E-0001"],
-                        interface_signals=(
-                            [
-                                SubmoduleInterfaceSignal(
-                                    target_module_id="2.3",
-                                    target_submodule_id="2.3.1",
-                                    status="request",
-                                    rationale="需要保护边界。",
-                                    question="整定是否覆盖异常负荷边界？",
-                                    needed_for="完成2.1.1结论。",
-                                    evidence_ids=["E-0001"],
-                                )
-                            ]
-                            if submodule_id == "2.1.1"
-                            else []
-                        ),
-                    )
-                    for submodule_id in envelope.target_submodule_ids
-                ],
+                submodule_id=submodule_id,
+                discovery_summary=f"{submodule_id} 独立发现。",
+                evidence_ids=["E-0001"],
+                interface_signals=(
+                    [
+                        SubmoduleInterfaceSignal(
+                            target_module_id="2.3",
+                            target_submodule_id="2.3.1",
+                            status="request",
+                            rationale="需要保护边界。",
+                            question="整定是否覆盖异常负荷边界？",
+                            needed_for="完成2.1.1结论。",
+                            evidence_ids=["E-0001"],
+                        )
+                    ]
+                    if submodule_id == "2.1.1"
+                    else []
+                ),
             )
-        assert envelope.allowed_outputs == ["module_interface_response_submission"]
+        assert envelope.allowed_outputs == ["submodule_interface_response_submission"]
         assert envelope.agent_id == "module-2.3-specialist"
-        return ModuleInterfaceResponseSubmission(
+        assert envelope.target_submodule_ids == ["2.3.1"]
+        return SubmoduleInterfaceResponseSubmission(
             module_id="2.3",
+            submodule_id="2.3.1",
             dispositions=[
                 InterfaceDisposition(
                     request_id="IF-2.1.1-2.3.1-001",
@@ -296,16 +293,16 @@ async def test_submodule_three_wave_batches_agent_dispatches_and_keeps_37_leaf_r
     discoveries = [
         item
         for item in envelopes
-        if item.allowed_outputs == ["submodule_discovery_batch_submission"]
+        if item.allowed_outputs == ["submodule_discovery_submission"]
     ]
     responses = [
         item
         for item in envelopes
-        if item.allowed_outputs == ["module_interface_response_submission"]
+        if item.allowed_outputs == ["submodule_interface_response_submission"]
     ]
-    assert len(discoveries) == 5
-    assert sum(len(item.target_submodule_ids) for item in discoveries) == 37
-    assert len({item.task_id for item in discoveries}) == 5
+    assert len(discoveries) == 37
+    assert all(len(item.target_submodule_ids) == 1 for item in discoveries)
+    assert len({item.task_id for item in discoveries}) == 37
     assert all(
         item.allowed_tools
         == ["calculate", "report_gap", "report_blocked", "submit_result"]
@@ -349,13 +346,13 @@ async def test_submodule_three_wave_batches_agent_dispatches_and_keeps_37_leaf_r
     assert {
         submodule_id
         for item in envelopes
-        if item.allowed_outputs == ["submodule_discovery_batch_submission"]
+        if item.allowed_outputs == ["submodule_discovery_submission"]
         for submodule_id in item.target_submodule_ids
     } == set(REPORT_TAXONOMY["2.1"].submodules)
     assert not [
         item
         for item in envelopes
-        if item.allowed_outputs == ["module_interface_response_submission"]
+        if item.allowed_outputs == ["submodule_interface_response_submission"]
     ]
 
 
@@ -369,7 +366,7 @@ async def test_module_report_leaf_failure_resumes_only_failed_and_unstarted_leaf
     runner._checkpoint = lambda *_args, **_kwargs: None
     runner._cost_boundary = lambda *_args, **_kwargs: asyncio.sleep(0)
     state = _state("run-module-local-leaf-resume")
-    state["request"].submodule_batch_size = 4
+    state["request"].submodule_task_concurrency = 1
     expected = tuple(REPORT_TAXONOMY["2.4"].submodules)
     failing_id = expected[4]
     first_started: list[tuple[str, ...]] = []
@@ -383,23 +380,17 @@ async def test_module_report_leaf_failure_resumes_only_failed_and_unstarted_leaf
         *,
         session_key=None,
     ):
-        batch = tuple(envelope.target_submodule_ids)
-        first_started.append(batch)
-        if failing_id in batch:
+        submodule_id = envelope.target_submodule_ids[0]
+        first_started.append((submodule_id,))
+        if submodule_id == failing_id:
             raise AgentWorkflowError("injected module-local leaf failure")
-        first_succeeded.extend(batch)
-        return SubmoduleDiscoveryBatchSubmission(
+        first_succeeded.append(submodule_id)
+        return SubmoduleDiscoverySubmission(
             module_id="2.4",
-            discoveries=[
-                SubmoduleDiscoverySubmission(
-                    module_id="2.4",
-                    submodule_id=submodule_id,
-                    discovery_summary=f"{submodule_id} 独立发现。",
-                    evidence_ids=["E-0001"],
-                    interface_signals=[],
-                )
-                for submodule_id in batch
-            ],
+            submodule_id=submodule_id,
+            discovery_summary=f"{submodule_id} 独立发现。",
+            evidence_ids=["E-0001"],
+            interface_signals=[],
         )
 
     runner._agent = first_agent
@@ -407,7 +398,7 @@ async def test_module_report_leaf_failure_resumes_only_failed_and_unstarted_leaf
         await runner._module_local_submodule_preparation(
             ("2.4",), state, "workflow-module-local-leaf-resume"
         )
-    assert len(first_started) == 2
+    assert len(first_started) == 5
     assert first_succeeded == list(expected[:4])
 
     resumed_calls: list[tuple[str, ...]] = []
@@ -420,20 +411,14 @@ async def test_module_report_leaf_failure_resumes_only_failed_and_unstarted_leaf
         *,
         session_key=None,
     ):
-        batch = tuple(envelope.target_submodule_ids)
-        resumed_calls.append(batch)
-        return SubmoduleDiscoveryBatchSubmission(
+        submodule_id = envelope.target_submodule_ids[0]
+        resumed_calls.append((submodule_id,))
+        return SubmoduleDiscoverySubmission(
             module_id="2.4",
-            discoveries=[
-                SubmoduleDiscoverySubmission(
-                    module_id="2.4",
-                    submodule_id=submodule_id,
-                    discovery_summary=f"{submodule_id} 恢复发现。",
-                    evidence_ids=["E-0001"],
-                    interface_signals=[],
-                )
-                for submodule_id in batch
-            ],
+            submodule_id=submodule_id,
+            discovery_summary=f"{submodule_id} 恢复发现。",
+            evidence_ids=["E-0001"],
+            interface_signals=[],
         )
 
     runner._agent = resumed_agent
@@ -602,22 +587,17 @@ async def test_wave_three_dispatches_and_persists_37_independent_leaf_results(
         *,
         session_key=None,
     ):
-        assert envelope.allowed_outputs == ["submodule_discovery_batch_submission"]
+        assert envelope.allowed_outputs == ["submodule_discovery_submission"]
         module_id = REPORT_TAXONOMY[
             envelope.agent_id.removeprefix("module-").removesuffix("-specialist")
         ].id
-        return SubmoduleDiscoveryBatchSubmission(
+        submodule_id = envelope.target_submodule_ids[0]
+        return SubmoduleDiscoverySubmission(
             module_id=module_id,
-            discoveries=[
-                SubmoduleDiscoverySubmission(
-                    module_id=module_id,
-                    submodule_id=submodule_id,
-                    discovery_summary=f"{submodule_id} 独立发现。",
-                    evidence_ids=["E-0001"],
-                    interface_signals=[],
-                )
-                for submodule_id in envelope.target_submodule_ids
-            ],
+            submodule_id=submodule_id,
+            discovery_summary=f"{submodule_id} 独立发现。",
+            evidence_ids=["E-0001"],
+            interface_signals=[],
         )
 
     runner._agent = discovery_agent

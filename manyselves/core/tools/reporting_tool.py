@@ -443,7 +443,7 @@ class RunReportingWorkflowTool(Tool):
             execution_mode: Current five-module review path by default; select bounded_module_lanes explicitly for leaf/lane execution.
             module_lane_concurrency: Maximum simultaneously active module lanes.
             submodule_task_concurrency: Maximum active leaf discovery, response, or authoring tasks.
-            submodule_batch_size: Maximum logical leaf results sharing one module-scoped Agent dispatch; Provider attempts remain separately metered and leaf recovery remains independent.
+            submodule_batch_size: Deprecated compatibility input; active Wave 1/2/3 tasks are never physically batched.
         """
 
         request = ReportRequest(

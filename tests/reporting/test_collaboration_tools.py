@@ -394,27 +394,43 @@ async def test_submit_result_appends_attempt_after_same_run_resume(
 
 
 @pytest.mark.asyncio
-async def test_submit_result_does_not_decode_or_repair_string_payload(
+async def test_submit_result_losslessly_decodes_one_complete_json_object_payload(
     tmp_path: Path,
 ) -> None:
     tool = _tool(tmp_path)
+    await _write_bound_module_parts(tmp_path)
     candidate = json.dumps(_module_payload())
     outcome = await tool(payload=candidate)
-    assert outcome["status"] == "correction_required"
-    issue = outcome["validation_errors"][0]
-    assert issue["field"] == "payload"
-    assert issue["received_type"] == "string"
-    assert issue["received"] == candidate
-    assert "JSON object" in issue["problem"]
-    assert issue["expected"] == "a native JSON object, not a JSON-encoded string"
-    assert issue["example"]["kind"] == "module_submission"
-    assert "Do not quote or JSON-stringify" in issue["repair_instruction"]
+    assert outcome["status"] == "completed"
+    assert outcome["transport_normalization"] == "single_json_object_decode_v1"
     persisted = json.loads(
         (tmp_path / "Work/runs/run-1/submissions/task/attempt-1-raw.json").read_text(
             encoding="utf-8"
         )
     )
     assert persisted["raw_payload"] == candidate
+    correction = json.loads(
+        (tmp_path / "Work/runs/run-1/submissions/task/correction-state.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert correction["raw_payload"] == candidate
+    assert correction["transport_normalization"] == "single_json_object_decode_v1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("candidate", ["not-json", "[]", '"double encoded"'])
+async def test_submit_result_rejects_non_object_string_without_guessing(
+    tmp_path: Path,
+    candidate: str,
+) -> None:
+    outcome = await _tool(tmp_path)(payload=candidate)
+    assert outcome["status"] == "correction_required"
+    issue = outcome["validation_errors"][0]
+    assert issue["field"] == "payload"
+    assert issue["received_type"] == "string"
+    assert issue["received"] == candidate
+    assert issue["expected"] == "a native JSON object, not a JSON-encoded string"
 
 
 @pytest.mark.asyncio
@@ -465,7 +481,7 @@ async def test_string_payload_example_uses_current_module_authoring_contract(
         input_contract_ref=contract_ref,
     )
 
-    outcome = await tool(payload='{"kind":"module_submission"}')
+    outcome = await tool(payload="not-json")
 
     issue = outcome["validation_errors"][0]
     example = issue["example"]
@@ -691,7 +707,7 @@ async def test_module_revision_correction_example_uses_each_finding_target(
         input_contract_ref=contract_ref,
     )
 
-    outcome = await tool(payload='{"kind":"module_revision_submission"}')
+    outcome = await tool(payload="not-json")
 
     responses = outcome["validation_errors"][0]["example"]["revision_responses"]
     assert {

@@ -10,8 +10,8 @@ V2 提交前基线：`aa63771f9fd1346cb89e136065fc5d3ee2a99a29`
 ## 1. 当前范围
 
 2026-08-11 起，成本、共享上下文和运行加速重新作为 Agent 编排的联合约束。当前实现
-优先在 Wave 1/2 共享不变模块上下文；Wave 3 写作保持真实逐叶 dispatch/session，
-并以独立 artifact/completion 支持失败隔离。每个 dispatch 内的实际 Provider turns
+在 Wave 1/2/3 都保持真实逐叶 dispatch/session，并以独立 artifact/completion 支持
+失败隔离；不变输入通过内容寻址引用和按叶收窄的确定性上下文包复用。每个 dispatch 内的实际 Provider turns
 继续由 UsageLedger 计数。Provider RPM/TPM admission 和真实费用
 A/B 仍是独立验收项；`observe` 不能被描述为已经强制费用上限。
 
@@ -29,9 +29,9 @@ A/B 仍是独立验收项；`observe` 不能被描述为已经强制费用上限
 | control/terminal 与 stream QoS 隔离 | 完成 | `loops/bus.py` 的 control queue、stream coalesce、terminal fence 与指标 | `test_bus.py` |
 | identity mutex、项目写租约和 fencing | 完成 | `parallel_runtime.py`、`store.py`、render/delivery/version publish fence | `test_parallel_runtime.py`、`test_distributed_runtime.py`、renderer stale-fence test |
 | lane journal、completion、单写 reducer 和 exact barrier | 完成 | `LaneTaskSpec`、`LaneAttemptRecord`、`LaneCompletion`、`WorkflowReducer` | missing/duplicate/order/recovery tests |
-| 固定叶子子模块成为独立写作任务 | 完成 | taxonomy 的 37 个 fixed leaf 在 Wave 3 分别拥有 TaskDispatched、session、typed result、artifact、context digest 和 completion；Wave 1/2 仍按模块共享发现/回答输入 | `test_wave_three_dispatches_and_persists_37_independent_leaf_results`、AgentRunner schema tests |
-| Wave 1A 子模块发现与模块内 reducer | 完成 | 5 个 `SubmoduleDiscoveryBatchSubmission` 默认覆盖 37 个独立 discovery；逐叶落盘后形成 2.1–2.5 的 `ModuleSubmoduleDiscoveryBarrier` | exact batch coverage、knowledge-change scoped rerun、barrier recovery tests |
-| Wave 2 精确叶子接口闭环 | 完成 | request 绑定 requester/target module+submodule；非空 leaf inbox 按目标模块共享一次 Agent dispatch，再按 request_id 拆成逐叶 response | exact request-id、sparse module batch、wrong-leaf/schema tests |
+| 固定叶子子模块成为独立任务 | 完成 | taxonomy 的 37 个 fixed leaf 在 Wave 1 和 Wave 3 分别拥有 TaskDispatched、session、typed result、artifact、context digest 和 completion；Wave 2 对每个非空 leaf inbox 同样独立调度 | independent Wave 1/2 tests、`test_wave_three_dispatches_and_persists_37_independent_leaf_results`、AgentRunner schema tests |
+| Wave 1A 子模块发现与模块内 reducer | 完成 | 37 个 `SubmoduleDiscoverySubmission` 真实独立执行；逐叶落盘后形成 2.1–2.5 的 `ModuleSubmoduleDiscoveryBarrier` | exact leaf coverage、knowledge-change scoped rerun、barrier recovery tests |
+| Wave 2 精确叶子接口闭环 | 完成 | request 绑定 requester/target module+submodule；每个非空 leaf inbox 独立回答并形成 response completion | exact request-id、sparse leaf dispatch、wrong-leaf/schema tests |
 | Wave 3 子模块写作与模块内 reducer | 完成 | 37 个单叶 author task 独立执行并物化 `SubmoduleDraftSubmission`/Claim/completion，再归并为既有 `ModuleSubmission` | 37 physical leaf authors、并发边界、Claim materialization、resume tests |
 | 叶子输入绑定恢复和失败隔离 | 完成 | 每个 leaf artifact 写 exact-context completion；失败冻结新分派但保留已启动成功叶，恢复只调度失败和未启动叶 | leaf scheduler failure/resume、knowledge-change scoped rerun tests |
 | 五模块完整私有 lane 并行 | 完成 | `workflow.py` 的 bounded module lanes；默认独立模块并发为 5 | `test_three_wave_workflow.py` 的 overlap、failure-drain、barrier tests |
@@ -56,10 +56,10 @@ A/B 仍是独立验收项；`observe` 不能被描述为已经强制费用上限
 
 ```text
 Preparation / immutable snapshot
-  → Wave 1A: 37 个逻辑 leaf discovery / 5 个模块共享 Agent batch
+  → Wave 1A: 37 个真实独立 leaf discovery / 配置化限并发
   → 5 个模块内 discovery barrier/reducer
   → Barrier 1: 生成精确 requester leaf → target leaf request index
-  → Wave 2: 非空 target leaf inbox 按目标模块聚合，最多 5 个 Agent batch
+  → Wave 2: 每个非空 target leaf inbox 独立 Agent dispatch
   → Barrier 2: 37 个 leaf collaboration bundle + 5 个兼容 module bundle
   → Wave 3: 37 个真实独立 leaf author task，按配置限并发并逐叶落盘
   → 5 个模块内 authoring barrier/reducer
@@ -77,7 +77,7 @@ taxonomy 的完整 leaf 集合，校验 identity、source、Claim、completion h
 - typed result、completion、barrier 分离持久化；缺 completion/缺 barrier 时只恢复已验证成果；
 - leaf completion 同时绑定 input refs、计划、Knowledge、discovery/inbox/bundle 和请求约束；
 - 一个模块的 Knowledge 变化只使该模块的 Wave 1A leaf 失效，其他模块 leaf 不重跑；
-- 模块 batch 失败时不发布该模块 reducer；已落盘叶子和其他模块 completion 保留，恢复只重组未完成叶子；
+- 任一叶子失败时不发布依赖它的 reducer；已完成兄弟叶 completion 保留，恢复只重派失败或未启动叶子；
 - worker/identity/project lease 被重授后，旧 epoch 不能完成、checkpoint 或 publish；
 - preparation completion 发布前失败不暴露部分 final snapshot；
 - renderer 在 publish fence 失效时只删除临时文件，不暴露 DOCX；
@@ -113,7 +113,7 @@ scripts/benchmark_reporting_orchestration.py --repetitions 5 --concurrency 5
 ```text
 子模块编排定向回归：128 passed
 reporting 非集成：523 passed
-全量非集成：1496 passed, 6 deselected
+全量非集成：1530 passed, 6 deselected
 git diff --check：passed
 ruff：当前复用环境未安装 ruff 模块，本轮未计入通过证据
 compileall：passed

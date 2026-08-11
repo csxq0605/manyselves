@@ -1,8 +1,8 @@
 # Manyselves 成本控制实验分支交接说明
 
 > 2026-08-11 更新：成本控制、共享上下文和加速是同一项 Agent 编排要求。37 个固定
-> 叶子保留独立 artifact/completion/recovery 身份。Wave 1 为 5 个共享 discovery batch，
-> Wave 2 最多 5 个 module inbox batch；Wave 3 的 37 个 leaf author 则各自拥有真实
+> 叶子保留独立 task/artifact/completion/recovery 身份。Wave 1 的 37 个 discovery、
+> Wave 2 的非空 leaf inbox 和 Wave 3 的 37 个 leaf author 都各自拥有真实
 > dispatch/session/result/completion，并由 `submodule_task_concurrency` 控制并发。
 > dispatch 内实际 Provider turns 由 UsageLedger 计量；
 > 当前证据仍是 fake/unit/offline，不是 Provider A/B。
@@ -64,7 +64,7 @@ V2 的 `M0/P0–P5/D0–D4` 混用。
 | 存储 | 项目级 SHA-256 CAS；Delivery v2、ReportVersion v2 使用 blob 引用/兼容视图；新写入停止部分 legacy 双写；retention 生成 dry-run 计划 | `manyselves/core/artifacts/content_store.py`、`reporting/delivery.py`、`versions.py`、`retention.py` 及对应测试 |
 | 审查成本 | 付费语义审查前执行确定性 module preflight；module recheck 发送 changed content、相关 finding/evidence 和未改内容 hash；Chief completion 可按当前 run/ref/hash 恢复 | `manyselves/core/reporting/review_preflight.py`、`review_lifecycle.py`、`workflow.py` 及对应测试 |
 | 成本计量与暂停 | UsageLedger 扩展 Provider usage、cache、message/tool schema、阶段和 payload 指纹；`observe/warn/pause_at_boundary` 只在安全 checkpoint 边界处理，并支持同 run 恢复 | `manyselves/core/usage_ledger.py`、`reporting/cost_control.py`、`workflow.py::ReportingRunBudget`、`tests/reporting/test_cost_control.py`、`tests/test_usage_ledger.py` |
-| 子模块协作、写作与归并 | Wave 1 用 5 个模块 batch 返回逐叶 discovery，Wave 2 用非空目标模块 batch 回答后逐叶拆分；Wave 3 真实调度 37 个单叶 author task，每叶拥有独立 session/result/completion，失败时保留已完成叶，reducer 仍生成既有 `ModuleSubmission` | `module_collaboration.py` 的 batch/leaf contracts、`workflow.py::_run_batched_submodule_discovery_stage`、`workflow.py::_run_batched_submodule_interface_response_stage`、`workflow.py::_run_scheduled_submodule_stage`、`workflow.py::_run_submodule_authoring_stage`、`test_three_wave_workflow.py` |
+| 子模块协作、写作与归并 | Wave 1、稀疏 Wave 2、Wave 3 均通过同一叶子 scheduler 真实调度；每叶拥有独立 envelope/session/result/completion，失败时保留已完成叶，resume 只重派缺失叶，reducer 仍生成既有 `ModuleSubmission` | `workflow.py::_run_scheduled_submodule_stage`、`workflow.py::_submodule_discovery`、`workflow.py::_submodule_interface_response`、`workflow.py::_run_submodule_authoring_stage`、`test_three_wave_workflow.py` |
 | main 同步能力 | 默认缺证 `draft`、evidence/photo traceability、decision reconciliation、MessageBus DEBUG 日志汇总已进入实验分支 | main 合并 `4a1f375` 与 `a0df065`；相关 reporting、mapper、bus 代码和测试 |
 
 ## 4. 当前实际执行边界
@@ -72,10 +72,10 @@ V2 的 `M0/P0–P5/D0–D4` 混用。
 完整报告的现状是：
 
 ```text
-Wave 1A：37 个逻辑 leaf discovery / 5 个模块共享 Agent dispatch
+Wave 1A：37 个真实独立 leaf discovery / 配置化限并发
   → 5 个模块内 discovery barrier/reducer
   → Barrier 1
-  → Wave 2：仅非空 target-leaf inbox；按目标模块聚合，最多 5 个 Agent dispatch
+  → Wave 2：仅非空 target-leaf inbox；每个非空 leaf 独立 Agent dispatch
   → Barrier 2：37 个 leaf bundle
   → Wave 3：37 个真实独立 leaf author task，按配置限并发并逐叶落盘
   → 5 个模块内 authoring barrier/reducer → ModuleSubmission
@@ -88,7 +88,7 @@ Wave 1A：37 个逻辑 leaf discovery / 5 个模块共享 Agent dispatch
 
 因此：
 
-- 可以说“当前工作树的 Wave 3 已有 37 个真实 leaf dispatch/session/result/completion、模块内 reducer 和离线恢复证据”；
+- 可以说“当前工作树的 Wave 1/2/3 均有真实 leaf dispatch/session/result/completion、模块内 reducer 和离线恢复证据”；
 - 不可以说“main 已并行”；
 - 不可以说“五条完整 module pipeline 已并行”；
 - 不可以把 MessageBus 日志降噪说成 MessageBus 已具备并行 QoS；
@@ -113,7 +113,7 @@ Wave 1A：37 个逻辑 leaf discovery / 5 个模块共享 Agent dispatch
 复跑非集成回归，结果为：
 
 ```text
-1526 passed, 6 deselected in 42.98s
+1530 passed, 6 deselected in 43.12s
 compileall passed
 git diff --check passed
 ```
