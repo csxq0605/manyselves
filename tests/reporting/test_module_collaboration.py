@@ -442,7 +442,13 @@ def test_new_submission_kinds_have_enriched_schemas_and_runner_identity_const(
     )
     payload_schema = registry._schema_cache["submit_result"]["properties"]["payload"]
     assert payload_schema["properties"]["module_id"]["const"] == "2.4"
-    assert "examples" not in payload_schema
+    example = payload_schema["examples"][0]
+    assert example["module_id"] == "2.4"
+    assert {
+        item["target_module_id"] for item in example["interface_coverage"]
+    } == set(MODULE_IDS) - {"2.4"}
+    assert example["requests"] == []
+    ModuleDiscoverySubmission.model_validate(example)
 
 
 def test_leaf_submission_schemas_bind_exact_active_submodule(tmp_path: Path) -> None:

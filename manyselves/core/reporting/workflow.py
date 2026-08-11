@@ -723,6 +723,133 @@ class ReportWorkflowRunner:
             + self._role_skill_context(state, "module-author")
         )
 
+    @staticmethod
+    def _leaf_knowledge_excerpt(text: str, submodule_id: str) -> str:
+        """Return the shared header plus exactly one taxonomy leaf Knowledge block."""
+
+        heading = re.compile(r"(?m)^##\s+(\d+(?:\.\d+)+)\b.*$")
+        matches = list(heading.finditer(text))
+        header = text[: matches[0].start()].strip() if matches else ""
+        leaf = ""
+        for index, match in enumerate(matches):
+            if match.group(1) != submodule_id:
+                continue
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            leaf = text[match.start() : end].strip()
+            break
+        if not leaf:
+            leaf = (
+                f"## {submodule_id}\n"
+                "未找到该叶子的确定性 Knowledge 小节；需要时打开共享 Knowledge 引用，"
+                "且不得把通用知识写成客户事实。"
+            )
+        return "\n\n".join(item for item in (header, leaf) if item)
+
+    @staticmethod
+    def _artifact_sha256(workspace: Path, ref: str | None) -> str | None:
+        if not ref:
+            return None
+        path = (workspace / ref).resolve()
+        if not path.is_relative_to(workspace) or not path.is_file():
+            return None
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def _shared_module_context_ref(
+        self,
+        state: dict,
+        module_id: str,
+        *,
+        purpose: str,
+        include_author_skill: bool = False,
+    ) -> str:
+        """Persist a small sibling-shared directory; large sources remain references."""
+
+        workspace = self.service.workspace
+        preparation = state.get("preparation_refs", {})
+        source_refs: dict[str, str] = {
+            "knowledge": state["module_knowledge_refs"][module_id],
+        }
+        if preparation.get("manifest"):
+            source_refs["manifest"] = preparation["manifest"]
+        if include_author_skill:
+            for key in ("core", "analysis", "visual", "rubric"):
+                ref = state.get("template_skill_refs", {}).get(key)
+                if ref:
+                    source_refs[f"template_skill_{key}"] = ref
+        body = {
+            "kind": "shared_module_context",
+            "version": 1,
+            "purpose": purpose,
+            "run_id": state["run_id"],
+            "module_id": module_id,
+            "module_title": REPORT_TAXONOMY[module_id].title,
+            "peer_target_taxonomy": {
+                peer_id: {
+                    "title": definition.title,
+                    "leaves": [
+                        {"id": item.id, "title": item.title}
+                        for item in definition.submodules.values()
+                    ],
+                }
+                for peer_id, definition in REPORT_TAXONOMY.items()
+                if peer_id != module_id
+            },
+            "source_refs": source_refs,
+            "source_sha256": {
+                name: self._artifact_sha256(workspace, ref)
+                for name, ref in source_refs.items()
+            },
+        }
+        canonical = json.dumps(
+            body, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        body["content_sha256"] = digest
+        path = self.service.store.write_json(
+            (
+                f"Work/runs/{state['run_id']}/context/shared/"
+                f"{purpose}-module-{module_id}-{digest[:12]}.json"
+            ),
+            body,
+        )
+        return path.relative_to(workspace).as_posix()
+
+    def _module_author_leaf_inline_context(
+        self,
+        state: dict,
+        module_id: str,
+        submodule_id: str,
+        shared_ref: str,
+    ) -> str:
+        knowledge_ref = state["module_knowledge_refs"][module_id]
+        knowledge_path = self.service.workspace / knowledge_ref
+        knowledge_text = (
+            knowledge_path.read_text(encoding="utf-8")
+            if knowledge_path.is_file()
+            else ""
+        )
+        leaf_knowledge = self._leaf_knowledge_excerpt(knowledge_text, submodule_id)
+        core_method = state.get("template_skill_text", {}).get("core", "").strip()
+        parts = [
+            (
+                f'<shared_module_context ref="{shared_ref}" delivery_mode="reference">'
+                "完整模块 Knowledge、manifest 与写作 Skill 只在需要补充当前叶子增量时按需读取。"
+                "</shared_module_context>"
+            ),
+            (
+                f'<leaf_knowledge_delta submodule_id="{submodule_id}" '
+                f'provenance_ref="{knowledge_ref}" project_fact_authority="false">\n'
+                f"{leaf_knowledge}\n</leaf_knowledge_delta>"
+            ),
+        ]
+        if core_method:
+            parts.append(
+                '<module_author_core_method delivery_mode="inline">\n'
+                + core_method
+                + "\n</module_author_core_method>"
+            )
+        return "\n\n".join(parts)
+
     async def _distill_template_skill(self, state: dict, workflow_id: str) -> None:
         """Let Template Distiller refresh the fixed project writing Skill."""
         selected, source = self.service.resolve_skill_distillation_template(
@@ -4234,7 +4361,7 @@ class ReportWorkflowRunner:
                 ],
                 constraints=[
                     f"仅分析目标模块 {module_id}",
-                    "inline_context 已注入项目 Knowledge 与 Template Distiller 产出的固定模板写作 Skill；按其分析语言、叙述节奏、推理链、建议方法和图证规则写作，不得重复打开同一内容",
+                    "叶子任务内联当前叶子的 Knowledge 增量与核心写作方法；整模块 Knowledge 和完整写作 Skill 以共享引用提供，仅在增量不足时按需读取",
                     "R-* 是优先参考而非认知边界；可使用模型世界知识解释机理、备选原因和行业实践，但不能把它补成客户事实",
                     "每个固定子模块必须形成带标题的完整正文，至少包含适用的现状、结论、风险机理和可执行建议",
                     (
@@ -4892,8 +5019,8 @@ class ReportWorkflowRunner:
         state: dict,
         *,
         purpose: str,
-    ) -> tuple[str, str]:
-        """Persist one bounded, self-contained context packet for a module microbatch."""
+    ) -> tuple[str, str, str]:
+        """Persist one leaf delta plus one sibling-shared context directory."""
 
         ordered = tuple(dict.fromkeys(submodule_ids))
         if not ordered:
@@ -4960,11 +5087,17 @@ class ReportWorkflowRunner:
             if knowledge_path is not None and knowledge_path.is_file()
             else ""
         )
+        shared_ref = self._shared_module_context_ref(
+            state,
+            module_id,
+            purpose="collaboration",
+        )
         packet_body = {
-            "kind": "leaf_collaboration_context",
-            "version": 1,
+            "kind": "leaf_context_delta",
+            "version": 2,
             "purpose": purpose,
             "run_id": state["run_id"],
+            "shared_context_ref": shared_ref,
             "module": {
                 "id": module_id,
                 "title": REPORT_TAXONOMY[module_id].title,
@@ -4978,26 +5111,20 @@ class ReportWorkflowRunner:
                     for submodule_id in ordered
                 ],
             },
-            "peer_target_taxonomy": {
-                peer_id: {
-                    "title": definition.title,
-                    "leaves": [
-                        {"id": item.id, "title": item.title}
-                        for item in definition.submodules.values()
-                    ],
-                }
-                for peer_id, definition in REPORT_TAXONOMY.items()
-                if peer_id != module_id
-            },
             "coverage": scoped_coverage,
             "evidence_items": evidence_items,
-            "project_manifest": read_json_ref(preparation.get("manifest")),
-            "module_knowledge": knowledge_text,
+            "leaf_knowledge": {
+                submodule_id: self._leaf_knowledge_excerpt(
+                    knowledge_text, submodule_id
+                )
+                for submodule_id in ordered
+            },
             "source_refs": {
                 "coverage": preparation.get("coverage"),
                 "evidence": preparation.get("evidence"),
                 "manifest": preparation.get("manifest"),
                 "knowledge": knowledge_ref,
+                "shared_context": shared_ref,
             },
         }
         canonical = json.dumps(
@@ -5023,11 +5150,11 @@ class ReportWorkflowRunner:
         )
         ref = path.relative_to(workspace).as_posix()
         inline = (
-            f'<leaf_collaboration_context ref="{ref}" sha256="{digest}">\n'
+            f'<leaf_context_delta ref="{ref}" shared_ref="{shared_ref}" sha256="{digest}">\n'
             + canonical
-            + "\n</leaf_collaboration_context>"
+            + "\n</leaf_context_delta>"
         )
-        return ref, inline
+        return ref, inline, shared_ref
 
     async def _submodule_discovery(
         self,
@@ -5046,11 +5173,16 @@ class ReportWorkflowRunner:
             for item in state["module_dispatch"].module_tasks
             if item.agent_id == specialist_id
         )
-        context_ref, context_inline = self._leaf_collaboration_context_packet(
+        context_ref, context_inline, shared_ref = self._leaf_collaboration_context_packet(
             (submodule_id,),
             state,
             purpose=("wave-1a" if allow_cross_module_interfaces else "module-local"),
         )
+        knowledge_ref = state["module_knowledge_refs"][module_id]
+        manifest_ref = state.get("preparation_refs", {}).get("manifest")
+        shared_input_refs = [shared_ref, knowledge_ref]
+        if manifest_ref:
+            shared_input_refs.append(manifest_ref)
         envelope = TaskEnvelope.model_validate(
             planned.model_copy(
                 update={
@@ -5067,7 +5199,7 @@ class ReportWorkflowRunner:
                             else "只提交该叶子范围的事实、缺口和初步发现；本路径不激活跨模块接口。"
                         )
                     ),
-                    "input_refs": [context_ref],
+                    "input_refs": [context_ref, *shared_input_refs],
                     "constraints": [
                         f"唯一工作范围是叶子子模块 {submodule_id}",
                         "不得用模块级摘要替代本子模块发现，也不得写其他子模块正文",
@@ -5083,7 +5215,8 @@ class ReportWorkflowRunner:
                             ]
                         ),
                         "不得实时 query_peer；只提交类型化 interface_signals",
-                        "上下文包已完整注入，应优先直接形成类型化提交；仅在确需计算或记录缺口时使用辅助工具，避免无新增信息的重复调用",
+                        "当前叶子的证据与 Knowledge 增量已内联；只有准备提交非空 interface_signals 时，才先用 open_artifact 读取 shared_context_ref 的 peer_target_taxonomy 并选择合法目标叶子",
+                        "没有跨模块接口时不要打开整模块共享资料；仅在确需补充当前叶子增量、计算或记录缺口时使用辅助工具",
                         *self._evidence_policy_constraints(
                             state["request"].missing_evidence_policy
                         ),
@@ -5091,6 +5224,8 @@ class ReportWorkflowRunner:
                     ],
                     "allowed_outputs": ["submodule_discovery_submission"],
                     "allowed_tools": [
+                        "open_artifact",
+                        "search_text",
                         "calculate",
                         "report_gap",
                         "report_blocked",
@@ -5113,7 +5248,10 @@ class ReportWorkflowRunner:
                     ),
                     "input_contract_kind": None,
                     "input_contract_ref": None,
-                    "artifact_delivery_modes": {context_ref: "hash_retained"},
+                    "artifact_delivery_modes": {
+                        context_ref: "hash_retained",
+                        **{ref: "reference" for ref in shared_input_refs},
+                    },
                 }
             ).model_dump(mode="python")
         )
@@ -5161,11 +5299,16 @@ class ReportWorkflowRunner:
             for item in state["module_dispatch"].module_tasks
             if item.agent_id == specialist_id
         )
-        context_ref, context_inline = self._leaf_collaboration_context_packet(
+        context_ref, context_inline, shared_ref = self._leaf_collaboration_context_packet(
             ordered,
             state,
             purpose=("wave-1a" if allow_cross_module_interfaces else "module-local"),
         )
+        knowledge_ref = state["module_knowledge_refs"][module_id]
+        manifest_ref = state.get("preparation_refs", {}).get("manifest")
+        shared_input_refs = [shared_ref, knowledge_ref]
+        if manifest_ref:
+            shared_input_refs.append(manifest_ref)
         batch_label = "-".join(ordered)
         envelope = TaskEnvelope.model_validate(
             planned.model_copy(
@@ -5179,7 +5322,7 @@ class ReportWorkflowRunner:
                         f"在一次模块 {module_id} 共享上下文会话中，分别完成 "
                         f"{', '.join(ordered)} 的 Wave 1A 发现；每个叶子必须独立提交。"
                     ),
-                    "input_refs": [context_ref],
+                    "input_refs": [context_ref, *shared_input_refs],
                     "constraints": [
                         f"本批次仅包含固定叶子 {', '.join(ordered)}",
                         "discoveries 必须对每个 target_submodule_id 恰好返回一次，禁止遗漏、重复或越界",
@@ -5193,7 +5336,8 @@ class ReportWorkflowRunner:
                             else ["module_report 不激活跨模块协作；所有 interface_signals 必须为空"]
                         ),
                         "共享检索结果可在本批次复用，但 evidence_ids 必须按叶子实际适用范围声明",
-                        "上下文包已完整注入，应优先直接形成类型化提交；仅在确需计算或记录缺口时使用辅助工具，避免无新增信息的重复调用",
+                        "各叶子的证据与 Knowledge 增量已内联；只有准备提交非空 interface_signals 时，才先用 open_artifact 读取 shared_context_ref 的 peer_target_taxonomy 并选择合法目标叶子",
+                        "没有跨模块接口时不要打开整模块共享资料；仅在确需补充叶子增量、计算或记录缺口时使用辅助工具",
                         *self._evidence_policy_constraints(
                             state["request"].missing_evidence_policy
                         ),
@@ -5201,6 +5345,8 @@ class ReportWorkflowRunner:
                     ],
                     "allowed_outputs": ["submodule_discovery_batch_submission"],
                     "allowed_tools": [
+                        "open_artifact",
+                        "search_text",
                         "calculate",
                         "report_gap",
                         "report_blocked",
@@ -5217,7 +5363,10 @@ class ReportWorkflowRunner:
                     ),
                     "input_contract_kind": None,
                     "input_contract_ref": None,
-                    "artifact_delivery_modes": {context_ref: "hash_retained"},
+                    "artifact_delivery_modes": {
+                        context_ref: "hash_retained",
+                        **{ref: "reference" for ref in shared_input_refs},
+                    },
                 }
             ).model_dump(mode="python")
         )
@@ -5355,6 +5504,17 @@ class ReportWorkflowRunner:
         )
         inbox_text = (self.service.workspace / inbox_ref).read_text(encoding="utf-8")
         knowledge_ref = state["module_knowledge_refs"][module_id]
+        knowledge_path = self.service.workspace / knowledge_ref
+        knowledge_text = (
+            knowledge_path.read_text(encoding="utf-8")
+            if knowledge_path.is_file()
+            else ""
+        )
+        shared_ref = self._shared_module_context_ref(
+            state,
+            module_id,
+            purpose="collaboration",
+        )
         evidence_ref = state["preparation_refs"]["evidence"]
         envelope = TaskEnvelope.model_validate(
             planned.model_copy(
@@ -5369,6 +5529,7 @@ class ReportWorkflowRunner:
                         discovery_ref,
                         evidence_ref,
                         knowledge_ref,
+                        shared_ref,
                     ],
                     "constraints": [
                         f"只回答 target_submodule_id={submodule_id} 的 inbox",
@@ -5398,11 +5559,22 @@ class ReportWorkflowRunner:
                     "inline_context": (
                         "<submodule_interface_inbox>\n"
                         + inbox_text
-                        + "\n</submodule_interface_inbox>"
+                        + "\n</submodule_interface_inbox>\n"
+                        + f'<leaf_knowledge_delta submodule_id="{submodule_id}" '
+                        + f'provenance_ref="{knowledge_ref}" '
+                        + 'project_fact_authority="false">\n'
+                        + self._leaf_knowledge_excerpt(knowledge_text, submodule_id)
+                        + "\n</leaf_knowledge_delta>"
                     ),
                     "input_contract_kind": None,
                     "input_contract_ref": None,
-                    "artifact_delivery_modes": {},
+                    "artifact_delivery_modes": {
+                        inbox_ref: "hash_retained",
+                        discovery_ref: "hash_retained",
+                        evidence_ref: "reference",
+                        knowledge_ref: "reference",
+                        shared_ref: "reference",
+                    },
                 }
             ).model_dump(mode="python")
         )
@@ -5548,7 +5720,7 @@ class ReportWorkflowRunner:
         target_leaves = target_submodule_ids or tuple(
             REPORT_TAXONOMY[module_id].submodules
         )
-        context_ref, context_inline = self._leaf_collaboration_context_packet(
+        context_ref, context_inline, shared_ref = self._leaf_collaboration_context_packet(
             target_leaves,
             state,
             purpose="wave-2",
@@ -5563,6 +5735,7 @@ class ReportWorkflowRunner:
                     ),
                     "input_refs": [
                         context_ref,
+                        shared_ref,
                         inbox_ref,
                         discovery_ref,
                     ],
@@ -5601,6 +5774,7 @@ class ReportWorkflowRunner:
                     "input_contract_ref": None,
                     "artifact_delivery_modes": {
                         context_ref: "hash_retained",
+                        shared_ref: "reference",
                         inbox_ref: "hash_retained",
                         discovery_ref: "hash_retained",
                     },
@@ -6749,6 +6923,17 @@ class ReportWorkflowRunner:
         contract, contract_ref, bundle = self._submodule_authoring_input(
             submodule_id, state
         )
+        shared_ref = self._shared_module_context_ref(
+            state,
+            module_id,
+            purpose="module-author",
+            include_author_skill=True,
+        )
+        role_skill_refs = [
+            ref
+            for key in ("core", "analysis", "visual", "rubric")
+            if (ref := state.get("template_skill_refs", {}).get(key))
+        ]
         bundle_context = bundle.model_dump_json()
         constraints = list(
             dict.fromkeys(
@@ -6811,13 +6996,21 @@ class ReportWorkflowRunner:
                         contract.manifest_ref,
                         contract.collaboration_bundle_ref,
                         contract.discovery_ref,
+                        contract.knowledge_ref,
+                        shared_ref,
+                        *role_skill_refs,
                     ],
                     "input_contract_kind": "submodule_authoring_input",
                     "input_contract_ref": contract_ref,
                     "prior_result_ref": None,
                     "context_summary_refs": [],
                     "inline_context": (
-                        (planned.inline_context or "")
+                        self._module_author_leaf_inline_context(
+                            state,
+                            module_id,
+                            submodule_id,
+                            shared_ref,
+                        )
                         + "\n\n<submodule_collaboration_bundle>\n"
                         + bundle_context
                         + "\n</submodule_collaboration_bundle>"
@@ -6829,6 +7022,9 @@ class ReportWorkflowRunner:
                         contract.manifest_ref: "reference",
                         contract.collaboration_bundle_ref: "hash_retained",
                         contract.discovery_ref: "hash_retained",
+                        contract.knowledge_ref: "reference",
+                        shared_ref: "reference",
+                        **{ref: "reference" for ref in role_skill_refs},
                     },
                 }
             ).model_dump(mode="python")

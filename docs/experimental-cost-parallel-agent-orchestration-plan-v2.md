@@ -4,7 +4,9 @@
 > 独立 task、artifact 和 completion。Wave 1 的 37 个 discovery、Wave 2 的每个非空
 > leaf inbox、Wave 3 的 37 个 author 都采用真实独立 Agent dispatch/session/result，
 > 以满足单叶失败隔离。共享 Knowledge/Evidence 通过内容寻址引用和按叶收窄的确定性
-> 上下文包复用。每个 dispatch 内的检索/工具/提交 Provider turns 仍由
+> 上下文增量复用：同模块共享资料保持 hash/ref 身份，Provider 首次输入只内联当前
+> 叶子的 coverage、Evidence、Knowledge 小节、inbox/bundle 和核心写作方法；需要完整
+> Knowledge/Skill 时才通过显式 reference 读取。每个 dispatch 内的检索/工具/提交 Provider turns 仍由
 > UsageLedger 按实际请求计数，不把 dispatch 数伪装成网络调用数。
 
 ## 1. 当前基线与规划边界
@@ -21,7 +23,7 @@
 - main 的 evidence/photo traceability、默认 `draft`、decision reconciliation 和 MessageBus 日志汇总已经进入当前分支。
 - 当前 V2 工作树以显式 cost-worktree `PYTHONPATH` 和
   `QT_QPA_PLATFORM=offscreen` 运行全量非集成回归，结果为
-  `1530 passed, 6 deselected`；`git diff --check` 通过。
+  `1532 passed, 6 deselected`；`git diff --check` 通过。
 - 尚无当前 V2 基线的真实 Provider 完整报告、真实 Token/金额对比、DOCX 目视检查和匹配 receipt，因此本文中的降本、加速数字都是验收目标，不是已实现结果。
 
 本文件取代 `experimental-parallel-agent-deployment-plan.md` 作为后续实施顺序；旧文件保留为合并 main 之前的设计记录。
@@ -30,8 +32,8 @@
 
 | 领域 | 当前已经实现 | 仍需解决 |
 | --- | --- | --- |
-| Provider 输入 | Prompt 不再重复内嵌完整 submission schema/example；任务专属工具 schema；已落盘长正文以 ref/hash 代替 | Cross/Chief/Final 仍可能获得过大的完整合同；每轮历史和工具结果仍会重发；缺少 task context budget |
-| Provider 输出 | 同一模块会话多次 `write_result_part` 逐叶落盘；正文与小型 typed commit 分离；revision/Chief 工具收窄 | submit-only 仍可能先输出普通文字再付费纠正；缺少 forced tool choice、按 task 的输出/轮次档位 |
+| Provider 输入 | Prompt 不重复粘贴 schema/example；首次工具 Schema 带当前 module/leaf/revision/request ids 的任务专属样例；Wave 1/2/3 使用 sibling-shared refs + leaf inline delta；已落盘长正文以 ref/hash 代替 | Cross/Chief/Final 仍可能获得过大的完整合同；每轮历史和工具结果仍会重发；尚无真实 Provider A/B 证明缓存命中或金额下降 |
+| Provider 输出 | 每个 Wave 3 leaf session 独立 `write_result_part` 和 typed commit；单层 JSON-object 字符串无损解码；结构错误反馈复用首次任务样例；revision/Chief 工具收窄 | submit-only 仍可能先输出普通文字再付费纠正；缺少 forced tool choice、按 task 的输出/轮次档位 |
 | 审查成本 | 确定性 preflight；module delta recheck；Chief completion 可恢复 | 五个 module review 仍串行；Cross owner 回改仍串行；语义 lifecycle 缺少 round/stagnation gate |
 | 协作 | Wave 1、Barrier 1、稀疏 Wave 2、Barrier 2、Wave 3 并行写作已实现 | author 完成后不能立即进入本模块审查；没有受限完整 module lane |
 | 存储 | CAS、Delivery v2、ReportVersion v2、停止新增 legacy 双写、retention dry-run | CAS 命中前仍重复读取、复制和哈希；telemetry、SourceLedger 和事件仍有重复 I/O |

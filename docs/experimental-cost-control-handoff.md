@@ -4,6 +4,9 @@
 > 叶子保留独立 task/artifact/completion/recovery 身份。Wave 1 的 37 个 discovery、
 > Wave 2 的非空 leaf inbox 和 Wave 3 的 37 个 leaf author 都各自拥有真实
 > dispatch/session/result/completion，并由 `submodule_task_concurrency` 控制并发。
+> 同模块叶子不再重复内联整模块 Knowledge、manifest 和完整写作 Skill：运行时生成
+> 同胞任务共用的 hash/ref 目录，并只内联当前叶子的 coverage、Evidence、Knowledge
+> 小节、inbox/bundle 以及核心写作方法。完整共享资料仍可按需读取。
 > dispatch 内实际 Provider turns 由 UsageLedger 计量；
 > 当前证据仍是 fake/unit/offline，不是 Provider A/B。
 
@@ -46,11 +49,16 @@ V2 的 `M0/P0–P5/D0–D4` 混用。
 | `0aff4d7` | 实验快照基线 |
 | `5f5a5e3` | Phase A–D 成本控制、CAS、preflight、三波协作及测试 |
 | `fc7ddae` | 同步证据决策改进 |
-| `9d1dfcb` | 第一版并行/部署计划；当前远端实验分支终点 |
+| `9d1dfcb` | 第一版并行/部署计划；已作为历史记录 |
 | `4a1f375` | 单向合入 main 至 `0a5093e` |
 | `7ae6954` | main 同步后的 V2 重规划与实验分支文档修正 |
 | `a0df065` | 单向合入 main 的 1.2.1 发布提交 `a84d409` |
 | `aa63771` | main 同步、Provider 歧义恢复与 V2 实现前基线 |
+| `20d9d26` | V2 编排、lane、部署参考实现与离线验证 |
+| `f7c2881` | 叶子协作上下文收窄与恢复边界 |
+| `8249903` | Wave 3 改为 37 个独立 leaf author task |
+| `fb3e832` | Wave 1/2/3 全部改为独立 leaf dispatch/recovery |
+| `HEAD` | sibling-shared context + leaf delta；首次与纠错共用任务专属样例 |
 
 ## 3. 已经完成的优化
 
@@ -59,8 +67,8 @@ V2 的 `M0/P0–P5/D0–D4` 混用。
 
 | 领域 | 已实现机制 | 主要代码/测试证据 |
 | --- | --- | --- |
-| Provider 输入 | Prompt 不再重复内嵌完整 submission schema/example；按任务生成较窄工具 schema；已持久化长正文在后续历史中改用 `artifact_ref`、字符数和 SHA-256 标记 | `manyselves/core/reporting/prompts.py`、`submission_contracts.py`、`agent_runner.py`、`manyselves/core/loops/agent_loop.py::_compact_persisted_result_part_call`、`tests/reporting/test_agent_runner.py` |
-| Provider 输出 | Wave 3 每个 leaf author 独立持久化正文和 typed commit；37 个结果完成后才由确定性 reducer 生成模块；revision/Chief 使用收窄工具集合 | `manyselves/core/tools/reporting_collaboration_tools.py`、`manyselves/core/reporting/agent_runner.py`、`tests/reporting/test_agent_runner.py` |
+| Provider 输入 | Prompt 不重复粘贴完整 schema/example；首次 `submit_result` 工具 Schema 保留当前 module/leaf/revision/request ids 的唯一任务专属样例；Wave 1/2/3 使用同模块共享 ref + 当前叶子 inline delta；已持久化长正文在后续历史中改用 `artifact_ref`、字符数和 SHA-256 标记 | `manyselves/core/reporting/prompts.py`、`submission_contracts.py`、`agent_runner.py`、`workflow.py::_shared_module_context_ref`、`workflow.py::_leaf_knowledge_excerpt`、`manyselves/core/loops/agent_loop.py::_compact_persisted_result_part_call`、`tests/reporting/test_agent_runner.py`、`test_three_wave_workflow.py` |
+| Provider 输出 | Wave 3 每个 leaf author 独立持久化正文和 typed commit；37 个结果完成后才由确定性 reducer 生成模块；一次完整 JSON-object 字符串包装会无损解码，真正的结构错误反馈复用首次任务专属样例，避免错误身份样例诱发第二次同错重试；revision/Chief 使用收窄工具集合 | `manyselves/core/tools/reporting_collaboration_tools.py`、`manyselves/core/reporting/agent_runner.py`、`tests/reporting/test_collaboration_tools.py` |
 | 存储 | 项目级 SHA-256 CAS；Delivery v2、ReportVersion v2 使用 blob 引用/兼容视图；新写入停止部分 legacy 双写；retention 生成 dry-run 计划 | `manyselves/core/artifacts/content_store.py`、`reporting/delivery.py`、`versions.py`、`retention.py` 及对应测试 |
 | 审查成本 | 付费语义审查前执行确定性 module preflight；module recheck 发送 changed content、相关 finding/evidence 和未改内容 hash；Chief completion 可按当前 run/ref/hash 恢复 | `manyselves/core/reporting/review_preflight.py`、`review_lifecycle.py`、`workflow.py` 及对应测试 |
 | 成本计量与暂停 | UsageLedger 扩展 Provider usage、cache、message/tool schema、阶段和 payload 指纹；`observe/warn/pause_at_boundary` 只在安全 checkpoint 边界处理，并支持同 run 恢复 | `manyselves/core/usage_ledger.py`、`reporting/cost_control.py`、`workflow.py::ReportingRunBudget`、`tests/reporting/test_cost_control.py`、`tests/test_usage_ledger.py` |
@@ -113,7 +121,7 @@ Wave 1A：37 个真实独立 leaf discovery / 配置化限并发
 复跑非集成回归，结果为：
 
 ```text
-1530 passed, 6 deselected in 43.12s
+1532 passed, 6 deselected in 43.27s
 compileall passed
 git diff --check passed
 ```

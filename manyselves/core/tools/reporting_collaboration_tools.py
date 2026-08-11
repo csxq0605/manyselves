@@ -188,6 +188,7 @@ class SubmitResultTool(_ResultTool):
         revision: int = 0,
         input_contract_kind: str | None = None,
         input_contract_ref: str | None = None,
+        submission_schemas: dict[str, dict] | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -195,6 +196,7 @@ class SubmitResultTool(_ResultTool):
         self.revision = revision
         self.input_contract_kind = input_contract_kind
         self.input_contract_ref = input_contract_ref
+        self.submission_schemas = deepcopy(submission_schemas or {})
         submissions_root = (
             self.store.workspace / "Work/runs" / self.run_id / "submissions" / self.task_id
         )
@@ -1360,7 +1362,13 @@ class SubmitResultTool(_ResultTool):
             if len(allowed_kinds) == 1
             else ""
         )
-        schema = submission_schema(active_kind) if active_kind else {}
+        schema = (
+            deepcopy(self.submission_schemas.get(active_kind))
+            if active_kind and active_kind in self.submission_schemas
+            else submission_schema(active_kind)
+            if active_kind
+            else {}
+        )
         contract = self._feedback_input_contract()
         if schema:
             payload_example: object = self._contextual_submission_example(
@@ -1372,7 +1380,10 @@ class SubmitResultTool(_ResultTool):
             payload_example = [
                 self._contextual_submission_example(
                     kind,
-                    submission_schema(kind),
+                    deepcopy(
+                        self.submission_schemas.get(kind)
+                        or submission_schema(kind)
+                    ),
                     contract,
                 )
                 for kind in allowed_kinds

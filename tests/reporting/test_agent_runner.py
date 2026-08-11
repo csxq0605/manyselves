@@ -477,6 +477,45 @@ def test_leaf_tasks_use_distinct_durable_identity_leases_within_one_module() -> 
     ) == definition.id
 
 
+def test_collaboration_submission_examples_are_specialized_to_current_leaf() -> None:
+    discovery = ReportingAgentRunner._task_submission_schema(
+        "submodule_discovery_submission",
+        None,
+        module_id="2.3",
+        submodule_id="2.3.2",
+        collaboration_request_ids=[],
+    )
+    discovery_example = discovery["examples"][0]
+    assert discovery_example["module_id"] == "2.3"
+    assert discovery_example["submodule_id"] == "2.3.2"
+    assert discovery_example["evidence_ids"] == []
+    assert discovery_example["interface_signals"] == []
+
+    request_ids = [
+        "IF-2.1.1-2.3.2-001",
+        "IF-2.4.1-2.3.2-002",
+    ]
+    response = ReportingAgentRunner._task_submission_schema(
+        "submodule_interface_response_submission",
+        None,
+        module_id="2.3",
+        submodule_id="2.3.2",
+        collaboration_request_ids=request_ids,
+    )
+    response_example = response["examples"][0]
+    assert response_example["module_id"] == "2.3"
+    assert response_example["submodule_id"] == "2.3.2"
+    assert [
+        item["request_id"] for item in response_example["dispositions"]
+    ] == request_ids
+    assert all(
+        item["status"] == "unresolved"
+        and item["unresolved_reason"]
+        and item["boundary"]
+        for item in response_example["dispositions"]
+    )
+
+
 def test_module_authoring_schema_and_example_use_current_identity(
     tmp_path: Path,
 ) -> None:

@@ -135,26 +135,28 @@
 
 ### Phase D：三波协作
 
-1. Wave 1：五个模块并行完成 research/interface discovery，只能提交 `module_discovery_submission`。
-   - 每个 peer 最多一个请求、每模块总请求最多四个，长文本和列表均有 schema 上限。
+1. Wave 1：37 个固定叶子各自执行可调度、可恢复的 research/interface discovery，只能提交 `submodule_discovery_submission`。
+   - 每个任务仅接收当前叶子的 Evidence/coverage/Knowledge 增量；整模块 Knowledge、manifest 与 peer taxonomy 使用同模块共享引用。
+   - 首次工具 Schema 给出当前 module/submodule 的有效样例，不再删除样例或退回通用 `2.1` 身份。
 2. Barrier 1：
-   - 校验五份 discovery 覆盖；
-   - 建立 interface index 和每模块 inbox；
+   - 模块内 reducer 先校验全部叶子 discovery，再形成五份模块 barrier；
+   - 建立 interface index 和 target-leaf inbox；
    - 拒绝无效目标、陈旧证据和缺失请求 id。
 3. Wave 2：
-   - 只调用存在入站请求的模块；
-   - 每个模块批量提交 `module_interface_response_submission`。
+   - 只调用存在入站请求的目标叶子；
+   - 每个非空 leaf inbox 独立提交 `submodule_interface_response_submission`，首次和纠错样例均覆盖当前全部 request ids。
 4. Barrier 2：
    - 每个请求必须 answered 或明确 unresolved；
-   - 构建每模块 `ModuleCollaborationBundle`。
+   - 构建 37 份 `SubmoduleCollaborationBundle`，再确定性归并模块 bundle。
    - Wave 1/2 结果仅在 Barrier 通过后提升为 canonical artifact；无效候选移入可恢复 rejected 区，显式 same-run resume 可重新分派。
-5. Wave 3：模块作者并行写作，但必须消费自己的 bundle；之后继续原有模块审查、Cross、Chief 和 final gate。
-   - 每份 specialist subject 记录 bundle、输入和当前补充约束的 fingerprint；上下文变化时不得静默复用旧正文。
+5. Wave 3：37 个叶子作者并行写作，各自消费自己的 bundle；模块内 reducer 完整归并后继续模块审查、Cross、Chief 和 final gate。
+   - 每个叶子只内联自己的 Knowledge 小节、bundle 与核心写作方法；完整模块 Knowledge/Skill 作为同胞共享引用按需读取。
+   - 每份 leaf completion 与 specialist subject 记录 bundle、输入和当前补充约束的 fingerprint；上下文变化时不得静默复用旧正文。
    - 部分模块运行显式排除 `query_peer/reply_peer`，不等待未调度同伴。
 
 验收：
 
-- 恰有五份有效 discovery artifact；
+- 恰有 37 份有效 leaf discovery artifact 和五份模块 reducer barrier；
 - 每个 interface request 都有 response/unresolved disposition；
 - Wave 2 Provider 调用模块数不超过实际有入站请求的模块数；
 - 每个作者的 envelope 含对应 bundle；

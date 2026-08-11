@@ -94,6 +94,7 @@ from .skills.resolver import RuntimeSkillResolver
 from .source_ledger import SourceLedger
 from .store import ReportingStore
 from .submission_contracts import submission_schema
+from .taxonomy import REPORT_TAXONOMY
 from .versions import SkillProvenance
 
 REPORTING_SUBMISSION_STREAM_IDLE_TIMEOUT_SECONDS = 600.0
@@ -1192,10 +1193,85 @@ class ReportingAgentRunner:
                     .get("request_id", {})
                     .update({"enum": list(collaboration_request_ids)})
                 )
-            # Generic examples use module 2.1 or 2.3. Once the active identity is
-            # fixed, omitting that generic example is safer and cheaper than
-            # presenting a semantically mismatched request id.
-            schema.pop("examples", None)
+            examples = schema.get("examples", [])
+            if examples and isinstance(examples[0], dict):
+                example = examples[0]
+                example["module_id"] = module_id
+                if kind == "submodule_discovery_submission":
+                    example.update(
+                        {
+                            "submodule_id": submodule_id,
+                            "discovery_summary": (
+                                f"已完成固定叶子 {submodule_id} 的独立证据发现。"
+                            ),
+                            "evidence_ids": [],
+                            "evidence_gaps": [],
+                            "provisional_findings": [],
+                            "interface_signals": [],
+                        }
+                    )
+                elif kind == "submodule_discovery_batch_submission":
+                    first_leaf = next(iter(REPORT_TAXONOMY[module_id].submodules))
+                    example["discoveries"] = [
+                        {
+                            "kind": "submodule_discovery_submission",
+                            "module_id": module_id,
+                            "submodule_id": first_leaf,
+                            "discovery_summary": (
+                                f"已完成固定叶子 {first_leaf} 的独立证据发现。"
+                            ),
+                            "evidence_ids": [],
+                            "evidence_gaps": [],
+                            "provisional_findings": [],
+                            "interface_signals": [],
+                        }
+                    ]
+                elif kind == "module_discovery_submission":
+                    example.update(
+                        {
+                            "discovery_summary": (
+                                f"已完成模块 {module_id} 的证据与接口覆盖发现。"
+                            ),
+                            "evidence_ids": [],
+                            "interface_coverage": [
+                                {
+                                    "target_module_id": peer_id,
+                                    "status": "not_applicable",
+                                    "rationale": "当前发现没有形成该模块接口依赖。",
+                                }
+                                for peer_id in REPORT_TAXONOMY
+                                if peer_id != module_id
+                            ],
+                            "requests": [],
+                        }
+                    )
+                elif kind == "submodule_interface_response_submission":
+                    example["submodule_id"] = submodule_id
+                    example["dispositions"] = [
+                        {
+                            "request_id": request_id,
+                            "status": "unresolved",
+                            "evidence_ids": [],
+                            "conditions": [],
+                            "unresolved_reason": "当前证据不足以形成可靠回答。",
+                            "boundary": "正文保留该接口为未决边界，不推断目标模块事实。",
+                        }
+                        for request_id in (collaboration_request_ids or [])
+                    ]
+                elif kind == "module_interface_response_submission" and (
+                    collaboration_request_ids is not None
+                ):
+                    example["dispositions"] = [
+                        {
+                            "request_id": request_id,
+                            "status": "unresolved",
+                            "evidence_ids": [],
+                            "conditions": [],
+                            "unresolved_reason": "当前证据不足以形成可靠回答。",
+                            "boundary": "保留该接口为未决边界，不推断请求方事实。",
+                        }
+                        for request_id in collaboration_request_ids
+                    ]
         elif isinstance(contract, SubmoduleAuthoringInput):
             schema.get("properties", {}).get("module_id", {}).update(
                 {"const": contract.module_id}
@@ -1753,6 +1829,16 @@ class ReportingAgentRunner:
             module_id,
             submodule_id,
         )
+        task_submission_schemas = {
+            kind: self._task_submission_schema(
+                kind,
+                input_contract,
+                module_id=module_id,
+                submodule_id=submodule_id,
+                collaboration_request_ids=collaboration_request_ids,
+            )
+            for kind in envelope.allowed_outputs
+        }
         expected_result_part_ids = (
             list(template_inspection.required_part_ids)
             if template_inspection is not None
@@ -1903,6 +1989,7 @@ class ReportingAgentRunner:
                 revision=envelope.revision,
                 input_contract_kind=envelope.input_contract_kind,
                 input_contract_ref=envelope.input_contract_ref,
+                submission_schemas=task_submission_schemas,
                 task_correlation=task_correlation,
             ),
             "write_result_part": WriteResultPartTool(
@@ -1953,16 +2040,7 @@ class ReportingAgentRunner:
                 evidence_binding_required=evidence_binding_required,
             )
         if "submit_result" in definition.tools:
-            output_schemas = [
-                self._task_submission_schema(
-                    kind,
-                    input_contract,
-                    module_id=module_id,
-                    submodule_id=submodule_id,
-                    collaboration_request_ids=collaboration_request_ids,
-                )
-                for kind in envelope.allowed_outputs
-            ]
+            output_schemas = list(task_submission_schemas.values())
             if not output_schemas:
                 raise ValueError(
                     f"{definition.id} has submit_result but no known allowed output contract"

@@ -305,19 +305,36 @@ async def test_submodule_three_wave_dispatches_independent_wave_one_and_two_leav
     assert len({item.task_id for item in discoveries}) == 37
     assert all(
         item.allowed_tools
-        == ["calculate", "report_gap", "report_blocked", "submit_result"]
+        == [
+            "open_artifact",
+            "search_text",
+            "calculate",
+            "report_gap",
+            "report_blocked",
+            "submit_result",
+        ]
         for item in discoveries
     )
-    assert all(len(item.input_refs) == 1 for item in discoveries)
+    assert all(len(item.input_refs) == 4 for item in discoveries)
     assert all(
-        item.artifact_delivery_modes == {item.input_refs[0]: "hash_retained"}
+        item.artifact_delivery_modes[item.input_refs[0]] == "hash_retained"
+        and all(
+            item.artifact_delivery_modes[ref] == "reference"
+            for ref in item.input_refs[1:]
+        )
         for item in discoveries
     )
     assert all(
-        "<leaf_collaboration_context" in (item.inline_context or "")
+        "<leaf_context_delta" in (item.inline_context or "")
         and '"E-0001"' in (item.inline_context or "")
         for item in discoveries
     )
+    sibling_shared_refs = {
+        item.input_refs[1]
+        for item in discoveries
+        if item.agent_id == "module-2.1-specialist"
+    }
+    assert len(sibling_shared_refs) == 1
     assert [item.agent_id for item in responses] == ["module-2.3-specialist"]
     assert set(state["submodule_discovery_barrier_refs"]) == set(MODULE_IDS)
     assert len(state["submodule_collaboration_bundle_refs"]) == 37
@@ -578,6 +595,26 @@ async def test_wave_three_dispatches_and_persists_37_independent_leaf_results(
     runner._checkpoint = lambda *_args, **_kwargs: None
     runner._cost_boundary = lambda *_args, **_kwargs: asyncio.sleep(0)
     state = _state("run-submodule-wave-three")
+    for module_id, knowledge_ref in state["module_knowledge_refs"].items():
+        runner.service.store.write_text(
+            knowledge_ref,
+            "# shared header\n\n"
+            + "\n\n".join(
+                f"## {leaf_id} {leaf.title}\nKNOWLEDGE-{leaf_id}"
+                for leaf_id, leaf in REPORT_TAXONOMY[module_id].submodules.items()
+            ),
+        )
+    state["template_skill_text"] = {
+        "core": "CORE-METHOD-SENTINEL",
+        "analysis": "FULL-ANALYSIS-SENTINEL",
+        "visual": "FULL-VISUAL-SENTINEL",
+        "rubric": "FULL-RUBRIC-SENTINEL",
+    }
+    state["template_skill_refs"] = {}
+    for key, text in state["template_skill_text"].items():
+        ref = f"Work/runs/{state['run_id']}/template-skill/{key}.md"
+        runner.service.store.write_text(ref, text)
+        state["template_skill_refs"][key] = ref
 
     async def discovery_agent(
         _agent_id,
@@ -614,6 +651,7 @@ async def test_wave_three_dispatches_and_persists_37_independent_leaf_results(
     active = 0
     max_active = 0
     calls: list[str] = []
+    author_envelopes: list[TaskEnvelope] = []
 
     async def author(
         _agent_id,
@@ -630,6 +668,7 @@ async def test_wave_three_dispatches_and_persists_37_independent_leaf_results(
         module_id = resolve_submodule(submodule_id).module_id
         assert session_key == f"submodule-{submodule_id}"
         assert set(envelope.artifact_delivery_modes) == set(envelope.input_refs)
+        author_envelopes.append(envelope)
         calls.append(submodule_id)
         active += 1
         max_active = max(max_active, active)
@@ -666,6 +705,33 @@ async def test_wave_three_dispatches_and_persists_37_independent_leaf_results(
     assert len(calls) == 37
     assert set(calls) == expected_leaves
     assert max_active == state["request"].submodule_task_concurrency
+    assert all("CORE-METHOD-SENTINEL" in item.inline_context for item in author_envelopes)
+    assert all(
+        "FULL-ANALYSIS-SENTINEL" not in item.inline_context
+        and "FULL-VISUAL-SENTINEL" not in item.inline_context
+        and "FULL-RUBRIC-SENTINEL" not in item.inline_context
+        for item in author_envelopes
+    )
+    for item in author_envelopes:
+        leaf_id = item.target_submodule_ids[0]
+        assert f"KNOWLEDGE-{leaf_id}" in item.inline_context
+        sibling_shared = [
+            ref
+            for ref in item.input_refs
+            if "/context/shared/module-author-module-" in ref
+        ]
+        assert len(sibling_shared) == 1
+    for module_id in MODULE_IDS:
+        shared_refs = {
+            next(
+                ref
+                for ref in item.input_refs
+                if "/context/shared/module-author-module-" in ref
+            )
+            for item in author_envelopes
+            if item.agent_id == f"module-{module_id}-specialist"
+        }
+        assert len(shared_refs) == 1
     assert set(state["submodule_authoring_barrier_refs"]) == set(MODULE_IDS)
     assert set(state["specialist_submissions"]) == set(MODULE_IDS)
     for module_id, submission in state["specialist_submissions"].items():

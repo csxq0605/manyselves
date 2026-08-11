@@ -13,6 +13,7 @@ from manyselves.core.reporting.agentic_models import (
     ModuleSubmission,
 )
 from manyselves.core.reporting.claim_ledger import ClaimLedger
+from manyselves.core.reporting.agent_runner import ReportingAgentRunner
 from manyselves.core.reporting.input_contracts import (
     ChiefEditorInput,
     ChiefRevisionInput,
@@ -59,6 +60,7 @@ def _tool(
     revision: int = 0,
     input_contract_kind: str | None = None,
     input_contract_ref: str | None = None,
+    submission_schemas: dict[str, dict] | None = None,
 ) -> SubmitResultTool:
     return SubmitResultTool(
         "agent",
@@ -72,6 +74,7 @@ def _tool(
         revision=revision,
         input_contract_kind=input_contract_kind,
         input_contract_ref=input_contract_ref,
+        submission_schemas=submission_schemas,
     )
 
 
@@ -717,6 +720,34 @@ async def test_module_revision_correction_example_uses_each_finding_target(
         "M-001": ["2.1.1"],
         "M-002": ["2.1.2"],
     }
+
+
+@pytest.mark.asyncio
+async def test_correction_reuses_exact_current_leaf_submission_example(
+    tmp_path: Path,
+) -> None:
+    kind = "submodule_interface_response_submission"
+    request_ids = ["IF-2.1.1-2.3.2-001", "IF-2.4.1-2.3.2-002"]
+    schema = ReportingAgentRunner._task_submission_schema(
+        kind,
+        None,
+        module_id="2.3",
+        submodule_id="2.3.2",
+        collaboration_request_ids=request_ids,
+    )
+    tool = _tool(
+        tmp_path,
+        allowed_outputs=[kind],
+        submission_schemas={kind: schema},
+    )
+
+    outcome = await tool(payload="not-json")
+
+    example = outcome["validation_errors"][0]["example"]
+    assert example == schema["examples"][0]
+    assert example["module_id"] == "2.3"
+    assert example["submodule_id"] == "2.3.2"
+    assert [item["request_id"] for item in example["dispositions"]] == request_ids
 
 
 @pytest.mark.asyncio
