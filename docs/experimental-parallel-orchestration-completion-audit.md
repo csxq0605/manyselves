@@ -10,8 +10,8 @@ V2 提交前基线：`aa63771f9fd1346cb89e136065fc5d3ee2a99a29`
 ## 1. 当前范围
 
 2026-08-11 起，成本、共享上下文和运行加速重新作为 Agent 编排的联合约束。当前实现
-优先消除“逻辑叶子任务等于物理 Provider 调用”的放大：保持逐叶 artifact/completion，
-同时把 Wave 1/2/3 的不变模块上下文按模块共享。每个 dispatch 内的实际 Provider turns
+优先在 Wave 1/2 共享不变模块上下文；Wave 3 写作保持真实逐叶 dispatch/session，
+并以独立 artifact/completion 支持失败隔离。每个 dispatch 内的实际 Provider turns
 继续由 UsageLedger 计数。Provider RPM/TPM admission 和真实费用
 A/B 仍是独立验收项；`observe` 不能被描述为已经强制费用上限。
 
@@ -29,11 +29,11 @@ A/B 仍是独立验收项；`observe` 不能被描述为已经强制费用上限
 | control/terminal 与 stream QoS 隔离 | 完成 | `loops/bus.py` 的 control queue、stream coalesce、terminal fence 与指标 | `test_bus.py` |
 | identity mutex、项目写租约和 fencing | 完成 | `parallel_runtime.py`、`store.py`、render/delivery/version publish fence | `test_parallel_runtime.py`、`test_distributed_runtime.py`、renderer stale-fence test |
 | lane journal、completion、单写 reducer 和 exact barrier | 完成 | `LaneTaskSpec`、`LaneAttemptRecord`、`LaneCompletion`、`WorkflowReducer` | missing/duplicate/order/recovery tests |
-| 固定叶子子模块成为独立逻辑任务 | 完成 | taxonomy 的 37 个 fixed leaf 分别拥有 typed result、artifact、context digest 和 completion；Agent dispatch 按模块聚合，不再复制 37 份共享输入 | `test_submodule_three_wave_batches_agent_dispatches_and_keeps_37_leaf_results`、AgentRunner schema tests |
+| 固定叶子子模块成为独立写作任务 | 完成 | taxonomy 的 37 个 fixed leaf 在 Wave 3 分别拥有 TaskDispatched、session、typed result、artifact、context digest 和 completion；Wave 1/2 仍按模块共享发现/回答输入 | `test_wave_three_dispatches_and_persists_37_independent_leaf_results`、AgentRunner schema tests |
 | Wave 1A 子模块发现与模块内 reducer | 完成 | 5 个 `SubmoduleDiscoveryBatchSubmission` 默认覆盖 37 个独立 discovery；逐叶落盘后形成 2.1–2.5 的 `ModuleSubmoduleDiscoveryBarrier` | exact batch coverage、knowledge-change scoped rerun、barrier recovery tests |
 | Wave 2 精确叶子接口闭环 | 完成 | request 绑定 requester/target module+submodule；非空 leaf inbox 按目标模块共享一次 Agent dispatch，再按 request_id 拆成逐叶 response | exact request-id、sparse module batch、wrong-leaf/schema tests |
-| Wave 3 子模块写作与模块内 reducer | 完成 | 5 个模块 authoring 会话逐叶 `write_result_part`，运行时物化 37 个 `SubmoduleDraftSubmission`/Claim/completion，再归并为既有 `ModuleSubmission` | 5 physical authors、37 leaf results、Claim materialization、resume tests |
-| 叶子输入绑定恢复和批次失败隔离 | 完成 | 每个 leaf artifact 写 exact-context completion；恢复只把未完成叶子重新组成模块微批，已完成叶子与其他模块不重跑 | module-batch failure/resume、knowledge-change scoped rerun tests |
+| Wave 3 子模块写作与模块内 reducer | 完成 | 37 个单叶 author task 独立执行并物化 `SubmoduleDraftSubmission`/Claim/completion，再归并为既有 `ModuleSubmission` | 37 physical leaf authors、并发边界、Claim materialization、resume tests |
+| 叶子输入绑定恢复和失败隔离 | 完成 | 每个 leaf artifact 写 exact-context completion；失败冻结新分派但保留已启动成功叶，恢复只调度失败和未启动叶 | leaf scheduler failure/resume、knowledge-change scoped rerun tests |
 | 五模块完整私有 lane 并行 | 完成 | `workflow.py` 的 bounded module lanes；默认独立模块并发为 5 | `test_three_wave_workflow.py` 的 overlap、failure-drain、barrier tests |
 | Cross-owner lane 并行与权威 recheck 串行 | 完成 | `review_lifecycle.py` 的 owner grouping、bounded lanes、`CrossOwnerBarrier` | `test_agent_workflow.py` 的 overlap/deferred-Main/reviewer-owner tests |
 | 动态任务排序和公平稳定 tie-break | 完成 | `scheduling.py::AdaptiveTaskScheduler`，历史时延驱动 LCP-first | `test_scheduling.py`、benchmark dispatch order |
@@ -61,7 +61,7 @@ Preparation / immutable snapshot
   → Barrier 1: 生成精确 requester leaf → target leaf request index
   → Wave 2: 非空 target leaf inbox 按目标模块聚合，最多 5 个 Agent batch
   → Barrier 2: 37 个 leaf collaboration bundle + 5 个兼容 module bundle
-  → Wave 3: 37 个逻辑 leaf draft / 5 个模块共享 authoring 会话并逐叶落盘
+  → Wave 3: 37 个真实独立 leaf author task，按配置限并发并逐叶落盘
   → 5 个模块内 authoring barrier/reducer
   → 既有 ModuleSubmission / module review lanes
   → Module Barrier → Cross-owner lanes → Chief → Final → render/publish

@@ -134,6 +134,7 @@ def _state(run_id: str) -> dict:
         "request": SimpleNamespace(
             missing_evidence_policy="draft",
             execution_requirements=[],
+            user_supplements=[],
             submodule_task_concurrency=8,
             submodule_batch_size=14,
         ),
@@ -583,7 +584,7 @@ async def test_leaf_revision_failure_keeps_completed_siblings_for_same_run_resum
 
 
 @pytest.mark.asyncio
-async def test_wave_three_uses_five_shared_calls_and_persists_37_leaf_results(
+async def test_wave_three_dispatches_and_persists_37_independent_leaf_results(
     tmp_path: Path,
 ) -> None:
     runner = object.__new__(ReportWorkflowRunner)
@@ -634,45 +635,57 @@ async def test_wave_three_uses_five_shared_calls_and_persists_37_leaf_results(
     max_active = 0
     calls: list[str] = []
 
-    async def author(module_id, _state, _workflow_id, **_kwargs):
+    async def author(
+        _agent_id,
+        envelope,
+        _artifacts,
+        _workflow_id,
+        *,
+        session_key=None,
+    ):
         nonlocal active, max_active
-        calls.append(module_id)
+        assert envelope.allowed_outputs == ["submodule_draft_submission"]
+        assert len(envelope.target_submodule_ids) == 1
+        submodule_id = envelope.target_submodule_ids[0]
+        module_id = resolve_submodule(submodule_id).module_id
+        assert session_key == f"submodule-{submodule_id}"
+        assert set(envelope.artifact_delivery_modes) == set(envelope.input_refs)
+        calls.append(submodule_id)
         active += 1
         max_active = max(max_active, active)
         await asyncio.sleep(0.002)
         active -= 1
-        submodule_ids = REPORT_TAXONOMY[module_id].submodules
-        claims = [
-            ClaimRecord(
-                id=f"C-{submodule_id}",
-                module_id=module_id,
-                submodule_id=submodule_id,
-                text=f"{submodule_id} 已完成独立判断。",
-                claim_type="project_fact",
-                source_ids=["E-0001"],
-            )
-            for submodule_id in submodule_ids
-        ]
-        return ModuleSubmission(
+        claim = ClaimRecord(
+            id=f"C-{submodule_id}",
             module_id=module_id,
-            submodule_narratives={
-                submodule_id: f"{submodule_id} 正文。[[CLAIM:C-{submodule_id}]]"
-                for submodule_id in submodule_ids
-            },
-            claims=claims,
+            submodule_id=submodule_id,
+            text=f"{submodule_id} 已完成独立判断。",
+            claim_type="project_fact",
+            source_ids=["E-0001"],
+        )
+        return SubmoduleDraftSubmission(
+            module_id=module_id,
+            submodule_id=submodule_id,
+            narrative=f"{submodule_id} 正文。[[CLAIM:C-{submodule_id}]]",
+            claim=claim,
             source_ids=["E-0001"],
             unresolved_questions=[],
             revision=0,
         )
 
-    runner._module_pipeline = author
+    runner._agent = author
     await runner._run_submodule_authoring_stage(
         tuple(MODULE_IDS), state, "workflow-submodule-wave-three"
     )
 
-    assert len(calls) == 5
-    assert set(calls) == set(MODULE_IDS)
-    assert max_active == 5
+    expected_leaves = {
+        submodule_id
+        for module_id in MODULE_IDS
+        for submodule_id in REPORT_TAXONOMY[module_id].submodules
+    }
+    assert len(calls) == 37
+    assert set(calls) == expected_leaves
+    assert max_active == state["request"].submodule_task_concurrency
     assert set(state["submodule_authoring_barrier_refs"]) == set(MODULE_IDS)
     assert set(state["specialist_submissions"]) == set(MODULE_IDS)
     for module_id, submission in state["specialist_submissions"].items():
@@ -689,7 +702,7 @@ async def test_wave_three_uses_five_shared_calls_and_persists_37_leaf_results(
     async def no_repeat(*_args, **_kwargs):
         raise AssertionError("current leaf author completion must be reused")
 
-    runner._module_pipeline = no_repeat
+    runner._agent = no_repeat
     await runner._run_submodule_authoring_stage(
         tuple(MODULE_IDS), state, "workflow-submodule-wave-three"
     )

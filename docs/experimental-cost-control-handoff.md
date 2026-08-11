@@ -1,9 +1,10 @@
 # Manyselves 成本控制实验分支交接说明
 
 > 2026-08-11 更新：成本控制、共享上下文和加速是同一项 Agent 编排要求。37 个固定
-> 叶子保留独立 artifact/completion/recovery 身份，但 Agent dispatch/session 按模块聚合：
-> Wave 1 为 5 个 discovery batch，Wave 2 最多 5 个 module inbox batch，Wave 3 为
-> 5 个共享 authoring 会话并逐叶写入。dispatch 内实际 Provider turns 由 UsageLedger 计量；
+> 叶子保留独立 artifact/completion/recovery 身份。Wave 1 为 5 个共享 discovery batch，
+> Wave 2 最多 5 个 module inbox batch；Wave 3 的 37 个 leaf author 则各自拥有真实
+> dispatch/session/result/completion，并由 `submodule_task_concurrency` 控制并发。
+> dispatch 内实际 Provider turns 由 UsageLedger 计量；
 > 当前证据仍是 fake/unit/offline，不是 Provider A/B。
 
 > 现场日期：2026-08-11
@@ -59,11 +60,11 @@ V2 的 `M0/P0–P5/D0–D4` 混用。
 | 领域 | 已实现机制 | 主要代码/测试证据 |
 | --- | --- | --- |
 | Provider 输入 | Prompt 不再重复内嵌完整 submission schema/example；按任务生成较窄工具 schema；已持久化长正文在后续历史中改用 `artifact_ref`、字符数和 SHA-256 标记 | `manyselves/core/reporting/prompts.py`、`submission_contracts.py`、`agent_runner.py`、`manyselves/core/loops/agent_loop.py::_compact_persisted_result_part_call`、`tests/reporting/test_agent_runner.py` |
-| Provider 输出 | 模块共享会话通过 `write_result_part` 逐叶持久化；正文与小型 typed commit 分离，避免模型可见 batch shape 引发纠错重试；revision/Chief 使用收窄工具集合 | `manyselves/core/tools/reporting_collaboration_tools.py`、`manyselves/core/reporting/agent_runner.py`、`tests/reporting/test_agent_runner.py` |
+| Provider 输出 | Wave 3 每个 leaf author 独立持久化正文和 typed commit；37 个结果完成后才由确定性 reducer 生成模块；revision/Chief 使用收窄工具集合 | `manyselves/core/tools/reporting_collaboration_tools.py`、`manyselves/core/reporting/agent_runner.py`、`tests/reporting/test_agent_runner.py` |
 | 存储 | 项目级 SHA-256 CAS；Delivery v2、ReportVersion v2 使用 blob 引用/兼容视图；新写入停止部分 legacy 双写；retention 生成 dry-run 计划 | `manyselves/core/artifacts/content_store.py`、`reporting/delivery.py`、`versions.py`、`retention.py` 及对应测试 |
 | 审查成本 | 付费语义审查前执行确定性 module preflight；module recheck 发送 changed content、相关 finding/evidence 和未改内容 hash；Chief completion 可按当前 run/ref/hash 恢复 | `manyselves/core/reporting/review_preflight.py`、`review_lifecycle.py`、`workflow.py` 及对应测试 |
 | 成本计量与暂停 | UsageLedger 扩展 Provider usage、cache、message/tool schema、阶段和 payload 指纹；`observe/warn/pause_at_boundary` 只在安全 checkpoint 边界处理，并支持同 run 恢复 | `manyselves/core/usage_ledger.py`、`reporting/cost_control.py`、`workflow.py::ReportingRunBudget`、`tests/reporting/test_cost_control.py`、`tests/test_usage_ledger.py` |
-| 子模块协作、写作与归并 | 37 个 leaf 是独立逻辑任务；Wave 1 用 5 个模块 batch 返回逐叶 discovery，Wave 2 用非空目标模块 batch 回答后逐叶拆分，Wave 3 用 5 个模块 authoring 会话逐叶落盘；每叶 completion 可恢复，reducer 仍生成既有 `ModuleSubmission` | `module_collaboration.py` 的 batch/leaf contracts、`workflow.py::_run_batched_submodule_discovery_stage`、`workflow.py::_run_batched_submodule_interface_response_stage`、`workflow.py::_run_submodule_authoring_stage`、`test_three_wave_workflow.py` |
+| 子模块协作、写作与归并 | Wave 1 用 5 个模块 batch 返回逐叶 discovery，Wave 2 用非空目标模块 batch 回答后逐叶拆分；Wave 3 真实调度 37 个单叶 author task，每叶拥有独立 session/result/completion，失败时保留已完成叶，reducer 仍生成既有 `ModuleSubmission` | `module_collaboration.py` 的 batch/leaf contracts、`workflow.py::_run_batched_submodule_discovery_stage`、`workflow.py::_run_batched_submodule_interface_response_stage`、`workflow.py::_run_scheduled_submodule_stage`、`workflow.py::_run_submodule_authoring_stage`、`test_three_wave_workflow.py` |
 | main 同步能力 | 默认缺证 `draft`、evidence/photo traceability、decision reconciliation、MessageBus DEBUG 日志汇总已进入实验分支 | main 合并 `4a1f375` 与 `a0df065`；相关 reporting、mapper、bus 代码和测试 |
 
 ## 4. 当前实际执行边界
@@ -76,7 +77,7 @@ Wave 1A：37 个逻辑 leaf discovery / 5 个模块共享 Agent dispatch
   → Barrier 1
   → Wave 2：仅非空 target-leaf inbox；按目标模块聚合，最多 5 个 Agent dispatch
   → Barrier 2：37 个 leaf bundle
-  → Wave 3：37 个逻辑 leaf draft / 5 个模块共享 authoring 会话，逐叶落盘
+  → Wave 3：37 个真实独立 leaf author task，按配置限并发并逐叶落盘
   → 5 个模块内 authoring barrier/reducer → ModuleSubmission
   → bounded module review/revision/recheck lanes
   → Cross 串行
@@ -87,7 +88,7 @@ Wave 1A：37 个逻辑 leaf discovery / 5 个模块共享 Agent dispatch
 
 因此：
 
-- 可以说“当前工作树已有 37-leaf 逻辑隔离、模块共享 Agent dispatch、模块内 reducer 和离线恢复证据”；
+- 可以说“当前工作树的 Wave 3 已有 37 个真实 leaf dispatch/session/result/completion、模块内 reducer 和离线恢复证据”；
 - 不可以说“main 已并行”；
 - 不可以说“五条完整 module pipeline 已并行”；
 - 不可以把 MessageBus 日志降噪说成 MessageBus 已具备并行 QoS；

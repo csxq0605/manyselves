@@ -1,11 +1,10 @@
 # Manyselves 输入输出成本、并行调度、加速与 Agent 编排计划 V2
 
 > 2026-08-11 架构更新：成本控制重新成为 Agent 优化的硬约束。37 个固定叶子仍是
-> 独立逻辑 task、artifact 和 completion，但不再等同于 37 个独立 Agent dispatch/session。
-> Wave 1 采用模块共享上下文 discovery batch，Wave 2 采用模块共享 inbox batch，Wave 3
-> 采用一次模块 authoring 会话并通过 `write_result_part` 逐叶落盘。默认完整路径的三波
-> 独立 Agent dispatch 上界由 `37 + 非空叶子 inbox + 37` 收敛为
-> `5 + 非空目标模块 + 5`。每个 dispatch 内的检索/工具/提交 Provider turns 仍由
+> 独立 task、artifact 和 completion。Wave 1 采用模块共享上下文 discovery batch，
+> Wave 2 采用模块共享 inbox batch；Wave 3 写作则保留 37 个真实独立 Agent
+> dispatch/session/result，以满足单叶失败隔离。默认完整路径的三波初始 dispatch 为
+> `5 + 非空目标模块 + 37`。每个 dispatch 内的检索/工具/提交 Provider turns 仍由
 > UsageLedger 按实际请求计数，不把 dispatch 数伪装成网络调用数。
 
 ## 1. 当前基线与规划边界
@@ -178,8 +177,8 @@ Coordinator / single-writer reducer
   ├─ Wave 1A: 37 logical leaf discoveries / 5 module-shared Agent batches
   │    └─ per-leaf completion → 5 module-local discovery reducers → Barrier 1
   ├─ sparse Wave 2: logical target-leaf inboxes / at most 5 module-shared calls → Barrier 2
-  ├─ Wave 3: 37 logical leaf drafts / 5 module-shared authoring sessions
-  │    └─ write_result_part per leaf → authoring barrier → ModuleSubmission
+  ├─ Wave 3: 37 independent leaf author dispatches / configured concurrency
+  │    └─ per-leaf result/completion → authoring barrier → ModuleSubmission
   ├─ bounded module lanes
   │    ├─ author 2.1 → preflight → auditor 2.1 → revision/recheck
   │    ├─ author 2.2 → preflight → auditor 2.2 → revision/recheck
@@ -209,7 +208,7 @@ Event planes
 | deterministic preparation/preflight/render | 不调用 LLM | 稳定 artifact/completion | 文件级 worker，reducer 单写 |
 | Wave 1A leaf discovery | 紧凑 typed 档 | 模块 batch 内含独立 leaf submissions | 5 个模块可并行；每叶 completion 独立恢复 |
 | Wave 2 leaf response | 紧凑 typed 档 | 模块 batch 回答非空 leaf inbox，再按 request_id 拆分 | 最多 5 个目标模块并行；每叶 response 独立恢复 |
-| Wave 3 leaf author | 高能力写作档 | 模块会话逐 leaf `write_result_part` + 小 commit | 5 个模块可并行；正文分段按 leaf 恢复 |
+| Wave 3 leaf author | 高能力写作档 | 单叶 session 写唯一正文并提交 typed result | 全局按 `submodule_task_concurrency` 并行；完成和恢复均按 leaf |
 | module auditor | 高能力审查档 | finding/verdict | 不同模块 session 可并行，同模块串行 |
 | specialist revision | 高能力局部档 | changed sections only | 不同模块可并行 |
 | Cross/Chief/Final | 高能力全局档 | index/search-first，必要时全文 | 各角色自身串行 |

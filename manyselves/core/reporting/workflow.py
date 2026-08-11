@@ -6777,7 +6777,14 @@ class ReportWorkflowRunner:
                         + bundle_context
                         + "\n</submodule_collaboration_bundle>"
                     ),
-                    "artifact_delivery_modes": {},
+                    "artifact_delivery_modes": {
+                        contract_ref: "inline",
+                        contract.coverage_ref: "reference",
+                        contract.evidence_ref: "reference",
+                        contract.manifest_ref: "reference",
+                        contract.collaboration_bundle_ref: "hash_retained",
+                        contract.discovery_ref: "hash_retained",
+                    },
                 }
             ).model_dump(mode="python")
         )
@@ -6895,101 +6902,31 @@ class ReportWorkflowRunner:
             else:
                 drafts[submodule_id] = payload
         if pending:
-            pending_by_module = {
-                module_id: [
-                    submodule_id
-                    for submodule_id in REPORT_TAXONOMY[module_id].submodules
-                    if submodule_id in pending
-                ]
-                for module_id in module_ids
-            }
-
-            async def author_module(
-                module_id: str, pending_leaves: list[str]
-            ) -> dict[str, SubmoduleDraftSubmission]:
-                submission = await self._module_pipeline(
-                    module_id,
-                    state,
-                    workflow_id,
-                    review=False,
-                    checkpoint=False,
+            drafts.update(
+                await self._run_scheduled_submodule_stage(
+                    tuple(pending),
+                    run_id=run_id,
+                    workflow_id=workflow_id,
+                    task_kind="submodule_authoring",
+                    concurrency=state["request"].submodule_task_concurrency,
+                    execute=lambda submodule_id: self._submodule_authoring(
+                        submodule_id,
+                        state,
+                        workflow_id,
+                    ),
+                    persist=lambda submodule_id, payload: (
+                        self._persist_submodule_task_completion(
+                            state=state,
+                            task_kind="submodule_authoring",
+                            wave="wave-3",
+                            submodule_id=submodule_id,
+                            artifact_ref=draft_refs[submodule_id],
+                            context_sha256=draft_contexts[submodule_id],
+                            payload=payload,
+                        )
+                    ),
                 )
-                claims_by_submodule: dict[str, list] = {
-                    submodule_id: []
-                    for submodule_id in REPORT_TAXONOMY[module_id].submodules
-                }
-                for claim in submission.claims:
-                    claims_by_submodule.setdefault(claim.submodule_id, []).append(claim)
-                invalid_claim_counts = {
-                    submodule_id: len(claims_by_submodule.get(submodule_id, []))
-                    for submodule_id in REPORT_TAXONOMY[module_id].submodules
-                    if len(claims_by_submodule.get(submodule_id, [])) != 1
-                }
-                if invalid_claim_counts:
-                    raise AgentWorkflowError(
-                        f"module {module_id} shared authoring did not materialize exactly "
-                        f"one runtime Claim per leaf: {invalid_claim_counts}"
-                    )
-                scoped: dict[str, SubmoduleDraftSubmission] = {}
-                for submodule_id in pending_leaves:
-                    claim = claims_by_submodule[submodule_id][0]
-                    payload = SubmoduleDraftSubmission(
-                        module_id=module_id,
-                        submodule_id=submodule_id,
-                        narrative=submission.submodule_narratives[submodule_id],
-                        claim=claim,
-                        source_ids=list(claim.source_ids),
-                        unresolved_questions=list(submission.unresolved_questions),
-                        revision=submission.revision,
-                    )
-                    self._persist_submodule_task_completion(
-                        state=state,
-                        task_kind="submodule_authoring",
-                        wave="wave-3",
-                        submodule_id=submodule_id,
-                        artifact_ref=draft_refs[submodule_id],
-                        context_sha256=draft_contexts[submodule_id],
-                        payload=payload,
-                    )
-                    scoped[submodule_id] = payload
-                return scoped
-
-            outcomes = await asyncio.gather(
-                *(
-                    author_module(module_id, leaves)
-                    for module_id, leaves in pending_by_module.items()
-                    if leaves
-                ),
-                return_exceptions=True,
             )
-            failures: list[BaseException] = []
-            for outcome in outcomes:
-                if isinstance(outcome, BaseException):
-                    failures.append(outcome)
-                else:
-                    drafts.update(outcome)
-            physical_batches = sum(bool(leaves) for leaves in pending_by_module.values())
-            self.service.store.write_json(
-                f"Work/runs/{run_id}/scheduling/submodule-authoring.json",
-                {
-                    "kind": "submodule_microbatch_scheduling_decisions",
-                    "version": 1,
-                    "run_id": run_id,
-                    "stage_id": "submodule-authoring",
-                    "policy": "module_shared_authoring_with_leaf_commits_v1",
-                    "logical_task_count": len(pending),
-                    "agent_dispatch_count": physical_batches,
-                    "avoided_independent_agent_dispatches": len(pending) - physical_batches,
-                    "provider_attempt_count_source": "UsageLedger",
-                    "batches": [
-                        leaves
-                        for _module_id, leaves in pending_by_module.items()
-                        if leaves
-                    ],
-                },
-            )
-            if failures:
-                raise failures[0]
         for submodule_id, payload in drafts.items():
             self.service.store.write_json(
                 draft_refs[submodule_id], payload.model_dump(mode="json")
@@ -7990,6 +7927,21 @@ class ReportWorkflowRunner:
                     "inline_context": (
                         (planned.inline_context or "") + collaboration_context
                     ),
+                    "artifact_delivery_modes": {
+                        module_input_ref: "inline",
+                        module_input.coverage_ref: "reference",
+                        module_input.evidence_ref: "reference",
+                        module_input.manifest_ref: "reference",
+                        **(
+                            {
+                                module_input.collaboration_bundle_ref: (
+                                    "hash_retained"
+                                )
+                            }
+                            if module_input.collaboration_bundle_ref
+                            else {}
+                        ),
+                    },
                 }
             ).model_dump(mode="python")
         )
