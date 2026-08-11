@@ -1506,6 +1506,47 @@ class SubmitResultTool(_ResultTool):
                 field_example = at_path(payload_example, loc)
                 if field_example is None:
                     field_example = payload_example
+                repair_instruction = (
+                    f"Correct {field} to the declared type or value and resubmit "
+                    "the complete payload as a native JSON object. Preserve all "
+                    "unrelated valid content; do not stringify the payload."
+                )
+                if (
+                    active_kind == "module_discovery_submission"
+                    and loc
+                    and loc[0] == "requests"
+                    and isinstance(payload, dict)
+                ):
+                    request_index = next(
+                        (part for part in loc[1:] if isinstance(part, int)),
+                        0,
+                    )
+                    requests = payload.get("requests")
+                    candidate = (
+                        requests[request_index]
+                        if isinstance(requests, list)
+                        and 0 <= request_index < len(requests)
+                        and isinstance(requests[request_index], dict)
+                        else None
+                    )
+                    if candidate is not None:
+                        requester_leaf = candidate.get("requester_submodule_id")
+                        target_leaf = candidate.get("target_submodule_id")
+                        if requester_leaf and target_leaf:
+                            corrected = deepcopy(candidate)
+                            corrected["request_id"] = (
+                                f"IF-{requester_leaf}-{target_leaf}-001"
+                            )
+                            field_example = corrected
+                            repair_instruction = (
+                                "Keep requester_submodule_id and target_submodule_id. Set "
+                                "request_id to IF-<requester_submodule_id>-"
+                                "<target_submodule_id>-NNN (for this request, for example "
+                                f"{corrected['request_id']!r}). Do not delete the leaf fields "
+                                "or downgrade the request to legacy module identity. Preserve "
+                                "all unrelated valid content and resubmit the complete native "
+                                "JSON object."
+                            )
                 issues.append(
                     issue(
                         field=field,
@@ -1513,11 +1554,7 @@ class SubmitResultTool(_ResultTool):
                         expected=expected_text(schema_at(loc)),
                         example=field_example,
                         received=at_path(payload, loc),
-                        repair_instruction=(
-                            f"Correct {field} to the declared type or value and resubmit "
-                            "the complete payload as a native JSON object. Preserve all "
-                            "unrelated valid content; do not stringify the payload."
-                        ),
+                        repair_instruction=repair_instruction,
                     )
                 )
             generic_messages = (

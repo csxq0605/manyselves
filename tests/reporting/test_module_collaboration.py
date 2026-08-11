@@ -504,3 +504,45 @@ async def test_submit_result_persists_new_kind_through_unified_agent_result(
     parsed = AgentResult.model_validate(persisted)
     assert isinstance(parsed.payload, ModuleDiscoverySubmission)
     assert parsed.payload.module_id == "2.1"
+
+
+@pytest.mark.asyncio
+async def test_module_discovery_correction_preserves_leaf_identity_in_request_id(
+    tmp_path: Path,
+) -> None:
+    request = InterfaceRequest(
+        request_id="IF-2.1.1-2.3.1-001",
+        requester_module_id="2.1",
+        requester_submodule_id="2.1.1",
+        target_module_id="2.3",
+        target_submodule_id="2.3.1",
+        question="保护边界是否覆盖当前切换场景？",
+        needed_for="确定架构风险和联合验收边界。",
+        evidence_ids=["E-0001"],
+    )
+    payload = _discovery("2.1", requests=[request]).model_dump(mode="json")
+    payload["requests"][0]["request_id"] = "IF-2.1-2.3-001"
+    tool = SubmitResultTool(
+        "module-2.1-specialist",
+        "session-1",
+        "run-1",
+        "module-2.1-discovery",
+        ReportingStore(tmp_path),
+        MessageBus(),
+        "workflow-1",
+        allowed_outputs=["module_discovery_submission"],
+    )
+
+    outcome = await tool(payload)
+
+    assert outcome["status"] == "correction_required"
+    issue = next(
+        item
+        for item in outcome["validation_errors"]
+        if item["field"].startswith("requests.0")
+    )
+    assert issue["example"]["request_id"] == "IF-2.1.1-2.3.1-001"
+    assert "Do not delete the leaf fields" in issue["repair_instruction"]
+    assert "downgrade the request to legacy module identity" in issue[
+        "repair_instruction"
+    ]

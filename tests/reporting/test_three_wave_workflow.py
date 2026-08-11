@@ -155,8 +155,8 @@ def _state(run_id: str) -> dict:
     [
         (
             "current_serial_review",
-            ["module_collaboration_legacy"],
-            (False, False, True),
+            ["leaf_collaboration", "leaf_authoring"],
+            (True, False, True),
         ),
         (
             "bounded_module_lanes",
@@ -179,9 +179,6 @@ async def test_execution_mode_gates_leaf_authoring_and_module_lane_expansion(
     runner.service = _Service(tmp_path)
     calls: list[str] = []
 
-    async def legacy(*_args, **_kwargs):
-        calls.append("module_collaboration_legacy")
-
     async def leaf(*_args, **_kwargs):
         calls.append("leaf_collaboration")
 
@@ -194,7 +191,6 @@ async def test_execution_mode_gates_leaf_authoring_and_module_lane_expansion(
     async def lanes(*_args, concurrency: int, **_kwargs):
         calls.append(f"bounded_module_lanes:{concurrency}")
 
-    runner._module_collaboration_legacy = legacy
     runner._module_collaboration = leaf
     runner._module_local_submodule_preparation = local_leaf
     runner._run_submodule_authoring_stage = leaf_authoring
@@ -309,6 +305,21 @@ async def test_submodule_three_wave_batches_agent_dispatches_and_keeps_37_leaf_r
     assert len(discoveries) == 5
     assert sum(len(item.target_submodule_ids) for item in discoveries) == 37
     assert len({item.task_id for item in discoveries}) == 5
+    assert all(
+        item.allowed_tools
+        == ["calculate", "report_gap", "report_blocked", "submit_result"]
+        for item in discoveries
+    )
+    assert all(len(item.input_refs) == 1 for item in discoveries)
+    assert all(
+        item.artifact_delivery_modes == {item.input_refs[0]: "hash_retained"}
+        for item in discoveries
+    )
+    assert all(
+        "<leaf_collaboration_context" in (item.inline_context or "")
+        and '"E-0001"' in (item.inline_context or "")
+        for item in discoveries
+    )
     assert [item.agent_id for item in responses] == ["module-2.3-specialist"]
     assert set(state["submodule_discovery_barrier_refs"]) == set(MODULE_IDS)
     assert len(state["submodule_collaboration_bundle_refs"]) == 37

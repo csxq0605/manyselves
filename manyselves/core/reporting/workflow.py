@@ -996,72 +996,50 @@ class ReportWorkflowRunner:
         state: dict,
         workflow_id: str,
     ) -> tuple[bool, bool, bool]:
-        """Select module-level compatibility or explicitly requested leaf execution."""
+        """Prepare leaf work for every writing path; only review overlap is optional."""
 
         full_scope = set(requested_modules) == set(REPORT_MODULE_IDS)
-        bounded_leaf_mode = (
+        bounded_lanes = (
             getattr(
                 state["request"],
                 "execution_mode",
                 "current_serial_review",
             )
             == "bounded_module_lanes"
-        )
-        if bounded_leaf_mode:
-            await self.service._notice(
-                (
-                    "五个专业模块的固定叶子进入独立调度：先并行发现接口问题，经两次"
-                    "确定性跨模块屏障形成叶子协作包，再独立写作、归并和审查。"
-                    if full_scope
-                    else "所请求模块将拆成固定叶子的独立、可恢复任务；叶子归并后再进入模块审查。"
-                )
-            )
-            if full_scope:
-                await self._module_collaboration(
-                    requested_modules,
-                    state,
-                    workflow_id,
-                )
-            else:
-                await self._module_local_submodule_preparation(
-                    requested_modules,
-                    state,
-                    workflow_id,
-                )
-            await self._run_submodule_authoring_stage(
-                requested_modules,
-                state,
-                workflow_id,
-            )
-            bounded_lanes = len(requested_modules) > 1
-            if bounded_lanes:
-                await self._run_bounded_module_lanes(
-                    requested_modules,
-                    state,
-                    workflow_id,
-                    concurrency=state["request"].module_lane_concurrency,
-                )
-            return True, bounded_lanes, full_scope
-
+        ) and len(requested_modules) > 1
         await self.service._notice(
             (
-                "五个专业模块进入三波协作：先并行发现接口问题，经两次确定性屏障形成"
-                "模块协作包，再并行写作；独立模块审查仍按固定顺序执行。"
+                "五个专业模块的固定叶子进入独立调度：先并行发现接口问题，经两次"
+                "确定性跨模块屏障形成叶子协作包，再独立写作、归并和审查。"
                 if full_scope
-                else "目标专业模块将按固定顺序完成写作、独立审查和定向修订闭环。"
+                else "所请求模块将拆成固定叶子的独立、可恢复任务；叶子归并后再进入模块审查。"
             )
         )
         if full_scope:
-            await self._module_collaboration_legacy(
+            await self._module_collaboration(
                 requested_modules,
                 state,
                 workflow_id,
             )
         else:
-            await self.service._notice(
-                "本次仅请求部分模块，不为未请求模块增加协作调用。"
+            await self._module_local_submodule_preparation(
+                requested_modules,
+                state,
+                workflow_id,
             )
-        return False, False, full_scope
+        await self._run_submodule_authoring_stage(
+            requested_modules,
+            state,
+            workflow_id,
+        )
+        if bounded_lanes:
+            await self._run_bounded_module_lanes(
+                requested_modules,
+                state,
+                workflow_id,
+                concurrency=state["request"].module_lane_concurrency,
+            )
+        return True, bounded_lanes, full_scope
 
     async def run(self, state: dict) -> None:
         run_id = state["run_id"]
@@ -4894,6 +4872,163 @@ class ReportWorkflowRunner:
         )
         return results
 
+    @staticmethod
+    def _jsonable_context_item(item: object) -> dict[str, object]:
+        """Serialize runtime evidence without requiring test doubles to be Pydantic."""
+
+        if hasattr(item, "model_dump"):
+            return item.model_dump(mode="json")
+        if isinstance(item, dict):
+            return dict(item)
+        return {
+            key: value
+            for key, value in vars(item).items()
+            if not key.startswith("_")
+        }
+
+    def _leaf_collaboration_context_packet(
+        self,
+        submodule_ids: tuple[str, ...],
+        state: dict,
+        *,
+        purpose: str,
+    ) -> tuple[str, str]:
+        """Persist one bounded, self-contained context packet for a module microbatch."""
+
+        ordered = tuple(dict.fromkeys(submodule_ids))
+        if not ordered:
+            raise AgentWorkflowError("leaf collaboration context requires at least one leaf")
+        module_ids = {resolve_submodule(item).module_id for item in ordered}
+        if len(module_ids) != 1:
+            raise AgentWorkflowError("leaf collaboration context may not cross module owners")
+        module_id = next(iter(module_ids))
+        workspace = self.service.workspace
+
+        def read_json_ref(ref: str | None) -> object:
+            if not ref:
+                return {}
+            path = workspace / ref
+            if not path.is_file():
+                return {}
+            return json.loads(path.read_text(encoding="utf-8"))
+
+        preparation = state.get("preparation_refs", {})
+        coverage_payload = read_json_ref(preparation.get("coverage"))
+        coverage_entry = (
+            coverage_payload.get("entries", {}).get(module_id, {})
+            if isinstance(coverage_payload, dict)
+            else {}
+        )
+        scoped_coverage = dict(coverage_entry) if isinstance(coverage_entry, dict) else {}
+        submodule_coverage = scoped_coverage.get("submodules", {})
+        scoped_coverage["submodules"] = {
+            submodule_id: submodule_coverage.get(submodule_id, {})
+            for submodule_id in ordered
+        }
+        evidence_ids = {
+            evidence_id
+            for submodule_id in ordered
+            for evidence_id in scoped_coverage["submodules"]
+            .get(submodule_id, {})
+            .get("evidence_ids", [])
+        }
+
+        evidence_items: list[dict[str, object]] = []
+        evidence_path = workspace / preparation.get("evidence", "")
+        if evidence_path.is_file():
+            for line in evidence_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                item = json.loads(line)
+                if item.get("id") in evidence_ids:
+                    evidence_items.append(item)
+        else:
+            candidates = [
+                self._jsonable_context_item(item)
+                for item in state.get("evidence_items", [])
+            ]
+            evidence_items = [
+                item
+                for item in candidates
+                if not evidence_ids or item.get("id") in evidence_ids
+            ]
+
+        knowledge_ref = state.get("module_knowledge_refs", {}).get(module_id)
+        knowledge_path = workspace / knowledge_ref if knowledge_ref else None
+        knowledge_text = (
+            knowledge_path.read_text(encoding="utf-8")
+            if knowledge_path is not None and knowledge_path.is_file()
+            else ""
+        )
+        packet_body = {
+            "kind": "leaf_collaboration_context",
+            "version": 1,
+            "purpose": purpose,
+            "run_id": state["run_id"],
+            "module": {
+                "id": module_id,
+                "title": REPORT_TAXONOMY[module_id].title,
+                "target_leaves": [
+                    {
+                        "id": submodule_id,
+                        "title": REPORT_TAXONOMY[module_id]
+                        .submodules[submodule_id]
+                        .title,
+                    }
+                    for submodule_id in ordered
+                ],
+            },
+            "peer_target_taxonomy": {
+                peer_id: {
+                    "title": definition.title,
+                    "leaves": [
+                        {"id": item.id, "title": item.title}
+                        for item in definition.submodules.values()
+                    ],
+                }
+                for peer_id, definition in REPORT_TAXONOMY.items()
+                if peer_id != module_id
+            },
+            "coverage": scoped_coverage,
+            "evidence_items": evidence_items,
+            "project_manifest": read_json_ref(preparation.get("manifest")),
+            "module_knowledge": knowledge_text,
+            "source_refs": {
+                "coverage": preparation.get("coverage"),
+                "evidence": preparation.get("evidence"),
+                "manifest": preparation.get("manifest"),
+                "knowledge": knowledge_ref,
+            },
+        }
+        canonical = json.dumps(
+            packet_body,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if len(canonical) > 90_000:
+            raise AgentWorkflowError(
+                f"leaf collaboration context for module {module_id} exceeds 90000 chars; "
+                "refine deterministic evidence scoping instead of starting an unbounded "
+                "search conversation"
+            )
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        packet_body["content_sha256"] = digest
+        path = self.service.store.write_json(
+            (
+                f"Work/runs/{state['run_id']}/context/collaboration/"
+                f"{purpose}-module-{module_id}-{digest[:12]}.json"
+            ),
+            packet_body,
+        )
+        ref = path.relative_to(workspace).as_posix()
+        inline = (
+            f'<leaf_collaboration_context ref="{ref}" sha256="{digest}">\n'
+            + canonical
+            + "\n</leaf_collaboration_context>"
+        )
+        return ref, inline
+
     async def _submodule_discovery(
         self,
         submodule_id: str,
@@ -4911,8 +5046,11 @@ class ReportWorkflowRunner:
             for item in state["module_dispatch"].module_tasks
             if item.agent_id == specialist_id
         )
-        preparation = state["preparation_refs"]
-        knowledge_ref = state["module_knowledge_refs"][module_id]
+        context_ref, context_inline = self._leaf_collaboration_context_packet(
+            (submodule_id,),
+            state,
+            purpose=("wave-1a" if allow_cross_module_interfaces else "module-local"),
+        )
         envelope = TaskEnvelope.model_validate(
             planned.model_copy(
                 update={
@@ -4929,12 +5067,7 @@ class ReportWorkflowRunner:
                             else "只提交该叶子范围的事实、缺口和初步发现；本路径不激活跨模块接口。"
                         )
                     ),
-                    "input_refs": [
-                        preparation["coverage"],
-                        preparation["evidence"],
-                        preparation["manifest"],
-                        knowledge_ref,
-                    ],
+                    "input_refs": [context_ref],
                     "constraints": [
                         f"唯一工作范围是叶子子模块 {submodule_id}",
                         "不得用模块级摘要替代本子模块发现，也不得写其他子模块正文",
@@ -4950,6 +5083,7 @@ class ReportWorkflowRunner:
                             ]
                         ),
                         "不得实时 query_peer；只提交类型化 interface_signals",
+                        "上下文包已完整注入，应优先直接形成类型化提交；仅在确需计算或记录缺口时使用辅助工具，避免无新增信息的重复调用",
                         *self._evidence_policy_constraints(
                             state["request"].missing_evidence_policy
                         ),
@@ -4957,17 +5091,7 @@ class ReportWorkflowRunner:
                     ],
                     "allowed_outputs": ["submodule_discovery_submission"],
                     "allowed_tools": [
-                        "search_project_evidence",
-                        "open_project_source",
-                        "search_reference_library",
-                        "open_reference",
-                        "web_search",
-                        "open_web_source",
-                        "inspect_document",
-                        "inspect_image",
                         "calculate",
-                        "open_artifact",
-                        "search_text",
                         "report_gap",
                         "report_blocked",
                         "submit_result",
@@ -4984,10 +5108,12 @@ class ReportWorkflowRunner:
                             if allow_cross_module_interfaces
                             else "本任务不请求、不回答跨模块接口。</submodule_wave_1a>"
                         )
+                        + "\n"
+                        + context_inline
                     ),
                     "input_contract_kind": None,
                     "input_contract_ref": None,
-                    "artifact_delivery_modes": {},
+                    "artifact_delivery_modes": {context_ref: "hash_retained"},
                 }
             ).model_dump(mode="python")
         )
@@ -5035,8 +5161,11 @@ class ReportWorkflowRunner:
             for item in state["module_dispatch"].module_tasks
             if item.agent_id == specialist_id
         )
-        preparation = state["preparation_refs"]
-        knowledge_ref = state["module_knowledge_refs"][module_id]
+        context_ref, context_inline = self._leaf_collaboration_context_packet(
+            ordered,
+            state,
+            purpose=("wave-1a" if allow_cross_module_interfaces else "module-local"),
+        )
         batch_label = "-".join(ordered)
         envelope = TaskEnvelope.model_validate(
             planned.model_copy(
@@ -5050,12 +5179,7 @@ class ReportWorkflowRunner:
                         f"在一次模块 {module_id} 共享上下文会话中，分别完成 "
                         f"{', '.join(ordered)} 的 Wave 1A 发现；每个叶子必须独立提交。"
                     ),
-                    "input_refs": [
-                        preparation["coverage"],
-                        preparation["evidence"],
-                        preparation["manifest"],
-                        knowledge_ref,
-                    ],
+                    "input_refs": [context_ref],
                     "constraints": [
                         f"本批次仅包含固定叶子 {', '.join(ordered)}",
                         "discoveries 必须对每个 target_submodule_id 恰好返回一次，禁止遗漏、重复或越界",
@@ -5069,6 +5193,7 @@ class ReportWorkflowRunner:
                             else ["module_report 不激活跨模块协作；所有 interface_signals 必须为空"]
                         ),
                         "共享检索结果可在本批次复用，但 evidence_ids 必须按叶子实际适用范围声明",
+                        "上下文包已完整注入，应优先直接形成类型化提交；仅在确需计算或记录缺口时使用辅助工具，避免无新增信息的重复调用",
                         *self._evidence_policy_constraints(
                             state["request"].missing_evidence_policy
                         ),
@@ -5076,17 +5201,7 @@ class ReportWorkflowRunner:
                     ],
                     "allowed_outputs": ["submodule_discovery_batch_submission"],
                     "allowed_tools": [
-                        "search_project_evidence",
-                        "open_project_source",
-                        "search_reference_library",
-                        "open_reference",
-                        "web_search",
-                        "open_web_source",
-                        "inspect_document",
-                        "inspect_image",
                         "calculate",
-                        "open_artifact",
-                        "search_text",
                         "report_gap",
                         "report_blocked",
                         "submit_result",
@@ -5097,11 +5212,12 @@ class ReportWorkflowRunner:
                     "context_summary_refs": [],
                     "inline_context": (
                         "<submodule_wave_1a_batch>共享模块级不变输入；输出仍是可单独验收和恢复的叶子结果。"
-                        "</submodule_wave_1a_batch>"
+                        "</submodule_wave_1a_batch>\n"
+                        + context_inline
                     ),
                     "input_contract_kind": None,
                     "input_contract_ref": None,
-                    "artifact_delivery_modes": {},
+                    "artifact_delivery_modes": {context_ref: "hash_retained"},
                 }
             ).model_dump(mode="python")
         )
@@ -5260,6 +5376,7 @@ class ReportWorkflowRunner:
                         "不得回答其他叶子子模块的问题，也不得发明 request_id",
                         "answered 必须包含适用条件；证据不足时明确 unresolved_reason 和 boundary",
                         "不得实时 query_peer",
+                        "inbox 与回答所需上下文已完整注入，应优先直接提交；仅在确需计算或记录缺口时使用辅助工具",
                     ],
                     "allowed_outputs": [
                         "submodule_interface_response_submission"
@@ -5339,8 +5456,11 @@ class ReportWorkflowRunner:
                         "必须对其余四个固定模块各提交一条 interface_coverage，且不得遗漏或重复",
                         "只有 request 或 conflict 状态可创建 InterfaceRequest",
                         (
-                            f"request_id 必须采用 IF-{module_id}-<目标模块>-NNN，"
-                            "在当前 discovery 内唯一"
+                            "若请求包含 requester_submodule_id 和 target_submodule_id，"
+                            "request_id 必须采用 IF-<requester_submodule_id>-"
+                            "<target_submodule_id>-NNN；只有不含叶子身份的历史兼容请求"
+                            f"才可采用 IF-{module_id}-<目标模块>-NNN。不得通过删除叶子"
+                            "字段绕过已声明的叶子身份，且 id 在当前 discovery 内唯一"
                         ),
                         "所有 evidence_ids 只能使用当前 run 已注册的 E-*",
                         "不得实时 query_peer；问题只通过类型化 InterfaceRequest 进入 Barrier 1",
@@ -5409,6 +5529,7 @@ class ReportWorkflowRunner:
         discovery_ref: str,
         state: dict,
         workflow_id: str,
+        target_submodule_ids: tuple[str, ...] | None = None,
     ) -> ModuleInterfaceResponseSubmission:
         specialist_id = f"module-{module_id}-specialist"
         planned = next(
@@ -5419,8 +5540,17 @@ class ReportWorkflowRunner:
         inbox_text = (
             self.service.workspace / inbox_ref
         ).read_text(encoding="utf-8")
-        preparation = state["preparation_refs"]
-        knowledge_ref = state["module_knowledge_refs"][module_id]
+        discovery_text = (
+            self.service.workspace / discovery_ref
+        ).read_text(encoding="utf-8")
+        target_leaves = target_submodule_ids or tuple(
+            REPORT_TAXONOMY[module_id].submodules
+        )
+        context_ref, context_inline = self._leaf_collaboration_context_packet(
+            target_leaves,
+            state,
+            purpose="wave-2",
+        )
         envelope = TaskEnvelope.model_validate(
             planned.model_copy(
                 update={
@@ -5430,10 +5560,9 @@ class ReportWorkflowRunner:
                         "无法回答时提交明确 unresolved 边界。"
                     ),
                     "input_refs": [
+                        context_ref,
                         inbox_ref,
                         discovery_ref,
-                        preparation["evidence"],
-                        knowledge_ref,
                     ],
                     "constraints": [
                         f"只回答 inbox 中目标为 {module_id} 的 request_id",
@@ -5442,34 +5571,37 @@ class ReportWorkflowRunner:
                         "answered 必须给出适用条件；证据不足时用 unresolved_reason 和 boundary 明确边界",
                         "所有 evidence_ids 只能使用当前 run 已注册的 E-*",
                         "不得实时 query_peer；本轮只批量提交接口响应",
+                        "inbox 与回答所需上下文已完整注入，应优先直接提交；仅在确需计算或记录缺口时使用辅助工具",
                     ],
                     "allowed_outputs": [
                         "module_interface_response_submission"
                     ],
                     "allowed_tools": [
-                        "search_project_evidence",
-                        "open_project_source",
-                        "open_artifact",
-                        "search_text",
                         "calculate",
                         "report_gap",
                         "report_blocked",
                         "submit_result",
                     ],
-                    "target_submodule_ids": list(
-                        REPORT_TAXONOMY[module_id].submodules
-                    ),
+                    "target_submodule_ids": list(target_leaves),
                     "revision": 0,
                     "prior_result_ref": None,
                     "context_summary_refs": [],
                     "inline_context": (
                         "<module_interface_inbox>\n"
                         + inbox_text
-                        + "\n</module_interface_inbox>"
+                        + "\n</module_interface_inbox>\n"
+                        + "<module_discovery>\n"
+                        + discovery_text
+                        + "\n</module_discovery>\n"
+                        + context_inline
                     ),
                     "input_contract_kind": None,
                     "input_contract_ref": None,
-                    "artifact_delivery_modes": {},
+                    "artifact_delivery_modes": {
+                        context_ref: "hash_retained",
+                        inbox_ref: "hash_retained",
+                        discovery_ref: "hash_retained",
+                    },
                 }
             ).model_dump(mode="python")
         )
@@ -5535,6 +5667,7 @@ class ReportWorkflowRunner:
                 discovery_ref=module_discovery_refs[module_id],
                 state=state,
                 workflow_id=workflow_id,
+                target_submodule_ids=tuple(leaves),
             )
             expected_ids = {request.request_id for request in requests}
             actual_ids = {item.request_id for item in response.dispositions}
