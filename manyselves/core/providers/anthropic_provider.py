@@ -12,9 +12,11 @@ from .base import (
     LLMResponse,
     LLMToolCall,
     Message,
+    ProviderRequestDisposition,
+    annotate_provider_request_failure,
     build_provider_request_metrics,
+    infer_provider_request_disposition,
 )
-
 
 ANTHROPIC_STREAM_IDLE_TIMEOUT_SECONDS = 600.0
 ANTHROPIC_CONNECT_TIMEOUT_SECONDS = 30.0
@@ -371,7 +373,18 @@ class AnthropicProvider(LLMProvider):
 
         logger.debug("Sending Anthropic request: model={}, messages={}", self.model, len(messages))
 
-        response = await self.client.messages.create(**params)
+        try:
+            response = await self.client.messages.create(**params)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            failure = annotate_provider_request_failure(
+                exc,
+                infer_provider_request_disposition(exc),
+            )
+            if failure is exc:
+                raise
+            raise failure from exc
 
         content = None
         tool_calls = []
@@ -463,8 +476,10 @@ class AnthropicProvider(LLMProvider):
         last_delta_type = None
         saw_message_stop = False
         iterator_exhausted = False
+        stream_opened = False
         try:
             async with self.client.messages.stream(**params) as stream:
+                stream_opened = True
                 request_id = getattr(stream, "request_id", None)
                 logger.debug("Anthropic stream opened: request_id={}", request_id)
                 # Stream full events so thinking_delta is not dropped by
@@ -571,16 +586,32 @@ class AnthropicProvider(LLMProvider):
                 saw_message_stop,
                 iterator_exhausted,
             )
-            raise TimeoutError(
+            timeout_error = TimeoutError(
                 f"Anthropic provider stream idle timeout after {idle_timeout:g}s"
-            ) from exc
-        except Exception as e:
+            )
+            failure = annotate_provider_request_failure(
+                timeout_error,
+                ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN,
+            )
+            raise failure from exc
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
             logger.error(
                 "Anthropic streaming error ({}): {}",
-                type(e).__name__,
-                str(e),
+                type(exc).__name__,
+                str(exc),
             )
-            raise
+            failure = annotate_provider_request_failure(
+                exc,
+                infer_provider_request_disposition(
+                    exc,
+                    stream_opened=stream_opened,
+                ),
+            )
+            if failure is exc:
+                raise
+            raise failure from exc
 
     # ------------------------------------------------------------------
     # Tool conversion

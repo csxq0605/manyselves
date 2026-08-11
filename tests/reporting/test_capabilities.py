@@ -45,6 +45,7 @@ def test_task_envelope_can_narrow_declared_tools_for_recovery(tmp_path: Path) ->
         "write_result_part",
         "list_result_parts",
         "submit_result",
+        "open_tool_result",
     )
 
 

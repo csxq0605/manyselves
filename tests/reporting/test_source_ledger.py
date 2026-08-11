@@ -52,3 +52,58 @@ def test_source_ledger_accepts_any_knowledge_path_and_rejects_other_roots(tmp_pa
     assert source.locator == "Knowledge/供应商/手册.md"
     with pytest.raises(ValueError, match="Knowledge"):
         ledger.register_local("现场", "Inputs/检测.md", "正文")
+
+
+def test_register_many_assigns_stable_ids_with_one_ordered_registry_write(tmp_path: Path):
+    ledger = SourceLedger(tmp_path, "run-batch")
+
+    records = ledger.register_many(
+        [
+            {
+                "kind": "local_reference",
+                "title": "规范 A",
+                "locator": "Knowledge/a.md",
+                "content": "完整正文 A",
+            },
+            {
+                "kind": "local_reference",
+                "title": "规范 B",
+                "locator": "Knowledge/b.md",
+                "content": "完整正文 B",
+            },
+            {
+                "kind": "web",
+                "title": "机构网页",
+                "locator": "https://example.org/full",
+                "content": "完整网页正文",
+            },
+        ]
+    )
+
+    assert [record.id for record in records] == ["R-001", "R-002", "W-001"]
+    assert [record.id for record in ledger.records] == ["R-001", "R-002", "W-001"]
+    assert (tmp_path / ledger.content_ref("R-001")).read_text(encoding="utf-8") == "完整正文 A"
+
+
+def test_register_many_is_validation_atomic(tmp_path: Path):
+    ledger = SourceLedger(tmp_path, "run-invalid-batch")
+
+    with pytest.raises(ValueError, match="Knowledge"):
+        ledger.register_many(
+            [
+                {
+                    "kind": "local_reference",
+                    "title": "规范 A",
+                    "locator": "Knowledge/a.md",
+                    "content": "正文 A",
+                },
+                {
+                    "kind": "local_reference",
+                    "title": "错误来源",
+                    "locator": "Inputs/not-knowledge.md",
+                    "content": "正文 B",
+                },
+            ]
+        )
+
+    assert ledger.records == []

@@ -218,6 +218,94 @@ async def test_wait_for_resolves_only_matching_message_and_unsubscribes(bus):
 
 
 @pytest.mark.asyncio
+async def test_slow_stream_subscriber_does_not_delay_typed_terminal() -> None:
+    bus = MessageBus(stream_capacity=2)
+    stream_started = asyncio.Event()
+    release_stream = asyncio.Event()
+    terminal_received = asyncio.Event()
+
+    async def slow_stream(message: AgentResponse) -> None:
+        if message.streaming:
+            stream_started.set()
+            await release_stream.wait()
+
+    def receive_terminal(message: AgentResultMessage) -> None:
+        terminal_received.set()
+
+    bus.subscribe(AgentResponse, slow_stream)
+    bus.subscribe(AgentResultMessage, receive_terminal)
+    processor = asyncio.create_task(bus.process_queue())
+    await bus.publish(
+        AgentResponse(
+            agent_type="runtime-2.1",
+            content="delta",
+            message_id="module-2.1",
+            streaming=True,
+            workflow_id="wf",
+            run_id="run",
+            task_id="module-2.1",
+            task_attempt_id="attempt-1",
+            session_id="session-1",
+        )
+    )
+    await asyncio.wait_for(stream_started.wait(), timeout=1)
+    await bus.publish(
+        AgentResultMessage(
+            workflow_id="wf",
+            run_id="run",
+            task_id="module-2.1",
+            task_attempt_id="attempt-1",
+            sender="module-2.1-specialist",
+            recipient="workflow",
+            result_path="result.json",
+            status="completed",
+        )
+    )
+
+    await asyncio.wait_for(terminal_received.wait(), timeout=0.2)
+    release_stream.set()
+    bus.shutdown()
+    await processor
+
+
+@pytest.mark.asyncio
+async def test_stream_plane_coalesces_and_terminal_fences_late_delta() -> None:
+    bus = MessageBus(stream_capacity=1)
+    first = AgentResponse(
+        agent_type="runtime-2.1",
+        content="a",
+        message_id="module-2.1",
+        streaming=True,
+        workflow_id="wf",
+        run_id="run",
+        task_id="module-2.1",
+        task_attempt_id="attempt-1",
+        session_id="session-1",
+    )
+    await bus.publish(first)
+    await bus.publish(first.model_copy(update={"content": "b"}))
+    assert len(bus._stream_pending) == 1
+    assert next(iter(bus._stream_pending.values())).content == "ab"
+    await bus.publish(
+        AgentResultMessage(
+            workflow_id="wf",
+            run_id="run",
+            task_id="module-2.1",
+            task_attempt_id="attempt-1",
+            sender="module-2.1-specialist",
+            recipient="workflow",
+            result_path="result.json",
+            status="completed",
+        )
+    )
+    assert not bus._stream_pending
+    await bus.publish(first.model_copy(update={"content": "late"}))
+    assert not bus._stream_pending
+    assert bus.stream_metrics["coalesced"] == 1
+    assert bus.stream_metrics["after_terminal_dropped"] == 1
+
+
+@pytest.mark.asyncio
 async def test_wait_for_timeout_unsubscribes(bus):
     with pytest.raises(asyncio.TimeoutError):
         await bus.wait_for(UserMessage, lambda _: True, timeout=0.01)

@@ -58,12 +58,20 @@ FIELD_GUIDANCE: dict[str, str] = {
     "constraints": "Task-specific rules; they narrow work but do not redefine the submission schema.",
     "context_summary_refs": "Context-only summaries; never treat them as authoritative subject artifacts.",
     "coverage": "Structured record of what the reviewer actually checked in the current pass.",
+    "coverage_ref": "Current-run immutable coverage artifact consumed by this exact authoring task.",
     "data_gap_analysis": "Final report section 3.1.3 body explaining evidence gaps, impact, and collection priority.",
     "decision": "Main exception decision for escalated findings only.",
     "decision_implication": "Why a supported cross-module relationship changes priority, sequencing, or residual risk.",
     "description": "Human-readable contract or Skill description matching the submitted content.",
+    "discovery_summary": "Complete evidence-bounded discovery summary for the assigned scope.",
+    "discoveries": "One complete typed discovery for every leaf id assigned to this module-scoped microbatch.",
+    "discovery_ref": "Current-run Wave 1A discovery artifact for this exact leaf submodule.",
+    "dispositions": "One answered or explicitly unresolved disposition for every exact inbox request.",
     "dimension_risk_analysis": "Final report section 3.1.2 body comparing risk dimensions and interactions.",
     "evidence_refs": "Existing current-run artifact or source refs that reproduce the submitted statement or verdict.",
+    "evidence_ids": "Unique current-run E-* ids supporting the exact submitted scope.",
+    "evidence_ref": "Current-run registered project-evidence artifact assigned to this task.",
+    "evidence_gaps": "Concrete missing project evidence that limits this exact leaf-submodule conclusion.",
     "expected_values": "Exact terms or values used by an explicitly declared machine predicate.",
     "finding_id": "Stable prior finding id copied exactly; do not restate or rename its contract.",
     "findings": "New immutable findings created from the current subject in this pass.",
@@ -76,13 +84,20 @@ FIELD_GUIDANCE: dict[str, str] = {
     "inline_context": "Bounded inline context; authoritative inputs must instead be role-labelled in the input contract.",
     "input_refs": "Current-run artifacts explicitly assigned as inputs; their roles come from the input contract.",
     "kind": "Required exact discriminator for the one submission type allowed by the active task.",
+    "knowledge_ref": "Module Knowledge reference assigned to the exact task scope.",
     "machine_checks": "Explicit deterministic prerequisites; passing them never resolves a semantic finding.",
     "module_id": "Fixed report module id from 2.1 through 2.5.",
+    "manifest_ref": "Current-run immutable project manifest assigned to this task.",
     "module_narratives": "Map containing exactly one complete approved narrative for each fixed report module.",
     "module_tasks": "Exactly one typed task envelope for each requested specialist.",
+    "interface_signals": "Exact cross-module dependencies emitted by this leaf submodule; each signal names a target leaf submodule.",
+    "collaboration_bundle_ref": "Barrier 2 bundle containing the exact leaf discovery and interface dispositions consumed by authoring.",
     "name": "Exact registered name required by the active artifact contract.",
     "new_findings": "Only genuinely new regression findings; never repeat required prior findings here.",
     "objective": "Concrete work objective for the assigned Agent and current stage.",
+    "question": "Concrete cross-module question answerable by the exact target leaf submodule.",
+    "needed_for": "Why the interface response is needed by the requesting leaf submodule.",
+    "blocking": "Whether an unresolved response remains an explicit authoring or escalation boundary.",
     "observation": "Concrete current-subject defect, including its location and material consequence.",
     "owner_module_id": "Single responsibility module that must perform a Cross-directed writeback.",
     "photo_ids": (
@@ -100,6 +115,7 @@ FIELD_GUIDANCE: dict[str, str] = {
         "examples, without copied project facts."
     ),
     "rationale": "Evidence-based explanation for the plan or exception decision.",
+    "narrative": "Complete reader-visible prose for this exact fixed leaf submodule.",
     "reason": "Reviewer-owned explanation for a verdict or workflow-owned failure result.",
     "regional_executive_summary": "Final report section 1.3 body grouped only by evidenced regions or responsibilities.",
     "related_module_ids": "Other fixed modules participating in the Cross relationship; exclude the owner module.",
@@ -124,6 +140,8 @@ FIELD_GUIDANCE: dict[str, str] = {
         "For a project_fact Claim this list must contain at least one E-* id."
     ),
     "submodule_id": "One fixed taxonomy submodule id.",
+    "requester_submodule_id": "Exact fixed leaf submodule that owns the cross-module request.",
+    "provisional_findings": "Evidence-bounded candidate findings retained for later authoring and review, not reviewer verdicts.",
     "submodule_ids": "Fixed taxonomy submodules actually covered by the review.",
     "submodule_narratives": (
         "Map of fixed submodule ids to their complete module-local prose. A long prose "
@@ -148,8 +166,10 @@ FIELD_GUIDANCE: dict[str, str] = {
     "target_section_ids": "Fixed final-report sections where the chief editor must act.",
     "target_changes": "One explicit required change and reviewer-check set for every targeted final-report section.",
     "target_section_id": "One exact Chapter 1, 3, or 4 section governed by this change contract.",
-    "target_submodule_id": "Single fixed module-local submodule where the author must act.",
+    "target_submodule_id": "Exact fixed leaf submodule where the author must act or that owns a cross-module response.",
     "target_submodule_ids": "Fixed module-local submodules authorized for review or revision.",
+    "target_module_id": "Fixed responsibility module containing the exact target leaf submodule.",
+    "status": "Stage-specific typed status; use exactly one value allowed by the active contract.",
     "task_id": "Stable task identifier within the current run.",
     "text": "Exact Claim wording that will be protected and traced to declared sources.",
     "title": "Human-readable title of the report or table.",
@@ -170,6 +190,25 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
         "Before committing, write every fixed submodule with write_result_part and pass "
         "its registered E-* ids through evidence_ids.",
         "The final commit contains only the fields declared by this schema; runtime owns all internal bindings.",
+    ],
+    "submodule_draft_submission": [
+        "This task writes and commits exactly one fixed leaf submodule.",
+        "Call write_result_part once with the assigned submodule_id and its complete prose/evidence binding.",
+        "The runtime creates the Claim and the module reducer; never invent either identity.",
+    ],
+    "submodule_discovery_submission": [
+        "Wave 1A covers exactly the one assigned fixed leaf submodule.",
+        "Retain evidence gaps and provisional findings without compressing another submodule into this result.",
+        "Every cross-module signal must identify an exact target leaf submodule.",
+    ],
+    "submodule_discovery_batch_submission": [
+        "One module-scoped Provider call may return several leaf discoveries to share immutable context.",
+        "discoveries must cover every assigned target_submodule_id exactly once and may not include another module.",
+        "Each nested discovery remains an independent typed result persisted and recovered by leaf id.",
+    ],
+    "submodule_interface_response_submission": [
+        "Wave 2 answers exactly one target leaf-submodule inbox.",
+        "Return one answered or explicitly unresolved disposition for every assigned request_id.",
     ],
     "module_revision_submission": [
         "kind is required and must equal module_revision_submission.",
@@ -214,6 +253,18 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
 KIND_SUMMARIES: dict[str, str] = {
     "module_submission": (
         "A small commit for specialist-authored result parts; runtime materializes prose and evidence bindings."
+    ),
+    "submodule_draft_submission": (
+        "A small Wave 3 leaf commit; runtime materializes its prose, evidence binding, and Claim."
+    ),
+    "submodule_discovery_submission": (
+        "Wave 1A evidence discovery and exact interface signals for one fixed leaf submodule."
+    ),
+    "submodule_discovery_batch_submission": (
+        "A module-scoped Wave 1 microbatch whose nested leaf discoveries are independently persisted."
+    ),
+    "submodule_interface_response_submission": (
+        "Wave 2 answers or explicit unresolved boundaries for one exact leaf-submodule inbox."
     ),
     "module_revision_submission": (
         "A small in-scope revision commit for already saved result parts and author responses."
@@ -383,6 +434,64 @@ def _chief_revision_example() -> dict[str, Any]:
 KIND_EXAMPLES: dict[str, dict[str, Any]] = {
     "module_submission": _module_example(),
     "module_revision_submission": _module_revision_example(),
+    "submodule_draft_submission": {
+        "kind": "submodule_draft_submission",
+        "module_id": "2.1",
+        "submodule_id": "2.1.1",
+        "unresolved_questions": [],
+        "revision": 0,
+    },
+    "submodule_discovery_submission": {
+        "kind": "submodule_discovery_submission",
+        "module_id": "2.1",
+        "submodule_id": "2.1.1",
+        "discovery_summary": "已完成负荷分配与过载风险的独立证据发现。",
+        "evidence_ids": ["E-0001"],
+        "evidence_gaps": [],
+        "provisional_findings": ["异常工况需要保护模块确认边界。"],
+        "interface_signals": [
+            {
+                "target_module_id": "2.3",
+                "target_submodule_id": "2.3.1",
+                "status": "request",
+                "rationale": "过载判断需要保护整定边界。",
+                "question": "当前保护定值是否覆盖已识别的异常负荷边界？",
+                "needed_for": "完成2.1.1风险机理和联合验收要求。",
+                "evidence_ids": ["E-0001"],
+                "blocking": True,
+            }
+        ],
+    },
+    "submodule_discovery_batch_submission": {
+        "kind": "submodule_discovery_batch_submission",
+        "module_id": "2.1",
+        "discoveries": [
+            {
+                "kind": "submodule_discovery_submission",
+                "module_id": "2.1",
+                "submodule_id": "2.1.1",
+                "discovery_summary": "已完成该叶子范围的证据发现。",
+                "evidence_ids": ["E-0001"],
+                "evidence_gaps": [],
+                "provisional_findings": [],
+                "interface_signals": [],
+            }
+        ],
+    },
+    "submodule_interface_response_submission": {
+        "kind": "submodule_interface_response_submission",
+        "module_id": "2.3",
+        "submodule_id": "2.3.1",
+        "dispositions": [
+            {
+                "request_id": "IF-2.1.1-2.3.1-001",
+                "status": "answered",
+                "answer": "现有整定覆盖正常边界，异常工况仍需联合试验。",
+                "evidence_ids": ["E-0002"],
+                "conditions": ["以当前整定版本为准"],
+            }
+        ],
+    },
     "module_discovery_submission": {
         "kind": "module_discovery_submission",
         "module_id": "2.1",

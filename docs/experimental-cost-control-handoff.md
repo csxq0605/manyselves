@@ -1,10 +1,16 @@
 # Manyselves 成本控制实验分支交接说明
 
-> 现场日期：2026-07-31
+> 2026-08-11 更新：成本控制、共享上下文和加速是同一项 Agent 编排要求。37 个固定
+> 叶子保留独立 artifact/completion/recovery 身份，但 Agent dispatch/session 按模块聚合：
+> Wave 1 为 5 个 discovery batch，Wave 2 最多 5 个 module inbox batch，Wave 3 为
+> 5 个共享 authoring 会话并逐叶写入。dispatch 内实际 Provider turns 由 UsageLedger 计量；
+> 当前证据仍是 fake/unit/offline，不是 Provider A/B。
+
+> 现场日期：2026-08-11
 >
 > 交接分支：`cost-control-experiments`
 >
-> 最新 main 同步点：`main@a84d409e7c07e936da70d62a06d0c868ac7a6f93`
+> 最新 main 同步点：`main@3babc0ca079fe15337b09f0ec4911bf638c39ae5`
 >
 > main 同步合并：`a0df065c273444e8b32c9709324b5bbc4f88b59a`
 
@@ -23,14 +29,14 @@ V2 的 `M0/P0–P5/D0–D4` 混用。
 ## 2. Git 与分支关系
 
 - 原始 worktree：`/Users/zzymima0000/Documents/Codex/manyselves`，
-  `main@a84d409`，版本 `1.2.1`。
+  `main@3babc0c`。
 - 实验 worktree：`/Users/zzymima0000/Documents/Codex/manyselves-cost-control`，
   分支 `cost-control-experiments`。
 - 最新 main 已通过 `a0df065` **单向合入实验分支**；main 是当前实验分支的
   祖先。
 - 成本控制和三波并行实验从未反向进入 main；main 的完整模块流水线仍是串行。
-- `origin/cost-control-experiments` 仍停在 `9d1dfcb`。本地后续同步、V2 和本
-  交接说明在推送前都只存在于本地，不能让接手人仅从远端分支开始工作。
+- V2 提交前 `origin/cost-control-experiments` 与本地都停在 `aa63771`；V2 提交后
+  远端仍需另行显式推送，不能把本地新 HEAD 冒充远端已发布身份。
 
 关键提交：
 
@@ -43,6 +49,7 @@ V2 的 `M0/P0–P5/D0–D4` 混用。
 | `4a1f375` | 单向合入 main 至 `0a5093e` |
 | `7ae6954` | main 同步后的 V2 重规划与实验分支文档修正 |
 | `a0df065` | 单向合入 main 的 1.2.1 发布提交 `a84d409` |
+| `aa63771` | main 同步、Provider 歧义恢复与 V2 实现前基线 |
 
 ## 3. 已经完成的优化
 
@@ -52,11 +59,11 @@ V2 的 `M0/P0–P5/D0–D4` 混用。
 | 领域 | 已实现机制 | 主要代码/测试证据 |
 | --- | --- | --- |
 | Provider 输入 | Prompt 不再重复内嵌完整 submission schema/example；按任务生成较窄工具 schema；已持久化长正文在后续历史中改用 `artifact_ref`、字符数和 SHA-256 标记 | `manyselves/core/reporting/prompts.py`、`submission_contracts.py`、`agent_runner.py`、`manyselves/core/loops/agent_loop.py::_compact_persisted_result_part_call`、`tests/reporting/test_agent_runner.py` |
-| Provider 输出 | `write_result_parts` 支持先整批校验再落盘；正文分段持久化后，以小型 typed submission 提交引用；revision/Chief 可使用收窄后的工具集合 | `manyselves/core/tools/reporting_collaboration_tools.py::WriteResultPartsTool`、`manyselves/core/reporting/agent_runner.py`、`tests/reporting/test_agent_runner.py` |
+| Provider 输出 | 模块共享会话通过 `write_result_part` 逐叶持久化；正文与小型 typed commit 分离，避免模型可见 batch shape 引发纠错重试；revision/Chief 使用收窄工具集合 | `manyselves/core/tools/reporting_collaboration_tools.py`、`manyselves/core/reporting/agent_runner.py`、`tests/reporting/test_agent_runner.py` |
 | 存储 | 项目级 SHA-256 CAS；Delivery v2、ReportVersion v2 使用 blob 引用/兼容视图；新写入停止部分 legacy 双写；retention 生成 dry-run 计划 | `manyselves/core/artifacts/content_store.py`、`reporting/delivery.py`、`versions.py`、`retention.py` 及对应测试 |
 | 审查成本 | 付费语义审查前执行确定性 module preflight；module recheck 发送 changed content、相关 finding/evidence 和未改内容 hash；Chief completion 可按当前 run/ref/hash 恢复 | `manyselves/core/reporting/review_preflight.py`、`review_lifecycle.py`、`workflow.py` 及对应测试 |
 | 成本计量与暂停 | UsageLedger 扩展 Provider usage、cache、message/tool schema、阶段和 payload 指纹；`observe/warn/pause_at_boundary` 只在安全 checkpoint 边界处理，并支持同 run 恢复 | `manyselves/core/usage_ledger.py`、`reporting/cost_control.py`、`workflow.py::ReportingRunBudget`、`tests/reporting/test_cost_control.py`、`tests/test_usage_ledger.py` |
-| 跨模块协作与当前并行 | Wave 1 五模块 discovery 并行，Barrier 1；仅有 inbox 的 Wave 2 response 并行，Barrier 2；Wave 3 五模块 author 并行 | `manyselves/core/reporting/module_collaboration.py`、`workflow.py::_module_collaboration`、`workflow.py` 中 author `asyncio.gather(... review=False)`、`tests/reporting/test_three_wave_workflow.py` |
+| 子模块协作、写作与归并 | 37 个 leaf 是独立逻辑任务；Wave 1 用 5 个模块 batch 返回逐叶 discovery，Wave 2 用非空目标模块 batch 回答后逐叶拆分，Wave 3 用 5 个模块 authoring 会话逐叶落盘；每叶 completion 可恢复，reducer 仍生成既有 `ModuleSubmission` | `module_collaboration.py` 的 batch/leaf contracts、`workflow.py::_run_batched_submodule_discovery_stage`、`workflow.py::_run_batched_submodule_interface_response_stage`、`workflow.py::_run_submodule_authoring_stage`、`test_three_wave_workflow.py` |
 | main 同步能力 | 默认缺证 `draft`、evidence/photo traceability、decision reconciliation、MessageBus DEBUG 日志汇总已进入实验分支 | main 合并 `4a1f375` 与 `a0df065`；相关 reporting、mapper、bus 代码和测试 |
 
 ## 4. 当前实际执行边界
@@ -64,12 +71,14 @@ V2 的 `M0/P0–P5/D0–D4` 混用。
 完整报告的现状是：
 
 ```text
-Wave 1 discovery 并行
+Wave 1A：37 个逻辑 leaf discovery / 5 个模块共享 Agent dispatch
+  → 5 个模块内 discovery barrier/reducer
   → Barrier 1
-  → 稀疏 Wave 2 response 并行
-  → Barrier 2
-  → 五模块 author 并行
-  → 2.1 至 2.5 各模块 review/revision/recheck 按固定顺序串行
+  → Wave 2：仅非空 target-leaf inbox；按目标模块聚合，最多 5 个 Agent dispatch
+  → Barrier 2：37 个 leaf bundle
+  → Wave 3：37 个逻辑 leaf draft / 5 个模块共享 authoring 会话，逐叶落盘
+  → 5 个模块内 authoring barrier/reducer → ModuleSubmission
+  → bounded module review/revision/recheck lanes
   → Cross 串行
   → Chief 串行
   → Final audit/revision 串行
@@ -78,37 +87,32 @@ Wave 1 discovery 并行
 
 因此：
 
-- 可以说“实验分支已有三波协作和 Wave 3 模块写作并行”；
+- 可以说“当前工作树已有 37-leaf 逻辑隔离、模块共享 Agent dispatch、模块内 reducer 和离线恢复证据”；
 - 不可以说“main 已并行”；
 - 不可以说“五条完整 module pipeline 已并行”；
 - 不可以把 MessageBus 日志降噪说成 MessageBus 已具备并行 QoS；
 - 不可以把 fake/unit/offline 通过说成真实报告已完成。
 
-## 5. 尚未实现，按 V2 继续
+## 5. 已完成边界与真实验证剩余项
 
-| 阶段 | 下一能力 | 当前状态 |
+| 阶段 | 能力 | 当前状态 |
 | --- | --- | --- |
 | `M0` | 固定 post-main fixture，按 policy/cohort 建真实 Provider、CPU/I/O、storage、bus 分层基线 | 未完成 |
-| `P0` | 精确 task terminal/result identity、attempt-scoped append-only result、exact-key waiter、MessageBus control/stream QoS | 未实现 |
-| `P1` | TaskSpec、semantic key、lane journal、单写 reducer、Provider 并发/RPM/TPM admission、identity lease/fencing、歧义恢复 | 未实现 |
-| `P2` | task context budget、Prompt 分段、index/search-first、forced submission、输出/轮次档位、共享 registry/memoization 安全门 | 未实现 |
-| `P3` | 受限 `author → preflight → review → revision → recheck` module lanes，以及 Cross-owner lanes | 未实现 |
-| `P4` | ProviderRouter 真正按 task 选择 model/effort，并做角色/档位 A/B | 未实现 |
-| `P5` | 确定性 per-file preparation/reducer、Knowledge/Evidence index、SourceLedger batch、trusted verified-blob handle、pure-read 工具并行 | 未实现 |
-| `D0–D4` | Headless、本地持久调度、项目隔离 POSIX 卷、Web 三界面、生产加固、可选对象存储 | 未实现 |
+| `P0–P3` | terminal/result identity、Bus QoS、lane journal、lease/fencing、三波编排和受限 module/Cross-owner lanes | 离线实现完成 |
+| `P4` | ProviderRouter/profile 执行路径 | plumbing 完成；真实模型/effort A/B 未完成 |
+| `P5` | 确定性 preparation、Knowledge/Evidence index、SourceLedger batch、trusted blob、pure-read 工具并行 | 离线实现完成 |
+| `D0–D4` | Headless、持久队列、项目隔离、Web API、生产安全端口、可选对象存储 | 本地参考适配完成；外部生产集成未完成 |
 
-当前正确的下一步是 `M0 + P0a`，而不是直接把五个完整
-`_module_pipeline()` 放进 `asyncio.gather()`。只有 P0/P1 的 terminal identity、
-Bus QoS、Provider admission、identity lease、lane journal 和恢复不变量通过后，
-才进入 P3。
+当前正确的下一步是以新 V2 commit 固定真实测试身份，执行 `M0` Provider-backed
+完整报告与 paired A/B；不能再用旧 `aa63771` 或未提交工作树作为真实测试身份。
 
 ## 6. 验证证据与未验证边界
 
-在最新 main 同步提交 `a0df065` 上，使用显式 cost-worktree `PYTHONPATH`
+在 V2 提交前工作树上，使用显式 cost-worktree `PYTHONPATH`
 复跑非集成回归，结果为：
 
 ```text
-1374 passed, 6 deselected in 29.97s
+1526 passed, 6 deselected in 42.98s
 compileall passed
 git diff --check passed
 ```

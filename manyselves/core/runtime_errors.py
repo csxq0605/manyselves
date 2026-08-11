@@ -99,8 +99,8 @@ def classify_runtime_error(exc: BaseException, retry_number: int = 1) -> Runtime
         return RuntimeErrorPolicy(
             "conflict",
             "服务端状态冲突（409）",
-            True,
-            1.0 if retry_number == 1 else 3.0,
+            False,
+            0.0,
         )
 
     if code is not None and 500 <= code <= 599:

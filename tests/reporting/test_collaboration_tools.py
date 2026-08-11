@@ -18,6 +18,7 @@ from manyselves.core.reporting.input_contracts import (
     ChiefRevisionInput,
     ModuleContentView,
     ModuleReviewInput,
+    SubmoduleAuthoringInput,
     ValidationReport,
     module_content_view,
 )
@@ -740,8 +741,12 @@ async def test_result_part_rejects_compaction_marker_without_overwriting_prose(
     assert rejected["accepted"] is False
     assert rejected["persisted"] is False
     assert rejected["rewrite_part_ids"] == ["2.1.1"]
-    assert "internal persisted_result_part marker" in (
+    assert "retired internal history token" in (
         rejected["validation_errors"][0]["problem"]
+    )
+    assert "persisted_result_part" not in json.dumps(
+        rejected,
+        ensure_ascii=False,
     )
 
     saved_content = (
@@ -999,6 +1004,74 @@ async def test_runtime_claim_boundary_uses_project_evidence_metadata(
     assert claims["2.1.2"]["confidence"] == 0.0
     assert claims["2.1.2"]["unresolved"] is True
     assert claims["2.1.2"]["footnote_required"] is False
+
+
+@pytest.mark.asyncio
+async def test_submodule_commit_materializes_one_bound_leaf_and_runtime_claim(
+    tmp_path: Path,
+) -> None:
+    task_id = "submodule-author-2.1.1"
+    contract_ref = "Work/runs/run-1/context/submodule-authoring-2.1.1-r0.json"
+    contract = SubmoduleAuthoringInput(
+        run_id="run-1",
+        module_id="2.1",
+        submodule_id="2.1.1",
+        coverage_ref="Work/runs/run-1/coverage.json",
+        evidence_ref="Work/runs/run-1/evidence.jsonl",
+        manifest_ref="Work/runs/run-1/manifest.json",
+        knowledge_ref="Work/runs/run-1/knowledge/module-2.1.md",
+        collaboration_bundle_ref=(
+            "Work/runs/run-1/collaboration/bundles/submodules/2.1.1.json"
+        ),
+        discovery_ref=(
+            "Work/runs/run-1/collaboration/wave-1/submodules/2.1.1.json"
+        ),
+    )
+    ReportingStore(tmp_path).write_json(
+        contract_ref, contract.model_dump(mode="json")
+    )
+    SourceLedger(tmp_path, "run-1").register_project(
+        "E-0001", "测试证据", "Inputs/test.txt", "测试事实"
+    )
+    writer = WriteResultPartTool(
+        "run-1",
+        task_id,
+        0,
+        ReportingStore(tmp_path),
+        ["2.1.1"],
+        evidence_binding_required=True,
+    )
+    await writer(
+        part_id="2.1.1",
+        content="供配电系统现状已经形成可追溯的独立判断。",
+        evidence_ids=["E-0001"],
+    )
+    tool = _tool(
+        tmp_path,
+        task_id=task_id,
+        allowed_outputs=["submodule_draft_submission"],
+        input_contract_kind="submodule_authoring_input",
+        input_contract_ref=contract_ref,
+    )
+
+    outcome = await tool(
+        payload={
+            "kind": "submodule_draft_submission",
+            "module_id": "2.1",
+            "submodule_id": "2.1.1",
+            "unresolved_questions": [],
+            "revision": 0,
+        }
+    )
+
+    assert outcome["status"] == "completed", outcome
+    result = json.loads(
+        (tmp_path / outcome["result_path"]).read_text(encoding="utf-8")
+    )["payload"]
+    assert result["submodule_id"] == "2.1.1"
+    assert result["source_ids"] == ["E-0001"]
+    assert result["claim"]["submodule_id"] == "2.1.1"
+    assert f"[[CLAIM:{result['claim']['id']}]]" in result["narrative"]
 
 
 @pytest.mark.asyncio

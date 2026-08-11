@@ -1,6 +1,7 @@
 import re
 from enum import StrEnum
 from typing import Annotated, Literal
+from uuid import uuid4
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -16,6 +17,9 @@ from .models import (
 from .module_collaboration import (
     ModuleDiscoverySubmission,
     ModuleInterfaceResponseSubmission,
+    SubmoduleDiscoveryBatchSubmission,
+    SubmoduleDiscoverySubmission,
+    SubmoduleInterfaceResponseSubmission,
 )
 from .taxonomy import REPORT_TAXONOMY, compose_module_markdown, resolve_submodule
 
@@ -72,6 +76,14 @@ def extra_numbered_submodule_headings(
 
 class TaskEnvelope(StrictModel):
     task_id: str = Field(min_length=1)
+    task_attempt_id: str = Field(
+        default_factory=lambda: f"attempt-{uuid4().hex}",
+        min_length=1,
+        description=(
+            "Identity of one workflow dispatch/requeue. Provider retries, tool follow-ups, "
+            "and submission corrections retain this value."
+        ),
+    )
     run_id: str = Field(min_length=1)
     agent_id: str = Field(min_length=1)
     objective: str = Field(min_length=1)
@@ -100,6 +112,7 @@ class TaskEnvelope(StrictModel):
         Literal[
             "template_distillation_input",
             "module_authoring_input",
+            "submodule_authoring_input",
             "module_review_input",
             "cross_review_input",
             "final_review_input",
@@ -332,6 +345,35 @@ class ModuleSubmission(StrictModel):
         """Deterministically render the typed submodule narratives for consumers."""
 
         return compose_module_markdown(self.module_id, self.submodule_narratives)
+
+
+class SubmoduleDraftSubmission(StrictModel):
+    """Runtime-materialized Wave 3 result for one fixed leaf submodule."""
+
+    kind: Literal["submodule_draft_submission"] = "submodule_draft_submission"
+    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
+    submodule_id: str
+    narrative: str = Field(min_length=1)
+    claim: ClaimRecord
+    source_ids: list[str]
+    unresolved_questions: list[str] = Field(default_factory=list)
+    revision: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def exact_leaf_identity(self) -> "SubmoduleDraftSubmission":
+        definition = resolve_submodule(self.submodule_id)
+        if definition.module_id != self.module_id:
+            raise ValueError("submodule draft belongs to another module")
+        if (
+            self.claim.module_id != self.module_id
+            or self.claim.submodule_id != self.submodule_id
+        ):
+            raise ValueError("submodule draft Claim identity mismatch")
+        if set(self.source_ids) != set(self.claim.source_ids):
+            raise ValueError("submodule draft source_ids must match its runtime Claim")
+        if extra_numbered_submodule_headings(self.submodule_id, self.narrative):
+            raise ValueError("submodule draft contains an out-of-scope numbered heading")
+        return self
 
 
 class ModuleRevisionSubmission(StrictModel):
@@ -1347,6 +1389,22 @@ class ModuleSubmissionInput(StrictModel):
     revision_responses: list[RevisionResponse] = Field(default_factory=list)
 
 
+class SubmoduleDraftSubmissionInput(StrictModel):
+    """Small leaf commit; runtime owns prose, evidence bindings, and Claim identity."""
+
+    kind: Literal["submodule_draft_submission"] = "submodule_draft_submission"
+    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
+    submodule_id: str
+    unresolved_questions: list[str] = Field(default_factory=list)
+    revision: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def fixed_leaf_identity(self) -> "SubmoduleDraftSubmissionInput":
+        if resolve_submodule(self.submodule_id).module_id != self.module_id:
+            raise ValueError("submodule draft commit belongs to another module")
+        return self
+
+
 class ModuleRevisionSubmissionInput(StrictModel):
     """Small revision commit; changed prose and evidence live in result parts."""
 
@@ -1439,6 +1497,7 @@ class SkillEvolutionSubmission(StrictModel):
 
 Submission = Annotated[
     ModuleSubmission
+    | SubmoduleDraftSubmission
     | ModuleRevisionSubmission
     | TemplateSkillSubmission
     | ModuleReviewFindingSubmission
@@ -1452,6 +1511,9 @@ Submission = Annotated[
     | EditedReportSubmission
     | ModuleDiscoverySubmission
     | ModuleInterfaceResponseSubmission
+    | SubmoduleDiscoveryBatchSubmission
+    | SubmoduleDiscoverySubmission
+    | SubmoduleInterfaceResponseSubmission
     | SkillEvolutionSubmission,
     Field(discriminator="kind"),
 ]
@@ -1459,6 +1521,7 @@ Submission = Annotated[
 
 SubmissionInput = Annotated[
     ModuleSubmissionInput
+    | SubmoduleDraftSubmissionInput
     | ModuleRevisionSubmissionInput
     | ChiefRevisionSubmissionInput
     | TemplateSkillSubmissionInput
@@ -1472,6 +1535,9 @@ SubmissionInput = Annotated[
     | EditedReportSubmissionInput
     | ModuleDiscoverySubmission
     | ModuleInterfaceResponseSubmission
+    | SubmoduleDiscoveryBatchSubmission
+    | SubmoduleDiscoverySubmission
+    | SubmoduleInterfaceResponseSubmission
     | SkillEvolutionSubmission,
     Field(discriminator="kind"),
 ]
@@ -1479,6 +1545,7 @@ SubmissionInput = Annotated[
 
 SUBMISSION_INPUT_TYPES: dict[str, type[BaseModel]] = {
     "module_submission": ModuleSubmissionInput,
+    "submodule_draft_submission": SubmoduleDraftSubmissionInput,
     "module_revision_submission": ModuleRevisionSubmissionInput,
     "chief_revision_submission": ChiefRevisionSubmissionInput,
     "template_skill_submission": TemplateSkillSubmissionInput,
@@ -1492,6 +1559,9 @@ SUBMISSION_INPUT_TYPES: dict[str, type[BaseModel]] = {
     "edited_report_submission": EditedReportSubmissionInput,
     "module_discovery_submission": ModuleDiscoverySubmission,
     "module_interface_response_submission": ModuleInterfaceResponseSubmission,
+    "submodule_discovery_batch_submission": SubmoduleDiscoveryBatchSubmission,
+    "submodule_discovery_submission": SubmoduleDiscoverySubmission,
+    "submodule_interface_response_submission": SubmoduleInterfaceResponseSubmission,
     "skill_evolution_submission": SkillEvolutionSubmission,
 }
 

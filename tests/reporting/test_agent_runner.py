@@ -1,5 +1,6 @@
 import asyncio
 import gzip
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +22,7 @@ from manyselves.core.providers.base import (
 )
 from manyselves.core.reporting.agent_runner import (
     InspectDocumentTool,
+    ProviderAttemptRecoveryRequired,
     ReportingAgentRunner,
     load_conversation_trace,
 )
@@ -314,12 +316,25 @@ def test_provider_manifest_distinguishes_pre_adapter_and_provider_payload(
     )
     before = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-    assert before["provider_context_manifest_version"] == 2
+    assert before["provider_context_manifest_version"] == 3
+    assert before["task_attempt_id"] == envelope.task_attempt_id
     assert before["request_sha256_scope"] == "agent_pre_adapter"
     assert before["provider_payload_status"] == "pending"
     assert before["provider_payload"] is None
 
     relative = manifest_path.relative_to(tmp_path).as_posix()
+    assert runner._ambiguous_provider_call_refs(
+        envelope,
+        session_id="session-manifest",
+        task_attempt_id=envelope.task_attempt_id,
+    ) == [relative]
+    assert runner._ambiguous_provider_call_refs(
+        envelope.model_copy(
+            update={"task_attempt_id": "attempt-explicit-requeue"}
+        ),
+        session_id="session-manifest",
+        task_attempt_id="attempt-explicit-requeue",
+    ) == []
     runner._finalize_provider_call_manifest(
         {
             "context_manifest_ref": relative,
@@ -334,6 +349,8 @@ def test_provider_manifest_distinguishes_pre_adapter_and_provider_payload(
             "tool_schema_chars": 100,
             "status": "success",
             "usage_source": "provider",
+            "attempt_disposition": "completed",
+            "retry_decision": "completed",
         }
     )
     after = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -351,6 +368,113 @@ def test_provider_manifest_distinguishes_pre_adapter_and_provider_payload(
     assert after["pre_adapter_request"]["request_sha256"] == before[
         "request_sha256"
     ]
+    assert after["attempt_disposition"] == "completed"
+    assert runner._ambiguous_provider_call_refs(
+        envelope,
+        session_id="session-manifest",
+        task_attempt_id=envelope.task_attempt_id,
+    ) == []
+
+
+@pytest.mark.asyncio
+async def test_new_dispatch_refuses_unreconciled_provider_attempt(
+    tmp_path: Path,
+) -> None:
+    provider = DirectSubmissionProvider()
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        provider,
+        AgentDefaults(),
+    )
+    definition = load_packaged_agents()["module-2.1-specialist"]
+    workflow_id = "workflow-ambiguous-recovery"
+    envelope = TaskEnvelope(
+        task_id="module-2.1-ambiguous",
+        run_id="run-ambiguous-recovery",
+        agent_id=definition.id,
+        objective="不得重复已经可能送达的请求",
+        allowed_outputs=["module_submission"],
+    )
+    session_id = "session-" + hashlib.sha256(
+        f"{workflow_id}:{definition.id}".encode("utf-8")
+    ).hexdigest()[:12]
+    manifest_path = runner._write_provider_call_manifest(
+        definition=definition,
+        envelope=envelope,
+        identity_key=definition.id,
+        session_id=session_id,
+        messages=[LLMMessage(role="user", content="task")],
+        tool_definitions=[],
+        phase="initial",
+        attempt=1,
+        call_index=1,
+    )
+
+    with pytest.raises(
+        ProviderAttemptRecoveryRequired,
+        match="reconcile the existing same-task journal",
+    ) as exc_info:
+        await runner.run(
+            definition,
+            envelope,
+            [],
+            workflow_id=workflow_id,
+        )
+
+    assert provider.max_tokens_seen == []
+    assert exc_info.value.partial_output is True
+    assert exc_info.value.manifest_refs == (
+        manifest_path.relative_to(tmp_path).as_posix(),
+    )
+
+
+def test_leaf_tasks_use_distinct_durable_identity_leases_within_one_module() -> None:
+    definition = load_packaged_agents()["module-2.1-specialist"]
+    first = TaskEnvelope(
+        task_id="submodule-discovery-2.1.1",
+        run_id="run-leaf-identities",
+        agent_id=definition.id,
+        objective="发现 2.1.1",
+        allowed_outputs=["submodule_discovery_submission"],
+        target_submodule_ids=["2.1.1"],
+    )
+    second = first.model_copy(
+        update={
+            "task_id": "submodule-discovery-2.1.2",
+            "target_submodule_ids": ["2.1.2"],
+        }
+    )
+    module_task = first.model_copy(
+        update={
+            "task_id": "module-2.1",
+            "allowed_outputs": ["module_submission"],
+            "target_submodule_ids": list(REPORT_TAXONOMY["2.1"].submodules),
+        }
+    )
+    revision_task = first.model_copy(
+        update={
+            "task_id": "submodule-revision-r1-2.1.1",
+            "allowed_outputs": ["module_revision_submission"],
+        }
+    )
+
+    first_key = ReportingAgentRunner._identity_key(
+        definition, first, "submodule-2.1.1"
+    )
+    second_key = ReportingAgentRunner._identity_key(
+        definition, second, "submodule-2.1.2"
+    )
+
+    assert first_key == "submodule-2.1.1"
+    assert second_key == "submodule-2.1.2"
+    assert first_key != second_key
+    assert ReportingAgentRunner._identity_key(
+        definition, revision_task, "submodule-2.1.1"
+    ) == "submodule-2.1.1"
+    assert ReportingAgentRunner._identity_key(
+        definition, module_task, "specialist-2.1"
+    ) == definition.id
 
 
 def test_module_authoring_schema_and_example_use_current_identity(
@@ -647,6 +771,7 @@ def test_template_skill_submission_schema_and_tools_are_exposed_to_distiller(
         "list_result_parts",
         "submit_result",
         "report_blocked",
+        "open_tool_result",
     }
     assert payload["properties"]["kind"]["const"] == "template_skill_submission"
     assert "skill_markdown" in payload["properties"]
@@ -893,6 +1018,25 @@ async def test_inspect_document_exposes_raw_docx_text_and_visual_structure(
 
 
 @pytest.mark.asyncio
+async def test_inspect_document_never_discards_text_beyond_inline_hint(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "long.txt"
+    exact = "A" * 128 + "TAIL-MUST-REMAIN"
+    source.write_text(exact, encoding="utf-8")
+
+    result = await InspectDocumentTool(tmp_path)("long.txt", max_chars=16)
+
+    assert result["truncated"] is False
+    assert result["requested_max_chars"] == 16
+    assert result["text_chars"] >= len(exact)
+    assert "TAIL-MUST-REMAIN" in result["text"]
+    assert result["text_sha256"] == hashlib.sha256(
+        result["text"].encode("utf-8")
+    ).hexdigest()
+
+
+@pytest.mark.asyncio
 async def test_template_inspection_rejects_wrong_path_without_consuming_one_shot(
     tmp_path: Path,
 ) -> None:
@@ -1127,6 +1271,29 @@ class CorrectionToolSliceContinuationProvider(LLMProvider):
         return LLMResponse(
             content="",
             tool_calls=[ToolSliceContinuationProvider.submission_call(f"submit-{self.calls}")],
+        )
+
+
+class RepeatingNoProgressToolProvider(LLMProvider):
+    """Always request the same pure read so the outer harness must stop it."""
+
+    def __init__(self):
+        super().__init__("test", model="repeating-no-progress")
+        self.calls = 0
+        self.max_tokens_seen: list[int] = []
+
+    async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        self.calls += 1
+        self.max_tokens_seen.append(max_tokens)
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                LLMToolCall(
+                    id=f"repeat-{self.calls}",
+                    name="calculate",
+                    arguments={"expression": "1 + 1"},
+                )
+            ],
         )
 
 
@@ -1528,6 +1695,22 @@ async def test_reporting_agent_runner_uses_real_isolated_loop_and_can_finish_wit
         row["request_metric_source"] == "provider_adapter_payload"
         for row in usage_rows
     )
+    assert [row["turn_kind"] for row in usage_rows] == [
+        "task_initial",
+        "tool_followup",
+    ]
+    assert all(len(row["execution_profile_sha256"]) == 64 for row in usage_rows)
+    assert all(row["resolved_provider_route"] == "inherit" for row in usage_rows)
+    assert all(row["resolved_model"] == "scripted" for row in usage_rows)
+    for row in usage_rows:
+        for field in (
+            "queue_wait_ms",
+            "context_build_ms",
+            "serialization_ms",
+            "provider_active_ms",
+            "tool_time_ms",
+        ):
+            assert row[field] >= 0
     for row in usage_rows:
         provider_manifest = json.loads(
             (tmp_path / row["context_manifest_ref"]).read_text(
@@ -1590,6 +1773,17 @@ async def test_max_tokens_continues_same_identity_without_submission_correction(
     assert len(continuation_messages) == 1
     assert "max_tokens" in continuation_messages[0]
     assert "submission_correction" not in continuation_messages[0]
+    continuation_state = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-max-tokens-continuation/continuations/"
+            f"module-2.1/{envelope.task_attempt_id}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert continuation_state["status"] == "typed_result"
+    assert continuation_state["events"][0]["turn_kind"] == (
+        "max_tokens_continuation"
+    )
 
 
 def test_evidence_auditor_uses_long_reasoning_output_limit(tmp_path: Path) -> None:
@@ -1876,6 +2070,81 @@ async def test_reporting_identity_keeps_one_stable_session_across_workflow_turns
 
 
 @pytest.mark.asyncio
+async def test_new_process_style_runner_recovers_persisted_attempt_without_provider_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    first_provider = DirectSubmissionProvider()
+    definition = load_packaged_agents()["module-2.1-specialist"]
+    envelope = TaskEnvelope(
+        task_id="module-2.1-recoverable",
+        run_id="run-attempt-recovery",
+        agent_id=definition.id,
+        objective="完成可恢复的模块任务",
+        allowed_outputs=["module_submission"],
+    )
+    first_runner = ReportingAgentRunner(
+        tmp_path,
+        bus,
+        first_provider,
+        AgentDefaults(max_tool_iterations=5),
+        timeout=5,
+    )
+    def fail_manifest_finalization(_record: dict) -> None:
+        raise OSError("injected provider manifest finalization failure")
+
+    monkeypatch.setattr(
+        first_runner,
+        "_finalize_provider_call_manifest",
+        fail_manifest_finalization,
+    )
+    try:
+        first = await first_runner.run(
+            definition,
+            envelope,
+            [],
+            workflow_id="workflow-attempt-recovery",
+        )
+        await first_runner.close_workflow("workflow-attempt-recovery")
+        provider_manifests = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in (
+                tmp_path
+                / "Work/runs/run-attempt-recovery/context-manifests/provider-calls"
+            ).glob("*.json")
+        ]
+        assert provider_manifests
+        assert all(
+            item["provider_payload_status"] == "pending"
+            for item in provider_manifests
+        )
+
+        recovery_provider = DirectSubmissionProvider()
+        recovered_runner = ReportingAgentRunner(
+            tmp_path,
+            bus,
+            recovery_provider,
+            AgentDefaults(max_tool_iterations=5),
+            timeout=5,
+        )
+        recovered = await recovered_runner.run(
+            definition,
+            envelope.model_copy(),
+            [],
+            workflow_id="workflow-attempt-recovery",
+        )
+
+        assert recovered == first
+        assert recovery_provider.max_tokens_seen == []
+        assert recovered_runner._sessions == {}
+    finally:
+        bus.shutdown()
+        await bus_task
+
+
+@pytest.mark.asyncio
 async def test_module_auditors_use_isolated_per_module_sessions_and_reuse_on_review(
     tmp_path: Path,
 ) -> None:
@@ -2022,6 +2291,9 @@ async def test_reporting_agent_runner_reprompts_untyped_completion_once_then_sto
             published_event.set()
 
     bus.subscribe(AgentResultMessage, capture)
+    requeue_runner: ReportingAgentRunner | None = None
+    requeue_provider: NaturalCompletionProvider | None = None
+    requeued = None
 
     try:
         result = await runner.run(
@@ -2031,16 +2303,37 @@ async def test_reporting_agent_runner_reprompts_untyped_completion_once_then_sto
             workflow_id="wf-natural-completion",
         )
         await asyncio.wait_for(published_event.wait(), timeout=1)
+        await runner.close_workflow("wf-natural-completion")
+        requeue_provider = NaturalCompletionProvider()
+        requeue_runner = ReportingAgentRunner(
+            tmp_path,
+            bus,
+            requeue_provider,
+            AgentDefaults(max_tool_iterations=5),
+            timeout=5,
+        )
+        requeued = await requeue_runner.run(
+            load_packaged_agents()["template-distiller"],
+            envelope.model_copy(),
+            [],
+            workflow_id="wf-natural-completion",
+        )
     finally:
+        if requeue_runner is not None:
+            await requeue_runner.close_workflow("wf-natural-completion")
         await runner.close_workflow("wf-natural-completion")
         bus.shutdown()
         await bus_task
 
     assert provider.calls == 2
+    assert requeue_provider is not None
+    assert requeue_provider.calls == 2
     assert result.status is AgentRunStatus.INCOMPLETE
+    assert requeued is not None
+    assert requeued.status is AgentRunStatus.INCOMPLETE
     assert result.raw_output == "已完成当前分析，但没有提交结构化结果。"
     assert result.reason == "agent ended without a typed submission"
-    assert len(published) == 1
+    assert len(published) == 2
     assert published[0].status == "incomplete"
     assert published[0].content == result.raw_output
     persisted = json.loads(
@@ -2090,10 +2383,88 @@ async def test_tool_iteration_boundary_continues_same_identity_until_typed_submi
     assert result.status is AgentRunStatus.COMPLETED
     assert result.session_id == session_id
     assert provider.calls == 3
+    turn_kinds = [
+        row["turn_kind"]
+        for row in UsageLedger(tmp_path, "run-continuation").rows()
+    ]
+    assert "tool_slice_continuation" in turn_kinds
+    continuation_state = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-continuation/continuations/"
+            f"module-2.1/{envelope.task_attempt_id}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert continuation_state["status"] == "typed_result"
+    assert continuation_state["events"][0]["turn_kind"] == (
+        "tool_slice_continuation"
+    )
     assert (
         tmp_path
         / "Work/runs/run-continuation/drafts/module-2.1/r0/2.1.1.md"
     ).is_file()
+
+
+@pytest.mark.asyncio
+async def test_repeated_no_progress_continuation_stops_at_profile_harness_boundary(
+    tmp_path: Path,
+) -> None:
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    provider = RepeatingNoProgressToolProvider()
+    runner = ReportingAgentRunner(
+        tmp_path, bus, provider, AgentDefaults(max_tool_iterations=1), timeout=5
+    )
+    envelope = TaskEnvelope(
+        task_id="module-2.1",
+        task_attempt_id="attempt-no-progress",
+        run_id="run-no-progress-continuation",
+        agent_id="module-2.1-specialist",
+        objective="验证无进展 continuation 的有限终止",
+        allowed_outputs=["module_submission"],
+    )
+
+    try:
+        definition = load_packaged_agents()["module-2.1-specialist"].model_copy(
+            update={"max_turns": 1}
+        )
+        result = await runner.run(
+            definition,
+            envelope,
+            [],
+            workflow_id="wf-no-progress-continuation",
+        )
+    finally:
+        await runner.close_workflow("wf-no-progress-continuation")
+        bus.shutdown()
+        await bus_task
+
+    assert result.status is AgentRunStatus.INCOMPLETE
+    assert result.reason.startswith("continuation harness stopped")
+    assert provider.calls == 4
+    assert all(value == 32768 for value in provider.max_tokens_seen)
+    state = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-no-progress-continuation/continuations/"
+            f"module-2.1/{envelope.task_attempt_id}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert state["status"] == "stopped"
+    assert state["stop_reason"] == "repeated_no_progress"
+    assert state["stop_turn_kind"] == "tool_slice_continuation"
+    assert state["continuation_counts"]["tool_slice_continuation"] == 1
+    assert state["events"][-1]["decision"] == "stop"
+    turn_kinds = [
+        row["turn_kind"]
+        for row in UsageLedger(tmp_path, envelope.run_id).rows()
+    ]
+    assert turn_kinds == [
+        "task_initial",
+        "tool_followup",
+        "tool_slice_continuation",
+        "tool_followup",
+    ]
 
 
 @pytest.mark.asyncio
@@ -2147,6 +2518,24 @@ async def test_submission_correction_boundary_continues_until_typed_submission(
     assert "submit_result 只发送 schema 声明的字段" in provider.correction
     assert "先在内部压缩措辞" not in provider.correction
     assert result.raw_output != "AGENT_TURN_CONTINUATION_REQUIRED"
+    turn_kinds = [
+        row["turn_kind"]
+        for row in UsageLedger(tmp_path, "run-correction-continuation").rows()
+    ]
+    assert "submission_correction" in turn_kinds
+    assert turn_kinds.count("submission_correction") == 2
+    assert "tool_slice_continuation" not in turn_kinds
+    continuation_state = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-correction-continuation/continuations/"
+            f"module-2.1/{envelope.task_attempt_id}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert continuation_state["status"] == "typed_result"
+    assert continuation_state["events"][0]["turn_kind"] == (
+        "submission_correction"
+    )
     submission_messages = [
         message
         for message in internal_messages

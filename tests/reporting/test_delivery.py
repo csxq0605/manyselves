@@ -105,6 +105,11 @@ def test_delivery_publishes_complete_five_module_package_atomically(tmp_path: Pa
     assert manifest["manifest_version"] == 2
     assert manifest["storage"] == "sha256-cas"
     assert set(receipt.artifact_refs) == set(manifest["artifacts"])
+    assert set(receipt.trusted_handle_refs) == set(manifest["artifacts"])
+    assert manifest["trusted_handle_refs"] == {
+        key: value.as_posix()
+        for key, value in receipt.trusted_handle_refs.items()
+    }
     blobs = [path for path in (workspace / "Work/content/sha256").rglob("*") if path.is_file()]
     assert len(blobs) == len(manifest["artifacts"])
     for key, relative in receipt.artifact_refs.items():

@@ -4,7 +4,85 @@ import hashlib
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
+
+
+class ProviderRequestDisposition(StrEnum):
+    """What the adapter knows about a failed physical provider request.
+
+    Automatic retry is only safe when the adapter can prove that the request
+    was not accepted.  Transport failures default to ``accepted_or_unknown``:
+    the absence of a first token does not prove that the provider did not
+    receive or start processing the request.
+    """
+
+    NOT_SENT = "not_sent"
+    DEFINITELY_REJECTED = "definitely_rejected"
+    ACCEPTED_OR_UNKNOWN = "accepted_or_unknown"
+
+
+class ProviderRequestError(RuntimeError):
+    """Fallback wrapper for exceptions that cannot carry adapter metadata."""
+
+    def __init__(
+        self,
+        original: BaseException,
+        disposition: ProviderRequestDisposition,
+    ) -> None:
+        super().__init__(str(original))
+        self.original = original
+        self.attempt_disposition = disposition.value
+        self.status_code = getattr(original, "status_code", None)
+        self.response = getattr(original, "response", None)
+
+
+def provider_request_disposition(
+    exc: BaseException,
+) -> ProviderRequestDisposition:
+    """Read adapter evidence, conservatively treating missing evidence as ambiguous."""
+
+    value = getattr(exc, "attempt_disposition", None)
+    try:
+        return ProviderRequestDisposition(value)
+    except (TypeError, ValueError):
+        return ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN
+
+
+def infer_provider_request_disposition(
+    exc: BaseException,
+    *,
+    stream_opened: bool = False,
+) -> ProviderRequestDisposition:
+    """Infer only dispositions that an HTTP adapter can establish safely.
+
+    A response that explicitly rejects the request before a stream opens is
+    definitive.  Conflict, timeout, connection, and server failures remain
+    ambiguous because they can occur after the provider accepted work.
+    """
+
+    if stream_opened:
+        return ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN
+    status_code = getattr(exc, "status_code", None)
+    if not isinstance(status_code, int):
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+    if status_code in {400, 401, 403, 404, 405, 413, 415, 422, 425, 429}:
+        return ProviderRequestDisposition.DEFINITELY_REJECTED
+    return ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN
+
+
+def annotate_provider_request_failure(
+    exc: BaseException,
+    disposition: ProviderRequestDisposition,
+) -> BaseException:
+    """Attach adapter disposition without erasing the SDK exception type."""
+
+    try:
+        setattr(exc, "attempt_disposition", disposition.value)
+    except (AttributeError, TypeError):
+        return ProviderRequestError(exc, disposition)
+    return exc
 
 
 def build_provider_request_metrics(

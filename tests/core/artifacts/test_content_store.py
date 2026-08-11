@@ -107,3 +107,42 @@ def test_content_store_rejects_refs_outside_cas(tmp_path: Path) -> None:
         store.resolve_blob(outside.relative_to(workspace))
     with pytest.raises(ValueError, match="project-relative"):
         store.resolve_blob(Path("../outside"))
+
+
+def test_trusted_handle_avoids_rehash_inside_same_ingestion_lineage(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    source = workspace / "Inputs/source.bin"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"verified-once" * 1024)
+    store = ContentAddressedStore(workspace)
+    blob = store.ingest_file(source)
+    handle = store.issue_trusted_handle(blob, lineage_id="run-1:delivery")
+    rehash_before = store.metrics_snapshot()["cas_rehash_bytes"]
+
+    assert store.resolve_trusted_handle(handle) == blob.path
+    view = store.link_trusted_view(
+        handle,
+        workspace / "Outputs/report.bin",
+    )
+
+    assert view.path.read_bytes() == source.read_bytes()
+    metrics = store.metrics_snapshot()
+    assert metrics["cas_rehash_bytes"] == rehash_before
+    assert metrics["cas_trusted_handle_hits"] == 2
+
+
+def test_trusted_handle_rejects_blob_changed_after_ingestion(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    source = workspace / "Inputs/source.bin"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"trusted")
+    store = ContentAddressedStore(workspace)
+    blob = store.ingest_file(source)
+    handle = store.issue_trusted_handle(blob, lineage_id="run-1:delivery")
+    blob.path.chmod(0o644)
+    blob.path.write_bytes(b"changed")
+
+    with pytest.raises(ValueError, match="changed"):
+        store.resolve_trusted_handle(handle)

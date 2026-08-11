@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
+import time
 from collections import defaultdict
+from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Iterable, Literal
+from uuid import uuid4
 
 from pydantic import Field
 
@@ -60,7 +64,19 @@ from .input_contracts import (
     strip_runtime_claim_markers,
 )
 from .models import CHIEF_SECTION_RESULT_PART_IDS
+from .parallel_runtime import (
+    ArtifactRef,
+    CrossOwnerBarrier,
+    CrossOwnerCompletion,
+    LaneExceptionCandidate,
+    WorkflowReducer,
+)
 from .revision_diff import build_revision_diff
+from .scheduling import (
+    AdaptiveTaskScheduler,
+    SchedulingCandidate,
+    TaskTimingHistory,
+)
 from .review_preflight import evaluate_module_review_preflight
 from .source_ledger import SourceLedger
 from .taxonomy import REPORT_TAXONOMY
@@ -71,6 +87,10 @@ if TYPE_CHECKING:
 
 class ReviewLifecycleError(RuntimeError):
     """A deterministic review-protocol failure that requires code or model correction."""
+
+
+class DeferredMainDecision(ReviewLifecycleError):
+    """A private lane reached Main work that must wait for cohort drain."""
 
 
 def _require_validation_binding(
@@ -146,6 +166,7 @@ class CrossReviewProgress(StrictModel):
     phase: str = "initial"
     review_round: int = 0
     revised_owner_ids: list[str] = Field(default_factory=list)
+    cross_owner_barrier_ref: str | None = None
 
 
 class FinalReviewProgress(StrictModel):
@@ -552,8 +573,6 @@ def _module_review_evidence_packet(
                 f"review subject cites unreadable current-run evidence: {evidence_id}"
             )
         content = (runner.service.workspace / content_ref).read_text(encoding="utf-8")
-        if len(content) > 4_000:
-            content = content[:3_960].rstrip() + "\n[bounded excerpt]"
         packet.append(
             ReviewEvidenceExcerpt(
                 evidence_id=evidence_id,
@@ -592,13 +611,8 @@ def _module_review_knowledge_packet(
             current_selected = match.group(1) in submodule_ids
         if current_selected:
             selected.append(line)
-    bounded = "\n".join(selected).strip()
-    if len(bounded) > 14_000:
-        bounded = (
-            bounded[:14_000].rsplit("\n", 1)[0]
-            + "\n\n[审计知识上下文已按成本上限截断]"
-        )
-    return knowledge_ref, bounded
+    complete_selected_context = "\n".join(selected).strip()
+    return knowledge_ref, complete_selected_context
 
 
 def _module_reviewer_session_key(
@@ -677,6 +691,24 @@ def _validate_final_findings(
 
 
 async def _main_exception_decision(
+    runner: "ReportWorkflowRunner",
+    **kwargs,
+) -> WorkflowDecisionSubmission:
+    """Run Main only outside an active private-lane cohort, always serialized."""
+
+    if kwargs.get("state", {}).get("_defer_main_exceptions"):
+        raise DeferredMainDecision(
+            "Main exception decision deferred until the active cohort drains"
+        )
+
+    lock = getattr(runner, "_main_exception_lock", None)
+    if lock is None:
+        return await _main_exception_decision_locked(runner, **kwargs)
+    async with lock:
+        return await _main_exception_decision_locked(runner, **kwargs)
+
+
+async def _main_exception_decision_locked(
     runner: "ReportWorkflowRunner",
     *,
     state: dict,
@@ -786,6 +818,8 @@ async def request_module_revision(
     validation_ref: str | None = None,
     validation_target_submodule_ids: set[str] | None = None,
 ) -> tuple[ModuleSubmission, str]:
+    """Fan one module correction out to its original fixed leaf identities."""
+
     module_findings = module_findings or []
     cross_findings = cross_findings or []
     requested_changes = requested_changes or []
@@ -847,70 +881,296 @@ async def request_module_revision(
     subject_path = runner.service.workspace / revision_input.subject_ref
     if not subject_path.is_file():
         _write_model(runner, revision_input.subject_ref, subject)
-    input_refs = [input_ref]
     specialist_id = f"module-{subject.module_id}-specialist"
-    envelope = TaskEnvelope(
-        task_id=f"module-{subject.module_id}-revision-r{subject.revision + 1}",
-        run_id=state["run_id"],
-        agent_id=specialist_id,
-        objective=(
-            "只修复确定性 preflight 中可复现的机器谓词失败。"
-            if validation_report is not None and not required_ids
-            else "按结构化 finding 和机器谓词对当前模块执行显式、定向的补丁修订。"
-        ),
-        input_refs=input_refs,
-        constraints=[
-            "只提交小型 module_revision_submission commit；不得在其中重复正文",
-            "assigned target_submodule_id 只用 write_result_part 逐项保存完整替换正文和 evidence_ids；先用 list_result_parts 确认状态，ready 项不得重写",
-            "最终提交只使用 schema 声明的简短字段；运行时从保存的小节自动生成补丁",
-            (
-                "本次只有机器 preflight 触发；revision_responses 必须为空，"
-                "不得伪造 reviewer finding 或 verdict"
-                if not required_ids
-                else "revision_responses 必须逐项且仅覆盖 assigned finding ids"
-            ),
-            "disputed 或 needs_input 不得伪造 changed_target_ids",
+    revision = subject.revision + 1
+
+    def finding_ids_for(target_id: str) -> set[str]:
+        return {
+            *(finding.id for finding in module_findings if finding.target_submodule_id == target_id),
             *(
-                [f"上一版显式机器检查未通过；只修复 {validation_ref} 中列出的谓词失败"]
-                if validation_ref
-                else []
+                finding.id
+                for finding in cross_findings
+                if target_id in finding.target_submodule_ids
             ),
-            *runner._user_supplement_constraints(
+            *(
+                change.id
+                for change in requested_changes
+                if target_id in change.target_submodule_ids
+            ),
+        }
+
+    leaf_inputs: dict[str, tuple[ModuleRevisionInput, str]] = {}
+    patch_refs: dict[str, str] = {}
+    patch_contexts: dict[str, str] = {}
+    for target_id in sorted(targets):
+        leaf_input = ModuleRevisionInput(
+            run_id=state["run_id"],
+            module_id=subject.module_id,
+            subject_ref=revision_input.subject_ref,
+            subject=module_content_view(subject, {target_id}),
+            target_submodule_ids=[target_id],
+            module_findings=[
+                finding
+                for finding in module_findings
+                if finding.target_submodule_id == target_id
+            ],
+            cross_findings=[
+                finding
+                for finding in cross_findings
+                if target_id in finding.target_submodule_ids
+            ],
+            requested_changes=[
+                change
+                for change in requested_changes
+                if target_id in change.target_submodule_ids
+            ],
+            validation_report_ref=(
+                validation_ref if target_id in validation_target_submodule_ids else None
+            ),
+            validation_report=(
+                validation_report
+                if target_id in validation_target_submodule_ids
+                else None
+            ),
+        )
+        leaf_ref = _write_model(
+            runner,
+            (
+                f"Work/runs/{state['run_id']}/reviews/module-revisions/"
+                f"{subject.module_id}/r{revision}/input-{target_id}.json"
+            ),
+            leaf_input,
+        )
+        leaf_inputs[target_id] = (leaf_input, leaf_ref)
+        patch_refs[target_id] = (
+            f"Work/runs/{state['run_id']}/reviews/module-revisions/"
+            f"{subject.module_id}/r{revision}/patch-{target_id}.json"
+        )
+        if hasattr(runner, "_submodule_task_context_sha256"):
+            patch_contexts[target_id] = runner._submodule_task_context_sha256(
                 state,
-                stage="module_authoring",
-                target_ids={
-                    subject.module_id,
-                    *targets,
-                    *(claim.id for claim in subject.claims),
-                },
+                task_kind=f"submodule_revision_r{revision}",
+                submodule_id=target_id,
+                input_refs=[leaf_ref, revision_input.subject_ref],
+            )
+
+    async def execute_leaf(target_id: str) -> ModuleRevisionSubmission:
+        leaf_input, leaf_ref = leaf_inputs[target_id]
+        leaf_required_ids = finding_ids_for(target_id)
+        envelope = TaskEnvelope(
+            task_id=f"submodule-revision-r{revision}-{target_id}",
+            run_id=state["run_id"],
+            agent_id=specialist_id,
+            objective=(
+                f"只修复固定叶子 {target_id} 的确定性机器谓词失败。"
+                if leaf_input.validation_report is not None and not leaf_required_ids
+                else f"由原叶子身份对固定叶子 {target_id} 执行显式、定向补丁修订。"
             ),
-        ],
-        allowed_outputs=["module_revision_submission"],
-        revision=subject.revision + 1,
-        prior_result_ref=revision_input.subject_ref,
-        artifact_delivery_modes={
-            input_ref: "inline",
-            revision_input.subject_ref: "hash_retained",
-        },
-        target_submodule_ids=sorted(targets),
-        input_contract_kind="module_revision_input",
-        input_contract_ref=input_ref,
-        inline_context=runner._role_skill_context(state, "module-author"),
+            input_refs=[leaf_ref],
+            constraints=[
+                f"唯一写作和身份范围是固定叶子 {target_id}",
+                "只提交小型 module_revision_submission commit；不得在其中重复正文",
+                "只用 write_result_part 保存本叶子的完整替换正文和 evidence_ids；先用 list_result_parts 确认状态，ready 项不得重写",
+                "同一 finding 可能分配给多个叶子；只实现并申报当前叶子的 changed_target_ids",
+                "最终提交只使用 schema 声明的简短字段；运行时从保存的小节自动生成补丁",
+                (
+                    "本次只有机器 preflight 触发；revision_responses 必须为空，"
+                    "不得伪造 reviewer finding 或 verdict"
+                    if not leaf_required_ids
+                    else "revision_responses 必须逐项且仅覆盖本叶子分配的 finding ids"
+                ),
+                "disputed 或 needs_input 不得伪造 changed_target_ids",
+                *(
+                    [f"上一版显式机器检查未通过；只修复 {validation_ref} 中列出的谓词失败"]
+                    if leaf_input.validation_report is not None
+                    else []
+                ),
+                *runner._user_supplement_constraints(
+                    state,
+                    stage="module_authoring",
+                    target_ids={
+                        subject.module_id,
+                        target_id,
+                        *(
+                            claim.id
+                            for claim in subject.claims
+                            if claim.submodule_id == target_id
+                        ),
+                    },
+                ),
+            ],
+            allowed_outputs=["module_revision_submission"],
+            revision=revision,
+            prior_result_ref=revision_input.subject_ref,
+            artifact_delivery_modes={
+                leaf_ref: "inline",
+                revision_input.subject_ref: "hash_retained",
+            },
+            target_submodule_ids=[target_id],
+            input_contract_kind="module_revision_input",
+            input_contract_ref=leaf_ref,
+            inline_context=runner._role_skill_context(state, "module-author"),
+        )
+        patch = await runner._agent(
+            specialist_id,
+            envelope,
+            envelope.input_refs,
+            workflow_id,
+            session_key=f"submodule-{target_id}",
+        )
+        if not isinstance(patch, ModuleRevisionSubmission):
+            raise ReviewLifecycleError(
+                f"module specialist returned the wrong revision type for {target_id}"
+            )
+        return patch
+
+    patches: dict[str, ModuleRevisionSubmission] = {}
+    pending_targets: list[str] = []
+    can_recover = all(
+        hasattr(runner, name)
+        for name in (
+            "_load_collaboration_submission",
+            "_persist_submodule_task_completion",
+            "_run_scheduled_submodule_stage",
+        )
     )
-    patch = await runner._agent(
-        specialist_id,
-        envelope,
-        envelope.input_refs,
-        workflow_id,
-        session_key=f"specialist-{subject.module_id}",
+    for target_id in sorted(targets):
+        patch = None
+        if can_recover:
+            patch = runner._load_collaboration_submission(
+                run_id=state["run_id"],
+                artifact_ref=patch_refs[target_id],
+                task_id=f"submodule-revision-r{revision}-{target_id}",
+                module_id=subject.module_id,
+                submodule_id=target_id,
+                expected_type=ModuleRevisionSubmission,
+                wave=f"revision-r{revision}",
+                expected_context_sha256=patch_contexts[target_id],
+                require_payload_submodule_identity=False,
+            )
+        if patch is None:
+            pending_targets.append(target_id)
+        else:
+            patches[target_id] = patch
+    if pending_targets and can_recover:
+        task_kind = f"submodule_revision_r{revision}"
+        patches.update(
+            await runner._run_scheduled_submodule_stage(
+                tuple(pending_targets),
+                run_id=state["run_id"],
+                workflow_id=workflow_id,
+                task_kind=task_kind,
+                concurrency=int(
+                    getattr(state.get("request"), "submodule_task_concurrency", 8)
+                ),
+                execute=execute_leaf,
+                persist=lambda target_id, patch: (
+                    runner._persist_submodule_task_completion(
+                        state=state,
+                        task_kind=task_kind,
+                        wave=f"revision-r{revision}",
+                        submodule_id=target_id,
+                        artifact_ref=patch_refs[target_id],
+                        context_sha256=patch_contexts[target_id],
+                        payload=patch,
+                    )
+                ),
+            )
+        )
+    elif pending_targets:
+        for target_id in pending_targets:
+            patches[target_id] = await execute_leaf(target_id)
+
+    narratives = dict(subject.submodule_narratives)
+    claims_by_id = {claim.id: claim for claim in subject.claims}
+    baseline_questions = list(subject.unresolved_questions)
+    removed_questions: set[str] = set()
+    added_questions: list[str] = []
+    responses_by_id: dict[str, list[tuple[str, RevisionResponse]]] = defaultdict(list)
+    for target_id in sorted(targets):
+        patch = patches[target_id]
+        interim = _apply_module_patch(
+            subject,
+            patch,
+            target_submodule_ids={target_id},
+            required_finding_ids=finding_ids_for(target_id),
+        )
+        narratives.update(patch.submodule_narratives)
+        for claim_id in patch.claim_ids_remove:
+            claims_by_id.pop(claim_id, None)
+        for claim in patch.claims_upsert:
+            claims_by_id[claim.id] = claim
+        removed_questions.update(set(baseline_questions) - set(interim.unresolved_questions))
+        for question in interim.unresolved_questions:
+            if question not in baseline_questions and question not in added_questions:
+                added_questions.append(question)
+        for response in patch.revision_responses:
+            responses_by_id[response.finding_id].append((target_id, response))
+
+    merged_responses: list[RevisionResponse] = []
+    for finding_id in sorted(required_ids):
+        leaf_responses = responses_by_id.get(finding_id, [])
+        expected_targets = {
+            target_id for target_id in targets if finding_id in finding_ids_for(target_id)
+        }
+        if {target_id for target_id, _ in leaf_responses} != expected_targets:
+            raise ReviewLifecycleError(
+                f"leaf revisions did not cover every assigned target for {finding_id}"
+            )
+        actions = {response.action for _, response in leaf_responses}
+        if actions == {"implemented"}:
+            action = "implemented"
+            changed_target_ids = sorted(
+                {
+                    target_id
+                    for _, response in leaf_responses
+                    for target_id in response.changed_target_ids
+                }
+            )
+        elif "needs_input" in actions:
+            action = "needs_input"
+            changed_target_ids = []
+        else:
+            action = "disputed"
+            changed_target_ids = []
+        merged_responses.append(
+            RevisionResponse(
+                finding_id=finding_id,
+                action=action,
+                summary="；".join(
+                    f"[{target_id}] {response.summary}"
+                    for target_id, response in leaf_responses
+                ),
+                changed_target_ids=changed_target_ids,
+            )
+        )
+
+    final_questions = [
+        question for question in baseline_questions if question not in removed_questions
+    ]
+    final_questions.extend(
+        question for question in added_questions if question not in final_questions
     )
-    if not isinstance(patch, ModuleRevisionSubmission):
-        raise ReviewLifecycleError("module specialist returned the wrong revision type")
-    revised = _apply_module_patch(
-        subject,
-        patch,
-        target_submodule_ids=targets,
-        required_finding_ids=required_ids,
+    revised = ModuleSubmission(
+        module_id=subject.module_id,
+        submodule_narratives=narratives,
+        claims=list(claims_by_id.values()),
+        source_ids=sorted(
+            {
+                source_id
+                for claim in claims_by_id.values()
+                for source_id in claim.source_ids
+            }
+            | set(subject.source_ids)
+            | {
+                source_id
+                for patch in patches.values()
+                for source_id in patch.source_ids
+            }
+        ),
+        unresolved_questions=final_questions,
+        revision=revision,
+        revision_responses=merged_responses,
     )
     subject_ref = _write_model(
         runner,
@@ -924,6 +1184,33 @@ async def request_module_revision(
             f"{subject.module_id}-r{revised.revision}.json"
         ),
         diff,
+    )
+    runner.service.store.write_json(
+        (
+            f"Work/runs/{state['run_id']}/reviews/module-revisions/"
+            f"{subject.module_id}/r{revision}/reducer-barrier.json"
+        ),
+        {
+            "kind": "module_leaf_revision_reducer_barrier",
+            "version": 1,
+            "run_id": state["run_id"],
+            "module_id": subject.module_id,
+            "base_revision": subject.revision,
+            "revision": revision,
+            "target_submodule_ids": sorted(targets),
+            "patch_refs": patch_refs,
+            "patch_sha256": {
+                target_id: hashlib.sha256(
+                    (runner.service.workspace / patch_ref).read_bytes()
+                ).hexdigest()
+                for target_id, patch_ref in patch_refs.items()
+                if (runner.service.workspace / patch_ref).is_file()
+            },
+            "subject_ref": subject_ref,
+            "subject_sha256": hashlib.sha256(
+                (runner.service.workspace / subject_ref).read_bytes()
+            ).hexdigest(),
+        },
     )
     return revised, subject_ref
 
@@ -1665,6 +1952,322 @@ def _validate_cross_synthesis_portfolio(
         )
 
 
+class _CrossOwnerLaneResult(StrictModel):
+    module: ModuleSubmission
+    responses: list[RevisionResponse]
+    local_review_ref: str
+    machine_validation_ref: str
+    completion_ref: str
+    completion: CrossOwnerCompletion
+
+
+def _cross_owner_artifact_ref(
+    runner: "ReportWorkflowRunner",
+    ref: str,
+) -> ArtifactRef:
+    path = (runner.service.workspace / ref).resolve()
+    if not path.is_relative_to(runner.service.workspace) or not path.is_file():
+        raise ReviewLifecycleError(f"Cross owner artifact is missing: {ref}")
+    content = path.read_bytes()
+    return ArtifactRef(
+        ref=ref,
+        sha256=hashlib.sha256(content).hexdigest(),
+        size=len(content),
+        media_type="application/json",
+    )
+
+
+async def _run_cross_owner_lane(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    workflow_id: str,
+    module_id: str,
+    current: ModuleSubmission,
+    findings: list[CrossReviewFinding],
+    finding_refs: list[str],
+    review_round: int,
+    defer_main_exceptions: bool = True,
+) -> _CrossOwnerLaneResult:
+    """Run one owner-local revision and original-auditor regression in private state."""
+
+    lane_state = deepcopy(state)
+    lane_state["_defer_main_exceptions"] = defer_main_exceptions
+    reviewed_baseline = current
+    baseline_subject_ref = (
+        f"Work/runs/{state['run_id']}/modules/"
+        f"{module_id}-r{reviewed_baseline.revision}.json"
+    )
+    prior_completion_ref = state.get("module_review_completion_refs", {}).get(
+        module_id
+    )
+    if not prior_completion_ref:
+        raise ReviewLifecycleError(
+            f"Cross local regression requires prior module review: {module_id}"
+        )
+    try:
+        prior_completion = ReviewCompletionRecord.model_validate_json(
+            (runner.service.workspace / prior_completion_ref).read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, ValueError) as exc:
+        raise ReviewLifecycleError(
+            f"Cross local regression prior completion is unreadable: {module_id}"
+        ) from exc
+    if (
+        prior_completion.lifecycle != "module"
+        or prior_completion.run_id != state["run_id"]
+        or baseline_subject_ref not in prior_completion.subject_refs
+    ):
+        raise ReviewLifecycleError(
+            f"Cross local regression prior completion does not bind {module_id}"
+        )
+
+    validation_ref: str | None = None
+    machine_attempts = 0
+    machine_failure_fingerprints: dict[tuple, int] = {}
+    persisted_candidate: ModuleSubmission | None = None
+    modules_root = runner.service.workspace / f"Work/runs/{state['run_id']}/modules"
+    candidates: list[ModuleSubmission] = []
+    for path in modules_root.glob(f"{module_id}-r*.json"):
+        try:
+            candidate = ModuleSubmission.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+            if candidate.revision <= current.revision:
+                continue
+            _validate_responses(
+                candidate.revision_responses,
+                {finding.id for finding in findings},
+                {
+                    target_id
+                    for finding in findings
+                    for target_id in finding.target_submodule_ids
+                },
+            )
+            candidates.append(candidate)
+        except (OSError, ValueError):
+            continue
+    if candidates:
+        persisted_candidate = max(candidates, key=lambda item: item.revision)
+
+    while True:
+        machine_attempts += 1
+        if persisted_candidate is not None:
+            revised = persisted_candidate
+            revised_ref = (
+                f"Work/runs/{state['run_id']}/modules/"
+                f"{module_id}-r{revised.revision}.json"
+            )
+            persisted_candidate = None
+        else:
+            revised, revised_ref = await request_module_revision(
+                runner,
+                state=lane_state,
+                workflow_id=workflow_id,
+                subject=current,
+                cross_findings=findings,
+                validation_ref=validation_ref,
+            )
+        exceptional = [
+            response
+            for response in revised.revision_responses
+            if response.action in {"disputed", "needs_input"}
+        ]
+        if exceptional:
+            decision = await _main_exception_decision(
+                runner,
+                state=lane_state,
+                workflow_id=workflow_id,
+                scope="cross",
+                subject_refs=[revised_ref],
+                finding_refs=finding_refs,
+                verdicts=[],
+                responses=exceptional,
+                trigger="author_response",
+            )
+            if decision.decision == "return_to_author":
+                current = revised
+                validation_ref = None
+                continue
+        validation_ref = _run_cross_machine_checks(
+            runner,
+            state=lane_state,
+            subject=revised,
+            subject_ref=revised_ref,
+            findings=findings,
+        )
+        report = ValidationReport.model_validate_json(
+            (runner.service.workspace / validation_ref).read_text(encoding="utf-8")
+        )
+        if report.passed:
+            break
+        fingerprint = tuple(
+            sorted(
+                (
+                    failure.check_id,
+                    failure.finding_id or "",
+                    failure.target_path,
+                    failure.message,
+                )
+                for failure in report.failures
+            )
+        )
+        repeated = machine_failure_fingerprints.get(fingerprint, 0) + 1
+        machine_failure_fingerprints[fingerprint] = repeated
+        if repeated >= 2 or machine_attempts >= 3:
+            raise ReviewLifecycleError(
+                "Cross machine validation failed repeatedly; the workflow stopped "
+                "without rewriting the module or reviewer verdict. "
+                f"module={module_id}; attempts={machine_attempts}; "
+                f"validation_ref={validation_ref}"
+            )
+        current = revised
+
+    lane_state.setdefault("module_submissions", {})[module_id] = revised
+    lane_state.setdefault("specialist_submissions", {})[module_id] = revised
+    local_scope = {
+        target_id for finding in findings for target_id in finding.target_submodule_ids
+    }
+    local_diff_ref = (
+        f"Work/runs/{state['run_id']}/reviews/module/cross-r{review_round}/"
+        f"{module_id}/trigger-diff-r{revised.revision}.json"
+    )
+    raw_local_diff = build_revision_diff(reviewed_baseline, revised)
+    local_diff = ModuleRevisionDiff(
+        module_id=raw_local_diff["module_id"],
+        from_revision=raw_local_diff["from_revision"],
+        to_revision=raw_local_diff["to_revision"],
+        changed_submodule_narratives=raw_local_diff[
+            "changed_submodule_narratives"
+        ],
+        changed_statement_refs=[
+            "statement-" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+            for value in raw_local_diff["changed_claim_ids"]
+        ],
+        evidence_ids_added=raw_local_diff["source_ids_added"],
+        evidence_ids_removed=raw_local_diff["source_ids_removed"],
+    )
+    runner.service.store.write_json(
+        local_diff_ref,
+        local_diff.model_dump(mode="json"),
+    )
+    cross_responses = list(revised.revision_responses)
+    local_reviewed = await run_module_review(
+        runner,
+        module_id,
+        revised,
+        lane_state,
+        workflow_id,
+        initial_scope=local_scope,
+        lifecycle_id=f"cross-r{review_round}",
+        regression_context=ModuleLocalRegressionContext(
+            prior_review_completion_ref=prior_completion_ref,
+            prior_review_completion=prior_completion,
+            baseline_subject_ref=baseline_subject_ref,
+            trigger_cross_findings=findings,
+            trigger_revision_responses=revised.revision_responses,
+            revision_diff_ref=local_diff_ref,
+            revision_diff=local_diff,
+        ),
+    )
+    final_subject_ref = (
+        f"Work/runs/{state['run_id']}/modules/"
+        f"{module_id}-r{local_reviewed.revision}.json"
+    )
+    final_validation_ref = _run_cross_machine_checks(
+        runner,
+        state=lane_state,
+        subject=local_reviewed,
+        subject_ref=final_subject_ref,
+        findings=findings,
+    )
+    final_validation = ValidationReport.model_validate_json(
+        (runner.service.workspace / final_validation_ref).read_text(encoding="utf-8")
+    )
+    _require_validation_binding(
+        runner,
+        final_validation,
+        subject_ref=final_subject_ref,
+        subject_revision=local_reviewed.revision,
+    )
+    if not final_validation.passed:
+        raise ReviewLifecycleError(
+            "Cross machine validation failed after the module-local regression "
+            "review; the workflow stopped before Cross recheck without starting "
+            "another author revision. "
+            f"module={module_id}; validation_ref={final_validation_ref}"
+        )
+    local_review_ref = lane_state["module_review_completion_refs"][module_id]
+    semantic_payload = {
+        "run_id": state["run_id"],
+        "review_round": review_round,
+        "module_id": module_id,
+        "baseline_subject_sha256": _cross_owner_artifact_ref(
+            runner, baseline_subject_ref
+        ).sha256,
+        "findings": [finding.model_dump(mode="json") for finding in findings],
+        "schema_version": "1",
+    }
+    semantic_key = hashlib.sha256(
+        json.dumps(
+            semantic_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    completion = CrossOwnerCompletion(
+        lane_id=f"cross-r{review_round}-module-{module_id}",
+        run_id=state["run_id"],
+        review_round=review_round,
+        module_id=module_id,
+        semantic_key=semantic_key,
+        subject=_cross_owner_artifact_ref(runner, final_subject_ref),
+        local_review_completion=_cross_owner_artifact_ref(
+            runner, local_review_ref
+        ),
+        machine_validation=_cross_owner_artifact_ref(
+            runner, final_validation_ref
+        ),
+        author_task_attempt_id=f"cross-owner-attempt-{uuid4().hex}",
+        reviewer_session_id=ReviewCompletionRecord.model_validate_json(
+            (runner.service.workspace / local_review_ref).read_text(
+                encoding="utf-8"
+            )
+        ).reviewer_session_key,
+        lease_epoch=1,
+    )
+    completion_ref = (
+        f"Work/runs/{state['run_id']}/lanes/cross-r{review_round}/"
+        f"module-{module_id}/completion-r{local_reviewed.revision}.json"
+    )
+    completion_path = runner.service.workspace / completion_ref
+    if completion_path.is_file():
+        existing = CrossOwnerCompletion.model_validate_json(
+            completion_path.read_text(encoding="utf-8")
+        )
+        if existing.completion_sha256() != completion.completion_sha256():
+            raise ReviewLifecycleError(
+                f"Cross owner completion changed for the same input: {module_id}"
+            )
+        completion = existing
+    else:
+        runner.service.store.write_json(
+            completion_ref,
+            completion.model_dump(mode="json"),
+        )
+    return _CrossOwnerLaneResult(
+        module=local_reviewed,
+        responses=cross_responses,
+        local_review_ref=local_review_ref,
+        machine_validation_ref=final_validation_ref,
+        completion_ref=completion_ref,
+        completion=completion,
+    )
+
+
 async def run_cross_review(
     runner: "ReportWorkflowRunner",
     state: dict,
@@ -1683,6 +2286,7 @@ async def run_cross_review(
     phase = "initial"
     review_round = 0
     revised_owner_ids: set[str] = set()
+    cross_owner_barrier_ref: str | None = None
     progress_ref = f"Work/runs/{state['run_id']}/reviews/cross-progress.json"
 
     def save_progress(next_action: str) -> None:
@@ -1704,6 +2308,7 @@ async def run_cross_review(
                 phase=phase,
                 review_round=review_round,
                 revised_owner_ids=sorted(revised_owner_ids),
+                cross_owner_barrier_ref=cross_owner_barrier_ref,
             ),
         )
 
@@ -1726,9 +2331,13 @@ async def run_cross_review(
         phase = progress.phase
         review_round = progress.review_round
         revised_owner_ids = set(progress.revised_owner_ids)
+        cross_owner_barrier_ref = progress.cross_owner_barrier_ref
+        if cross_owner_barrier_ref is not None:
+            state["cross_owner_barrier_ref"] = cross_owner_barrier_ref
 
     async def complete_revision_wave() -> None:
         nonlocal responses_by_module, local_review_refs, machine_refs
+        nonlocal cross_owner_barrier_ref
         grouped: dict[str, list[CrossReviewFinding]] = defaultdict(list)
         for finding in pending.values():
             grouped[finding.owner_module_id].append(finding)
@@ -1736,224 +2345,256 @@ async def run_cross_review(
             responses_by_module = {}
             local_review_refs = {}
             machine_refs = []
-        for module_id in sorted(grouped):
-            if module_id in revised_owner_ids:
-                continue
-            current = modules[module_id]
-            reviewed_baseline = current
-            baseline_subject_ref = (
-                f"Work/runs/{state['run_id']}/modules/"
-                f"{module_id}-r{reviewed_baseline.revision}.json"
-            )
-            prior_completion_ref = state.get(
-                "module_review_completion_refs",
-                {},
-            ).get(module_id)
-            if not prior_completion_ref:
-                raise ReviewLifecycleError(
-                    f"Cross local regression requires prior module review: {module_id}"
-                )
-            try:
-                prior_completion = ReviewCompletionRecord.model_validate_json(
-                    (
-                        runner.service.workspace / prior_completion_ref
-                    ).read_text(encoding="utf-8")
-                )
-            except (OSError, ValueError) as exc:
-                raise ReviewLifecycleError(
-                    f"Cross local regression prior completion is unreadable: {module_id}"
-                ) from exc
-            if (
-                prior_completion.lifecycle != "module"
-                or prior_completion.run_id != state["run_id"]
-                or baseline_subject_ref not in prior_completion.subject_refs
-            ):
-                raise ReviewLifecycleError(
-                    f"Cross local regression prior completion does not bind {module_id}"
-                )
-            validation_ref: str | None = None
-            machine_attempts = 0
-            machine_failure_fingerprints: dict[tuple, int] = {}
-            persisted_candidate: ModuleSubmission | None = None
-            modules_root = runner.service.workspace / f"Work/runs/{state['run_id']}/modules"
-            candidates: list[ModuleSubmission] = []
-            for path in modules_root.glob(f"{module_id}-r*.json"):
+        targets = [
+            module_id
+            for module_id in sorted(grouped, key=float)
+            if module_id not in revised_owner_ids
+        ]
+        if not targets:
+            if grouped:
+                if cross_owner_barrier_ref is None:
+                    raise ReviewLifecycleError(
+                        "Cross owner resume lacks its exact owner barrier"
+                    )
                 try:
-                    candidate = ModuleSubmission.model_validate_json(
-                        path.read_text(encoding="utf-8")
+                    barrier = CrossOwnerBarrier.model_validate_json(
+                        (
+                            runner.service.workspace / cross_owner_barrier_ref
+                        ).read_text(encoding="utf-8")
                     )
-                    if candidate.revision <= current.revision:
-                        continue
-                    _validate_responses(
-                        candidate.revision_responses,
-                        {finding.id for finding in grouped[module_id]},
-                        {
-                            target_id
-                            for finding in grouped[module_id]
-                            for target_id in finding.target_submodule_ids
-                        },
+                except (OSError, ValueError) as exc:
+                    raise ReviewLifecycleError(
+                        "Cross owner resume barrier is unreadable or invalid"
+                    ) from exc
+                if (
+                    barrier.run_id != state["run_id"]
+                    or barrier.review_round != review_round
+                    or set(barrier.target_modules) != set(grouped)
+                ):
+                    raise ReviewLifecycleError(
+                        "Cross owner resume barrier identity mismatch"
                     )
-                    candidates.append(candidate)
-                except (OSError, ValueError):
-                    continue
-            if candidates:
-                persisted_candidate = max(candidates, key=lambda item: item.revision)
-            while True:
-                machine_attempts += 1
-                if persisted_candidate is not None:
-                    revised = persisted_candidate
-                    revised_ref = (
-                        f"Work/runs/{state['run_id']}/modules/{module_id}-r{revised.revision}.json"
-                    )
-                    persisted_candidate = None
-                else:
-                    revised, revised_ref = await request_module_revision(
-                        runner,
-                        state=state,
-                        workflow_id=workflow_id,
-                        subject=current,
-                        cross_findings=grouped[module_id],
-                        validation_ref=validation_ref,
-                    )
-                exceptional = [
-                    response
-                    for response in revised.revision_responses
-                    if response.action in {"disputed", "needs_input"}
-                ]
-                if exceptional:
-                    decision = await _main_exception_decision(
-                        runner,
-                        state=state,
-                        workflow_id=workflow_id,
-                        scope="cross",
-                        subject_refs=[revised_ref],
-                        finding_refs=finding_refs,
-                        verdicts=[],
-                        responses=exceptional,
-                        trigger="author_response",
-                    )
-                    if decision.decision == "return_to_author":
-                        current = revised
-                        validation_ref = None
-                        continue
-                validation_ref = _run_cross_machine_checks(
+            return
+
+        parallel_owner_lanes = (
+            getattr(
+                state.get("request"),
+                "execution_mode",
+                "current_serial_review",
+            )
+            == "bounded_module_lanes"
+        )
+        results: dict[str, _CrossOwnerLaneResult] = {}
+        if not parallel_owner_lanes:
+            for module_id in targets:
+                results[module_id] = await _run_cross_owner_lane(
                     runner,
                     state=state,
-                    subject=revised,
-                    subject_ref=revised_ref,
+                    workflow_id=workflow_id,
+                    module_id=module_id,
+                    current=modules[module_id],
                     findings=grouped[module_id],
+                    finding_refs=finding_refs,
+                    review_round=review_round,
+                    defer_main_exceptions=False,
                 )
-                report = ValidationReport.model_validate_json(
-                    (runner.service.workspace / validation_ref).read_text(encoding="utf-8")
+
+        parallel_targets = targets if parallel_owner_lanes else []
+        timing_history = TaskTimingHistory(runner.service.workspace)
+        candidates = []
+        for index, module_id in enumerate(parallel_targets):
+            provider_router = getattr(runner.service, "provider_router", None)
+            if provider_router is None:
+                priority, critical_path_weight, configured_duration_ms = (
+                    50,
+                    1.0,
+                    60_000,
                 )
-                if report.passed:
-                    break
-                fingerprint = tuple(
-                    sorted(
-                        (
-                            failure.check_id,
-                            failure.finding_id or "",
-                            failure.target_path,
-                            failure.message,
-                        )
-                        for failure in report.failures
+            else:
+                priority, critical_path_weight, configured_duration_ms = (
+                    provider_router.scheduling_hints(
+                        task_id=f"cross-owner-lane:{module_id}",
+                        task_kind="cross_owner_lane",
                     )
                 )
-                repeated = machine_failure_fingerprints.get(fingerprint, 0) + 1
-                machine_failure_fingerprints[fingerprint] = repeated
-                if repeated >= 2 or machine_attempts >= 3:
-                    raise ReviewLifecycleError(
-                        "Cross machine validation failed repeatedly; the workflow "
-                        "stopped without rewriting the module or reviewer verdict. "
-                        f"module={module_id}; attempts={machine_attempts}; "
-                        f"validation_ref={validation_ref}"
-                    )
-                current = revised
-            modules[module_id] = revised
-            state["module_submissions"][module_id] = revised
-            state.setdefault("specialist_submissions", {})[module_id] = revised
-            responses_by_module[module_id] = revised.revision_responses
-            local_scope = {
-                target_id
-                for finding in grouped[module_id]
-                for target_id in finding.target_submodule_ids
-            }
-            local_diff_ref = (
-                f"Work/runs/{state['run_id']}/reviews/module/cross-r{review_round}/"
-                f"{module_id}/trigger-diff-r{revised.revision}.json"
+            candidates.append(
+                SchedulingCandidate(
+                    task_id=module_id,
+                    owner_key=module_id,
+                    task_kind="cross_owner_lane",
+                    ordinal=index,
+                    priority=priority,
+                    critical_path_weight=critical_path_weight,
+                    expected_duration_ms=timing_history.estimate_ms(
+                        "cross_owner_lane",
+                        module_id,
+                        default=configured_duration_ms,
+                    ),
+                )
             )
-            raw_local_diff = build_revision_diff(reviewed_baseline, revised)
-            local_diff = ModuleRevisionDiff(
-                module_id=raw_local_diff["module_id"],
-                from_revision=raw_local_diff["from_revision"],
-                to_revision=raw_local_diff["to_revision"],
-                changed_submodule_narratives=raw_local_diff[
-                    "changed_submodule_narratives"
-                ],
-                changed_statement_refs=[
-                    "statement-"
-                    + hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
-                    for value in raw_local_diff["changed_claim_ids"]
-                ],
-                evidence_ids_added=raw_local_diff["source_ids_added"],
-                evidence_ids_removed=raw_local_diff["source_ids_removed"],
-            )
+        scheduler = AdaptiveTaskScheduler(candidates)
+        failures: list[BaseException] = []
+        deferred_main_modules: set[str] = set()
+        freeze_admission = asyncio.Event()
+
+        def persist_exception_candidate(
+            module_id: str,
+            disposition: Literal["escalate", "failed"],
+            reason: str,
+        ) -> None:
+            attempt_id = f"cross-owner-attempt-{uuid4().hex}"
             runner.service.store.write_json(
-                local_diff_ref,
-                local_diff.model_dump(mode="json"),
-            )
-            local_reviewed = await run_module_review(
-                runner,
-                module_id,
-                revised,
-                state,
-                workflow_id,
-                initial_scope=local_scope,
-                lifecycle_id=f"cross-r{review_round}",
-                regression_context=ModuleLocalRegressionContext(
-                    prior_review_completion_ref=prior_completion_ref,
-                    prior_review_completion=prior_completion,
-                    baseline_subject_ref=baseline_subject_ref,
-                    trigger_cross_findings=grouped[module_id],
-                    trigger_revision_responses=revised.revision_responses,
-                    revision_diff_ref=local_diff_ref,
-                    revision_diff=local_diff,
+                (
+                    f"Work/runs/{state['run_id']}/lanes/cross-r{review_round}/"
+                    f"module-{module_id}/exceptions/{attempt_id}.json"
                 ),
+                LaneExceptionCandidate(
+                    lane_id=f"cross-r{review_round}-module-{module_id}",
+                    run_id=state["run_id"],
+                    module_id=module_id,
+                    disposition=disposition,
+                    reason=reason,
+                    task_attempt_id=attempt_id,
+                ).model_dump(mode="json"),
             )
-            modules[module_id] = local_reviewed
-            state["module_submissions"][module_id] = local_reviewed
-            state.setdefault("specialist_submissions", {})[module_id] = local_reviewed
-            final_subject_ref = (
-                f"Work/runs/{state['run_id']}/modules/"
-                f"{module_id}-r{local_reviewed.revision}.json"
+
+        async def worker() -> None:
+            while True:
+                if freeze_admission.is_set():
+                    return
+                candidate = await scheduler.next()
+                if candidate is None:
+                    return
+                module_id = candidate.task_id
+                started = time.perf_counter()
+                if freeze_admission.is_set():
+                    return
+                try:
+                    results[module_id] = await _run_cross_owner_lane(
+                        runner,
+                        state=state,
+                        workflow_id=workflow_id,
+                        module_id=module_id,
+                        current=modules[module_id],
+                        findings=grouped[module_id],
+                        finding_refs=finding_refs,
+                        review_round=review_round,
+                    )
+                    timing_history.record(
+                        run_id=state["run_id"],
+                        task_id=module_id,
+                        task_kind="cross_owner_lane",
+                        owner_key=module_id,
+                        duration_ms=int(
+                            (time.perf_counter() - started) * 1000
+                        ),
+                        status="completed",
+                    )
+                except DeferredMainDecision as exc:
+                    persist_exception_candidate(
+                        module_id,
+                        "escalate",
+                        str(exc),
+                    )
+                    deferred_main_modules.add(module_id)
+                    timing_history.record(
+                        run_id=state["run_id"],
+                        task_id=module_id,
+                        task_kind="cross_owner_lane",
+                        owner_key=module_id,
+                        duration_ms=int(
+                            (time.perf_counter() - started) * 1000
+                        ),
+                        status="deferred",
+                    )
+                except BaseException as exc:
+                    persist_exception_candidate(
+                        module_id,
+                        "failed",
+                        str(exc),
+                    )
+                    failures.append(exc)
+                    freeze_admission.set()
+                    timing_history.record(
+                        run_id=state["run_id"],
+                        task_id=module_id,
+                        task_kind="cross_owner_lane",
+                        owner_key=module_id,
+                        duration_ms=int(
+                            (time.perf_counter() - started) * 1000
+                        ),
+                        status="failed",
+                    )
+
+        configured = int(
+            getattr(state.get("request"), "module_lane_concurrency", 5)
+        )
+        workers = [
+            asyncio.create_task(
+                worker(),
+                name=f"cross-owner-worker-{index + 1}",
             )
-            validation_ref = _run_cross_machine_checks(
+            for index in range(min(max(1, configured), len(parallel_targets)))
+        ]
+        await asyncio.gather(*workers)
+        if parallel_owner_lanes:
+            runner.service.store.write_json(
+                (
+                    f"Work/runs/{state['run_id']}/scheduling/"
+                    f"cross-owner-r{review_round}.json"
+                ),
+                {
+                    "policy": "longest_critical_path_first_v1",
+                    "decisions": [
+                        decision.model_dump(mode="json")
+                        for decision in scheduler.decisions
+                    ],
+                },
+            )
+        if failures:
+            raise failures[0]
+        for module_id in sorted(deferred_main_modules, key=float):
+            results[module_id] = await _run_cross_owner_lane(
                 runner,
                 state=state,
-                subject=local_reviewed,
-                subject_ref=final_subject_ref,
+                workflow_id=workflow_id,
+                module_id=module_id,
+                current=modules[module_id],
                 findings=grouped[module_id],
+                finding_refs=finding_refs,
+                review_round=review_round,
+                defer_main_exceptions=False,
             )
-            final_validation = ValidationReport.model_validate_json(
-                (runner.service.workspace / validation_ref).read_text(encoding="utf-8")
+
+        barrier_inputs: list[tuple[str, CrossOwnerCompletion]] = []
+        for module_id in targets:
+            result = results[module_id]
+            modules[module_id] = result.module
+            state["module_submissions"][module_id] = result.module
+            state.setdefault("specialist_submissions", {})[module_id] = result.module
+            state.setdefault("module_review_completion_refs", {})[module_id] = (
+                result.local_review_ref
             )
-            _require_validation_binding(
-                runner,
-                final_validation,
-                subject_ref=final_subject_ref,
-                subject_revision=local_reviewed.revision,
-            )
-            if not final_validation.passed:
-                raise ReviewLifecycleError(
-                    "Cross machine validation failed after the module-local regression "
-                    "review; the workflow stopped before Cross recheck without starting "
-                    "another author revision. "
-                    f"module={module_id}; validation_ref={validation_ref}"
-                )
-            machine_refs.append(validation_ref)
-            local_review_refs[module_id] = state["module_review_completion_refs"][module_id]
+            responses_by_module[module_id] = result.responses
+            machine_refs.append(result.machine_validation_ref)
+            local_review_refs[module_id] = result.local_review_ref
             revised_owner_ids.add(module_id)
-            save_progress("revise")
+            barrier_inputs.append((result.completion_ref, result.completion))
+
+        WorkflowReducer(
+            runner.service.workspace,
+            state["run_id"],
+        ).write_cross_owner_barrier(
+            review_round,
+            targets,
+            barrier_inputs,
+        )
+        cross_owner_barrier_ref = (
+            f"Work/runs/{state['run_id']}/lanes/cross-r{review_round}/"
+            "owner-barrier.json"
+        )
+        state["cross_owner_barrier_ref"] = cross_owner_barrier_ref
+        save_progress("revise")
 
     if progress is not None and progress.next_action == "revise":
         await complete_revision_wave()

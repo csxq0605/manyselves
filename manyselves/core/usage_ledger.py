@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import threading
 from datetime import datetime
@@ -47,17 +48,32 @@ class UsageLedger:
         row.setdefault("uncached_input_tokens", _uncached_input_tokens(row))
         self.path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(row, ensure_ascii=False, default=str) + "\n"
+        lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         with self._lock_for(self.path):
-            with self.path.open("a", encoding="utf-8") as handle:
-                handle.write(line)
-                handle.flush()
+            with lock_path.open("a+", encoding="utf-8") as process_lock:
+                fcntl.flock(process_lock.fileno(), fcntl.LOCK_EX)
+                try:
+                    with self.path.open("a", encoding="utf-8") as handle:
+                        handle.write(line)
+                        handle.flush()
+                finally:
+                    fcntl.flock(process_lock.fileno(), fcntl.LOCK_UN)
         return row
 
     def rows(self) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
+        lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         with self._lock_for(self.path):
-            return [json.loads(line) for line in self.path.read_text(encoding="utf-8").splitlines()]
+            with lock_path.open("a+", encoding="utf-8") as process_lock:
+                fcntl.flock(process_lock.fileno(), fcntl.LOCK_SH)
+                try:
+                    return [
+                        json.loads(line)
+                        for line in self.path.read_text(encoding="utf-8").splitlines()
+                    ]
+                finally:
+                    fcntl.flock(process_lock.fileno(), fcntl.LOCK_UN)
 
     def summarize(self, *, group_by: str = "stage") -> dict[str, Any]:
         """Aggregate provider cost signals without inventing provider prices."""
@@ -78,6 +94,12 @@ class UsageLedger:
             "message_chars",
             "tool_schema_chars",
             "duration_ms",
+            "queue_wait_ms",
+            "context_build_ms",
+            "serialization_ms",
+            "ttft_ms",
+            "provider_active_ms",
+            "tool_time_ms",
             "response_tool_call_count",
         )
 

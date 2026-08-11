@@ -19,11 +19,13 @@ from manyselves.core.loops.agent_loop import (
     _is_explicit_evidence_decision,
     _is_explicit_report_cancel_request,
     _is_simple_report_continuation,
+    _LoopLLMResponse,
     _requires_reporting_workflow_route,
 )
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMResponse, LLMStreamChunk, LLMToolCall
 from manyselves.core.providers.base import Message as LLMMessage
+from manyselves.core.tools.registry import Tool, ToolRegistry
 from manyselves.core.usage_ledger import UsageLedger
 from manyselves.interfaces.types import (
     AgentResponse,
@@ -38,6 +40,27 @@ from manyselves.interfaces.types import (
 from manyselves.interfaces.types import (
     ToolResult as ToolResultMsg,
 )
+
+
+class _ParallelProbeTool(Tool):
+    side_effect = "pure_read"
+    parallel_safe = True
+
+    def __init__(self, name: str, state: dict[str, int], delay: float) -> None:
+        self.name = name
+        self.state = state
+        self.delay = delay
+
+    async def __call__(self, value: int) -> dict:
+        self.state["active"] += 1
+        self.state["maximum"] = max(
+            self.state["maximum"], self.state["active"]
+        )
+        try:
+            await asyncio.sleep(self.delay)
+            return {"value": value}
+        finally:
+            self.state["active"] -= 1
 
 
 @pytest.fixture
@@ -720,6 +743,47 @@ def agent_loop(workspace, config, mock_gui, mock_provider, mock_prompt_loader):
     return loop
 
 
+@pytest.mark.asyncio
+async def test_parallel_safe_pure_read_batch_overlaps_and_preserves_result_order(
+    agent_loop,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {"active": 0, "maximum": 0}
+    registry = ToolRegistry()
+    registry.register(_ParallelProbeTool("pure_a", state, 0.05))
+    registry.register(_ParallelProbeTool("pure_b", state, 0.05))
+    agent_loop.tools = registry
+    agent_loop._current_message = UserMessage(
+        content="run pure tools",
+        agent_type="main",
+    )
+    monkeypatch.setattr(
+        agent_loop,
+        "_chat_with_retries",
+        AsyncMock(return_value=_LoopLLMResponse(content="done", tool_calls=[])),
+    )
+    response = _LoopLLMResponse(
+        content="",
+        tool_calls=[
+            LLMToolCall(id="a", name="pure_a", arguments={"value": 1}),
+            LLMToolCall(id="b", name="pure_b", arguments={"value": 2}),
+        ],
+    )
+    started = asyncio.get_running_loop().time()
+
+    await agent_loop._handle_tool_calls(response, "message")
+
+    elapsed = asyncio.get_running_loop().time() - started
+    assert state["maximum"] == 2
+    assert elapsed < 0.09
+    tool_results = [
+        json.loads(message.content)
+        for message in agent_loop._conversation_history
+        if message.is_tool_result
+    ]
+    assert [result["value"] for result in tool_results] == [1, 2]
+
+
 def test_agent_loop_keeps_dynamic_agent_id(
     workspace, config, mock_provider, mock_prompt_loader
 ):
@@ -837,7 +901,10 @@ async def test_stream_final_thinking_snapshot_is_not_published_as_second_thought
 
     published = [
         message
-        for message in list(agent_loop.bus._queue._queue)
+        for message in [
+            *list(agent_loop.bus._queue._queue),
+            *list(agent_loop.bus._stream_pending.values()),
+        ]
         if isinstance(message, AgentResponse)
     ]
     thinking_messages = [m for m in published if m.thinking]
@@ -1531,7 +1598,10 @@ async def test_tool_followup_streams_thinking_chunks(
 
     await loop._handle_tool_calls(response, "msg-1")
 
-    published = list(bus._queue._queue)
+    published = [
+        *list(bus._queue._queue),
+        *list(bus._stream_pending.values()),
+    ]
     assert [
         msg.thinking
         for msg in published
@@ -1648,6 +1718,216 @@ def test_working_memory_compaction_removes_complete_old_tool_exchange() -> None:
     )
     assert all(message.tool_call_id != "call-old-write" for message in compacted)
     assert compacted[-1].content == "continue from current durable state"
+    assert "latest_tool_state" in compacted[1].content
+    assert '"write_result_part":{"status":"created"}' in compacted[1].content
+    assert "persisted_result_part" not in compacted[1].content
+
+
+def test_working_memory_compaction_keeps_complete_recent_tool_exchange() -> None:
+    recent_call = LLMToolCall(
+        id="call-recent-search",
+        name="search_project_evidence",
+        arguments={"query": "保护配合"},
+    )
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="old context" + ("x" * 20_000)),
+        LLMMessage(role="assistant", content="", tool_calls=[recent_call]),
+        LLMMessage(
+            role="user",
+            content=json.dumps(
+                {
+                    "status": "ok",
+                    "next_action": "write_result_part",
+                    "hits": ["E-0001"],
+                }
+            ),
+            tool_call_id="call-recent-search",
+            is_tool_result=True,
+        ),
+        LLMMessage(role="assistant", content="已获得所需证据。"),
+    ]
+
+    compacted = agent_loop_module._compact_messages_for_working_memory(
+        messages,
+        target_tokens=1500,
+    )
+
+    retained_call_ids = {
+        call.id for message in compacted for call in (message.tool_calls or [])
+    }
+    retained_result_ids = {
+        message.tool_call_id for message in compacted if message.is_tool_result
+    }
+    assert retained_call_ids == {"call-recent-search"}
+    assert retained_result_ids == {"call-recent-search"}
+    assert "E-0001" in compacted[1].content
+
+
+def test_working_memory_compaction_drops_adjacent_orphan_tool_result() -> None:
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="old context" + ("x" * 20_000)),
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                LLMToolCall(
+                    id="call-valid",
+                    name="search_project_evidence",
+                    arguments={"query": "保护配合"},
+                )
+            ],
+        ),
+        LLMMessage(
+            role="user",
+            content='{"status":"ok"}',
+            tool_call_id="call-valid",
+            is_tool_result=True,
+        ),
+        LLMMessage(
+            role="user",
+            content='{"status":"orphan"}',
+            tool_call_id="call-orphan",
+            is_tool_result=True,
+        ),
+    ]
+
+    compacted = agent_loop_module._compact_messages_for_working_memory(
+        messages,
+        target_tokens=1500,
+    )
+
+    retained_result_ids = {
+        message.tool_call_id for message in compacted if message.is_tool_result
+    }
+    assert retained_result_ids == {"call-valid"}
+
+
+@pytest.mark.parametrize(
+    "call_ids",
+    [
+        ["", "call-valid"],
+        ["call-duplicate", "call-duplicate"],
+    ],
+)
+def test_atomic_history_rejects_empty_or_duplicate_assistant_call_ids(
+    call_ids: list[str],
+) -> None:
+    history = [
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                LLMToolCall(id=call_id, name="calculate", arguments={"expression": "1"})
+                for call_id in call_ids
+            ],
+        ),
+        LLMMessage(
+            role="user",
+            content='{"status":"ok"}',
+            tool_call_id=call_ids[-1],
+            is_tool_result=True,
+        ),
+    ]
+
+    assert agent_loop_module._atomic_history_units(history) == []
+
+
+def test_repeated_working_memory_compaction_preserves_one_original_objective() -> None:
+    objective = "分析五模块并保留 Cross、Chief 与 Final 的语义门禁。"
+    first = agent_loop_module._compact_messages_for_working_memory(
+        [
+            LLMMessage(role="system", content="system"),
+            LLMMessage(role="user", content=objective),
+            LLMMessage(role="assistant", content="旧分析" + ("x" * 20_000)),
+        ],
+        target_tokens=700,
+    )
+    second = agent_loop_module._compact_messages_for_working_memory(
+        [
+            *first,
+            LLMMessage(role="user", content="新增证据" + ("y" * 20_000)),
+            LLMMessage(role="assistant", content="继续综合"),
+        ],
+        target_tokens=700,
+    )
+
+    provider_text = "\n".join(message.content or "" for message in second)
+    assert provider_text.count("<working_memory_checkpoint>") == 1
+    assert f"<original_objective>{objective}</original_objective>" in provider_text
+    assert "<original_objective><working_memory_checkpoint>" not in provider_text
+
+
+@pytest.mark.asyncio
+async def test_provider_payload_never_exposes_retired_history_token(
+    agent_loop,
+) -> None:
+    marker = (
+        "<persisted_result_part part_id=part-a "
+        f"sha256={'a' * 64} characters=100>"
+    )
+    retired_name = "persisted_result_part"
+    messages = [
+        LLMMessage(role="system", content=f"system {marker}"),
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                LLMToolCall(
+                    id=f"old-call-{retired_name}",
+                    name=f"write_{retired_name}",
+                    arguments={retired_name: marker, "part_id": "part-a"},
+                )
+            ],
+        ),
+        LLMMessage(
+            role="user",
+            content=f"tool result mentioned {marker}",
+            tool_call_id=f"old-call-{retired_name}",
+            is_tool_result=True,
+        ),
+    ]
+    tools = [
+        {
+            "name": "write_result_part",
+            "description": f"legacy description {marker}",
+            "input_schema": {
+                "type": "object",
+                "properties": {retired_name: {"type": "string"}},
+            },
+        }
+    ]
+    agent_loop._chat_followup = AsyncMock(
+        return_value=_LoopLLMResponse(content="ok", tool_calls=[])
+    )
+
+    await agent_loop._chat_with_retries(messages, tools, "message-1")
+
+    provider_messages = agent_loop._chat_followup.await_args.args[0]
+    provider_tools = agent_loop._chat_followup.await_args.args[1]
+    canonical_payload = json.dumps(
+        {
+            "messages": [
+                {
+                    "content": message.content,
+                    "thinking": message.thinking,
+                    "tool_calls": [
+                        {
+                            "name": call.name,
+                            "arguments": call.arguments,
+                        }
+                        for call in (message.tool_calls or [])
+                    ],
+                }
+                for message in provider_messages
+            ],
+            "tools": provider_tools,
+        },
+        ensure_ascii=False,
+    )
+    assert "persisted_result_part" not in canonical_payload.casefold()
+    assert "persisted_result_part" in messages[0].content
 
 
 def test_legacy_result_part_marker_restores_exact_same_task_disk_prose(
@@ -1679,6 +1959,71 @@ def test_legacy_result_part_marker_restores_exact_same_task_disk_prose(
     )
 
     assert restored.arguments["content"] == content
+
+
+@pytest.mark.asyncio
+async def test_verified_legacy_marker_closes_as_already_ready_without_replaying_write(
+    agent_loop,
+    workspace,
+) -> None:
+    content = "历史运行中已经持久化的完整正文。" * 80
+    artifact = workspace / "Work/runs/run/drafts/module/r0/part-a.md"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(content, encoding="utf-8")
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    marker = (
+        "<persisted_result_part part_id=part-a "
+        f"sha256={digest} characters={len(content)} "
+        "history_only=true copy=forbidden "
+        "artifact_ref=Work/runs/run/drafts/module/r0/part-a.md>"
+    )
+    write_part = AsyncMock()
+    agent_loop.tools.get = (
+        lambda name: write_part if name == "write_result_part" else None
+    )
+    agent_loop.tools.get_definitions.return_value = []
+    agent_loop.usage_run_id = "run"
+    agent_loop.usage_task_id = "module"
+    agent_loop._chat_with_retries = AsyncMock(
+        return_value=SimpleNamespace(
+            content="The durable part is ready.",
+            tool_calls=[],
+            thinking=None,
+        )
+    )
+
+    await agent_loop._handle_tool_calls(
+        SimpleNamespace(
+            content="",
+            thinking=None,
+            tool_calls=[
+                LLMToolCall(
+                    id="call-legacy-ready",
+                    name="write_result_part",
+                    arguments={"part_id": "part-a", "content": marker},
+                )
+            ],
+            usage=None,
+        ),
+        "msg-legacy-ready",
+    )
+
+    write_part.assert_not_awaited()
+    assert artifact.read_text(encoding="utf-8") == content
+    followup_messages = agent_loop._chat_with_retries.await_args.args[0]
+    retained_call = next(
+        message.tool_calls[0]
+        for message in followup_messages
+        if message.role == "assistant" and message.tool_calls
+    )
+    assert "persisted_result_part" not in retained_call.arguments["content"]
+    result = next(
+        json.loads(message.content)
+        for message in followup_messages
+        if message.is_tool_result
+    )
+    assert result["status"] == "already_ready"
+    assert result["ready_part_ids"] == ["part-a"]
 
 
 def test_persisted_result_part_disk_fallback_rejects_cross_part_artifact(

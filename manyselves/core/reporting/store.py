@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from .parallel_runtime import validate_bound_project_write_lease
+
 
 class ReportingStore:
     """Write reporting state only beneath the active Manyselves workspace."""
@@ -70,6 +72,7 @@ class ReportingStore:
         return self._atomic_write(relative, content)
 
     def _atomic_write(self, relative: str, content: str) -> Path:
+        validate_bound_project_write_lease(self.workspace)
         path = self.workspace / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(

@@ -27,7 +27,7 @@ from .agentic_models import (
 )
 from .models import SpecialTopicPlan
 from .submission_contracts import FIELD_GUIDANCE
-from .taxonomy import REPORT_TAXONOMY
+from .taxonomy import REPORT_TAXONOMY, resolve_submodule
 
 
 class ModuleContentView(StrictModel):
@@ -56,8 +56,10 @@ class ReviewEvidenceExcerpt(StrictModel):
     )
     content: str = Field(
         min_length=1,
-        max_length=4_000,
-        description="Bounded normalized evidence content needed to audit the cited prose.",
+        description=(
+            "Complete normalized current-run evidence content needed to audit the cited "
+            "prose. Runtime cost optimization must not truncate this authoritative input."
+        ),
     )
 
 
@@ -401,6 +403,29 @@ class ModuleAuthoringInput(StrictModel):
         return self
 
 
+class SubmoduleAuthoringInput(StrictModel):
+    """Immutable Wave 3 input for one independently scheduled leaf author."""
+
+    kind: Literal["submodule_authoring_input"] = "submodule_authoring_input"
+    run_id: str = Field(min_length=1)
+    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
+    submodule_id: str = Field(min_length=1)
+    revision: int = Field(default=0, ge=0)
+    coverage_ref: str = Field(min_length=1)
+    evidence_ref: str = Field(min_length=1)
+    manifest_ref: str = Field(min_length=1)
+    knowledge_ref: str = Field(min_length=1)
+    collaboration_bundle_ref: str = Field(min_length=1)
+    discovery_ref: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def exact_leaf_scope(self) -> "SubmoduleAuthoringInput":
+        definition = resolve_submodule(self.submodule_id)
+        if definition.module_id != self.module_id:
+            raise ValueError("submodule authoring input belongs to another module")
+        return self
+
+
 class ModuleReviewInput(StrictModel):
     kind: Literal["module_review_input"] = "module_review_input"
     review_protocol_version: Literal[2] = Field(
@@ -475,9 +500,8 @@ class ModuleReviewInput(StrictModel):
     )
     knowledge_context: str = Field(
         default="",
-        max_length=14_000,
         description=(
-            "Only sourced domain mechanisms, standards, thresholds, and applicability sections "
+            "Complete selected taxonomy sections from the immutable Knowledge snapshot, "
             "aligned to required_submodule_ids; never workflow method or current-project evidence."
         ),
     )
@@ -1140,10 +1164,10 @@ class ModuleRevisionInput(StrictModel):
         for finding in self.cross_findings:
             if finding.owner_module_id != self.module_id:
                 raise ValueError("cross finding belongs to another owner module")
-            if not set(finding.target_submodule_ids).issubset(allowed):
+            if not set(finding.target_submodule_ids).intersection(allowed):
                 raise ValueError("cross finding lies outside revision targets")
         for change in self.requested_changes:
-            if not set(change.target_submodule_ids).issubset(allowed):
+            if not set(change.target_submodule_ids).intersection(allowed):
                 raise ValueError("requested change lies outside revision targets")
         return self
 
@@ -1474,6 +1498,7 @@ class FinalAuditSnapshot(StrictModel):
 INPUT_CONTRACT_TYPES = {
     "template_distillation_input": TemplateDistillationInput,
     "module_authoring_input": ModuleAuthoringInput,
+    "submodule_authoring_input": SubmoduleAuthoringInput,
     "module_review_input": ModuleReviewInput,
     "cross_review_input": CrossReviewInput,
     "final_review_input": FinalReviewInput,
@@ -1487,6 +1512,7 @@ INPUT_CONTRACT_TYPES = {
 INPUT_CONTRACT_SUMMARIES = {
     "template_distillation_input": "One exact template snapshot and five required durable output parts.",
     "module_authoring_input": "One fixed module scope with role-labelled current-run evidence inputs.",
+    "submodule_authoring_input": "One exact leaf-submodule discovery and Barrier-2 collaboration bundle.",
     "module_review_input": "One exact module subject plus phase-specific immutable review state.",
     "cross_review_input": "Five exact module subjects plus phase-specific Cross closure state.",
     "final_review_input": "One exact edited report plus phase-specific final-review state.",
@@ -1655,6 +1681,23 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "knowledge_ref": "Work/runs/report-example/knowledge/module-2.1.md",
         "saved_part_ids": [],
         "rewrite_part_ids": [],
+    },
+    "submodule_authoring_input": {
+        "kind": "submodule_authoring_input",
+        "run_id": "report-example",
+        "module_id": "2.1",
+        "submodule_id": "2.1.1",
+        "revision": 0,
+        "coverage_ref": "Work/runs/report-example/preparation/coverage.json",
+        "evidence_ref": "Work/runs/report-example/preparation/evidence.jsonl",
+        "manifest_ref": "Work/runs/report-example/preparation/manifest.json",
+        "knowledge_ref": "Work/runs/report-example/knowledge/module-2.1.md",
+        "collaboration_bundle_ref": (
+            "Work/runs/report-example/collaboration/bundles/submodules/2.1.1.json"
+        ),
+        "discovery_ref": (
+            "Work/runs/report-example/collaboration/wave-1/submodules/2.1.1.json"
+        ),
     },
     "module_review_input": {
         "kind": "module_review_input",

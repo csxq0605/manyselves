@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from manyselves.core.reporting.models import SpecialTopicPlan
 from manyselves.core.reporting.research.knowledge_context import KnowledgeContextBuilder
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
@@ -113,3 +115,22 @@ def test_large_module_knowledge_preserves_every_submodule_with_bounded_quota(
     for submodule_id, submodule in module.submodules.items():
         assert f"## {submodule_id} {submodule.title}" in context.text
     assert "## 2.4.4" in context.text
+
+
+def test_knowledge_snapshot_rejects_hash_consistent_retired_history_token(
+    tmp_path,
+) -> None:
+    knowledge = tmp_path / "Knowledge/poisoned.md"
+    knowledge.parent.mkdir(parents=True)
+    knowledge.write_text(
+        "<persisted_result_part sha256=" + "a" * 64 + " characters=100>",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="retired internal history token",
+    ) as exc_info:
+        KnowledgeContextBuilder(tmp_path, "run-poisoned").build_module("2.1")
+
+    assert "persisted_result_part" not in str(exc_info.value)

@@ -121,6 +121,47 @@ def test_warn_policy_records_and_advances_window_without_raising(tmp_path) -> No
     assert snapshot["cost_control"]["next_provider_attempt_threshold"] == 2
 
 
+def test_all_workflow_operations_bind_the_requested_cost_control_mode() -> None:
+    operations = (
+        ReportWorkflowRunner.distill_template_skill,
+        ReportWorkflowRunner.run,
+        ReportWorkflowRunner.aggregate_existing,
+        ReportWorkflowRunner.run_revision,
+    )
+
+    for operation in operations:
+        source = inspect.getsource(operation)
+        budget_construction = source[source.index("ReportingRunBudget(") :]
+        assert "request.cost_control_mode" in budget_construction
+
+
+@pytest.mark.asyncio
+async def test_pause_mode_never_interrupts_an_active_typed_dispatch(tmp_path) -> None:
+    run_id = "run-cost-active-turn"
+    budget = ReportingRunBudget(
+        tmp_path,
+        run_id,
+        max_attempts=1,
+        max_tokens=100,
+        mode="pause_at_boundary",
+    )
+
+    await budget.acquire("module-2.1-specialist")
+    _record_attempt(tmp_path, run_id)
+    # Provider admission remains observational while the typed turn is active.
+    # The pause is evaluated only after its durable stage checkpoint commits.
+    await budget.acquire_provider_attempt("module-2.1-specialist", "module-2.1")
+    assert budget.snapshot()["active_dispatches"] == 1
+    assert budget.snapshot()["cost_control"]["pending_decision"] is None
+    await budget.release()
+
+    _commit_boundary(budget, "module-authoring", "module-review")
+    with pytest.raises(ReportingNeedsDecisionError):
+        budget.evaluate_boundary("module-authoring", "module-review")
+
+    assert budget.snapshot()["active_dispatches"] == 0
+
+
 def test_boundary_evaluation_cannot_claim_an_unwritten_checkpoint(tmp_path) -> None:
     budget = ReportingRunBudget(
         tmp_path,

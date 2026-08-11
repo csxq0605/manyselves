@@ -710,6 +710,30 @@ def test_failed_post_render_validation_does_not_publish_output(tmp_path: Path) -
     assert not output.exists()
 
 
+def test_stale_fence_before_publish_never_exposes_rendered_output(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.docx"
+    Document().save(template)
+    photo = tmp_path / "photo.png"
+    from PIL import Image
+
+    Image.new("RGB", (20, 20), color="green").save(photo)
+    output = tmp_path / "stale-worker-must-not-publish.docx"
+
+    def reject_stale_worker() -> None:
+        raise RuntimeError("stale project write lease")
+
+    with pytest.raises(RuntimeError, match="stale project write lease"):
+        PdsDocxRenderer(PackagedDocxCore(template)).render(
+            _approved_report(photo),
+            output,
+            before_publish=reject_stale_worker,
+        )
+
+    assert not output.exists()
+
+
 def test_packaged_core_explicitly_forbids_structured_model_prose_generation(
     tmp_path: Path,
 ) -> None:

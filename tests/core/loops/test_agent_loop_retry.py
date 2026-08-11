@@ -8,8 +8,16 @@ import pytest
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.agent_loop import AgentLoop
 from manyselves.core.loops.bus import MessageBus
-from manyselves.core.providers.base import LLMProvider, LLMResponse, LLMStreamChunk, LLMToolCall
+from manyselves.core.providers.base import (
+    LLMProvider,
+    LLMResponse,
+    LLMStreamChunk,
+    LLMToolCall,
+    ProviderRequestDisposition,
+    annotate_provider_request_failure,
+)
 from manyselves.core.tools.registry import Tool, ToolRegistry
+from manyselves.core.usage_ledger import UsageLedger
 from manyselves.interfaces.types import SystemNotice
 
 
@@ -28,7 +36,11 @@ class EventuallySuccessfulProvider(LLMProvider):
     async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
         self.calls += 1
         if self.calls <= self.failures:
-            raise HttpFailureError(503, "temporary outage")
+            failure = HttpFailureError(429, "request limit")
+            raise annotate_provider_request_failure(
+                failure,
+                ProviderRequestDisposition.DEFINITELY_REJECTED,
+            )
         return LLMResponse(content="recovered")
 
 
@@ -64,6 +76,25 @@ class IdleTimeoutAwareProvider(LLMProvider):
     ):
         self.idle_timeouts.append(stream_idle_timeout_seconds)
         yield LLMStreamChunk(delta=None, done=True)
+
+
+class PreTokenAmbiguousFailureProvider(LLMProvider):
+    def __init__(self, error: BaseException):
+        super().__init__("key", model="ambiguous-model")
+        self.error = error
+        self.calls = 0
+
+    async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        raise AssertionError("streaming path should be used")
+
+    async def chat_stream(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        self.calls += 1
+        if False:  # pragma: no cover - makes this an async generator
+            yield LLMStreamChunk()
+        raise annotate_provider_request_failure(
+            self.error,
+            ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN,
+        )
 
 
 class BlockingTool(Tool):
@@ -148,6 +179,16 @@ async def test_provider_retry_is_bounded_and_announced(tmp_path: Path, monkeypat
     ]
     assert [row["attempt"] for row in rows] == [1, 2, 3]
     assert [row["status"] for row in rows] == ["error", "error", "success"]
+    assert [row["attempt_disposition"] for row in rows] == [
+        "definitely_rejected",
+        "definitely_rejected",
+        "completed",
+    ]
+    assert [row["retry_decision"] for row in rows] == [
+        "automatic_retry",
+        "automatic_retry",
+        "completed",
+    ]
     notices = [item for item in list(loop.bus._queue._queue) if isinstance(item, SystemNotice)]
     assert len(notices) == 2
     assert "自动重试（1/2）" in notices[0].content
@@ -184,6 +225,66 @@ async def test_partial_stream_failure_is_not_retried(tmp_path: Path, monkeypatch
         await loop._chat_with_retries([], None, "message-1")
 
     assert provider.calls == 1
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ConnectionError("connection reset before first token"),
+        asyncio.TimeoutError("timeout before first token"),
+    ],
+    ids=["connection", "timeout"],
+)
+@pytest.mark.asyncio
+async def test_pre_token_ambiguous_failure_is_not_physically_retried(
+    tmp_path: Path,
+    error: BaseException,
+    monkeypatch,
+):
+    provider = PreTokenAmbiguousFailureProvider(error)
+    loop = _loop(tmp_path, provider)
+
+    async def should_not_wait(_delay: float) -> bool:
+        raise AssertionError("ambiguous request must not be retried")
+
+    monkeypatch.setattr(loop, "_wait_before_retry", should_not_wait)
+
+    with pytest.raises(RuntimeError, match="状态不确定") as exc_info:
+        await loop._chat_with_retries([], None, "message-1")
+
+    assert provider.calls == 1
+    assert exc_info.value.ambiguous is True
+    assert exc_info.value.partial_output is True
+    rows = UsageLedger(tmp_path, "main").rows()
+    assert len(rows) == 1
+    assert rows[0]["attempt_disposition"] == "accepted_or_unknown"
+    assert rows[0]["retry_decision"] == "stop_ambiguous"
+    assert rows[0]["retry"] is False
+
+
+@pytest.mark.asyncio
+async def test_conflict_409_is_not_retried_without_reconciliation(
+    tmp_path: Path,
+    monkeypatch,
+):
+    provider = PreTokenAmbiguousFailureProvider(
+        HttpFailureError(409, "request id already exists")
+    )
+    loop = _loop(tmp_path, provider)
+
+    async def should_not_wait(_delay: float) -> bool:
+        raise AssertionError("409 requires reconciliation, not retry")
+
+    monkeypatch.setattr(loop, "_wait_before_retry", should_not_wait)
+
+    with pytest.raises(RuntimeError, match="409"):
+        await loop._chat_with_retries([], None, "message-1")
+
+    assert provider.calls == 1
+    row = UsageLedger(tmp_path, "main").rows()[0]
+    assert row["attempt_disposition"] == "accepted_or_unknown"
+    assert row["retry_decision"] == "stop_ambiguous"
+    assert row["retry"] is False
 
 
 @pytest.mark.asyncio

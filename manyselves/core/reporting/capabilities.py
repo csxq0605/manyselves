@@ -46,7 +46,14 @@ def compile_agent_access(
             "attach existing project artifacts before starting the AgentLoop"
         )
     declared_tools = tuple(
-        dict.fromkeys([*definition.tools, "open_artifact", "search_text"])
+        dict.fromkeys(
+            [
+                *definition.tools,
+                "open_artifact",
+                "open_tool_result",
+                "search_text",
+            ]
+        )
     )
     if envelope.allowed_tools:
         unknown = sorted(set(envelope.allowed_tools) - set(declared_tools))
@@ -54,7 +61,7 @@ def compile_agent_access(
             raise ConfigurationError(
                 f"{definition.id} task requested undeclared tools {unknown}"
             )
-        allowed = set(envelope.allowed_tools)
+        allowed = {*envelope.allowed_tools, "open_tool_result"}
         tools = tuple(name for name in declared_tools if name in allowed)
     else:
         tools = declared_tools

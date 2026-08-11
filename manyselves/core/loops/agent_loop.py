@@ -13,7 +13,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-
 if TYPE_CHECKING:
     from .manager import LoopManager
 
@@ -21,7 +20,12 @@ from loguru import logger
 
 from ...config.schema import AgentDefaults
 from ...core.prompts import PromptLoader
-from ...core.providers.base import LLMProvider, LLMToolCall
+from ...core.providers.base import (
+    LLMProvider,
+    LLMToolCall,
+    ProviderRequestDisposition,
+    provider_request_disposition,
+)
 from ...core.providers.base import Message as LLMMessage
 from ...core.runtime_errors import (
     RuntimeErrorPolicy,
@@ -292,6 +296,8 @@ class _LoopLLMResponse:
     stop_reason: str | None = None
     streamed: bool = False
     request_metrics: dict[str, Any] | None = None
+    ttft_ms: int | None = None
+    provider_active_ms: int | None = None
 
 
 @dataclass
@@ -626,6 +632,11 @@ class _ProviderAttemptError(RuntimeError):
         super().__init__(str(original))
         self.original = original
         self.partial_output = partial_output
+        self.attempt_disposition = (
+            ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN
+            if partial_output
+            else provider_request_disposition(original)
+        )
 
 
 class _ProviderRequestError(RuntimeError):
@@ -638,14 +649,33 @@ class _ProviderRequestError(RuntimeError):
         *,
         attempts: int,
         partial_output: bool,
+        ambiguous: bool,
+        attempt_disposition: ProviderRequestDisposition,
     ):
         self.original = original
         self.policy = policy
         self.attempts = attempts
-        self.partial_output = partial_output
+        self.had_partial_output = partial_output
+        self.ambiguous = ambiguous
+        # ReportingService historically uses partial_output as its durable
+        # ambiguity signal. Preserve that contract for accepted-or-unknown
+        # requests even when no token was observed locally.
+        self.partial_output = partial_output or ambiguous
+        self.attempt_disposition = attempt_disposition.value
         retry_text = f"，已自动重试{attempts - 1}次仍失败" if attempts > 1 else ""
-        partial_text = "；响应已产生部分内容，为避免重复输出未自动重试" if partial_output else ""
-        super().__init__(f"{policy.title}{retry_text}{partial_text}：{original}")
+        partial_text = (
+            "；响应已产生部分内容，为避免重复输出未自动重试"
+            if partial_output
+            else ""
+        )
+        ambiguous_text = (
+            "；请求可能已被服务端接受，状态不确定，未自动重试"
+            if ambiguous and not partial_output
+            else ""
+        )
+        super().__init__(
+            f"{policy.title}{retry_text}{partial_text}{ambiguous_text}：{original}"
+        )
 
 
 def _estimate_tokens(messages: list[LLMMessage]) -> int:
@@ -663,6 +693,81 @@ def _estimate_tokens(messages: list[LLMMessage]) -> int:
         if getattr(m, "thinking", None) and m.thinking:
             total += int(len(m.thinking) * _TOKENS_PER_CHAR)
     return total
+
+
+def _sanitize_provider_visible_text(value: str) -> str:
+    """Remove retired history tokens before any payload reaches a Provider.
+
+    Old durable transcripts can legitimately contain the token. It remains in
+    the lossless local trace, but showing its spelling back to a model turns an
+    internal storage protocol into an in-context example.
+    """
+
+    sanitized = re.sub(
+        r"<persisted_result_part(?: [^>]*)?>",
+        "[retired internal history token omitted]",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(
+        r"persisted_result_part",
+        "retired_internal_history_token",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+
+
+def _sanitize_provider_visible_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _sanitize_provider_visible_text(value)
+    if isinstance(value, dict):
+        return {
+            _sanitize_provider_visible_text(str(key)): _sanitize_provider_visible_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_sanitize_provider_visible_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_provider_visible_value(item) for item in value)
+    return value
+
+
+def _sanitize_provider_messages(
+    messages: list[LLMMessage],
+) -> list[LLMMessage]:
+    """Return a protocol-equivalent Provider view with legacy tokens redacted."""
+
+    return [
+        LLMMessage(
+            role=message.role,
+            content=_sanitize_provider_visible_text(message.content or ""),
+            tool_calls=(
+                [
+                    LLMToolCall(
+                        id=_sanitize_provider_visible_text(call.id),
+                        name=_sanitize_provider_visible_text(call.name),
+                        arguments=_sanitize_provider_visible_value(call.arguments),
+                    )
+                    for call in message.tool_calls
+                ]
+                if message.tool_calls is not None
+                else None
+            ),
+            tool_call_id=(
+                _sanitize_provider_visible_text(message.tool_call_id)
+                if message.tool_call_id is not None
+                else None
+            ),
+            is_tool_result=message.is_tool_result,
+            thinking=(
+                _sanitize_provider_visible_text(message.thinking)
+                if message.thinking is not None
+                else None
+            ),
+            cache_control=message.cache_control,
+        )
+        for message in messages
+    ]
 
 
 def _estimate_response_tokens(response: Any) -> int:
@@ -777,36 +882,68 @@ def _compact_messages_for_working_memory(
 
     system_msg = messages[0]
     history = messages[1:]
-    objective = next(
-        (
-            message.content[:1200]
-            for message in history
-            if message.role == "user"
-            and not getattr(message, "is_tool_result", False)
-            and message.content
-        ),
-        "",
-    )
-    combined = "\n".join(message.content or "" for message in history)
-    references = sorted(
-        set(
-            re.findall(r"\b(?:E|R|W)-[A-Za-z0-9_.-]+", combined)
-            + re.findall(
-                r"\b(?:Work|Outputs|Knowledge)/[^\s<>'\"，。；]+",
-                combined,
-            )
+    objective = ""
+    for message in history:
+        if (
+            message.role != "user"
+            or getattr(message, "is_tool_result", False)
+            or not message.content
+        ):
+            continue
+        previous = re.search(
+            r"<original_objective>(.*?)</original_objective>",
+            message.content,
+            flags=re.DOTALL,
         )
-    )[:80]
+        objective = (
+            previous.group(1)[:1200]
+            if previous is not None
+            and "<working_memory_checkpoint>" in message.content
+            else message.content[:1200]
+        )
+        break
+    combined = "\n".join(message.content or "" for message in history)
+
+    # Prefer references mentioned most recently.  A sorted set used to discard
+    # recency and could evict the exact finding/result-part ids needed to finish
+    # the active task while retaining older, alphabetically earlier ids.
+    reference_candidates = (
+        re.findall(
+            r"\b(?:Work|Outputs|Knowledge)/[^\s<>'\"，。；]+",
+            combined,
+        )
+        + re.findall(r"\b(?:E|R|W)-[A-Za-z0-9_.-]+", combined)
+    )
+    references = list(dict.fromkeys(reversed(reference_candidates)))[:120]
+    references.reverse()
+    identifier_candidates = re.findall(
+        r"\b(?:E|R|W|RN|SI|M|X|F)-[A-Za-z0-9_.-]+",
+        combined,
+    )
+    retained_identifiers = list(
+        dict.fromkeys(reversed(identifier_candidates))
+    )[:120]
+    retained_identifiers.reverse()
     shared_memory_refs = [
         ref for ref in references if ref.endswith("-evidence-memory.json")
     ]
+    latest_tool_state = _latest_compaction_tool_state(history)
     checkpoint_content = (
         "<working_memory_checkpoint>\n"
         f"<original_objective>{objective}</original_objective>\n"
         f"<retained_references>{' '.join(references)}</retained_references>\n"
+        f"<retained_identifiers>{' '.join(retained_identifiers)}</retained_identifiers>\n"
         f"<shared_memory_refs>{' '.join(shared_memory_refs)}</shared_memory_refs>\n"
-        "Older tool transcripts were persisted locally. Continue from the recent "
+        + (
+            f"<latest_tool_state>{latest_tool_state}</latest_tool_state>\n"
+            if latest_tool_state
+            else ""
+        )
+        + "Older tool transcripts were persisted locally. Continue from the recent "
         "messages. Reuse shared memory before searching or reopening source records. "
+        "The complete removed transcript remains available losslessly through "
+        "checkpoint_ref; call open_tool_result only when a needed detail is absent "
+        "from the retained messages. "
         "Never recreate an older write merely because it is absent here: call "
         "list_result_parts once and write only missing or explicitly assigned rewrite "
         "parts. Current tool schemas, not this checkpoint, define argument shapes.\n"
@@ -818,23 +955,142 @@ def _compact_messages_for_working_memory(
 
     kept: list[LLMMessage] = []
     kept_tokens = 0
-    for message in reversed(history):
-        message_tokens = _estimate_tokens([message])
-        if kept_tokens + message_tokens > recent_budget:
-            break
-        kept.insert(0, message)
-        kept_tokens += message_tokens
-
-    while kept:
-        first = kept[0]
-        if first.role in {"tool", "assistant"} or (
-            first.role == "user" and getattr(first, "is_tool_result", False)
+    # Tool use is one protocol object: assistant(tool_calls) plus every matching
+    # tool result.  Retaining or removing individual messages can manufacture an
+    # invalid example and make the next model call imitate missing arguments.
+    # Compact only complete atomic units.
+    for unit in reversed(_atomic_history_units(history)):
+        if any(
+            message.role == "user"
+            and "<working_memory_checkpoint>" in (message.content or "")
+            for message in unit
         ):
-            kept.pop(0)
             continue
-        break
+        unit_tokens = _estimate_tokens(unit)
+        if kept_tokens + unit_tokens > recent_budget:
+            break
+        kept[0:0] = unit
+        kept_tokens += unit_tokens
 
     return [system_msg, checkpoint, *kept]
+
+
+def _atomic_history_units(history: list[LLMMessage]) -> list[list[LLMMessage]]:
+    """Group provider history without splitting a tool call from its results."""
+
+    units: list[list[LLMMessage]] = []
+    index = 0
+    while index < len(history):
+        message = history[index]
+        calls = list(getattr(message, "tool_calls", None) or [])
+        if message.role != "assistant" or not calls:
+            # Never retain an orphan result.  It remains available in the exact
+            # durable transcript written by ``_compact_working_memory``.
+            if message.role == "tool" or getattr(message, "is_tool_result", False):
+                index += 1
+                continue
+            units.append([message])
+            index += 1
+            continue
+
+        call_ids = [str(getattr(call, "id", "") or "") for call in calls]
+        expected_ids = set(call_ids)
+        calls_are_valid = (
+            all(call_ids)
+            and len(call_ids) == len(calls)
+            and len(expected_ids) == len(call_ids)
+        )
+        unit = [message]
+        seen_ids: set[str] = set()
+        scan = index + 1
+        while scan < len(history):
+            candidate = history[scan]
+            if not (
+                candidate.role == "tool"
+                or getattr(candidate, "is_tool_result", False)
+            ):
+                break
+            result_id = str(getattr(candidate, "tool_call_id", "") or "")
+            # A result for another call, a missing id, or a duplicate result is
+            # an orphan protocol object.  Stop the unit before it; the outer
+            # loop will discard that result while preserving a preceding
+            # complete exchange, if any.
+            if (
+                not result_id
+                or result_id not in expected_ids
+                or result_id in seen_ids
+            ):
+                break
+            unit.append(candidate)
+            seen_ids.add(result_id)
+            scan += 1
+
+        # An incomplete exchange is never shown back to a Provider as a valid
+        # example.  It is still losslessly present in the persisted checkpoint.
+        if calls_are_valid and expected_ids.issubset(seen_ids):
+            units.append(unit)
+        index = scan
+    return units
+
+
+def _latest_compaction_tool_state(history: list[LLMMessage]) -> str:
+    """Retain compact typed progress, not arbitrary old tool prose."""
+
+    call_names: dict[str, str] = {}
+    for message in history:
+        for call in getattr(message, "tool_calls", None) or []:
+            call_id = str(getattr(call, "id", "") or "")
+            if call_id:
+                call_names[call_id] = str(getattr(call, "name", "") or "")
+
+    retained_keys = {
+        "status",
+        "accepted",
+        "complete",
+        "next_action",
+        "part_id",
+        "ready_part_ids",
+        "missing_part_ids",
+        "rewrite_part_ids",
+        "do_not_rewrite_part_ids",
+        "affected_part_ids",
+        "required_synthesis_input_ids",
+        "correction_state_ref",
+        "result_path",
+    }
+    latest: dict[str, dict[str, Any]] = {}
+    for message in history:
+        if not getattr(message, "is_tool_result", False):
+            continue
+        try:
+            payload = json.loads(message.content or "")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        compact = {key: payload[key] for key in retained_keys if key in payload}
+        if not compact:
+            continue
+        tool_name = call_names.get(str(message.tool_call_id or ""), "tool")
+        latest[tool_name] = compact
+
+    if not latest:
+        return ""
+    rendered = json.dumps(
+        latest,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    # The retired marker token must never become a model-visible recovery hint.
+    rendered = re.sub(
+        r"persisted_result_part",
+        "internal_history_placeholder",
+        rendered,
+        flags=re.IGNORECASE,
+    )
+    return rendered[:6000]
 
 
 def _tool_required_args(tool_registry: ToolRegistry, tool_name: str, tool: Any | None = None) -> list[str]:
@@ -961,6 +1217,9 @@ class AgentLoop:
         self.provider_attempt_record_observer = provider_attempt_record_observer
         self._usage_totals = {"input_tokens": 0, "output_tokens": 0}
         self._last_usage_record: dict[str, Any] | None = None
+        self._usage_queue_wait_ms = 0
+        self._usage_context_build_ms = 0
+        self._usage_tool_time_ms = 0
         self._terminal_outcome: ToolOutcome | None = None
         self._terminal_tool_name: str | None = None
         self._buffered_main_response: str = ""
@@ -1066,6 +1325,7 @@ class AgentLoop:
                     Error(
                         source=str(self.agent_type),
                         message=str(e),
+                        **self._active_workflow_correlation(),
                     )
                 )
 
@@ -1520,6 +1780,7 @@ class AgentLoop:
                 content=response,
                 message_id=message.message_id,
                 streaming=False,
+                **self._active_workflow_correlation(),
             )
         )
         await self._flush_manifest_if_needed()
@@ -1538,6 +1799,7 @@ class AgentLoop:
                 content=response,
                 message_id=message.message_id,
                 streaming=False,
+                **self._active_workflow_correlation(),
             )
         )
         await self._flush_manifest_if_needed()
@@ -1591,6 +1853,7 @@ class AgentLoop:
                         content=candidate,
                         message_id=message.message_id,
                         streaming=False,
+                        **self._active_workflow_correlation(),
                     )
                 )
                 await self._flush_manifest_if_needed()
@@ -1629,6 +1892,7 @@ class AgentLoop:
                 content=fallback,
                 message_id=message.message_id,
                 streaming=False,
+                **self._active_workflow_correlation(),
             )
         )
         await self._flush_manifest_if_needed()
@@ -1683,6 +1947,7 @@ class AgentLoop:
                 content=response,
                 message_id=message.message_id,
                 streaming=False,
+                **self._active_workflow_correlation(),
             )
         )
         await self._flush_manifest_if_needed()
@@ -1703,6 +1968,22 @@ class AgentLoop:
             )
         )
 
+    def _active_workflow_correlation(self) -> dict[str, str]:
+        """Copy the active typed-task identity onto every response/error event."""
+
+        message = self._current_message
+        if message is None:
+            return {}
+        return {
+            "workflow_id": str(getattr(message, "workflow_id", "") or ""),
+            "run_id": str(getattr(message, "run_id", "") or ""),
+            "task_id": str(getattr(message, "task_id", "") or ""),
+            "task_attempt_id": str(
+                getattr(message, "task_attempt_id", "") or ""
+            ),
+            "session_id": str(getattr(message, "session_id", "") or ""),
+        }
+
     async def _process_message(self, message: UserMessage) -> None:
         """Process a user message.
 
@@ -1715,6 +1996,13 @@ class AgentLoop:
         # Keep direct test/debug invocations under the same routing policy as
         # messages dequeued by _process_loop.
         self._current_message = message
+        now = datetime.now(tz=message.timestamp.tzinfo)
+        self._usage_queue_wait_ms = max(
+            0,
+            int((now - message.timestamp).total_seconds() * 1000),
+        )
+        self._usage_context_build_ms = 0
+        self._usage_tool_time_ms = 0
         await self._set_status(AgentStatus.THINKING)
 
         # Reset per-turn state: this message's turn has not yet been reported.
@@ -1768,6 +2056,7 @@ class AgentLoop:
                 return
 
             # Build messages — system prompt always first, conversation history follows
+            context_started = time.perf_counter()
             messages = await self._build_messages()
 
             # Auto-compact: trim if exceeds context budget
@@ -1775,6 +2064,9 @@ class AgentLoop:
 
             # Get tool definitions
             tool_definitions = self.tools.get_definitions()
+            self._usage_context_build_ms = int(
+                (time.perf_counter() - context_started) * 1000
+            )
 
             # Call LLM with streaming (default)
             start_time = time.time()
@@ -1902,6 +2194,7 @@ class AgentLoop:
                         message_id=message.message_id,
                         streaming=False,
                         internal=True,
+                        **self._active_workflow_correlation(),
                     )
                 )
                 await self._flush_manifest_if_needed()
@@ -1950,6 +2243,7 @@ class AgentLoop:
                     content=final_content,
                     message_id=message.message_id,
                     streaming=False,
+                    **self._active_workflow_correlation(),
                 )
             )
 
@@ -1977,6 +2271,8 @@ class AgentLoop:
                         "attempts": e.attempts,
                         "automatic_retries": max(0, e.attempts - 1),
                         "partial_output": e.partial_output,
+                        "ambiguous": e.ambiguous,
+                        "attempt_disposition": e.attempt_disposition,
                     }
                 )
             else:
@@ -1996,6 +2292,7 @@ class AgentLoop:
                     source=str(self.agent_type),
                     message=display_error,
                     details=details,
+                    **self._active_workflow_correlation(),
                 )
             )
 
@@ -2063,6 +2360,8 @@ class AgentLoop:
         final_usage = None
         final_request_metrics = None
         stop_reason = None
+        provider_started = time.perf_counter()
+        ttft_ms: int | None = None
         try:
             try:
                 stream_kwargs: dict[str, Any] = {}
@@ -2081,6 +2380,15 @@ class AgentLoop:
                     await stream
                     raise NotImplementedError
                 async for chunk in stream:
+                    if ttft_ms is None and (
+                        chunk.delta
+                        or chunk.tool_calls
+                        or chunk.thinking
+                        or chunk.done
+                    ):
+                        ttft_ms = int(
+                            (time.perf_counter() - provider_started) * 1000
+                        )
                     if chunk.delta:
                         accumulated_content += chunk.delta
                         if not self._must_buffer_main_report_route():
@@ -2090,6 +2398,7 @@ class AgentLoop:
                                     content=chunk.delta,
                                     message_id=user_message_id,
                                     streaming=True,
+                                    **self._active_workflow_correlation(),
                                 )
                             )
 
@@ -2118,6 +2427,7 @@ class AgentLoop:
                                     message_id=user_message_id,
                                     streaming=True,
                                     thinking=chunk.thinking,
+                                    **self._active_workflow_correlation(),
                                 )
                             )
 
@@ -2139,6 +2449,10 @@ class AgentLoop:
                     stop_reason=stop_reason,
                     streamed=True,
                     request_metrics=final_request_metrics,
+                    ttft_ms=ttft_ms,
+                    provider_active_ms=int(
+                        (time.perf_counter() - provider_started) * 1000
+                    ),
                 )
             except NotImplementedError:
                 response = await self.llm_provider.chat(
@@ -2155,6 +2469,12 @@ class AgentLoop:
                     stop_reason=getattr(response, "stop_reason", None),
                     streamed=False,
                     request_metrics=getattr(response, "request_metrics", None),
+                    ttft_ms=int(
+                        (time.perf_counter() - provider_started) * 1000
+                    ),
+                    provider_active_ms=int(
+                        (time.perf_counter() - provider_started) * 1000
+                    ),
                 )
         except asyncio.CancelledError:
             raise
@@ -2186,6 +2506,10 @@ class AgentLoop:
     ) -> _LoopLLMResponse:
         """Run one provider round with bounded, cancel-aware automatic retries."""
 
+        provider_messages = _sanitize_provider_messages(messages)
+        provider_tool_definitions = _sanitize_provider_visible_value(
+            tool_definitions
+        )
         attempts = 0
         while True:
             attempts += 1
@@ -2194,26 +2518,28 @@ class AgentLoop:
                 await self.before_provider_attempt()
             if self.provider_attempt_observer is not None:
                 await self.provider_attempt_observer(
-                    messages,
-                    tool_definitions,
+                    provider_messages,
+                    provider_tool_definitions,
                     phase,
                     attempts,
                 )
             try:
                 response = await self._chat_followup(
-                    messages,
-                    tool_definitions,
+                    provider_messages,
+                    provider_tool_definitions,
                     user_message_id,
                     stream_idle_timeout_seconds,
                 )
                 self._last_usage_record = self._record_token_usage(
-                    messages,
+                    provider_messages,
                     response,
                     phase=phase,
                     status="success",
                     error=None,
                     attempt=attempts,
-                    tool_definitions=tool_definitions,
+                    attempt_disposition="completed",
+                    retry_decision="completed",
+                    tool_definitions=provider_tool_definitions,
                     duration_ms=int((time.monotonic() - attempt_started) * 1000),
                 )
                 await self._notify_provider_attempt_record(self._last_usage_record)
@@ -2221,31 +2547,61 @@ class AgentLoop:
             except _ProviderAttemptError as failure:
                 retry_number = attempts
                 policy = classify_runtime_error(failure.original, retry_number=retry_number)
+                attempt_disposition = failure.attempt_disposition
+                ambiguous = (
+                    failure.partial_output
+                    or attempt_disposition
+                    == ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN
+                )
+                within_retry_boundary = attempts <= _MAX_PROVIDER_RETRIES
+                safe_to_repeat = attempt_disposition in {
+                    ProviderRequestDisposition.NOT_SENT,
+                    ProviderRequestDisposition.DEFINITELY_REJECTED,
+                }
+                can_retry = (
+                    policy.retryable
+                    and safe_to_repeat
+                    and not failure.partial_output
+                    and within_retry_boundary
+                    and not self._cancel_event.is_set()
+                )
+                if can_retry:
+                    retry_decision = "automatic_retry"
+                elif failure.partial_output:
+                    retry_decision = "stop_partial_output"
+                elif ambiguous:
+                    retry_decision = "stop_ambiguous"
+                elif not policy.retryable:
+                    retry_decision = "stop_non_retryable"
+                elif not within_retry_boundary:
+                    retry_decision = "stop_retry_limit"
+                elif self._cancel_event.is_set():
+                    retry_decision = "stop_cancelled"
+                else:
+                    retry_decision = "stop_not_proven_safe"
                 self._last_usage_record = self._record_token_usage(
-                    messages,
+                    provider_messages,
                     _LoopLLMResponse(content="", tool_calls=[]),
                     phase=phase,
                     status="error",
                     error=str(failure.original),
                     attempt=attempts,
-                    retry=policy.retryable,
+                    retry=can_retry,
+                    attempt_disposition=attempt_disposition.value,
+                    retry_decision=retry_decision,
                     error_class=type(failure.original).__name__,
-                    tool_definitions=tool_definitions,
+                    tool_definitions=provider_tool_definitions,
                     duration_ms=int((time.monotonic() - attempt_started) * 1000),
                 )
                 await self._notify_provider_attempt_record(self._last_usage_record)
-                can_retry = (
-                    policy.retryable
-                    and not failure.partial_output
-                    and attempts <= _MAX_PROVIDER_RETRIES
-                    and not self._cancel_event.is_set()
-                )
                 if not can_retry:
                     raise _ProviderRequestError(
                         failure.original,
                         policy,
                         attempts=attempts,
                         partial_output=failure.partial_output,
+                        ambiguous=ambiguous,
+                        attempt_disposition=attempt_disposition,
                     ) from failure.original
 
                 visible_agent = (
@@ -2325,6 +2681,52 @@ class AgentLoop:
             # Execute a bounded batch. Every skipped call still gets a compact
             # protocol-valid tool result so providers do not see orphan calls.
             batch_limit = self.config.max_tool_calls_per_round
+            parallel_results: dict[int, Any] = {}
+            bounded_calls = list(response.tool_calls[:batch_limit])
+            pure_batch = len(bounded_calls) >= 2 and len(response.tool_calls) <= batch_limit
+            if pure_batch:
+                for candidate in bounded_calls:
+                    candidate_tool = self.tools.get(candidate.name)
+                    required = _tool_required_args(
+                        self.tools,
+                        candidate.name,
+                        candidate_tool,
+                    )
+                    if (
+                        candidate_tool is None
+                        or candidate_tool.side_effect != "pure_read"
+                        or not candidate_tool.parallel_safe
+                        or any(
+                            name not in candidate.arguments
+                            or candidate.arguments.get(name) is None
+                            for name in required
+                        )
+                    ):
+                        pure_batch = False
+                        break
+            if pure_batch:
+                batch_started = time.perf_counter()
+
+                async def run_pure_call(call: LLMToolCall) -> Any:
+                    tool = self.tools.get(call.name)
+                    if tool is None:
+                        raise ValueError(f"Tool not found: {call.name}")
+                    return await tool(**dict(call.arguments or {}))
+
+                batch_task = asyncio.gather(
+                    *(run_pure_call(call) for call in bounded_calls),
+                    return_exceptions=True,
+                )
+                self._active_tool_task = batch_task
+                try:
+                    batch_values = await batch_task
+                finally:
+                    self._usage_tool_time_ms += int(
+                        (time.perf_counter() - batch_started) * 1000
+                    )
+                    if self._active_tool_task is batch_task:
+                        self._active_tool_task = None
+                parallel_results = dict(enumerate(batch_values))
             for tool_index, tool_call in enumerate(response.tool_calls):
                 if tool_index >= batch_limit:
                     result_str = (
@@ -2356,6 +2758,9 @@ class AgentLoop:
                     continue
                 await self._set_status(AgentStatus.RUNNING_TOOL)
 
+                historical_marker_part_ids = _unresolved_persisted_result_part_ids(
+                    tool_call
+                )
                 execution_tool_call = _rehydrate_persisted_result_part_call(
                     tool_call,
                     self._persisted_result_part_contents,
@@ -2366,13 +2771,19 @@ class AgentLoop:
                 unresolved_part_ids = _unresolved_persisted_result_part_ids(
                     execution_tool_call
                 )
+                resolved_historical_marker = bool(historical_marker_part_ids) and not (
+                    unresolved_part_ids
+                )
                 visible_tool_call = (
                     _redact_unresolved_persisted_result_part_call(
-                        execution_tool_call
+                        tool_call
                     )
-                    if unresolved_part_ids
+                    if historical_marker_part_ids
                     else tool_call
                 )
+                # A retired marker is never a Provider-visible success example,
+                # even when its same-run digest can be verified from disk.
+                assistant_tool_message.tool_calls[tool_index] = visible_tool_call
                 await self.bus.publish(
                     ToolCallMessage(
                         agent_type=self.agent_type,
@@ -2391,7 +2802,29 @@ class AgentLoop:
                     if tool is None:
                         raise ValueError(f"Tool not found: {tool_call.name}")
 
-                    if (
+                    if resolved_historical_marker:
+                        # Legacy checkpoints described an already-persisted part
+                        # by marker.  Replaying the historical write can overwrite
+                        # good prose and creates another paid correction loop.  A
+                        # verified marker therefore closes as an idempotent read of
+                        # durable state; the current schema/list tool determines the
+                        # next action.
+                        result = {
+                            "status": "already_ready",
+                            "accepted": True,
+                            "persisted": True,
+                            "ready_part_ids": historical_marker_part_ids,
+                            "do_not_rewrite_part_ids": historical_marker_part_ids,
+                            "next_action": "list_result_parts_then_submit",
+                            "instruction": (
+                                "The referenced same-run parts are already persisted. "
+                                "Do not execute the historical write again. List current "
+                                "parts once, write only missing or explicitly authorized "
+                                "rewrite ids, then submit the typed result."
+                            ),
+                        }
+
+                    elif (
                         tool_call.name == "cancel_reporting_workflow"
                         and not _is_explicit_report_cancel_request(self._current_message)
                     ):
@@ -2484,15 +2917,26 @@ class AgentLoop:
                             missing_argument_names=missing_required,
                         )
 
-                    tool_task = asyncio.create_task(
-                        tool(**execution_tool_call.arguments)
-                    )
-                    self._active_tool_task = tool_task
-                    try:
-                        result = await tool_task
-                    finally:
-                        if self._active_tool_task is tool_task:
-                            self._active_tool_task = None
+                    if resolved_historical_marker:
+                        pass
+                    elif tool_index in parallel_results:
+                        result = parallel_results[tool_index]
+                        if isinstance(result, BaseException):
+                            raise result
+                    else:
+                        tool_started = time.perf_counter()
+                        tool_task = asyncio.create_task(
+                            tool(**execution_tool_call.arguments)
+                        )
+                        self._active_tool_task = tool_task
+                        try:
+                            result = await tool_task
+                        finally:
+                            self._usage_tool_time_ms += int(
+                                (time.perf_counter() - tool_started) * 1000
+                            )
+                            if self._active_tool_task is tool_task:
+                                self._active_tool_task = None
 
                     if (
                         tool_call.name == "apply_patch"
@@ -2512,7 +2956,11 @@ class AgentLoop:
 
                     outcome = normalize_tool_outcome(result, tool_call.name)
                     if outcome.status == "ok" and assistant_tool_message.tool_calls:
-                        if isinstance(result, dict) and result.get("persisted") is True:
+                        if (
+                            not resolved_historical_marker
+                            and isinstance(result, dict)
+                            and result.get("persisted") is True
+                        ):
                             _remember_persisted_result_part_content(
                                 execution_tool_call,
                                 self._persisted_result_part_contents,
@@ -2524,7 +2972,11 @@ class AgentLoop:
                         # call even when its paired tool result says it succeeded.
                         # The general working-memory compactor bounds cost by evicting
                         # complete older messages and persists their exact transcript.
-                        assistant_tool_message.tool_calls[tool_index] = execution_tool_call
+                        assistant_tool_message.tool_calls[tool_index] = (
+                            visible_tool_call
+                            if resolved_historical_marker
+                            else execution_tool_call
+                        )
                     await self.bus.publish(
                         ToolResultMsg(
                             agent_type=self.agent_type,
@@ -2615,7 +3067,9 @@ class AgentLoop:
                         str(e),
                         tool_call.arguments,
                     )
-                    error_msg = f"Error executing {tool_call.name}: {str(e)}"
+                    error_msg = _sanitize_provider_visible_text(
+                        f"Error executing {tool_call.name}: {str(e)}"
+                    )
 
                     await self.bus.publish(
                         ToolResultMsg(
@@ -2660,6 +3114,7 @@ class AgentLoop:
                             content=canonical_terminal_message(self._terminal_outcome),
                             message_id=user_message_id,
                             streaming=False,
+                            **self._active_workflow_correlation(),
                         )
                     )
                     return
@@ -2763,6 +3218,7 @@ class AgentLoop:
                             message_id=user_message_id,
                             streaming=True,
                             thinking=response.thinking,
+                            **self._active_workflow_correlation(),
                         )
                     )
 
@@ -2795,6 +3251,7 @@ class AgentLoop:
                     message_id=user_message_id,
                     streaming=False,
                     internal=True,
+                    **self._active_workflow_correlation(),
                 )
             )
         elif response.content and not self._turn_reported:
@@ -2808,6 +3265,7 @@ class AgentLoop:
                         content=response.content,
                         message_id=user_message_id,
                         streaming=False,
+                        **self._active_workflow_correlation(),
                     )
                 )
 
@@ -2838,7 +3296,18 @@ class AgentLoop:
                     "content": message.content or "",
                     "tool_call_id": message.tool_call_id,
                     "is_tool_result": message.is_tool_result,
-                    "tool_calls": [str(call) for call in (message.tool_calls or [])],
+                    "tool_calls": [
+                        (
+                            call.model_dump(mode="json")
+                            if hasattr(call, "model_dump")
+                            else {
+                                "id": getattr(call, "id", None),
+                                "name": getattr(call, "name", None),
+                                "arguments": getattr(call, "arguments", None),
+                            }
+                        )
+                        for call in (message.tool_calls or [])
+                    ],
                 }
                 for message in removed
             ],
@@ -2852,7 +3321,11 @@ class AgentLoop:
             role=checkpoint.role,
             content=(checkpoint.content or "").replace(
                 "Older tool transcripts were persisted locally.",
-                f"Older tool transcripts were persisted locally. checkpoint_ref={checkpoint_ref}",
+                (
+                    "Older tool transcripts were persisted locally. "
+                    f"checkpoint_ref={checkpoint_ref} "
+                    f"checkpoint_sha256={hashlib.sha256(serialized.encode()).hexdigest()}"
+                ),
             ),
         )
         logger.info(
@@ -2874,6 +3347,8 @@ class AgentLoop:
         error: str | None,
         attempt: int = 1,
         retry: bool = False,
+        attempt_disposition: str | None = None,
+        retry_decision: str | None = None,
         guard: bool = False,
         error_class: str | None = None,
         tool_definitions: list[dict] | None = None,
@@ -2898,6 +3373,7 @@ class AgentLoop:
         self._usage_totals["output_tokens"] += output_tokens
         run_id = str(self.usage_run_id or self.agent_type)
         task_id = str(self.usage_task_id or "") or None
+        serialization_started = time.perf_counter()
         message_payload = [
             {
                 "role": message.role,
@@ -2928,6 +3404,9 @@ class AgentLoop:
             sort_keys=True,
             default=str,
             separators=(",", ":"),
+        )
+        serialization_ms = int(
+            (time.perf_counter() - serialization_started) * 1000
         )
         pre_adapter_request_fingerprint = hashlib.sha256(
             f"{serialized_messages}\n{serialized_tools}".encode("utf-8")
@@ -2999,6 +3478,25 @@ class AgentLoop:
         )
         if not provider_call_id and context_manifest_ref:
             provider_call_id = Path(str(context_manifest_ref)).stem
+        phase_turn_kind = (
+            "guard"
+            if guard or phase.startswith("guard")
+            else "tool_followup"
+            if phase == "tool_followup"
+            else str(
+                getattr(
+                    self._current_message,
+                    "turn_kind",
+                    "task_initial",
+                )
+            )
+        )
+        queue_wait_ms = self._usage_queue_wait_ms
+        context_build_ms = self._usage_context_build_ms
+        tool_time_ms = self._usage_tool_time_ms
+        self._usage_queue_wait_ms = 0
+        self._usage_context_build_ms = 0
+        self._usage_tool_time_ms = 0
         record = {
             "timestamp": datetime.now().astimezone().isoformat(),
             "run_id": run_id,
@@ -3006,6 +3504,7 @@ class AgentLoop:
             "agent_id": str(self.agent_type),
             "stage": str(getattr(self, "usage_stage", "") or phase),
             "phase": phase,
+            "turn_kind": phase_turn_kind,
             "provider": self.llm_provider.__class__.__name__,
             "model": self.llm_provider.model or "unknown",
             "status": status,
@@ -3013,6 +3512,8 @@ class AgentLoop:
             "error_class": error_class,
             "attempt": attempt,
             "retry": retry,
+            "attempt_disposition": attempt_disposition,
+            "retry_decision": retry_decision,
             "guard": guard or phase.startswith("guard"),
             "message_count": len(messages),
             "message_chars": message_chars,
@@ -3048,6 +3549,37 @@ class AgentLoop:
                 getattr(response, "tool_calls", None) or []
             ),
             "duration_ms": duration_ms,
+            "queue_wait_ms": queue_wait_ms,
+            "context_build_ms": context_build_ms,
+            "serialization_ms": serialization_ms,
+            "ttft_ms": getattr(response, "ttft_ms", None),
+            "provider_active_ms": (
+                getattr(response, "provider_active_ms", None)
+                if getattr(response, "provider_active_ms", None) is not None
+                else duration_ms
+            ),
+            "tool_time_ms": tool_time_ms,
+            "execution_profile_id": getattr(
+                self, "usage_execution_profile_id", None
+            ),
+            "execution_profile_version": getattr(
+                self, "usage_execution_profile_version", None
+            ),
+            "execution_profile_sha256": getattr(
+                self, "usage_execution_profile_sha256", None
+            ),
+            "resolved_provider_route": getattr(
+                self, "usage_resolved_provider_route", "inherit"
+            ),
+            "resolved_model": getattr(
+                self,
+                "usage_resolved_model",
+                self.llm_provider.model or "unknown",
+            ),
+            "task_priority": getattr(self, "usage_task_priority", None),
+            "expected_duration_ms": getattr(
+                self, "usage_expected_duration_ms", None
+            ),
             "input_tokens": input_tokens,
             "cached_input_tokens": cached_input_tokens,
             "cache_write_input_tokens": cache_write_input_tokens,
@@ -3086,6 +3618,8 @@ class AgentLoop:
             rendered = result
         else:
             rendered = json.dumps(result, ensure_ascii=False, default=str)
+
+        rendered = _sanitize_provider_visible_text(rendered)
 
         max_chars = self.config.max_tool_result_chars
         if len(rendered) <= max_chars:

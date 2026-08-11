@@ -158,6 +158,33 @@ def test_report_version_preserves_suffix_when_source_is_already_a_cas_view(
     assert published.artifact_blob_refs["final_docx"] == blob.relative_path
 
 
+def test_report_version_reuses_delivery_trusted_handle_without_rehash(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "Outputs/report.docx"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"already-verified-delivery")
+    delivery_store = ContentAddressedStore(tmp_path)
+    blob = delivery_store.ingest_file(source)
+    handle = delivery_store.issue_trusted_handle(
+        blob, lineage_id="delivery:report:v1:final_docx"
+    )
+    delivery_view = tmp_path / "Work/runs/run/delivery/report.docx"
+    delivery_store.link_trusted_view(handle, delivery_view)
+    version_store = ReportVersionStore(tmp_path)
+
+    published = version_store.publish(
+        _version(
+            "version-trusted",
+            {"final_docx": delivery_view.relative_to(tmp_path)},
+        ),
+        trusted_handle_refs={"final_docx": handle.manifest_ref},
+    )
+
+    assert published.artifact_trusted_handle_refs["final_docx"] == handle.manifest_ref
+    assert version_store.content_store.metrics_snapshot()["cas_rehash_bytes"] == 0
+
+
 def test_report_version_loads_legacy_v1_manifest_without_rewriting(
     tmp_path: Path,
 ) -> None:

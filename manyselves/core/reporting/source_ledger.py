@@ -7,8 +7,10 @@ import json
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .agentic_models import SourceKind, SourceRecord
+from .parallel_runtime import exclusive_file_lock
 
 _LOCKS_GUARD = threading.Lock()
 _PATH_LOCKS: dict[Path, threading.RLock] = {}
@@ -31,6 +33,7 @@ class SourceLedger:
         self.run_id = safe_run_id
         self.path = workspace / "Work/runs" / safe_run_id / "ledgers/sources.json"
         self.content_root = workspace / "Work/runs" / safe_run_id / "sources"
+        self.process_lock_path = self.path.with_suffix(".lock")
         self._lock = _lock_for(self.path)
 
     def _load(self) -> list[SourceRecord]:
@@ -42,7 +45,8 @@ class SourceLedger:
     @property
     def records(self) -> list[SourceRecord]:
         with self._lock:
-            return self._load()
+            with exclusive_file_lock(self.process_lock_path):
+                return self._load()
 
     def _persist(self, records: list[SourceRecord]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,60 +90,151 @@ class SourceLedger:
         ]
         return f"{prefix}{max(numbers, default=0) + 1:03d}"
 
-    def register_local(self, title: str, locator: str, content: str) -> SourceRecord:
+    def _validate_local_locator(self, locator: str) -> None:
         locator_path = locator.split("；", 1)[0].split("#", 1)[0]
         resolved = (self.workspace / locator_path).resolve()
         knowledge_root = (self.workspace / "Knowledge").resolve()
         if not resolved.is_relative_to(knowledge_root) or resolved == knowledge_root:
             raise ValueError("local references must be located beneath project Knowledge")
-        digest = self._digest(content)
-        with self._lock:
-            records = self._load()
-            for record in records:
-                if (
-                    record.kind == SourceKind.LOCAL_REFERENCE
-                    and record.locator == locator
-                    and record.content_sha256 == digest
-                ):
-                    self._persist_content(record.id, content)
-                    return record
-            record = SourceRecord(
-                id=self._next_id(records, SourceKind.LOCAL_REFERENCE),
-                kind=SourceKind.LOCAL_REFERENCE,
-                title=title,
-                locator=locator,
-                content_sha256=digest,
+
+    def register_many(self, entries: list[dict[str, Any]]) -> list[SourceRecord]:
+        """Register an ordered batch with one lock, id allocation, and registry write.
+
+        Each entry uses ``kind`` plus ``title``, ``locator`` and ``content``.
+        Project evidence additionally supplies ``evidence_id``; web entries may
+        supply publisher/published_at/scope_note.  Validation completes for the
+        entire batch before the registry is replaced, so a bad later item cannot
+        partially allocate R/W identifiers.
+        """
+
+        if not entries:
+            return []
+        normalized: list[dict[str, Any]] = []
+        for raw in entries:
+            entry = dict(raw)
+            try:
+                kind = SourceKind(entry["kind"])
+                title = str(entry["title"]).strip()
+                locator = str(entry["locator"]).strip()
+                content = str(entry["content"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError("source batch entry is incomplete or invalid") from exc
+            if not title or not locator:
+                raise ValueError("source title and locator must be non-empty")
+            if kind is SourceKind.LOCAL_REFERENCE:
+                self._validate_local_locator(locator)
+            evidence_id = (
+                str(entry.get("evidence_id") or "")
+                if kind is SourceKind.PROJECT_EVIDENCE
+                else ""
             )
-            records.append(record)
-            self._persist(records)
-            self._persist_content(record.id, content)
-            return record
+            if kind is SourceKind.PROJECT_EVIDENCE and not evidence_id.startswith("E-"):
+                raise ValueError("project evidence id must start with E-")
+            normalized.append(
+                {
+                    **entry,
+                    "kind": kind,
+                    "title": title,
+                    "locator": locator,
+                    "content": content,
+                    "content_sha256": self._digest(content),
+                    "evidence_id": evidence_id,
+                }
+            )
+
+        with self._lock:
+            with exclusive_file_lock(self.process_lock_path):
+                records = self._load()
+                results: list[SourceRecord] = []
+                pending_contents: list[tuple[str, str]] = []
+                for entry in normalized:
+                    kind = entry["kind"]
+                    digest = entry["content_sha256"]
+                    locator = entry["locator"]
+                    existing = None
+                    if kind is SourceKind.PROJECT_EVIDENCE:
+                        existing = next(
+                            (
+                                record
+                                for record in records
+                                if record.id == entry["evidence_id"]
+                            ),
+                            None,
+                        )
+                        if existing is not None and (
+                            existing.locator != locator
+                            or existing.content_sha256 != digest
+                        ):
+                            raise ValueError(
+                                "conflicting project evidence id: "
+                                f"{entry['evidence_id']}"
+                            )
+                    else:
+                        existing = next(
+                            (
+                                record
+                                for record in records
+                                if record.kind == kind
+                                and record.locator == locator
+                                and record.content_sha256 == digest
+                            ),
+                            None,
+                        )
+                    if existing is None:
+                        source_id = (
+                            entry["evidence_id"]
+                            if kind is SourceKind.PROJECT_EVIDENCE
+                            else self._next_id(records, kind)
+                        )
+                        existing = SourceRecord(
+                            id=source_id,
+                            kind=kind,
+                            title=entry["title"],
+                            locator=locator,
+                            publisher=entry.get("publisher"),
+                            published_at=entry.get("published_at"),
+                            accessed_at=(
+                                datetime.now(UTC).date().isoformat()
+                                if kind is SourceKind.WEB
+                                else None
+                            ),
+                            scope_note=entry.get("scope_note"),
+                            content_sha256=digest,
+                        )
+                        records.append(existing)
+                    results.append(existing)
+                    pending_contents.append((existing.id, entry["content"]))
+                for source_id, content in pending_contents:
+                    self._persist_content(source_id, content)
+                self._persist(records)
+                return results
+
+    def register_local(self, title: str, locator: str, content: str) -> SourceRecord:
+        return self.register_many(
+            [
+                {
+                    "kind": SourceKind.LOCAL_REFERENCE,
+                    "title": title,
+                    "locator": locator,
+                    "content": content,
+                }
+            ]
+        )[0]
 
     def register_project(
         self, evidence_id: str, title: str, locator: str, content: str
     ) -> SourceRecord:
-        if not evidence_id.startswith("E-"):
-            raise ValueError("project evidence id must start with E-")
-        digest = self._digest(content)
-        with self._lock:
-            records = self._load()
-            for record in records:
-                if record.id == evidence_id:
-                    if record.locator != locator or record.content_sha256 != digest:
-                        raise ValueError(f"conflicting project evidence id: {evidence_id}")
-                    self._persist_content(record.id, content)
-                    return record
-            record = SourceRecord(
-                id=evidence_id,
-                kind=SourceKind.PROJECT_EVIDENCE,
-                title=title,
-                locator=locator,
-                content_sha256=digest,
-            )
-            records.append(record)
-            self._persist(records)
-            self._persist_content(record.id, content)
-            return record
+        return self.register_many(
+            [
+                {
+                    "kind": SourceKind.PROJECT_EVIDENCE,
+                    "evidence_id": evidence_id,
+                    "title": title,
+                    "locator": locator,
+                    "content": content,
+                }
+            ]
+        )[0]
 
     def register_web(
         self,
@@ -150,30 +245,16 @@ class SourceLedger:
         published_at: str | None = None,
         scope_note: str | None = None,
     ) -> SourceRecord:
-        digest = self._digest(content)
-        accessed_at = datetime.now(UTC).date().isoformat()
-        with self._lock:
-            records = self._load()
-            for record in records:
-                if (
-                    record.kind == SourceKind.WEB
-                    and record.locator == url
-                    and record.content_sha256 == digest
-                ):
-                    self._persist_content(record.id, content)
-                    return record
-            record = SourceRecord(
-                id=self._next_id(records, SourceKind.WEB),
-                kind=SourceKind.WEB,
-                title=title,
-                locator=url,
-                publisher=publisher,
-                published_at=published_at,
-                accessed_at=accessed_at,
-                scope_note=scope_note,
-                content_sha256=digest,
-            )
-            records.append(record)
-            self._persist(records)
-            self._persist_content(record.id, content)
-            return record
+        return self.register_many(
+            [
+                {
+                    "kind": SourceKind.WEB,
+                    "title": title,
+                    "locator": url,
+                    "content": content,
+                    "publisher": publisher,
+                    "published_at": published_at,
+                    "scope_note": scope_note,
+                }
+            ]
+        )[0]

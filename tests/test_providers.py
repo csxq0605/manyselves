@@ -11,7 +11,9 @@ from manyselves.core.providers.base import (
     LLMResponse,
     LLMToolCall,
     Message,
+    ProviderRequestDisposition,
     build_provider_request_metrics,
+    provider_request_disposition,
 )
 from manyselves.core.providers.defaults import DEFAULT_MODELS
 from manyselves.core.providers.factory import (
@@ -101,6 +103,54 @@ def test_provider_request_metrics_hash_only_canonical_payload():
     assert len(first["request_fingerprint"]) == 64
     assert first["request_chars"] > first["message_chars"]
     assert first["tool_schema_chars"] > 0
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_exposes_definitive_429_rejection():
+    class HttpFailureError(RuntimeError):
+        status_code = 429
+
+    class Completions:
+        async def create(self, **kwargs):
+            raise HttpFailureError("request limit")
+
+    provider = OpenAICompatProvider.__new__(OpenAICompatProvider)
+    provider.model = "gpt-test"
+    provider.provider_type = "openai"
+    provider.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=Completions())
+    )
+
+    with pytest.raises(HttpFailureError) as exc_info:
+        await provider.chat([Message(role="user", content="audit")])
+
+    assert provider_request_disposition(exc_info.value) == (
+        ProviderRequestDisposition.DEFINITELY_REJECTED
+    )
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_treats_409_as_accepted_or_unknown():
+    class HttpFailureError(RuntimeError):
+        status_code = 409
+
+    class Completions:
+        async def create(self, **kwargs):
+            raise HttpFailureError("request id already exists")
+
+    provider = OpenAICompatProvider.__new__(OpenAICompatProvider)
+    provider.model = "gpt-test"
+    provider.provider_type = "openai"
+    provider.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=Completions())
+    )
+
+    with pytest.raises(HttpFailureError) as exc_info:
+        await provider.chat([Message(role="user", content="audit")])
+
+    assert provider_request_disposition(exc_info.value) == (
+        ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN
+    )
 
 
 # ── Anthropic provider conversion tests ─────────────────────────────────
@@ -383,9 +433,13 @@ async def test_openai_stream_has_application_level_idle_timeout(monkeypatch):
         0.01,
     )
 
-    with pytest.raises(TimeoutError, match="provider stream idle timeout"):
+    with pytest.raises(TimeoutError, match="provider stream idle timeout") as exc_info:
         async for _ in provider.chat_stream([Message(role="user", content="audit")]):
             pass
+
+    assert provider_request_disposition(exc_info.value) == (
+        ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN
+    )
 
 
 @pytest.mark.asyncio
@@ -616,12 +670,16 @@ async def test_anthropic_stream_uses_per_request_idle_timeout(monkeypatch):
         0.01,
     )
 
-    with pytest.raises(TimeoutError, match="idle timeout after 0.02s"):
+    with pytest.raises(TimeoutError, match="idle timeout after 0.02s") as exc_info:
         async for _ in provider.chat_stream(
             [Message(role="user", content="audit")],
             stream_idle_timeout_seconds=0.02,
         ):
             pass
+
+    assert provider_request_disposition(exc_info.value) == (
+        ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN
+    )
 
 
 # ── ProviderFactory tests ───────────────────────────────────────────────

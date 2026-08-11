@@ -16,6 +16,7 @@ from copy import deepcopy
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from ...config.schema import AgentDefaults
 from ...interfaces.types import (
@@ -58,6 +59,8 @@ from ..tools.skill_evolution_tools import ProductSkillEvolutionTool
 from .agentic_models import AgentResult, AgentRunStatus, TaskEnvelope
 from .capabilities import compile_agent_access, scoped_gateway
 from .config import AgentDefinition
+from .execution_runtime import ProviderRouter, ResolvedTaskExecutionProfile
+from .input_snapshot import RunInputSnapshotStore
 from .input_contracts import (
     INPUT_CONTRACT_TYPES,
     AggregateEditorInput,
@@ -68,12 +71,20 @@ from .input_contracts import (
     ModuleAuthoringInput,
     ModuleReviewInput,
     ModuleRevisionInput,
+    SubmoduleAuthoringInput,
     TemplateDistillationInput,
 )
 from .message_router import WorkflowMessageRouter, artifact_path_refs
 from .models import CHIEF_RESULT_PART_IDS, CHIEF_SECTION_RESULT_PART_IDS
 from .module_collaboration import InterfaceRequest
 from .module_skills import ModuleSkillLibrary
+from .parallel_runtime import (
+    IdentityLease,
+    IdentityLeaseManager,
+    TaskAttemptStore,
+    TaskCorrelation,
+    exclusive_file_lock,
+)
 from .prompts import PromptAssembler
 from .research.evidence_memory import EvidenceResearchMemory
 from .research.reference_library import ReferenceLibrary
@@ -87,6 +98,7 @@ from .versions import SkillProvenance
 
 REPORTING_SUBMISSION_STREAM_IDLE_TIMEOUT_SECONDS = 600.0
 REPORTING_AUDIT_STREAM_IDLE_TIMEOUT_SECONDS = 600.0
+CONTINUATION_HARNESS_STOPPED = "REPORTING_CONTINUATION_HARNESS_STOPPED:"
 REPORTING_AUDIT_AGENT_IDS = frozenset(
     {
         "evidence-auditor",
@@ -94,10 +106,37 @@ REPORTING_AUDIT_AGENT_IDS = frozenset(
         "chief-editor-auditor",
     }
 )
+
+
+class ProviderAttemptRecoveryRequired(RuntimeError):
+    """A same-task Provider request may have been accepted without a result."""
+
+    partial_output = True
+    ambiguous = True
+
+    def __init__(self, manifest_refs: list[str]) -> None:
+        self.manifest_refs = tuple(manifest_refs)
+        super().__init__(
+            "Provider attempt status is ambiguous; reconcile the existing same-task "
+            "journal before dispatching another physical request: "
+            + ", ".join(manifest_refs)
+        )
+
+
 MODULE_COLLABORATION_SUBMISSION_KINDS = frozenset(
     {
         "module_discovery_submission",
         "module_interface_response_submission",
+        "submodule_discovery_batch_submission",
+        "submodule_discovery_submission",
+        "submodule_interface_response_submission",
+    }
+)
+SUBMODULE_SCOPED_SUBMISSION_KINDS = frozenset(
+    {
+        "submodule_discovery_submission",
+        "submodule_interface_response_submission",
+        "submodule_draft_submission",
     }
 )
 
@@ -187,6 +226,8 @@ class InspectImageTool(Tool):
 class CalculateTool(Tool):
     name = "calculate"
     description = "Evaluate a basic arithmetic expression with no names or code execution."
+    side_effect = "pure_read"
+    parallel_safe = True
     _ops = {
         ast.Add: operator.add,
         ast.Sub: operator.sub,
@@ -232,10 +273,12 @@ class ReportingAgentRunner:
         *,
         timeout: float | None = None,
         product_skill_root: Path | None = None,
+        provider_router: ProviderRouter | None = None,
     ):
         self.workspace = Path(workspace).resolve()
         self.bus = bus
         self.llm_provider = llm_provider
+        self.provider_router = provider_router or ProviderRouter(llm_provider)
         self.defaults = defaults
         # Reporting tasks are already bounded by provider idle timeouts, tool-turn
         # limits, and the run-level request/token budget.  A second wall-clock
@@ -254,6 +297,7 @@ class ReportingAgentRunner:
             project_root=self.workspace / "Capabilities/skills",
         )
         self._sessions: dict[tuple[str, str], tuple[AgentLoop, str, str]] = {}
+        self._session_route_bindings: dict[tuple[str, str], tuple[str, str]] = {}
         self._artifact_root = ArtifactGateway(
             self.workspace, ArtifactGrant("root", "root", "workflow", "root")
         )
@@ -355,6 +399,15 @@ class ReportingAgentRunner:
             return "module_revision"
         if "module_submission" in outputs:
             return "module_authoring"
+        if "submodule_draft_submission" in outputs:
+            return "submodule_authoring"
+        if (
+            "submodule_discovery_submission" in outputs
+            or "submodule_discovery_batch_submission" in outputs
+        ):
+            return "submodule_collaboration_discovery"
+        if "submodule_interface_response_submission" in outputs:
+            return "submodule_collaboration_response"
         if "module_discovery_submission" in outputs:
             return "module_collaboration_discovery"
         if "module_interface_response_submission" in outputs:
@@ -383,38 +436,39 @@ class ReportingAgentRunner:
 
         relative = f"Work/runs/{envelope.run_id}/agent-identities.json"
         path = self.workspace / relative
-        registry = (
-            json.loads(path.read_text(encoding="utf-8"))
-            if path.is_file()
-            else {
-                "workflow_id": workflow_id,
-                "created_by": "main",
-                "identities": {},
-            }
-        )
-        identities = registry.setdefault("identities", {})
-        identity = identities.setdefault(
-            identity_key,
-            {
-                "agent_id": envelope.agent_id,
-                "identity_key": identity_key,
-                "session_id": session_id,
-                "runtime_id": runtime_id,
-                "created_on_first_dispatch": True,
-                "first_task_id": envelope.task_id,
-                "first_revision": envelope.revision,
-            },
-        )
-        if identity["session_id"] != session_id or identity["runtime_id"] != runtime_id:
-            raise RuntimeError(f"reporting identity changed inside workflow: {identity_key}")
-        identity.update(
-            {
-                "status": status,
-                "last_task_id": envelope.task_id,
-                "last_revision": envelope.revision,
-            }
-        )
-        self.store.write_json(relative, registry)
+        with exclusive_file_lock(path.with_suffix(".lock")):
+            registry = (
+                json.loads(path.read_text(encoding="utf-8"))
+                if path.is_file()
+                else {
+                    "workflow_id": workflow_id,
+                    "created_by": "main",
+                    "identities": {},
+                }
+            )
+            identities = registry.setdefault("identities", {})
+            identity = identities.setdefault(
+                identity_key,
+                {
+                    "agent_id": envelope.agent_id,
+                    "identity_key": identity_key,
+                    "session_id": session_id,
+                    "runtime_id": runtime_id,
+                    "created_on_first_dispatch": True,
+                    "first_task_id": envelope.task_id,
+                    "first_revision": envelope.revision,
+                },
+            )
+            if identity["session_id"] != session_id or identity["runtime_id"] != runtime_id:
+                raise RuntimeError(f"reporting identity changed inside workflow: {identity_key}")
+            identity.update(
+                {
+                    "status": status,
+                    "last_task_id": envelope.task_id,
+                    "last_revision": envelope.revision,
+                }
+            )
+            self.store.write_json(relative, registry)
 
     def _reporting_research_guard(
         self,
@@ -431,12 +485,18 @@ class ReportingAgentRunner:
         usage_path = self.workspace / f"Work/runs/{envelope.run_id}/research-tool-usage.json"
 
         def guard() -> None:
-            usage = (
-                json.loads(usage_path.read_text(encoding="utf-8")) if usage_path.is_file() else {}
-            )
-            used = int(usage.get(key, 0))
-            usage[key] = used + 1
-            self.store.write_json(f"Work/runs/{envelope.run_id}/research-tool-usage.json", usage)
+            with exclusive_file_lock(usage_path.with_suffix(".lock")):
+                usage = (
+                    json.loads(usage_path.read_text(encoding="utf-8"))
+                    if usage_path.is_file()
+                    else {}
+                )
+                used = int(usage.get(key, 0))
+                usage[key] = used + 1
+                self.store.write_json(
+                    f"Work/runs/{envelope.run_id}/research-tool-usage.json",
+                    usage,
+                )
 
         return guard
 
@@ -466,7 +526,10 @@ class ReportingAgentRunner:
             module_id=module_id,
             submodule_ids=(
                 set(envelope.target_submodule_ids)
-                if definition.id == "evidence-auditor"
+                if (
+                    definition.id == "evidence-auditor"
+                    or re.fullmatch(r"module-2\.[1-5]-specialist", definition.id)
+                )
                 else None
             ),
         )
@@ -483,6 +546,214 @@ class ReportingAgentRunner:
     def _sha256_text(value: str) -> str:
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _continuation_limits(
+        resolved_profile: ResolvedTaskExecutionProfile,
+    ) -> dict[str, int]:
+        """Derive finite extra-slice headroom without reducing task limits.
+
+        One continuation reuses the exact execution profile.  A profile which
+        already grants a large output or tool window therefore needs fewer
+        complete extra windows than a deliberately small test/deployment
+        profile.  These limits never mutate ``max_tokens`` or omit task input.
+        """
+
+        profile = resolved_profile.profile
+        max_tokens_slices = max(
+            1,
+            min(
+                3,
+                (65_536 + profile.max_output_tokens - 1)
+                // profile.max_output_tokens,
+            ),
+        )
+        tool_slices = max(
+            1,
+            min(
+                3,
+                (24 + profile.max_tool_rounds - 1) // profile.max_tool_rounds,
+            ),
+        )
+        return {
+            "max_tokens_continuation": max_tokens_slices,
+            "tool_slice_continuation": tool_slices,
+            # A correction is already a dedicated extra model turn.  If that
+            # turn reaches its tool boundary, allow exactly one lossless slice
+            # to submit the typed result, but never a correction loop.
+            "submission_correction": 1,
+            "max_no_progress_observations": 1,
+        }
+
+    @staticmethod
+    def _continuation_conversation_event_digests(loop: AgentLoop) -> set[str]:
+        """Hash unique semantic events while ignoring harness-owned prompts.
+
+        Sets intentionally ignore repeated copies of the same tool call/result,
+        so changing call ids or appending an identical transcript is not
+        mistaken for progress.
+        """
+
+        def normalized_content(value: Any) -> str:
+            content = str(value or "")
+            if (
+                "<same_identity_continuation>" in content
+                or "<submission_correction>" in content
+                or "<progress_check>" in content
+                or "<working_memory_checkpoint>" in content
+            ):
+                return ""
+            marker = (
+                "[Provider output reached the per-request max_tokens limit "
+                "before a typed tool submission. The task is not complete.]"
+            )
+            content = content.replace(marker, "").strip()
+            if not content:
+                return ""
+            try:
+                parsed = json.loads(content)
+            except (TypeError, ValueError):
+                return content
+            if isinstance(parsed, dict) and parsed.get("truncated") is True:
+                parsed = dict(parsed)
+                parsed.pop("full_result_ref", None)
+                return json.dumps(
+                    parsed,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                )
+            return content
+
+        digests: set[str] = set()
+        for message in loop._conversation_history:
+            tool_calls = []
+            for call in getattr(message, "tool_calls", None) or ():
+                tool_calls.append(
+                    {
+                        "name": str(getattr(call, "name", "") or ""),
+                        "arguments": dict(getattr(call, "arguments", {}) or {}),
+                    }
+                )
+            event = {
+                "role": str(getattr(message, "role", "") or ""),
+                "content": normalized_content(getattr(message, "content", "")),
+                "is_tool_result": bool(
+                    getattr(message, "is_tool_result", False)
+                ),
+                "tool_calls": tool_calls,
+            }
+            if not event["content"] and not tool_calls:
+                continue
+            serialized = json.dumps(
+                event,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+            digests.add(hashlib.sha256(serialized.encode("utf-8")).hexdigest())
+        return digests
+
+    async def _continuation_progress_snapshot(
+        self,
+        loop: AgentLoop,
+        envelope: TaskEnvelope,
+    ) -> dict[str, Any]:
+        """Return content-free evidence of durable or conversational progress."""
+
+        durable: dict[str, str] = {}
+        run_root = self.workspace / "Work" / "runs" / envelope.run_id
+        durable_roots = (
+            run_root / "drafts" / envelope.task_id / f"r{envelope.revision}",
+            run_root / "results" / "attempts" / envelope.task_id,
+        )
+        for root in durable_roots:
+            if not root.is_dir():
+                continue
+            for path in sorted(item for item in root.rglob("*") if item.is_file()):
+                relative = path.relative_to(self.workspace).as_posix()
+                durable[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+        canonical_result = run_root / "results" / f"{envelope.task_id}.json"
+        if canonical_result.is_file():
+            relative = canonical_result.relative_to(self.workspace).as_posix()
+            durable[relative] = hashlib.sha256(
+                canonical_result.read_bytes()
+            ).hexdigest()
+
+        result_parts: dict[str, Any] | None = None
+        list_parts = loop.tools.get("list_result_parts")
+        if list_parts is not None:
+            try:
+                listed = await list_parts()
+            except Exception as exc:  # pragma: no cover - defensive telemetry
+                result_parts = {"status": "unreadable", "error_type": type(exc).__name__}
+            else:
+                result_parts = {
+                    "complete": bool(listed.get("complete", False)),
+                    "ready_part_ids": sorted(listed.get("ready_part_ids", ())),
+                    "missing_part_ids": sorted(listed.get("missing_part_ids", ())),
+                    "rewrite_part_ids": sorted(listed.get("rewrite_part_ids", ())),
+                    "parts": sorted(
+                        (
+                            str(item.get("part_id", "")),
+                            int(item.get("characters", 0)),
+                            bool(item.get("ready", False)),
+                        )
+                        for item in listed.get("parts", ())
+                    ),
+                }
+
+        durable_payload = json.dumps(
+            {"files": durable, "result_parts": result_parts},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        event_digests = self._continuation_conversation_event_digests(loop)
+        return {
+            "durable_sha256": hashlib.sha256(
+                durable_payload.encode("utf-8")
+            ).hexdigest(),
+            "durable_file_count": len(durable),
+            "result_parts": result_parts,
+            "conversation_event_sha256": sorted(event_digests),
+        }
+
+    @staticmethod
+    def _claim_hash_occurrence(
+        claim_root: Path,
+        digest: str,
+        occurrence: str,
+    ) -> str:
+        """Choose one first occurrence without a shared read/modify/write race."""
+
+        claim_root.mkdir(parents=True, exist_ok=True)
+        claim_path = claim_root / digest
+        with exclusive_file_lock(claim_path.with_suffix(".lock")):
+            if claim_path.is_file():
+                return claim_path.read_text(encoding="utf-8")
+            with claim_path.open("w", encoding="utf-8") as handle:
+                handle.write(occurrence)
+                handle.flush()
+                os.fsync(handle.fileno())
+            return occurrence
+
+    def _merge_hash_index(self, index_path: Path, claims: dict[str, str]) -> None:
+        """Maintain the legacy aggregate view through one process-safe reducer."""
+
+        with exclusive_file_lock(index_path.with_suffix(".lock")):
+            current = (
+                json.loads(index_path.read_text(encoding="utf-8"))
+                if index_path.is_file()
+                else {}
+            )
+            for digest, occurrence in claims.items():
+                current.setdefault(digest, occurrence)
+            self.store.write_json(
+                index_path.relative_to(self.workspace).as_posix(), current
+            )
+
     def _write_context_manifest(
         self,
         *,
@@ -494,17 +765,15 @@ class ReportingAgentRunner:
         task_message: str,
         input_contract_payload: str | None,
         shared_artifacts: list[str],
+        resolved_execution_profile: ResolvedTaskExecutionProfile | None = None,
     ) -> Path:
         """Persist content-free context provenance for one provider dispatch."""
 
         root = f"Work/runs/{envelope.run_id}/context-manifests"
         index_ref = f"{root}/hash-index.json"
         index_path = self.workspace / index_ref
-        hash_index = (
-            json.loads(index_path.read_text(encoding="utf-8"))
-            if index_path.is_file()
-            else {}
-        )
+        claims: dict[str, str] = {}
+        claim_root = index_path.parent / "hash-index-claims"
         safe_task_id = re.sub(r"[^A-Za-z0-9_.-]", "_", envelope.task_id)
         task_sha256 = self._sha256_text(task_message)
         manifest_ref = (
@@ -515,7 +784,8 @@ class ReportingAgentRunner:
         def component(kind: str, value: str) -> dict:
             digest = self._sha256_text(value)
             occurrence = f"{manifest_ref}#{kind}"
-            first = hash_index.setdefault(digest, occurrence)
+            first = self._claim_hash_occurrence(claim_root, digest, occurrence)
+            claims[digest] = first
             return {
                 "kind": kind,
                 "chars": len(value),
@@ -548,7 +818,10 @@ class ReportingAgentRunner:
                     payload = path.read_bytes()
                     digest = hashlib.sha256(payload).hexdigest()
                     occurrence = f"{manifest_ref}#artifact:{ref}"
-                    first = hash_index.setdefault(digest, occurrence)
+                    first = self._claim_hash_occurrence(
+                        claim_root, digest, occurrence
+                    )
+                    claims[digest] = first
                     entry.update(
                         {
                             "bytes": len(payload),
@@ -576,10 +849,16 @@ class ReportingAgentRunner:
             "context_manifest_version": 1,
             "run_id": envelope.run_id,
             "task_id": envelope.task_id,
+            "task_attempt_id": envelope.task_attempt_id,
             "revision": envelope.revision,
             "agent_id": definition.id,
             "identity_key": identity_key,
             "session_id": session_id,
+            "execution_profile": (
+                resolved_execution_profile.model_dump(mode="json")
+                if resolved_execution_profile is not None
+                else None
+            ),
             "input_contract_kind": envelope.input_contract_kind,
             "target_submodule_ids": envelope.target_submodule_ids,
             "prompt_components": prompt_components,
@@ -602,7 +881,7 @@ class ReportingAgentRunner:
                 for mode in ("inline", "reference", "hash_retained")
             },
         }
-        self.store.write_json(index_ref, hash_index)
+        self._merge_hash_index(index_path, claims)
         return self.store.write_json(manifest_ref, manifest)
 
     def _write_provider_call_manifest(
@@ -617,17 +896,15 @@ class ReportingAgentRunner:
         phase: str,
         attempt: int,
         call_index: int,
+        resolved_execution_profile: ResolvedTaskExecutionProfile | None = None,
     ) -> Path:
         """Persist pre-adapter hashes, then backfill canonical provider payload metrics."""
 
         root = f"Work/runs/{envelope.run_id}/context-manifests"
         index_ref = f"{root}/provider-hash-index.json"
         index_path = self.workspace / index_ref
-        hash_index = (
-            json.loads(index_path.read_text(encoding="utf-8"))
-            if index_path.is_file()
-            else {}
-        )
+        claims: dict[str, str] = {}
+        claim_root = index_path.parent / "provider-hash-index-claims"
         safe_task_id = re.sub(r"[^A-Za-z0-9_.-]", "_", envelope.task_id)
         safe_phase = re.sub(r"[^A-Za-z0-9_.-]", "_", phase)
         manifest_ref = (
@@ -639,7 +916,8 @@ class ReportingAgentRunner:
         def component(kind: str, value: str, *, index: int | None = None) -> dict:
             digest = self._sha256_text(value)
             occurrence = f"{manifest_ref}#{kind}"
-            first = hash_index.setdefault(digest, occurrence)
+            first = self._claim_hash_occurrence(claim_root, digest, occurrence)
+            claims[digest] = first
             result = {
                 "kind": kind,
                 "chars": len(value),
@@ -702,10 +980,11 @@ class ReportingAgentRunner:
             default=str,
         )
         manifest = {
-            "provider_context_manifest_version": 2,
+            "provider_context_manifest_version": 3,
             "provider_call_id": provider_call_id,
             "run_id": envelope.run_id,
             "task_id": envelope.task_id,
+            "task_attempt_id": envelope.task_attempt_id,
             "revision": envelope.revision,
             "agent_id": definition.id,
             "identity_key": identity_key,
@@ -713,6 +992,11 @@ class ReportingAgentRunner:
             "provider_call_index": call_index,
             "phase": phase,
             "attempt": attempt,
+            "execution_profile": (
+                resolved_execution_profile.model_dump(mode="json")
+                if resolved_execution_profile is not None
+                else None
+            ),
             "message_count": len(messages),
             "messages": message_components,
             "tool_definitions": component("tool_definitions", serialized_tools),
@@ -729,7 +1013,7 @@ class ReportingAgentRunner:
             "provider_payload_status": "pending",
             "provider_payload": None,
         }
-        self.store.write_json(index_ref, hash_index)
+        self._merge_hash_index(index_path, claims)
         return self.store.write_json(manifest_ref, manifest)
 
     def _finalize_provider_call_manifest(
@@ -775,7 +1059,53 @@ class ReportingAgentRunner:
         )
         manifest["usage_status"] = record.get("status")
         manifest["usage_source"] = record.get("usage_source")
+        manifest["attempt_disposition"] = record.get("attempt_disposition")
+        manifest["retry_decision"] = record.get("retry_decision")
         return self.store.write_json(relative, manifest)
+
+    def _ambiguous_provider_call_refs(
+        self,
+        envelope: TaskEnvelope,
+        *,
+        session_id: str,
+        task_attempt_id: str | None = None,
+    ) -> list[str]:
+        """Find same-task requests that cannot safely be replayed."""
+
+        root = (
+            self.workspace
+            / f"Work/runs/{envelope.run_id}/context-manifests/provider-calls"
+        )
+        if not root.is_dir():
+            return []
+        ambiguous: list[str] = []
+        for path in sorted(root.glob("*.json")):
+            try:
+                manifest = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                continue
+            expected = {
+                "run_id": envelope.run_id,
+                "task_id": envelope.task_id,
+                "revision": envelope.revision,
+                "session_id": session_id,
+            }
+            if task_attempt_id is not None:
+                expected["task_attempt_id"] = task_attempt_id
+            if any(
+                manifest.get(key) != value
+                for key, value in expected.items()
+            ):
+                continue
+            pending = manifest.get("provider_payload_status") == "pending"
+            accepted_unknown = (
+                manifest.get("usage_status") == "error"
+                and manifest.get("attempt_disposition")
+                == "accepted_or_unknown"
+            )
+            if pending or accepted_unknown:
+                ambiguous.append(path.relative_to(self.workspace).as_posix())
+        return ambiguous
 
     def _input_contract(self, envelope: TaskEnvelope):
         if not envelope.input_contract_kind or not envelope.input_contract_ref:
@@ -809,6 +1139,7 @@ class ReportingAgentRunner:
         contract,
         *,
         module_id: str | None = None,
+        submodule_id: str | None = None,
         collaboration_request_ids: list[str] | None = None,
     ) -> dict:
         """Specialize provider-visible review schemas to the exact active task."""
@@ -827,8 +1158,22 @@ class ReportingAgentRunner:
             schema.get("properties", {}).get("module_id", {}).update(
                 {"const": module_id}
             )
+            if kind in {
+                "submodule_discovery_submission",
+                "submodule_interface_response_submission",
+            }:
+                if submodule_id is None:
+                    raise ValueError(
+                        f"{kind} requires one fixed leaf-submodule identity"
+                    )
+                schema.get("properties", {}).get("submodule_id", {}).update(
+                    {"const": submodule_id}
+                )
             if (
-                kind == "module_interface_response_submission"
+                kind in {
+                    "module_interface_response_submission",
+                    "submodule_interface_response_submission",
+                }
                 and collaboration_request_ids is not None
             ):
                 dispositions = schema.get("properties", {}).get(
@@ -851,6 +1196,16 @@ class ReportingAgentRunner:
             # fixed, omitting that generic example is safer and cheaper than
             # presenting a semantically mismatched request id.
             schema.pop("examples", None)
+        elif isinstance(contract, SubmoduleAuthoringInput):
+            schema.get("properties", {}).get("module_id", {}).update(
+                {"const": contract.module_id}
+            )
+            schema.get("properties", {}).get("submodule_id", {}).update(
+                {"const": contract.submodule_id}
+            )
+            schema.get("properties", {}).get("revision", {}).update(
+                {"const": contract.revision}
+            )
         elif isinstance(contract, ModuleAuthoringInput):
             schema.get("properties", {}).get("module_id", {}).update({"const": contract.module_id})
             schema.get("properties", {}).get("revision", {}).update({"const": contract.revision})
@@ -922,6 +1277,10 @@ class ReportingAgentRunner:
             if isinstance(contract, ModuleAuthoringInput):
                 example["module_id"] = contract.module_id
                 example["revision"] = contract.revision
+            elif isinstance(contract, SubmoduleAuthoringInput):
+                example["module_id"] = contract.module_id
+                example["submodule_id"] = contract.submodule_id
+                example["revision"] = contract.revision
             elif isinstance(contract, ModuleRevisionInput):
                 example["module_id"] = contract.module_id
                 example["base_revision"] = contract.subject.revision
@@ -965,12 +1324,15 @@ class ReportingAgentRunner:
         self,
         envelope: TaskEnvelope,
         module_id: str | None,
+        submodule_id: str | None,
     ) -> list[str] | None:
         """Load the exact sparse Wave 2 inbox for task-scoped schema binding."""
 
         if (
-            "module_interface_response_submission"
-            not in envelope.allowed_outputs
+            not {
+                "module_interface_response_submission",
+                "submodule_interface_response_submission",
+            }.intersection(envelope.allowed_outputs)
         ):
             return None
         if module_id is None:
@@ -984,9 +1346,19 @@ class ReportingAgentRunner:
             raise ValueError(
                 "Wave 2 response requires exactly one collaboration inbox ref"
             )
+        submodule_response = (
+            "submodule_interface_response_submission"
+            in envelope.allowed_outputs
+        )
+        if submodule_response and submodule_id is None:
+            raise ValueError("Wave 2 submodule response requires one fixed leaf identity")
         expected_ref = (
             f"Work/runs/{envelope.run_id}/collaboration/inboxes/"
-            f"module-{module_id}.json"
+            + (
+                f"submodule-{submodule_id}.json"
+                if submodule_response
+                else f"module-{module_id}.json"
+            )
         )
         if inbox_refs[0] != expected_ref:
             raise ValueError(
@@ -1008,9 +1380,18 @@ class ReportingAgentRunner:
             raise ValueError("Wave 2 collaboration inbox is invalid JSON") from exc
         requests = inbox.get("requests") if isinstance(inbox, dict) else None
         if (
-            inbox.get("kind") != "module_interface_inbox"
+            inbox.get("kind")
+            != (
+                "submodule_interface_inbox"
+                if submodule_response
+                else "module_interface_inbox"
+            )
             or inbox.get("run_id") != envelope.run_id
             or inbox.get("module_id") != module_id
+            or (
+                submodule_response
+                and inbox.get("submodule_id") != submodule_id
+            )
             or not isinstance(requests, list)
             or not requests
         ):
@@ -1032,6 +1413,13 @@ class ReportingAgentRunner:
         ):
             raise ValueError(
                 "Wave 2 collaboration inbox contains a request for another module"
+            )
+        if submodule_response and any(
+            request.target_submodule_id != submodule_id
+            for request in typed_requests
+        ):
+            raise ValueError(
+                "Wave 2 collaboration inbox contains a request for another submodule"
             )
         request_ids = [
             request.request_id for request in typed_requests
@@ -1140,6 +1528,91 @@ class ReportingAgentRunner:
             for skill in self.module_skills.skills
         ]
 
+    def _task_correlation(
+        self,
+        envelope: TaskEnvelope,
+        *,
+        workflow_id: str,
+        identity_key: str,
+        session_id: str,
+        identity_lease: IdentityLease,
+        execution_profile_sha256: str = "0" * 64,
+    ) -> TaskCorrelation:
+        """Bind one dispatch to its immutable inputs and active identity lease."""
+
+        input_contract_ref = envelope.input_contract_ref
+        input_contract_sha256: str | None = None
+        subject_ref: str | None = None
+        subject_sha256: str | None = None
+        if input_contract_ref:
+            contract_path = (self.workspace / input_contract_ref).resolve()
+            if (
+                not contract_path.is_relative_to(self.workspace)
+                or not contract_path.is_file()
+            ):
+                raise ValueError("task input contract is not a readable workspace artifact")
+            contract_bytes = contract_path.read_bytes()
+            input_contract_sha256 = hashlib.sha256(contract_bytes).hexdigest()
+            try:
+                contract_payload = json.loads(contract_bytes)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("task input contract is not valid JSON") from exc
+            candidate_ref = next(
+                (
+                    contract_payload.get(field)
+                    for field in ("subject_ref", "base_subject_ref")
+                    if isinstance(contract_payload.get(field), str)
+                ),
+                None,
+            )
+            if candidate_ref:
+                candidate_path = (self.workspace / candidate_ref).resolve()
+                if (
+                    not candidate_path.is_relative_to(self.workspace)
+                    or not candidate_path.is_file()
+                ):
+                    raise ValueError("task subject is not a readable workspace artifact")
+                subject_ref = candidate_ref
+                subject_sha256 = hashlib.sha256(candidate_path.read_bytes()).hexdigest()
+        task_envelope_sha256 = hashlib.sha256(
+            json.dumps(
+                envelope.model_dump(
+                    mode="json",
+                    exclude={"task_attempt_id"},
+                ),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        return TaskCorrelation(
+            workflow_id=workflow_id,
+            run_id=envelope.run_id,
+            task_id=envelope.task_id,
+            task_attempt_id=envelope.task_attempt_id,
+            agent_id=envelope.agent_id,
+            identity_key=identity_key,
+            session_id=session_id,
+            task_envelope_sha256=task_envelope_sha256,
+            execution_profile_sha256=execution_profile_sha256,
+            input_contract_ref=input_contract_ref,
+            input_contract_sha256=input_contract_sha256,
+            subject_ref=subject_ref,
+            subject_sha256=subject_sha256,
+            lease_owner_id=identity_lease.owner_id,
+            lease_epoch=identity_lease.lease_epoch,
+        )
+
+    @staticmethod
+    def _same_recoverable_task(
+        previous: TaskCorrelation,
+        current: TaskCorrelation,
+    ) -> bool:
+        excluded = {"task_attempt_id", "lease_owner_id", "lease_epoch"}
+        return previous.model_dump(exclude=excluded) == current.model_dump(
+            exclude=excluded
+        )
+
     def _tools(
         self,
         definition: AgentDefinition,
@@ -1149,6 +1622,7 @@ class ReportingAgentRunner:
         *,
         gateway: ArtifactGateway | None = None,
         shared_artifacts: list[str] | None = None,
+        task_correlation: TaskCorrelation | None = None,
     ) -> ToolRegistry:
         registry = ToolRegistry()
         gateway = gateway or scoped_gateway(
@@ -1180,7 +1654,26 @@ class ReportingAgentRunner:
             if module_id is not None
             else None
         )
-        library = ReferenceLibrary(self.workspace)
+        input_snapshot_path = (
+            self.workspace
+            / f"Work/runs/{envelope.run_id}/input-snapshot.json"
+        )
+        if input_snapshot_path.is_file():
+            input_snapshot = RunInputSnapshotStore(self.workspace).load(
+                envelope.run_id
+            )
+            library = ReferenceLibrary(
+                self.workspace,
+                knowledge_root=input_snapshot.scope_root(
+                    self.workspace, "Knowledge"
+                ),
+                index_root=(
+                    self.workspace
+                    / f"Work/runs/{envelope.run_id}/indexes/knowledge"
+                ),
+            )
+        else:
+            library = ReferenceLibrary(self.workspace)
         key = os.getenv("BRAVE_SEARCH_API_KEY", "").strip()
         web = BraveWebResearchBackend(key) if key else DisabledWebResearchBackend()
         research_guard = self._reporting_research_guard(definition, envelope, workflow_id)
@@ -1233,6 +1726,11 @@ class ReportingAgentRunner:
                     "template distillation template_ref is not one canonical workspace file"
                 )
         input_contract = self._input_contract(envelope)
+        submodule_id = (
+            envelope.target_submodule_ids[0]
+            if len(envelope.target_submodule_ids) == 1
+            else None
+        )
         collaboration_outputs = (
             set(envelope.allowed_outputs) & MODULE_COLLABORATION_SUBMISSION_KINDS
         )
@@ -1243,15 +1741,25 @@ class ReportingAgentRunner:
                 "a collaboration wave task requires exactly one collaboration "
                 "submission kind and one fixed module specialist identity"
             )
+        if (
+            collaboration_outputs & SUBMODULE_SCOPED_SUBMISSION_KINDS
+            and submodule_id is None
+        ):
+            raise ValueError(
+                "a submodule collaboration task requires exactly one fixed leaf scope"
+            )
         collaboration_request_ids = self._collaboration_request_ids(
             envelope,
             module_id,
+            submodule_id,
         )
         expected_result_part_ids = (
             list(template_inspection.required_part_ids)
             if template_inspection is not None
             else list(input_contract.required_submodule_ids)
             if isinstance(input_contract, ModuleAuthoringInput)
+            else [input_contract.submodule_id]
+            if isinstance(input_contract, SubmoduleAuthoringInput)
             else list(input_contract.target_submodule_ids)
             if isinstance(input_contract, ModuleRevisionInput)
             else [
@@ -1274,7 +1782,11 @@ class ReportingAgentRunner:
             else envelope.target_submodule_ids
         )
         evidence_binding_required = bool(
-            {"module_submission", "module_revision_submission"}
+            {
+                "module_submission",
+                "module_revision_submission",
+                "submodule_draft_submission",
+            }
             & set(envelope.allowed_outputs)
         )
         required_synthesis_input_ids: list[str] = []
@@ -1391,6 +1903,7 @@ class ReportingAgentRunner:
                 revision=envelope.revision,
                 input_contract_kind=envelope.input_contract_kind,
                 input_contract_ref=envelope.input_contract_ref,
+                task_correlation=task_correlation,
             ),
             "write_result_part": WriteResultPartTool(
                 envelope.run_id,
@@ -1418,6 +1931,7 @@ class ReportingAgentRunner:
                 self.store,
                 self.bus,
                 workflow_id,
+                task_correlation=task_correlation,
             ),
         }
         if definition.id == "product-skill-maintainer":
@@ -1444,6 +1958,7 @@ class ReportingAgentRunner:
                     kind,
                     input_contract,
                     module_id=module_id,
+                    submodule_id=submodule_id,
                     collaboration_request_ids=collaboration_request_ids,
                 )
                 for kind in envelope.allowed_outputs
@@ -1481,6 +1996,29 @@ class ReportingAgentRunner:
             }
         return registry
 
+    @staticmethod
+    def _identity_key(
+        definition: AgentDefinition,
+        envelope: TaskEnvelope,
+        session_key: str | None,
+    ) -> str:
+        """Scope concurrent leaf tasks without weakening durable role ownership."""
+
+        if definition.id == "evidence-auditor" and session_key:
+            return session_key
+        if (
+            session_key
+            and re.fullmatch(r"module-2\.[1-5]-specialist", definition.id)
+            and len(envelope.target_submodule_ids) == 1
+            and (
+                set(envelope.allowed_outputs) & SUBMODULE_SCOPED_SUBMISSION_KINDS
+                or "module_revision_submission" in envelope.allowed_outputs
+            )
+            and session_key == f"submodule-{envelope.target_submodule_ids[0]}"
+        ):
+            return session_key
+        return definition.id
+
     async def run(
         self,
         definition: AgentDefinition,
@@ -1489,6 +2027,44 @@ class ReportingAgentRunner:
         *,
         workflow_id: str,
         session_key: str | None = None,
+    ) -> AgentResult:
+        """Run one typed task while holding a cross-process identity fence."""
+
+        identity_key = self._identity_key(definition, envelope, session_key)
+        # One public run() call is one dispatch/requeue.  model_copy() is used
+        # heavily to build follow-up envelopes, so a copied construction-time
+        # value must never make two dispatches share an immutable result path.
+        envelope.task_attempt_id = f"attempt-{uuid4().hex}"
+        manager = IdentityLeaseManager(self.workspace, envelope.run_id)
+        lease_handle = manager.acquire(
+            workflow_id,
+            identity_key,
+            owner_id=(
+                f"{IdentityLeaseManager.default_owner_id()}:"
+                f"{envelope.task_attempt_id}"
+            ),
+        )
+        try:
+            return await self._run_with_identity_lease(
+                definition,
+                envelope,
+                shared_artifacts,
+                workflow_id=workflow_id,
+                session_key=session_key,
+                identity_lease=lease_handle.lease,
+            )
+        finally:
+            lease_handle.release()
+
+    async def _run_with_identity_lease(
+        self,
+        definition: AgentDefinition,
+        envelope: TaskEnvelope,
+        shared_artifacts: list[str],
+        *,
+        workflow_id: str,
+        session_key: str | None = None,
+        identity_lease: IdentityLease,
     ) -> AgentResult:
         router = self._routers.get(workflow_id)
         if router is None:
@@ -1515,11 +2091,33 @@ class ReportingAgentRunner:
         # module so their evidence scope and review history cannot bleed across
         # modules.  Revisions keep the same session_key and therefore the same
         # auditor identity.
-        identity_key = (
-            session_key if definition.id == "evidence-auditor" and session_key else definition.id
-        )
+        identity_key = self._identity_key(definition, envelope, session_key)
+        if (
+            identity_lease.workflow_id != workflow_id
+            or identity_lease.identity_key != identity_key
+        ):
+            raise RuntimeError("identity lease does not match the typed task")
         cache_key = (workflow_id, identity_key)
         cached = self._sessions.get(cache_key)
+        task_kind = self._usage_stage(definition, envelope)
+        base_config = self._loop_config(definition, envelope)
+        resolved_profile, routed_provider, resolved_config = (
+            self.provider_router.resolve(
+                definition,
+                envelope,
+                task_kind=task_kind,
+                base_config=base_config,
+            )
+        )
+        route_binding = (
+            resolved_profile.resolved_provider_route,
+            resolved_profile.resolved_model,
+        )
+        previous_binding = self._session_route_bindings.get(cache_key)
+        if previous_binding is not None and previous_binding != route_binding:
+            raise RuntimeError(
+                "reporting identity provider route/model changed inside one lifecycle"
+            )
         gateway = scoped_gateway(
             self._artifact_root,
             workflow_id=workflow_id,
@@ -1527,12 +2125,90 @@ class ReportingAgentRunner:
             agent_id=definition.id,
             session_id=(cached[1] if cached is not None else "pending"),
         )
-        system_prompt = self._system_prompt(definition, envelope)
+        prompt_definition = definition.model_copy(
+            update={
+                "effort": resolved_profile.profile.effort,
+                "model": resolved_profile.resolved_model,
+            }
+        )
+        system_prompt = self._system_prompt(prompt_definition, envelope)
+        recovery_session_id = (
+            cached[1]
+            if cached is not None
+            else "session-"
+            + hashlib.sha256(
+                f"{workflow_id}:{identity_key}".encode("utf-8")
+            ).hexdigest()[:12]
+        )
+        recovery_correlation = self._task_correlation(
+            envelope,
+            workflow_id=workflow_id,
+            identity_key=identity_key,
+            session_id=recovery_session_id,
+            identity_lease=identity_lease,
+            execution_profile_sha256=resolved_profile.profile_sha256,
+        )
+        attempt_store = TaskAttemptStore(self.workspace, envelope.run_id)
+        previous_correlation = attempt_store.current(envelope.task_id)
+        if (
+            previous_correlation is not None
+            and self._same_recoverable_task(
+                previous_correlation,
+                recovery_correlation,
+            )
+        ):
+            recovered = attempt_store.load_verified_result(previous_correlation)
+            if recovered is not None:
+                terminal, payload = recovered
+                recovered_result = AgentResult.model_validate(payload)
+                if terminal.status != recovered_result.status.value:
+                    raise RuntimeError(
+                        "persisted task result status does not match its terminal"
+                    )
+                if (
+                    recovered_result.task_id != envelope.task_id
+                    or recovered_result.run_id != envelope.run_id
+                    or recovered_result.agent_id != definition.id
+                    or recovered_result.session_id != recovery_session_id
+                ):
+                    raise RuntimeError(
+                        "persisted task result does not match its Agent identity"
+                    )
+                # Only a completed typed result closes this semantic task.  An
+                # incomplete/failed/blocked attempt remains forensic evidence,
+                # but an explicit later dispatch must be allowed to create a
+                # fresh attempt rather than returning that non-success forever.
+                if terminal.status == AgentRunStatus.COMPLETED.value:
+                    runtime_id = f"{definition.id}--{recovery_session_id}"
+                    self._record_identity(
+                        workflow_id=workflow_id,
+                        envelope=envelope,
+                        identity_key=identity_key,
+                        session_id=recovery_session_id,
+                        runtime_id=runtime_id,
+                        status="completed",
+                    )
+                    return recovered_result
+        ambiguous_provider_refs = self._ambiguous_provider_call_refs(
+            envelope,
+            session_id=recovery_session_id,
+        )
+        if ambiguous_provider_refs:
+            raise ProviderAttemptRecoveryRequired(ambiguous_provider_refs)
         if cached is None:
             identity_digest = hashlib.sha256(
                 f"{workflow_id}:{identity_key}".encode("utf-8")
             ).hexdigest()[:12]
             session_id = f"session-{identity_digest}"
+            task_correlation = self._task_correlation(
+                envelope,
+                workflow_id=workflow_id,
+                identity_key=identity_key,
+                session_id=session_id,
+                identity_lease=identity_lease,
+                execution_profile_sha256=resolved_profile.profile_sha256,
+            )
+            TaskAttemptStore(self.workspace, envelope.run_id).activate(task_correlation)
             gateway = scoped_gateway(
                 self._artifact_root,
                 workflow_id=workflow_id,
@@ -1541,7 +2217,7 @@ class ReportingAgentRunner:
                 session_id=session_id,
             )
             runtime_id = f"{definition.id}--{session_id}"
-            config = self._loop_config(definition, envelope)
+            config = resolved_config
             loop = AgentLoop(
                 agent_type=runtime_id,
                 workspace=self.workspace,
@@ -1552,10 +2228,11 @@ class ReportingAgentRunner:
                     workflow_id,
                     gateway=gateway,
                     shared_artifacts=shared_artifacts,
+                    task_correlation=task_correlation,
                 ),
                 bus=self.bus,
                 config=config,
-                llm_provider=self.llm_provider,
+                llm_provider=routed_provider,
                 system_prompt=system_prompt,
                 usage_run_id=envelope.run_id,
                 usage_task_id=envelope.task_id,
@@ -1567,18 +2244,29 @@ class ReportingAgentRunner:
                 ),
             )
             self._sessions[cache_key] = (loop, session_id, runtime_id)
-            loop.usage_stage = self._usage_stage(definition, envelope)
+            self._session_route_bindings[cache_key] = route_binding
+            loop.usage_stage = task_kind
             router.register_session(definition.id, session_id, runtime_id)
             await loop.start()
         else:
             loop, session_id, runtime_id = cached
+            task_correlation = self._task_correlation(
+                envelope,
+                workflow_id=workflow_id,
+                identity_key=identity_key,
+                session_id=session_id,
+                identity_lease=identity_lease,
+                execution_profile_sha256=resolved_profile.profile_sha256,
+            )
+            TaskAttemptStore(self.workspace, envelope.run_id).activate(task_correlation)
             # A durable role identity is not a license to replay every prior task
             # prompt. Each reporting transition carries a complete typed input
             # contract, so start the new task with clean provider working memory.
             # Tool follow-ups and continuation slices inside this run() call still
             # share the same conversation.
             loop.reset_working_memory_for_typed_task()
-            loop.config = self._loop_config(definition, envelope)
+            loop.config = resolved_config
+            loop.llm_provider = routed_provider
             loop.artifact_gateway = gateway
             loop._system_prompt_override = system_prompt
             loop.tools = self._tools(
@@ -1588,15 +2276,27 @@ class ReportingAgentRunner:
                 workflow_id,
                 gateway=gateway,
                 shared_artifacts=shared_artifacts,
+                task_correlation=task_correlation,
             )
             loop.usage_run_id = envelope.run_id
             loop.usage_task_id = envelope.task_id
-            loop.usage_stage = self._usage_stage(definition, envelope)
+            loop.usage_stage = task_kind
             loop.before_provider_attempt = (
                 None
                 if self._provider_attempt_guard is None
                 else lambda: self._provider_attempt_guard(definition.id, envelope.task_id)
             )
+        loop.usage_execution_profile_id = resolved_profile.profile.profile_id
+        loop.usage_execution_profile_version = resolved_profile.profile.version
+        loop.usage_execution_profile_sha256 = resolved_profile.profile_sha256
+        loop.usage_resolved_provider_route = (
+            resolved_profile.resolved_provider_route
+        )
+        loop.usage_resolved_model = resolved_profile.resolved_model
+        loop.usage_task_priority = resolved_profile.profile.priority
+        loop.usage_expected_duration_ms = (
+            resolved_profile.profile.expected_duration_ms
+        )
         safe_task_id = re.sub(r"[^A-Za-z0-9_.-]", "_", envelope.task_id)
         provider_call_root = (
             self.workspace
@@ -1628,6 +2328,7 @@ class ReportingAgentRunner:
                 phase=phase,
                 attempt=attempt,
                 call_index=provider_call_index,
+                resolved_execution_profile=resolved_profile,
             )
             loop.usage_context_manifest_ref = manifest_path.relative_to(
                 self.workspace
@@ -1670,6 +2371,7 @@ class ReportingAgentRunner:
             task_message=task_message,
             input_contract_payload=input_contract_payload,
             shared_artifacts=shared_artifacts,
+            resolved_execution_profile=resolved_profile,
         )
 
         async def wait_result() -> AgentResult:
@@ -1679,16 +2381,39 @@ class ReportingAgentRunner:
                     item.workflow_id == workflow_id
                     and item.run_id == envelope.run_id
                     and item.task_id == envelope.task_id
+                    and item.task_attempt_id == envelope.task_attempt_id
                     and item.sender == definition.id
+                    and item.session_id == session_id
+                    and item.identity_key == identity_key
+                    and item.lease_owner_id == identity_lease.owner_id
+                    and item.lease_epoch == identity_lease.lease_epoch
                 ),
                 timeout=self.timeout,
             )
-            raw = json.loads((self.workspace / message.result_path).read_text(encoding="utf-8"))
+            expected_ref = (
+                f"Work/runs/{envelope.run_id}/results/attempts/"
+                f"{envelope.task_id}/{envelope.task_attempt_id}.json"
+            )
+            if message.result_path != expected_ref:
+                raise RuntimeError("typed result path does not match the active task attempt")
+            result_path = (self.workspace / message.result_path).resolve()
+            if (
+                not result_path.is_relative_to(self.workspace)
+                or not result_path.is_file()
+            ):
+                raise RuntimeError("typed result artifact is missing")
+            result_bytes = result_path.read_bytes()
+            if hashlib.sha256(result_bytes).hexdigest() != message.result_sha256:
+                raise RuntimeError("typed result hash does not match its terminal envelope")
+            raw = json.loads(result_bytes)
             return AgentResult.model_validate(raw)
 
         async def persist_untyped_completion(response: AgentResponse) -> AgentResult:
             """Return a natural Agent completion to the workflow without guessing its type."""
 
+            continuation_stopped = response.content.startswith(
+                CONTINUATION_HARNESS_STOPPED
+            )
             incomplete = AgentResult(
                 task_id=envelope.task_id,
                 run_id=envelope.run_id,
@@ -1696,24 +2421,20 @@ class ReportingAgentRunner:
                 session_id=session_id,
                 status=AgentRunStatus.INCOMPLETE,
                 raw_output=response.content,
-                reason="agent ended without a typed submission",
+                reason=(
+                    "continuation harness stopped after bounded no-progress/profile headroom"
+                    if continuation_stopped
+                    else "agent ended without a typed submission"
+                ),
             )
-            result_relative = f"results/{envelope.task_id}.json"
-            canonical = self.workspace / "Work/runs" / envelope.run_id / result_relative
-            if canonical.is_file():
-                try:
-                    existing = AgentResult.model_validate_json(
-                        canonical.read_text(encoding="utf-8")
-                    )
-                except (ValueError, OSError):
-                    existing = None
-                if existing is not None and existing.status == AgentRunStatus.COMPLETED:
-                    result_relative = (
-                        f"results/attempts/{envelope.task_id}-r{envelope.revision}-"
-                        f"{session_id}-incomplete.json"
-                    )
-            path = self.store.write_run_model(envelope.run_id, result_relative, incomplete)
-            relative = path.relative_to(self.workspace).as_posix()
+            terminal = TaskAttemptStore(
+                self.workspace, envelope.run_id
+            ).persist_result(
+                task_correlation,
+                incomplete.model_dump(mode="json"),
+                status=incomplete.status.value,
+            )
+            relative = terminal.result_ref
             await self.bus.publish(
                 AgentResultMessage(
                     workflow_id=workflow_id,
@@ -1725,6 +2446,16 @@ class ReportingAgentRunner:
                     result_path=relative,
                     status=incomplete.status.value,
                     content=response.content,
+                    task_attempt_id=envelope.task_attempt_id,
+                    session_id=session_id,
+                    identity_key=identity_key,
+                    input_contract_ref=task_correlation.input_contract_ref,
+                    input_contract_sha256=(
+                        task_correlation.input_contract_sha256
+                    ),
+                    result_sha256=terminal.result_sha256,
+                    lease_owner_id=identity_lease.owner_id,
+                    lease_epoch=identity_lease.lease_epoch,
                 )
             )
             return incomplete
@@ -1734,6 +2465,7 @@ class ReportingAgentRunner:
             *,
             internal: bool = False,
             provider_stream_idle_timeout_seconds: float | None = None,
+            turn_kind: str = "task_initial",
         ) -> AgentResult | AgentResponse:
             result_waiter = asyncio.create_task(wait_result())
             final_waiter = asyncio.create_task(
@@ -1742,6 +2474,11 @@ class ReportingAgentRunner:
                     lambda item: (
                         item.agent_type == runtime_id
                         and item.message_id == envelope.task_id
+                        and item.workflow_id == workflow_id
+                        and item.run_id == envelope.run_id
+                        and item.task_id == envelope.task_id
+                        and item.task_attempt_id == envelope.task_attempt_id
+                        and item.session_id == session_id
                         and not item.streaming
                     ),
                     timeout=self.timeout,
@@ -1750,7 +2487,14 @@ class ReportingAgentRunner:
             error_waiter = asyncio.create_task(
                 self.bus.wait_for(
                     Error,
-                    lambda item: item.source == runtime_id,
+                    lambda item: (
+                        item.source == runtime_id
+                        and item.workflow_id == workflow_id
+                        and item.run_id == envelope.run_id
+                        and item.task_id == envelope.task_id
+                        and item.task_attempt_id == envelope.task_attempt_id
+                        and item.session_id == session_id
+                    ),
                     timeout=self.timeout,
                 )
             )
@@ -1765,6 +2509,12 @@ class ReportingAgentRunner:
                         content=content,
                         internal=internal,
                         provider_stream_idle_timeout_seconds=(provider_stream_idle_timeout_seconds),
+                        workflow_id=workflow_id,
+                        run_id=envelope.run_id,
+                        task_id=envelope.task_id,
+                        task_attempt_id=envelope.task_attempt_id,
+                        session_id=session_id,
+                        turn_kind=turn_kind,
                     )
                 )
                 done, _pending = await asyncio.wait(
@@ -1792,14 +2542,154 @@ class ReportingAgentRunner:
 
             async def finish_tool_slices(
                 turn: AgentResult | AgentResponse,
+                *,
+                origin_turn_kind: str = "task_initial",
             ) -> AgentResult | AgentResponse:
-                """Continue one durable Agent until the current action yields a real result."""
+                """Continue only while durable/conversational state is advancing."""
+
+                safe_task_id = re.sub(r"[^A-Za-z0-9_.-]", "_", envelope.task_id)
+                safe_attempt_id = re.sub(
+                    r"[^A-Za-z0-9_.-]", "_", envelope.task_attempt_id
+                )
+                continuation_ref = (
+                    f"Work/runs/{envelope.run_id}/continuations/{safe_task_id}/"
+                    f"{safe_attempt_id}.json"
+                )
+                continuation_path = self.workspace / continuation_ref
+                limits = self._continuation_limits(resolved_profile)
+
+                def load_state() -> dict[str, Any]:
+                    if continuation_path.is_file():
+                        state = json.loads(
+                            continuation_path.read_text(encoding="utf-8")
+                        )
+                        expected = {
+                            "run_id": envelope.run_id,
+                            "task_id": envelope.task_id,
+                            "task_attempt_id": envelope.task_attempt_id,
+                            "revision": envelope.revision,
+                            "execution_profile_sha256": (
+                                resolved_profile.profile_sha256
+                            ),
+                        }
+                        if any(state.get(key) != value for key, value in expected.items()):
+                            raise RuntimeError(
+                                "continuation harness state does not match the active typed task"
+                            )
+                        if state.get("limits") != limits:
+                            raise RuntimeError(
+                                "continuation harness limits changed inside one task attempt"
+                            )
+                        return state
+                    return {
+                        "kind": "reporting_continuation_harness_state",
+                        "version": 1,
+                        "run_id": envelope.run_id,
+                        "task_id": envelope.task_id,
+                        "task_attempt_id": envelope.task_attempt_id,
+                        "revision": envelope.revision,
+                        "execution_profile_id": resolved_profile.profile.profile_id,
+                        "execution_profile_sha256": resolved_profile.profile_sha256,
+                        "limits": limits,
+                        "continuation_counts": {
+                            "max_tokens_continuation": 0,
+                            "tool_slice_continuation": 0,
+                            "submission_correction": 0,
+                        },
+                        "no_progress_observations": 0,
+                        "observed_conversation_event_sha256": [],
+                        "last_durable_sha256": None,
+                        "status": "active",
+                        "events": [],
+                    }
+
+                def save_state(state: dict[str, Any]) -> None:
+                    self.store.write_json(continuation_ref, state)
 
                 while isinstance(turn, AgentResponse) and turn.content in {
                     AGENT_TURN_CONTINUATION_REQUIRED,
                     AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
                 }:
                     max_tokens_continuation = turn.content == AGENT_MAX_TOKENS_CONTINUATION_REQUIRED
+                    continuation_kind = (
+                        "max_tokens_continuation"
+                        if max_tokens_continuation
+                        else "submission_correction"
+                        if origin_turn_kind == "submission_correction"
+                        else "tool_slice_continuation"
+                    )
+                    state = load_state()
+                    snapshot = await self._continuation_progress_snapshot(
+                        loop,
+                        envelope,
+                    )
+                    observed = set(
+                        state["observed_conversation_event_sha256"]
+                    )
+                    current_events = set(snapshot["conversation_event_sha256"])
+                    first_observation = state["last_durable_sha256"] is None
+                    durable_changed = (
+                        not first_observation
+                        and state["last_durable_sha256"]
+                        != snapshot["durable_sha256"]
+                    )
+                    new_events = current_events - observed
+                    progressed = first_observation or durable_changed or bool(new_events)
+                    if progressed:
+                        state["no_progress_observations"] = 0
+                    else:
+                        state["no_progress_observations"] += 1
+                    state["last_durable_sha256"] = snapshot["durable_sha256"]
+                    state["observed_conversation_event_sha256"] = sorted(
+                        observed | current_events
+                    )
+                    count = int(state["continuation_counts"][continuation_kind])
+                    profile_limit_reached = count >= limits[continuation_kind]
+                    stalled = (
+                        not first_observation
+                        and state["no_progress_observations"]
+                        >= limits["max_no_progress_observations"]
+                    )
+                    event = {
+                        "sequence": len(state["events"]) + 1,
+                        "origin_turn_kind": origin_turn_kind,
+                        "turn_kind": continuation_kind,
+                        "progressed": progressed,
+                        "new_conversation_event_count": len(new_events),
+                        "durable_changed": durable_changed,
+                        "durable_file_count": snapshot["durable_file_count"],
+                        "result_parts": snapshot["result_parts"],
+                        "continuations_already_issued": count,
+                    }
+                    if stalled or profile_limit_reached:
+                        stop_reason = (
+                            "repeated_no_progress"
+                            if stalled
+                            else "execution_profile_continuation_limit"
+                        )
+                        event.update(
+                            {"decision": "stop", "stop_reason": stop_reason}
+                        )
+                        state["events"].append(event)
+                        state["status"] = "stopped"
+                        state["stop_reason"] = stop_reason
+                        state["stop_turn_kind"] = continuation_kind
+                        save_state(state)
+                        return turn.model_copy(
+                            update={
+                                "content": (
+                                    f"{CONTINUATION_HARNESS_STOPPED}{stop_reason};"
+                                    f"turn_kind={continuation_kind};state_ref={continuation_ref}"
+                                ),
+                                "internal": True,
+                            }
+                        )
+
+                    state["continuation_counts"][continuation_kind] = count + 1
+                    event["decision"] = "continue"
+                    state["events"].append(event)
+                    state["status"] = "continuing"
+                    save_state(state)
                     if max_tokens_continuation:
                         continuation_instruction = (
                             "上一模型轮次达到单次 max_tokens 上限，未产生完整提交；"
@@ -1828,10 +2718,19 @@ class ReportingAgentRunner:
                     turn = await one_turn(
                         continuation_message,
                         internal=True,
+                        turn_kind=continuation_kind,
                         provider_stream_idle_timeout_seconds=(
                             REPORTING_SUBMISSION_STREAM_IDLE_TIMEOUT_SECONDS
                         ),
                     )
+                if continuation_path.is_file():
+                    state = load_state()
+                    state["status"] = (
+                        "typed_result"
+                        if isinstance(turn, AgentResult)
+                        else "ended_without_continuation_sentinel"
+                    )
+                    save_state(state)
                 return turn
 
             # Reporting turns can spend several minutes assembling a typed tool
@@ -1846,7 +2745,12 @@ class ReportingAgentRunner:
                     provider_stream_idle_timeout_seconds=(stream_idle_timeout),
                 )
             )
-            if isinstance(turn, AgentResponse) and envelope.allowed_outputs:
+            if (
+                isinstance(turn, AgentResponse)
+                and turn.content.startswith(CONTINUATION_HARNESS_STOPPED)
+            ):
+                result = await persist_untyped_completion(turn)
+            elif isinstance(turn, AgentResponse) and envelope.allowed_outputs:
                 expected = ", ".join(envelope.allowed_outputs)
                 if envelope.task_id == "template-skill-distillation":
                     correction = (
@@ -1943,10 +2847,12 @@ class ReportingAgentRunner:
                     await one_turn(
                         correction,
                         internal=True,
+                        turn_kind="submission_correction",
                         provider_stream_idle_timeout_seconds=(
                             REPORTING_SUBMISSION_STREAM_IDLE_TIMEOUT_SECONDS
                         ),
-                    )
+                    ),
+                    origin_turn_kind="submission_correction",
                 )
                 result = (
                     corrected
@@ -2119,6 +3025,7 @@ class ReportingAgentRunner:
         keys = [key for key in self._sessions if key[0] == workflow_id]
         for key in keys:
             loop, _session_id, runtime_id = self._sessions.pop(key)
+            self._session_route_bindings.pop(key, None)
             await loop.stop()
         router = self._routers.pop(workflow_id, None)
         if router is not None:

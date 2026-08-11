@@ -19,6 +19,7 @@ from ...interfaces.types import (
 )
 from ..checkpoints import CheckpointManager
 from ..artifacts import ArtifactGateway, ArtifactGrant
+from ..prompts.loader import PromptLoader
 from ..reporting.config import load_packaged_agents
 from ..reporting.prompts import PromptAssembler
 from ..tools import (
@@ -211,6 +212,14 @@ class LoopManager:
         llm_provider = self._provider_manager.get_active_provider()
         agents = load_packaged_agents()
         definition = agents["main-agent"]
+        prompt_loader = PromptLoader()
+        prompt_parts = [
+            prompt_loader.load_prompt("main"),
+            PromptAssembler.system_prompt(definition),
+        ]
+        shared_prompt = prompt_loader.load_shared_context()
+        if shared_prompt:
+            prompt_parts.insert(1, shared_prompt)
         loop = AgentLoop(
             agent_type="main",
             workspace=self.workspace,
@@ -221,7 +230,9 @@ class LoopManager:
             loop_manager=self,
             manifest_manager=self.manifest_manager,
             task_board=self._task_board,
-            system_prompt=PromptAssembler.system_prompt(definition),
+            # The GUI Main owns route selection while the packaged XML identity
+            # owns reporting-role boundaries.  Both are required at runtime.
+            system_prompt="\n\n".join(prompt_parts),
             artifact_gateway=self._artifact_gateway,
         )
         self._loops["main"] = loop

@@ -41,11 +41,15 @@ def _stable_file_id(relative_path: Path, sha256: str) -> str:
     return f"file-{hashlib.sha256(identity).hexdigest()[:16]}"
 
 
-def build_manifest(workspace: Path) -> ProjectManifest:
+def build_manifest(
+    workspace: Path,
+    *,
+    input_root: Path | None = None,
+) -> ProjectManifest:
     """Hash supported and explicit-manual-review inputs without opening them."""
 
     workspace = Path(workspace).resolve()
-    inputs = workspace / "Inputs"
+    inputs = Path(input_root).resolve() if input_root is not None else workspace / "Inputs"
     if not inputs.is_dir():
         return ProjectManifest()
 
@@ -56,15 +60,21 @@ def build_manifest(workspace: Path) -> ProjectManifest:
         if path.is_file() and path.suffix.casefold() in _INPUT_MEDIA_TYPES
     )
     for path in candidates:
-        relative_path = path.relative_to(workspace)
+        logical_path = Path("Inputs") / path.relative_to(inputs)
+        snapshot_ref = (
+            path.relative_to(workspace)
+            if input_root is not None
+            else None
+        )
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         files.append(
             ManifestFile(
-                id=_stable_file_id(relative_path, digest),
-                path=relative_path,
+                id=_stable_file_id(logical_path, digest),
+                path=logical_path,
                 sha256=digest,
                 media_type=_INPUT_MEDIA_TYPES[path.suffix.casefold()],
-                purpose=_purpose_for(path),
+                purpose=_purpose_for(logical_path),
+                snapshot_ref=snapshot_ref,
             )
         )
     return ProjectManifest(files=files)

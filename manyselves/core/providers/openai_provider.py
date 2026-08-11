@@ -17,10 +17,11 @@ from .base import (
     LLMStreamChunk,
     LLMToolCall,
     Message,
+    annotate_provider_request_failure,
     build_provider_request_metrics,
+    infer_provider_request_disposition,
 )
 from .defaults import DEFAULT_API_BASES
-
 
 OPENAI_STREAM_IDLE_TIMEOUT_SECONDS = 300.0
 
@@ -208,7 +209,18 @@ class OpenAICompatProvider(LLMProvider):
 
         logger.debug("Sending {} request: model={}, messages={}", self.provider_type, self.model, len(messages))
 
-        response = await self.client.chat.completions.create(**params)
+        try:
+            response = await self.client.chat.completions.create(**params)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            failure = annotate_provider_request_failure(
+                exc,
+                infer_provider_request_disposition(exc),
+            )
+            if failure is exc:
+                raise
+            raise failure from exc
 
         message = response.choices[0].message
         content = message.content
@@ -308,8 +320,10 @@ class OpenAICompatProvider(LLMProvider):
         final_usage: dict[str, int] | None = None
         stop_reason: str | None = None
 
+        stream_opened = False
         try:
             response = await self.client.chat.completions.create(**params)
+            stream_opened = True
 
             stream = response.__aiter__()
             while True:
@@ -393,9 +407,20 @@ class OpenAICompatProvider(LLMProvider):
                 request_metrics=request_metrics,
             )
 
-        except Exception as e:
-            logger.error("{} streaming error: {}", self.provider_type, e)
+        except asyncio.CancelledError:
             raise
+        except Exception as exc:
+            logger.error("{} streaming error: {}", self.provider_type, exc)
+            failure = annotate_provider_request_failure(
+                exc,
+                infer_provider_request_disposition(
+                    exc,
+                    stream_opened=stream_opened,
+                ),
+            )
+            if failure is exc:
+                raise
+            raise failure from exc
 
     def _parse_arguments(self, arguments: str) -> dict:
         """Parse JSON arguments string."""

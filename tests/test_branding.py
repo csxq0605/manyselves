@@ -23,4 +23,5 @@ def test_distribution_metadata_exposes_manyselves_command() -> None:
     assert data["project"]["description"] == DESCRIPTOR_EN
     assert data["project"]["scripts"] == {
         "manyselves": "manyselves.__main__:main",
+        "manyselves-headless": "manyselves.headless_service:main",
     }

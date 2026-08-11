@@ -1,0 +1,1421 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Manyselves 最新成功报告的全链路成本、重复输出与实验控制审计。">
+  <title>Manyselves · 架构审计与全链路成本控制实验</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f7fb;
+      --surface: rgba(255, 255, 255, .92);
+      --surface-2: #edf2f8;
+      --ink: #14233a;
+      --muted: #5d6b7d;
+      --line: #d8e0eb;
+      --navy: #173a63;
+      --blue: #2878d4;
+      --cyan: #18a0ae;
+      --green: #168b67;
+      --amber: #c77a12;
+      --red: #c94f54;
+      --violet: #7756d8;
+      --shadow: 0 18px 48px rgba(24, 46, 78, .10);
+      --radius: 22px;
+      --max: 1180px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b121d;
+        --surface: rgba(18, 29, 44, .94);
+        --surface-2: #162338;
+        --ink: #eaf1fb;
+        --muted: #a7b5c7;
+        --line: #2b3b52;
+        --navy: #8bbcf3;
+        --blue: #69abf4;
+        --cyan: #5dcbd4;
+        --green: #51c9a1;
+        --amber: #f0ad52;
+        --red: #ef7e82;
+        --violet: #a891f0;
+        --shadow: 0 18px 48px rgba(0, 0, 0, .30);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-padding-top: 88px;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 7% 0%, color-mix(in srgb, var(--blue) 12%, transparent), transparent 30rem),
+        radial-gradient(circle at 95% 12%, color-mix(in srgb, var(--cyan) 10%, transparent), transparent 34rem),
+        var(--bg);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+      text-rendering: optimizeLegibility;
+    }
+
+    a {
+      color: var(--blue);
+      text-underline-offset: .18em;
+      text-decoration-thickness: .08em;
+    }
+
+    a:hover { color: var(--cyan); }
+
+    code, .mono {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: .92em;
+      overflow-wrap: anywhere;
+    }
+
+    code {
+      padding: .12rem .35rem;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-2);
+    }
+
+    .shell {
+      width: min(calc(100% - 32px), var(--max));
+      margin-inline: auto;
+    }
+
+    .topbar {
+      position: sticky;
+      z-index: 20;
+      top: 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+      background: color-mix(in srgb, var(--bg) 82%, transparent);
+      -webkit-backdrop-filter: blur(18px);
+      backdrop-filter: blur(18px);
+    }
+
+    .topbar .shell {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 790;
+      letter-spacing: -.02em;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      width: 30px;
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      color: white;
+      background: linear-gradient(145deg, var(--blue), var(--cyan));
+      box-shadow: 0 8px 18px color-mix(in srgb, var(--blue) 25%, transparent);
+      font-size: .8rem;
+    }
+
+    nav {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    nav::-webkit-scrollbar { display: none; }
+
+    nav a {
+      padding: .42rem .65rem;
+      color: var(--muted);
+      border-radius: 999px;
+      text-decoration: none;
+      font-size: .82rem;
+      white-space: nowrap;
+    }
+
+    nav a:hover {
+      color: var(--ink);
+      background: var(--surface-2);
+    }
+
+    header.hero {
+      padding: clamp(56px, 8vw, 96px) 0 34px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 17px;
+      color: var(--green);
+      font-size: .8rem;
+      font-weight: 760;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 0 5px color-mix(in srgb, currentColor 14%, transparent);
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+
+    h1 {
+      max-width: 950px;
+      margin-bottom: 20px;
+      font-size: clamp(2.35rem, 6vw, 5.1rem);
+      line-height: 1.04;
+      letter-spacing: -.055em;
+    }
+
+    h1 em {
+      color: var(--blue);
+      font-style: normal;
+    }
+
+    .lead {
+      max-width: 850px;
+      margin-bottom: 28px;
+      color: var(--muted);
+      font-size: clamp(1rem, 2vw, 1.22rem);
+    }
+
+    .hero-note {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 14px;
+      align-items: start;
+      max-width: 940px;
+      padding: 16px 18px;
+      border: 1px solid color-mix(in srgb, var(--amber) 34%, var(--line));
+      border-radius: 16px;
+      background: color-mix(in srgb, var(--amber) 7%, var(--surface));
+    }
+
+    .hero-note strong {
+      color: var(--amber);
+      font-size: .8rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .hero-note p { margin: 0; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-top: 28px;
+    }
+
+    .metric {
+      min-width: 0;
+      padding: 19px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .metric .value {
+      display: block;
+      margin-bottom: 4px;
+      font-size: clamp(1.55rem, 4vw, 2.45rem);
+      font-weight: 830;
+      line-height: 1.05;
+      letter-spacing: -.045em;
+    }
+
+    .metric .label {
+      display: block;
+      color: var(--muted);
+      font-size: .84rem;
+    }
+
+    .metric .mini {
+      display: block;
+      margin-top: 9px;
+      color: var(--green);
+      font-size: .73rem;
+      font-weight: 700;
+    }
+
+    main { padding: 24px 0 88px; }
+
+    section { margin-top: 68px; }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, .62fr) minmax(280px, .38fr);
+      gap: 28px;
+      align-items: end;
+      margin-bottom: 24px;
+    }
+
+    .kicker {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--blue);
+      font-size: .76rem;
+      font-weight: 780;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      margin-bottom: 0;
+      font-size: clamp(1.7rem, 4vw, 2.65rem);
+      line-height: 1.15;
+      letter-spacing: -.035em;
+    }
+
+    h3 {
+      margin-bottom: 9px;
+      font-size: 1rem;
+      line-height: 1.35;
+    }
+
+    .section-head p {
+      margin: 0;
+      color: var(--muted);
+      font-size: .95rem;
+    }
+
+    .grid-2, .grid-3 {
+      display: grid;
+      gap: 18px;
+    }
+
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .card {
+      min-width: 0;
+      padding: clamp(20px, 3vw, 28px);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: 0 10px 36px color-mix(in srgb, var(--ink) 6%, transparent);
+    }
+
+    .card > :last-child { margin-bottom: 0; }
+
+    .decision {
+      border-color: color-mix(in srgb, var(--green) 36%, var(--line));
+      background:
+        linear-gradient(145deg, color-mix(in srgb, var(--green) 7%, var(--surface)), var(--surface) 65%);
+    }
+
+    .decision .stamp {
+      display: inline-block;
+      margin-bottom: 14px;
+      padding: .3rem .62rem;
+      color: var(--green);
+      border: 1px solid color-mix(in srgb, var(--green) 32%, transparent);
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--green) 8%, transparent);
+      font-size: .72rem;
+      font-weight: 780;
+      letter-spacing: .06em;
+    }
+
+    .decision h3 {
+      max-width: 680px;
+      font-size: clamp(1.25rem, 3vw, 1.75rem);
+      letter-spacing: -.025em;
+    }
+
+    .facts {
+      display: grid;
+      gap: 12px;
+      margin: 0;
+    }
+
+    .facts div {
+      display: grid;
+      grid-template-columns: 112px minmax(0, 1fr);
+      gap: 12px;
+      padding-bottom: 11px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .facts div:last-child { padding-bottom: 0; border-bottom: 0; }
+    .facts dt { color: var(--muted); font-size: .82rem; }
+    .facts dd { margin: 0; font-weight: 650; overflow-wrap: anywhere; }
+
+    .callout {
+      padding: 15px 17px;
+      border-left: 4px solid var(--blue);
+      border-radius: 5px 14px 14px 5px;
+      background: color-mix(in srgb, var(--blue) 7%, var(--surface-2));
+      font-size: .9rem;
+    }
+
+    .callout.warn {
+      border-left-color: var(--amber);
+      background: color-mix(in srgb, var(--amber) 7%, var(--surface-2));
+    }
+
+    .callout.danger {
+      border-left-color: var(--red);
+      background: color-mix(in srgb, var(--red) 7%, var(--surface-2));
+    }
+
+    .visual-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .visual-title h3 { margin: 0; }
+    .visual-title span { color: var(--muted); font-size: .76rem; }
+
+    .donut-row {
+      display: grid;
+      grid-template-columns: 188px minmax(0, 1fr);
+      align-items: center;
+      gap: 24px;
+    }
+
+    .donut {
+      width: 188px;
+      height: 188px;
+      overflow: visible;
+    }
+
+    .legend {
+      display: grid;
+      gap: 11px;
+    }
+
+    .legend-item {
+      display: grid;
+      grid-template-columns: 12px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .legend-item:last-child { border-bottom: 0; }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--dot, var(--blue));
+    }
+
+    .legend-item span { color: var(--muted); font-size: .84rem; }
+    .legend-item strong { font-size: .95rem; }
+
+    .bar-group { display: grid; gap: 15px; }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: minmax(118px, .48fr) minmax(160px, 1fr) 76px;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .bar-row .name { font-size: .82rem; font-weight: 690; }
+    .bar-row .num { text-align: right; color: var(--muted); font-size: .78rem; }
+
+    .track {
+      height: 12px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: var(--surface-2);
+    }
+
+    .fill {
+      width: var(--w);
+      height: 100%;
+      border-radius: inherit;
+      background: var(--c, var(--blue));
+    }
+
+    .big-bar {
+      display: flex;
+      height: 34px;
+      margin: 18px 0 12px;
+      overflow: hidden;
+      border-radius: 10px;
+      background: var(--surface-2);
+    }
+
+    .big-bar span {
+      display: grid;
+      place-items: center;
+      min-width: 0;
+      color: white;
+      font-size: .7rem;
+      font-weight: 780;
+      line-height: 1;
+    }
+
+    .schema-visual {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 132px;
+      gap: 20px;
+      align-items: center;
+    }
+
+    .schema-score {
+      display: grid;
+      place-items: center;
+      width: 132px;
+      height: 132px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle closest-side, var(--surface) 75%, transparent 77% 99%, transparent),
+        conic-gradient(var(--violet) 0 85.3%, var(--surface-2) 85.3% 100%);
+      font-size: 1.65rem;
+      font-weight: 830;
+      letter-spacing: -.04em;
+    }
+
+    .schema-score small {
+      display: block;
+      color: var(--muted);
+      font-size: .58rem;
+      font-weight: 650;
+      letter-spacing: 0;
+      text-align: center;
+    }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 8px;
+      margin: 6px 0 18px;
+    }
+
+    .pipeline .node {
+      position: relative;
+      min-height: 106px;
+      padding: 14px 12px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--surface-2);
+    }
+
+    .pipeline .node:not(:last-child)::after {
+      content: "→";
+      position: absolute;
+      z-index: 2;
+      right: -15px;
+      top: 39px;
+      display: grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      color: var(--muted);
+      border-radius: 50%;
+      background: var(--surface);
+      font-weight: 800;
+    }
+
+    .pipeline .node.hot {
+      border-color: color-mix(in srgb, var(--red) 38%, var(--line));
+      background: color-mix(in srgb, var(--red) 8%, var(--surface));
+    }
+
+    .pipeline b { display: block; font-size: .83rem; }
+    .pipeline small { display: block; margin-top: 7px; color: var(--muted); font-size: .69rem; line-height: 1.45; }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: .22rem .48rem;
+      border-radius: 999px;
+      color: var(--tag-ink, var(--blue));
+      background: color-mix(in srgb, var(--tag-ink, var(--blue)) 10%, transparent);
+      font-size: .68rem;
+      font-weight: 760;
+      white-space: nowrap;
+    }
+
+    .tag.green { --tag-ink: var(--green); }
+    .tag.amber { --tag-ink: var(--amber); }
+    .tag.red { --tag-ink: var(--red); }
+    .tag.violet { --tag-ink: var(--violet); }
+
+    .state {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: .24rem .52rem;
+      border: 1px solid color-mix(in srgb, var(--state, var(--blue)) 28%, transparent);
+      border-radius: 999px;
+      color: var(--state, var(--blue));
+      background: color-mix(in srgb, var(--state, var(--blue)) 8%, transparent);
+      font-size: .67rem;
+      font-weight: 780;
+      white-space: nowrap;
+    }
+
+    .state::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .state.baseline { --state: var(--blue); }
+    .state.dirty { --state: var(--amber); }
+    .state.pending { --state: var(--red); }
+    .state.verified { --state: var(--green); }
+
+    .state-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 18px;
+    }
+
+    .matrix-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .matrix-grid .wide { grid-column: 1 / -1; }
+
+    .matrix-mini {
+      overflow-x: auto;
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+    }
+
+    .matrix-mini table {
+      min-width: 500px;
+      font-size: .77rem;
+    }
+
+    .matrix-mini th, .matrix-mini td { padding: 11px 12px; }
+
+    .risk-list { display: grid; gap: 11px; }
+
+    .risk {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr) minmax(170px, .32fr);
+      gap: 15px;
+      align-items: start;
+      padding: 17px;
+      border: 1px solid var(--line);
+      border-radius: 17px;
+      background: var(--surface);
+    }
+
+    .risk h3 { margin-bottom: 4px; }
+    .risk p { margin: 0; color: var(--muted); font-size: .81rem; }
+
+    .risk .evidence {
+      padding-left: 14px;
+      border-left: 1px solid var(--line);
+      color: var(--muted);
+      font-size: .73rem;
+    }
+
+    .severity {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      color: white;
+      border-radius: 13px;
+      background: var(--sev, var(--blue));
+      font-size: .77rem;
+      font-weight: 850;
+    }
+
+    .severity.p0 { --sev: var(--red); }
+    .severity.p1 { --sev: var(--amber); }
+    .severity.p2 { --sev: var(--blue); }
+    .severity.p3 { --sev: var(--muted); }
+
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 9px;
+      margin-bottom: 18px;
+    }
+
+    .phase {
+      position: relative;
+      min-height: 126px;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-top: 4px solid var(--phase, var(--blue));
+      border-radius: 15px;
+      background: var(--surface);
+    }
+
+    .phase b { display: block; margin-bottom: 7px; font-size: .82rem; }
+    .phase small { display: block; color: var(--muted); font-size: .7rem; line-height: 1.5; }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--surface);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+      font-size: .84rem;
+    }
+
+    th, td {
+      padding: 15px 16px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      background: var(--surface-2);
+      font-size: .7rem;
+      font-weight: 780;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .change-list, .gate-list, .source-list {
+      display: grid;
+      gap: 12px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .change-list li, .gate-list li {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .change-list li:last-child, .gate-list li:last-child { border-bottom: 0; }
+
+    .index {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 9px;
+      color: white;
+      background: var(--blue);
+      font-size: .72rem;
+      font-weight: 800;
+    }
+
+    .change-list p, .gate-list p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: .83rem;
+    }
+
+    .map-card {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .map-card::after {
+      content: "";
+      position: absolute;
+      width: 120px;
+      height: 120px;
+      right: -40px;
+      bottom: -46px;
+      border-radius: 50%;
+      background: color-mix(in srgb, var(--accent, var(--blue)) 12%, transparent);
+    }
+
+    .map-card .num-mark {
+      color: var(--accent, var(--blue));
+      font-size: 1.8rem;
+      font-weight: 850;
+      letter-spacing: -.045em;
+    }
+
+    .map-card p { color: var(--muted); font-size: .84rem; }
+
+    .evidence-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      overflow: hidden;
+      margin-top: 20px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--line);
+    }
+
+    .evidence-strip div {
+      padding: 17px;
+      background: var(--surface);
+    }
+
+    .evidence-strip small { display: block; color: var(--muted); }
+    .evidence-strip strong { display: block; margin-top: 3px; }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--surface);
+    }
+
+    summary {
+      padding: 16px 18px;
+      cursor: pointer;
+      font-weight: 720;
+    }
+
+    details > div { padding: 0 18px 18px; color: var(--muted); font-size: .87rem; }
+
+    .source-list li {
+      display: grid;
+      grid-template-columns: minmax(220px, .45fr) minmax(0, 1fr);
+      gap: 18px;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .source-list li:last-child { border-bottom: 0; }
+    .source-list span { color: var(--muted); font-size: .82rem; }
+
+    footer {
+      padding: 30px 0 54px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: .8rem;
+    }
+
+    .footer-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    @media (max-width: 900px) {
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .section-head { grid-template-columns: 1fr; gap: 10px; }
+      .grid-3 { grid-template-columns: 1fr; }
+      .pipeline { grid-template-columns: repeat(3, 1fr); }
+      .pipeline .node:nth-child(3)::after { display: none; }
+      .evidence-strip { grid-template-columns: repeat(2, 1fr); }
+      .matrix-grid { grid-template-columns: 1fr; }
+      .matrix-grid .wide { grid-column: auto; }
+      .timeline { grid-template-columns: repeat(3, 1fr); }
+      nav { max-width: 60vw; }
+    }
+
+    @media (max-width: 650px) {
+      .shell { width: min(calc(100% - 22px), var(--max)); }
+      .topbar .shell { min-height: 58px; }
+      .brand span:last-child { display: none; }
+      nav { max-width: calc(100vw - 64px); }
+      header.hero { padding-top: 42px; }
+      .hero-note { grid-template-columns: 1fr; gap: 5px; }
+      .metrics, .grid-2 { grid-template-columns: 1fr; }
+      .donut-row { grid-template-columns: 1fr; justify-items: center; }
+      .legend { width: 100%; }
+      .schema-visual { grid-template-columns: 1fr; }
+      .schema-score { grid-row: 1; }
+      .pipeline { grid-template-columns: 1fr 1fr; }
+      .pipeline .node:nth-child(2n)::after { display: none; }
+      .pipeline .node:nth-child(3)::after { display: grid; }
+      .bar-row { grid-template-columns: 102px minmax(120px, 1fr) 64px; gap: 8px; }
+      .source-list li { grid-template-columns: 1fr; gap: 3px; }
+      .evidence-strip { grid-template-columns: 1fr; }
+      .risk { grid-template-columns: 42px minmax(0, 1fr); }
+      .risk .evidence { grid-column: 2; padding: 9px 0 0; border-left: 0; border-top: 1px solid var(--line); }
+      .timeline { grid-template-columns: 1fr; }
+      .phase { min-height: 0; }
+      .footer-row { flex-direction: column; }
+    }
+
+    @media print {
+      :root {
+        --bg: #fff;
+        --surface: #fff;
+        --surface-2: #f1f4f8;
+        --ink: #102238;
+        --muted: #516173;
+        --line: #cfd8e3;
+      }
+      body { background: #fff; font-size: 10pt; }
+      .topbar { position: static; background: #fff; }
+      nav { display: none; }
+      header.hero { padding-top: 34px; }
+      section { break-inside: avoid; margin-top: 34px; }
+      .card { box-shadow: none; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="shell">
+      <div class="brand"><span class="brand-mark">MS</span><span>Manyselves Cost Lab</span></div>
+      <nav aria-label="报告目录">
+        <a href="#verdict">结论</a>
+        <a href="#architecture">架构</a>
+        <a href="#matrices">契约</a>
+        <a href="#findings">问题</a>
+        <a href="#cost-map">成本地图</a>
+        <a href="#duplication">重复分布</a>
+        <a href="#retries">失败语义</a>
+        <a href="#sessions">会话教训</a>
+        <a href="#changes">实验改动</a>
+        <a href="#gates">门槛</a>
+        <a href="#sources">依据</a>
+      </nav>
+    </div>
+  </div>
+
+  <header class="hero shell">
+    <p class="eyebrow">Observation baseline · 2026-08-09</p>
+    <h1>从架构契约到<em>隐性成本</em><br>一次看清、分层实验</h1>
+    <p class="lead">以最新成功运行 <code>report-dc2549e1b5</code> 和冻结 HEAD 为双基线，审计 Main Prompt、工具与权限契约，再追踪 Provider 上下文、模块编写与修订、失败重试和持久化副本；目标是减少确定性浪费，同时保留模型判断空间、五模块交付链和最终质量门禁。</p>
+
+    <div class="hero-note" role="note">
+      <strong>证据边界</strong>
+      <p>这是单次成功运行的审计，不是严格 A/B。旧运行输入、配置或执行条件不同，不能归因；当前脏实验代码也尚未完成真实 Provider 配对运行。</p>
+    </div>
+
+    <div class="metrics" aria-label="核心观察指标">
+      <article class="metric">
+        <span class="value">191</span>
+        <span class="label">Provider 调用</span>
+        <span class="mini">请求上限 80 · 未强制</span>
+      </article>
+      <article class="metric">
+        <span class="value">8.143M</span>
+        <span class="label">账本记录 tokens</span>
+        <span class="mini">请求上限 0.8M · 未强制</span>
+      </article>
+      <article class="metric">
+        <span class="value">85.3%</span>
+        <span class="label">工具 schema 字符重复率</span>
+        <span class="mini">1,655,022 / 1,940,575 chars</span>
+      </article>
+      <article class="metric">
+        <span class="value">29.61%</span>
+        <span class="label">样本闭包精确冗余</span>
+        <span class="mini">28,508,953 / 96,275,919 bytes</span>
+      </article>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section id="verdict">
+      <div class="section-head">
+        <div><span class="kicker">01 · Executive verdict</span><h2>有大量重复，但不是一种重复</h2></div>
+        <p>Provider 请求、工作流阶段与存储闭包各自有不同的浪费机制；必须分层治理，不能靠统一缩短提示词或压低输出上限解决。</p>
+      </div>
+
+      <div class="grid-2">
+        <article class="card decision">
+          <span class="stamp">审计结论 · YES</span>
+          <h3>高频工具跟进和重复 schema 是上下文主风险；最终 DOCX 的多份物理副本是样本存储主风险。</h3>
+          <p>153 次工具跟进占全部调用的 80.1%；模块编写与修订合计 153 次、约 6.461M tokens。样本闭包中存在 28.51MB 字节级精确冗余，其中同一最终 DOCX 的副本贡献 88.38%。</p>
+          <div class="callout">可立即控制的是：重复 schema、无信息增量的继续、可判定的同一校验失败、可安全识别的传输重试，以及同内容多路径物理复制。</div>
+        </article>
+
+        <article class="card">
+          <h3>解释边界</h3>
+          <dl class="facts">
+            <div><dt>已证实</dt><dd>字节级重复、schema 字符重复、调用与 token 分布、预算未强制</dd></div>
+            <div><dt>不能外推</dt><dd>85.3% 不是“全部提示词重复率”；29.61% 不是“全部项目语义重复率”</dd></div>
+            <div><dt>目录结论</dt><dd><code>Work</code>、<code>.manyselves</code>、<code>output</code> 需按同运行、同 hash、同交付角色判重，不能只按文件名</dd></div>
+            <div><dt>因果结论</dt><dd>需相同输入、模型、配置和门禁的真实 Provider 配对实验</dd></div>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <div class="section-head">
+        <div><span class="kicker">02 · Runtime architecture</span><h2>成本问题先从契约漂移开始</h2></div>
+        <p>GUI Main、Loop runtime 与 reporting workflow 是三层不同对象。若 Prompt 承诺的操作、实际注册工具和可执行权限不一致，模型会在错误接口上反复尝试，成本与失败面同时扩大。</p>
+      </div>
+
+      <div class="state-legend" aria-label="实现状态图例">
+        <span class="state baseline">冻结 HEAD 已确认</span>
+        <span class="state dirty">dirty experiment</span>
+        <span class="state pending">真实 Provider 待验证</span>
+      </div>
+
+      <div class="pipeline" aria-label="Manyselves 运行调用链">
+        <div class="node"><b>GUI / Main</b><small>用户意图<br>五操作入口</small></div>
+        <div class="node hot"><b>LoopManager</b><small>Prompt + Tool<br>装配漂移点</small></div>
+        <div class="node"><b>AgentLoop</b><small>history / compaction<br>Provider attempts</small></div>
+        <div class="node"><b>ReportingService</b><small>run boundary<br>request cost mode</small></div>
+        <div class="node"><b>Workflow</b><small>modules → reviews<br>continuation</small></div>
+        <div class="node"><b>Delivery / Store</b><small>DOCX + receipt<br>CAS / views</small></div>
+      </div>
+
+      <div class="grid-3">
+        <article class="card">
+          <span class="state baseline">HEAD aa63771</span>
+          <h3 style="margin-top:14px">五操作 Main Prompt 被绕过</h3>
+          <p>冻结 HEAD 的 <code>manager.py::_create_loops()</code> 仅把 <code>PromptAssembler.system_prompt(definition)</code> 传给 GUI Main，因此使用 packaged <code>main-agent</code> Prompt，未装入 GUI 的五操作 Main Prompt。</p>
+          <p class="callout"><strong>dirty experiment：</strong>当前改为拼接 GUI <code>main</code>、shared context 与 packaged role Prompt；这是实验性修复，尚不是冻结提交。</p>
+        </article>
+
+        <article class="card">
+          <span class="state baseline">契约不一致</span>
+          <h3 style="margin-top:14px">Prompt 声明了 GUI Main 没有的工具</h3>
+          <p>packaged frontmatter 声明 <code>query_peer</code>、<code>reply_peer</code>、<code>submit_result</code>、<code>report_blocked</code>；GUI <code>_create_tools_for_agent()</code> 实际注册文件/Artifact、报告工作流、Skill 维护和任务管理等工具，没有注册这四项。</p>
+          <p class="callout warn">拼接 Prompt 只修复“少读一份说明”，尚未修复 schema parity。需要启动时校验：Prompt 声明 ⊆ 实际 ToolRegistry。</p>
+        </article>
+
+        <article class="card">
+          <span class="state baseline">文档性权限</span>
+          <h3 style="margin-top:14px"><code>reads / writes</code> 没有编译为 enforcement</h3>
+          <p><code>AgentDefinition</code> 只检查 carrier 名是否属于 <code>KNOWN_CARRIERS</code>；<code>compile_agent_access()</code> 仅根据 task refs、实际路径和工具列表生成 access，没有读取 <code>definition.reads</code> 或 <code>definition.writes</code>。</p>
+          <p class="callout danger">当前 carrier 是角色文档，不是强制权限边界；不能据此声称 agent 被限制在声明的读写范围。</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="matrices">
+      <div class="section-head">
+        <div><span class="kicker">03 · Five contract matrices</span><h2>五张表看清“谁、用什么、能碰什么”</h2></div>
+        <p>矩阵压缩展示运行事实与缺口，不把 packaged 定义、GUI Main 工具和 workflow task-scoped 工具混为一套。</p>
+      </div>
+
+      <div class="matrix-grid">
+        <article class="card">
+          <h3>① 对象 × 能力</h3>
+          <div class="matrix-mini">
+            <table>
+              <thead><tr><th>对象</th><th>主要读取</th><th>写入 / 决策</th></tr></thead>
+              <tbody>
+                <tr><td>GUI Main</td><td>workspace、workflow 状态</td><td>启动 / 取消 / 状态 / 恢复 / 修订</td></tr>
+                <tr><td>5 Specialists</td><td>模块任务、证据、研究</td><td>draft / claims / sources / typed result</td></tr>
+                <tr><td>Evidence + Cross</td><td>模块、证据与来源账本</td><td>finding / verdict / disposition</td></tr>
+                <tr><td>Chief + Final</td><td>approved modules / reviews</td><td>综合、终审、最终门禁</td></tr>
+                <tr><td>确定性交付</td><td>typed artifact refs</td><td>render / receipt / delivery view</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>② 核心工具 × 注册事实</h3>
+          <div class="matrix-mini">
+            <table>
+              <thead><tr><th>范围</th><th>声明 / 预期</th><th>运行事实</th></tr></thead>
+              <tbody>
+                <tr><td>Main frontmatter</td><td>inspect + peer + submit + blocked</td><td>四项 peer/result 工具未在 GUI registry 注册</td></tr>
+                <tr><td>GUI Main registry</td><td>read/open/search、patch/delete</td><td>另含五个报告工作流入口、Skill、tasks</td></tr>
+                <tr><td>Reporting roles</td><td>按 definition + envelope</td><td>task-scoped registry，不能外推到 GUI Main</td></tr>
+                <tr><td>确定性阶段</td><td>typed input / output</td><td>不应为方便而转换成额外模型调用</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>③ 权限 carrier × enforcement</h3>
+          <div class="matrix-mini">
+            <table>
+              <thead><tr><th>层</th><th>当前约束</th><th>缺口</th></tr></thead>
+              <tbody>
+                <tr><td>Definition reads/writes</td><td>carrier 名称白名单校验</td><td>没有 carrier → path/capability 编译</td></tr>
+                <tr><td>Task refs</td><td>artifact ref / workspace path 存在性</td><td>未证明符合角色 reads</td></tr>
+                <tr><td>Allowed tools</td><td>definition tools 与 envelope 取交集</td><td>GUI Main 不走同一 parity 契约</td></tr>
+                <tr><td>Write path</td><td>GUI 文件工具限制到 Work</td><td>workflow / Outputs 另有写入边界</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>④ 上下文 / Skill-KB × 成本控制</h3>
+          <div class="matrix-mini">
+            <table>
+              <thead><tr><th>载体</th><th>正确用途</th><th>当前风险 / 控制</th></tr></thead>
+              <tbody>
+                <tr><td>GUI Main Prompt</td><td>路由与五操作</td><td>HEAD 缺失；dirty 已拼接，待 parity</td></tr>
+                <tr><td>Packaged role Prompt</td><td>角色边界与完成标准</td><td>工具声明漂移，可能诱发无效调用</td></tr>
+                <tr><td>Shared context</td><td>稳定公共约束</td><td>应保持短、可缓存、避免业务正文</td></tr>
+                <tr><td>Skills / Knowledge</td><td>按需发现与加载</td><td>dirty 已在发布与读取两端拒绝退休历史标记；索引化展开仍待规模验证</td></tr>
+                <tr><td>Tool results / history</td><td>环境事实与进度</td><td>dirty 已做 call/result 原子压缩与 Provider-visible 标记清除</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card wide">
+          <h3>⑤ 上游 × 下游契约</h3>
+          <div class="matrix-mini">
+            <table>
+              <thead><tr><th>边界</th><th>输入</th><th>输出 / 验收</th><th>关键缺口</th></tr></thead>
+              <tbody>
+                <tr><td>User → GUI Main</td><td>自然语言 + 文件</td><td>结构化 ReportRequest / 用户决定</td><td>五操作 Prompt 在 HEAD 未装配</td></tr>
+                <tr><td>Main → ReportingService</td><td>ReportRequest + cost mode</td><td>run identity / status / decision</td><td>四入口硬编码 observe 已在 dirty 修复</td></tr>
+                <tr><td>Workflow → Agent</td><td>TaskEnvelope + refs + allowed tools</td><td>typed AgentResult + checkpoint</td><td>reads/writes carrier 未强制</td></tr>
+                <tr><td>AgentLoop → Provider</td><td>Prompt + messages + schemas</td><td>stream / tool use / terminal</td><td>attempt disposition 需真实故障配对验证</td></tr>
+                <tr><td>Workflow → Delivery</td><td>5 modules + reviews + final markdown</td><td>fresh DOCX + matching receipt</td><td>成本暂停只能在安全边界</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="findings">
+      <div class="section-head">
+        <div><span class="kicker">04 · Prioritized findings</span><h2>P0–P3：先修运行契约，再压成本</h2></div>
+        <p>严重度描述失败后果，不代表已发生事故；每项同时标注冻结基线、dirty experiment 与待验证状态。</p>
+      </div>
+
+      <div class="risk-list">
+        <article class="risk"><span class="severity p0">P0</span><div><h3>Main 的路由 Prompt 在冻结 HEAD 被 packaged Prompt 覆盖</h3><p>GUI 五操作入口未进入模型系统上下文，可能造成错误路由、重复澄清或绕路调用。dirty 已把 GUI + shared + packaged 拼接，但尚未成为冻结提交。</p></div><div class="evidence"><span class="state baseline">已确认</span><br><code>manager.py:208–225 (HEAD)</code><br><span class="state dirty">拼接修复</span></div></article>
+        <article class="risk"><span class="severity p0">P0</span><div><h3>packaged Main 声明的工具与 GUI ToolRegistry 不一致</h3><p>Prompt 要求 peer/result/block 工具，但实际没有注册；模型可产生不可执行调用并进入恢复循环。需要启动时 schema parity fail-fast，Prompt 拼接本身不够。</p></div><div class="evidence"><span class="state baseline">已确认</span><br><code>main-agent.md:5–7</code><br><code>manager.py:257–369</code></div></article>
+        <article class="risk"><span class="severity p1">P1</span><div><h3>响应处置不明时的物理重试可能重复成本或副作用</h3><p>首 token 超时、流中断与明确拒绝不能共用一套 retry。dirty experiment 已加入 disposition、ambiguous 不重放与 409 不盲重试。</p></div><div class="evidence"><span class="state dirty">已实现</span><br><code>providers/base.py</code><br><code>loops/agent_loop.py</code><br><span class="state pending">Provider fault A/B</span></div></article>
+        <article class="risk"><span class="severity p1">P1</span><div><h3><code>reads / writes</code> 是文档 carrier，不是执行权限</h3><p>定义加载只拒绝未知名称，access compiler 不消费 reads/writes。若把 frontmatter 当成安全边界，会产生错误保证。</p></div><div class="evidence"><span class="state baseline">已确认</span><br><code>config.py:42–101</code><br><code>capabilities.py:19–68</code></div></article>
+        <article class="risk"><span class="severity p1">P1</span><div><h3>成功基线只 observe；dirty 已撤回默认 37 叶级放大</h3><p>成功样本的 80 calls / 800k 请求限制未强制，实际 191 / 8.143M。dirty 的四入口已恢复请求 cost mode；默认执行路径回到五模块级编写/审查，只有显式 <code>bounded_module_lanes</code> 才启用 37-leaf 实验。安全暂停与真实节省仍需 G1/G2 验证。</p></div><div class="evidence"><span class="state baseline">limits_enforced=false</span><br><span class="state dirty">mode + default gate 已实现</span><br><span class="state pending">paired A/B</span></div></article>
+        <article class="risk"><span class="severity p2">P2</span><div><h3>Provider 固定工具 schema 高频重发</h3><p>工具 schema 1.94M chars 中 85.3% 被计为重复；按角色最小工具集、稳定前缀与紧凑结果可减量，但真实 token/账单收益必须严格配对。</p></div><div class="evidence"><span class="state baseline">账本已确认</span><br><code>usage/&lt;run&gt;.jsonl</code><br><span class="state pending">paired A/B</span></div></article>
+        <article class="risk"><span class="severity p2">P2</span><div><h3>样本闭包存在 28.51MB 字节级精确冗余</h3><p>29.61% 的样本闭包是精确副本；最终 DOCX 一项贡献其中 88.38%。适合 CAS + 可验证视图，不适合直接删除交付路径。</p></div><div class="evidence"><span class="state baseline">hash 审计</span><br><code>Work / .manyselves / output</code><br><span class="state pending">可逆迁移</span></div></article>
+        <article class="risk"><span class="severity p3">P3</span><div><h3>Skill / KB / 工具结果仍需增量索引与按需展开</h3><p>长文整份打开、重复扫描和大工具结果会随着资料增长形成 I/O 与上下文成本。应先索引/过滤/分页，再回传命中片段。</p></div><div class="evidence"><span class="state pending">规模验证</span><br><code>reference_library.py</code><br><code>knowledge_context.py</code></div></article>
+      </div>
+    </section>
+
+    <section id="cost-map">
+      <div class="section-head">
+        <div><span class="kicker">05 · End-to-end cost map</span><h2>成本集中在“写—改”回路</h2></div>
+        <p>不是所有 191 次调用同等昂贵。模块编写和修订占调用 80.1%、token 约 79.3%，应优先减少无增量回合，而不是削弱最终审查。</p>
+      </div>
+
+      <div class="pipeline" aria-label="全链路成本流">
+        <div class="node"><b>输入与取证</b><small>文件、证据、知识、角色上下文</small></div>
+        <div class="node hot"><b>模块编写</b><small>64 calls<br>约 3.115M tokens</small></div>
+        <div class="node hot"><b>模块修订</b><small>89 calls<br>约 3.346M tokens</small></div>
+        <div class="node"><b>Cross / Chief</b><small>保留串行语义门禁</small></div>
+        <div class="node"><b>Final / 渲染</b><small>结构、DOCX、receipt</small></div>
+        <div class="node"><b>持久化</b><small>Work / .manyselves / output</small></div>
+      </div>
+
+      <div class="grid-2">
+        <article class="card">
+          <div class="visual-title"><h3>调用形态</h3><span>191 total</span></div>
+          <div class="donut-row">
+            <svg class="donut" viewBox="0 0 200 200" role="img" aria-labelledby="donut-title donut-desc">
+              <title id="donut-title">初始调用与工具跟进调用占比</title>
+              <desc id="donut-desc">初始调用 38 次，占 19.9%；工具跟进 153 次，占 80.1%。</desc>
+              <circle cx="100" cy="100" r="70" fill="none" stroke="var(--surface-2)" stroke-width="24"/>
+              <circle cx="100" cy="100" r="70" fill="none" stroke="var(--cyan)" stroke-width="24" pathLength="100" stroke-dasharray="80.1 19.9" stroke-linecap="butt" transform="rotate(-90 100 100)"/>
+              <circle cx="100" cy="100" r="70" fill="none" stroke="var(--blue)" stroke-width="24" pathLength="100" stroke-dasharray="19.9 80.1" stroke-dashoffset="-80.1" stroke-linecap="butt" transform="rotate(-90 100 100)"/>
+              <text x="100" y="95" text-anchor="middle" fill="var(--ink)" font-size="30" font-weight="800">191</text>
+              <text x="100" y="119" text-anchor="middle" fill="var(--muted)" font-size="11">PROVIDER CALLS</text>
+            </svg>
+            <div class="legend">
+              <div class="legend-item"><i class="dot" style="--dot:var(--cyan)"></i><span>工具跟进</span><strong>153 · 80.1%</strong></div>
+              <div class="legend-item"><i class="dot" style="--dot:var(--blue)"></i><span>初始调用</span><strong>38 · 19.9%</strong></div>
+              <div class="callout warn">工具跟进不是天然浪费；只有无新证据、重复 schema、重复写入或错误恢复不前进时才应被合并或终止。</div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="visual-title"><h3>阶段集中度</h3><span>calls / tokens</span></div>
+          <div class="bar-group" aria-label="调用数分布">
+            <div class="bar-row"><span class="name">模块编写</span><span class="track"><i class="fill" style="--w:33.5%;--c:var(--blue)"></i></span><span class="num">64 · 33.5%</span></div>
+            <div class="bar-row"><span class="name">模块修订</span><span class="track"><i class="fill" style="--w:46.6%;--c:var(--red)"></i></span><span class="num">89 · 46.6%</span></div>
+            <div class="bar-row"><span class="name">其余阶段</span><span class="track"><i class="fill" style="--w:19.9%;--c:var(--cyan)"></i></span><span class="num">38 · 19.9%</span></div>
+          </div>
+          <div class="big-bar" aria-label="token 分布">
+            <span style="width:38.25%;background:var(--blue)">3.115M</span>
+            <span style="width:41.09%;background:var(--red)">3.346M</span>
+            <span style="width:20.66%;background:var(--cyan)">约 1.682M</span>
+          </div>
+          <p class="callout">模块编写 + 修订约 6.461M tokens，占总量约 79.3%。策略：保留有价值修订，消除无进展续写、同错误循环和重复加载。</p>
+        </article>
+      </div>
+
+      <div class="evidence-strip" aria-label="预算与执行事实">
+        <div><small>请求 max calls</small><strong>80</strong></div>
+        <div><small>实际 calls</small><strong>191 · 2.39×</strong></div>
+        <div><small>请求 max tokens</small><strong>800,000</strong></div>
+        <div><small>实际 tokens</small><strong>8,142,987 · 10.18×</strong></div>
+      </div>
+      <p class="callout danger" style="margin-top:14px"><strong>根因不是“配置值太大”，而是运行模式为 <code>observe</code> 且 <code>limits_enforced=false</code>。</strong> 观察预算只记账、不阻断；若要强制，必须先定义安全暂停点、同运行恢复和完成门禁，避免把一次成功拆成多次失败。</p>
+    </section>
+
+    <section id="duplication">
+      <div class="section-head">
+        <div><span class="kicker">06 · Duplication layers</span><h2>上下文重复与存储重复分开治理</h2></div>
+        <p>一个发生在每次 Provider 请求之前，一个发生在交付产物落盘之后。二者都大，但控制点、风险与验收方式不同。</p>
+      </div>
+
+      <div class="grid-2">
+        <article class="card">
+          <div class="visual-title"><h3>工具 schema 字符</h3><span>Provider request layer</span></div>
+          <div class="schema-visual">
+            <div>
+              <p><strong>总量</strong> 1,940,575 chars<br><strong>重复</strong> 1,655,022 chars<br><strong>非重复</strong> 285,553 chars</p>
+              <p class="callout">85.3% 只描述工具 schema 字符中的重复，不代表全部输入 token。优先手段是按角色缩小工具集合、合并同义工具、精简描述并缓存稳定前缀。</p>
+            </div>
+            <div class="schema-score" aria-label="重复率 85.3%"><span>85.3%<small>REPEATED</small></span></div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="visual-title"><h3>样本存储闭包</h3><span>exact bytes only</span></div>
+          <p><strong>96,275,919 B</strong> 总闭包 · <strong>28,508,953 B</strong> 精确冗余</p>
+          <div class="big-bar" aria-label="样本闭包唯一数据与精确冗余">
+            <span style="width:70.39%;background:var(--green)">唯一数据 70.39%</span>
+            <span style="width:29.61%;background:var(--amber)">冗余 29.61%</span>
+          </div>
+          <div class="bar-group" style="margin-top:20px">
+            <div class="bar-row"><span class="name">最终 DOCX 副本</span><span class="track"><i class="fill" style="--w:88.38%;--c:var(--violet)"></i></span><span class="num">25.20 MB</span></div>
+            <div class="bar-row"><span class="name">其他精确冗余</span><span class="track"><i class="fill" style="--w:11.62%;--c:var(--amber)"></i></span><span class="num">3.31 MB</span></div>
+          </div>
+          <p class="callout warn" style="margin-top:18px">同一最终 DOCX 的 25,195,461 B 副本占样本冗余 88.38%。适合用内容寻址对象 + 多路径引用/视图；交付路径仍应保持可读且可追溯。</p>
+        </article>
+      </div>
+
+      <div class="grid-3" style="margin-top:18px">
+        <article class="card map-card" style="--accent:var(--blue)"><span class="num-mark">①</span><h3>Provider-visible</h3><p>角色说明、历史消息、工具定义、工具结果。控制重复 schema、整份文档回灌与无增量上下文。</p><span class="tag">按调用计费</span></article>
+        <article class="card map-card" style="--accent:var(--cyan)"><span class="num-mark">②</span><h3>Workflow-visible</h3><p>模块草稿、修订、审查与继续。控制固定展开、重复取证、校验失败循环和不安全重试。</p><span class="tag green">按回合放大</span></article>
+        <article class="card map-card" style="--accent:var(--violet)"><span class="num-mark">③</span><h3>Storage-visible</h3><p><code>Work</code>、<code>.manyselves</code>、<code>output</code> 的运行态、归档与交付视图。按 SHA-256 判重并保留 provenance。</p><span class="tag violet">按副本累积</span></article>
+      </div>
+    </section>
+
+    <section id="retries">
+      <div class="section-head">
+        <div><span class="kicker">07 · Failure semantics</span><h2>先判定请求处置，再决定是否重试</h2></div>
+        <p>最昂贵的失败不是报错本身，而是无法确认请求是否已被接受时再次发起物理请求。逻辑继续、校验纠正与 Provider 重试必须分别记账。</p>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>事件</th><th>处置语义</th><th>允许动作</th><th>禁止动作</th><th>成本记录</th></tr></thead>
+          <tbody>
+            <tr><td>连接前失败 / 明确未发送</td><td><span class="tag green">not sent</span></td><td>有界退避后重试</td><td>无限重试</td><td>physical attempt + reason</td></tr>
+            <tr><td>429 / 明确拒绝</td><td><span class="tag green">definitely rejected</span></td><td>尊重服务端等待时间，共享 cooldown + jitter</td><td>每个 agent 独立风暴式重试</td><td>retry-after、队列等待、attempt</td></tr>
+            <tr><td>409 冲突</td><td><span class="tag amber">reconcile first</span></td><td>读取冲突状态，确认幂等键/检查点后再决定</td><td>盲目立即重放</td><td>conflict fingerprint</td></tr>
+            <tr><td>首 token 超时 / 接收状态不明</td><td><span class="tag red">accepted or unknown</span></td><td>标记 ambiguous，暂停或人工/状态协调</td><td>悄悄发起第二个物理请求</td><td>ambiguous=true、no replay</td></tr>
+            <tr><td>流中断：已有普通文本</td><td><span class="tag amber">partial persisted</span></td><td>从已持久化边界做有锚点继续</td><td>重发整轮并合并两份文本</td><td>continuation kind + delta</td></tr>
+            <tr><td>流中断：工具参数/思考块不完整</td><td><span class="tag red">unsafe partial</span></td><td>丢弃不完整调用并进入协调状态</td><td>猜测参数或重放有副作用工具</td><td>block type + terminal state</td></tr>
+            <tr><td>确定性 Schema / 业务校验失败</td><td><span class="tag violet">logical correction</span></td><td>一次明确纠正；相同 fingerprint 再现即终止</td><td>把同一错误包装成无限 Provider retry</td><td>validation fingerprint</td></tr>
+            <tr><td>正常取证 / 工具继续</td><td><span class="tag">normal work</span></td><td>按进展与预算继续</td><td>误记为“失败重试”掩盖真实调用结构</td><td>turn kind + progress</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="sessions">
+      <div class="section-head">
+        <div><span class="kicker">08 · Session-derived invariants</span><h2>两次真实会话把“省 token”变成协议约束</h2></div>
+        <p>以下不是泛化建议，而是从指定 Codex 会话还原出的失败链。实验控制必须阻断根因，不能只在账本末端统计。</p>
+      </div>
+
+      <div class="grid-2">
+        <article class="card">
+          <span class="state baseline">019fb739…</span>
+          <h3 style="margin-top:14px">模型可见内部标记会诱发模仿与重写</h3>
+          <p>已创建的结果片段之后又发生 5 次写入，额外消耗约 29,872 tokens；同一组会话还出现漏参数、批量 parts 被字符串化及压缩后协议形状损坏。</p>
+          <div class="callout"><strong>落地约束：</strong>Provider canonical payload、Prompt、Skill、Knowledge 与工具结果中该退休标记必须为 0；已验证片段只返回 <code>already_ready</code>，不得重放写工具；压缩以完整 tool-call/result group 为原子。</div>
+        </article>
+        <article class="card">
+          <span class="state baseline">019fadeb…</span>
+          <h3 style="margin-top:14px">调用下降不等于成本因果成立</h3>
+          <p><code>report-dc2549e1b5</code> 与旧运行的 191 vs 226 calls 输入 SHA、账本 schema 与失败条件不同，不能称为 A/B；新运行的 author + revision 占 79.3% tokens，工具 schema 重复字符占 85.3%。</p>
+          <div class="callout warn"><strong>落地约束：</strong>normal work、Provider retry、validation correction 与 continuation 分开记账；同输入/模型/价格/schema/质量门禁配对后，才报告 expected cost per verified delivery。</div>
+        </article>
+      </div>
+    </section>
+
+    <section id="changes">
+      <div class="section-head">
+        <div><span class="kicker">09 · Experimental controls</span><h2>本轮改动：减少重复，不削弱判断</h2></div>
+        <p>实验按可独立回滚的控制点拆分；只有通过离线故障注入和真实 Provider 配对门槛，才能宣称“节省且不降质”。</p>
+      </div>
+
+      <div class="grid-2">
+        <article class="card">
+          <h3>已落入实验工作树并做定向离线验证</h3>
+          <ul class="change-list">
+            <li><span class="index">A</span><div><strong>原子化上下文压缩</strong><p>assistant tool-call 与匹配 tool-result 成对保留或成对移出；摘要保留最新引用、状态与下一动作。</p></div></li>
+            <li><span class="index">B</span><div><strong>旧结果片段只恢复、不重写</strong><p>同运行且可验证的历史结果映射为 <code>already_ready</code>；模型可见历史去除退休标记，避免模仿和循环写入。</p></div></li>
+            <li><span class="index">C</span><div><strong>Provider-visible 与 Knowledge 双向隔离</strong><p>canonical Provider messages、tool args/schema 和工具结果在请求前统一清除退休标记；Knowledge 在 snapshot 发布与加载两端做语义 sentinel gate，hash 自洽也不能放行污染正文。</p></div></li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>dirty experiment 已实现；真实 Provider 待验证</h3>
+          <ul class="change-list">
+            <li><span class="index" style="background:var(--amber)">D</span><div><strong>Provider disposition / no ambiguous retry</strong><p>显式区分 <code>not_sent</code>、<code>definitely_rejected</code>、<code>accepted_or_unknown</code>；处置不明不发第二个物理请求，409 不盲目自动重试。</p></div></li>
+            <li><span class="index" style="background:var(--amber)">E</span><div><strong>类型化、进展感知的有界继续</strong><p>首个续片允许；此后必须出现新的 durable 状态或新语义事件，并受分类回合上限与无进展上限双重约束；不通过统一降低专家 <code>max_tokens</code> 控成本。</p></div></li>
+            <li><span class="index" style="background:var(--amber)">F</span><div><strong>四个 workflow 入口恢复 request cost mode</strong><p>不再把请求统一改写为 <code>observe</code>；强制模式仍必须只在类型化提交/检查点等安全边界暂停。</p></div></li>
+            <li><span class="index" style="background:var(--amber)">G</span><div><strong>默认路径撤回 37-leaf 放大</strong><p>默认恢复冻结实验提交的五模块级协作与串行 Cross owner；37-leaf / lane 路径只在显式 <code>bounded_module_lanes</code> 下启用，Chief 与 Final 仍顺序执行。</p></div></li>
+            <li><span class="index" style="background:var(--amber)">H</span><div><strong>Provider pre-send / terminal journal</strong><p>manifest v3 绑定 run、task 与 task-attempt；先恢复 hash-verified completed terminal，否则同任务 pending 或 <code>accepted_or_unknown</code> 会在进程崩溃恢复时 fail-closed，不悄悄创建第二次物理请求。</p></div></li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="callout warn" style="margin-top:18px"><strong>不做的优化：</strong>删除关键角色上下文、截断专家输出、跳过 Cross/Chief/Final、用 lint 代替语义审查、把一次正常工具继续误判为失败、或在流处置不明时盲目重试。这些手段会把“成本下降”换成“失败率上升”。<br><strong>仍待实现：</strong>ambiguous journal 的显式 reconciliation UI/API、journal rename 的父目录 fsync（当前只承诺进程崩溃恢复，不宣称断电耐久）、并发 lane 共享的 429 cooldown/admission、workspace 级 single-writer/output-owner，以及真实 Provider 配对。</div>
+    </section>
+
+    <section id="harness-map">
+      <div class="section-head">
+        <div><span class="kicker">10 · Anthropic harness mapping</span><h2>把公开工程原则映射到运行时控制点</h2></div>
+        <p>这里引用的是 Anthropic 官方工程文章与 Claude Platform 文档；映射是本项目的工程推论，不代表官方对 Manyselves 的结论。</p>
+      </div>
+
+      <div class="grid-3">
+        <article class="card map-card" style="--accent:var(--blue)"><span class="tag">simple patterns</span><h3 style="margin-top:14px">最简可组合工作流</h3><p>固定、可预测的阶段用代码路径；真正需要模型判断的步骤保留 agent 灵活性。并行只用于可独立拆分的广度，不把所有阶段都展开。</p></article>
+        <article class="card map-card" style="--accent:var(--cyan)"><span class="tag green">context</span><h3 style="margin-top:14px">最小高信号上下文</h3><p>引用先于整文，按需加载；压缩保留结构化进度、关键 ID、校验状态和下一动作，而不是把所有历史再次发送。</p></article>
+        <article class="card map-card" style="--accent:var(--violet)"><span class="tag violet">tools</span><h3 style="margin-top:14px">少而清晰的工具接口</h3><p>按角色暴露工具，减少重叠 schema；工具返回支持过滤、分页和紧凑摘要，并保持错误信息可行动。</p></article>
+        <article class="card map-card" style="--accent:var(--green)"><span class="tag green">durable progress</span><h3 style="margin-top:14px">增量进度与恢复</h3><p>以持久化结果、检查点和功能门禁作为真实进度；新上下文先读状态再做下一项，避免猜测与重复工作。</p></article>
+        <article class="card map-card" style="--accent:var(--amber)"><span class="tag amber">errors & streams</span><h3 style="margin-top:14px">区分错误和流状态</h3><p>429 服从退避，409 先协调；中断流根据已接收块类型处理。不可把“响应处置不明”折叠成普通安全重试。</p></article>
+        <article class="card map-card" style="--accent:var(--red)"><span class="tag red">evals</span><h3 style="margin-top:14px">评估最终环境状态</h3><p>同时记录 pass@1、总 attempts、tokens、工具错误和最终交付状态；不能用“多试几次最终成功”隐藏首轮失败成本。</p></article>
+      </div>
+    </section>
+
+    <section id="gates">
+      <div class="section-head">
+        <div><span class="kicker">11 · Phased plan, gates & rollback</span><h2>先对齐契约，再兑现成本</h2></div>
+        <p>门槛按风险递增：离线协议 → 故障注入 → 同条件真实配对 → 小流量启用。任一质量或幂等性门禁失败即停止扩围。</p>
+      </div>
+
+      <div class="timeline" aria-label="五阶段改造路线">
+        <div class="phase" style="--phase:var(--red)"><b>P0 · 契约对齐</b><small>Main Prompt 单一装配源；Prompt ↔ ToolRegistry 启动 parity；冻结 baseline。</small></div>
+        <div class="phase" style="--phase:var(--amber)"><b>P1 · 正确恢复</b><small>attempt disposition、409 协调、类型化继续、安全暂停、同运行恢复。</small></div>
+        <div class="phase" style="--phase:var(--blue)"><b>P2 · 上下文减量</b><small>原子压缩、marker 隔离、最小 schema、Skill/KB 按需展开。</small></div>
+        <div class="phase" style="--phase:var(--violet)"><b>P3 · 存储 / I/O</b><small>CAS canonical、可读 views、增量索引、可逆 retention 与 provenance。</small></div>
+        <div class="phase" style="--phase:var(--green)"><b>P4 · 配对放量</b><small>同输入 Provider A/B；质量门禁；仅显式评估 37-leaf；小流量 canary。</small></div>
+      </div>
+
+      <div class="grid-2">
+        <article class="card">
+          <h3>实验准入门槛</h3>
+          <ul class="gate-list">
+            <li><span class="index">G0</span><div><strong>交付质量不退化</strong><p><code>completed</code>、五模块、Cross 与 Final 完成、fresh readable DOCX、receipt 与本运行一致。</p></div></li>
+            <li><span class="index">G1</span><div><strong>协议与故障注入</strong><p>歧义首 token 超时只发一次；429 有界重试；409 不盲重试；工具调用/结果成对；同校验 fingerprint 终止。</p></div></li>
+            <li><span class="index">G2</span><div><strong>真实 Provider 严格配对</strong><p>同输入 SHA、模型、参数、提示词版本、工具集合和交付门禁；比较 pass@1、calls、tokens、wall time、重试与质量。</p></div></li>
+            <li><span class="index">G3</span><div><strong>小流量与停止线</strong><p>质量退化、失败增多、歧义重复副作用、恢复重做或预算暂停破坏交付，任一出现即回滚。</p></div></li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>回滚策略</h3>
+          <ul class="gate-list">
+            <li><span class="index" style="background:var(--violet)">R1</span><div><strong>控制点独立开关</strong><p>重试语义、继续边界、上下文压缩、并行展开、存储 CAS 分开启停，避免整包回滚。</p></div></li>
+            <li><span class="index" style="background:var(--violet)">R2</span><div><strong>保留原始运行证据</strong><p>失败态、账本、workflow state、receipt 与 artifact 不删除、不覆盖、不自动重跑。</p></div></li>
+            <li><span class="index" style="background:var(--violet)">R3</span><div><strong>只在实验分支切换</strong><p>不在脏工作树执行 destructive reset；使用独立提交/配置恢复已知行为，并记录 HEAD 与开关快照。</p></div></li>
+            <li><span class="index" style="background:var(--violet)">R4</span><div><strong>存储可逆视图</strong><p>内容寻址对象可回建交付路径；引用删除前先验证仍有可读副本和 provenance。</p></div></li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="callout danger" style="margin-top:18px"><strong>当前状态：未通过 G2。</strong> 本轮实验代码没有真实 Provider paired run，因此报告只确认成本热点与控制设计，不宣称当前实现已经降低真实成本。</div>
+    </section>
+
+    <section id="identity">
+      <div class="section-head">
+        <div><span class="kicker">12 · Identity & provenance</span><h2>实验身份冻结</h2></div>
+        <p>分支名、工作树和成功基线是三个不同对象。报告明确记录它们，避免把另一个 checkout 或旧运行当作当前实现。</p>
+      </div>
+      <article class="card">
+        <dl class="facts">
+          <div><dt>工作树</dt><dd class="mono">/Users/zzymima0000/Documents/Codex/manyselves-cost-control</dd></div>
+          <div><dt>Git 分支</dt><dd class="mono">cost-control-experiments</dd></div>
+          <div><dt>冻结 HEAD</dt><dd class="mono">aa63771f9fd1346cb89e136065fc5d3ee2a99a29</dd></div>
+          <div><dt>上游</dt><dd class="mono">origin/cost-control-experiments</dd></div>
+          <div><dt>工作树状态</dt><dd>已有未提交实验改动；本报告不把 dirty diff 误认成冻结提交内容</dd></div>
+          <div><dt>成功基线</dt><dd class="mono">/Users/zzymima0000/Documents/Codex/success · report-dc2549e1b5</dd></div>
+          <div><dt>观察日期</dt><dd>2026-08-09 · Asia/Shanghai</dd></div>
+        </dl>
+      </article>
+    </section>
+
+    <section id="sources">
+      <div class="section-head">
+        <div><span class="kicker">13 · Primary sources</span><h2>官方参考与口径</h2></div>
+        <p>外部链接仅作方法依据；本 HTML 的字体、样式和图表均为内联资源，离线打开不依赖 CDN。</p>
+      </div>
+
+      <article class="card">
+        <ul class="source-list">
+          <li><a href="https://www.anthropic.com/engineering/building-effective-agents">Building effective agents</a><span>简单、可组合模式；工作流与 agent 的边界；独立任务的并行化。</span></li>
+          <li><a href="https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents">Effective harnesses for long-running agents</a><span>结构化进度、增量工作、干净恢复点与端到端测试。</span></li>
+          <li><a href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents">Effective context engineering for AI agents</a><span>高信号上下文、按需检索、压缩与长期任务上下文管理。</span></li>
+          <li><a href="https://www.anthropic.com/engineering/writing-tools-for-agents">Writing effective tools for AI agents</a><span>清晰工具边界、可行动返回、工具评估与接口优化。</span></li>
+          <li><a href="https://www.anthropic.com/engineering/code-execution-with-mcp">Code execution with MCP</a><span>在数据附近执行过滤与转换，减少大体积工具结果进入模型上下文。</span></li>
+          <li><a href="https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents">Demystifying evals for AI agents</a><span>评估真实结果、轨迹、失败模式、成本与试验统计。</span></li>
+          <li><a href="https://platform.claude.com/docs/en/api/errors">Claude API errors</a><span>HTTP 错误类别、限流与重试注意事项。</span></li>
+          <li><a href="https://platform.claude.com/docs/en/build-with-claude/streaming">Streaming messages</a><span>流事件、错误事件与增量块语义，是中断恢复分类的依据。</span></li>
+        </ul>
+      </article>
+
+      <details style="margin-top:16px">
+        <summary>指标口径与限制</summary>
+        <div>
+          <p><strong>calls / tokens：</strong>取自最新成功运行的 usage 账本聚合；阶段 token 以报告给出的三位小数百万值展示，因四舍五入与总量可能有微小差异。</p>
+          <p><strong>重复 schema：</strong>重复工具 schema 字符数 / 工具 schema 字符总数；不等于全部请求字符或全部输入 token 的重复率。</p>
+          <p><strong>精确冗余：</strong>样本闭包内按字节内容完全相同计算；不包含语义相似但字节不同的文本，也不代表全项目。</p>
+          <p><strong>非 A/B：</strong>旧运行与本运行并非同输入、同配置、同执行路径的受控配对。当前实验 dirty tree 未运行真实 Provider 配对基准。</p>
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell footer-row">
+      <span>Manyselves · Cost Control Experimental Audit</span>
+      <span>Self-contained HTML · no external assets · 2026-08-09</span>
+    </div>
+  </footer>
+</body>
+</html>

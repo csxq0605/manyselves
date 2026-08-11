@@ -9,6 +9,7 @@ import tempfile
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Callable
 from docx import Document
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -158,6 +159,7 @@ class PdsDocxRenderer:
         output_path: Path,
         *,
         approved_markdown: str | None = None,
+        before_publish: Callable[[], None] | None = None,
     ) -> PdsRenderResult:
         """Render approved prose only and validate semantic preservation."""
 
@@ -194,6 +196,8 @@ class PdsDocxRenderer:
                 temporary.write(self._canonical_docx(buffer.getvalue()))
                 temporary_path = Path(temporary.name)
             self._verify_output(temporary_path, report)
+            if before_publish is not None:
+                before_publish()
             temporary_path.replace(output_path)
             temporary_path = None
         finally:

@@ -1,5 +1,6 @@
 """Tests for loop manager (agent lifecycle coordination)."""
 
+import inspect
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -105,6 +106,20 @@ def test_create_tools_for_main(manager):
         "aggregate_existing",
         "render_existing",
     }
+    execution_mode = reporting_schema["properties"]["execution_mode"]
+    assert set(execution_mode["enum"]) == {
+        "current_serial_review",
+        "bounded_module_lanes",
+    }
+    assert "execution_mode" not in reporting_schema["required"]
+    reporting_tool = tools.get("run_reporting_workflow")
+    assert reporting_tool is not None
+    assert (
+        inspect.signature(reporting_tool.__call__)
+        .parameters["execution_mode"]
+        .default
+        == "current_serial_review"
+    )
 
 
 def test_main_does_not_advertise_mineru_when_cli_is_unavailable(manager):
@@ -142,6 +157,19 @@ async def test_start_creates_loops(mock_factory, manager):
     await manager.start()
     assert manager.is_running
     assert set(manager._loops) == {"main"}
+    system_prompt = manager._loops["main"]._system_prompt_override
+    assert system_prompt is not None
+    assert '<agent_identity name="main-agent">' in system_prompt
+    assert "五路决策" in system_prompt
+    for operation in (
+        "distill_template_skill",
+        "full_report",
+        "module_report",
+        "aggregate_existing",
+        "render_existing",
+    ):
+        assert operation in system_prompt
+    assert "独立、可调度、可恢复任务" in system_prompt
     assert all(
         legacy not in manager._loops
         for legacy in ("data_analysis", "plotting", "theory", "report")

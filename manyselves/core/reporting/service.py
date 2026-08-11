@@ -15,8 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ...config.schema import AgentDefaults
 from ...interfaces.types import AgentType, SystemNotice
-from ..loops.bus import MessageBus
 from ..artifacts.content_store import ContentAddressedStore
+from ..loops.bus import MessageBus
 from ..providers.base import LLMProvider
 from ..tools.task_board import TaskBoard
 from ..usage_ledger import UsageLedger
@@ -25,7 +25,8 @@ from .config import load_packaged_agents
 from .coverage import evaluate_coverage
 from .decisions import EvidenceDecisionStore
 from .evidence_readiness import ReportingBlockedError
-from .intake.adapters import IntakeAdapterRegistry
+from .execution_runtime import ProviderRouter
+from .input_snapshot import RunInputSnapshotStore
 from .intake.manifest import build_manifest
 from .intake.wps_images import canonicalize_photo_bindings, extract_wps_images
 from .mappers import map_s2_1, map_s4_4, map_s4_6
@@ -35,7 +36,6 @@ from .models import (
     EvidenceDecisionRequest,
     EvidenceItem,
     OutputArtifact,
-    ParsedArtifact,
     PhotoAsset,
     ProjectManifest,
     ReportRequest,
@@ -43,6 +43,14 @@ from .models import (
     UserSupplement,
 )
 from .output_verifier import OutputVerificationError, verify_current_run_outputs
+from .parallel_runtime import (
+    ProjectWriteLease,
+    ProjectWriteLeaseManager,
+    bind_project_write_lease,
+    reset_project_write_lease,
+    validate_bound_project_write_lease,
+)
+from .preparation import FilePreparationResult, prepare_manifest_file
 from .rendering import PackagedV2DocxCore, PdsDocxRenderer, RenderRequest, RenderResult
 from .rendering.packaged_docx import verify_rendered_markdown
 from .store import ReportingStore
@@ -79,6 +87,7 @@ class ReportingService:
         task_board: TaskBoard,
         llm_provider: LLMProvider,
         agent_defaults: AgentDefaults | None = None,
+        provider_router: ProviderRouter | None = None,
     ):
         if llm_provider is None:
             raise ValueError(
@@ -89,6 +98,7 @@ class ReportingService:
         self.task_board = task_board
         self.llm_provider = llm_provider
         self.agent_defaults = agent_defaults or AgentDefaults()
+        self.provider_router = provider_router or ProviderRouter(llm_provider)
         self.store = ReportingStore(self.workspace)
         self.content_store = ContentAddressedStore(self.workspace)
         self.decisions = EvidenceDecisionStore(self.workspace)
@@ -108,7 +118,19 @@ class ReportingService:
 
         source = Path(source)
         target = Path(target)
+        validate_bound_project_write_lease(self.workspace)
         blob = self.content_store.ingest_file(source)
+        trusted = self.content_store.issue_trusted_handle(
+            blob,
+            lineage_id=(
+                "snapshot:"
+                + (
+                    target.relative_to(self.workspace).as_posix()
+                    if target.resolve().is_relative_to(self.workspace)
+                    else target.as_posix()
+                )
+            ),
+        )
         if target.exists() or target.is_symlink():
             if not target.is_file():
                 raise ValueError(f"content snapshot target is not a file: {target}")
@@ -123,16 +145,18 @@ class ReportingService:
                     f".{target.name}.{uuid.uuid4().hex}.cas-view"
                 )
                 try:
-                    self.content_store.link_view(
-                        blob,
+                    self.content_store.link_trusted_view(
+                        trusted,
                         staged,
                         final_path=target,
                     )
+                    validate_bound_project_write_lease(self.workspace)
                     os.replace(staged, target)
                 finally:
                     staged.unlink(missing_ok=True)
         else:
-            self.content_store.link_view(blob, target)
+            validate_bound_project_write_lease(self.workspace)
+            self.content_store.link_trusted_view(trusted, target)
         return target, blob.sha256, blob.relative_path
 
     def _agent_runner_for(self, workflow_id: str) -> ReportingAgentRunner:
@@ -146,6 +170,7 @@ class ReportingService:
                 self.llm_provider,
                 self.agent_defaults,
                 timeout=None,
+                provider_router=self.provider_router,
             )
             self._active_agent_runners[workflow_id] = runner
         return runner
@@ -154,9 +179,20 @@ class ReportingService:
         if workflow_id is not None:
             self._active_agent_runners.pop(workflow_id, None)
 
-    def resolve_report_template(self) -> tuple[Path, str]:
+    def resolve_report_template(
+        self, run_id: str | None = None
+    ) -> tuple[Path, str]:
         """Resolve the current template with project scope taking precedence."""
-        project_template = self.workspace / self.PROJECT_TEMPLATE_PATH
+        project_template = (
+            self.workspace
+            / "Work"
+            / "runs"
+            / run_id
+            / "frozen-project"
+            / self.PROJECT_TEMPLATE_PATH
+            if run_id is not None
+            else self.workspace / self.PROJECT_TEMPLATE_PATH
+        )
         if project_template.exists():
             if not project_template.is_file():
                 raise ValueError(
@@ -171,10 +207,21 @@ class ReportingService:
             )
         return self.packaged_report_template_path, "packaged"
 
-    def resolve_skill_distillation_template(self) -> tuple[Path, str]:
+    def resolve_skill_distillation_template(
+        self, run_id: str | None = None
+    ) -> tuple[Path, str]:
         """Select the expert source only for the isolated Skill distillation task."""
 
-        expert_source = self.workspace / self.EXPERT_SKILL_SOURCE_PATH
+        expert_source = (
+            self.workspace
+            / "Work"
+            / "runs"
+            / run_id
+            / "frozen-project"
+            / self.EXPERT_SKILL_SOURCE_PATH
+            if run_id is not None
+            else self.workspace / self.EXPERT_SKILL_SOURCE_PATH
+        )
         if expert_source.exists():
             if not expert_source.is_file():
                 raise ValueError(
@@ -184,7 +231,7 @@ class ReportingService:
             if not expert_source.resolve().is_relative_to(self.workspace):
                 raise ValueError("expert Skill source must stay inside the project workspace")
             return expert_source, "expert-skill-source"
-        return self.resolve_report_template()
+        return self.resolve_report_template(run_id)
 
     @property
     def report_template_path(self) -> Path:
@@ -205,21 +252,143 @@ class ReportingService:
         self.store.ensure_layout()
         run_id = f"report-{uuid.uuid4().hex[:10]}"
         self.store.write_json(f"Work/runs/{run_id}/request.json", request.model_dump(mode="json"))
+        explicit_refs: list[Path] = []
+        if request.source_markdown_ref is not None:
+            explicit_refs.append(request.source_markdown_ref)
+        if request.operation == "aggregate_existing":
+            if request.source_module_refs is not None:
+                explicit_refs.extend(request.source_module_refs.values())
+            else:
+                default_refs = [
+                    Path(f"Outputs/Modules/{module_id}.md")
+                    for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5")
+                ]
+                explicit_refs.extend(
+                    ref for ref in default_refs if (self.workspace / ref).is_file()
+                )
+        RunInputSnapshotStore(self.workspace).freeze(
+            run_id,
+            extra_refs=tuple(explicit_refs),
+        )
         return run_id
 
     async def run_prepared(self, request: ReportRequest, run_id: str) -> ReportingRunResult:
         """Execute a request previously persisted by :meth:`prepare_run`."""
         return await self._execute(request, run_id)
 
+    async def run_prepared_claimed(
+        self,
+        request: ReportRequest,
+        run_id: str,
+        project_write_lease: ProjectWriteLease,
+        *,
+        resume: bool = False,
+    ) -> ReportingRunResult:
+        """Execute beneath a durable worker's already-acquired project lease."""
+
+        manager = ProjectWriteLeaseManager(self.workspace)
+        manager.validate(project_write_lease)
+        if (
+            project_write_lease.run_id != run_id
+            or project_write_lease.operation != request.operation
+        ):
+            raise ValueError("claimed project lease does not match report request")
+        token = bind_project_write_lease(self.workspace, project_write_lease)
+        lock_handle = None
+        try:
+            lock_handle = self._acquire_run_lock(run_id)
+            return await self._execute_locked(
+                request,
+                run_id,
+                resume=resume,
+                project_write_lease=project_write_lease,
+            )
+        finally:
+            if lock_handle is not None:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                lock_handle.close()
+            reset_project_write_lease(token)
+
+    def prepare_revision_run(self, request: RevisionRequest) -> str:
+        self.store.ensure_layout()
+        run_id = f"report-revision-{uuid.uuid4().hex[:10]}"
+        self.store.write_json(
+            f"Work/runs/{run_id}/revision-request.json",
+            request.model_dump(mode="json"),
+        )
+        RunInputSnapshotStore(self.workspace).freeze(run_id)
+        return run_id
+
+    async def run_revision_claimed(
+        self,
+        request: RevisionRequest,
+        run_id: str,
+        project_write_lease: ProjectWriteLease,
+        *,
+        resume: bool = False,
+    ) -> ReportingRunResult:
+        from .revisions import RevisionCoordinator
+
+        manager = ProjectWriteLeaseManager(self.workspace)
+        manager.validate(project_write_lease)
+        if (
+            project_write_lease.run_id != run_id
+            or project_write_lease.operation != "revision"
+        ):
+            raise ValueError("claimed project lease does not match revision request")
+        token = bind_project_write_lease(self.workspace, project_write_lease)
+        lock_handle = None
+        workflow_id = f"report-revision:{run_id}"
+        try:
+            lock_handle = self._acquire_run_lock(run_id)
+            result = await RevisionCoordinator(
+                self,
+                self._agent_runner_for(workflow_id),
+            ).run(
+                request,
+                run_id=run_id,
+                resume=resume,
+            )
+            if result.status != "needs_decision":
+                self._forget_agent_runner(workflow_id)
+            return result
+        except BaseException:
+            self._forget_agent_runner(workflow_id)
+            raise
+        finally:
+            if lock_handle is not None:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                lock_handle.close()
+            reset_project_write_lease(token)
+
     async def _execute(
         self, request: ReportRequest, run_id: str, *, resume: bool = False
     ) -> ReportingRunResult:
-        lock_handle = self._acquire_run_lock(run_id)
+        project_lease = ProjectWriteLeaseManager(self.workspace).acquire(
+            run_id,
+            request.operation,
+        )
+        lease_token = bind_project_write_lease(
+            self.workspace,
+            project_lease.lease,
+        )
+        lock_handle = None
         try:
-            return await self._execute_locked(request, run_id, resume=resume)
+            lock_handle = self._acquire_run_lock(run_id)
+            return await self._execute_locked(
+                request,
+                run_id,
+                resume=resume,
+                project_write_lease=project_lease.lease,
+            )
         finally:
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-            lock_handle.close()
+            if lock_handle is not None:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                lock_handle.close()
+            try:
+                project_lease.release()
+            finally:
+                reset_project_write_lease(lease_token)
 
     def _acquire_run_lock(self, run_id: str):
         lock_path = self.workspace / f"Work/runs/{run_id}/.active.lock"
@@ -233,9 +402,21 @@ class ReportingService:
         return handle
 
     async def _execute_locked(
-        self, request: ReportRequest, run_id: str, *, resume: bool = False
+        self,
+        request: ReportRequest,
+        run_id: str,
+        *,
+        resume: bool = False,
+        project_write_lease: ProjectWriteLease | None = None,
     ) -> ReportingRunResult:
         state: dict = {"request": request, "run_id": run_id, "resume": resume}
+        if project_write_lease is not None:
+            state["project_write_lease_ref"] = (
+                ProjectWriteLeaseManager(self.workspace)
+                .record_path.relative_to(self.workspace)
+                .as_posix()
+            )
+            state["project_write_lease_epoch"] = project_write_lease.lease_epoch
         execution_started_ns = time.time_ns()
         workflow_id: str | None = None
         await self._notice(f"配电报告流程 {run_id} 已启动。")
@@ -341,13 +522,20 @@ class ReportingService:
             return result
         except Exception as exc:
             self._forget_agent_runner(workflow_id)
+            ambiguous = bool(getattr(exc, "partial_output", False))
             result = ReportingRunResult(
                 run_id=run_id,
-                status="failed",
+                status="ambiguous" if ambiguous else "failed",
                 error=str(exc),
             )
             self._save_run(result)
-            await self._notice(f"配电报告流程失败：{exc}")
+            if ambiguous:
+                await self._notice(
+                    "Provider 响应在持久化前中断，结果状态不确定；"
+                    "已停止自动重试并等待人工确认或显式恢复。"
+                )
+            else:
+                await self._notice(f"配电报告流程失败：{exc}")
             return result
 
         artifacts: list[OutputArtifact] = state.get("output_artifacts", [])
@@ -390,25 +578,40 @@ class ReportingService:
         source_ref = request.source_markdown_ref
         if source_ref is None:
             raise ValueError("render_existing requires source_markdown_ref")
-        self._render_markdown(state, source_ref, request.output_filename)
+        frozen_ref = RunInputSnapshotStore(self.workspace).load(
+            str(state["run_id"])
+        ).resolve(source_ref)
+        self._render_markdown(
+            state,
+            frozen_ref,
+            request.output_filename,
+            declared_source_ref=source_ref,
+        )
 
     def _render_markdown(
         self,
         state: dict,
         source_ref: Path,
         output_filename: str | None,
+        *,
+        declared_source_ref: Path | None = None,
     ) -> None:
         """Render one project-local Markdown artifact through the deterministic component."""
 
         run_id = state["run_id"]
-        source = (self.workspace / source_ref).resolve()
-        if not source.is_relative_to(self.workspace) or not source.is_file():
+        source_view = self.workspace / source_ref
+        source = source_view.resolve()
+        if not source.is_relative_to(self.workspace) or not source_view.is_file():
             raise FileNotFoundError(f"render source does not exist: {source_ref}")
-        markdown = source.read_text(encoding="utf-8")
+        markdown = source_view.read_text(encoding="utf-8")
         if not markdown.strip():
             raise ValueError("render source Markdown is empty")
+        logical_source_ref = declared_source_ref or source_ref
+        source_snapshot_ref = (
+            source_ref if source_ref != logical_source_ref else None
+        )
 
-        selected_template, template_source = self.resolve_report_template()
+        selected_template, template_source = self.resolve_report_template(run_id)
         template_snapshot = (
             self.workspace / f"Work/runs/{run_id}/templates/report_template.docx"
         )
@@ -417,12 +620,13 @@ class ReportingService:
             template_snapshot,
         )
 
-        filename = output_filename or f"{source.stem}.docx"
+        filename = output_filename or f"{logical_source_ref.stem}.docx"
         output_ref = Path("Outputs/Reports") / filename
         output = self.workspace / output_ref
         render_request = RenderRequest(
             run_id=run_id,
-            source_markdown_ref=source.relative_to(self.workspace),
+            source_markdown_ref=logical_source_ref,
+            source_snapshot_ref=source_snapshot_ref,
             template_ref=template_snapshot.relative_to(self.workspace),
             output_ref=output_ref,
         )
@@ -461,6 +665,7 @@ class ReportingService:
                 temporary.write(raw_docx)
                 temporary_path = Path(temporary.name)
             verify_rendered_markdown(temporary_path, markdown)
+            validate_bound_project_write_lease(self.workspace)
             temporary_path.replace(output)
             temporary_path = None
         finally:
@@ -472,7 +677,8 @@ class ReportingService:
         render_result = RenderResult(
             status="completed",
             run_id=run_id,
-            source_markdown_ref=source.relative_to(self.workspace),
+            source_markdown_ref=logical_source_ref,
+            source_snapshot_ref=source_snapshot_ref,
             output_ref=output_ref,
             render_log_ref=render_log_ref,
             template_sha256=template_sha256,
@@ -592,7 +798,11 @@ class ReportingService:
                     ],
                 },
             )
-        return await self._execute(resumed_request, decision.run_id)
+        return await self._execute(
+            resumed_request,
+            decision.run_id,
+            resume=True,
+        )
 
     async def resume_run(
         self,
@@ -685,15 +895,18 @@ class ReportingService:
                     ],
                 },
             )
-        runner = ReportingAgentRunner(
-            self.workspace,
-            self.bus,
-            self.llm_provider,
-            self.agent_defaults,
-        )
-        return await RevisionCoordinator(self, runner).run(
-            resumed_revision, run_id=run_id, resume=True
-        )
+        workflow_id = f"report-revision:{run_id}"
+        try:
+            result = await RevisionCoordinator(
+                self,
+                self._agent_runner_for(workflow_id),
+            ).run(resumed_revision, run_id=run_id, resume=True)
+        except BaseException:
+            self._forget_agent_runner(workflow_id)
+            raise
+        if result.status != "needs_decision":
+            self._forget_agent_runner(workflow_id)
+        return result
 
     def validate_resume_run(
         self, run_id: str
@@ -723,7 +936,14 @@ class ReportingService:
             and (
                 previous is None
                 or previous.status
-                in {"failed", "cancelled", "in_progress", "needs_decision", "blocked"}
+                in {
+                    "failed",
+                    "cancelled",
+                    "ambiguous",
+                    "in_progress",
+                    "needs_decision",
+                    "blocked",
+                }
             )
         )
         if not (budget_stopped or checkpoint_resumable):
@@ -744,13 +964,19 @@ class ReportingService:
     ) -> ReportingRunResult:
         from .revisions import RevisionCoordinator
 
-        runner = ReportingAgentRunner(
-            self.workspace,
-            self.bus,
-            self.llm_provider,
-            self.agent_defaults,
-        )
-        return await RevisionCoordinator(self, runner).run(request, run_id=run_id)
+        run_id = run_id or f"report-revision-{uuid.uuid4().hex[:10]}"
+        workflow_id = f"report-revision:{run_id}"
+        try:
+            result = await RevisionCoordinator(
+                self,
+                self._agent_runner_for(workflow_id),
+            ).run(request, run_id=run_id)
+        except BaseException:
+            self._forget_agent_runner(workflow_id)
+            raise
+        if result.status != "needs_decision":
+            self._forget_agent_runner(workflow_id)
+        return result
 
     async def _notice(self, content: str) -> None:
         await self.bus.publish(SystemNotice(agent_type=AgentType.MAIN, content=content))
@@ -769,24 +995,94 @@ class ReportingService:
         )
 
     async def _build_manifest(self, state: dict) -> None:
-        manifest = build_manifest(self.workspace)
+        input_snapshot = RunInputSnapshotStore(self.workspace).load(
+            str(state["run_id"])
+        )
+        state["input_snapshot_ref"] = (
+            f"Work/runs/{state['run_id']}/input-snapshot.json"
+        )
+        state["input_snapshot_digest"] = input_snapshot.inventory_digest
+        manifest = build_manifest(
+            self.workspace,
+            input_root=input_snapshot.scope_root(self.workspace, "Inputs"),
+        )
         state["project_manifest"] = manifest
         self.store.write_json("Work/manifest.json", manifest.model_dump(mode="json"))
 
     async def _parse_artifacts(self, state: dict) -> None:
         manifest: ProjectManifest = state["project_manifest"]
-        artifacts: list[ParsedArtifact] = []
-        registry = IntakeAdapterRegistry()
+        request: ReportRequest = state["request"]
+        indexed_files = list(enumerate(manifest.files))
+
+        async def run_one(
+            semaphore: asyncio.Semaphore,
+            order: int,
+            manifest_file,
+        ) -> FilePreparationResult:
+            async with semaphore:
+                return await asyncio.to_thread(
+                    prepare_manifest_file,
+                    self.workspace,
+                    str(state["run_id"]),
+                    manifest_file,
+                    order,
+                )
+
+        if request.preparation_mode == "deterministic_workers" and len(indexed_files) > 1:
+            semaphore = asyncio.Semaphore(
+                min(request.preparation_concurrency, len(indexed_files))
+            )
+            results = await asyncio.gather(
+                *(
+                    run_one(semaphore, order, manifest_file)
+                    for order, manifest_file in indexed_files
+                )
+            )
+        else:
+            results = [
+                prepare_manifest_file(
+                    self.workspace,
+                    str(state["run_id"]),
+                    manifest_file,
+                    order,
+                )
+                for order, manifest_file in indexed_files
+            ]
+        results = sorted(results, key=lambda item: item.manifest_order)
+        if [item.manifest_order for item in results] != list(range(len(manifest.files))):
+            raise RuntimeError("preparation worker results are not a complete manifest order")
+        by_id = {item.file_id: item for item in results}
+        if len(by_id) != len(results):
+            raise RuntimeError("preparation worker returned duplicate file identity")
         for manifest_file in manifest.files:
-            if manifest_file.purpose in {"s2-1", "s4-4", "s4-6"}:
-                continue
-            try:
-                artifacts.extend(registry.parse(self.workspace / manifest_file.path, manifest_file))
-                manifest_file.parse_status = "parsed"
-            except Exception as exc:
-                manifest_file.parse_status = "failed"
-                manifest_file.error = str(exc)
-        state["parsed_artifacts"] = artifacts
+            result = by_id.get(manifest_file.id)
+            if result is None or result.source_sha256 != manifest_file.sha256:
+                raise RuntimeError("preparation worker source identity mismatch")
+            manifest_file.parse_status = result.status
+            manifest_file.error = result.error
+            self.store.write_json(
+                (
+                    f"Work/runs/{state['run_id']}/preparation-workers/results/"
+                    f"{result.manifest_order:04d}-{result.file_id}.json"
+                ),
+                result.model_dump(mode="json"),
+            )
+        state["preparation_worker_results"] = results
+        state["parsed_artifacts"] = [
+            artifact
+            for result in results
+            for artifact in result.parsed_artifacts
+        ]
+        state["preparation_parallelism"] = {
+            "mode": request.preparation_mode,
+            "worker_count": (
+                min(request.preparation_concurrency, len(indexed_files))
+                if request.preparation_mode == "deterministic_workers"
+                else 1
+            ),
+            "file_count": len(indexed_files),
+            "reducer_order": [item.file_id for item in results],
+        }
         self.store.write_json("Work/manifest.json", manifest.model_dump(mode="json"))
 
     async def _normalize_evidence(self, state: dict) -> None:
@@ -794,75 +1090,123 @@ class ReportingService:
         manifest: ProjectManifest = state["project_manifest"]
         photo_assets: list[PhotoAsset] = []
         mapping_gaps: list[dict] = []
-        mappers = {
-            "s2-1": map_s2_1,
-            "s4-4": map_s4_4,
-            "s4-6": map_s4_6,
-        }
-        for manifest_file in manifest.files:
-            mapper = mappers.get(manifest_file.purpose or "")
-            if mapper is None:
-                continue
-            input_path = self.workspace / manifest_file.path
-            try:
-                extracted: dict[str, PhotoAsset] = {}
-                if manifest_file.purpose == "s4-4":
-                    extracted = extract_wps_images(
-                        input_path,
-                        output_dir=(
-                            self.workspace
-                            / "Work"
-                            / "runs"
-                            / str(state["run_id"])
-                            / "assets"
-                            / manifest_file.id
-                        ),
-                    )
-                    extracted = {
-                        asset_key: asset.model_copy(
-                            update={
-                                "path": self.snapshot_content(
-                                    asset.path,
-                                    asset.path,
-                                    replace_existing_with_view=True,
-                                )[0]
-                            }
-                        )
-                        for asset_key, asset in extracted.items()
-                    }
-                mapped = mapper(input_path, file_id=manifest_file.id)
-                mapped_evidence = [
-                    item.model_copy(
-                        update={
-                            "source": item.source.model_copy(update={"path": manifest_file.path})
-                        }
-                    )
-                    for item in mapped.evidence_items
-                ]
-                if manifest_file.purpose == "s4-4":
+        worker_results: list[FilePreparationResult] | None = state.get(
+            "preparation_worker_results"
+        )
+        if worker_results is not None:
+            for result in sorted(
+                worker_results, key=lambda item: item.manifest_order
+            ):
+                if result.status != "parsed":
+                    continue
+                mapped_evidence = result.provisional_evidence
+                if result.purpose == "s4-4":
                     mapped_evidence, normalized_assets = canonicalize_photo_bindings(
                         mapped_evidence,
-                        extracted,
+                        result.raw_photo_assets,
                         start_index=len(photo_assets) + 1,
                     )
-                    photo_assets.extend(
-                        asset.model_copy(
-                            update={"path": asset.path.relative_to(self.workspace)}
-                        )
-                        for asset in normalized_assets
+                    final_asset_root = (
+                        self.workspace
+                        / "Work"
+                        / "runs"
+                        / str(state["run_id"])
+                        / "assets"
+                        / result.file_id
                     )
+                    for asset in normalized_assets:
+                        final_path = final_asset_root / asset.path.name
+                        final_path, _sha256, _blob_ref = self.snapshot_content(
+                            asset.path,
+                            final_path,
+                        )
+                        photo_assets.append(
+                            asset.model_copy(
+                                update={
+                                    "path": final_path.relative_to(self.workspace)
+                                }
+                            )
+                        )
                 evidence.extend(mapped_evidence)
                 mapping_gaps.extend(
-                    {
-                        "file_id": manifest_file.id,
-                        **gap.model_dump(mode="json"),
-                    }
-                    for gap in mapped.gaps
+                    {"file_id": result.file_id, **gap}
+                    for gap in result.mapping_gaps
                 )
-                manifest_file.parse_status = "parsed"
-            except Exception as exc:
-                manifest_file.parse_status = "failed"
-                manifest_file.error = str(exc)
+        else:
+            # Compatibility path for direct boundary tests and older adapters.
+            mappers = {
+                "s2-1": map_s2_1,
+                "s4-4": map_s4_4,
+                "s4-6": map_s4_6,
+            }
+            for manifest_file in manifest.files:
+                mapper = mappers.get(manifest_file.purpose or "")
+                if mapper is None:
+                    continue
+                input_path = self.workspace / manifest_file.path
+                try:
+                    extracted: dict[str, PhotoAsset] = {}
+                    if manifest_file.purpose == "s4-4":
+                        extracted = extract_wps_images(
+                            input_path,
+                            output_dir=(
+                                self.workspace
+                                / "Work"
+                                / "runs"
+                                / str(state["run_id"])
+                                / "assets"
+                                / manifest_file.id
+                            ),
+                        )
+                        extracted = {
+                            asset_key: asset.model_copy(
+                                update={
+                                    "path": self.snapshot_content(
+                                        asset.path,
+                                        asset.path,
+                                        replace_existing_with_view=True,
+                                    )[0]
+                                }
+                            )
+                            for asset_key, asset in extracted.items()
+                        }
+                    mapped = mapper(input_path, file_id=manifest_file.id)
+                    mapped_evidence = [
+                        item.model_copy(
+                            update={
+                                "source": item.source.model_copy(
+                                    update={"path": manifest_file.path}
+                                )
+                            }
+                        )
+                        for item in mapped.evidence_items
+                    ]
+                    if manifest_file.purpose == "s4-4":
+                        mapped_evidence, normalized_assets = canonicalize_photo_bindings(
+                            mapped_evidence,
+                            extracted,
+                            start_index=len(photo_assets) + 1,
+                        )
+                        photo_assets.extend(
+                            asset.model_copy(
+                                update={
+                                    "path": asset.path.relative_to(self.workspace)
+                                }
+                            )
+                            for asset in normalized_assets
+                        )
+                    evidence.extend(mapped_evidence)
+                    mapping_gaps.extend(
+                        {
+                            "file_id": manifest_file.id,
+                            **gap.model_dump(mode="json"),
+                        }
+                        for gap in mapped.gaps
+                    )
+                    manifest_file.parse_status = "parsed"
+                except Exception as exc:
+                    manifest_file.parse_status = "failed"
+                    manifest_file.error = str(exc)
 
         for artifact in state.get("parsed_artifacts", []):
             if artifact.kind == "manual_required":
@@ -937,8 +1281,25 @@ class ReportingService:
                 )
             )
         photo_assets = normalized_photo_assets
+        photo_to_evidence: dict[str, list[str]] = {
+            asset.id: [] for asset in photo_assets
+        }
+        evidence_to_photo: dict[str, list[str]] = {}
+        for item in evidence:
+            evidence_to_photo[item.id] = list(item.photo_refs)
+            for photo_id in item.photo_refs:
+                photo_to_evidence.setdefault(photo_id, []).append(item.id)
+        photo_adjacency = {
+            "schema_version": 1,
+            "photo_to_evidence": photo_to_evidence,
+            "evidence_to_photo": evidence_to_photo,
+            "primary_evidence": {
+                asset.id: asset.primary_evidence_id for asset in photo_assets
+            },
+        }
         state["evidence_items"] = evidence
         state["photo_assets"] = photo_assets
+        state["photo_evidence_adjacency"] = photo_adjacency
         state["mapping_gaps"] = mapping_gaps
         self.store.write_jsonl(
             "Work/evidence.jsonl",
@@ -948,6 +1309,7 @@ class ReportingService:
             "Work/photo-manifest.json",
             {"assets": [asset.model_dump(mode="json") for asset in photo_assets]},
         )
+        self.store.write_json("Work/photo-evidence-adjacency.json", photo_adjacency)
         self.store.write_json("Work/mapping-gaps.json", {"gaps": mapping_gaps})
         self.store.write_json("Work/manifest.json", manifest.model_dump(mode="json"))
 

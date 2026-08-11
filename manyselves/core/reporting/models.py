@@ -281,6 +281,24 @@ class ReportRequest(ReportingModel):
     cost_control_mode: CostControlMode = "observe"
     max_provider_attempts: int = Field(default=80, ge=1, le=1000)
     max_total_tokens: int = Field(default=800_000, ge=1_000)
+    execution_mode: Literal[
+        "current_serial_review", "bounded_module_lanes"
+    ] = "current_serial_review"
+    module_lane_concurrency: int = Field(default=5, ge=1, le=5)
+    submodule_task_concurrency: int = Field(default=8, ge=1, le=37)
+    submodule_batch_size: int = Field(
+        default=14,
+        ge=1,
+        le=14,
+        description=(
+            "Maximum logical leaf results returned by one module-scoped Agent dispatch. "
+            "Every leaf remains independently persisted and recoverable."
+        ),
+    )
+    preparation_mode: Literal[
+        "serial", "deterministic_workers"
+    ] = "deterministic_workers"
+    preparation_concurrency: int = Field(default=4, ge=1, le=16)
 
     @field_validator("target_modules")
     @classmethod
@@ -431,6 +449,10 @@ class ManifestFile(ReportingModel):
     sha256: str = Field(min_length=1)
     media_type: str = Field(min_length=1)
     purpose: str | None = None
+    snapshot_ref: Path | None = Field(
+        default=None,
+        description="Run-frozen source bytes used for parsing; path remains logical provenance.",
+    )
     parse_status: Literal["pending", "parsed", "failed"] = "pending"
     error: str | None = None
 

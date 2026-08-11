@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
+import json
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,8 +13,14 @@ import pytest
 from manyselves.core.reporting.agentic_models import (
     AgentResult,
     AgentRunStatus,
+    ClaimRecord,
+    ModuleSubmission,
+    ModuleRevisionSubmission,
+    SubmoduleDraftSubmission,
     TaskEnvelope,
 )
+from manyselves.core.reporting.input_contracts import RequestedModuleChange
+from manyselves.core.reporting.distributed_runtime import LocalEventStore, RunProjection
 from manyselves.core.reporting.module_collaboration import (
     MODULE_IDS,
     InterfaceDisposition,
@@ -20,13 +28,24 @@ from manyselves.core.reporting.module_collaboration import (
     ModuleDiscoverySubmission,
     ModuleInterfaceCoverage,
     ModuleInterfaceResponseSubmission,
+    SubmoduleDiscoveryBatchSubmission,
+    SubmoduleDiscoverySubmission,
+    SubmoduleInterfaceResponseSubmission,
+    SubmoduleInterfaceSignal,
 )
+from manyselves.core.reporting.models import ReportRequest
 from manyselves.core.reporting.store import ReportingStore
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
+from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY, resolve_submodule
 from manyselves.core.reporting.workflow import (
     AgentWorkflowError,
     ReportWorkflowRunner,
 )
+from manyselves.core.reporting.review_lifecycle import (
+    DeferredMainDecision,
+    request_module_revision,
+)
+from manyselves.core.reporting.scheduling import TaskTimingHistory
+from manyselves.core.reporting.source_ledger import SourceLedger
 
 
 class _Service:
@@ -115,6 +134,8 @@ def _state(run_id: str) -> dict:
         "request": SimpleNamespace(
             missing_evidence_policy="draft",
             execution_requirements=[],
+            submodule_task_concurrency=8,
+            submodule_batch_size=14,
         ),
         "module_dispatch": SimpleNamespace(module_tasks=tasks),
         "module_knowledge_refs": {
@@ -126,6 +147,588 @@ def _state(run_id: str) -> dict:
         "preparation_refs": preparation_refs,
         "evidence_items": [SimpleNamespace(id="E-0001")],
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("execution_mode", "expected_calls", "expected_selection"),
+    [
+        (
+            "current_serial_review",
+            ["module_collaboration_legacy"],
+            (False, False, True),
+        ),
+        (
+            "bounded_module_lanes",
+            [
+                "leaf_collaboration",
+                "leaf_authoring",
+                "bounded_module_lanes:5",
+            ],
+            (True, True, True),
+        ),
+    ],
+)
+async def test_execution_mode_gates_leaf_authoring_and_module_lane_expansion(
+    tmp_path: Path,
+    execution_mode: str,
+    expected_calls: list[str],
+    expected_selection: tuple[bool, bool, bool],
+) -> None:
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = _Service(tmp_path)
+    calls: list[str] = []
+
+    async def legacy(*_args, **_kwargs):
+        calls.append("module_collaboration_legacy")
+
+    async def leaf(*_args, **_kwargs):
+        calls.append("leaf_collaboration")
+
+    async def local_leaf(*_args, **_kwargs):
+        calls.append("local_leaf_preparation")
+
+    async def leaf_authoring(*_args, **_kwargs):
+        calls.append("leaf_authoring")
+
+    async def lanes(*_args, concurrency: int, **_kwargs):
+        calls.append(f"bounded_module_lanes:{concurrency}")
+
+    runner._module_collaboration_legacy = legacy
+    runner._module_collaboration = leaf
+    runner._module_local_submodule_preparation = local_leaf
+    runner._run_submodule_authoring_stage = leaf_authoring
+    runner._run_bounded_module_lanes = lanes
+    request = ReportRequest(
+        operation="full_report",
+        instruction="验证执行模式边界",
+        **(
+            {"execution_mode": execution_mode}
+            if execution_mode == "bounded_module_lanes"
+            else {}
+        ),
+    )
+
+    selected = await runner._prepare_module_authoring_mode(
+        tuple(request.target_modules),
+        {"request": request},
+        "workflow-mode-gate",
+    )
+
+    assert selected == expected_selection
+    assert calls == expected_calls
+
+
+@pytest.mark.asyncio
+async def test_submodule_three_wave_batches_agent_dispatches_and_keeps_37_leaf_results(
+    tmp_path: Path,
+) -> None:
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = _Service(tmp_path)
+    runner._budget = None
+    checkpoints: list[tuple[str, str]] = []
+    runner._checkpoint = (
+        lambda _state, activity, status, error=None: checkpoints.append(
+            (activity, status)
+        )
+    )
+    runner._cost_boundary = lambda *_args, **_kwargs: asyncio.sleep(0)
+    envelopes: list[TaskEnvelope] = []
+
+    async def agent(
+        _agent_id,
+        envelope,
+        _artifacts,
+        _workflow_id,
+        *,
+        session_key=None,
+    ):
+        envelopes.append(envelope)
+        module_id = REPORT_TAXONOMY[
+            envelope.agent_id.removeprefix("module-").removesuffix("-specialist")
+        ].id
+        if envelope.allowed_outputs == ["submodule_discovery_batch_submission"]:
+            return SubmoduleDiscoveryBatchSubmission(
+                module_id=module_id,
+                discoveries=[
+                    SubmoduleDiscoverySubmission(
+                        module_id=module_id,
+                        submodule_id=submodule_id,
+                        discovery_summary=f"{submodule_id} 独立发现。",
+                        evidence_ids=["E-0001"],
+                        interface_signals=(
+                            [
+                                SubmoduleInterfaceSignal(
+                                    target_module_id="2.3",
+                                    target_submodule_id="2.3.1",
+                                    status="request",
+                                    rationale="需要保护边界。",
+                                    question="整定是否覆盖异常负荷边界？",
+                                    needed_for="完成2.1.1结论。",
+                                    evidence_ids=["E-0001"],
+                                )
+                            ]
+                            if submodule_id == "2.1.1"
+                            else []
+                        ),
+                    )
+                    for submodule_id in envelope.target_submodule_ids
+                ],
+            )
+        assert envelope.allowed_outputs == ["module_interface_response_submission"]
+        assert envelope.agent_id == "module-2.3-specialist"
+        return ModuleInterfaceResponseSubmission(
+            module_id="2.3",
+            dispositions=[
+                InterfaceDisposition(
+                    request_id="IF-2.1.1-2.3.1-001",
+                    status="answered",
+                    answer="当前整定覆盖正常边界。",
+                    evidence_ids=["E-0001"],
+                    conditions=["以当前整定版本为准"],
+                )
+            ],
+        )
+
+    runner._agent = agent
+    state = _state("run-submodule-three-wave")
+    await runner._module_collaboration(
+        tuple(MODULE_IDS), state, "workflow-submodule-three-wave"
+    )
+
+    discoveries = [
+        item
+        for item in envelopes
+        if item.allowed_outputs == ["submodule_discovery_batch_submission"]
+    ]
+    responses = [
+        item
+        for item in envelopes
+        if item.allowed_outputs == ["module_interface_response_submission"]
+    ]
+    assert len(discoveries) == 5
+    assert sum(len(item.target_submodule_ids) for item in discoveries) == 37
+    assert len({item.task_id for item in discoveries}) == 5
+    assert [item.agent_id for item in responses] == ["module-2.3-specialist"]
+    assert set(state["submodule_discovery_barrier_refs"]) == set(MODULE_IDS)
+    assert len(state["submodule_collaboration_bundle_refs"]) == 37
+    assert set(state["collaboration_bundle_refs"]) == set(MODULE_IDS)
+    assert checkpoints[-2:] == [
+        ("collaboration-barrier-1", "completed"),
+        ("collaboration-barrier-2", "completed"),
+    ]
+
+    async def no_repeat(*_args, **_kwargs):
+        raise AssertionError("verified leaf completions must recover without calls")
+
+    runner._agent = no_repeat
+    await runner._module_collaboration(
+        tuple(MODULE_IDS), state, "workflow-submodule-three-wave"
+    )
+
+    knowledge_path = tmp_path / state["module_knowledge_refs"]["2.1"]
+    knowledge_path.parent.mkdir(parents=True, exist_ok=True)
+    knowledge_path.write_text("2.1 当前知识发生变化。", encoding="utf-8")
+    envelopes.clear()
+    runner._agent = agent
+    await runner._module_collaboration(
+        tuple(MODULE_IDS), state, "workflow-submodule-three-wave"
+    )
+    assert {
+        submodule_id
+        for item in envelopes
+        if item.allowed_outputs == ["submodule_discovery_batch_submission"]
+        for submodule_id in item.target_submodule_ids
+    } == set(REPORT_TAXONOMY["2.1"].submodules)
+    assert not [
+        item
+        for item in envelopes
+        if item.allowed_outputs == ["module_interface_response_submission"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_module_report_leaf_failure_resumes_only_failed_and_unstarted_leafs(
+    tmp_path: Path,
+) -> None:
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = _Service(tmp_path)
+    runner._budget = None
+    runner._checkpoint = lambda *_args, **_kwargs: None
+    runner._cost_boundary = lambda *_args, **_kwargs: asyncio.sleep(0)
+    state = _state("run-module-local-leaf-resume")
+    state["request"].submodule_batch_size = 4
+    expected = tuple(REPORT_TAXONOMY["2.4"].submodules)
+    failing_id = expected[4]
+    first_started: list[tuple[str, ...]] = []
+    first_succeeded: list[str] = []
+
+    async def first_agent(
+        _agent_id,
+        envelope,
+        _artifacts,
+        _workflow_id,
+        *,
+        session_key=None,
+    ):
+        batch = tuple(envelope.target_submodule_ids)
+        first_started.append(batch)
+        if failing_id in batch:
+            raise AgentWorkflowError("injected module-local leaf failure")
+        first_succeeded.extend(batch)
+        return SubmoduleDiscoveryBatchSubmission(
+            module_id="2.4",
+            discoveries=[
+                SubmoduleDiscoverySubmission(
+                    module_id="2.4",
+                    submodule_id=submodule_id,
+                    discovery_summary=f"{submodule_id} 独立发现。",
+                    evidence_ids=["E-0001"],
+                    interface_signals=[],
+                )
+                for submodule_id in batch
+            ],
+        )
+
+    runner._agent = first_agent
+    with pytest.raises(AgentWorkflowError, match="injected module-local leaf failure"):
+        await runner._module_local_submodule_preparation(
+            ("2.4",), state, "workflow-module-local-leaf-resume"
+        )
+    assert len(first_started) == 2
+    assert first_succeeded == list(expected[:4])
+
+    resumed_calls: list[tuple[str, ...]] = []
+
+    async def resumed_agent(
+        _agent_id,
+        envelope,
+        _artifacts,
+        _workflow_id,
+        *,
+        session_key=None,
+    ):
+        batch = tuple(envelope.target_submodule_ids)
+        resumed_calls.append(batch)
+        return SubmoduleDiscoveryBatchSubmission(
+            module_id="2.4",
+            discoveries=[
+                SubmoduleDiscoverySubmission(
+                    module_id="2.4",
+                    submodule_id=submodule_id,
+                    discovery_summary=f"{submodule_id} 恢复发现。",
+                    evidence_ids=["E-0001"],
+                    interface_signals=[],
+                )
+                for submodule_id in batch
+            ],
+        )
+
+    runner._agent = resumed_agent
+    await runner._module_local_submodule_preparation(
+        ("2.4",), state, "workflow-module-local-leaf-resume"
+    )
+
+    resumed_leaf_ids = {item for batch in resumed_calls for item in batch}
+    assert resumed_leaf_ids == set(expected) - set(first_succeeded)
+    assert not resumed_leaf_ids.intersection(first_succeeded)
+    assert set(state["submodule_discovery_barrier_refs"]) == {"2.4"}
+    assert set(state["submodule_collaboration_bundle_refs"]) == set(expected)
+    for ref in state["submodule_collaboration_bundle_refs"].values():
+        bundle = json.loads((tmp_path / ref).read_text(encoding="utf-8"))
+        assert bundle["requested_interfaces"] == []
+        assert bundle["responded_interfaces"] == []
+
+
+@pytest.mark.asyncio
+async def test_leaf_revision_failure_keeps_completed_siblings_for_same_run_resume(
+    tmp_path: Path,
+) -> None:
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = _Service(tmp_path)
+    runner._budget = None
+    runner._role_skill_context = lambda *_args, **_kwargs: ""
+    runner._user_supplement_constraints = lambda *_args, **_kwargs: []
+    state = _state("run-leaf-revision-resume")
+    state["request"].submodule_task_concurrency = 3
+    state["request"].user_supplements = []
+    targets = tuple(REPORT_TAXONOMY["2.4"].submodules)[:5]
+    subject = ModuleSubmission(
+        module_id="2.4",
+        submodule_narratives={
+            submodule_id: f"### {submodule_id}\n\n{submodule_id} 原始正文。"
+            for submodule_id in REPORT_TAXONOMY["2.4"].submodules
+        },
+        claims=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision=0,
+    )
+    runner.service.store.write_json(
+        "Work/runs/run-leaf-revision-resume/modules/2.4-r0.json",
+        subject.model_dump(mode="json"),
+    )
+    change = RequestedModuleChange(
+        id="USER-2.4-R1",
+        instruction="分别更新五个固定叶子。",
+        target_submodule_ids=list(targets),
+    )
+    failing_id = targets[0]
+    first_started: list[str] = []
+    first_succeeded: list[str] = []
+    cohort_started = asyncio.Event()
+
+    def patch(submodule_id: str) -> ModuleRevisionSubmission:
+        return ModuleRevisionSubmission(
+            module_id="2.4",
+            base_revision=0,
+            revision=1,
+            submodule_narratives={
+                submodule_id: f"### {submodule_id}\n\n{submodule_id} 已独立修订。"
+            },
+            claims_upsert=[],
+            claim_ids_remove=[],
+            source_ids=[],
+            unresolved_questions=[],
+            revision_responses=[
+                {
+                    "finding_id": change.id,
+                    "action": "implemented",
+                    "summary": f"已由原叶子身份完成 {submodule_id} 的独立修订。",
+                    "changed_target_ids": [submodule_id],
+                }
+            ],
+        )
+
+    async def first_agent(
+        _agent_id,
+        envelope,
+        _artifacts,
+        _workflow_id,
+        *,
+        session_key=None,
+    ):
+        submodule_id = envelope.target_submodule_ids[0]
+        assert session_key == f"submodule-{submodule_id}"
+        first_started.append(submodule_id)
+        if len(first_started) == 3:
+            cohort_started.set()
+        await cohort_started.wait()
+        if submodule_id == failing_id:
+            raise AgentWorkflowError("injected leaf revision failure")
+        await asyncio.sleep(0.002)
+        first_succeeded.append(submodule_id)
+        return patch(submodule_id)
+
+    runner._agent = first_agent
+    with pytest.raises(AgentWorkflowError, match="injected leaf revision failure"):
+        await request_module_revision(
+            runner,
+            state=state,
+            workflow_id="workflow-leaf-revision-resume",
+            subject=subject,
+            requested_changes=[change],
+        )
+    assert len(first_started) == 3
+    assert set(first_succeeded) == set(first_started) - {failing_id}
+
+    resumed_calls: list[str] = []
+
+    async def resumed_agent(
+        _agent_id,
+        envelope,
+        _artifacts,
+        _workflow_id,
+        *,
+        session_key=None,
+    ):
+        submodule_id = envelope.target_submodule_ids[0]
+        assert session_key == f"submodule-{submodule_id}"
+        resumed_calls.append(submodule_id)
+        return patch(submodule_id)
+
+    runner._agent = resumed_agent
+    revised, _ = await request_module_revision(
+        runner,
+        state=state,
+        workflow_id="workflow-leaf-revision-resume",
+        subject=subject,
+        requested_changes=[change],
+    )
+
+    assert set(resumed_calls) == set(targets) - set(first_succeeded)
+    assert not set(resumed_calls).intersection(first_succeeded)
+    assert revised.revision == 1
+    assert revised.revision_responses[0].changed_target_ids == sorted(targets)
+    barrier = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-leaf-revision-resume/reviews/module-revisions/"
+            "2.4/r1/reducer-barrier.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert barrier["target_submodule_ids"] == sorted(targets)
+    assert set(barrier["patch_sha256"]) == set(targets)
+
+
+@pytest.mark.asyncio
+async def test_wave_three_uses_five_shared_calls_and_persists_37_leaf_results(
+    tmp_path: Path,
+) -> None:
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = _Service(tmp_path)
+    runner._budget = None
+    runner._checkpoint = lambda *_args, **_kwargs: None
+    runner._cost_boundary = lambda *_args, **_kwargs: asyncio.sleep(0)
+    state = _state("run-submodule-wave-three")
+
+    async def discovery_agent(
+        _agent_id,
+        envelope,
+        _artifacts,
+        _workflow_id,
+        *,
+        session_key=None,
+    ):
+        assert envelope.allowed_outputs == ["submodule_discovery_batch_submission"]
+        module_id = REPORT_TAXONOMY[
+            envelope.agent_id.removeprefix("module-").removesuffix("-specialist")
+        ].id
+        return SubmoduleDiscoveryBatchSubmission(
+            module_id=module_id,
+            discoveries=[
+                SubmoduleDiscoverySubmission(
+                    module_id=module_id,
+                    submodule_id=submodule_id,
+                    discovery_summary=f"{submodule_id} 独立发现。",
+                    evidence_ids=["E-0001"],
+                    interface_signals=[],
+                )
+                for submodule_id in envelope.target_submodule_ids
+            ],
+        )
+
+    runner._agent = discovery_agent
+    await runner._module_collaboration(
+        tuple(MODULE_IDS), state, "workflow-submodule-wave-three"
+    )
+    SourceLedger(tmp_path, state["run_id"]).register_project(
+        "E-0001",
+        "测试证据",
+        "Inputs/evidence.txt",
+        "当前项目测试证据。",
+    )
+
+    active = 0
+    max_active = 0
+    calls: list[str] = []
+
+    async def author(module_id, _state, _workflow_id, **_kwargs):
+        nonlocal active, max_active
+        calls.append(module_id)
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.002)
+        active -= 1
+        submodule_ids = REPORT_TAXONOMY[module_id].submodules
+        claims = [
+            ClaimRecord(
+                id=f"C-{submodule_id}",
+                module_id=module_id,
+                submodule_id=submodule_id,
+                text=f"{submodule_id} 已完成独立判断。",
+                claim_type="project_fact",
+                source_ids=["E-0001"],
+            )
+            for submodule_id in submodule_ids
+        ]
+        return ModuleSubmission(
+            module_id=module_id,
+            submodule_narratives={
+                submodule_id: f"{submodule_id} 正文。[[CLAIM:C-{submodule_id}]]"
+                for submodule_id in submodule_ids
+            },
+            claims=claims,
+            source_ids=["E-0001"],
+            unresolved_questions=[],
+            revision=0,
+        )
+
+    runner._module_pipeline = author
+    await runner._run_submodule_authoring_stage(
+        tuple(MODULE_IDS), state, "workflow-submodule-wave-three"
+    )
+
+    assert len(calls) == 5
+    assert set(calls) == set(MODULE_IDS)
+    assert max_active == 5
+    assert set(state["submodule_authoring_barrier_refs"]) == set(MODULE_IDS)
+    assert set(state["specialist_submissions"]) == set(MODULE_IDS)
+    for module_id, submission in state["specialist_submissions"].items():
+        assert set(submission.submodule_narratives) == set(
+            REPORT_TAXONOMY[module_id].submodules
+        )
+        assert len(submission.claims) == len(
+            REPORT_TAXONOMY[module_id].submodules
+        )
+        assert runner._module_authoring_completion_is_current(
+            state, module_id, submission
+        )
+
+    async def no_repeat(*_args, **_kwargs):
+        raise AssertionError("current leaf author completion must be reused")
+
+    runner._module_pipeline = no_repeat
+    await runner._run_submodule_authoring_stage(
+        tuple(MODULE_IDS), state, "workflow-submodule-wave-three"
+    )
+
+
+@pytest.mark.asyncio
+async def test_leaf_scheduler_freezes_new_dispatch_and_keeps_started_successes(
+    tmp_path: Path,
+) -> None:
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = _Service(tmp_path)
+    submodule_ids = tuple(REPORT_TAXONOMY["2.4"].submodules)[:8]
+    started: list[str] = []
+    persisted: list[str] = []
+    cohort_started = asyncio.Event()
+    failing_id = submodule_ids[0]
+
+    async def execute(submodule_id: str) -> str:
+        started.append(submodule_id)
+        if len(started) == 4:
+            cohort_started.set()
+        await cohort_started.wait()
+        if submodule_id == failing_id:
+            raise AgentWorkflowError("leaf failed")
+        await asyncio.sleep(0.002)
+        return submodule_id
+
+    with pytest.raises(AgentWorkflowError, match="leaf failed"):
+        await runner._run_scheduled_submodule_stage(
+            submodule_ids,
+            run_id="run-leaf-scheduler-failure",
+            workflow_id="workflow-leaf-scheduler-failure",
+            task_kind="submodule_authoring",
+            concurrency=4,
+            execute=execute,
+            persist=lambda submodule_id, _payload: persisted.append(submodule_id),
+        )
+
+    assert len(started) == 4
+    assert set(persisted) == set(started) - {failing_id}
+    event_types = [
+        event.event_type
+        for event in LocalEventStore(
+            tmp_path, "run-leaf-scheduler-failure"
+        ).read()
+    ]
+    assert event_types.count("TaskDispatched") == 4
+    assert event_types.count("TypedResultAccepted") == 3
+    assert event_types.count("TaskFailed") == 1
+    assert "StageCompleted" not in event_types
 
 
 @pytest.mark.asyncio
@@ -183,7 +786,7 @@ async def test_three_wave_barriers_use_sparse_wave_two_and_resume_without_calls(
     runner._agent = agent
     state = _state("run-three-wave")
 
-    await runner._module_collaboration(
+    await runner._module_collaboration_legacy(
         tuple(MODULE_IDS),
         state,
         "workflow-three-wave",
@@ -235,7 +838,7 @@ async def test_three_wave_barriers_use_sparse_wave_two_and_resume_without_calls(
         raise AssertionError("completed collaboration task was repeated")
 
     runner._agent = no_repeat
-    await runner._module_collaboration(
+    await runner._module_collaboration_legacy(
         tuple(MODULE_IDS),
         state,
         "workflow-three-wave",
@@ -304,7 +907,7 @@ async def test_barrier_invalid_generic_result_is_quarantined_for_same_run_retry(
 
     runner._agent = valid_agent
     with pytest.raises(AgentWorkflowError, match="Barrier 1 failed"):
-        await runner._module_collaboration(
+        await runner._module_collaboration_legacy(
             tuple(MODULE_IDS),
             state,
             "workflow-barrier-retry",
@@ -322,7 +925,7 @@ async def test_barrier_invalid_generic_result_is_quarantined_for_same_run_retry(
     )
     assert len(rejected) == 1
 
-    await runner._module_collaboration(
+    await runner._module_collaboration_legacy(
         tuple(MODULE_IDS),
         state,
         "workflow-barrier-retry",
@@ -409,7 +1012,7 @@ async def test_barrier_quarantines_wrong_generic_result_identity_and_retries_now
         )
 
     runner._agent = valid_agent
-    await runner._module_collaboration(
+    await runner._module_collaboration_legacy(
         tuple(MODULE_IDS),
         state,
         "workflow-generic-identity-retry",
@@ -471,3 +1074,330 @@ def test_async_gather_contains_only_authoring_pipeline_without_review() -> None:
         )
         assert isinstance(review, ast.Constant)
         assert review.value is False
+
+
+@pytest.mark.asyncio
+async def test_bounded_module_lanes_overlap_and_reduce_private_state_once(
+    tmp_path: Path,
+) -> None:
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = _Service(tmp_path)
+    runner._budget = None
+    checkpoint_states: list[dict] = []
+    runner._checkpoint = lambda state, *_args, **_kwargs: checkpoint_states.append(
+        dict(state)
+    )
+    runner._bind_reviewed_module_to_authoring_context = (
+        lambda *_args, **_kwargs: None
+    )
+    run_id = "run-bounded-lanes"
+    preparation_refs = {
+        "coverage": f"Work/runs/{run_id}/coverage.json",
+        "evidence": f"Work/runs/{run_id}/evidence.json",
+        "manifest": f"Work/runs/{run_id}/manifest.json",
+    }
+    for ref in preparation_refs.values():
+        runner.service.store.write_json(ref, {"ref": ref})
+    state = {
+        "run_id": run_id,
+        "request": SimpleNamespace(
+            execution_requirements=[],
+            missing_evidence_policy="draft",
+            user_supplements=[],
+        ),
+        "preparation_refs": preparation_refs,
+        "module_knowledge_refs": {},
+        "module_submissions": {},
+        "specialist_submissions": {},
+        "module_review_completion_refs": {},
+    }
+    active = 0
+    maximum_active = 0
+    lane_state_ids: set[int] = set()
+    lane_starts: list[str] = []
+    TaskTimingHistory(tmp_path).record(
+        run_id="historical-run",
+        task_id="2.5",
+        task_kind="module_lane",
+        owner_key="2.5",
+        duration_ms=120_000,
+        status="completed",
+    )
+
+    async def pipeline(
+        module_id,
+        lane_state,
+        _workflow_id,
+        *,
+        review=True,
+        checkpoint=True,
+    ):
+        nonlocal active, maximum_active
+        assert review is True
+        assert checkpoint is False
+        lane_starts.append(module_id)
+        lane_state_ids.add(id(lane_state))
+        lane_state["private_module"] = module_id
+        active += 1
+        maximum_active = max(maximum_active, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        submission = ModuleSubmission(
+            module_id=module_id,
+            submodule_narratives={
+                submodule_id: f"{submodule_id} 模块 {module_id} 正文"
+                for submodule_id in REPORT_TAXONOMY[module_id].submodules
+            },
+            claims=[],
+            source_ids=[],
+            unresolved_questions=[],
+            revision=0,
+        )
+        subject_ref = f"Work/runs/{run_id}/modules/{module_id}-r0.json"
+        review_ref = (
+            f"Work/runs/{run_id}/reviews/module/initial/{module_id}/"
+            "completion-r0.json"
+        )
+        runner.service.store.write_json(
+            subject_ref, submission.model_dump(mode="json")
+        )
+        runner.service.store.write_json(
+            review_ref,
+            {"reviewer_session_key": f"module-auditor-{module_id}"},
+        )
+        lane_state.setdefault("module_submissions", {})[module_id] = submission
+        lane_state.setdefault("specialist_submissions", {})[module_id] = submission
+        lane_state.setdefault("module_review_completion_refs", {})[
+            module_id
+        ] = review_ref
+        return submission
+
+    runner._module_pipeline = pipeline
+    await runner._run_bounded_module_lanes(
+        tuple(MODULE_IDS),
+        state,
+        "workflow-bounded-lanes",
+        concurrency=2,
+    )
+
+    assert maximum_active == 2
+    assert lane_starts[0] == "2.5"
+    assert len(lane_state_ids) == 5
+    assert "private_module" not in state
+    assert set(state["module_submissions"]) == set(MODULE_IDS)
+    assert set(state["module_review_completion_refs"]) == set(MODULE_IDS)
+    barrier_ref = state["module_lane_barrier_ref"]
+    barrier = json.loads((tmp_path / barrier_ref).read_text(encoding="utf-8"))
+    assert barrier["target_modules"] == list(MODULE_IDS)
+    assert list(barrier["completion_refs"]) == list(MODULE_IDS)
+    assert checkpoint_states[-1]["module_lane_barrier_ref"] == barrier_ref
+    schedule = json.loads(
+        (tmp_path / f"Work/runs/{run_id}/scheduling/module-lanes.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert schedule["policy"] == "longest_critical_path_first_v1"
+    assert schedule["decisions"][0]["task_id"] == "2.5"
+    events = LocalEventStore(tmp_path, run_id).read()
+    assert events[0].event_type == "StageReady"
+    assert events[-1].event_type == "StageCompleted"
+    assert sum(event.event_type == "TaskDispatched" for event in events) == 5
+    assert sum(event.event_type == "AttemptStarted" for event in events) == 5
+    assert sum(event.event_type == "TypedResultAccepted" for event in events) == 5
+    projection = RunProjection.rebuild(run_id, events)
+    assert projection.stages["module-work"]["status"] == "completed"
+    assert all(
+        projection.tasks[f"module-{module_id}"]["status"] == "completed"
+        for module_id in MODULE_IDS
+    )
+
+
+def _bounded_lane_fixture(
+    tmp_path: Path,
+    run_id: str,
+) -> tuple[ReportWorkflowRunner, dict]:
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = _Service(tmp_path)
+    runner._budget = None
+    runner._checkpoint = lambda *_args, **_kwargs: None
+    runner._bind_reviewed_module_to_authoring_context = (
+        lambda *_args, **_kwargs: None
+    )
+    preparation_refs = {
+        "coverage": f"Work/runs/{run_id}/coverage.json",
+        "evidence": f"Work/runs/{run_id}/evidence.json",
+        "manifest": f"Work/runs/{run_id}/manifest.json",
+    }
+    for ref in preparation_refs.values():
+        runner.service.store.write_json(ref, {"ref": ref})
+    state = {
+        "run_id": run_id,
+        "request": SimpleNamespace(
+            execution_requirements=[],
+            missing_evidence_policy="draft",
+            user_supplements=[],
+        ),
+        "preparation_refs": preparation_refs,
+        "module_knowledge_refs": {},
+        "module_submissions": {},
+        "specialist_submissions": {},
+        "module_review_completion_refs": {},
+    }
+    return runner, state
+
+
+def _persist_lane_submission(
+    runner: ReportWorkflowRunner,
+    lane_state: dict,
+    module_id: str,
+) -> ModuleSubmission:
+    run_id = lane_state["run_id"]
+    submission = ModuleSubmission(
+        module_id=module_id,
+        submodule_narratives={
+            submodule_id: f"{submodule_id} 模块 {module_id} 正文"
+            for submodule_id in REPORT_TAXONOMY[module_id].submodules
+        },
+        claims=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision=0,
+    )
+    subject_ref = f"Work/runs/{run_id}/modules/{module_id}-r0.json"
+    review_ref = (
+        f"Work/runs/{run_id}/reviews/module/initial/{module_id}/"
+        "completion-r0.json"
+    )
+    runner.service.store.write_json(subject_ref, submission.model_dump(mode="json"))
+    runner.service.store.write_json(
+        review_ref,
+        {"reviewer_session_key": f"module-auditor-{module_id}"},
+    )
+    lane_state.setdefault("module_submissions", {})[module_id] = submission
+    lane_state.setdefault("specialist_submissions", {})[module_id] = submission
+    lane_state.setdefault("module_review_completion_refs", {})[module_id] = review_ref
+    return submission
+
+
+@pytest.mark.asyncio
+async def test_hard_failure_freezes_new_lanes_but_drains_started_cohort(
+    tmp_path: Path,
+) -> None:
+    runner, state = _bounded_lane_fixture(tmp_path, "run-lane-failure")
+    started: list[str] = []
+    finished: list[str] = []
+
+    async def pipeline(module_id, lane_state, _workflow_id, **_kwargs):
+        started.append(module_id)
+        if module_id == "2.2":
+            await asyncio.sleep(0.005)
+            raise AgentWorkflowError("injected lane failure")
+        await asyncio.sleep(0.03)
+        finished.append(module_id)
+        return _persist_lane_submission(runner, lane_state, module_id)
+
+    runner._module_pipeline = pipeline
+    with pytest.raises(AgentWorkflowError, match="injected lane failure"):
+        await runner._run_bounded_module_lanes(
+            tuple(MODULE_IDS),
+            state,
+            "workflow-lane-failure",
+            concurrency=2,
+        )
+
+    assert started == ["2.1", "2.2"]
+    assert finished == ["2.1"]
+    assert not (tmp_path / "Work/runs/run-lane-failure/lanes/module-barrier.json").exists()
+    candidates = list(
+        (tmp_path / "Work/runs/run-lane-failure/lanes/module-2.2/exceptions").glob(
+            "*.json"
+        )
+    )
+    assert len(candidates) == 1
+    candidate = json.loads(candidates[0].read_text(encoding="utf-8"))
+    assert candidate["disposition"] == "failed"
+    events = LocalEventStore(tmp_path, "run-lane-failure").read()
+    assert sum(event.event_type == "TaskFailed" for event in events) == 1
+    assert sum(event.event_type == "TypedResultAccepted" for event in events) == 1
+    assert not any(event.event_type == "StageCompleted" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_completion_before_barrier_recovers_without_agent_calls(
+    tmp_path: Path,
+) -> None:
+    runner, state = _bounded_lane_fixture(tmp_path, "run-lane-recovery")
+
+    async def pipeline(module_id, lane_state, _workflow_id, **_kwargs):
+        return _persist_lane_submission(runner, lane_state, module_id)
+
+    runner._module_pipeline = pipeline
+    for module_id in MODULE_IDS:
+        await runner._execute_module_lane(
+            module_id,
+            state,
+            "workflow-lane-recovery",
+        )
+
+    calls = 0
+
+    async def must_not_run(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("verified completion must recover without Agent call")
+
+    runner._module_pipeline = must_not_run
+    await runner._run_bounded_module_lanes(
+        tuple(MODULE_IDS),
+        state,
+        "workflow-lane-recovery",
+        concurrency=2,
+    )
+
+    assert calls == 0
+    assert set(state["module_submissions"]) == set(MODULE_IDS)
+    assert (tmp_path / state["module_lane_barrier_ref"]).is_file()
+    stage_ready = [
+        event
+        for event in LocalEventStore(tmp_path, "run-lane-recovery").read()
+        if event.event_type == "StageReady"
+    ]
+    assert stage_ready[-1].payload["recovered_modules"] == list(MODULE_IDS)
+
+
+@pytest.mark.asyncio
+async def test_main_exception_work_starts_only_after_module_cohort_drains(
+    tmp_path: Path,
+) -> None:
+    runner, state = _bounded_lane_fixture(tmp_path, "run-main-deferred")
+    initial_started: set[str] = set()
+    initial_finished: set[str] = set()
+    active = 0
+    main_boundary_snapshots: list[tuple[set[str], int]] = []
+
+    async def pipeline(module_id, lane_state, _workflow_id, **_kwargs):
+        nonlocal active
+        if lane_state["_defer_main_exceptions"]:
+            initial_started.add(module_id)
+            active += 1
+            await asyncio.sleep(0.005)
+            active -= 1
+            if module_id == "2.2":
+                raise DeferredMainDecision("needs serialized Main decision")
+            initial_finished.add(module_id)
+        else:
+            main_boundary_snapshots.append((set(initial_started), active))
+        return _persist_lane_submission(runner, lane_state, module_id)
+
+    runner._module_pipeline = pipeline
+    await runner._run_bounded_module_lanes(
+        tuple(MODULE_IDS),
+        state,
+        "workflow-main-deferred",
+        concurrency=2,
+    )
+
+    assert initial_started == set(MODULE_IDS)
+    assert initial_finished == set(MODULE_IDS) - {"2.2"}
+    assert main_boundary_snapshots == [(set(MODULE_IDS), 0)]
+    assert (tmp_path / state["module_lane_barrier_ref"]).is_file()

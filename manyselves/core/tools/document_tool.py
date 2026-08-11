@@ -47,7 +47,9 @@ class InspectDocumentTool(Tool):
 
         Args:
             path: Project-relative file path.
-            max_chars: Maximum returned text characters.
+            max_chars: Compatibility hint for the caller's preferred inline
+                display size. The tool always returns the complete parsed text;
+                AgentLoop may persist and page the exact result losslessly.
         """
         path_ref = Path(path)
         if (
@@ -104,8 +106,11 @@ class InspectDocumentTool(Tool):
         result = {
             "path": relative,
             "kind": parsed.kind,
-            "text": text[:max_chars],
-            "truncated": len(text) > max_chars,
+            "text": text,
+            "truncated": False,
+            "requested_max_chars": max_chars,
+            "text_chars": len(text),
+            "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
             "visual_verified": parsed.visual_verified,
             "error": parsed.error,
         }

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ..source_ledger import SourceLedger
 from ..store import ReportingStore
+from ..input_snapshot import RunInputSnapshotStore
 from ..models import SpecialTopicPlan
 from ..taxonomy import REPORT_TAXONOMY
 from .reference_library import ReferenceDocument, ReferenceLibrary
@@ -20,6 +21,7 @@ class KnowledgeContext:
     path: Path
     text: str
     source_ids: tuple[str, ...]
+    snapshot_ref: Path | None = None
 
 
 class KnowledgeContextBuilder:
@@ -66,7 +68,18 @@ class KnowledgeContextBuilder:
     def __init__(self, workspace: Path, run_id: str):
         self.workspace = Path(workspace).resolve()
         self.run_id = run_id
-        self.library = ReferenceLibrary(self.workspace)
+        snapshot_path = self.workspace / f"Work/runs/{run_id}/input-snapshot.json"
+        if snapshot_path.is_file():
+            snapshot = RunInputSnapshotStore(self.workspace).load(run_id)
+            self.library = ReferenceLibrary(
+                self.workspace,
+                knowledge_root=snapshot.scope_root(self.workspace, "Knowledge"),
+                index_root=(
+                    self.workspace / f"Work/runs/{run_id}/indexes/knowledge"
+                ),
+            )
+        else:
+            self.library = ReferenceLibrary(self.workspace)
         self.ledger = SourceLedger(self.workspace, run_id)
         self.store = ReportingStore(self.workspace)
         self._documents: tuple[ReferenceDocument, ...] | None = None
@@ -74,20 +87,7 @@ class KnowledgeContextBuilder:
     def _load_documents(self) -> tuple[ReferenceDocument, ...]:
         if self._documents is not None:
             return self._documents
-        if not self.library.root.is_dir():
-            self._documents = ()
-            return self._documents
-        documents: list[ReferenceDocument] = []
-        supported = self.library.TEXT_SUFFIXES | self.library.DOCUMENT_SUFFIXES
-        for path in sorted(self.library.root.rglob("*")):
-            if not path.is_file() or path.suffix.casefold() not in supported:
-                continue
-            try:
-                relative = path.relative_to(self.workspace).as_posix()
-                documents.append(self.library.open(relative))
-            except (OSError, ValueError):
-                continue
-        self._documents = tuple(documents)
+        self._documents = self.library.documents()
         return self._documents
 
     @staticmethod
@@ -234,6 +234,7 @@ class KnowledgeContextBuilder:
             path=path.relative_to(self.workspace),
             text=text,
             source_ids=tuple(dict.fromkeys(source_ids)),
+            snapshot_ref=self.library.snapshot_manifest_ref(),
         )
 
     def build_quality(self) -> KnowledgeContext:
@@ -263,6 +264,7 @@ class KnowledgeContextBuilder:
             path=path.relative_to(self.workspace),
             text=text,
             source_ids=tuple(dict.fromkeys(source_ids)),
+            snapshot_ref=self.library.snapshot_manifest_ref(),
         )
 
     @staticmethod
@@ -337,4 +339,5 @@ class KnowledgeContextBuilder:
             path=path.relative_to(self.workspace),
             text=text,
             source_ids=tuple(dict.fromkeys(source_ids)),
+            snapshot_ref=self.library.snapshot_manifest_ref(),
         )

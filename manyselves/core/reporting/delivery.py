@@ -15,6 +15,10 @@ from pydantic import Field, field_validator
 from ..artifacts.content_store import ContentAddressedStore
 from .agentic_models import StrictModel
 from .models import REPORT_MODULE_IDS
+from .parallel_runtime import (
+    current_bound_project_write_lease,
+    validate_bound_project_write_lease,
+)
 
 
 class DeliveryPackage(StrictModel):
@@ -46,8 +50,10 @@ class DeliveryReceipt(StrictModel):
     artifact_sha256: dict[str, str]
     storage_version: Literal[1, 2] = 1
     artifact_refs: dict[str, Path] = Field(default_factory=dict)
+    trusted_handle_refs: dict[str, Path] = Field(default_factory=dict)
+    project_lease_epoch: int | None = Field(default=None, ge=1)
 
-    @field_validator("artifact_refs")
+    @field_validator("artifact_refs", "trusted_handle_refs")
     @classmethod
     def artifact_refs_are_project_relative(
         cls, value: dict[str, Path]
@@ -66,6 +72,8 @@ class ProjectDelivery:
         self.content_store = ContentAddressedStore(self.workspace)
 
     def deliver(self, package: DeliveryPackage) -> DeliveryReceipt:
+        validate_bound_project_write_lease(self.workspace)
+        active_lease = current_bound_project_write_lease(self.workspace)
         self._validate_inputs(package)
         destination = self.delivery_root / f"{package.report_id}-{package.version}"
         if destination.exists():
@@ -80,25 +88,40 @@ class ProjectDelivery:
             sources = self._package_sources(package)
             hashes: dict[str, str] = {}
             artifact_refs: dict[str, Path] = {}
+            trusted_handle_refs: dict[str, Path] = {}
             for key, source in sources.items():
                 blob = self.content_store.ingest_file(source)
-                self.content_store.link_view(
+                trusted = self.content_store.issue_trusted_handle(
                     blob,
+                    lineage_id=(
+                        f"delivery:{package.report_id}:{package.version}:{key}"
+                    ),
+                )
+                self.content_store.link_trusted_view(
+                    trusted,
                     staging_targets[key],
                     final_path=final_targets[key],
                 )
                 hashes[key] = blob.sha256
                 artifact_refs[key] = blob.relative_path
+                trusted_handle_refs[key] = trusted.manifest_ref
             manifest = {
                 "manifest_version": 2,
                 "storage": "sha256-cas",
                 "report_id": package.report_id,
                 "version": package.version,
                 "status": "success",
+                "project_lease_epoch": (
+                    active_lease.lease_epoch if active_lease is not None else None
+                ),
                 "modules": list(REPORT_MODULE_IDS),
                 "artifacts": hashes,
                 "artifact_refs": {
                     key: path.as_posix() for key, path in artifact_refs.items()
+                },
+                "trusted_handle_refs": {
+                    key: path.as_posix()
+                    for key, path in trusted_handle_refs.items()
                 },
             }
             manifest_path = staging / "delivery-manifest.json"
@@ -109,6 +132,7 @@ class ProjectDelivery:
             hashes["manifest"] = self._sha256(manifest_path)
 
             self.delivery_root.mkdir(parents=True, exist_ok=True)
+            validate_bound_project_write_lease(self.workspace)
             os.replace(staging, destination)
 
         return DeliveryReceipt(
@@ -126,6 +150,10 @@ class ProjectDelivery:
             artifact_sha256=hashes,
             storage_version=2,
             artifact_refs=artifact_refs,
+            trusted_handle_refs=trusted_handle_refs,
+            project_lease_epoch=(
+                active_lease.lease_epoch if active_lease is not None else None
+            ),
         )
 
     def _reuse_existing(
@@ -166,6 +194,7 @@ class ProjectDelivery:
         }
         storage_version = manifest.get("manifest_version", 1)
         artifact_refs: dict[str, Path] = {}
+        trusted_handle_refs: dict[str, Path] = {}
         refs_valid = storage_version == 1
         if storage_version == 2:
             raw_refs = manifest.get("artifact_refs")
@@ -183,6 +212,24 @@ class ProjectDelivery:
                     refs_valid = False
                 else:
                     refs_valid = True
+            raw_handles = manifest.get("trusted_handle_refs")
+            if isinstance(raw_handles, dict) and set(raw_handles) == set(actual_hashes):
+                trusted_handle_refs = {
+                    str(key): Path(str(value)) for key, value in raw_handles.items()
+                }
+                try:
+                    for key, relative in trusted_handle_refs.items():
+                        handle = self.content_store.load_trusted_handle(relative)
+                        blob = self.content_store.resolve_trusted_handle(
+                            handle,
+                            expected_sha256=actual_hashes[key],
+                        )
+                        if targets[key].resolve() != blob:
+                            raise ValueError(
+                                "delivery view does not match trusted blob handle"
+                            )
+                except (FileNotFoundError, ValueError):
+                    trusted_handle_refs = {}
         if (
             storage_version not in {1, 2}
             or manifest.get("report_id") != package.report_id
@@ -212,6 +259,8 @@ class ProjectDelivery:
             },
             storage_version=storage_version,
             artifact_refs=artifact_refs,
+            trusted_handle_refs=trusted_handle_refs,
+            project_lease_epoch=manifest.get("project_lease_epoch"),
         )
 
     @staticmethod

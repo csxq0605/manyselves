@@ -224,7 +224,7 @@ def test_snapshot_content_keeps_existing_file_if_view_staging_fails(
     def fail_staging(*_args, **_kwargs):
         raise OSError("staging failed")
 
-    monkeypatch.setattr(service.content_store, "link_view", fail_staging)
+    monkeypatch.setattr(service.content_store, "link_trusted_view", fail_staging)
     with pytest.raises(OSError, match="staging failed"):
         service.snapshot_content(
             source,
@@ -272,6 +272,52 @@ async def test_service_retains_same_identity_registry_while_waiting_for_user(
     ]
 
     second = await service._execute(request, run_id, resume=True)
+    assert second.status == "completed"
+    assert runner_ids[0] == runner_ids[1]
+    assert service._active_agent_runners == {}
+
+
+@pytest.mark.asyncio
+async def test_revision_wait_resume_reuses_one_runner_and_releases_on_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    run_id = "report-revision-retained-identities"
+    request = RevisionRequest(
+        baseline_version_id="baseline-version",
+        feedback="等待用户确认后继续局部修订",
+        target_module_ids=["2.4"],
+    )
+    runner_ids: list[int] = []
+
+    async def scripted_run(coordinator, _request, *, run_id=None, resume=False):
+        runner_ids.append(id(coordinator.agent_runner))
+        return ReportingRunResult(
+            run_id=run_id,
+            status="needs_decision" if len(runner_ids) == 1 else "completed",
+        )
+
+    monkeypatch.setattr(RevisionCoordinator, "run", scripted_run)
+    first = await service.revise(request, run_id=run_id)
+    assert first.status == "needs_decision"
+    assert list(service._active_agent_runners) == [f"report-revision:{run_id}"]
+
+    service.store.write_json(
+        f"Work/runs/{run_id}/revision-request.json",
+        request.model_dump(mode="json"),
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/workflow-state.json",
+        {"run_id": run_id, "activity": "module-work", "status": "failed"},
+    )
+    service._save_run(first)
+    second = await service.resume_run(run_id)
+
     assert second.status == "completed"
     assert runner_ids[0] == runner_ids[1]
     assert service._active_agent_runners == {}
@@ -336,6 +382,9 @@ async def test_render_existing_bypasses_all_analysis_agents(tmp_path: Path, monk
         )
     )
     assert render_request["source_markdown_ref"] == "Work/drafts/approved.md"
+    assert render_request["source_snapshot_ref"].startswith(
+        f"Work/runs/{result.run_id}/frozen-project/Work/drafts/approved.md"
+    )
     assert render_request["output_ref"] == "Outputs/Reports/approved.docx"
 
 
@@ -540,7 +589,7 @@ def test_template_skill_loader_rejects_persisted_result_part_marker(
 
     with pytest.raises(
         AgentWorkflowError,
-        match="含有内部 persisted_result_part 历史标记",
+        match="含有退休的内部历史令牌",
     ):
         runner._require_template_skill({})
 

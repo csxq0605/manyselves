@@ -1,6 +1,19 @@
 import json
+import multiprocessing
+from pathlib import Path
 
 from manyselves.core.usage_ledger import UsageLedger
+
+
+def _append_usage_rows(workspace: str, worker: int, count: int) -> None:
+    ledger = UsageLedger(Path(workspace), "run-process-safe")
+    for index in range(count):
+        ledger.record_attempt(
+            run_id="run-process-safe",
+            task_id=f"worker-{worker}-{index}",
+            stage="process",
+            status="success",
+        )
 
 
 def test_usage_ledger_summarizes_stage_and_repeated_request_cost(tmp_path) -> None:
@@ -109,3 +122,23 @@ def test_usage_ledger_rejects_unknown_grouping(tmp_path) -> None:
         assert "group_by" in str(exc)
     else:
         raise AssertionError("unknown grouping must fail")
+
+
+def test_usage_ledger_appends_are_process_safe(tmp_path) -> None:
+    context = multiprocessing.get_context("spawn")
+    workers = [
+        context.Process(
+            target=_append_usage_rows,
+            args=(str(tmp_path), worker, 25),
+        )
+        for worker in range(4)
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=20)
+        assert worker.exitcode == 0
+
+    rows = UsageLedger(tmp_path, "run-process-safe").rows()
+    assert len(rows) == 100
+    assert len({row["task_id"] for row in rows}) == 100

@@ -1,9 +1,17 @@
 # Manyselves 输入输出成本、并行调度、加速与 Agent 编排计划 V2
 
+> 2026-08-11 架构更新：成本控制重新成为 Agent 优化的硬约束。37 个固定叶子仍是
+> 独立逻辑 task、artifact 和 completion，但不再等同于 37 个独立 Agent dispatch/session。
+> Wave 1 采用模块共享上下文 discovery batch，Wave 2 采用模块共享 inbox batch，Wave 3
+> 采用一次模块 authoring 会话并通过 `write_result_part` 逐叶落盘。默认完整路径的三波
+> 独立 Agent dispatch 上界由 `37 + 非空叶子 inbox + 37` 收敛为
+> `5 + 非空目标模块 + 5`。每个 dispatch 内的检索/工具/提交 Provider turns 仍由
+> UsageLedger 按实际请求计数，不把 dispatch 数伪装成网络调用数。
+
 ## 1. 当前基线与规划边界
 
 - 当前实验分支：`cost-control-experiments`。
-- main 同步基线：`main@a84d409e7c07e936da70d62a06d0c868ac7a6f93`（版本 `1.2.1`）。
+- main 同步基线：`main@3babc0ca079fe15337b09f0ec4911bf638c39ae5`。
 - 主要功能同步提交：`4a1f375`，父提交为原实验计划 `9d1dfcb` 与
   main `0a5093e`；后续版本同步提交：`a0df065`，父提交为 `7ae6954` 与
   main `a84d409`。
@@ -12,9 +20,9 @@
 - session `019fa2be-22cc-74a0-a4f6-22a210e3a674` 只作为三波协作和安全并行的补充设计依据，不能代替前者。
 - `5f5a5e3` 已经实现输入合同精简、结果分段、CAS、审查 preflight、delta recheck、阶段成本边界和三波协作；本计划不把这些能力重新列为“尚未实现”。
 - main 的 evidence/photo traceability、默认 `draft`、decision reconciliation 和 MessageBus 日志汇总已经进入当前分支。
-- 最新 main 合并提交 `a0df065` 上，以显式 cost-worktree `PYTHONPATH` 和
+- 当前 V2 工作树以显式 cost-worktree `PYTHONPATH` 和
   `QT_QPA_PLATFORM=offscreen` 运行全量非集成回归，结果为
-  `1374 passed, 6 deselected`；`compileall` 与 `git diff --check` 通过。
+  `1526 passed, 6 deselected`；`compileall` 与 `git diff --check` 通过。
 - 尚无当前 V2 基线的真实 Provider 完整报告、真实 Token/金额对比、DOCX 目视检查和匹配 receipt，因此本文中的降本、加速数字都是验收目标，不是已实现结果。
 
 本文件取代 `experimental-parallel-agent-deployment-plan.md` 作为后续实施顺序；旧文件保留为合并 main 之前的设计记录。
@@ -24,7 +32,7 @@
 | 领域 | 当前已经实现 | 仍需解决 |
 | --- | --- | --- |
 | Provider 输入 | Prompt 不再重复内嵌完整 submission schema/example；任务专属工具 schema；已落盘长正文以 ref/hash 代替 | Cross/Chief/Final 仍可能获得过大的完整合同；每轮历史和工具结果仍会重发；缺少 task context budget |
-| Provider 输出 | `write_result_parts` 批量写入；正文与小型 typed commit 分离；revision/Chief 工具收窄 | submit-only 仍可能先输出普通文字再付费纠正；缺少 forced tool choice、按 task 的输出/轮次档位 |
+| Provider 输出 | 同一模块会话多次 `write_result_part` 逐叶落盘；正文与小型 typed commit 分离；revision/Chief 工具收窄 | submit-only 仍可能先输出普通文字再付费纠正；缺少 forced tool choice、按 task 的输出/轮次档位 |
 | 审查成本 | 确定性 preflight；module delta recheck；Chief completion 可恢复 | 五个 module review 仍串行；Cross owner 回改仍串行；语义 lifecycle 缺少 round/stagnation gate |
 | 协作 | Wave 1、Barrier 1、稀疏 Wave 2、Barrier 2、Wave 3 并行写作已实现 | author 完成后不能立即进入本模块审查；没有受限完整 module lane |
 | 存储 | CAS、Delivery v2、ReportVersion v2、停止新增 legacy 双写、retention dry-run | CAS 命中前仍重复读取、复制和哈希；telemetry、SourceLedger 和事件仍有重复 I/O |
@@ -167,8 +175,11 @@ Main conversation/control plane
 Coordinator / single-writer reducer
   ├─ deterministic preparation workers
   │    └─ preparation snapshot + evidence/photo binding barrier
-  ├─ Wave 1 cohort → Barrier 1
-  ├─ sparse Wave 2 cohort → Barrier 2
+  ├─ Wave 1A: 37 logical leaf discoveries / 5 module-shared Agent batches
+  │    └─ per-leaf completion → 5 module-local discovery reducers → Barrier 1
+  ├─ sparse Wave 2: logical target-leaf inboxes / at most 5 module-shared calls → Barrier 2
+  ├─ Wave 3: 37 logical leaf drafts / 5 module-shared authoring sessions
+  │    └─ write_result_part per leaf → authoring barrier → ModuleSubmission
   ├─ bounded module lanes
   │    ├─ author 2.1 → preflight → auditor 2.1 → revision/recheck
   │    ├─ author 2.2 → preflight → auditor 2.2 → revision/recheck
@@ -196,9 +207,9 @@ Event planes
 | Task kind | 默认能力 | 输出策略 | 并行边界 |
 | --- | --- | --- | --- |
 | deterministic preparation/preflight/render | 不调用 LLM | 稳定 artifact/completion | 文件级 worker，reducer 单写 |
-| Wave 1 discovery | 紧凑 typed 档 | 小型 discovery submission | 不同模块可并行 |
-| Wave 2 response | 紧凑 typed 档 | 批量 response submission | 仅有 inbox 的模块并行 |
-| specialist author | 高能力写作档 | result parts + 小 commit | 不同模块可并行 |
+| Wave 1A leaf discovery | 紧凑 typed 档 | 模块 batch 内含独立 leaf submissions | 5 个模块可并行；每叶 completion 独立恢复 |
+| Wave 2 leaf response | 紧凑 typed 档 | 模块 batch 回答非空 leaf inbox，再按 request_id 拆分 | 最多 5 个目标模块并行；每叶 response 独立恢复 |
+| Wave 3 leaf author | 高能力写作档 | 模块会话逐 leaf `write_result_part` + 小 commit | 5 个模块可并行；正文分段按 leaf 恢复 |
 | module auditor | 高能力审查档 | finding/verdict | 不同模块 session 可并行，同模块串行 |
 | specialist revision | 高能力局部档 | changed sections only | 不同模块可并行 |
 | Cross/Chief/Final | 高能力全局档 | index/search-first，必要时全文 | 各角色自身串行 |

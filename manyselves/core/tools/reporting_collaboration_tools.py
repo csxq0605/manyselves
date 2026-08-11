@@ -40,6 +40,8 @@ from ..reporting.agentic_models import (
     ModuleRevisionSubmissionInput,
     ModuleSubmission,
     ModuleSubmissionInput,
+    SubmoduleDraftSubmission,
+    SubmoduleDraftSubmissionInput,
     TableSubmission,
     TemplateSkillSubmission,
     WorkflowDecisionSubmission,
@@ -56,6 +58,7 @@ from ..reporting.input_contracts import (
     ModuleAuthoringInput,
     ModuleReviewInput,
     ModuleRevisionInput,
+    SubmoduleAuthoringInput,
     TemplateDistillationInput,
     WorkflowExceptionInput,
 )
@@ -65,6 +68,7 @@ from ..reporting.models import (
     CHIEF_SECTION_RESULT_PART_IDS,
     EvidenceItem,
 )
+from ..reporting.parallel_runtime import TaskAttemptStore, TaskCorrelation
 from ..reporting.source_ledger import SourceLedger
 from ..reporting.store import ReportingStore
 from ..reporting.submission_contracts import submission_schema
@@ -92,6 +96,7 @@ class _ResultTool(Tool):
         store: ReportingStore,
         bus: MessageBus,
         workflow_id: str = "",
+        task_correlation: TaskCorrelation | None = None,
     ):
         if Path(task_id).name != task_id or not task_id:
             raise ValueError("task_id must be a single safe path component")
@@ -102,10 +107,24 @@ class _ResultTool(Tool):
         self.store = store
         self.bus = bus
         self.workflow_id = workflow_id
+        self.task_correlation = task_correlation
 
     async def _persist_and_publish(self, result: AgentResult) -> str:
-        path = self.store.write_run_model(self.run_id, f"results/{self.task_id}.json", result)
-        relative = path.relative_to(self.store.workspace).as_posix()
+        terminal = None
+        if self.task_correlation is not None:
+            terminal = TaskAttemptStore(
+                self.store.workspace, self.run_id
+            ).persist_result(
+                self.task_correlation,
+                result.model_dump(mode="json"),
+                status=result.status.value,
+            )
+            relative = terminal.result_ref
+        else:
+            path = self.store.write_run_model(
+                self.run_id, f"results/{self.task_id}.json", result
+            )
+            relative = path.relative_to(self.store.workspace).as_posix()
         await self.bus.publish(
             AgentResultMessage(
                 workflow_id=self.workflow_id,
@@ -117,6 +136,38 @@ class _ResultTool(Tool):
                 result_path=relative,
                 status=result.status.value,
                 content=result.reason or "",
+                task_attempt_id=(
+                    self.task_correlation.task_attempt_id
+                    if self.task_correlation is not None
+                    else ""
+                ),
+                session_id=self.session_id,
+                identity_key=(
+                    self.task_correlation.identity_key
+                    if self.task_correlation is not None
+                    else ""
+                ),
+                input_contract_ref=(
+                    self.task_correlation.input_contract_ref
+                    if self.task_correlation is not None
+                    else None
+                ),
+                input_contract_sha256=(
+                    self.task_correlation.input_contract_sha256
+                    if self.task_correlation is not None
+                    else None
+                ),
+                result_sha256=terminal.result_sha256 if terminal is not None else "",
+                lease_owner_id=(
+                    self.task_correlation.lease_owner_id
+                    if self.task_correlation is not None
+                    else ""
+                ),
+                lease_epoch=(
+                    self.task_correlation.lease_epoch
+                    if self.task_correlation is not None
+                    else 0
+                ),
             )
         )
         return relative
@@ -205,12 +256,12 @@ class SubmitResultTool(_ResultTool):
                 "module part contains an internal provider-history compaction marker",
                 field=f"result_parts.{part_id}.content",
                 expected="the complete reader-visible submodule prose",
-                example="完整小节正文；内部 persisted_result_part 标记不得进入报告。",
-                received="contains <persisted_result_part ...>",
+                example="完整小节正文；退休的内部历史令牌不得进入报告。",
+                received="contains a retired internal history token",
                 repair_instruction=(
                     f"Call write_result_part again for part_id={part_id!r} with the complete "
-                    "intended prose and evidence_ids. Never copy a persisted_result_part "
-                    "marker or its sha256 value into content."
+                    "intended prose and evidence_ids. Never copy an internal history "
+                    "placeholder or its digest into content."
                 ),
             )
         unexpected_headings = extra_numbered_submodule_headings(part_id, prose)
@@ -330,11 +381,11 @@ class SubmitResultTool(_ResultTool):
                 field=f"result_parts.{part_id}.content",
                 expected="the complete reader-visible section prose",
                 example="修订后的完整目标小节正文。",
-                received="contains <persisted_result_part ...>",
+                received="contains a retired internal history token",
                 repair_instruction=(
                     f"Call write_result_part again for part_id={part_id!r} with the complete "
-                    "intended prose. Never copy a persisted_result_part marker or its "
-                    "sha256 value into content."
+                    "intended prose. Never copy an internal history placeholder or its "
+                    "digest into content."
                 ),
             )
         relative = prose_path.relative_to(self.store.workspace).as_posix()
@@ -450,6 +501,65 @@ class SubmitResultTool(_ResultTool):
                 "revision_responses": [
                     response.model_dump(mode="python") for response in commit.revision_responses
                 ],
+            }
+        )
+
+    def _assemble_submodule_commit(
+        self,
+        commit: SubmoduleDraftSubmissionInput,
+    ) -> SubmoduleDraftSubmission:
+        """Materialize one exact leaf part without exposing prose paths or Claim ids."""
+
+        contract = self._feedback_input_contract()
+        if not isinstance(contract, SubmoduleAuthoringInput):
+            raise SubmissionValidationError(
+                "submodule commit requires its active submodule_authoring_input",
+                field="$contract",
+                expected="one exact current-run submodule authoring input",
+                received=self.input_contract_ref,
+            )
+        if (
+            commit.module_id != contract.module_id
+            or commit.submodule_id != contract.submodule_id
+            or commit.revision != contract.revision
+        ):
+            raise SubmissionValidationError(
+                "submodule commit identity differs from the active authoring input",
+                field="$identity",
+                expected={
+                    "module_id": contract.module_id,
+                    "submodule_id": contract.submodule_id,
+                    "revision": contract.revision,
+                },
+                received={
+                    "module_id": commit.module_id,
+                    "submodule_id": commit.submodule_id,
+                    "revision": commit.revision,
+                },
+            )
+        prose, evidence_ids, _ = self._bound_module_part(commit.submodule_id)
+        claim_payload = self._runtime_claim_for_part(
+            module_id=commit.module_id,
+            part_id=commit.submodule_id,
+            prose=prose,
+            evidence_ids=evidence_ids,
+        )
+        claim_id = str(claim_payload["id"])
+        narrative = (
+            prose.rstrip() + f"\n\n[[CLAIM:{claim_id}]]"
+            if evidence_ids
+            else prose
+        )
+        return SubmoduleDraftSubmission.model_validate(
+            {
+                "kind": "submodule_draft_submission",
+                "module_id": commit.module_id,
+                "submodule_id": commit.submodule_id,
+                "narrative": narrative,
+                "claim": claim_payload,
+                "source_ids": list(evidence_ids),
+                "unresolved_questions": commit.unresolved_questions,
+                "revision": commit.revision,
             }
         )
 
@@ -761,7 +871,7 @@ class SubmitResultTool(_ResultTool):
                         f"Call write_result_part again for the part stored at {ref!r} "
                         "with its complete prose."
                     ),
-                    received="contains <persisted_result_part ...>",
+                    received="contains a retired internal history token",
                     repair_instruction=(
                         "Rewrite the affected result part with complete prose, then submit "
                         "the exact artifact_ref returned by write_result_part. Never copy a "
@@ -783,11 +893,11 @@ class SubmitResultTool(_ResultTool):
                     field=".".join(map(str, path)) or "payload",
                     expected="complete reader-visible text or an exact current-task artifact_ref",
                     example="完整正文，或 write_result_part 返回的 Work/runs/.../drafts/...md",
-                    received="contains <persisted_result_part ...>",
+                    received="contains a retired internal history token",
                     repair_instruction=(
-                        "Replace the marker with the complete intended prose or the exact "
-                        "artifact_ref returned by write_result_part. Never submit the marker "
-                        "or its sha256 value as report content."
+                        "Replace the internal history placeholder with the complete intended "
+                        "prose or the exact artifact_ref returned by write_result_part. Never "
+                        "submit the placeholder or its digest as report content."
                     ),
                 )
             if "result_part_refs" in path:
@@ -970,7 +1080,13 @@ class SubmitResultTool(_ResultTool):
         contract,
     ) -> object:
         example = deepcopy(schema.get("examples", [{}])[0])
-        if kind == "module_submission" and isinstance(contract, ModuleAuthoringInput):
+        if kind == "submodule_draft_submission" and isinstance(
+            contract, SubmoduleAuthoringInput
+        ):
+            example["module_id"] = contract.module_id
+            example["submodule_id"] = contract.submodule_id
+            example["revision"] = contract.revision
+        elif kind == "module_submission" and isinstance(contract, ModuleAuthoringInput):
             example["module_id"] = contract.module_id
             example["revision"] = contract.revision
         elif kind == "module_revision_submission" and isinstance(contract, ModuleRevisionInput):
@@ -984,11 +1100,23 @@ class SubmitResultTool(_ResultTool):
                     for finding in contract.module_findings
                 ),
                 *(
-                    (finding.id, list(finding.target_submodule_ids))
+                    (
+                        finding.id,
+                        sorted(
+                            set(finding.target_submodule_ids)
+                            & set(contract.target_submodule_ids)
+                        ),
+                    )
                     for finding in contract.cross_findings
                 ),
                 *(
-                    (change.id, list(change.target_submodule_ids))
+                    (
+                        change.id,
+                        sorted(
+                            set(change.target_submodule_ids)
+                            & set(contract.target_submodule_ids)
+                        ),
+                    )
                     for change in contract.requested_changes
                 ),
             ]
@@ -1660,6 +1788,29 @@ class SubmitResultTool(_ResultTool):
                 str(cached["text"]),
             )
             return
+        if isinstance(contract, SubmoduleAuthoringInput):
+            if not isinstance(payload, SubmoduleDraftSubmission):
+                return
+            if (
+                payload.module_id != contract.module_id
+                or payload.submodule_id != contract.submodule_id
+                or payload.revision != contract.revision
+            ):
+                raise SubmissionValidationError(
+                    "submodule submission identity differs from its input contract",
+                    field="$identity",
+                    expected={
+                        "module_id": contract.module_id,
+                        "submodule_id": contract.submodule_id,
+                        "revision": contract.revision,
+                    },
+                    received={
+                        "module_id": payload.module_id,
+                        "submodule_id": payload.submodule_id,
+                        "revision": payload.revision,
+                    },
+                )
+            return
         if isinstance(contract, ModuleAuthoringInput):
             if not isinstance(payload, ModuleSubmission):
                 return
@@ -2324,7 +2475,12 @@ class SubmitResultTool(_ResultTool):
                     "stringify the payload."
                 ),
             )
-        if submission_kind == "module_submission":
+        if submission_kind == "submodule_draft_submission":
+            commit = SubmoduleDraftSubmissionInput.model_validate(normalized_payload)
+            normalized_payload = self._assemble_submodule_commit(commit).model_dump(
+                mode="python"
+            )
+        elif submission_kind == "module_submission":
             commit = ModuleSubmissionInput.model_validate(normalized_payload)
             normalized_payload = self._assemble_module_commit(commit).model_dump(mode="python")
         elif submission_kind == "module_revision_submission":
@@ -2396,6 +2552,30 @@ class SubmitResultTool(_ResultTool):
                         "reported by ClaimLedger. Do not weaken, invent, or silently drop "
                         "unrelated Claims; then resubmit the complete payload."
                     ),
+                ) from exc
+        if isinstance(result.payload, SubmoduleDraftSubmission):
+            sources = SourceLedger(self.store.workspace, self.run_id).records
+            known_source_ids = {source.id for source in sources}
+            unknown_declared = sorted(
+                set(result.payload.source_ids) - known_source_ids
+            )
+            if unknown_declared:
+                raise SubmissionValidationError(
+                    "submodule_draft_submission contains unregistered sources: "
+                    f"{unknown_declared}",
+                    field="source_ids",
+                    expected="only current-run registered source ids",
+                    received=result.payload.source_ids,
+                )
+            try:
+                ClaimLedger(claims=[result.payload.claim], sources=sources)
+            except ValueError as exc:
+                raise SubmissionValidationError(
+                    "submodule_draft_submission Claim validation failed: "
+                    f"{exc}",
+                    field="claim",
+                    expected="one runtime-owned Claim bound to this exact leaf submodule",
+                    received=result.payload.claim.model_dump(mode="json"),
                 ) from exc
         if isinstance(result.payload, ModuleRevisionSubmission):
             sources = SourceLedger(self.store.workspace, self.run_id).records
@@ -2587,9 +2767,9 @@ class WriteResultPartTool(_ResultPartTool):
             raise ValueError("result part must contain 1-48000 characters")
         if _contains_persisted_result_part_marker(content):
             raise ValueError(
-                "result part content contains an internal persisted_result_part marker; "
-                "regenerate the complete intended prose and never copy the marker or its "
-                "sha256 value into report content"
+                "result part content contains a retired internal history token; "
+                "regenerate the complete intended prose and never copy the placeholder or "
+                "its digest into report content"
             )
         if self.evidence_binding_required:
             unexpected_headings = extra_numbered_submodule_headings(part_id, content)
@@ -2782,7 +2962,7 @@ class ListResultPartsTool(_ResultPartTool):
                     )
                     if _contains_persisted_result_part_marker(content):
                         structural_errors.append(
-                            "contains internal persisted_result_part marker"
+                            "contains a retired internal history token"
                         )
                     if "[[CLAIM:" in content:
                         structural_errors.append(

@@ -414,6 +414,12 @@ class RunReportingWorkflowTool(Tool):
         cost_control_mode: CostControlMode = "observe",
         max_provider_attempts: int = 80,
         max_total_tokens: int = 800000,
+        execution_mode: Literal[
+            "current_serial_review", "bounded_module_lanes"
+        ] = "current_serial_review",
+        module_lane_concurrency: int = 5,
+        submodule_task_concurrency: int = 8,
+        submodule_batch_size: int = 14,
     ) -> dict[str, Any]:
         """Run the report workflow.
 
@@ -434,6 +440,10 @@ class RunReportingWorkflowTool(Tool):
             cost_control_mode: Observe, warn, or pause only after a completed stage/checkpoint.
             max_provider_attempts: Provider-attempt window for cost observation or boundary pause.
             max_total_tokens: Token window for cost observation or boundary pause.
+            execution_mode: Current five-module review path by default; select bounded_module_lanes explicitly for leaf/lane execution.
+            module_lane_concurrency: Maximum simultaneously active module lanes.
+            submodule_task_concurrency: Maximum active leaf discovery, response, or authoring tasks.
+            submodule_batch_size: Maximum logical leaf results sharing one module-scoped Agent dispatch; Provider attempts remain separately metered and leaf recovery remains independent.
         """
 
         request = ReportRequest(
@@ -458,6 +468,10 @@ class RunReportingWorkflowTool(Tool):
             cost_control_mode=cost_control_mode,
             max_provider_attempts=max_provider_attempts,
             max_total_tokens=max_total_tokens,
+            execution_mode=execution_mode,
+            module_lane_concurrency=module_lane_concurrency,
+            submodule_task_concurrency=submodule_task_concurrency,
+            submodule_batch_size=submodule_batch_size,
         )
         return self.controller.start(request)
 

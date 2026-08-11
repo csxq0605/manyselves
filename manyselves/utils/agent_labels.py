@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
-from PyQt6.QtGui import QIcon
+from typing import TYPE_CHECKING, Any
+
 from ..interfaces.types import AgentId, AgentType, normalize_agent_id
+
+if TYPE_CHECKING:
+    from PyQt6.QtGui import QIcon
+else:
+    QIcon = Any
 
 
 def _get_qicon(agent_type: str, color: str | None = None, size: int = 16) -> QIcon:
