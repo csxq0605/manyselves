@@ -46,11 +46,6 @@ from manyselves.core.reporting.models import (
     SpecialTopicPlan,
     UserSupplement,
 )
-from manyselves.core.reporting.module_collaboration import (
-    MODULE_IDS,
-    ModuleCollaborationBundle,
-    ModuleInterfaceCoverage,
-)
 from manyselves.core.reporting.prompts import PromptAssembler
 from manyselves.core.reporting import review_lifecycle as review_lifecycle_module
 from manyselves.core.reporting.review_lifecycle import (
@@ -2430,171 +2425,6 @@ async def test_module_resume_invalidates_legacy_parts_without_context_fingerprin
 
 
 @pytest.mark.asyncio
-async def _legacy_wave_three_author_consumes_bundle_and_does_not_start_review(
-    tmp_path: Path,
-) -> None:
-    service = _FakeService(tmp_path)
-    runner = object.__new__(ReportWorkflowRunner)
-    runner.service = service
-    run_id = "run-wave-three-author"
-    module_id = "2.1"
-    bundle = ModuleCollaborationBundle(
-        module_id=module_id,
-        discovery_summary="已完成可复用的项目证据和接口发现。",
-        discovery_evidence_ids=[],
-        peer_coverage=[
-            ModuleInterfaceCoverage(
-                target_module_id=peer,
-                status="not_applicable",
-                rationale="当前证据没有形成该接口依赖。",
-            )
-            for peer in MODULE_IDS
-            if peer != module_id
-        ],
-    )
-    bundle_ref = (
-        f"Work/runs/{run_id}/collaboration/bundles/module-{module_id}.json"
-    )
-    service.store.write_json(bundle_ref, bundle.model_dump(mode="json"))
-    planned = TaskEnvelope(
-        task_id=f"module-{module_id}",
-        run_id=run_id,
-        agent_id=f"module-{module_id}-specialist",
-        objective="完成模块正文和结构化提交。",
-        constraints=[],
-        allowed_outputs=["module_submission"],
-        target_submodule_ids=list(REPORT_TAXONOMY[module_id].submodules),
-        inline_context="原模块 Knowledge 与角色写作方法。",
-    )
-    captured: dict[str, object] = {}
-
-    async def author(
-        agent_id,
-        envelope,
-        artifacts,
-        workflow_id,
-        *,
-        session_key=None,
-    ):
-        captured["envelope"] = envelope
-        captured["artifacts"] = artifacts
-        return _module(module_id)
-
-    async def forbidden_review(*_args, **_kwargs):
-        raise AssertionError("Wave 3 author-only dispatch started module review")
-
-    runner._agent = author
-    runner._module_review_loop = forbidden_review
-    runner._checkpoint = lambda *_args, **_kwargs: (_ for _ in ()).throw(
-        AssertionError("concurrent author-only dispatch wrote a checkpoint")
-    )
-    state = {
-        "run_id": run_id,
-        "request": SimpleNamespace(
-            execution_requirements=[],
-            missing_evidence_policy="draft",
-            user_supplements=[],
-        ),
-        "module_dispatch": SimpleNamespace(module_tasks=[planned]),
-        "preparation_refs": {
-            "coverage": "Work/coverage.json",
-            "evidence": "Work/evidence.jsonl",
-            "manifest": "Work/manifest.json",
-        },
-        "module_knowledge_refs": {
-            module_id: (
-                f"Work/runs/{run_id}/knowledge/module-{module_id}.md"
-            )
-        },
-        "collaboration_bundle_refs": {module_id: bundle_ref},
-    }
-
-    result = await runner._module_pipeline(
-        module_id,
-        state,
-        "workflow",
-        review=False,
-    )
-
-    assert result.module_id == module_id
-    envelope = captured["envelope"]
-    assert isinstance(envelope, TaskEnvelope)
-    assert bundle_ref in envelope.input_refs
-    assert "module_collaboration_bundle" in envelope.inline_context
-    assert "query_peer" not in envelope.allowed_tools
-    assert "reply_peer" not in envelope.allowed_tools
-    input_contract = json.loads(
-        (tmp_path / envelope.input_contract_ref).read_text(encoding="utf-8")
-    )
-    assert input_contract["collaboration_bundle_ref"] == bundle_ref
-    completion_ref = (
-        f"Work/runs/{run_id}/collaboration/wave-3/"
-        f"module-{module_id}-r0.json"
-    )
-    assert (tmp_path / completion_ref).is_file()
-    assert runner._module_authoring_completion_is_current(
-        state,
-        module_id,
-        result,
-    )
-    changed_bundle = bundle.model_copy(
-        update={"discovery_summary": "当前 bundle 已被后续补充改变。"}
-    )
-    service.store.write_json(
-        bundle_ref,
-        changed_bundle.model_dump(mode="json"),
-    )
-    assert not runner._module_authoring_completion_is_current(
-        state,
-        module_id,
-        result,
-    )
-    stale_draft_root = (
-        tmp_path
-        / f"Work/runs/{run_id}/drafts/module-{module_id}/r0"
-    )
-    for submodule_id in REPORT_TAXONOMY[module_id].submodules:
-        (stale_draft_root / f"{submodule_id}.md").write_text(
-            f"旧上下文正文 {submodule_id}",
-            encoding="utf-8",
-        )
-    state["resume"] = True
-    state["specialist_submissions"] = {}
-    refreshed: dict[str, TaskEnvelope] = {}
-
-    async def reauthor(
-        _agent_id,
-        new_envelope,
-        _artifacts,
-        _workflow_id,
-        *,
-        session_key=None,
-    ):
-        refreshed["envelope"] = new_envelope
-        return _module(module_id, revision=1)
-
-    runner._agent = reauthor
-    refreshed_result = await runner._module_pipeline(
-        module_id,
-        state,
-        "workflow",
-        review=False,
-    )
-
-    assert refreshed_result.revision == 1
-    assert refreshed["envelope"].revision == 1
-    assert refreshed["envelope"].target_submodule_ids == list(
-        REPORT_TAXONOMY[module_id].submodules
-    )
-    refreshed_input = json.loads(
-        (
-            tmp_path / refreshed["envelope"].input_contract_ref
-        ).read_text(encoding="utf-8")
-    )
-    assert refreshed_input["saved_part_ids"] == []
-
-
-@pytest.mark.asyncio
 async def test_partial_module_authoring_never_exposes_live_peer_tools(
     tmp_path: Path,
 ) -> None:
@@ -3048,6 +2878,93 @@ def test_chief_envelope_is_pack_bound_and_has_no_raw_evidence_or_photo_inputs(
     assert editor_input.cross_decision_pack_ref == state["cross_decision_pack_ref"]
     assert editor_input.cross_decision_pack_sha256 == state["cross_decision_pack_sha256"]
     assert editor_input.cross_decision is not None
+
+
+def test_chief_pack_accepts_closed_ordinary_xmr_cross_finding(
+    tmp_path: Path,
+) -> None:
+    """Ordinary Cross ids must never be reinterpreted as removed IF reroutes."""
+
+    runner, state, _completion_ref = _chief_completion_fixture(tmp_path)
+    run_id = state["run_id"]
+    pack_ref = state.pop("cross_decision_pack_ref")
+    state.pop("cross_decision_pack", None)
+    state.pop("cross_decision_pack_sha256", None)
+    (runner.service.workspace / pack_ref).unlink()
+
+    finding_ref = f"Work/runs/{run_id}/reviews/cross-findings-r0.json"
+    verdict_ref = f"Work/runs/{run_id}/reviews/cross-verdicts-r1.json"
+    coverage = [
+        {
+            "module_id": module_id,
+            "checked_dimensions": list(CROSS_REVIEW_DIMENSIONS),
+        }
+        for module_id in REPORT_TAXONOMY
+    ]
+    finding = {
+        "id": "XMR-001",
+        "owner_module_id": "2.3",
+        "target_submodule_ids": ["2.3.1"],
+        "related_module_ids": ["2.5"],
+        "category": "dependencies",
+        "impact": "blocking",
+        "observation": "模块 2.3 尚未说明保护操作对模块 2.5 管理规程的前置依赖，导致联合行动无法排序。",
+        "evidence_refs": ["E-0001"],
+        "required_change": "在模块 2.3 写明保护操作依赖模块 2.5 的管理规程，并给出实施顺序和联合验收要求。",
+        "reviewer_checks": ["依赖、顺序和联合验收均已写入责任模块"],
+    }
+    runner.service.store.write_json(
+        finding_ref,
+        CrossReviewFindingSubmission(
+            coverage=coverage,
+            findings=[finding],
+            synthesis_inputs=[],
+        ).model_dump(mode="json"),
+    )
+    runner.service.store.write_json(
+        verdict_ref,
+        CrossReviewVerdictSubmission(
+            coverage=coverage,
+            verdicts=[
+                {
+                    "finding_id": "XMR-001",
+                    "verdict": "resolved",
+                    "reason": "责任模块已补充依赖、顺序和联合验收要求。",
+                    "evidence_refs": [f"Work/runs/{run_id}/modules/2.3-r0.json"],
+                }
+            ],
+            new_findings=[],
+            synthesis_inputs=[],
+        ).model_dump(mode="json"),
+    )
+    completion_ref = state["cross_review_completion_ref"]
+    module_refs = [
+        f"Work/runs/{run_id}/modules/{module_id}-r0.json"
+        for module_id in REPORT_TAXONOMY
+    ]
+    runner.service.store.write_json(
+        completion_ref,
+        ReviewCompletionRecord(
+            lifecycle="cross",
+            run_id=run_id,
+            reviewer_agent_id="cross-module-reviewer",
+            reviewer_session_key="cross-module-reviewer",
+            subject_refs=module_refs,
+            finding_refs=[finding_ref],
+            verdict_refs=[verdict_ref],
+            resolved_finding_ids=["XMR-001"],
+            artifact_sha256=_artifact_hashes(
+                tmp_path, [*module_refs, finding_ref, verdict_ref]
+            ),
+        ).model_dump(mode="json"),
+    )
+
+    pack = runner._materialize_chief_cross_decision_pack(state)
+
+    assert pack.cross_review_completion_ref == completion_ref
+    assert set(pack.artifact_sha256) == {completion_ref}
+    assert "if_closures" not in pack.model_dump()
+    assert "xmr_verdicts" not in pack.model_dump()
 
 
 def test_revision_checkpoint_refuses_chief_without_cross_owner_barrier(

@@ -4,9 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from manyselves.core.reporting.agentic_models import (
-    CrossDecisionIFClosure,
     CrossDecisionPack,
-    CrossDecisionXMRVerdict,
     FinalReviewFinding,
 )
 from manyselves.core.reporting.input_contracts import (
@@ -26,9 +24,6 @@ def _pack_payload() -> dict:
         "module_ids": ["2.1", "2.2", "2.3", "2.4", "2.5"],
         "cross_review_completion_ref": COMPLETION,
         "synthesis_inputs": [],
-        "if_closures": [],
-        "xmr_verdicts": [],
-        "residual_risks": [],
         "artifact_sha256": {COMPLETION: "0" * 64},
         "pack_sha256": "0" * 64,
     }
@@ -55,33 +50,6 @@ def test_cross_decision_pack_requires_terminal_five_module_hash_bound_state() ->
                     "Work/runs/foreign/reviews/cross.json": "0" * 64
                 },
             }
-        )
-
-
-def test_if_closure_rejects_pending_and_missing_evidence() -> None:
-    base = {
-        "request_id": "IF-2.1-2.3-001",
-        "requester_submodule_id": "2.1.1",
-        "target_submodule_id": "2.3.1",
-        "question": "当前联锁是否覆盖异常切换场景？",
-        "evidence_ids": ["E-0001"],
-        "source_ref": f"Work/runs/{RUN}/reviews/interface-closures-r0.json",
-    }
-    answered = CrossDecisionIFClosure(
-        **base,
-        status="answered",
-        answer="已覆盖当前整定版本。",
-        conditions=["以当前整定版本为准"],
-    )
-    assert answered.status == "answered"
-    with pytest.raises(ValidationError, match="literal|valid"):
-        CrossDecisionIFClosure(**base, status="pending_cross")
-    with pytest.raises(ValidationError):
-        CrossDecisionIFClosure(
-            **{**base, "evidence_ids": []},
-            status="answered",
-            answer="已覆盖。",
-            conditions=["当前版本"],
         )
 
 

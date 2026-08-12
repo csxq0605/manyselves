@@ -11,9 +11,7 @@ from pydantic import Field, TypeAdapter, model_validator
 
 from .agentic_models import (
     ClaimRecord,
-    CrossDecisionIFClosure,
     CrossDecisionPack,
-    CrossDecisionXMRVerdict,
     FINAL_AUDIT_SECTION_IDS,
     CrossReviewFinding,
     CrossSynthesisInput,
@@ -63,28 +61,19 @@ class CrossDecisionPackView(StrictModel):
     )
     cross_review_completion_ref: str = Field(min_length=1)
     synthesis_inputs: list[CrossSynthesisInput] = Field(default_factory=list)
-    if_closures: list[CrossDecisionIFClosure] = Field(default_factory=list)
-    xmr_verdicts: list[CrossDecisionXMRVerdict] = Field(default_factory=list)
-    residual_risks: list[str] = Field(default_factory=list)
     artifact_refs: list[str] = Field(
         default_factory=list,
-        description=(
-            "Current-run immutable completion, IF, and XMR refs retained for runtime hash binding."
-        ),
+        description="Current-run immutable Cross completion ref retained for hash binding.",
     )
 
     @model_validator(mode="after")
     def view_matches_closed_pack(self) -> "CrossDecisionPackView":
-        expected_refs = {
-            self.cross_review_completion_ref,
-            *(closure.source_ref for closure in self.if_closures),
-            *(ref for verdict in self.xmr_verdicts for ref in verdict.source_refs),
-        }
+        expected_refs = {self.cross_review_completion_ref}
         if not self.artifact_refs:
             self.artifact_refs = sorted(expected_refs)
         if sorted(set(self.artifact_refs)) != sorted(expected_refs):
             raise ValueError(
-                "Cross decision view artifact_refs must exactly cover completion, IF, and XMR refs"
+                "Cross decision view artifact_refs must exactly cover Cross completion"
             )
         # Reuse the complete pack's fail-closed semantic checks without exposing
         # its internal artifact hash map to the Provider-facing contract.
@@ -900,28 +889,6 @@ class CrossReviewInput(StrictModel):
         default_factory=list,
         description="Typed reports corresponding one-for-one to machine_validation_refs.",
     )
-    interface_registry_ref: str | None = Field(
-        default=None,
-        description="Current-run canonical exact IF resolution registry artifact.",
-    )
-    interface_registry_sha256: str | None = Field(
-        default=None,
-        pattern=r"^[0-9a-f]{64}$",
-        description="SHA-256 binding for interface_registry_ref.",
-    )
-    pending_interface_request_ids: list[str] = Field(
-        default_factory=list,
-        description="Exact unresolved IF ids admitted to this Cross pass.",
-    )
-    interface_closure_refs: list[str] = Field(
-        default_factory=list,
-        description="Current-run immutable r0/r1 IF closure artifacts already persisted.",
-    )
-    interface_residual_risks: dict[str, str] = Field(
-        default_factory=dict,
-        description="Confirmed missing IF boundaries retained for Chief synthesis.",
-    )
-
     @model_validator(mode="after")
     def five_subjects_and_phase_fields_match(self) -> "CrossReviewInput":
         expected = {"2.1", "2.2", "2.3", "2.4", "2.5"}
@@ -936,16 +903,6 @@ class CrossReviewInput(StrictModel):
         changed = set(self.changed_module_ids)
         if len(changed) != len(self.changed_module_ids):
             raise ValueError("changed_module_ids must be unique")
-        if len(self.pending_interface_request_ids) != len(
-            set(self.pending_interface_request_ids)
-        ):
-            raise ValueError("pending interface request ids must be unique")
-        if (self.interface_registry_ref is None) != (
-            self.interface_registry_sha256 is None
-        ):
-            raise ValueError(
-                "interface registry ref and sha256 must be supplied together"
-            )
         if self.phase == "initial" and (
             self.required_findings
             or self.revision_responses_by_module
@@ -1118,19 +1075,6 @@ class CrossOwnerInput(StrictModel):
         default=None,
         description="Hash-bound passed machine validation report for the owner revision."
     )
-    interface_registry_ref: str | None = Field(
-        default=None,
-        description="Optional immutable interface registry artifact consulted by the owner."
-    )
-    interface_registry_sha256: str | None = Field(
-        default=None,
-        pattern=r"^[0-9a-f]{64}$",
-        description="SHA-256 binding for the optional interface registry artifact."
-    )
-    pending_interface_request_ids: list[str] = Field(
-        default_factory=list,
-        description="Interface request ids still requiring owner-scoped closure."
-    )
     @model_validator(mode="after")
     def exact_owner_and_relation_scope(self) -> "CrossOwnerInput":
         expected_related = set(REPORT_TAXONOMY) - {self.owner_module_id}
@@ -1155,14 +1099,6 @@ class CrossOwnerInput(StrictModel):
                 or view.subject_sha256 != self.related_module_sha256[module_id]
             ):
                 raise ValueError("Cross owner relation view/hash binding is inconsistent")
-        if len(self.pending_interface_request_ids) != len(
-            set(self.pending_interface_request_ids)
-        ):
-            raise ValueError("Cross owner interface request ids must be unique")
-        if (self.interface_registry_ref is None) != (
-            self.interface_registry_sha256 is None
-        ):
-            raise ValueError("interface registry ref and hash must be supplied together")
         for finding in self.required_findings:
             if finding.owner_module_id != self.owner_module_id:
                 raise ValueError("Cross owner required finding lies outside owner scope")
@@ -2152,9 +2088,6 @@ _EXAMPLE_CROSS_DECISION = {
     "module_ids": list(REPORT_TAXONOMY),
     "cross_review_completion_ref": _EXAMPLE_CROSS_COMPLETION_REF,
     "synthesis_inputs": [],
-    "if_closures": [],
-    "xmr_verdicts": [],
-    "residual_risks": [],
     "artifact_refs": [_EXAMPLE_CROSS_COMPLETION_REF],
 }
 
@@ -2263,7 +2196,6 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "required_findings": [],
         "revision_responses": [],
         "prior_synthesis_inputs": [],
-        "pending_interface_request_ids": [],
     },
     "final_review_input": {
         "kind": "final_review_input",

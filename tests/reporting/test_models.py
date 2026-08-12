@@ -120,9 +120,9 @@ def test_report_request_exposes_no_runtime_granularity_or_lane_switches() -> Non
     with pytest.raises(ValidationError):
         ReportRequest(
             operation="module_report",
-            instruction="拒绝已删除的叶级模式",
+            instruction="拒绝已删除的粒度切换参数",
             target_modules=["2.1"],
-            authoring_granularity="leaf_37",
+            authoring_granularity="removed",
         )
 
 

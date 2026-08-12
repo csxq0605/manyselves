@@ -74,7 +74,7 @@ def _as_relative_ref(value: Any) -> str | None:
         return ref
     if ref.upper().startswith("P-") and "/" not in ref and "\\" not in ref:
         return ref
-    # E-/C-/F-/IF- values and other bare identifiers are domain identifiers,
+    # E-/C-/F- values and other bare identifiers are domain identifiers,
     # not artifact paths.  P-* is also an identifier, but it is returned above
     # so the recursive collector can route it through the current-run photo
     # map rather than guessing a path.
@@ -422,7 +422,6 @@ def _load_run_photo_map(
         workspace / f"Work/runs/{envelope.run_id}/preparation/photo-manifest.json",
         workspace / f"Work/runs/{envelope.run_id}/context/photo-manifest.json",
         workspace / f"Work/runs/{envelope.run_id}/photo-manifest.json",
-        workspace / "Work/photo-manifest.json",
     )
     for path in roots:
         if not path.is_file():

@@ -88,28 +88,15 @@ FIELD_GUIDANCE: dict[str, str] = {
     "module_narratives": "Map containing exactly one complete approved narrative for each fixed report module.",
     "module_tasks": "Exactly one typed task envelope for each requested specialist.",
     "cross_context": "Aggregate-existing mode must keep this field null; it must never fabricate Cross decisions.",
-    "cross_decision": "Terminal, lossless CrossDecisionPack view with all five module ids, IF closures, XMR verdicts, synthesis inputs, residual risks, and E/ref bindings.",
+    "cross_decision": "Terminal, hash-bound CrossDecisionPack view with all five module ids and approved synthesis inputs.",
     "version": "Monotonic schema version for the persisted CrossDecisionPack contract.",
-    "cross_review_completion_ref": "Current-run immutable completion record proving Cross review closed all module and IF/XMR findings.",
+    "cross_review_completion_ref": "Current-run immutable completion record proving Cross review closed all module findings.",
     "cross_decision_pack_ref": "Current-run immutable CrossDecisionPack artifact reference consumed by Chief/Final.",
     "cross_decision_pack_sha256": "SHA-256 binding for cross_decision_pack_ref; stale or foreign hashes fail closed.",
-    "if_closures": "Every IF must be terminal: answered, resolved_by_cross, confirmed_missing, or reroute_to_owner; pending/unresolved is forbidden.",
-    "interface_closures": "Optional typed IF closures owned by this review stage; include exactly the pending request set when the active input declares one, otherwise submit an empty list.",
-    "xmr_verdicts": "Terminal XMR-IF verdicts exactly covering rerouted IF owner findings; pending verdicts are forbidden.",
-    "artifact_refs": "Exact current-run immutable completion, IF, and XMR artifact refs retained for runtime hash verification.",
+    "artifact_refs": "Exact current-run immutable Cross completion ref retained for runtime hash verification.",
     "artifact_sha256": "SHA-256 map covering every artifact_ref exactly once; missing, foreign, or malformed hashes fail closed.",
-    "pack_sha256": "SHA-256 of the complete CrossDecisionPack payload, including terminal IF/XMR state.",
+    "pack_sha256": "SHA-256 of the complete CrossDecisionPack payload.",
     "module_ids": "Exactly the five fixed report modules 2.1, 2.2, 2.3, 2.4, and 2.5.",
-    "source_ref": "Current-run immutable source artifact ref for one IF closure.",
-    "source_refs": "Current-run immutable source artifact refs for one XMR verdict.",
-    "request_id": "Stable IF-* request id bound to the requester and target responsibility modules.",
-    "status": "Terminal IF state only: answered, resolved_by_cross, confirmed_missing, or reroute_to_owner.",
-    "owner_finding_id": "Stable XMR-IF-* owner finding required for reroute_to_owner.",
-    "owner_submodule_id": "Exact fixed taxonomy subsection that receives a rerouted XMR owner finding.",
-    "outcome": "Legacy IF closure spelling normalized to the terminal status values; pending is forbidden.",
-    "answer": "Concrete IF answer required for answered or resolved_by_cross terminal states.",
-    "conditions": "Explicit applicability conditions for an answered or resolved_by_cross IF decision.",
-    "residual_risk": "Transparent remaining risk required for confirmed_missing and never hidden as a resolved answer.",
     "name": "Exact registered name required by the active artifact contract.",
     "new_findings": "Only genuinely new regression findings; never repeat required prior findings here.",
     "objective": "Concrete work objective for the assigned Agent and current stage.",
@@ -220,17 +207,6 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
         "Write each assigned changed submodule with write_result_part and evidence_ids.",
         "The final commit contains only the fields declared by this schema; runtime derives the scoped patch.",
     ],
-    "module_discovery_submission": [
-        "Wave 1 must cover each of the other four modules exactly once.",
-        "Every request_id must encode the requester and target and be unique in the current run.",
-        "Only request or conflict coverage may emit InterfaceRequest records.",
-    ],
-    "module_interface_response_submission": [
-        "Wave 2 is only for modules with non-empty incoming request inboxes.",
-        "Return exactly one answered or explicitly unresolved disposition per incoming request_id.",
-        "Wave 2 has no block/Main/user-intervention outcome; unresolved must include an explicit reason and authoring boundary and never blocks downstream authoring.",
-        "Never answer a request addressed to another module or invent a request_id.",
-    ],
     "module_review_finding_submission": [
         "Identify findings only by fixed target_submodule_id.",
     ],
@@ -239,11 +215,9 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
     ],
     "cross_review_finding_submission": [
         "Locate writeback by owner module and fixed submodule ids.",
-        "When interface_closures are present, return exactly one resolved_by_cross, confirmed_missing, or reroute_to_owner outcome per pending IF request.",
     ],
     "cross_review_verdict_submission": [
         "Recheck module locations and finding_ids.",
-        "Cross r1 must close every pending IF and XMR-IF finding; no pending interface closure may reach Chief.",
     ],
     "cross_owner_finding_submission": [
         "owner_module_id is the one fixed module owned by this Cross-owner lane; coverage.module_id must match it.",
@@ -254,8 +228,8 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
     "cross_owner_verdict_submission": [
         "owner_module_id is the one fixed module owned by this Cross-owner lane; coverage.module_id must match it.",
         "Return exactly one verdict for every required prior owner finding id; an empty verdicts list is valid only when no prior finding is assigned.",
-        "new_findings may be empty or contain only genuinely new regressions owned by owner_module_id; do not restate required findings.",
-        "Do not submit synthesis_inputs or interface_closures during recheck; runtime carries the immutable initial owner artifacts forward.",
+        "new_findings may contain only genuine regressions introduced by the current owner revision; do not repeat required prior findings.",
+        "Recheck may return verdicts and genuine new regressions; runtime carries immutable initial synthesis artifacts forward.",
     ],
     "edited_report_submission": [
         "Runtime preserves all approved module bindings automatically.",
@@ -276,12 +250,6 @@ KIND_SUMMARIES: dict[str, str] = {
     "module_revision_submission": (
         "A small in-scope revision commit for already saved result parts and author responses."
     ),
-    "module_discovery_submission": (
-        "Wave 1 module research and exhaustive peer-interface discovery before final authoring."
-    ),
-    "module_interface_response_submission": (
-        "Wave 2 batched answers or explicit unresolved boundaries for one module's actual inbox."
-    ),
     "template_skill_submission": (
         "A project-scoped writing Skill distilled from the template without copying project facts."
     ),
@@ -301,7 +269,7 @@ KIND_SUMMARIES: dict[str, str] = {
         "Initial Cross-owner result for one fixed module: scoped coverage, owner-local findings, and optional supported synthesis inputs."
     ),
     "cross_owner_verdict_submission": (
-        "Cross-owner recheck for one fixed module: exact required-finding verdicts plus optional owner-local regressions and updated synthesis inputs."
+        "Cross-owner recheck for one fixed module: exact required-finding verdicts plus genuine owner-local regressions."
     ),
     "final_review_finding_submission": (
         "Initial final-report coverage, immutable editorial findings, and transparent residual risks."
@@ -461,59 +429,6 @@ def _cross_owner_coverage_example(module_id: str = "2.1") -> dict[str, Any]:
 KIND_EXAMPLES: dict[str, dict[str, Any]] = {
     "module_submission": _module_example(),
     "module_revision_submission": _module_revision_example(),
-    "module_discovery_submission": {
-        "kind": "module_discovery_submission",
-        "module_id": "2.1",
-        "discovery_summary": "已识别本模块证据边界以及一个需要模块 2.3 回答的接口问题。",
-        "evidence_ids": ["E-0001"],
-        "interface_coverage": [
-            {
-                "target_module_id": "2.2",
-                "status": "not_applicable",
-                "rationale": "当前发现不依赖该模块责任边界。",
-            },
-            {
-                "target_module_id": "2.3",
-                "status": "request",
-                "rationale": "最终风险判断需要确认保护接口条件。",
-            },
-            {
-                "target_module_id": "2.4",
-                "status": "offer",
-                "rationale": "可向该模块提供本模块已确认的负荷边界。",
-            },
-            {
-                "target_module_id": "2.5",
-                "status": "not_applicable",
-                "rationale": "当前发现不涉及该模块。",
-            },
-        ],
-        "requests": [
-            {
-                "request_id": "IF-2.1-2.3-001",
-                "requester_module_id": "2.1",
-                "target_module_id": "2.3",
-                "question": "保护配置是否覆盖当前识别的运行边界？",
-                "needed_for": "确定风险机理、行动依赖和联合验收边界。",
-                "evidence_ids": ["E-0001"],
-                "blocking": True,
-            }
-        ],
-    },
-    "module_interface_response_submission": {
-        "kind": "module_interface_response_submission",
-        "module_id": "2.3",
-        "dispositions": [
-            {
-                "request_id": "IF-2.1-2.3-001",
-                "status": "answered",
-                "answer": "现有配置覆盖正常边界，但异常工况仍需联合验证。",
-                "evidence_ids": ["E-0002"],
-                "conditions": ["以当前整定版本为准"],
-                "residual_uncertainty": "异常工况缺少联动试验记录。",
-            }
-        ],
-    },
     "template_skill_submission": _template_skill_example(),
     "edited_report_submission": _edited_report_example(),
     "chief_revision_submission": _chief_revision_example(),
@@ -564,7 +479,6 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
         ],
         "findings": [],
         "synthesis_inputs": [],
-        "interface_closures": [],
     },
     "cross_review_verdict_submission": {
         "kind": "cross_review_verdict_submission",
@@ -592,7 +506,6 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
         ],
         "new_findings": [],
         "synthesis_inputs": [],
-        "interface_closures": [],
     },
     "cross_owner_finding_submission": {
         "kind": "cross_owner_finding_submission",
@@ -600,7 +513,6 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
         "coverage": _cross_owner_coverage_example(),
         "findings": [],
         "synthesis_inputs": [],
-        "interface_closures": [],
     },
     "cross_owner_verdict_submission": {
         "kind": "cross_owner_verdict_submission",
@@ -608,8 +520,6 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
         "coverage": _cross_owner_coverage_example(),
         "verdicts": [],
         "new_findings": [],
-        "synthesis_inputs": [],
-        "interface_closures": [],
     },
     "final_review_finding_submission": {
         "kind": "final_review_finding_submission",

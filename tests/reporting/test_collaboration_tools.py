@@ -9,6 +9,7 @@ from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting.agentic_models import (
     SUBMISSION_INPUT_TYPES,
     ClaimRecord,
+    CrossOwnerVerdictSubmission,
     CrossReviewFinding,
     EditedReportSubmission,
     ModuleSubmission,
@@ -476,9 +477,43 @@ async def test_cross_owner_submit_runtime_assigns_owner_scope_and_finding_id(
     assert result["payload"]["findings"][0]["id"] == "XMR-2.1-001"
 
 
+def test_cross_owner_verdict_reads_empty_removed_protocol_fields() -> None:
+    payload = {
+        "kind": "cross_owner_verdict_submission",
+        "owner_module_id": "2.1",
+        "coverage": {
+            "module_id": "2.1",
+            "checked_dimensions": [
+                "terminology",
+                "facts",
+                "risk_levels",
+                "dependencies",
+                "propagation",
+                "joint_verification",
+            ],
+        },
+        "verdicts": [],
+        "new_findings": [],
+        "synthesis_inputs": [],
+        "interface_closures": [],
+    }
+
+    restored = CrossOwnerVerdictSubmission.model_validate(payload)
+    dumped = restored.model_dump(mode="json")
+    assert dumped["new_findings"] == []
+    assert "synthesis_inputs" not in dumped
+    assert "interface_closures" not in dumped
+
+    payload["interface_closures"] = [{"request_id": "IF-obsolete"}]
+    with pytest.raises(ValueError, match="interface_closures"):
+        CrossOwnerVerdictSubmission.model_validate(payload)
+
+
 @pytest.mark.asyncio
-async def test_cross_owner_recheck_injects_exact_verdict_ids_and_rejects_new_findings(
+@pytest.mark.parametrize("legacy_echo", [False, True])
+async def test_cross_owner_recheck_injects_exact_ids_and_accepts_new_regressions(
     tmp_path: Path,
+    legacy_echo: bool,
 ) -> None:
     finding = _cross_owner_finding()
     contract = _cross_owner_contract(phase="recheck", required_findings=[finding])
@@ -492,8 +527,7 @@ async def test_cross_owner_recheck_injects_exact_verdict_ids_and_rejects_new_fin
         input_contract_kind="cross_owner_input",
         input_contract_ref=contract_ref,
     )
-    outcome = await tool(
-        payload={
+    payload = {
             "kind": "cross_owner_verdict_submission",
             "verdicts": [
                 {
@@ -502,12 +536,13 @@ async def test_cross_owner_recheck_injects_exact_verdict_ids_and_rejects_new_fin
                     "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
                 }
             ],
-            # Legacy/model echoes are ignored: these artifacts belong to the
-            # immutable initial owner result and cannot be rewritten at recheck.
-            "synthesis_inputs": [],
-            "interface_closures": [],
         }
-    )
+    if legacy_echo:
+        # Legacy model echoes are ignored: initial material is immutable and
+        # the removed IF protocol must not break a valid five-module verdict.
+        payload["synthesis_inputs"] = []
+        payload["interface_closures"] = []
+    outcome = await tool(payload=payload)
     assert outcome["status"] == "completed", outcome
     result = json.loads(
         (tmp_path / "Work/runs/run-1/results/cross-owner-2.1-r1.json").read_text(
@@ -518,10 +553,18 @@ async def test_cross_owner_recheck_injects_exact_verdict_ids_and_rejects_new_fin
         "XMR-2.1-001"
     ]
     assert result["payload"]["new_findings"] == []
-    assert result["payload"]["synthesis_inputs"] == []
-    assert result["payload"]["interface_closures"] == []
+    assert "synthesis_inputs" not in result["payload"]
+    assert "interface_closures" not in result["payload"]
 
-    bad = await tool(
+    regression_tool = _tool(
+        tmp_path,
+        task_id="cross-owner-2.1-r1-regression",
+        allowed_outputs=["cross_owner_verdict_submission"],
+        revision=1,
+        input_contract_kind="cross_owner_input",
+        input_contract_ref=contract_ref,
+    )
+    regression = await regression_tool(
         payload={
             "kind": "cross_owner_verdict_submission",
             "verdicts": [
@@ -538,18 +581,30 @@ async def test_cross_owner_recheck_injects_exact_verdict_ids_and_rejects_new_fin
                     "related_module_ids": ["2.2"],
                     "category": "dependencies",
                     "impact": "advisory",
-                    "observation": "新的回归观察不应在同一 owner 重检中另起 finding 波次。",
+                    "observation": (
+                        "本轮 owner 修订虽然关闭了原问题，但同时改变了与模块2.2之间的"
+                        "实施先后关系，形成了新的跨模块依赖回归。"
+                    ),
                     "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
-                    "required_change": "由下一轮 Cross owner 输入明确新的责任边界。",
-                    "reviewer_checks": ["新的 finding 不应被当前重检接受。"],
+                    "required_change": (
+                        "下一轮应由责任模块补充实施先后关系、接口责任人以及联合验收条件，"
+                        "再交由同一 Cross owner 复核关闭。"
+                    ),
+                    "reviewer_checks": ["下一轮修订关闭该新增回归。"],
                     "machine_checks": [],
                 }
             ],
         }
     )
-    assert bad["status"] == "correction_required"
-    assert any(
-        item["field"] == "new_findings" for item in bad["validation_errors"]
+    assert regression["status"] == "completed", regression
+    regression_result = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-1/results/cross-owner-2.1-r1-regression.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert regression_result["payload"]["new_findings"][0]["id"].startswith(
+        "XMR-2.1-r1-"
     )
 
 
@@ -1515,7 +1570,8 @@ async def test_module_commit_rejects_model_authored_claims(
     assert issue["field"] == "claims"
     assert issue["received_type"] == "object"
     assert "claims" not in issue["example"]
-    assert "Correct claims" in issue["repair_instruction"]
+    assert "Remove undeclared field claims completely" in issue["repair_instruction"]
+    assert "null, an empty array" in issue["repair_instruction"]
 
 
 def test_module_contract_hides_claims_markers_and_artifact_refs() -> None:

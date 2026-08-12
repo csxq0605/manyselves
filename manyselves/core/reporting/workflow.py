@@ -23,7 +23,6 @@ from .agentic_models import (
     AgentResult,
     AgentRunStatus,
     CrossDecisionPack,
-    CrossDecisionXMRVerdict,
     CrossSynthesisInput,
     EditedReportSubmission,
     ModuleDispatchPlan,
@@ -1210,6 +1209,30 @@ class ReportWorkflowRunner:
         input_snapshot = RunInputSnapshotStore(
             self.service.workspace
         ).load(run_id)
+        imported_evidence_path = (
+            self.service.workspace / f"Work/runs/{run_id}/evidence.jsonl"
+        )
+        state["evidence_items"] = (
+            [
+                EvidenceItem.model_validate_json(line)
+                for line in imported_evidence_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            if imported_evidence_path.is_file()
+            else []
+        )
+        imported_photo_path = (
+            self.service.workspace / f"Work/runs/{run_id}/context/photo-manifest.json"
+        )
+        state["photo_assets"] = []
+        if imported_photo_path.is_file():
+            imported_photo_payload = json.loads(
+                imported_photo_path.read_text(encoding="utf-8")
+            )
+            state["photo_assets"] = [
+                PhotoAsset.model_validate(item)
+                for item in imported_photo_payload.get("assets", [])
+            ]
         for module_id in REPORT_MODULE_IDS:
             relative = Path(configured_refs[module_id])
             frozen_relative = input_snapshot.resolve(relative)
@@ -1450,7 +1473,14 @@ class ReportWorkflowRunner:
                 )
                 for module_id in REPORT_MODULE_IDS
             }
-            ledger = None
+            imported_source_records = SourceLedger(
+                self.service.workspace, run_id
+            ).records
+            ledger = (
+                ClaimLedger(claims=[], sources=imported_source_records)
+                if imported_source_records
+                else None
+            )
             claims = (
                 [
                     claim
@@ -1511,7 +1541,10 @@ class ReportWorkflowRunner:
             if structured_modules:
                 ledger = ClaimLedger(
                     claims=claims,
-                    sources=list(structured_sources.values()),
+                    sources=(
+                        imported_source_records
+                        or list(structured_sources.values())
+                    ),
                 )
                 state["module_submissions"] = structured_modules
                 self.service.store.write_json(
@@ -2509,9 +2542,9 @@ class ReportWorkflowRunner:
     ) -> CrossDecisionPack:
         """Materialize the terminal Cross boundary consumed by Chief/Final.
 
-        This reducer consumes the already completed Cross review and IF registry;
-        it never performs a second semantic Cross pass.  Every reference and
-        E-* binding is checked before writing the immutable pack.
+        This reducer consumes the already completed five-module Cross review;
+        it never performs a second semantic Cross pass.  The immutable review
+        completion is the sole provenance boundary admitted to Chief.
         """
 
         run_id = state.get("run_id")
@@ -2549,317 +2582,13 @@ class ReportWorkflowRunner:
                 "Chief cannot start: current Cross completion is invalid"
             ) from exc
 
-        registry = state.get("interface_resolution_registry")
-        registry_ref = state.get("interface_resolution_registry_ref")
-        if registry is not None and not isinstance(registry, InterfaceResolutionRegistry):
-            try:
-                registry = InterfaceResolutionRegistry.model_validate(registry)
-            except ValueError as exc:
-                raise AgentWorkflowError(
-                    "Chief cannot start: interface registry is invalid"
-                ) from exc
-        if registry is None and registry_ref:
-            registry_path = self._require_current_run_artifact(
-                run_id, str(registry_ref), label="interface resolution registry"
-            )
-            expected_registry_hash = state.get("interface_resolution_registry_sha256")
-            actual_registry_hash = self._sha256(registry_path)
-            if expected_registry_hash != actual_registry_hash:
-                raise AgentWorkflowError(
-                    "Chief cannot start: interface registry hash is stale"
-                )
-            try:
-                registry = InterfaceResolutionRegistry.model_validate_json(
-                    registry_path.read_text(encoding="utf-8")
-                )
-            except (OSError, ValueError, json.JSONDecodeError) as exc:
-                raise AgentWorkflowError(
-                    "Chief cannot start: interface registry is invalid"
-                ) from exc
-        if registry is not None:
-            if registry.run_id != run_id:
-                raise AgentWorkflowError(
-                    "Chief cannot start: interface registry belongs to another run"
-                )
-            if not registry_ref:
-                raise AgentWorkflowError(
-                    "Chief cannot start: interface registry lacks an immutable ref"
-                )
-            if registry.pending_request_ids:
-                raise AgentWorkflowError(
-                    "Chief cannot start while IF/XMR records remain pending: "
-                    f"{list(registry.pending_request_ids)}"
-                )
-            state["interface_resolution_registry"] = registry
-
-        # Verify closure artifacts and map each terminal IF to its immutable
-        # closure batch.  The registry remains the source of truth for status.
-        closure_source_by_request: dict[str, str] = {}
-        closure_history_by_request: dict[str, list[tuple[str, object]]] = {}
-        closure_refs = list(state.get("interface_closure_refs", []))
-        closure_hashes = dict(state.get("interface_closure_sha256", {}))
-        for closure_ref in closure_refs:
-            closure_path = self._require_current_run_artifact(
-                run_id, str(closure_ref), label="interface closure"
-            )
-            expected_hash = closure_hashes.get(closure_ref)
-            if expected_hash is not None and self._sha256(closure_path) != expected_hash:
-                raise AgentWorkflowError(
-                    "Chief cannot start: interface closure hash is stale"
-                )
-            try:
-                batch = InterfaceResolutionClosureBatch.model_validate_json(
-                    closure_path.read_text(encoding="utf-8")
-                )
-            except (OSError, ValueError, json.JSONDecodeError) as exc:
-                raise AgentWorkflowError(
-                    "Chief cannot start: interface closure artifact is invalid"
-                ) from exc
-            if batch.run_id != run_id:
-                raise AgentWorkflowError(
-                    "Chief cannot start: interface closure belongs to another run"
-                )
-            for closure in batch.closures:
-                closure_source_by_request[closure.request_id] = str(closure_ref)
-                closure_history_by_request.setdefault(closure.request_id, []).append(
-                    (str(closure_ref), closure)
-                )
-
-        if registry_ref:
-            registry_path = self._require_current_run_artifact(
-                run_id, str(registry_ref), label="interface resolution registry"
-            )
-        known_evidence_ids = {
-            source.id
-            for source in SourceLedger(self.service.workspace, run_id).records
-            if source.id.startswith("E-")
-        }
-
-        def terminal_evidence_ids(values: list[str]) -> list[str]:
-            evidence_ids = list(dict.fromkeys(value for value in values if value.startswith("E-")))
-            if not evidence_ids:
-                raise AgentWorkflowError(
-                    "Chief cannot start: terminal Cross IF/XMR decision lacks E-* evidence"
-                )
-            if known_evidence_ids and not set(evidence_ids).issubset(known_evidence_ids):
-                missing = sorted(set(evidence_ids) - known_evidence_ids)
-                raise AgentWorkflowError(
-                    "Chief cannot start: IF/XMR decision references unknown E-* ids: "
-                    f"{missing}"
-                )
-            return evidence_ids
-
-        if_closures: list = []
-        if registry is not None:
-            for request_id, resolution in sorted(registry.resolutions.items()):
-                request = resolution.request
-                status = resolution.closure_status
-                if status in {"pending_cross", "reroute_to_owner"}:
-                    raise AgentWorkflowError(
-                        "Chief cannot start while IF/XMR records remain pending: "
-                        f"{request_id}"
-                    )
-                cross_closure = resolution.cross_closure
-                historical_reroute = next(
-                    (
-                        (source_ref, closure)
-                        for source_ref, closure in closure_history_by_request.get(
-                            request_id, []
-                        )
-                        if getattr(closure, "outcome", None) == "reroute_to_owner"
-                    ),
-                    None,
-                )
-                # A reroute is intentionally represented in the terminal pack
-                # even after r1 has resolved its XMR finding; the final registry
-                # no longer reports it as pending, but the owner decision remains
-                # part of the Chief/Final audit boundary.
-                pack_status = (
-                    "reroute_to_owner" if historical_reroute is not None else status
-                )
-                if historical_reroute is not None:
-                    reroute_source_ref, reroute_closure = historical_reroute
-                    cross_closure = reroute_closure
-                else:
-                    reroute_source_ref = None
-                evidence_values = [
-                    *request.evidence_ids,
-                    *resolution.disposition.evidence_ids,
-                    *resolution.disposition.checked_evidence_ids,
-                ]
-                if cross_closure is not None:
-                    evidence_values.extend(cross_closure.checked_evidence_ids)
-                evidence_ids = terminal_evidence_ids(evidence_values)
-                requester_submodule_id = (
-                    request.requester_submodule_id
-                    or REPORT_TAXONOMY[request.requester_module_id].submodules[0]
-                )
-                target_submodule_id = (
-                    request.target_submodule_id
-                    or REPORT_TAXONOMY[request.target_module_id].submodules[0]
-                )
-                source_ref = closure_source_by_request.get(request_id)
-                if reroute_source_ref is not None:
-                    source_ref = reroute_source_ref
-                if source_ref is None:
-                    source_ref = str(registry_ref) if registry_ref else ""
-                if not source_ref:
-                    raise AgentWorkflowError(
-                        f"Chief cannot start: IF closure {request_id} lacks source ref"
-                    )
-                if pack_status == "answered":
-                    answer = resolution.disposition.answer
-                    conditions = list(resolution.disposition.conditions)
-                    boundary = None
-                    residual_risk = None
-                    owner_finding_id = None
-                elif pack_status == "resolved_by_cross":
-                    answer = cross_closure.reason if cross_closure is not None else None
-                    conditions = list(resolution.disposition.conditions) or [
-                        "Cross 已基于当前五模块证据闭合该接口。"
-                    ]
-                    boundary = None
-                    residual_risk = None
-                    owner_finding_id = None
-                elif pack_status == "confirmed_missing":
-                    answer = None
-                    conditions = []
-                    boundary = (
-                        cross_closure.boundary
-                        if cross_closure is not None
-                        else resolution.disposition.boundary
-                    )
-                    residual_risk = (
-                        cross_closure.residual_risk
-                        if cross_closure is not None
-                        else resolution.disposition.unresolved_reason
-                    )
-                    owner_finding_id = None
-                elif pack_status == "reroute_to_owner":
-                    answer = None
-                    conditions = []
-                    boundary = cross_closure.boundary if cross_closure is not None else None
-                    residual_risk = (
-                        cross_closure.residual_risk
-                        if cross_closure is not None
-                        else None
-                    )
-                    owner_finding_id = (
-                        cross_closure.owner_finding_id
-                        if cross_closure is not None
-                        else f"XMR-{request_id}"
-                    )
-                else:
-                    raise AgentWorkflowError(
-                        f"Chief cannot start: unsupported terminal IF status {status}"
-                    )
-                if_closures.append(
-                    CrossDecisionIFClosure(
-                        request_id=request_id,
-                        requester_submodule_id=requester_submodule_id,
-                        target_submodule_id=target_submodule_id,
-                        question=request.question,
-                        status=pack_status,
-                        answer=answer,
-                        conditions=conditions,
-                        evidence_ids=evidence_ids,
-                        source_ref=source_ref,
-                        boundary=boundary,
-                        residual_risk=residual_risk,
-                        owner_finding_id=owner_finding_id,
-                    )
-                )
-
-        # Cross artifacts are the sole source of XMR finding/verdict semantics;
-        # this reducer merely translates the already closed immutable records.
-        finding_records: dict[str, tuple[dict, str]] = {}
-        verdict_records: dict[str, tuple[dict, str]] = {}
-        completion_artifact_refs = [
-            *completion.finding_refs,
-            *completion.verdict_refs,
-        ]
-        for artifact_ref in completion_artifact_refs:
-            artifact_path = self._require_current_run_artifact(
-                run_id, artifact_ref, label="Cross review artifact"
-            )
-            try:
-                artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError, json.JSONDecodeError) as exc:
-                raise AgentWorkflowError(
-                    "Chief cannot start: Cross review artifact is unreadable"
-                ) from exc
-            for finding in [
-                *artifact_payload.get("findings", []),
-                *artifact_payload.get("new_findings", []),
-            ]:
-                if isinstance(finding, dict) and isinstance(finding.get("id"), str):
-                    finding_records[finding["id"]] = (finding, artifact_ref)
-            for verdict in artifact_payload.get("verdicts", []):
-                if isinstance(verdict, dict) and isinstance(verdict.get("finding_id"), str):
-                    verdict_records[verdict["finding_id"]] = (verdict, artifact_ref)
-
-        xmr_verdicts: list = []
-        xmr_ids = sorted(
-            finding_id
-            for finding_id in finding_records
-            if finding_id.startswith("XMR-")
-        )
-        for finding_id in xmr_ids:
-            finding, finding_ref = finding_records[finding_id]
-            verdict_record = verdict_records.get(finding_id)
-            if verdict_record is None:
-                raise AgentWorkflowError(
-                    f"Chief cannot start: XMR finding {finding_id} lacks a verdict"
-                )
-            verdict, verdict_ref = verdict_record
-            if verdict.get("verdict") != "resolved":
-                raise AgentWorkflowError(
-                    f"Chief cannot start: XMR finding {finding_id} is not resolved"
-                )
-            evidence_values = [
-                *finding.get("evidence_refs", []),
-                *verdict.get("evidence_refs", []),
-            ]
-            evidence_ids = terminal_evidence_ids(evidence_values)
-            xmr_verdicts.append(
-                CrossDecisionXMRVerdict(
-                    finding_id=finding_id,
-                    owner_module_id=finding["owner_module_id"],
-                    target_submodule_ids=list(finding["target_submodule_ids"]),
-                    related_module_ids=list(finding["related_module_ids"]),
-                    verdict=verdict["verdict"],
-                    reason=str(verdict.get("reason") or verdict.get("summary") or "Cross 已关闭该接口。"),
-                    evidence_refs=evidence_ids,
-                    source_refs=list(dict.fromkeys([finding_ref, verdict_ref])),
-                )
-            )
-
         synthesis_inputs = [
             item
             if isinstance(item, CrossSynthesisInput)
             else CrossSynthesisInput.model_validate(item)
             for item in state.get("cross_synthesis_inputs", [])
         ]
-        residual_risks = list(
-            dict.fromkeys(
-                value.strip()
-                for value in [
-                    *dict(state.get("interface_residual_risks", {})).values(),
-                    *[
-                        closure.residual_risk
-                        for closure in if_closures
-                        if closure.residual_risk
-                    ],
-                ]
-                if isinstance(value, str) and value.strip()
-            )
-        )
-
-        artifact_refs = {
-            completion_ref,
-            *(closure.source_ref for closure in if_closures),
-            *(ref for verdict in xmr_verdicts for ref in verdict.source_refs),
-        }
+        artifact_refs = {completion_ref}
         artifact_sha256: dict[str, str] = {}
         for artifact_ref in sorted(artifact_refs):
             artifact_path = self._require_current_run_artifact(
@@ -2871,9 +2600,6 @@ class ReportWorkflowRunner:
             module_ids=list(REPORT_MODULE_IDS),
             cross_review_completion_ref=completion_ref,
             synthesis_inputs=synthesis_inputs,
-            if_closures=if_closures,
-            xmr_verdicts=xmr_verdicts,
-            residual_risks=residual_risks,
             artifact_sha256=artifact_sha256,
             pack_sha256="0" * 64,
         )
@@ -5722,36 +5448,6 @@ class ReportWorkflowRunner:
         return barrier
 
     async def _chief_edit(self, state: dict, workflow_id: str) -> None:
-        interface_registry = state.get("interface_resolution_registry")
-        if interface_registry is None and state.get("interface_resolution_registry_ref"):
-            registry_ref = str(state["interface_resolution_registry_ref"])
-            registry_path = self.service.workspace / registry_ref
-            if not registry_path.is_file():
-                raise AgentWorkflowError(
-                    f"Chief cannot start: interface registry is missing ({registry_ref})"
-                )
-            expected_hash = state.get("interface_resolution_registry_sha256")
-            actual_hash = self._sha256(registry_path)
-            if expected_hash != actual_hash:
-                raise AgentWorkflowError(
-                    "Chief cannot start: interface registry hash is stale"
-                )
-            try:
-                interface_registry = InterfaceResolutionRegistry.model_validate_json(
-                    registry_path.read_text(encoding="utf-8")
-                )
-            except (OSError, ValueError) as exc:
-                raise AgentWorkflowError(
-                    "Chief cannot start: interface registry is invalid"
-                ) from exc
-            state["interface_resolution_registry"] = interface_registry
-        if isinstance(interface_registry, InterfaceResolutionRegistry):
-            pending_interfaces = interface_registry.pending_request_ids
-            if pending_interfaces:
-                raise AgentWorkflowError(
-                    "Chief cannot start while Cross interface IF/XMR records remain pending: "
-                    f"{list(pending_interfaces)}"
-                )
         special_topic_plan: SpecialTopicPlan | None = state.get("special_topic_plan")
         special_topic_input_refs: list[str] = []
         special_topic_context = ""

@@ -12,10 +12,15 @@ from manyselves.core.reporting import review_lifecycle as lifecycle
 from manyselves.core.reporting.agentic_models import (
     CROSS_REVIEW_DIMENSIONS,
     CrossOwnerFindingSubmission,
+    CrossOwnerVerdictSubmission,
     CrossReviewCoverageEntry,
+    CrossReviewFinding,
     CrossSynthesisInput,
     ModuleSubmission,
+    ResolutionVerdict,
+    RevisionResponse,
 )
+from manyselves.core.reporting.input_contracts import CrossOwnerInput, ValidationReport
 from manyselves.core.reporting.parallel_runtime import (
     ArtifactRef,
     CrossOwnerCompletion,
@@ -74,6 +79,28 @@ def _synthesis(owner_module_id: str) -> list[CrossSynthesisInput]:
     ]
 
 
+def _cross_finding(finding_id: str) -> CrossReviewFinding:
+    return CrossReviewFinding(
+        id=finding_id,
+        owner_module_id="2.1",
+        target_submodule_ids=["2.1.1"],
+        related_module_ids=["2.2"],
+        category="dependencies",
+        impact="blocking",
+        observation=(
+            "模块2.1当前写法没有稳定表达与模块2.2之间的实施先后关系，"
+            "可能导致责任边界和联合验收顺序发生冲突。"
+        ),
+        evidence_refs=["Work/runs/run-cross-regression/modules/2.1-r0.json"],
+        required_change=(
+            "在模块2.1责任范围内补充与模块2.2的实施顺序、接口责任人和联合验收条件，"
+            "并保留可由同一Cross owner复核的明确记录。"
+        ),
+        reviewer_checks=["实施顺序、接口责任和联合验收条件均已明确写入。"],
+        machine_checks=[],
+    )
+
+
 class _Runner:
     def __init__(self, workspace: Path, *, failed_owner: str | None = None) -> None:
         self.service = SimpleNamespace(
@@ -105,7 +132,6 @@ class _Runner:
             ),
             findings=[],
             synthesis_inputs=_synthesis(owner_module_id),
-            interface_closures=[],
         )
 
     @staticmethod
@@ -164,6 +190,96 @@ def _fake_noop(
     return lifecycle._CrossOwnerLaneResult(
         module=module,
         responses=[],
+        local_review_ref=local_ref,
+        machine_validation_ref=machine_ref,
+        completion_ref=completion_ref,
+        completion=completion,
+    )
+
+
+async def _fake_revision_lane(
+    runner: _Runner,
+    *,
+    state: dict,
+    module_id: str,
+    current: ModuleSubmission,
+    findings: list[CrossReviewFinding],
+    review_round: int,
+    owner_input_ref: str,
+    **_kwargs,
+) -> lifecycle._CrossOwnerLaneResult:
+    run_id = state["run_id"]
+    responses = [
+        RevisionResponse(
+            finding_id=finding.id,
+            action="implemented",
+            summary="责任模块已按本轮Cross finding补充接口责任、实施顺序和联合验收条件。",
+            changed_target_ids=list(finding.target_submodule_ids),
+        )
+        for finding in findings
+    ]
+    revised = current.model_copy(
+        update={
+            "revision": current.revision + 1,
+            "revision_responses": responses,
+        }
+    )
+    subject_ref = (
+        f"Work/runs/{run_id}/modules/{module_id}-r{revised.revision}.json"
+    )
+    subject_path = runner.service.store.write_json(
+        subject_ref, revised.model_dump(mode="json")
+    )
+    local_ref = (
+        f"Work/runs/{run_id}/reviews/module/cross-r{review_round}/"
+        f"{module_id}/completion.json"
+    )
+    runner.service.store.write_json(
+        local_ref, {"status": "completed", "module_id": module_id}
+    )
+    machine_ref = (
+        f"Work/runs/{run_id}/validations/cross-{module_id}-r{revised.revision}.json"
+    )
+    report = ValidationReport(
+        validation_protocol_version=2,
+        run_id=run_id,
+        subject_ref=subject_ref,
+        subject_revision=revised.revision,
+        content_sha256=hashlib.sha256(subject_path.read_bytes()).hexdigest(),
+        validator="test-cross-regression-loop-v1",
+        check_ids=[],
+        failures=[],
+        observations=[],
+        passed=True,
+    )
+    runner.service.store.write_json(machine_ref, report.model_dump(mode="json"))
+    completion = CrossOwnerCompletion(
+        lane_id=f"cross-r{review_round}-module-{module_id}",
+        run_id=run_id,
+        review_round=review_round,
+        module_id=module_id,
+        semantic_key=hashlib.sha256(
+            f"{module_id}:{review_round}".encode()
+        ).hexdigest(),
+        subject_revision=revised.revision,
+        owner_input=_artifact_ref(runner, owner_input_ref),
+        subject=_artifact_ref(runner, subject_ref),
+        local_review_completion=_artifact_ref(runner, local_ref),
+        machine_validation=_artifact_ref(runner, machine_ref),
+        author_task_attempt_id=f"test-author-{module_id}-r{review_round}",
+        reviewer_session_id=f"cross-owner-{module_id}",
+        lease_epoch=1,
+    )
+    completion_ref = (
+        f"Work/runs/{run_id}/lanes/cross-r{review_round}/"
+        f"module-{module_id}/completion-r{revised.revision}.json"
+    )
+    runner.service.store.write_json(
+        completion_ref, completion.model_dump(mode="json")
+    )
+    return lifecycle._CrossOwnerLaneResult(
+        module=revised,
+        responses=responses,
         local_review_ref=local_ref,
         machine_validation_ref=machine_ref,
         completion_ref=completion_ref,
@@ -261,7 +377,6 @@ def test_legacy_cross_owner_promotion_requires_matching_completed_task_payload(
         ),
         findings=[],
         synthesis_inputs=_synthesis(owner_module_id),
-        interface_closures=[],
     )
     ref = (
         f"Work/runs/{run_id}/reviews/"
@@ -368,6 +483,116 @@ async def test_fixed_five_owner_wave_has_full_owner_views_distinct_sessions_and_
 
 
 @pytest.mark.asyncio
+async def test_cross_owner_recheck_regression_enters_next_revision_round(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-cross-regression"
+    first = _cross_finding("XMR-2.1-001")
+    regression = _cross_finding("XMR-2.1-r1-001")
+
+    class _RegressionRunner(_Runner):
+        async def _agent(
+            self,
+            _agent_id,
+            envelope,
+            _artifacts,
+            _workflow_id,
+            *,
+            session_key=None,
+        ):
+            owner_module_id = envelope.task_id.split("-")[2]
+            self.calls.append((envelope.task_id, session_key or ""))
+            if envelope.task_id.endswith("initial"):
+                return CrossOwnerFindingSubmission(
+                    owner_module_id=owner_module_id,
+                    coverage=CrossReviewCoverageEntry(
+                        module_id=owner_module_id,
+                        checked_dimensions=list(CROSS_REVIEW_DIMENSIONS),
+                    ),
+                    findings=[first] if owner_module_id == "2.1" else [],
+                    synthesis_inputs=_synthesis(owner_module_id),
+                )
+            contract = CrossOwnerInput.model_validate_json(
+                (self.service.workspace / envelope.input_refs[0]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            return CrossOwnerVerdictSubmission(
+                owner_module_id=owner_module_id,
+                coverage=CrossReviewCoverageEntry(
+                    module_id=owner_module_id,
+                    checked_dimensions=list(CROSS_REVIEW_DIMENSIONS),
+                ),
+                verdicts=[
+                    ResolutionVerdict(
+                        finding_id=finding.id,
+                        verdict="resolved",
+                        reason="责任模块当前修订满足该finding的全部reviewer checks。",
+                        evidence_refs=[contract.owner_subject_ref],
+                    )
+                    for finding in contract.required_findings
+                ],
+                new_findings=(
+                    [regression]
+                    if owner_module_id == "2.1" and contract.review_round == 1
+                    else []
+                ),
+            )
+
+    runner = _RegressionRunner(tmp_path)
+    _write_modules(runner, run_id)
+    monkeypatch.setattr(
+        lifecycle,
+        "_verified_cross_owner_noop",
+        lambda runner, **kwargs: _fake_noop(runner, **kwargs),
+    )
+    monkeypatch.setattr(lifecycle, "_run_cross_owner_lane", _fake_revision_lane)
+    state = _state(run_id)
+
+    await lifecycle.run_cross_review(
+        runner, state, "workflow-cross-regression-loop"
+    )
+
+    assert (
+        tmp_path
+        / f"Work/runs/{run_id}/reviews/cross-owner-input-r2-2.1.json"
+    ).is_file()
+    assert (
+        tmp_path
+        / f"Work/runs/{run_id}/reviews/cross-owner-verdicts-r2-2.1.json"
+    ).is_file()
+    aggregate_findings = json.loads(
+        (
+            tmp_path / f"Work/runs/{run_id}/reviews/cross-findings-r0.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert {item["id"] for item in aggregate_findings["findings"]} == {
+        first.id,
+        regression.id,
+    }
+    aggregate_verdicts = json.loads(
+        (
+            tmp_path / f"Work/runs/{run_id}/reviews/cross-verdicts-r1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert {item["finding_id"] for item in aggregate_verdicts["verdicts"]} == {
+        first.id,
+        regression.id,
+    }
+    assert state["module_submissions"]["2.1"].revision == 2
+    assert [
+        task_id
+        for task_id, session_key in runner.calls
+        if session_key == "cross-owner-2.1"
+    ] == [
+        "cross-owner-2.1-r0-initial",
+        "cross-owner-2.1-r1-recheck",
+        "cross-owner-2.1-r2-recheck",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_cross_owner_initial_failure_drains_all_five_and_writes_no_barrier(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -463,7 +688,6 @@ async def test_fast_cross_owner_enters_local_pipeline_without_waiting_for_slow_i
                 ),
                 findings=[],
                 synthesis_inputs=_synthesis(owner_module_id),
-                interface_closures=[],
             )
 
     runner = _StaggeredRunner(tmp_path)

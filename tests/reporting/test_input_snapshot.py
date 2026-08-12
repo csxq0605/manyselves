@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -81,3 +82,106 @@ async def test_queued_run_uses_frozen_inputs_knowledge_and_template(
     assert library.open("Knowledge/guide.md").text == "ORIGINAL KNOWLEDGE"
     assert source == "project"
     assert Document(selected_template).paragraphs[0].text == "ORIGINAL TEMPLATE"
+
+
+def test_aggregate_copies_referenced_legacy_assets_without_hash_gate(
+    tmp_path: Path,
+) -> None:
+    for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5"):
+        module = tmp_path / f"Outputs/Modules/{module_id}.md"
+        module.parent.mkdir(parents=True, exist_ok=True)
+        module.write_text(
+            f"## {module_id}\n\n引用 E-0001 和缺失的旧来源 W-0999。\n",
+            encoding="utf-8",
+        )
+    evidence = {
+        "id": "E-0001",
+        "subject": "旧运行证据",
+        "fact": "可继续用于汇总",
+        "source": {"file_id": "file-a", "path": "Inputs/a.xlsx"},
+        "confidence": 1.0,
+        "needs_confirmation": False,
+        "photo_refs": ["P-0001"],
+    }
+    work = tmp_path / "Work"
+    work.mkdir(exist_ok=True)
+    (work / "evidence.jsonl").write_text(
+        json.dumps(evidence, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    source_run = work / "runs/report-source"
+    (source_run / "ledgers").mkdir(parents=True)
+    (source_run / "sources").mkdir(parents=True)
+    (source_run / "ledgers/sources.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "E-0001",
+                    "kind": "project_evidence",
+                    "title": "旧运行证据",
+                    "locator": "Inputs/a.xlsx#A1",
+                    "content_sha256": "deliberately-not-checked",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (source_run / "sources/E-0001.txt").write_text(
+        "旧运行证据正文",
+        encoding="utf-8",
+    )
+    old_photo = source_run / "assets/P-0001.png"
+    old_photo.parent.mkdir(parents=True)
+    old_photo.write_bytes(b"legacy-photo")
+    (work / "photo-manifest.json").write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {
+                        "id": "P-0001",
+                        "path": old_photo.relative_to(tmp_path).as_posix(),
+                        "sha256": "also-not-checked",
+                        "media_type": "image/png",
+                        "source_member": "xl/media/image1.png",
+                        "primary_evidence_id": "E-0001",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=NoCallProvider(),
+    )
+
+    run_id = service.prepare_run(
+        ReportRequest(operation="aggregate_existing", instruction="aggregate")
+    )
+
+    imported_source = tmp_path / f"Work/runs/{run_id}/sources/E-0001.txt"
+    imported_photo = tmp_path / f"Work/runs/{run_id}/assets/imported/P-0001.png"
+    assert imported_source.read_text(encoding="utf-8") == "旧运行证据正文"
+    assert imported_photo.read_bytes() == b"legacy-photo"
+    assert not imported_source.is_symlink()
+    assert not imported_photo.is_symlink()
+    manifest = json.loads(
+        (tmp_path / f"Work/runs/{run_id}/context/photo-manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["assets"][0]["path"] == (
+        f"Work/runs/{run_id}/assets/imported/P-0001.png"
+    )
+    provenance = json.loads(
+        (tmp_path / f"Work/runs/{run_id}/context/imported-provenance.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert provenance["gaps"] == [
+        {"id": "W-0999", "kind": "source", "reason": "not_found"}
+    ]

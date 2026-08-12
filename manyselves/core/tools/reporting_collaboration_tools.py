@@ -1453,46 +1453,19 @@ class SubmitResultTool(_ResultTool):
                 field_example = at_path(payload_example, loc)
                 if field_example is None:
                     field_example = payload_example
-                repair_instruction = (
-                    f"Correct {field} to the declared type or value and resubmit "
-                    "the complete payload as a native JSON object. Preserve all "
-                    "unrelated valid content; do not stringify the payload."
-                )
-                if (
-                    active_kind == "module_discovery_submission"
-                    and loc
-                    and loc[0] == "requests"
-                    and isinstance(payload, dict)
-                ):
-                    request_index = next(
-                        (part for part in loc[1:] if isinstance(part, int)),
-                        0,
+                if item.get("type") == "extra_forbidden":
+                    repair_instruction = (
+                        f"Remove undeclared field {field} completely and resubmit the "
+                        "complete payload as a native JSON object. Do not return this "
+                        "field with null, an empty array, or any other value. Preserve "
+                        "all unrelated valid content; do not stringify the payload."
                     )
-                    requests = payload.get("requests")
-                    candidate = (
-                        requests[request_index]
-                        if isinstance(requests, list)
-                        and 0 <= request_index < len(requests)
-                        and isinstance(requests[request_index], dict)
-                        else None
+                else:
+                    repair_instruction = (
+                        f"Correct {field} to the declared type or value and resubmit "
+                        "the complete payload as a native JSON object. Preserve all "
+                        "unrelated valid content; do not stringify the payload."
                     )
-                    if candidate is not None:
-                        requester_module = candidate.get("requester_module_id")
-                        target_module = candidate.get("target_module_id")
-                        if requester_module and target_module:
-                            corrected = deepcopy(candidate)
-                            corrected["request_id"] = (
-                                f"IF-{requester_module}-{target_module}-001"
-                            )
-                            field_example = corrected
-                            repair_instruction = (
-                                "Keep requester_module_id and target_module_id. Set "
-                                "request_id to IF-<requester_module_id>-"
-                                "<target_module_id>-NNN (for this request, for example "
-                                f"{corrected['request_id']!r}). Preserve "
-                                "all unrelated valid content and resubmit the complete native "
-                                "JSON object."
-                            )
                 issues.append(
                     issue(
                         field=field,
@@ -2020,19 +1993,7 @@ class SubmitResultTool(_ResultTool):
                     "Cross owner verdicts",
                     field="verdicts.finding_id",
                 )
-                if payload.new_findings:
-                    raise SubmissionValidationError(
-                        "Cross owner recheck cannot create a second finding wave",
-                        field="new_findings",
-                        expected="an empty array during owner recheck",
-                        example=[],
-                        received=[finding.id for finding in payload.new_findings],
-                        repair_instruction=(
-                            "Resolve or leave open only the required prior findings. "
-                            "Do not create new_findings in this one-shot owner recheck."
-                        ),
-                    )
-                findings = []
+                findings = payload.new_findings
             else:
                 return
             if payload.owner_module_id != owner_module_id:
@@ -2085,33 +2046,7 @@ class SubmitResultTool(_ResultTool):
                     example=[],
                     received=out_of_scope,
                 )
-            invalid_closures = [
-                closure.request_id
-                for closure in payload.interface_closures
-                if closure.owner_module_id is not None
-                and closure.owner_module_id != owner_module_id
-            ]
-            if invalid_closures:
-                raise SubmissionValidationError(
-                    "Cross owner interface closures leave owner scope",
-                    field="interface_closures.owner_module_id",
-                    expected=owner_module_id,
-                    example=[],
-                    received=invalid_closures,
-                )
             if isinstance(payload, CrossOwnerFindingSubmission):
-                expected_closure_ids = set(contract.pending_interface_request_ids)
-                actual_closure_ids = {
-                    closure.request_id for closure in payload.interface_closures
-                }
-                if actual_closure_ids != expected_closure_ids:
-                    raise SubmissionValidationError(
-                        "Cross owner interface closure coverage is incomplete",
-                        field="interface_closures.request_id",
-                        expected=sorted(expected_closure_ids),
-                        example=sorted(expected_closure_ids),
-                        received=sorted(actual_closure_ids),
-                    )
                 invalid_synthesis_ids = [
                     item.id
                     for item in payload.synthesis_inputs
@@ -2130,10 +2065,15 @@ class SubmitResultTool(_ResultTool):
                 for source in SourceLedger(self.store.workspace, self.run_id).records
                 if source.id.startswith("E-")
             }
+            synthesis_inputs = (
+                payload.synthesis_inputs
+                if isinstance(payload, CrossOwnerFindingSubmission)
+                else []
+            )
             unknown_evidence = sorted(
                 {
                     ref
-                    for synthesis in payload.synthesis_inputs
+                    for synthesis in synthesis_inputs
                     for ref in synthesis.evidence_refs
                     if ref.startswith("E-") and ref not in known_evidence
                 }
@@ -2530,24 +2470,12 @@ class SubmitResultTool(_ResultTool):
                     existing_ids=[],
                 )
             elif kind == "cross_owner_verdict_submission":
-                # These fields are not part of the provider-visible recheck
-                # schema.  Normalize legacy/model echoes away before typed
+                # Removed legacy fields are not part of the provider-visible
+                # recheck schema.  Normalize harmless echoes away before typed
                 # validation; the immutable initial owner artifact remains the
-                # sole source of synthesis and interface closure semantics.
-                normalized["synthesis_inputs"] = []
-                normalized["interface_closures"] = []
-                if normalized.get("new_findings"):
-                    raise SubmissionValidationError(
-                        "Cross owner recheck cannot create a second finding wave",
-                        field="new_findings",
-                        expected="an empty array during owner recheck",
-                        example=[],
-                        received=normalized.get("new_findings"),
-                        repair_instruction=(
-                            "Resolve or leave open only the required prior findings. "
-                            "Do not create new_findings in this one-shot owner recheck."
-                        ),
-                    )
+                # sole source of initial-only material.
+                normalized.pop("synthesis_inputs", None)
+                normalized.pop("interface_closures", None)
                 verdicts = normalized.get("verdicts")
                 if isinstance(verdicts, list) and len(verdicts) == len(existing_ids):
                     normalized["verdicts"] = [
@@ -2556,10 +2484,11 @@ class SubmitResultTool(_ResultTool):
                         else verdict
                         for verdict, finding_id in zip(verdicts, existing_ids, strict=True)
                     ]
-                # The current owner lane is one-shot: recheck may close prior
-                # findings but cannot create a second finding wave.
-                if "new_findings" not in normalized:
-                    normalized["new_findings"] = []
+                normalized["new_findings"] = self._runtime_finding_ids(
+                    normalized.get("new_findings", []),
+                    prefix=f"XMR-{owner_module_id}-r{contract.review_round}-",
+                    existing_ids=existing_ids,
+                )
         elif isinstance(contract, (FinalReviewInput, AggregateFinalReviewInput)):
             normalized["checked_section_ids"] = list(contract.required_section_ids)
             existing_ids = [finding.id for finding in contract.required_findings]

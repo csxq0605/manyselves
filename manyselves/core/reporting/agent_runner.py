@@ -97,7 +97,6 @@ from .input_contracts import (
 )
 from .message_router import WorkflowMessageRouter, artifact_path_refs
 from .models import CHIEF_RESULT_PART_IDS, CHIEF_SECTION_RESULT_PART_IDS
-from .module_collaboration import InterfaceRequest
 from .module_skills import ModuleSkillLibrary
 from .parallel_runtime import (
     IdentityLease,
@@ -194,14 +193,6 @@ class _RunnerContextRebuilder(ReportingContextRebuilder):
             forensic_only=rebased.forensic_only,
             reason=rebased.reason,
         )
-
-
-MODULE_COLLABORATION_SUBMISSION_KINDS = frozenset(
-    {
-        "module_discovery_submission",
-        "module_interface_response_submission",
-    }
-)
 
 
 def load_conversation_trace(
@@ -648,10 +639,6 @@ class ReportingAgentRunner:
             return "module_revision"
         if "module_submission" in outputs:
             return "module_authoring"
-        if "module_discovery_submission" in outputs:
-            return "module_collaboration_discovery"
-        if "module_interface_response_submission" in outputs:
-            return "module_collaboration_response"
         return "reporting_other"
 
     @staticmethod
@@ -1704,7 +1691,6 @@ class ReportingAgentRunner:
         contract,
         *,
         module_id: str | None = None,
-        collaboration_request_ids: list[str] | None = None,
     ) -> dict:
         """Specialize provider-visible review schemas to the exact active task."""
 
@@ -1714,69 +1700,7 @@ class ReportingAgentRunner:
             node.get("properties", {}).pop(name, None)
             node["required"] = [field for field in node.get("required", []) if field != name]
 
-        if kind in MODULE_COLLABORATION_SUBMISSION_KINDS:
-            if module_id is None:
-                raise ValueError(
-                    f"{kind} requires one fixed module specialist identity"
-                )
-            schema.get("properties", {}).get("module_id", {}).update(
-                {"const": module_id}
-            )
-            if kind == "module_interface_response_submission" and collaboration_request_ids is not None:
-                dispositions = schema.get("properties", {}).get(
-                    "dispositions", {}
-                )
-                dispositions.update(
-                    {
-                        "minItems": len(collaboration_request_ids),
-                        "maxItems": len(collaboration_request_ids),
-                    }
-                )
-                (
-                    schema.get("$defs", {})
-                    .get("InterfaceDisposition", {})
-                    .get("properties", {})
-                    .get("request_id", {})
-                    .update({"enum": list(collaboration_request_ids)})
-                )
-            examples = schema.get("examples", [])
-            if examples and isinstance(examples[0], dict):
-                example = examples[0]
-                example["module_id"] = module_id
-                if kind == "module_discovery_submission":
-                    example.update(
-                        {
-                            "discovery_summary": (
-                                f"已完成模块 {module_id} 的证据与接口覆盖发现。"
-                            ),
-                            "evidence_ids": [],
-                            "interface_coverage": [
-                                {
-                                    "target_module_id": peer_id,
-                                    "status": "not_applicable",
-                                    "rationale": "当前发现没有形成该模块接口依赖。",
-                                }
-                                for peer_id in REPORT_TAXONOMY
-                                if peer_id != module_id
-                            ],
-                            "requests": [],
-                        }
-                    )
-                elif kind == "module_interface_response_submission" and (
-                    collaboration_request_ids is not None
-                ):
-                    example["dispositions"] = [
-                        {
-                            "request_id": request_id,
-                            "status": "unresolved",
-                            "evidence_ids": [],
-                            "conditions": [],
-                            "unresolved_reason": "当前证据不足以形成可靠回答。",
-                            "boundary": "保留该接口为未决边界，不推断请求方事实。",
-                        }
-                        for request_id in collaboration_request_ids
-                    ]
-        elif isinstance(contract, ModuleAuthoringInput):
+        if isinstance(contract, ModuleAuthoringInput):
             schema.get("properties", {}).get("module_id", {}).update({"const": contract.module_id})
             schema.get("properties", {}).get("revision", {}).update({"const": contract.revision})
         elif isinstance(contract, ModuleRevisionInput):
@@ -1840,11 +1764,9 @@ class ReportingAgentRunner:
             finding = schema.get("$defs", {}).get("CrossReviewFinding", {})
             remove_property(finding, "id")
             if kind == "cross_owner_verdict_submission":
-                # Initial synthesis and interface closures are immutable
-                # runtime-owned inputs.  Recheck is verdict-only so a model
-                # cannot silently rewrite an already accepted Cross relation.
+                # Initial synthesis is immutable runtime-owned input. Recheck
+                # may report regressions but cannot rewrite an accepted relation.
                 remove_property(schema, "synthesis_inputs")
-                remove_property(schema, "interface_closures")
                 required_ids = [finding.id for finding in contract.required_findings]
                 verdicts = schema.get("properties", {}).get("verdicts", {})
                 verdicts.update(
@@ -1928,86 +1850,6 @@ class ReportingAgentRunner:
                 else:
                     example["verdicts"] = [deepcopy(base) for _ in required_findings]
         return schema
-
-    def _collaboration_request_ids(
-        self,
-        envelope: TaskEnvelope,
-        module_id: str | None,
-    ) -> list[str] | None:
-        """Load the exact module-level Wave 2 inbox for schema binding."""
-
-        if "module_interface_response_submission" not in envelope.allowed_outputs:
-            return None
-        if module_id is None:
-            raise ValueError("Wave 2 response requires a fixed module identity")
-        inbox_refs = [
-            ref
-            for ref in envelope.input_refs
-            if "/collaboration/inboxes/" in ref
-        ]
-        if len(inbox_refs) != 1:
-            raise ValueError(
-                "Wave 2 response requires exactly one collaboration inbox ref"
-            )
-        expected_ref = (
-            f"Work/runs/{envelope.run_id}/collaboration/inboxes/module-{module_id}.json"
-        )
-        if inbox_refs[0] != expected_ref:
-            raise ValueError(
-                "Wave 2 collaboration inbox must use its canonical current-run path"
-            )
-        inbox_path = (self.workspace / inbox_refs[0]).resolve()
-        run_root = (
-            self.workspace / f"Work/runs/{envelope.run_id}"
-        ).resolve()
-        if (
-            (self.workspace / inbox_refs[0]).is_symlink()
-            or not inbox_path.is_relative_to(run_root)
-            or not inbox_path.is_file()
-        ):
-            raise ValueError("Wave 2 collaboration inbox is not readable")
-        try:
-            inbox = json.loads(inbox_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise ValueError("Wave 2 collaboration inbox is invalid JSON") from exc
-        requests = inbox.get("requests") if isinstance(inbox, dict) else None
-        if (
-            inbox.get("kind") != "module_interface_inbox"
-            or inbox.get("run_id") != envelope.run_id
-            or inbox.get("module_id") != module_id
-            or not isinstance(requests, list)
-            or not requests
-        ):
-            raise ValueError(
-                "Wave 2 collaboration inbox does not match the active module"
-            )
-        try:
-            typed_requests = [
-                InterfaceRequest.model_validate(item)
-                for item in requests
-            ]
-        except ValueError as exc:
-            raise ValueError(
-                "Wave 2 collaboration inbox contains an invalid interface request"
-            ) from exc
-        if any(
-            request.target_module_id != module_id
-            for request in typed_requests
-        ):
-            raise ValueError(
-                "Wave 2 collaboration inbox contains a request for another module"
-            )
-        request_ids = [
-            request.request_id for request in typed_requests
-        ]
-        if (
-            any(not isinstance(item, str) or not item for item in request_ids)
-            or len(request_ids) != len(set(request_ids))
-        ):
-            raise ValueError(
-                "Wave 2 collaboration inbox request_ids must be non-empty and unique"
-            )
-        return list(request_ids)
 
     @staticmethod
     def _result_part_item_schema(
@@ -2305,26 +2147,11 @@ class ReportingAgentRunner:
                     "template distillation template_ref is not one canonical workspace file"
                 )
         input_contract = self._input_contract(envelope)
-        collaboration_outputs = (
-            set(envelope.allowed_outputs) & MODULE_COLLABORATION_SUBMISSION_KINDS
-        )
-        if collaboration_outputs and (
-            len(envelope.allowed_outputs) != 1 or module_id is None
-        ):
-            raise ValueError(
-                "a collaboration wave task requires exactly one collaboration "
-                "submission kind and one fixed module specialist identity"
-            )
-        collaboration_request_ids = self._collaboration_request_ids(
-            envelope,
-            module_id,
-        )
         task_submission_schemas = {
             kind: self._task_submission_schema(
                 kind,
                 input_contract,
                 module_id=module_id,
-                collaboration_request_ids=collaboration_request_ids,
             )
             for kind in envelope.allowed_outputs
         }
@@ -3914,17 +3741,6 @@ class ReportingAgentRunner:
                         f"{module_instruction}"
                         f"随后立即调用 submit_result {submission_instruction}。"
                         "不得重新读取或搜索输入。\n"
-                        "</submission_correction>"
-                    )
-                elif (
-                    set(envelope.allowed_outputs)
-                    & MODULE_COLLABORATION_SUBMISSION_KINDS
-                ):
-                    correction = (
-                        "<submission_correction>\n"
-                        "你已经完成本轮协作分析，但尚未提交类型化结果。"
-                        f"立即使用现有上下文调用 submit_result 提交唯一的 {expected}；"
-                        "不得开始最终正文、不得调用正文分段工具、不得重新检索。\n"
                         "</submission_correction>"
                     )
                 elif definition.id.startswith("module-") and definition.id.endswith("-specialist"):

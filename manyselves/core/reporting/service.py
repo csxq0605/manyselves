@@ -7,6 +7,7 @@ import io
 import json
 import os
 import re
+import shutil
 import stat
 import tempfile
 import time
@@ -269,6 +270,172 @@ class ReportingService:
         run_id = self.prepare_run(request)
         return await self.run_prepared(request, run_id)
 
+    def _copy_referenced_existing_assets(
+        self,
+        run_id: str,
+        source_refs: list[Path],
+    ) -> None:
+        """Copy the E/R/W/P closure used by imported report prose into a new run.
+
+        This is deliberately a recovery-oriented file copy, not a CAS or hash
+        identity gate.  Missing legacy sidecars are recorded as gaps so usable
+        module prose can still be aggregated.
+        """
+
+        source_ids: set[str] = set()
+        for ref in source_refs:
+            path = self.workspace / ref
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            source_ids.update(re.findall(r"\b[ERWP]-\d{3,}\b", text))
+        if not source_ids:
+            return
+
+        gaps: list[dict[str, str]] = []
+        evidence_by_id: dict[str, dict] = {}
+        global_evidence = self.workspace / "Work/evidence.jsonl"
+        if global_evidence.is_file():
+            try:
+                evidence_lines = global_evidence.read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeDecodeError):
+                evidence_lines = []
+                gaps.append({"kind": "evidence", "reason": "unreadable"})
+            for line in evidence_lines:
+                if not line.strip():
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    gaps.append({"kind": "evidence", "reason": "invalid_jsonl_line"})
+                    continue
+                evidence_id = str(item.get("id", ""))
+                if evidence_id in source_ids:
+                    evidence_by_id[evidence_id] = item
+                    source_ids.update(
+                        str(photo_id)
+                        for photo_id in item.get("photo_refs", [])
+                        if re.fullmatch(r"P-\d{3,}", str(photo_id))
+                    )
+
+        ledger_records: dict[str, dict] = {}
+        record_origins: dict[str, Path] = {}
+        ledger_paths = sorted(
+            (self.workspace / "Work/runs").glob("*/ledgers/sources.json"),
+            key=lambda path: path.stat().st_mtime_ns,
+            reverse=True,
+        )
+        wanted_source_ids = {
+            item for item in source_ids if re.fullmatch(r"[ERW]-\d{3,}", item)
+        }
+        for ledger_path in ledger_paths:
+            if wanted_source_ids.issubset(ledger_records):
+                break
+            try:
+                records = json.loads(ledger_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(records, list):
+                continue
+            for record in records:
+                source_id = str(record.get("id", "")) if isinstance(record, dict) else ""
+                if source_id in wanted_source_ids and source_id not in ledger_records:
+                    ledger_records[source_id] = record
+                    record_origins[source_id] = ledger_path.parents[1]
+
+        run_root = self.workspace / "Work/runs" / run_id
+        imported_sources = run_root / "sources"
+        imported_sources.mkdir(parents=True, exist_ok=True)
+        for source_id in sorted(wanted_source_ids):
+            origin = record_origins.get(source_id)
+            source_content = origin / "sources" / f"{source_id}.txt" if origin else None
+            if source_content is not None and source_content.is_file():
+                try:
+                    shutil.copyfile(source_content, imported_sources / f"{source_id}.txt")
+                except OSError:
+                    gaps.append(
+                        {"id": source_id, "kind": "source", "reason": "copy_failed"}
+                    )
+            elif source_id in evidence_by_id:
+                try:
+                    (imported_sources / f"{source_id}.txt").write_text(
+                        json.dumps(evidence_by_id[source_id], ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                except OSError:
+                    gaps.append(
+                        {"id": source_id, "kind": "source", "reason": "copy_failed"}
+                    )
+            else:
+                gaps.append({"id": source_id, "kind": "source", "reason": "not_found"})
+
+        if ledger_records:
+            self.store.write_json(
+                f"Work/runs/{run_id}/ledgers/sources.json",
+                [ledger_records[key] for key in sorted(ledger_records)],
+            )
+        if evidence_by_id:
+            self.store.write_jsonl(
+                f"Work/runs/{run_id}/evidence.jsonl",
+                [evidence_by_id[key] for key in sorted(evidence_by_id)],
+            )
+
+        wanted_photo_ids = {
+            item for item in source_ids if re.fullmatch(r"P-\d{3,}", item)
+        }
+        imported_photos: list[dict] = []
+        global_photos = self.workspace / "Work/photo-manifest.json"
+        if wanted_photo_ids and global_photos.is_file():
+            try:
+                photo_payload = json.loads(global_photos.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                photo_payload = {}
+                gaps.append({"kind": "photo_manifest", "reason": "unreadable"})
+            by_id = {
+                str(item.get("id")): item
+                for item in photo_payload.get("assets", [])
+                if isinstance(item, dict)
+            }
+            for photo_id in sorted(wanted_photo_ids):
+                raw = by_id.get(photo_id)
+                if raw is None:
+                    gaps.append({"id": photo_id, "kind": "photo", "reason": "not_found"})
+                    continue
+                source_path = self.workspace / Path(str(raw.get("path", "")))
+                if not source_path.is_file():
+                    gaps.append({"id": photo_id, "kind": "photo", "reason": "file_missing"})
+                    continue
+                suffix = source_path.suffix if len(source_path.suffix) <= 12 else ""
+                target_ref = Path(f"Work/runs/{run_id}/assets/imported/{photo_id}{suffix}")
+                target = self.workspace / target_ref
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    shutil.copyfile(source_path, target)
+                except OSError:
+                    gaps.append({"id": photo_id, "kind": "photo", "reason": "copy_failed"})
+                    continue
+                imported_photos.append({**raw, "path": target_ref.as_posix()})
+        if imported_photos:
+            self.store.write_json(
+                f"Work/runs/{run_id}/context/photo-manifest.json",
+                {"assets": imported_photos},
+            )
+        self.store.write_json(
+            f"Work/runs/{run_id}/context/imported-provenance.json",
+            {
+                "source_ids": sorted(source_ids),
+                "copied_source_ids": sorted(ledger_records),
+                "copied_evidence_ids": sorted(evidence_by_id),
+                "copied_photo_ids": sorted(
+                    str(item["id"]) for item in imported_photos
+                ),
+                "gaps": gaps,
+            },
+        )
+
     def prepare_run(self, request: ReportRequest) -> str:
         """Persist a new run request and return its stable id before execution starts."""
         run_id = f"report-{uuid.uuid4().hex[:10]}"
@@ -296,6 +463,8 @@ class ReportingService:
                 run_id,
                 extra_refs=tuple(explicit_refs),
             )
+            if request.operation in {"aggregate_existing", "render_existing"}:
+                self._copy_referenced_existing_assets(run_id, explicit_refs)
         return run_id
 
     async def run_prepared(self, request: ReportRequest, run_id: str) -> ReportingRunResult:

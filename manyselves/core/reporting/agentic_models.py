@@ -15,11 +15,6 @@ from .models import (
     PhotoAsset,
     SpecialTopicPlan,
 )
-from .module_collaboration import (
-    InterfaceCrossClosure,
-    ModuleDiscoverySubmission,
-    ModuleInterfaceResponseSubmission,
-)
 from .taxonomy import REPORT_TAXONOMY, compose_module_markdown, resolve_submodule
 
 
@@ -1032,210 +1027,6 @@ class CrossSynthesisInput(StrictModel):
 
 
 _CROSS_DECISION_MODULE_IDS = ("2.1", "2.2", "2.3", "2.4", "2.5")
-_CROSS_DECISION_IF_STATUSES = (
-    "answered",
-    "resolved_by_cross",
-    "confirmed_missing",
-    "reroute_to_owner",
-)
-
-
-class CrossDecisionIFClosure(StrictModel):
-    """One terminal IF decision carried from Cross to the chief editor.
-
-    Wave-2 ``unresolved`` and Cross ``pending_cross`` are deliberately not
-    representable here.  A pack is a closed decision boundary; unresolved
-    requests must either be transparently confirmed missing or rerouted to an
-    owner finding before the pack can reach Chief.
-    """
-
-    request_id: str = Field(
-        # Legacy module-level IF ids remain readable; requester/target leaf
-        # fields below still provide the exact semantic binding for new packs.
-        pattern=r"^IF-(?:2\.[1-5](?:\.[0-9]+)*)-(?:2\.[1-5](?:\.[0-9]+)*)-[0-9]{3,}$",
-        max_length=128,
-    )
-    requester_submodule_id: str = Field(min_length=5)
-    target_submodule_id: str = Field(min_length=5)
-    question: str = Field(min_length=1, max_length=2000)
-    status: Literal[
-        "answered",
-        "resolved_by_cross",
-        "confirmed_missing",
-        "reroute_to_owner",
-    ]
-    answer: str | None = Field(default=None, max_length=2000)
-    conditions: list[str] = Field(default_factory=list, max_length=16)
-    evidence_ids: list[str] = Field(
-        min_length=1,
-        description="Registered current-run E-* ids supporting this terminal IF decision.",
-    )
-    source_ref: str = Field(
-        min_length=1,
-        description="Current-run immutable IF request/closure artifact reference.",
-    )
-    boundary: str | None = Field(default=None, max_length=2000)
-    residual_risk: str | None = Field(default=None, max_length=2000)
-    owner_finding_id: str | None = Field(
-        default=None,
-        description="Stable XMR-IF-* owner finding id when status is reroute_to_owner.",
-    )
-
-    @model_validator(mode="before")
-    @classmethod
-    def accept_legacy_outcome_spelling(cls, value):
-        if isinstance(value, dict) and "status" not in value and "outcome" in value:
-            value = dict(value)
-            value["status"] = value.pop("outcome")
-        return value
-
-    @model_validator(mode="after")
-    def terminal_payload_is_complete(self) -> "CrossDecisionIFClosure":
-        if self.requester_submodule_id == self.target_submodule_id:
-            raise ValueError("IF requester and target leaves must differ")
-        requester = resolve_submodule(self.requester_submodule_id)
-        target = resolve_submodule(self.target_submodule_id)
-        if requester.module_id == target.module_id:
-            raise ValueError("IF requester and target leaves must belong to peer modules")
-        if not self.request_id.startswith(
-            f"IF-{requester.module_id}-{target.module_id}-"
-        ):
-            raise ValueError("IF request id does not bind requester and target leaves")
-        if any(not value.startswith("E-") for value in self.evidence_ids):
-            raise ValueError("IF closure evidence_ids must contain only E-* ids")
-        if len(self.evidence_ids) != len(set(self.evidence_ids)):
-            raise ValueError("IF closure evidence_ids must be unique")
-        if any(not value.strip() for value in self.conditions):
-            raise ValueError("IF closure conditions cannot be blank")
-        if self.status in {"answered", "resolved_by_cross"}:
-            if not self.answer or not self.answer.strip():
-                raise ValueError(f"{self.status} requires answer")
-            if not self.conditions:
-                raise ValueError(f"{self.status} requires conditions")
-            if self.boundary is not None or self.residual_risk is not None:
-                raise ValueError(f"{self.status} cannot carry missing-boundary fields")
-            if self.owner_finding_id is not None:
-                raise ValueError(f"{self.status} cannot carry an owner finding")
-        elif self.status == "confirmed_missing":
-            if self.answer is not None or self.conditions:
-                raise ValueError("confirmed_missing cannot declare an answer")
-            if not self.boundary or not self.boundary.strip():
-                raise ValueError("confirmed_missing requires boundary")
-            if not self.residual_risk or not self.residual_risk.strip():
-                raise ValueError("confirmed_missing requires residual_risk")
-            if self.owner_finding_id is not None:
-                raise ValueError("confirmed_missing cannot carry an owner finding")
-        elif self.status == "reroute_to_owner":
-            if self.answer is not None or self.conditions:
-                raise ValueError("reroute_to_owner cannot declare an answer")
-            if not self.boundary or not self.boundary.strip():
-                raise ValueError("reroute_to_owner requires boundary")
-            expected = f"XMR-{self.request_id}"
-            if self.owner_finding_id != expected:
-                raise ValueError(
-                    "reroute_to_owner requires the stable XMR-IF-* owner finding id"
-                )
-        return self
-
-
-class CrossDecisionXMRVerdict(StrictModel):
-    """Terminal Cross verdict for an interface reroute (XMR-IF-*)."""
-
-    finding_id: str = Field(pattern=r"^XMR-", min_length=5)
-    owner_module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
-    target_submodule_ids: list[str] = Field(min_length=1)
-    related_module_ids: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(
-        min_length=1
-    )
-    verdict: Literal["resolved", "open", "escalate"]
-    reason: str = Field(min_length=1)
-    evidence_refs: list[str] = Field(
-        min_length=1,
-        description="Current-run E-* evidence refs supporting this XMR verdict.",
-    )
-    source_refs: list[str] = Field(
-        min_length=1,
-        description="Current-run immutable XMR finding/verdict artifact refs.",
-    )
-
-    @model_validator(mode="after")
-    def xmr_scope_and_evidence_are_valid(self) -> "CrossDecisionXMRVerdict":
-        if len(self.target_submodule_ids) != len(set(self.target_submodule_ids)):
-            raise ValueError("XMR target_submodule_ids must be unique")
-        for submodule_id in self.target_submodule_ids:
-            if resolve_submodule(submodule_id).module_id != self.owner_module_id:
-                raise ValueError("XMR target submodule belongs to another owner module")
-        if self.owner_module_id in self.related_module_ids:
-            raise ValueError("XMR related_module_ids cannot include owner module")
-        if len(self.related_module_ids) != len(set(self.related_module_ids)):
-            raise ValueError("XMR related_module_ids must be unique")
-        if any(not value.startswith("E-") for value in self.evidence_refs):
-            raise ValueError("XMR evidence_refs must contain at least one E-* id")
-        if len(self.evidence_refs) != len(set(self.evidence_refs)):
-            raise ValueError("XMR evidence_refs must be unique")
-        if any(not value.strip() for value in self.source_refs):
-            raise ValueError("XMR source_refs cannot be blank")
-        return self
-
-
-def _cross_decision_artifact_refs(
-    cross_review_completion_ref: str,
-    if_closures: list[CrossDecisionIFClosure],
-    xmr_verdicts: list[CrossDecisionXMRVerdict],
-) -> set[str]:
-    return {
-        cross_review_completion_ref,
-        *(closure.source_ref for closure in if_closures),
-        *(ref for verdict in xmr_verdicts for ref in verdict.source_refs),
-    }
-
-
-def _validate_cross_decision_core(
-    *,
-    run_id: str,
-    module_ids: list[str],
-    cross_review_completion_ref: str,
-    if_closures: list[CrossDecisionIFClosure],
-    xmr_verdicts: list[CrossDecisionXMRVerdict],
-    artifact_refs: list[str],
-) -> list[str]:
-    expected_modules = set(_CROSS_DECISION_MODULE_IDS)
-    if len(module_ids) != 5 or set(module_ids) != expected_modules:
-        raise ValueError("Cross decision pack requires exactly modules 2.1 through 2.5")
-    if len(module_ids) != len(set(module_ids)):
-        raise ValueError("Cross decision module_ids must be unique")
-    run_prefix = f"Work/runs/{run_id}/"
-    refs = _cross_decision_artifact_refs(
-        cross_review_completion_ref,
-        if_closures,
-        xmr_verdicts,
-    )
-    if any(not ref.startswith(run_prefix) for ref in refs):
-        raise ValueError("Cross decision artifacts must belong to the current run")
-    closure_ids = [closure.request_id for closure in if_closures]
-    if len(closure_ids) != len(set(closure_ids)):
-        raise ValueError("Cross decision IF closure request ids must be unique")
-    xmr_ids = [verdict.finding_id for verdict in xmr_verdicts]
-    if len(xmr_ids) != len(set(xmr_ids)):
-        raise ValueError("Cross decision XMR finding ids must be unique")
-    reroute_ids = {
-        closure.owner_finding_id
-        for closure in if_closures
-        if closure.status == "reroute_to_owner"
-    }
-    if None in reroute_ids:
-        raise ValueError("reroute IF closure is missing its XMR owner finding")
-    if set(xmr_ids) != {value for value in reroute_ids if value is not None}:
-        raise ValueError(
-            "Cross decision XMR verdicts must exactly close rerouted IF owner findings"
-        )
-    actual_refs = sorted(set(artifact_refs))
-    expected_refs = sorted(refs)
-    if actual_refs != expected_refs:
-        raise ValueError(
-            "Cross decision artifact_refs must exactly cover completion, IF, and XMR refs"
-        )
-    return expected_refs
 
 
 class CrossDecisionPack(StrictModel):
@@ -1249,12 +1040,9 @@ class CrossDecisionPack(StrictModel):
     )
     cross_review_completion_ref: str = Field(min_length=1)
     synthesis_inputs: list[CrossSynthesisInput] = Field(default_factory=list)
-    if_closures: list[CrossDecisionIFClosure] = Field(default_factory=list)
-    xmr_verdicts: list[CrossDecisionXMRVerdict] = Field(default_factory=list)
-    residual_risks: list[str] = Field(default_factory=list)
     artifact_sha256: dict[str, str] = Field(
         min_length=1,
-        description="SHA-256 for every immutable completion, IF, and XMR artifact ref.",
+        description="SHA-256 binding for the immutable Cross completion artifact.",
     )
     pack_sha256: str = Field(
         pattern=r"^[0-9a-f]{64}$",
@@ -1263,19 +1051,13 @@ class CrossDecisionPack(StrictModel):
 
     @model_validator(mode="after")
     def pack_is_closed_and_hash_bound(self) -> "CrossDecisionPack":
-        refs = _cross_decision_artifact_refs(
-            self.cross_review_completion_ref,
-            self.if_closures,
-            self.xmr_verdicts,
-        )
-        _validate_cross_decision_core(
-            run_id=self.run_id,
-            module_ids=[str(item) for item in self.module_ids],
-            cross_review_completion_ref=self.cross_review_completion_ref,
-            if_closures=self.if_closures,
-            xmr_verdicts=self.xmr_verdicts,
-            artifact_refs=sorted(refs),
-        )
+        if set(self.module_ids) != set(_CROSS_DECISION_MODULE_IDS):
+            raise ValueError("Cross decision pack requires exactly modules 2.1 through 2.5")
+        if len(self.module_ids) != len(set(self.module_ids)):
+            raise ValueError("Cross decision module_ids must be unique")
+        refs = {self.cross_review_completion_ref}
+        if not self.cross_review_completion_ref.startswith(f"Work/runs/{self.run_id}/"):
+            raise ValueError("Cross decision artifacts must belong to the current run")
         if set(self.artifact_sha256) != refs:
             raise ValueError(
                 "Cross decision artifact_sha256 must hash every immutable artifact ref"
@@ -1283,12 +1065,6 @@ class CrossDecisionPack(StrictModel):
         if any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in self.artifact_sha256.values()):
             raise ValueError("Cross decision artifact_sha256 values must be SHA-256 hex")
         return self
-
-
-# Short aliases used by callers that refer to the records by their protocol
-# names rather than the pack's field names.
-InterfaceClosureView = CrossDecisionIFClosure
-XMRVerdict = CrossDecisionXMRVerdict
 
 
 class ModuleReviewFindingSubmission(StrictModel):
@@ -1360,13 +1136,6 @@ class CrossReviewFindingSubmission(StrictModel):
         "additional module-local writeback."
         ),
     )
-    interface_closures: list[InterfaceCrossClosure] = Field(
-        default_factory=list,
-        description=(
-            "One exact Cross r0 outcome for each unresolved Wave 2 IF request; "
-            "answered Wave 2 requests are already closed and must not be repeated."
-        ),
-    )
 
     @model_validator(mode="after")
     def coverage_and_ids_are_complete_and_unique(self) -> "CrossReviewFindingSubmission":
@@ -1379,9 +1148,6 @@ class CrossReviewFindingSubmission(StrictModel):
             raise ValueError("cross review finding ids must be unique")
         if len(synthesis_ids) != len(set(synthesis_ids)):
             raise ValueError("cross synthesis input ids must be unique")
-        closure_ids = [item.request_id for item in self.interface_closures]
-        if len(closure_ids) != len(set(closure_ids)):
-            raise ValueError("cross interface closure request ids must be unique")
         return self
 
 
@@ -1402,12 +1168,6 @@ class CrossReviewVerdictSubmission(StrictModel):
         default_factory=list,
         description="Updated supported inputs for the chief editor after recheck.",
     )
-    interface_closures: list[InterfaceCrossClosure] = Field(
-        default_factory=list,
-        description=(
-            "One exact Cross r1 closure for each IF still pending after owner writeback."
-        ),
-    )
 
     @model_validator(mode="after")
     def coverage_and_ids_are_complete_and_unique(self) -> "CrossReviewVerdictSubmission":
@@ -1422,9 +1182,6 @@ class CrossReviewVerdictSubmission(StrictModel):
             raise ValueError("new cross review finding ids must be unique")
         if set(verdict_ids) & set(finding_ids):
             raise ValueError("a prior cross finding cannot also be submitted as new")
-        closure_ids = [item.request_id for item in self.interface_closures]
-        if len(closure_ids) != len(set(closure_ids)):
-            raise ValueError("cross interface closure request ids must be unique")
         return self
 
 
@@ -1436,7 +1193,6 @@ class CrossOwnerFindingSubmission(StrictModel):
     coverage: CrossReviewCoverageEntry
     findings: list[CrossReviewFinding] = Field(default_factory=list)
     synthesis_inputs: list[CrossSynthesisInput] = Field(default_factory=list)
-    interface_closures: list[InterfaceCrossClosure] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def findings_stay_in_owner_scope(self) -> "CrossOwnerFindingSubmission":
@@ -1457,8 +1213,19 @@ class CrossOwnerVerdictSubmission(StrictModel):
     coverage: CrossReviewCoverageEntry
     verdicts: list[ResolutionVerdict] = Field(default_factory=list)
     new_findings: list[CrossReviewFinding] = Field(default_factory=list)
-    synthesis_inputs: list[CrossSynthesisInput] = Field(default_factory=list)
-    interface_closures: list[InterfaceCrossClosure] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_empty_legacy_recheck_fields(cls, value: object) -> object:
+        """Read old verdict artifacts without re-exposing removed output fields."""
+
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        for field in ("synthesis_inputs", "interface_closures"):
+            if normalized.get(field) in (None, []):
+                normalized.pop(field, None)
+        return normalized
 
     @model_validator(mode="after")
     def findings_stay_in_owner_scope(self) -> "CrossOwnerVerdictSubmission":
@@ -1813,8 +1580,6 @@ Submission = Annotated[
     | WorkflowDecisionSubmission
     | ChiefRevisionSubmission
     | EditedReportSubmission
-    | ModuleDiscoverySubmission
-    | ModuleInterfaceResponseSubmission
     | SkillEvolutionSubmission,
     Field(discriminator="kind"),
 ]
@@ -1835,8 +1600,6 @@ SubmissionInput = Annotated[
     | FinalReviewVerdictSubmission
     | WorkflowDecisionSubmission
     | EditedReportSubmissionInput
-    | ModuleDiscoverySubmission
-    | ModuleInterfaceResponseSubmission
     | SkillEvolutionSubmission,
     Field(discriminator="kind"),
 ]
@@ -1857,8 +1620,6 @@ SUBMISSION_INPUT_TYPES: dict[str, type[BaseModel]] = {
     "final_review_verdict_submission": FinalReviewVerdictSubmission,
     "workflow_decision_submission": WorkflowDecisionSubmission,
     "edited_report_submission": EditedReportSubmissionInput,
-    "module_discovery_submission": ModuleDiscoverySubmission,
-    "module_interface_response_submission": ModuleInterfaceResponseSubmission,
     "skill_evolution_submission": SkillEvolutionSubmission,
 }
 

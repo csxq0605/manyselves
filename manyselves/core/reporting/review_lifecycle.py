@@ -69,13 +69,6 @@ from .input_contracts import (
     module_content_view,
     strip_runtime_claim_markers,
 )
-from .module_collaboration import (
-    InterfaceCrossClosure,
-    InterfaceResolutionClosureBatch,
-    InterfaceResolutionRegistry,
-    apply_interface_cross_closure,
-    interface_owner_finding_id,
-)
 from .models import (
     CHIEF_SECTION_RESULT_PART_IDS,
     FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
@@ -184,11 +177,6 @@ class CrossReviewProgress(StrictModel):
     review_round: int = 0
     revised_owner_ids: list[str] = Field(default_factory=list)
     cross_owner_barrier_ref: str | None = None
-    interface_registry_ref: str | None = None
-    interface_registry_sha256: str | None = None
-    interface_closure_refs: list[str] = Field(default_factory=list)
-    interface_closure_sha256: dict[str, str] = Field(default_factory=dict)
-    interface_residual_risks: dict[str, str] = Field(default_factory=dict)
 
 
 class FinalReviewProgress(StrictModel):
@@ -1908,6 +1896,10 @@ class _CrossOwnerPipelineResult(StrictModel):
     lane: _CrossOwnerLaneResult
     verdict_ref: str | None = None
     verdict: CrossOwnerVerdictSubmission | None = None
+    finding_refs: list[str] = Field(default_factory=list)
+    verdict_refs: list[str] = Field(default_factory=list)
+    findings: list[CrossReviewFinding] = Field(default_factory=list)
+    verdicts: list[ResolutionVerdict] = Field(default_factory=list)
 
 
 _CROSS_OWNER_MODULE_IDS = tuple(REPORT_TAXONOMY)
@@ -1956,9 +1948,6 @@ def _cross_owner_input(
     local_review_ref: str | None = None,
     machine_validation_ref: str | None = None,
     prior_synthesis_inputs: list[CrossSynthesisInput] | None = None,
-    interface_registry_ref: str | None = None,
-    interface_registry_sha256: str | None = None,
-    pending_interface_request_ids: list[str] | None = None,
 ) -> tuple[CrossOwnerInput, str]:
     """Build and persist one owner-complete/four-relation Cross input."""
 
@@ -2015,9 +2004,6 @@ def _cross_owner_input(
         local_regression_review_ref=local_review_ref,
         machine_validation_ref=machine_validation_ref,
         machine_validation_report=machine_report,
-        interface_registry_ref=interface_registry_ref,
-        interface_registry_sha256=interface_registry_sha256,
-        pending_interface_request_ids=pending_interface_request_ids or [],
     )
     ref = _write_model(
         runner,
@@ -2150,14 +2136,6 @@ def _load_cross_owner_input(
             subject_ref=contract.owner_subject_ref,
             subject_revision=contract.owner_subject_revision,
         )
-    if contract.interface_registry_ref is not None:
-        registry_actual = _cross_owner_artifact_ref(
-            runner, contract.interface_registry_ref
-        )
-        if registry_actual.sha256 != contract.interface_registry_sha256:
-            raise ReviewLifecycleError(
-                f"Cross owner {phase} interface registry changed: {owner_module_id}"
-            )
     return contract, ref
 
 
@@ -2230,11 +2208,12 @@ def _load_cross_owner_verdict(
     *,
     run_id: str,
     owner_module_id: str,
+    review_round: int,
     required_findings: list[CrossReviewFinding],
     require_task_binding: bool = False,
 ) -> tuple[CrossOwnerVerdictSubmission, str] | None:
     ref = (
-        f"Work/runs/{run_id}/reviews/cross-owner-verdicts-r1-"
+        f"Work/runs/{run_id}/reviews/cross-owner-verdicts-r{review_round}-"
         f"{owner_module_id}.json"
     )
     path = runner.service.workspace / ref
@@ -2253,25 +2232,20 @@ def _load_cross_owner_verdict(
     if (
         verdict.owner_module_id != owner_module_id
         or actual_ids != expected_ids
-        or verdict.new_findings
-        or any(item.verdict != "resolved" for item in verdict.verdicts)
     ):
         raise ReviewLifecycleError(
-            f"Cross owner verdict does not close its exact finding set: {owner_module_id}"
+            f"Cross owner verdict does not cover its exact finding set: {owner_module_id}"
         )
     if require_task_binding:
         _require_cross_owner_task_payload(
             runner,
             run_id=run_id,
-            task_id=f"cross-owner-{owner_module_id}-r1-recheck",
+            task_id=f"cross-owner-{owner_module_id}-r{review_round}-recheck",
             expected_payload=verdict,
         )
-    # Initial synthesis and interface closure artifacts are runtime-owned and
-    # immutable.  Older v1 rechecks were allowed to echo or rewrite them; those
-    # fields are deliberately ignored during recovery and never promoted.
-    return verdict.model_copy(
-        update={"synthesis_inputs": [], "interface_closures": []}
-    ), ref
+    # Initial synthesis artifacts are runtime-owned and immutable; rechecks do
+    # not echo or rewrite them.
+    return verdict, ref
 
 
 def _require_cross_owner_task_payload(
@@ -2320,12 +2294,13 @@ def _recover_cross_owner_lane(
     *,
     state: dict,
     owner_module_id: str,
-    initial_input_ref: str,
+    review_round: int,
+    owner_input_ref: str,
     required_findings: list[CrossReviewFinding],
 ) -> _CrossOwnerLaneResult | None:
     lane_root = (
         runner.service.workspace
-        / f"Work/runs/{state['run_id']}/lanes/cross-r1/module-{owner_module_id}"
+        / f"Work/runs/{state['run_id']}/lanes/cross-r{review_round}/module-{owner_module_id}"
     )
     candidates = [
         path
@@ -2335,7 +2310,7 @@ def _recover_cross_owner_lane(
     if not candidates:
         return None
     matching: list[tuple[str, CrossOwnerCompletion]] = []
-    expected_input = _cross_owner_artifact_ref(runner, initial_input_ref)
+    expected_input = _cross_owner_artifact_ref(runner, owner_input_ref)
     for path in candidates:
         try:
             completion = CrossOwnerCompletion.model_validate_json(
@@ -2348,9 +2323,9 @@ def _recover_cross_owner_lane(
         if (
             completion.run_id == state["run_id"]
             and completion.module_id == owner_module_id
-            and completion.review_round == 1
+            and completion.review_round == review_round
             and completion.owner_input is not None
-            and completion.owner_input.ref == initial_input_ref
+            and completion.owner_input.ref == owner_input_ref
             and completion.owner_input.sha256 == expected_input.sha256
         ):
             matching.append(
@@ -2385,7 +2360,7 @@ def _recover_cross_owner_lane(
         runner,
         run_id=state["run_id"],
         owner_module_id=owner_module_id,
-        review_round=1,
+        review_round=review_round,
         phase="recheck",
     )
     if recheck_input is not None:
@@ -2430,13 +2405,18 @@ def _promote_cross_owner_pipeline_completion(
 ) -> _CrossOwnerLaneResult:
     promoted = lane.completion.model_copy(
         update={
+            # The exact-five barrier is the outer Cross lifecycle r1 barrier.
+            # Owner-internal regression rounds remain visible in their lane refs
+            # and verdict artifacts but do not split the outer barrier identity.
+            "lane_id": f"cross-r1-module-{lane.completion.module_id}",
+            "review_round": 1,
             "initial_result": _cross_owner_artifact_ref(runner, initial_result_ref),
             "verdict_result": (
                 _cross_owner_artifact_ref(runner, verdict_ref)
                 if verdict_ref is not None
                 else None
             ),
-            "schema_version": "2",
+            "schema_version": "3",
         }
     )
     ref = (
@@ -2453,7 +2433,19 @@ def _promote_cross_owner_pipeline_completion(
             raise ReviewLifecycleError(
                 f"Cross owner pipeline completion is invalid: {promoted.module_id}"
             ) from exc
-        if existing.completion_sha256() != promoted.completion_sha256():
+        legacy_compatible = (
+            existing.schema_version in {"1", "2"}
+            and existing.run_id == promoted.run_id
+            and existing.module_id == promoted.module_id
+            and existing.review_round == 1
+            and existing.initial_result == promoted.initial_result
+            and existing.verdict_result == promoted.verdict_result
+            and existing.subject == promoted.subject
+        )
+        if (
+            existing.completion_sha256() != promoted.completion_sha256()
+            and not legacy_compatible
+        ):
             raise ReviewLifecycleError(
                 f"Cross owner pipeline completion changed: {promoted.module_id}"
             )
@@ -2508,7 +2500,10 @@ async def _run_cross_owner_review(
             (
                 "initial 只提交 cross_owner_finding_submission"
                 if phase == "initial"
-                else "recheck 只提交 cross_owner_verdict_submission，逐项覆盖全部 required_findings"
+                else (
+                    "recheck 只提交 cross_owner_verdict_submission，逐项覆盖全部 "
+                    "required_findings；new_findings 只允许当前修订引入的真实回归"
+                )
             ),
             "coverage 仅证明当前 owner 检查过六个维度，不代表 approved",
         ],
@@ -3174,17 +3169,6 @@ async def run_cross_review(
         raise ReviewLifecycleError(
             "Cross owner wave requires exactly five completed module subjects"
         )
-    interface_registry: InterfaceResolutionRegistry | None = state.get(
-        "interface_resolution_registry"
-    )
-    interface_registry_ref = state.get("interface_resolution_registry_ref")
-    interface_registry_sha256 = state.get("interface_resolution_registry_sha256")
-    pending_by_owner: dict[str, list[str]] = {module_id: [] for module_id in owner_ids}
-    if interface_registry is not None:
-        for request_id in interface_registry.pending_request_ids:
-            resolution = interface_registry.resolutions[request_id]
-            pending_by_owner[resolution.request.requester_module_id].append(request_id)
-
     completion_ref = f"Work/runs/{run_id}/reviews/cross-completion.json"
     completion_path = runner.service.workspace / completion_ref
     if state.get("resume") and completion_path.is_file():
@@ -3260,9 +3244,6 @@ async def run_cross_review(
                 owner_module_id=owner_module_id,
                 phase="initial",
                 review_round=0,
-                interface_registry_ref=interface_registry_ref,
-                interface_registry_sha256=interface_registry_sha256,
-                pending_interface_request_ids=pending_by_owner[owner_module_id],
             )
         loaded_modules = _cross_owner_modules_from_input(runner, loaded[0])
         for module_id in owner_ids:
@@ -3313,12 +3294,6 @@ async def run_cross_review(
         else:
             initial_result, initial_result_ref = initial_loaded
 
-        if {
-            closure.request_id for closure in initial_result.interface_closures
-        } != set(pending_by_owner[owner_module_id]):
-            raise ReviewLifecycleError(
-                f"Cross owner {owner_module_id} interface closure coverage mismatch"
-            )
         invalid_synthesis_ids = [
             item.id
             for item in initial_result.synthesis_inputs
@@ -3329,21 +3304,31 @@ async def run_cross_review(
                 f"Cross owner {owner_module_id} synthesis ids must use its owner namespace: "
                 f"{invalid_synthesis_ids}"
             )
-        findings = list(initial_result.findings)
-        lane = _recover_cross_owner_lane(
-            runner,
-            state=state,
-            owner_module_id=owner_module_id,
-            initial_input_ref=initial_input_ref,
-            required_findings=findings,
-        )
-        if not findings:
+        pending = {finding.id: finding for finding in initial_result.findings}
+        resolved_ids: set[str] = set()
+        finding_refs = [initial_result_ref]
+        verdict_refs: list[str] = []
+        all_findings = list(initial_result.findings)
+        terminal_verdicts: dict[str, ResolutionVerdict] = {}
+        current = frozen_modules[owner_module_id]
+        review_round = 1
+        owner_input_ref = initial_input_ref
+
+        if not pending:
+            lane = _recover_cross_owner_lane(
+                runner,
+                state=state,
+                owner_module_id=owner_module_id,
+                review_round=1,
+                owner_input_ref=initial_input_ref,
+                required_findings=[],
+            )
             if lane is None:
                 lane = _verified_cross_owner_noop(
                     runner,
                     state=state,
                     owner_module_id=owner_module_id,
-                    module=frozen_modules[owner_module_id],
+                    module=current,
                     owner_input_ref=initial_input_ref,
                     review_round=1,
                 )
@@ -3359,112 +3344,185 @@ async def run_cross_review(
                 initial_result_ref=initial_result_ref,
                 initial_result=initial_result,
                 lane=lane,
+                finding_refs=finding_refs,
+                findings=all_findings,
             )
 
-        if lane is None:
-            lane = await _run_cross_owner_lane(
+        while pending:
+            findings = list(pending.values())
+            lane = _recover_cross_owner_lane(
                 runner,
                 state=state,
-                workflow_id=workflow_id,
-                module_id=owner_module_id,
-                current=frozen_modules[owner_module_id],
-                findings=findings,
-                finding_refs=[initial_result_ref],
-                review_round=1,
-                owner_input_ref=initial_input_ref,
+                owner_module_id=owner_module_id,
+                review_round=review_round,
+                owner_input_ref=owner_input_ref,
+                required_findings=findings,
             )
+            if lane is None:
+                lane = await _run_cross_owner_lane(
+                    runner,
+                    state=state,
+                    workflow_id=workflow_id,
+                    module_id=owner_module_id,
+                    current=current,
+                    findings=findings,
+                    finding_refs=finding_refs,
+                    review_round=review_round,
+                    owner_input_ref=owner_input_ref,
+                )
 
-        verdict_loaded = _load_cross_owner_verdict(
-            runner,
-            run_id=run_id,
-            owner_module_id=owner_module_id,
-            required_findings=findings,
-            require_task_binding=require_legacy_task_binding,
-        )
-        if verdict_loaded is None:
-            modules_for_recheck = dict(frozen_modules)
-            modules_for_recheck[owner_module_id] = lane.module
-            recheck_loaded = _load_cross_owner_input(
+            verdict_loaded = _load_cross_owner_verdict(
                 runner,
                 run_id=run_id,
                 owner_module_id=owner_module_id,
-                review_round=1,
-                phase="recheck",
+                review_round=review_round,
+                required_findings=findings,
+                require_task_binding=require_legacy_task_binding,
             )
-            if recheck_loaded is None:
-                _contract, recheck_input_ref = _cross_owner_input(
+            modules_for_recheck = dict(frozen_modules)
+            modules_for_recheck[owner_module_id] = lane.module
+            if verdict_loaded is None:
+                recheck_loaded = _load_cross_owner_input(
+                    runner,
+                    run_id=run_id,
+                    owner_module_id=owner_module_id,
+                    review_round=review_round,
+                    phase="recheck",
+                )
+                if recheck_loaded is None:
+                    _contract, recheck_input_ref = _cross_owner_input(
+                        runner,
+                        state=state,
+                        modules=modules_for_recheck,
+                        owner_module_id=owner_module_id,
+                        phase="recheck",
+                        review_round=review_round,
+                        required_findings=findings,
+                        revision_responses=lane.responses,
+                        local_review_ref=lane.local_review_ref,
+                        machine_validation_ref=lane.machine_validation_ref,
+                        prior_synthesis_inputs=list(initial_result.synthesis_inputs),
+                    )
+                else:
+                    recheck_contract, recheck_input_ref = recheck_loaded
+                    if (
+                        {finding.id for finding in recheck_contract.required_findings}
+                        != set(pending)
+                        or recheck_contract.owner_subject_ref
+                        != lane.completion.subject.ref
+                    ):
+                        raise ReviewLifecycleError(
+                            f"Cross owner recheck input does not bind recovered lane: "
+                            f"{owner_module_id}/r{review_round}"
+                        )
+                verdict, verdict_ref = await _run_cross_owner_review(
                     runner,
                     state=state,
+                    workflow_id=workflow_id,
                     modules=modules_for_recheck,
                     owner_module_id=owner_module_id,
                     phase="recheck",
-                    review_round=1,
+                    review_round=review_round,
+                    owner_input_ref=recheck_input_ref,
                     required_findings=findings,
                     revision_responses=lane.responses,
                     local_review_ref=lane.local_review_ref,
                     machine_validation_ref=lane.machine_validation_ref,
-                    # Only this owner's immutable synthesis is supplied as a
-                    # read-only reminder.  It is not part of the output schema.
                     prior_synthesis_inputs=list(initial_result.synthesis_inputs),
-                    interface_registry_ref=interface_registry_ref,
-                    interface_registry_sha256=interface_registry_sha256,
-                    pending_interface_request_ids=pending_by_owner[owner_module_id],
                 )
+                assert isinstance(verdict, CrossOwnerVerdictSubmission)
             else:
-                recheck_contract, recheck_input_ref = recheck_loaded
-                if (
-                    {finding.id for finding in recheck_contract.required_findings}
-                    != {finding.id for finding in findings}
-                    or recheck_contract.owner_subject_ref
-                    != lane.completion.subject.ref
-                ):
+                verdict, verdict_ref = verdict_loaded
+
+            _validate_cross_findings(verdict.new_findings, modules_for_recheck)
+            verdict_refs.append(verdict_ref)
+            terminal_verdicts.update(
+                {item.finding_id: item for item in verdict.verdicts}
+            )
+            escalated = [
+                item for item in verdict.verdicts if item.verdict == "escalate"
+            ]
+            main_accepts: set[str] = set()
+            if escalated:
+                decision = await _main_exception_decision(
+                    runner,
+                    state=state,
+                    workflow_id=workflow_id,
+                    scope="cross",
+                    subject_refs=[lane.completion.subject.ref],
+                    finding_refs=finding_refs,
+                    verdicts=escalated,
+                    responses=lane.responses,
+                )
+                if decision.decision == "accept_dispute":
+                    main_accepts = set(decision.finding_ids)
+
+            next_pending = {
+                item.finding_id: pending[item.finding_id]
+                for item in verdict.verdicts
+                if item.verdict == "open"
+                or (
+                    item.verdict == "escalate"
+                    and item.finding_id not in main_accepts
+                )
+            }
+            resolved_ids.update(
+                item.finding_id
+                for item in verdict.verdicts
+                if item.verdict == "resolved" or item.finding_id in main_accepts
+            )
+            for finding in verdict.new_findings:
+                if finding.id in pending or finding.id in resolved_ids:
                     raise ReviewLifecycleError(
-                        f"Cross owner recheck input does not bind recovered lane: "
-                        f"{owner_module_id}"
+                        f"new Cross owner finding reuses an existing id: {finding.id}"
                     )
-            verdict, verdict_ref = await _run_cross_owner_review(
-                runner,
-                state=state,
-                workflow_id=workflow_id,
-                modules=modules_for_recheck,
-                owner_module_id=owner_module_id,
-                phase="recheck",
-                review_round=1,
-                owner_input_ref=recheck_input_ref,
-                required_findings=findings,
-                revision_responses=lane.responses,
-                local_review_ref=lane.local_review_ref,
-                machine_validation_ref=lane.machine_validation_ref,
-                prior_synthesis_inputs=list(initial_result.synthesis_inputs),
-            )
-            assert isinstance(verdict, CrossOwnerVerdictSubmission)
-            verdict = verdict.model_copy(
-                update={"synthesis_inputs": [], "interface_closures": []}
-            )
-        else:
-            verdict, verdict_ref = verdict_loaded
-        if any(item.verdict != "resolved" for item in verdict.verdicts):
-            raise ReviewLifecycleError(
-                f"Cross owner {owner_module_id} left an open or escalated finding"
-            )
-        if verdict.new_findings:
-            raise ReviewLifecycleError(
-                f"Cross owner {owner_module_id} created a new finding during one-shot recheck"
-            )
-        lane = _promote_cross_owner_pipeline_completion(
-            runner,
-            lane=lane,
-            initial_result_ref=initial_result_ref,
-            verdict_ref=verdict_ref,
-        )
-        return _CrossOwnerPipelineResult(
-            owner_module_id=owner_module_id,
-            initial_input_ref=initial_input_ref,
-            initial_result_ref=initial_result_ref,
-            initial_result=initial_result,
-            lane=lane,
-            verdict_ref=verdict_ref,
-            verdict=verdict,
+                next_pending[finding.id] = finding
+                all_findings.append(finding)
+            if verdict.new_findings:
+                regression_ref = _write_immutable_model(
+                    runner,
+                    (
+                        f"Work/runs/{run_id}/reviews/"
+                        f"cross-owner-regression-findings-r{review_round}-"
+                        f"{owner_module_id}.json"
+                    ),
+                    CrossOwnerFindingSubmission(
+                        owner_module_id=owner_module_id,
+                        coverage=verdict.coverage,
+                        findings=verdict.new_findings,
+                        synthesis_inputs=[],
+                    ),
+                )
+                finding_refs.append(regression_ref)
+
+            if not next_pending:
+                lane = _promote_cross_owner_pipeline_completion(
+                    runner,
+                    lane=lane,
+                    initial_result_ref=initial_result_ref,
+                    verdict_ref=verdict_ref,
+                )
+                return _CrossOwnerPipelineResult(
+                    owner_module_id=owner_module_id,
+                    initial_input_ref=initial_input_ref,
+                    initial_result_ref=initial_result_ref,
+                    initial_result=initial_result,
+                    lane=lane,
+                    verdict_ref=verdict_ref,
+                    verdict=verdict,
+                    finding_refs=finding_refs,
+                    verdict_refs=verdict_refs,
+                    findings=all_findings,
+                    verdicts=list(terminal_verdicts.values()),
+                )
+
+            pending = next_pending
+            current = lane.module
+            owner_input_ref = verdict_ref
+            review_round += 1
+
+        raise ReviewLifecycleError(
+            f"Cross owner loop ended without completion: {owner_module_id}"
         )
 
     # Each task now owns its complete initial→edit→auditor→recheck chain.  A
@@ -3539,12 +3597,11 @@ async def run_cross_review(
     finding_ids = [
         finding.id
         for owner_module_id in owner_ids
-        for finding in pipelines[owner_module_id].initial_result.findings
+        for finding in pipelines[owner_module_id].findings
     ]
     if len(finding_ids) != len(set(finding_ids)):
         raise ReviewLifecycleError("Cross owner findings reused an id")
     synthesis_by_id: dict[str, CrossSynthesisInput] = {}
-    closure_by_id: dict[str, InterfaceCrossClosure] = {}
     all_verdicts: list[ResolutionVerdict] = []
     for owner_module_id in owner_ids:
         pipeline = pipelines[owner_module_id]
@@ -3554,17 +3611,7 @@ async def run_cross_review(
                     "Cross owner synthesis reused an id with different content"
                 )
             synthesis_by_id[item.id] = item
-        for closure in pipeline.initial_result.interface_closures:
-            if (
-                closure.request_id in closure_by_id
-                and closure_by_id[closure.request_id] != closure
-            ):
-                raise ReviewLifecycleError(
-                    "Cross owner interface closure reused an id"
-                )
-            closure_by_id[closure.request_id] = closure
-        if pipeline.verdict is not None:
-            all_verdicts.extend(pipeline.verdict.verdicts)
+        all_verdicts.extend(pipeline.verdicts)
 
     final_modules = dict(frozen_modules)
     barrier_inputs: list[tuple[str, CrossOwnerCompletion]] = []
@@ -3593,10 +3640,9 @@ async def run_cross_review(
         findings=[
             finding
             for owner_module_id in owner_ids
-            for finding in pipelines[owner_module_id].initial_result.findings
+            for finding in pipelines[owner_module_id].findings
         ],
         synthesis_inputs=list(synthesis_by_id.values()),
-        interface_closures=list(closure_by_id.values()),
     )
     aggregate_finding_ref = _write_immutable_model(
         runner,
@@ -3613,10 +3659,9 @@ async def run_cross_review(
         ],
         verdicts=all_verdicts,
         new_findings=[],
-        # Recheck cannot rewrite synthesis or interface closures.  The exact
-        # initial owner artifacts are the sole canonical source.
+        # Recheck cannot rewrite synthesis.  The exact initial owner artifacts
+        # are the sole canonical source.
         synthesis_inputs=list(synthesis_by_id.values()),
-        interface_closures=list(closure_by_id.values()),
     )
     aggregate_verdict_ref = _write_immutable_model(
         runner,

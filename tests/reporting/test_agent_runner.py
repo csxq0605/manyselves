@@ -584,96 +584,16 @@ def test_cross_owner_submission_schema_binds_owner_and_required_verdict_ids() ->
     )
     assert recheck["properties"]["verdicts"]["minItems"] == 1
     assert recheck["properties"]["verdicts"]["maxItems"] == 1
+    assert "new_findings" in recheck["properties"]
+    assert "new_findings" in recheck["examples"][0]
     assert "synthesis_inputs" not in recheck["properties"]
+    assert "synthesis_inputs" not in recheck["examples"][0]
     assert "interface_closures" not in recheck["properties"]
+    assert "interface_closures" not in recheck["examples"][0]
     assert recheck["$defs"]["ResolutionVerdict"]["properties"]["finding_id"]["enum"] == [
         "X-2.1-001"
     ]
     assert recheck["examples"][0]["verdicts"][0]["finding_id"] == "X-2.1-001"
-
-
-def test_wave_two_submission_schema_is_bound_to_exact_sparse_inbox(
-    tmp_path: Path,
-) -> None:
-    run_id = "run-wave-two-schema"
-    inbox_ref = (
-        f"Work/runs/{run_id}/collaboration/inboxes/module-2.3.json"
-    )
-    inbox_path = tmp_path / inbox_ref
-    inbox_path.parent.mkdir(parents=True)
-    inbox_path.write_text(
-        json.dumps(
-            {
-                "kind": "module_interface_inbox",
-                "run_id": run_id,
-                "module_id": "2.3",
-                "requests": [
-                    {
-                        "request_id": "IF-2.1-2.3-001",
-                        "requester_module_id": "2.1",
-                        "target_module_id": "2.3",
-                        "question": "保护边界是否覆盖当前场景？",
-                        "needed_for": "形成联合验收边界。",
-                    },
-                    {
-                        "request_id": "IF-2.2-2.3-001",
-                        "requester_module_id": "2.2",
-                        "target_module_id": "2.3",
-                        "question": "控制接口是否需要保护闭锁？",
-                        "needed_for": "形成接口风险结论。",
-                    },
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    runner = ReportingAgentRunner(
-        tmp_path,
-        MessageBus(),
-        DirectSubmissionProvider(),
-        AgentDefaults(),
-    )
-    envelope = TaskEnvelope(
-        task_id="module-interface-response-2.3",
-        run_id=run_id,
-        agent_id="module-2.3-specialist",
-        objective="批量回答接口请求",
-        input_refs=[inbox_ref],
-        allowed_outputs=["module_interface_response_submission"],
-    )
-
-    registry = runner._tools(
-        load_packaged_agents()["module-2.3-specialist"],
-        envelope,
-        "session-wave-two-schema",
-        "workflow-wave-two-schema",
-    )
-    payload = registry._schema_cache["submit_result"]["properties"][
-        "payload"
-    ]
-    dispositions = payload["properties"]["dispositions"]
-    request_id = payload["$defs"]["InterfaceDisposition"]["properties"][
-        "request_id"
-    ]
-
-    assert payload["properties"]["module_id"]["const"] == "2.3"
-    assert dispositions["minItems"] == 2
-    assert dispositions["maxItems"] == 2
-    assert request_id["enum"] == [
-        "IF-2.1-2.3-001",
-        "IF-2.2-2.3-001",
-    ]
-
-    wrong = json.loads(inbox_path.read_text(encoding="utf-8"))
-    wrong["run_id"] = "another-run"
-    inbox_path.write_text(json.dumps(wrong), encoding="utf-8")
-    with pytest.raises(ValueError, match="current-run|active module"):
-        runner._tools(
-            load_packaged_agents()["module-2.3-specialist"],
-            envelope,
-            "session-wave-two-wrong-run",
-            "workflow-wave-two-wrong-run",
-        )
 
 
 def test_module_review_tool_schema_omits_runtime_owned_fields(

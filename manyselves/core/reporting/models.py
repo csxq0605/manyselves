@@ -77,19 +77,9 @@ class ReportingModel(BaseModel):
 
 
 def __getattr__(name: str):
-    """Lazily expose Cross decision carriers without creating an import cycle.
+    """Lazily expose the Cross decision carrier without an import cycle."""
 
-    ``agentic_models`` owns the nested Cross synthesis/IF/XMR contracts, but
-    callers historically import persisted carriers from ``models``.  Keeping
-    this compatibility bridge lazy lets both import paths resolve while the
-    semantic definitions remain single-sourced.
-    """
-
-    if name in {
-        "CrossDecisionPack",
-        "CrossDecisionIFClosure",
-        "CrossDecisionXMRVerdict",
-    }:
+    if name == "CrossDecisionPack":
         from . import agentic_models
 
         return getattr(agentic_models, name)
