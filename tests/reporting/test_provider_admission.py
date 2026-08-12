@@ -10,11 +10,42 @@ from manyselves.core.reporting.provider_admission import (
     ProviderAdmissionController,
     provider_model_key,
 )
+from manyselves.core.reporting.service import ReportingService
+from manyselves.core.loops.bus import MessageBus
+from manyselves.core.providers.base import LLMProvider
+from manyselves.core.tools.task_board import TaskBoard
+
+
+class _NeverCalledProvider(LLMProvider):
+    def __init__(self) -> None:
+        super().__init__("test", model="never-called")
+
+    async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        raise AssertionError("provider must not be called")
 
 
 def test_provider_model_key_is_stable() -> None:
     assert provider_model_key("openai", "gpt-test") == "openai:gpt-test"
     assert provider_model_key("openai", None) == "openai:default"
+
+
+def test_reporting_service_shares_one_default_controller_across_workflows(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=_NeverCalledProvider(),
+    )
+
+    first = service._agent_runner_for("workflow-a")
+    second = service._agent_runner_for("workflow-b")
+
+    assert first.provider_admission is service.provider_admission
+    assert second.provider_admission is service.provider_admission
+    assert service.provider_admission.global_concurrency == 8
+    assert service.provider_admission.provider_model_concurrency == 8
 
 
 def test_global_and_provider_model_concurrency_are_enforced() -> None:

@@ -1181,8 +1181,8 @@ async def request_module_revision(
                 # A finding round is a business cohort: every affected leaf
                 # is ready once the reviewer emits its typed finding.  The
                 # helper still groups multiple findings for one leaf into a
-                # single task, while all distinct leaves run concurrently;
-                # Provider backpressure is enforced below this scheduler.
+                # single task. Distinct leaves remain all-ready, while every
+                # module lane shares the workflow's run-global leaf-task gate.
                 all_ready=True,
                 execute=execute_leaf,
                 persist=lambda target_id, patch: (

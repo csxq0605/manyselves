@@ -398,6 +398,37 @@ class ReportWorkflowRunner:
             raise AgentWorkflowError(f"reporting Agent identities are missing: {missing}")
         self._budget: ReportingRunBudget | None = None
         self._main_exception_lock = asyncio.Lock()
+        # Every leaf cohort in one run shares this physical task gate.  Module
+        # lanes may remain fully parallel, but their Wave/revision children
+        # must not multiply ``submodule_task_concurrency`` per module.
+        self._run_leaf_task_gates: dict[str, tuple[int, asyncio.Semaphore]] = {}
+
+    def _run_leaf_task_gate(
+        self,
+        run_id: str,
+        concurrency: int,
+    ) -> tuple[int, asyncio.Semaphore]:
+        """Return the one leaf-task semaphore shared by every lane in a run."""
+
+        limit = max(1, int(concurrency))
+        # A few focused tests construct the runner with ``object.__new__``;
+        # lazy creation keeps that supported without weakening production use.
+        gates = getattr(self, "_run_leaf_task_gates", None)
+        if gates is None:
+            gates = {}
+            self._run_leaf_task_gates = gates
+        existing = gates.get(run_id)
+        if existing is not None:
+            existing_limit, gate = existing
+            if existing_limit != limit:
+                raise AgentWorkflowError(
+                    "one reporting run cannot use conflicting global leaf-task "
+                    f"limits: run_id={run_id}, existing={existing_limit}, requested={limit}"
+                )
+            return existing
+        created = (limit, asyncio.Semaphore(limit))
+        gates[run_id] = created
+        return created
 
     def _raise_if_cancel_requested(self, run_id: str) -> None:
         """Stop before a new task/stage when the durable job requested cancel."""
@@ -5841,8 +5872,9 @@ class ReportWorkflowRunner:
 
         ``all_ready`` means every business-ready leaf remains eligible after a
         sibling failure; it does not mean unbounded physical concurrency.
-        Wave 1/2/3 honor ``submodule_task_concurrency`` (default 8), drain the
-        complete queue, and retain each successful leaf for recovery.  Only a
+        Wave 1/2/3 and every module-audit revision cohort share one run-global
+        ``submodule_task_concurrency`` gate (default 8), drain the complete
+        queue, and retain each successful leaf for recovery.  Only a
         workflow-level cancellation can stop dispatch in the all-ready path.
         """
 
@@ -5864,6 +5896,7 @@ class ReportWorkflowRunner:
                 for index, submodule_id in enumerate(ordered)
             ]
         )
+        global_limit, global_gate = self._run_leaf_task_gate(run_id, concurrency)
         event_store = LocalEventStore(self.service.workspace, run_id)
         stage_id = task_kind.replace("_", "-")
         event_store.append(
@@ -5872,7 +5905,13 @@ class ReportWorkflowRunner:
             correlation_id=workflow_id,
             payload={
                 "submodule_ids": list(ordered),
-                "concurrency": min(max(1, concurrency), max(1, len(ordered))),
+                "concurrency": min(
+                    max(1, concurrency), max(1, len(ordered))
+                ),
+                "cohort_worker_count": min(
+                    max(1, concurrency), max(1, len(ordered))
+                ),
+                "run_global_leaf_concurrency": global_limit,
             },
         )
         results: dict[str, Any] = {}
@@ -5894,7 +5933,12 @@ class ReportWorkflowRunner:
                 )
                 started = time.perf_counter_ns()
                 try:
-                    payload = await execute(submodule_id)
+                    # Separate concurrently running module lanes all pass
+                    # through this same run-scoped semaphore.  Persisting the
+                    # immutable result happens after release and therefore
+                    # does not hold scarce Provider/task capacity.
+                    async with global_gate:
+                        payload = await execute(submodule_id)
                     if persist is not None:
                         persist(submodule_id, payload)
                     results[submodule_id] = payload
@@ -5988,6 +6032,7 @@ class ReportWorkflowRunner:
                 "stage_id": stage_id,
                 "policy": "longest_critical_path_first_v1",
                 "concurrency": worker_count,
+                "run_global_leaf_concurrency": global_limit,
                 "decisions": [
                     item.model_dump(mode="json") for item in scheduler.decisions
                 ],

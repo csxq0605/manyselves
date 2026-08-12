@@ -67,6 +67,81 @@ async def test_all_ready_leaf_scheduler_honors_cap_and_drains_entire_queue(
 
 
 @pytest.mark.asyncio
+async def test_concurrent_module_revision_cohorts_share_one_run_global_cap(
+    tmp_path: Path,
+) -> None:
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = _Service(tmp_path)
+    active = 0
+    maximum_active = 0
+    completed: list[str] = []
+
+    async def execute(submodule_id: str) -> str:
+        nonlocal active, maximum_active
+        active += 1
+        maximum_active = max(maximum_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        completed.append(submodule_id)
+        return submodule_id
+
+    first = tuple(REPORT_TAXONOMY["2.1"].submodules)
+    second = tuple(REPORT_TAXONOMY["2.2"].submodules)
+    await asyncio.gather(
+        runner._run_scheduled_submodule_stage(
+            first,
+            run_id="run-global-revision-cap",
+            workflow_id="workflow-global-revision-cap",
+            task_kind="submodule_revision_r1_module_2_1",
+            concurrency=3,
+            all_ready=True,
+            execute=execute,
+        ),
+        runner._run_scheduled_submodule_stage(
+            second,
+            run_id="run-global-revision-cap",
+            workflow_id="workflow-global-revision-cap",
+            task_kind="submodule_revision_r1_module_2_2",
+            concurrency=3,
+            all_ready=True,
+            execute=execute,
+        ),
+    )
+
+    assert set(completed) == set(first) | set(second)
+    assert maximum_active == 3
+
+
+@pytest.mark.asyncio
+async def test_one_run_rejects_conflicting_global_leaf_limits(tmp_path: Path) -> None:
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = _Service(tmp_path)
+
+    async def execute(submodule_id: str) -> str:
+        return submodule_id
+
+    await runner._run_scheduled_submodule_stage(
+        (next(iter(REPORT_TAXONOMY["2.1"].submodules)),),
+        run_id="run-conflicting-cap",
+        workflow_id="workflow-conflicting-cap",
+        task_kind="first-cohort",
+        concurrency=3,
+        all_ready=True,
+        execute=execute,
+    )
+    with pytest.raises(AgentWorkflowError, match="conflicting global leaf-task limits"):
+        await runner._run_scheduled_submodule_stage(
+            (next(iter(REPORT_TAXONOMY["2.2"].submodules)),),
+            run_id="run-conflicting-cap",
+            workflow_id="workflow-conflicting-cap",
+            task_kind="second-cohort",
+            concurrency=4,
+            all_ready=True,
+            execute=execute,
+        )
+
+
+@pytest.mark.asyncio
 async def test_accepted_or_unknown_leaf_attempt_is_marked_and_not_replayed(
     tmp_path: Path,
 ) -> None:

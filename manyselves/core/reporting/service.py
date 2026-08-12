@@ -53,6 +53,7 @@ from .parallel_runtime import (
     validate_bound_project_write_lease,
 )
 from .preparation import FilePreparationResult, prepare_manifest_file
+from .provider_admission import ProviderAdmissionController
 from .rendering import PackagedV2DocxCore, PdsDocxRenderer, RenderRequest, RenderResult
 from .rendering.packaged_docx import verify_rendered_markdown
 from .retention import ReportingRetentionPlanner
@@ -91,6 +92,7 @@ class ReportingService:
         llm_provider: LLMProvider,
         agent_defaults: AgentDefaults | None = None,
         provider_router: ProviderRouter | None = None,
+        provider_admission: ProviderAdmissionController | None = None,
     ):
         if llm_provider is None:
             raise ValueError(
@@ -102,6 +104,15 @@ class ReportingService:
         self.llm_provider = llm_provider
         self.agent_defaults = agent_defaults or AgentDefaults()
         self.provider_router = provider_router or ProviderRouter(llm_provider)
+        # This controller is owned by the service, not by a module lane or an
+        # Agent session.  Consequently all real Provider requests share the
+        # same concurrency ceiling and 429 cooldown.  Business task readiness
+        # is still controlled independently by the workflow scheduler.
+        self.provider_admission = provider_admission or ProviderAdmissionController(
+            global_concurrency=8,
+            provider_model_concurrency=8,
+            cooldown_jitter_seconds=0.25,
+        )
         self.store = ReportingStore(self.workspace)
         self.content_store = ContentAddressedStore(self.workspace)
         self.decisions = EvidenceDecisionStore(self.workspace)
@@ -174,6 +185,7 @@ class ReportingService:
                 self.agent_defaults,
                 timeout=None,
                 provider_router=self.provider_router,
+                provider_admission=self.provider_admission,
             )
             self._active_agent_runners[workflow_id] = runner
         return runner
