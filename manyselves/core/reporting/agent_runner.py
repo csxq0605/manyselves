@@ -3313,6 +3313,10 @@ class ReportingAgentRunner:
         )
         if ambiguous_provider_refs:
             raise ProviderAttemptRecoveryRequired(ambiguous_provider_refs)
+        # Reporting uses the AgentLoop's lossless conversation history.  The
+        # experimental typed context rebaser was removed from the runtime path
+        # after a real run showed that consumed tool results were reduced to
+        # unusable memo refs, causing agents to reopen the same artifacts.
         context_rebuilder: ReportingContextRebuilder | None = None
         if cached is None:
             identity_digest = hashlib.sha256(
@@ -3334,15 +3338,6 @@ class ReportingAgentRunner:
                 envelope=envelope,
                 agent_id=definition.id,
                 session_id=session_id,
-            )
-            context_rebuilder = self._context_rebuilder_for_task(
-                definition=definition,
-                envelope=envelope,
-                identity_key=identity_key,
-                session_id=session_id,
-                system_prompt=system_prompt,
-                gateway=gateway,
-                shared_artifacts=shared_artifacts,
             )
             runtime_id = f"{definition.id}--{session_id}"
             config = resolved_config
@@ -3370,8 +3365,6 @@ class ReportingAgentRunner:
                     if self._provider_attempt_guard is None
                     else lambda: self._provider_attempt_guard(definition.id, envelope.task_id)
                 ),
-                "context_rebuilder": context_rebuilder,
-                "pre_send_context_guard": self._typed_context_pre_send_guard,
             }
             if self.provider_admission is not None:
                 loop_kwargs.update(
@@ -3398,12 +3391,6 @@ class ReportingAgentRunner:
                 loop_kwargs.pop("context_rebuilder", None)
                 loop_kwargs.pop("pre_send_context_guard", None)
                 loop = AgentLoop(**loop_kwargs)
-            if hasattr(loop, "set_context_rebuilder"):
-                loop.set_context_rebuilder(context_rebuilder)
-            else:
-                setattr(loop, "context_rebuilder", context_rebuilder)
-            if hasattr(loop, "pre_send_context_guard"):
-                loop.pre_send_context_guard = self._typed_context_pre_send_guard
             self._sessions[cache_key] = (loop, session_id, runtime_id)
             self._session_route_bindings[cache_key] = route_binding
             loop.usage_stage = task_kind
@@ -3427,15 +3414,6 @@ class ReportingAgentRunner:
                 agent_id=definition.id,
                 session_id=session_id,
             )
-            context_rebuilder = self._context_rebuilder_for_task(
-                definition=definition,
-                envelope=envelope,
-                identity_key=identity_key,
-                session_id=session_id,
-                system_prompt=system_prompt,
-                gateway=gateway,
-                shared_artifacts=shared_artifacts,
-            )
             # A durable role identity is not a license to replay every prior task
             # prompt. Each reporting transition carries a complete typed input
             # contract, so start the new task with clean provider working memory.
@@ -3443,22 +3421,10 @@ class ReportingAgentRunner:
             # share the same conversation.
             if hasattr(loop, "reset_working_memory_for_typed_task"):
                 loop.reset_working_memory_for_typed_task()
-            elif getattr(loop, "context_rebuilder", None) is not None:
-                # Compatibility for an older loop that has no dedicated reset
-                # helper: do not carry the previous task's conversation into a
-                # new typed capsule.
-                if hasattr(loop, "_conversation_history"):
-                    loop._conversation_history = []
             loop.config = resolved_config
             loop.llm_provider = routed_provider
             loop.artifact_gateway = gateway
             loop._system_prompt_override = system_prompt
-            if hasattr(loop, "set_context_rebuilder"):
-                loop.set_context_rebuilder(context_rebuilder)
-            else:
-                setattr(loop, "context_rebuilder", context_rebuilder)
-            if hasattr(loop, "pre_send_context_guard"):
-                loop.pre_send_context_guard = self._typed_context_pre_send_guard
             loop.tools = self._tools(
                 definition,
                 envelope,
@@ -3512,11 +3478,6 @@ class ReportingAgentRunner:
             attempt: int,
         ) -> None:
             nonlocal provider_call_index
-            if context_rebuilder is not None:
-                # The observer receives the exact typed Provider view.  Record
-                # only complete assistant-call/result pairs in the capsule;
-                # the compressed conversation trace remains forensic write-only.
-                self._sync_context_messages(context_rebuilder, messages)
             provider_call_index += 1
             manifest_path = self._write_provider_call_manifest(
                 definition=definition,
@@ -3573,13 +3534,8 @@ class ReportingAgentRunner:
             # a typed rebase (count=1).  The observer runs immediately before
             # that payload is sent, so do not clear the marker here or the H3
             # ledger row would claim that no context rebuild occurred.
-            loop.usage_rebuild_count = max(
-                1 if context_rebuilder is not None else 0,
-                int(getattr(loop, "usage_rebuild_count", 0) or 0),
-            )
-            loop.usage_pre_send_guard_status = (
-                "typed_context_rebased" if context_rebuilder is not None else None
-            )
+            loop.usage_rebuild_count = 0
+            loop.usage_pre_send_guard_status = None
 
         async def finalize_provider_context(record: dict[str, Any]) -> None:
             self._finalize_provider_call_manifest(record)
@@ -3947,7 +3903,7 @@ class ReportingAgentRunner:
                         continuation_instruction = (
                             "先调用 list_result_parts 查看已保存分段，只继续未完成部分；不要重新检索或重写"
                             "已保存内容。"
-                            if "list_result_parts" in definition.tools
+                            if loop.tools.get("list_result_parts") is not None
                             else "继续使用当前输入引用和已经获得的上下文；不要重新检索或重读已有内容。"
                         )
                     boundary_explanation = (

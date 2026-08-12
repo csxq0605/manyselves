@@ -497,6 +497,26 @@ def test_leaf_tasks_use_distinct_durable_identity_leases_within_one_module() -> 
         definition, module_task, "specialist-2.1"
     ) == definition.id
 
+    all_leaf_keys: set[str] = set()
+    for module_id, taxonomy in REPORT_TAXONOMY.items():
+        specialist = load_packaged_agents()[f"module-{module_id}-specialist"]
+        for submodule_id in taxonomy.submodules:
+            task_id = f"submodule-discovery-{submodule_id}"
+            leaf = TaskEnvelope(
+                task_id=task_id,
+                run_id="run-all-leaf-identities",
+                agent_id=specialist.id,
+                objective=f"发现 {submodule_id}",
+                allowed_outputs=["submodule_discovery_submission"],
+                target_submodule_ids=[submodule_id],
+            )
+            key = ReportingAgentRunner._identity_key(
+                specialist, leaf, f"submodule-{submodule_id}"
+            )
+            assert key == f"submodule-{submodule_id}"
+            all_leaf_keys.add(key)
+    assert len(all_leaf_keys) == 37
+
 
 def test_collaboration_submission_examples_are_specialized_to_current_leaf() -> None:
     discovery = ReportingAgentRunner._task_submission_schema(
@@ -2099,14 +2119,10 @@ async def test_reporting_identity_keeps_one_stable_session_across_workflow_turns
         initial_provider_manifests = [
             item for item in provider_manifests if item["phase"] == "initial"
         ]
-        # H2 records the exact typed Provider payload (stable prefix,
-        # typed-task state, and task turn), while the logical task view keeps
-        # the historical two-message contract available to consumers that do
-        # not count typed context scaffolding.
-        assert [item["message_count"] for item in initial_provider_manifests] == [4, 4]
+        assert [item["message_count"] for item in initial_provider_manifests] == [2, 2]
         assert [
             item["provider_message_count"] for item in initial_provider_manifests
-        ] == [4, 4]
+        ] == [2, 2]
         assert [
             item["logical_task_message_count"] for item in initial_provider_manifests
         ] == [2, 2]

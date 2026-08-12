@@ -3188,17 +3188,10 @@ class AgentLoop:
             if isinstance(decision, str) and decision in {"allow", "rebuilt", "blocked"}:
                 return ContextGateDecision(decision, "custom_guard", rebuild_count=rebuild_count)  # type: ignore[arg-type]
 
-        return pre_send_context_gate(
-            messages,
-            previous_messages=self._last_provider_messages,
-            tool_definitions=tool_definitions,
-            previous_tool_definitions=self._last_provider_tools,
-            phase=gate_phase,
-            attempt=attempt,
-            previous_attempt_disposition=self._last_provider_attempt_disposition,
-            rebuilt=rebuilt,
-            rebuild_count=rebuild_count,
-        )
+        # No implicit context policy is applied.  A tool error/result must be
+        # returned to the same model turn so it can repair the local command;
+        # it must not be converted into a pre-send block or a task restart.
+        return ContextGateDecision("allow", "context_gate_disabled")
 
     def _record_pre_send_gate(
         self,

@@ -336,7 +336,7 @@ async def test_submodule_three_wave_dispatches_independent_wave_one_and_two_leav
     )
     assert all(len(item.input_refs) == 4 for item in discoveries)
     assert all(
-        item.artifact_delivery_modes[item.input_refs[0]] == "hash_retained"
+        item.artifact_delivery_modes[item.input_refs[0]] == "reference"
         and all(
             item.artifact_delivery_modes[ref] == "reference"
             for ref in item.input_refs[1:]
@@ -693,7 +693,7 @@ async def test_wave_three_dispatches_and_persists_37_independent_leaf_results(
         assert len(envelope.target_submodule_ids) == 1
         submodule_id = envelope.target_submodule_ids[0]
         module_id = resolve_submodule(submodule_id).module_id
-        assert session_key == f"submodule-author-{submodule_id}-session"
+        assert session_key == f"submodule-{submodule_id}"
         assert set(envelope.artifact_delivery_modes) == set(envelope.input_refs)
         author_envelopes.append(envelope)
         calls.append(submodule_id)

@@ -5313,16 +5313,14 @@ class ReportWorkflowRunner:
         return []
 
     @staticmethod
-    def _leaf_session_key(task_id: str) -> str:
-        """Return a stable session identity unique to one leaf task.
+    def _leaf_session_key(submodule_id: str) -> str:
+        """Return the original stable identity for one taxonomy leaf.
 
-        A module specialist owns many leaves, but each Wave 1/2/3 leaf call
-        must have its own conversation fence.  Keeping the task id in the
-        session key also prevents a stale response from another wave from
-        being attached to this task during resume.
+        All three waves for the same leaf deliberately reuse this identity;
+        different leaves never share a ReportingAgentRunner lease.
         """
 
-        return f"{task_id}-session"
+        return f"submodule-{submodule_id}"
 
     def _load_collaboration_submission(
         self,
@@ -5412,7 +5410,7 @@ class ReportWorkflowRunner:
                 or (
                     completion.get("session_key") is not None
                     and completion.get("session_key")
-                    != self._leaf_session_key(task_id)
+                    != self._leaf_session_key(submodule_id)
                 )
             ):
                 self._reject_collaboration_candidates(
@@ -5572,7 +5570,7 @@ class ReportWorkflowRunner:
             "task_kind": task_kind,
             "task_id": task_id,
             "task_attempt_id": f"{task_id}-attempt-1",
-            "session_key": self._leaf_session_key(task_id),
+            "session_key": self._leaf_session_key(submodule_id),
             "module_id": module_id,
             "submodule_id": submodule_id,
             "planned_task": planned,
@@ -5636,7 +5634,7 @@ class ReportWorkflowRunner:
                 "wave": wave,
                 "task_id": task_id,
                 "task_attempt_id": f"{task_id}-attempt-1",
-                "session_key": self._leaf_session_key(task_id),
+                "session_key": self._leaf_session_key(submodule_id),
                 "module_id": module_id,
                 "submodule_id": submodule_id,
                 "artifact_ref": artifact_ref,
@@ -5677,7 +5675,7 @@ class ReportWorkflowRunner:
                 "task_kind": task_kind,
                 "task_id": task_id,
                 "task_attempt_id": f"{task_id}-attempt-1",
-                "session_key": self._leaf_session_key(task_id),
+                "session_key": self._leaf_session_key(submodule_id),
                 "module_id": module_id,
                 "submodule_id": submodule_id,
                 "status": "ambiguous",
@@ -6248,7 +6246,7 @@ class ReportWorkflowRunner:
                     "input_contract_kind": None,
                     "input_contract_ref": None,
                     "artifact_delivery_modes": {
-                        context_ref: "hash_retained",
+                        context_ref: "reference",
                         **{ref: "reference" for ref in shared_input_refs},
                     },
                 }
@@ -6259,7 +6257,7 @@ class ReportWorkflowRunner:
             envelope,
             envelope.input_refs,
             workflow_id,
-            session_key=self._leaf_session_key(task_id),
+            session_key=self._leaf_session_key(submodule_id),
         )
         if (
             not isinstance(payload, SubmoduleDiscoverySubmission)
@@ -6584,7 +6582,7 @@ class ReportWorkflowRunner:
             envelope,
             envelope.input_refs,
             workflow_id,
-            session_key=self._leaf_session_key(task_id),
+            session_key=self._leaf_session_key(submodule_id),
         )
         if (
             not isinstance(payload, SubmoduleInterfaceResponseSubmission)
@@ -8159,7 +8157,7 @@ class ReportWorkflowRunner:
             envelope,
             envelope.input_refs,
             workflow_id,
-            session_key=self._leaf_session_key(task_id),
+            session_key=self._leaf_session_key(submodule_id),
         )
         if (
             not isinstance(payload, SubmoduleDraftSubmission)
