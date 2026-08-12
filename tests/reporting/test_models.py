@@ -104,39 +104,25 @@ def test_report_request_rejects_invalid_run_budget() -> None:
         ReportRequest(instruction="生成 2.4", max_total_tokens=999)
 
 
-def test_report_request_defaults_to_all_ready_and_keeps_legacy_modes() -> None:
+def test_report_request_exposes_no_runtime_granularity_or_lane_switches() -> None:
     request = ReportRequest(
         operation="full_report",
         instruction="生成完整报告",
     )
-    bounded = request.model_copy(
-        update={"execution_mode": "bounded_module_lanes"}
-    )
-
-    assert request.execution_mode == "all_ready"
-    assert request.authoring_granularity == "leaf_37"
-    assert request.model_copy(
-        update={"authoring_granularity": "module_5"}
-    ).authoring_granularity == "module_5"
-    assert bounded.execution_mode == "bounded_module_lanes"
-    serial = request.model_copy(update={"execution_mode": "current_serial_review"})
-    assert serial.execution_mode == "current_serial_review"
-    assert (
-        ReportRequest.model_json_schema()["properties"]["execution_mode"]["default"]
-        == "all_ready"
-    )
-    assert (
-        ReportRequest.model_json_schema()["properties"]["authoring_granularity"][
-            "default"
-        ]
-        == "leaf_37"
-    )
-    with pytest.raises(ValidationError, match="only valid for full_report"):
+    forbidden = {
+        "execution_mode",
+        "authoring_granularity",
+        "module_lane_concurrency",
+        "submodule_task_concurrency",
+        "submodule_batch_size",
+    }
+    assert forbidden.isdisjoint(ReportRequest.model_json_schema()["properties"])
+    with pytest.raises(ValidationError):
         ReportRequest(
             operation="module_report",
-            instruction="错误的五模块模式",
+            instruction="拒绝已删除的叶级模式",
             target_modules=["2.1"],
-            authoring_granularity="module_5",
+            authoring_granularity="leaf_37",
         )
 
 

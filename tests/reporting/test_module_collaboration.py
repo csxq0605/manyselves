@@ -6,7 +6,12 @@ from pydantic import ValidationError
 
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting.agent_runner import ReportingAgentRunner
-from manyselves.core.reporting.agentic_models import AgentResult, TaskEnvelope
+from manyselves.core.reporting.agentic_models import (
+    AgentResult,
+    CrossOwnerFindingSubmission,
+    CrossOwnerVerdictSubmission,
+    TaskEnvelope,
+)
 from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.reporting.module_collaboration import (
     MODULE_IDS,
@@ -15,17 +20,9 @@ from manyselves.core.reporting.module_collaboration import (
     ModuleDiscoverySubmission,
     ModuleInterfaceCoverage,
     ModuleInterfaceResponseSubmission,
-    SubmoduleDiscoveryBatchSubmission,
-    SubmoduleDiscoverySubmission,
-    SubmoduleInterfaceResponseSubmission,
-    SubmoduleInterfaceSignal,
     build_collaboration_bundles,
     build_interface_inboxes,
-    build_submodule_collaboration_bundles,
-    build_submodule_interface_inboxes,
-    reduce_submodule_discoveries,
 )
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.submission_contracts import (
     submission_model,
@@ -72,109 +69,6 @@ def _discovery(
         ],
         requests=requests,
     )
-
-
-def _leaf_discoveries() -> list[SubmoduleDiscoverySubmission]:
-    values: list[SubmoduleDiscoverySubmission] = []
-    for module_id, module in REPORT_TAXONOMY.items():
-        for submodule_id in module.submodules:
-            signals = (
-                [
-                    SubmoduleInterfaceSignal(
-                        target_module_id="2.3",
-                        target_submodule_id="2.3.1",
-                        status="request",
-                        rationale="需要保护定值边界。",
-                        question="保护定值是否覆盖异常负荷边界？",
-                        needed_for="完成2.1.1风险机理和联合验收要求。",
-                        evidence_ids=["E-0001"],
-                    )
-                ]
-                if submodule_id == "2.1.1"
-                else []
-            )
-            values.append(
-                SubmoduleDiscoverySubmission(
-                    module_id=module_id,
-                    submodule_id=submodule_id,
-                    discovery_summary=f"{submodule_id} 独立发现。",
-                    evidence_ids=["E-0001"],
-                    evidence_gaps=[],
-                    provisional_findings=[],
-                    interface_signals=signals,
-                )
-            )
-    return values
-
-
-def test_discovery_batch_keeps_leaf_identity_and_rejects_cross_module_results() -> None:
-    leaves = _leaf_discoveries()
-    scoped = [item for item in leaves if item.module_id == "2.1"]
-    batch = SubmoduleDiscoveryBatchSubmission(
-        module_id="2.1",
-        discoveries=scoped,
-    )
-    assert [item.submodule_id for item in batch.discoveries] == list(
-        REPORT_TAXONOMY["2.1"].submodules
-    )
-
-    with pytest.raises(ValidationError, match="crosses module ownership"):
-        SubmoduleDiscoveryBatchSubmission(
-            module_id="2.1",
-            discoveries=[
-                scoped[0],
-                next(item for item in leaves if item.module_id == "2.2"),
-            ],
-        )
-    with pytest.raises(ValidationError, match="duplicate leaf ids"):
-        SubmoduleDiscoveryBatchSubmission(
-            module_id="2.1",
-            discoveries=[scoped[0], scoped[0]],
-        )
-
-
-def test_leaf_discovery_reducer_requires_all_37_and_routes_exact_submodules() -> None:
-    discoveries = _leaf_discoveries()
-    assert len(discoveries) == 37
-    with pytest.raises(ValueError, match="every fixed leaf submodule"):
-        reduce_submodule_discoveries(
-            discoveries[:-1], known_evidence_ids={"E-0001"}
-        )
-
-    modules = reduce_submodule_discoveries(
-        discoveries, known_evidence_ids={"E-0001"}
-    )
-    request = modules["2.1"].requests[0]
-    assert request.requester_submodule_id == "2.1.1"
-    assert request.target_submodule_id == "2.3.1"
-    assert request.request_id == "IF-2.1.1-2.3.1-001"
-    inboxes = build_submodule_interface_inboxes(
-        list(modules.values()), known_evidence_ids={"E-0001"}
-    )
-    assert set(inboxes) == {"2.3.1"}
-
-    response = SubmoduleInterfaceResponseSubmission(
-        module_id="2.3",
-        submodule_id="2.3.1",
-        dispositions=[
-            InterfaceDisposition(
-                request_id=request.request_id,
-                status="answered",
-                answer="当前整定覆盖正常边界。",
-                evidence_ids=["E-0001"],
-                conditions=["以当前整定版本为准"],
-            )
-        ],
-    )
-    bundles = build_submodule_collaboration_bundles(
-        discoveries,
-        list(modules.values()),
-        [response],
-        known_evidence_ids={"E-0001"},
-    )
-    assert len(bundles) == 37
-    assert len(bundles["2.1.1"].requested_interfaces) == 1
-    assert len(bundles["2.3.1"].responded_interfaces) == 1
 
 
 def _five_discoveries() -> list[ModuleDiscoverySubmission]:
@@ -226,26 +120,6 @@ def test_discovery_requires_four_unique_peer_targets_and_unique_request_ids() ->
     )
     with pytest.raises(ValidationError, match="request_ids must be unique"):
         _discovery("2.1", requests=[request, request])
-
-
-def test_discovery_preserves_multiple_precise_leaf_requests_per_peer() -> None:
-    precise_requests = [
-        InterfaceRequest(
-            request_id=f"IF-2.1.{index}-2.3.1-{index:03d}",
-            requester_module_id="2.1",
-            target_module_id="2.3",
-            requester_submodule_id=f"2.1.{index}",
-            target_submodule_id="2.3.1",
-            question=f"需要确认接口问题 {index}？",
-            needed_for="完成最终判断。",
-        )
-        for index in (1, 2)
-    ]
-    discovery = _discovery("2.1", requests=precise_requests)
-    assert [item.requester_submodule_id for item in discovery.requests] == [
-        "2.1.1",
-        "2.1.2",
-    ]
 
 
 def test_collaboration_keeps_lossless_module_summary_but_bounds_atomic_fields() -> None:
@@ -415,7 +289,7 @@ def test_new_submission_kinds_have_enriched_schemas_and_runner_identity_const(
         assert schema["properties"]["kind"]["const"] == kind
         assert undescribed_property_paths(schema) == []
         if kind == "module_discovery_submission":
-            assert schema["properties"]["requests"]["maxItems"] >= 37
+            assert schema["properties"]["requests"]["maxItems"] >= 1
             blocking_description = schema["$defs"]["InterfaceRequest"][
                 "properties"
             ]["blocking"]["description"]
@@ -451,39 +325,17 @@ def test_new_submission_kinds_have_enriched_schemas_and_runner_identity_const(
     ModuleDiscoverySubmission.model_validate(example)
 
 
-def test_leaf_submission_schemas_bind_exact_active_submodule(tmp_path: Path) -> None:
-    for kind in (
-        "submodule_discovery_submission",
-        "submodule_interface_response_submission",
-        "submodule_draft_submission",
+def test_cross_owner_submission_contracts_are_scoped_and_described() -> None:
+    for kind, model in (
+        ("cross_owner_finding_submission", CrossOwnerFindingSubmission),
+        ("cross_owner_verdict_submission", CrossOwnerVerdictSubmission),
     ):
         schema = submission_schema(kind)
-        assert schema["properties"]["kind"]["const"] == kind
         assert undescribed_property_paths(schema) == []
-
-    runner = ReportingAgentRunner(
-        tmp_path,
-        MessageBus(),
-        object(),
-        AgentDefaults(),
-    )
-    envelope = TaskEnvelope(
-        task_id="submodule-discovery-2.4.2.1",
-        run_id="run-leaf-collaboration",
-        agent_id="module-2.4-specialist",
-        objective="完成一个叶子 discovery",
-        allowed_outputs=["submodule_discovery_submission"],
-        target_submodule_ids=["2.4.2.1"],
-    )
-    registry = runner._tools(
-        load_packaged_agents()["module-2.4-specialist"],
-        envelope,
-        "submodule-2.4.2.1",
-        "workflow-leaf-collaboration",
-    )
-    payload_schema = registry._schema_cache["submit_result"]["properties"]["payload"]
-    assert payload_schema["properties"]["module_id"]["const"] == "2.4"
-    assert payload_schema["properties"]["submodule_id"]["const"] == "2.4.2.1"
+        assert "owner_module_id" in schema["description"]
+        example = schema["examples"][0]
+        assert example["owner_module_id"] == example["coverage"]["module_id"]
+        assert model.model_validate(example).owner_module_id == "2.1"
 
 
 @pytest.mark.asyncio
@@ -513,21 +365,19 @@ async def test_submit_result_persists_new_kind_through_unified_agent_result(
 
 
 @pytest.mark.asyncio
-async def test_module_discovery_correction_preserves_leaf_identity_in_request_id(
+async def test_module_discovery_correction_preserves_module_identity_in_request_id(
     tmp_path: Path,
 ) -> None:
     request = InterfaceRequest(
-        request_id="IF-2.1.1-2.3.1-001",
+        request_id="IF-2.1-2.3-001",
         requester_module_id="2.1",
-        requester_submodule_id="2.1.1",
         target_module_id="2.3",
-        target_submodule_id="2.3.1",
         question="保护边界是否覆盖当前切换场景？",
         needed_for="确定架构风险和联合验收边界。",
         evidence_ids=["E-0001"],
     )
     payload = _discovery("2.1", requests=[request]).model_dump(mode="json")
-    payload["requests"][0]["request_id"] = "IF-2.1-2.3-001"
+    payload["requests"][0]["request_id"] = "IF-2.1-2.3-01"
     tool = SubmitResultTool(
         "module-2.1-specialist",
         "session-1",
@@ -547,8 +397,5 @@ async def test_module_discovery_correction_preserves_leaf_identity_in_request_id
         for item in outcome["validation_errors"]
         if item["field"].startswith("requests.0")
     )
-    assert issue["example"]["request_id"] == "IF-2.1.1-2.3.1-001"
-    assert "Do not delete the leaf fields" in issue["repair_instruction"]
-    assert "downgrade the request to legacy module identity" in issue[
-        "repair_instruction"
-    ]
+    assert issue["example"]["request_id"] == "IF-2.1-2.3-001"
+    assert "requester_module_id and target_module_id" in issue["repair_instruction"]

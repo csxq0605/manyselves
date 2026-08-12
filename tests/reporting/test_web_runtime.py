@@ -255,7 +255,7 @@ async def test_authorized_web_surface_survives_api_runtime_reconstruction(
         )
 
 
-def test_leaf_completion_does_not_promote_whole_module_without_reducer_and_review(
+def test_module_task_completion_does_not_promote_module_without_review(
     tmp_path: Path,
 ) -> None:
     runtime = _runtime(tmp_path)
@@ -281,37 +281,19 @@ def test_leaf_completion_does_not_promote_whole_module_without_reducer_and_revie
     run_id = created["run_id"]
     LocalEventStore(runtime.paths.project_storage_root, run_id).append(
         "TypedResultAccepted",
-        stage_id="submodule-authoring",
-        task_id="submodule_authoring:2.1.1",
-        payload={"submodule_id": "2.1.1"},
+        stage_id="module-authoring",
+        task_id="module-2.1-author",
+        payload={"module_id": "2.1"},
     )
 
     projected = api.progress(token, project_id, run_id)
     module = next(item for item in projected["modules"] if item["module_id"] == "2.1")
-    leaf = next(item for item in module["leafs"] if item["submodule_id"] == "2.1.1")
-    assert leaf == {
-        "submodule_id": "2.1.1",
-        "status": "completed",
-        "phase": "leaf_authoring",
-    }
     assert module["status"] == "running"
-    assert module["reducer_status"] == "not_started"
     assert module["review_status"] == "not_started"
     public = api.events(token, project_id, run_id)
-    assert public["events"][-1]["type"] == "leaf_status"
-    assert public["events"][-1]["submodule_id"] == "2.1.1"
+    assert public["events"][-1]["type"] == "module_status"
+    assert public["events"][-1]["module_id"] == "2.1"
 
-    reducer_ref = (
-        f"Work/runs/{run_id}/collaboration/wave-3/module-barriers/module-2.1.json"
-    )
-    runtime.service.store.write_json(
-        reducer_ref,
-        {
-            "kind": "module_submodule_authoring_barrier",
-            "run_id": run_id,
-            "module_id": "2.1",
-        },
-    )
     review_ref = (
         f"Work/runs/{run_id}/reviews/module/initial/2.1/completion-r0.json"
     )
@@ -325,12 +307,10 @@ def test_leaf_completion_does_not_promote_whole_module_without_reducer_and_revie
     runtime.service.store.write_json(
         f"Work/runs/{run_id}/workflow-state.json",
         {
-            "submodule_authoring_barrier_refs": {"2.1": reducer_ref},
             "module_review_completion_refs": {"2.1": review_ref},
         },
     )
     completed = api.progress(token, project_id, run_id)
     module = next(item for item in completed["modules"] if item["module_id"] == "2.1")
     assert module["status"] == "completed"
-    assert module["reducer_status"] == "completed"
     assert module["review_status"] == "completed"

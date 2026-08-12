@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Manyselves 五模块并行与 CAS 成本控制实验</title>
+  <style>
+    :root{--ink:#17233c;--muted:#637087;--paper:#f4f7fb;--card:#fff;--blue:#2864dc;--cyan:#16a6b6;--violet:#7657d5;--green:#158568;--amber:#d98518;--line:#dce4ef;--shadow:0 16px 42px rgba(29,49,83,.09)}
+    *{box-sizing:border-box}body{margin:0;background:linear-gradient(155deg,#edf4ff 0,#f8f7ff 38%,#f4faf8 100%);color:var(--ink);font:15px/1.68 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+    main{max-width:1180px;margin:auto;padding:42px 24px 72px}.hero{padding:38px;border-radius:28px;color:#fff;background:radial-gradient(circle at 92% 10%,rgba(71,212,211,.33),transparent 26%),linear-gradient(132deg,#172b58,#254f9f 58%,#5f4ac4);box-shadow:0 24px 70px rgba(24,50,105,.28)}
+    .kicker{font-size:12px;letter-spacing:.16em;text-transform:uppercase;opacity:.76}.hero h1{font-size:clamp(30px,5vw,52px);line-height:1.12;margin:10px 0 14px}.hero p{max-width:850px;font-size:18px;margin:0;opacity:.9}.meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}.pill{padding:7px 12px;border-radius:999px;background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.22);font-size:13px}
+    section{margin-top:26px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:18px}.card{background:rgba(255,255,255,.92);border:1px solid rgba(219,228,241,.9);border-radius:20px;padding:24px;box-shadow:var(--shadow)}.span4{grid-column:span 4}.span5{grid-column:span 5}.span6{grid-column:span 6}.span7{grid-column:span 7}.span8{grid-column:span 8}.span12{grid-column:span 12}
+    h2{font-size:23px;margin:0 0 14px}h3{font-size:16px;margin:0 0 8px}.lead{font-size:17px}.muted{color:var(--muted)}.good{color:var(--green)}.warn{color:var(--amber)}code{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:#edf2f8;padding:2px 6px;border-radius:5px}
+    .metric{font-size:34px;font-weight:760;line-height:1.08}.metric small{display:block;font-size:13px;font-weight:500;color:var(--muted);margin-top:8px}.bar{height:10px;border-radius:8px;background:#e8edf4;overflow:hidden;margin:12px 0}.fill{height:100%;border-radius:8px;background:linear-gradient(90deg,var(--blue),var(--cyan))}
+    .flow{overflow:auto}.flow svg{min-width:1020px;width:100%;height:auto;display:block}.node{fill:#fff;stroke:#cbd8e9;stroke-width:1.4}.node-blue{fill:#eaf2ff;stroke:#7ba3ed}.node-cyan{fill:#e8fbfb;stroke:#58bfc5}.node-violet{fill:#f0edff;stroke:#a08de2}.node-green{fill:#ebf8f3;stroke:#69b49d}.arrow{stroke:#8293aa;stroke-width:2;fill:none;marker-end:url(#arrow)}.svg-title{font-weight:700;font-size:13px;fill:#17233c}.svg-sub{font-size:10px;fill:#637087}.barrier{stroke:#6e5ac8;stroke-width:4;stroke-dasharray:5 5}
+    ul{padding-left:20px;margin:9px 0}li{margin:5px 0}.checks{list-style:none;padding:0}.checks li{padding-left:27px;position:relative}.checks li:before{content:"✓";position:absolute;left:0;color:var(--green);font-weight:800}.checks li.caveat:before{content:"!";color:var(--amber)}
+    table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:11px 10px;border-bottom:1px solid var(--line);vertical-align:top}th{color:#4d5c74;font-weight:650}.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:#e9f7f2;color:#147359}.tag.off{background:#fff2e3;color:#a45e0c}
+    .callout{border-left:4px solid var(--blue);padding:14px 16px;background:#eef4ff;border-radius:0 12px 12px 0}.foot{font-size:12px;color:var(--muted);margin-top:28px}.mono{word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+    @media(max-width:820px){.span4,.span5,.span6,.span7,.span8{grid-column:span 12}.hero{padding:28px}.metric{font-size:30px}}
+  </style>
+</head>
+<body><main>
+  <header class="hero">
+    <div class="kicker">Experimental architecture report · 2026-08-12</div>
+    <h1>五模块并行，双 Barrier 收敛</h1>
+    <p>将 cost 分支与 CAS 输出成本控制能力合并；彻底移除 37 叶运行时，把并发严格限定为五个模块 Editor/Auditor 与五个模块级 Cross owner，之后串行进入 Chief、Final 与 Delivery。</p>
+    <div class="meta"><span class="pill">branch · cost-control-experiments</span><span class="pill">5 module lanes</span><span class="pill">5 Cross owners</span><span class="pill">CAS v3 mixed storage</span><span class="pill">default-safe compactor</span></div>
+  </header>
+
+  <section class="grid">
+    <article class="card span8"><h2>结论</h2><p class="lead"><b>目标架构已实现，且没有以删减专家正文、Reviewer 或最终门禁换取成本。</b> 37 个小节编号仍保留为报告 taxonomy、Claim 与 finding 的定位坐标，但不再产生独立 Agent、Task、Session、Lane、Wave 或恢复状态。</p><div class="callout">成本控制的核心从“37 叶并行放大”改为“固定 5+5 并发上限、精确恢复、输出单副本视图”。Chief、Final、Delivery 保持串行。</div></article>
+    <article class="card span4"><h2>运行面缩减</h2><div class="metric">10k+<small>旧运行、合同、恢复与测试行被删除</small></div><div class="bar"><div class="fill" style="width:78%"></div></div><p class="muted">删除 three-wave/leaf 调度、leaf contracts、leaf checkpoint 与对应运行测试；新增 Cross owner 与 CAS 安全链。</p></article>
+  </section>
+
+  <section class="card flow"><h2>确认后的唯一工作流</h2>
+    <svg viewBox="0 0 1040 480" role="img" aria-label="五模块 Editor Auditor 并行，模块 barrier，五 Cross owner 并行，Cross barrier，Chief Final Delivery 串行">
+      <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8293aa"/></marker></defs>
+      <text x="22" y="31" class="svg-title">阶段 A · 五个模块 Lane 并行</text>
+      <g transform="translate(20,48)">
+        <g transform="translate(0,0)"><rect class="node node-blue" width="148" height="54" rx="11"/><text x="12" y="22" class="svg-title">Editor 2.1</text><text x="12" y="39" class="svg-sub">模块全文 + 固定小节结构</text></g>
+        <g transform="translate(0,65)"><rect class="node node-blue" width="148" height="54" rx="11"/><text x="12" y="22" class="svg-title">Editor 2.2</text><text x="12" y="39" class="svg-sub">模块全文 + 固定小节结构</text></g>
+        <g transform="translate(0,130)"><rect class="node node-blue" width="148" height="54" rx="11"/><text x="12" y="22" class="svg-title">Editor 2.3</text><text x="12" y="39" class="svg-sub">模块全文 + 固定小节结构</text></g>
+        <g transform="translate(0,195)"><rect class="node node-blue" width="148" height="54" rx="11"/><text x="12" y="22" class="svg-title">Editor 2.4</text><text x="12" y="39" class="svg-sub">模块全文 + 固定小节结构</text></g>
+        <g transform="translate(0,260)"><rect class="node node-blue" width="148" height="54" rx="11"/><text x="12" y="22" class="svg-title">Editor 2.5</text><text x="12" y="39" class="svg-sub">模块全文 + 固定小节结构</text></g>
+        <path class="arrow" d="M148 27H194"/><path class="arrow" d="M148 92H194"/><path class="arrow" d="M148 157H194"/><path class="arrow" d="M148 222H194"/><path class="arrow" d="M148 287H194"/>
+        <g transform="translate(194,0)"><rect class="node node-cyan" width="176" height="54" rx="11"/><text x="12" y="21" class="svg-title">Auditor 2.1</text><text x="12" y="38" class="svg-sub">finding → revision → same recheck</text></g>
+        <g transform="translate(194,65)"><rect class="node node-cyan" width="176" height="54" rx="11"/><text x="12" y="21" class="svg-title">Auditor 2.2</text><text x="12" y="38" class="svg-sub">finding → revision → same recheck</text></g>
+        <g transform="translate(194,130)"><rect class="node node-cyan" width="176" height="54" rx="11"/><text x="12" y="21" class="svg-title">Auditor 2.3</text><text x="12" y="38" class="svg-sub">finding → revision → same recheck</text></g>
+        <g transform="translate(194,195)"><rect class="node node-cyan" width="176" height="54" rx="11"/><text x="12" y="21" class="svg-title">Auditor 2.4</text><text x="12" y="38" class="svg-sub">finding → revision → same recheck</text></g>
+        <g transform="translate(194,260)"><rect class="node node-cyan" width="176" height="54" rx="11"/><text x="12" y="21" class="svg-title">Auditor 2.5</text><text x="12" y="38" class="svg-sub">finding → revision → same recheck</text></g>
+        <line class="barrier" x1="401" y1="-4" x2="401" y2="318"/><text x="381" y="338" class="svg-sub">MODULE BARRIER · EXACT 5</text>
+        <path class="arrow" d="M370 157H450"/>
+      </g>
+      <text x="484" y="31" class="svg-title">阶段 B · 五个 Cross owner 并行</text>
+      <g transform="translate(470,48)">
+        <g transform="translate(0,0)"><rect class="node node-violet" width="194" height="54" rx="11"/><text x="12" y="21" class="svg-title">Cross owner 2.1</text><text x="12" y="38" class="svg-sub">own full + other 4 compact claims</text></g>
+        <g transform="translate(0,65)"><rect class="node node-violet" width="194" height="54" rx="11"/><text x="12" y="21" class="svg-title">Cross owner 2.2</text><text x="12" y="38" class="svg-sub">own full + other 4 compact claims</text></g>
+        <g transform="translate(0,130)"><rect class="node node-violet" width="194" height="54" rx="11"/><text x="12" y="21" class="svg-title">Cross owner 2.3</text><text x="12" y="38" class="svg-sub">own full + other 4 compact claims</text></g>
+        <g transform="translate(0,195)"><rect class="node node-violet" width="194" height="54" rx="11"/><text x="12" y="21" class="svg-title">Cross owner 2.4</text><text x="12" y="38" class="svg-sub">own full + other 4 compact claims</text></g>
+        <g transform="translate(0,260)"><rect class="node node-violet" width="194" height="54" rx="11"/><text x="12" y="21" class="svg-title">Cross owner 2.5</text><text x="12" y="38" class="svg-sub">own full + other 4 compact claims</text></g>
+        <line class="barrier" x1="228" y1="-4" x2="228" y2="318"/><text x="202" y="338" class="svg-sub">CROSS BARRIER · EXACT 5</text>
+        <path class="arrow" d="M194 157H278"/>
+        <g transform="translate(278,66)"><rect class="node node-green" width="126" height="54" rx="11"/><text x="18" y="23" class="svg-title">Chief</text><text x="18" y="40" class="svg-sub">串行整合</text></g>
+        <path class="arrow" d="M341 120V151"/>
+        <g transform="translate(278,151)"><rect class="node node-green" width="126" height="54" rx="11"/><text x="18" y="23" class="svg-title">Final</text><text x="18" y="40" class="svg-sub">串行终审</text></g>
+        <path class="arrow" d="M341 205V236"/>
+        <g transform="translate(278,236)"><rect class="node node-green" width="126" height="54" rx="11"/><text x="18" y="23" class="svg-title">Delivery</text><text x="18" y="40" class="svg-sub">receipt + version</text></g>
+      </g>
+    </svg>
+  </section>
+
+  <section class="grid">
+    <article class="card span6"><h2>语义不变量</h2><ul class="checks"><li>模块作者一次提交完整模块，37 小节仅作为内部结构与 coverage。</li><li>每个模块使用稳定 Auditor identity；修订后必须由同一 Auditor recheck。</li><li>Cross owner 只写本模块；其他四模块为 hash 绑定的只读 compact views。</li><li>无 finding 的 Cross owner 也产出可验证 no-op completion。</li><li>任一 owner 失败会 drain 全部五项、记录 terminal，并阻止 barrier 与自动重发。</li><li>两个 barrier 均要求当前 run、精确五项、refs / hashes / revisions 一致。</li></ul></article>
+    <article class="card span6"><h2>37 叶删除边界</h2><table><tr><th>已删除</th><th>仍保留</th></tr><tr><td>leaf Agent / Task / Session / Lane</td><td>报告小节 taxonomy</td></tr><tr><td>三波 discovery/interface/authoring</td><td><code>submodule_id</code> 证据定位</td></tr><tr><td>leaf input/submission contracts</td><td>Claim 与 finding target</td></tr><tr><td>leaf checkpoint / resume / web progress</td><td>模块全文结构校验</td></tr><tr><td>运行参数与 Tool schema 开关</td><td>历史运行产物（只读证据）</td></tr></table><p class="muted">生产目录静态扫描对 leaf_37、bounded_module_lanes、SubmoduleAuthoringInput、三波 barrier 等运行词项无匹配。</p></article>
+  </section>
+
+  <section class="grid">
+    <article class="card span4"><h2>冻结样本</h2><div class="metric">25.20 MB<small>最终 DOCX · report-dc2549e1b5</small></div><p class="mono">d31c5b1288b35ab5ec9a5ee628b2ff7fb456f7c035da734837a54f0571b25f28</p><span class="tag">completed · 5 modules · Cross · Final</span></article>
+    <article class="card span4"><h2>样本精确冗余</h2><div class="metric">29.61%<small>28,508,953 / 96,275,919 bytes</small></div><div class="bar"><div class="fill" style="width:29.61%"></div></div><p class="muted">最终 DOCX 的 Outputs 实体副本占样本冗余的 88.38%，是首个最安全、收益最大的 CAS view 对象。</p></article>
+    <article class="card span4"><h2>全局审计范围</h2><div class="metric">69.97%<small>1,093,676,027 bytes 精确冗余</small></div><div class="bar"><div class="fill" style="width:69.97%"></div></div><p class="muted">范围含 success/test/test-improvements 的 Work、.manyselves、Outputs 及两个源码仓库 .manyselves；属于 2026-08-09 冻结审计，不代表当前磁盘全量。</p></article>
+  </section>
+
+  <section class="grid">
+    <article class="card span7"><h2>CAS 输出控制链</h2><ol><li><b>Single writer：</b>workspace lock → run lock，防止不同 run 覆盖共享 Outputs。</li><li><b>Output owner：</b>completed result 与 receipt/version/hash 耐久后，原子发布 <code>Work/output-owner.json</code>。</li><li><b>Completed-run compactor：</b>默认 dry-run；仅显式 run_id + apply 才将最终 DOCX 转为相对 CAS symlink view。</li><li><b>Fail closed：</b>active/non-completed、owner mismatch、receipt/version/hash/CAS tamper 均拒绝。</li><li><b>Rollback：</b>从只读 blob 原子恢复普通文件；journal 支持 rolled_back / recovery_required。</li><li><b>v3 mixed storage：</b>仅 CAS-mode artifact 要求 blob ref；materialized artifact 保持本地实体，兼容 v2 只读验证。</li></ol></article>
+    <article class="card span5"><h2>为什么不直接自动压缩全部 Outputs</h2><ul class="checks"><li>首轮只处理写入路径已证明原子替换的最终 DOCX。</li><li>不删除 CAS blob，不迁移 receipt/version，不改变 completed 判定。</li><li>source-index DOCX 等写入器尚未逐个证明 symlink-safe 前，不进入自动视图。</li><li class="caveat">成本收益需在副本物理回收后实测；CAS view 设计本身不等于费用下降。</li></ul></article>
+  </section>
+
+  <section class="card"><h2>验证矩阵</h2><table><thead><tr><th>门禁</th><th>结果</th><th>覆盖</th></tr></thead><tbody>
+    <tr><td>Reporting suite</td><td><span class="tag">631 passed</span></td><td>五模块、Cross owner、恢复、CAS、service、tools</td></tr>
+    <tr><td>Offline full suite</td><td><span class="tag">1645 passed · 6 deselected</span></td><td><code>-m 'not integration'</code>，Qt offscreen，无网络 Provider</td></tr>
+    <tr><td>CAS focused</td><td><span class="tag">63 + 31 passed</span></td><td>content store、owner、compactor、retention、delivery/version</td></tr>
+    <tr><td>Cross focused</td><td><span class="tag">47 passed</span></td><td>exact-five、failure drain、contracts、prompts</td></tr>
+    <tr><td>真实 Provider paired A/B</td><td><span class="tag off">未执行</span></td><td>因此不声称 token、费用或质量已经下降</td></tr>
+  </tbody></table></section>
+
+  <section class="grid">
+    <article class="card span6"><h2>证据入口</h2><table><tr><td>唯一工作流</td><td><code>manyselves/core/reporting/workflow.py</code></td></tr><tr><td>Cross owner 生命周期</td><td><code>manyselves/core/reporting/review_lifecycle.py</code></td></tr><tr><td>Cross typed contracts</td><td><code>input_contracts.py / agentic_models.py</code></td></tr><tr><td>Barrier records</td><td><code>parallel_runtime.py</code></td></tr><tr><td>输出所有权</td><td><code>output_ownership.py</code></td></tr><tr><td>CAS 压缩器</td><td><code>storage_compaction.py</code></td></tr><tr><td>显式 CLI</td><td><code>scripts/compact_reporting_storage.py</code></td></tr></table></article>
+    <article class="card span6"><h2>下一步实验门</h2><ol><li>冻结相同 Inputs、model、Prompt/Schema、price table 与质量门。</li><li>对 baseline 与本分支各跑真实 Provider delivery，比较 uncached / cache-read / cache-write / output tokens、物理请求、correction、continuation、p50/p95。</li><li>同时验证五模块、双 barrier、Chief、Final、DOCX 与 receipt hash 链。</li><li>先对冻结成功 run 执行 compactor dry-run；人工核对 plan 后再 apply，并测 inode、磁盘占用、可打开性与 rollback。</li></ol><p class="callout"><b>合并门：</b>只接受“每次已验证交付的预期成本”改善；不能用 eventual pass 或删减 Reviewer 掩盖首轮失败。</p></article>
+  </section>
+
+  <p class="foot">审计说明：存储百分比来自 2026-08-09 冻结范围；成功样本的完成状态、五模块、Cross、Final、receipt 与 DOCX SHA 于 2026-08-12 重新读取确认。本文不包含真实 Provider 对照结论。</p>
+</main></body></html>

@@ -7,8 +7,8 @@
 收到报告请求后，先根据用户说明选择 `operation`，再调用一次 `run_reporting_workflow`。`operation` 没有缺省语义，不得先自行遍历资料，也不得通过 `read`、`open_artifact` 或 `search_text` 遍历项目来代替路由决策。
 
 1. **只蒸馏或更新模板写作能力**：选择 `operation="distill_template_skill"`，`target_modules` 必须为空。该行动只读取报告模板并把完整 Skill 固定写入 `Work/report-template-writing/`；不读取项目证据，不启动模块专家、总编或 Render，也不生成报告。
-2. **从原始资料重新开始完整报告**：选择 `operation="full_report"`，`target_modules` 必须是 `2.1` 至 `2.5`。工作流只从 `Work/report-template-writing/` 读取已蒸馏 Skill。`authoring_granularity="leaf_37"` 时，每个固定叶子都是独立、可恢复的三波任务；`authoring_granularity="module_5"` 时，跳过叶波并让五个模块分别以“写作→Evidence Auditor→修订→原 Auditor 复核”的完整 lane 同时执行。五模块通过后才进行 Cross、总编和独立成稿审计。此操作绝不读取模板或触发蒸馏。
-3. **只新写或重写指定模块**：选择 `operation="module_report"`，`target_modules` 只填写用户点名的模块。所请求模块仍必须拆成全部固定叶子的独立、可调度、可恢复任务，再由确定性 reducer 归并并进入独立模块审计；不得退化成一次模块级整块写作。该路径不创建未请求模块、跨模块问答屏障、跨模块审查或总编；定向返修回到命中的原叶子身份，一个叶子失败时保留其他已完成叶子并只恢复失败或未启动任务。此操作只读取固定 Skill；若用户还要求随后生成完整报告，等待该任务成功返回后，再选择第 4 路继续，不得在第一步重跑其他模块。
+2. **从原始资料重新开始完整报告**：选择 `operation="full_report"`，`target_modules` 必须是 `2.1` 至 `2.5`。工作流只从 `Work/report-template-writing/` 读取已蒸馏 Skill。五个模块分别以“写作→Evidence Auditor→定向修订→原 Auditor 复核”的完整 lane 同时执行；五模块 barrier 通过后，五个模块级 Cross owner 各自审查本模块与其他模块的关系，统一 barrier 后才进入总编和独立成稿审计。此操作绝不读取模板或触发蒸馏。
+3. **只新写或重写指定模块**：选择 `operation="module_report"`，`target_modules` 只填写用户点名的模块。每个请求模块是一个完整 lane；小节编号只用于正文结构、Claim 归属和 finding 定位，不创建小节级 Agent、Task、Session 或 Lane。该路径不创建未请求模块、Cross owner、总编或完整交付；模块定向返修继续使用原模块作者和原 Auditor 身份。此操作只读取固定 Skill；若用户还要求随后生成完整报告，等待该任务成功返回后，再选择第 4 路继续。
 4. **已有五份分块报告，需要生成汇总报告**：选择 `operation="aggregate_existing"`。默认读取 `Outputs/Modules/2.1.md` 至 `2.5.md`；只有用户明确给出其他路径时才传 `source_module_refs`。此路径只读取固定 Skill，启动总编并经过独立成稿审计后进入 Render；不启动模块专家、单模块证据审计、跨模块审查或模板蒸馏。
 5. **已有汇总 Markdown，只需要 Word**：选择 `operation="render_existing"` 并传 `source_markdown_ref`。此路径不启动任何分析或写作 Agent，直接进入确定性 Render。
 “已有报告”必须按粒度判断：五份 2.x 文件属于第 4 路；单个完整汇总 Markdown 属于第 5 路。用户明确说“蒸馏、学习或更新模板 Skill”属于第 1 路；“重新分析、重新生成全部、从 Inputs 开始”属于第 2 路；点名一个或若干 2.x 模块属于第 3 路。写作操作若返回固定 Skill 缺失，必须明确提示先单独运行第 1 路，不能在同一个写作 run 中补做蒸馏。只有路径或范围确实无法确定时才询问用户。
@@ -19,7 +19,7 @@
 
 - **已有完整 Markdown 直接生成 DOCX**：仍使用第 5 路 `render_existing`，把该 Markdown 的项目相对路径作为 `source_markdown_ref`；不得启动模块专家、审计员或总编。
 - **当前 run 已有五个完成模块，尚未完成跨模块审查**：不得重新调用 `run_reporting_workflow`，也不得把它改成 `aggregate_existing`。直接调用 `resume_reporting_workflow(run_id=原run_id)`，由 checkpoint 恢复五个模块并进入跨模块审查；不得重写已经完成的模块。
-- **当前 run 停在某个叶子写作、模块独立审计或定向返修**：调用 `resume_reporting_workflow(run_id=原run_id, supplements=[...])`，每条 supplement 必须声明 content、scope、target_ids、stages 和 supersedes；已完成叶子的 completion 不得失效或重跑，只调度失败/未启动叶子；定向返修继续使用命中的原叶子 specialist 与原 auditor 身份完成闭环，不得跳过审计或新建 run。
+- **当前 run 停在模块写作、模块独立审计或定向返修**：调用 `resume_reporting_workflow(run_id=原run_id, supplements=[...])`，每条 supplement 必须声明 content、scope、target_ids、stages 和 supersedes；已完成模块 completion 不得失效或重跑；定向返修继续使用原模块 specialist 与原 auditor 身份完成闭环，不得跳过审计或新建 run。
 - **当前 run 停在总编成稿审计或总编返修**：调用 `resume_reporting_workflow(run_id=原run_id, supplements=[...])`，并将 stages 限定到 chief_edit/final_review；继续使用原 chief-editor 与原 chief-editor-auditor 身份，不得绕过成稿审计直接渲染。
 - **当前 run 已有上一轮跨模块审查，模块已按审查意见修改，需要再次审查**：仍调用 `resume_reporting_workflow(run_id=原run_id, supplements=[...])`。这不是一种新的“再次审计 operation”；工作流必须继续使用该 run 中已保留的 `cross-module-reviewer` 身份，把上一轮审查和实际变更模块交回它，并返回一份完整审查结果。未修改模块沿用上一轮审查，不得重新读取正文。
 - **只有五份孤立模块文件、没有可恢复 run/checkpoint，却要求先审查而不是汇总**：不得假装存在可恢复流程，也不得擅自选择第 4 路跳过审查。Main 应明确说明缺少承载审查状态的原 `run_id`，请用户提供原 run；只有用户改为要求直接汇总时才使用 `aggregate_existing`。
@@ -49,7 +49,6 @@ Main 判断“已有模块进入审查”时，导航依据只能是后台终态
 - `target_modules`：只允许固定模块 `2.1`、`2.2`、`2.3`、`2.4`、`2.5`。`distill_template_skill` 必须传空列表；`full_report` 和 `aggregate_existing` 必须是全部五个；`module_report` 只传用户指定模块。
 - `execution_requirements`：本轮“深度思考”、重点审查等执行要求，与报告范围分开传递。
 - `operation`：必须显式选择 `distill_template_skill`、`full_report`、`module_report`、`aggregate_existing` 或 `render_existing`。
-- `authoring_granularity`：完整报告作者粒度；只允许 `leaf_37` 或 `module_5`。除非用户明确要求五模块 A/B 路径，否则使用默认 `leaf_37`。`leaf_37` 的叶任务默认最多同时运行 8 个，不得擅自改成 37 个物理并发；`module_5` 本身保证五条完整模块 lane 并行，不得再用 `execution_mode` 改写其语义。
 - `source_module_refs`：仅用于 `aggregate_existing`；未指定时由工作流使用标准五模块路径，Main 不需要先读取确认内容。
 - `source_markdown_ref`：`render_existing` 时必须是项目内现有 Markdown 相对路径。
 

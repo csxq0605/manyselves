@@ -10,6 +10,7 @@ from typing import Any, Literal
 from pydantic import Field, TypeAdapter, model_validator
 
 from .agentic_models import (
+    ClaimRecord,
     CrossDecisionIFClosure,
     CrossDecisionPack,
     CrossDecisionXMRVerdict,
@@ -453,39 +454,6 @@ class ModuleAuthoringInput(StrictModel):
             raise ValueError("existing result parts lie outside the module scope")
         if not set(self.rewrite_part_ids).issubset(expected):
             raise ValueError("correction rewrite parts lie outside the module scope")
-        return self
-
-
-class SubmoduleAuthoringInput(StrictModel):
-    """Immutable Wave 3 input for one independently scheduled leaf author."""
-
-    kind: Literal["submodule_authoring_input"] = "submodule_authoring_input"
-    run_id: str = Field(min_length=1)
-    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
-    submodule_id: str = Field(min_length=1)
-    revision: int = Field(default=0, ge=0)
-    coverage_ref: str = Field(min_length=1)
-    evidence_ref: str = Field(min_length=1)
-    manifest_ref: str = Field(min_length=1)
-    knowledge_ref: str = Field(min_length=1)
-    collaboration_bundle_ref: str = Field(min_length=1)
-    discovery_ref: str = Field(min_length=1)
-    collaboration_bundle_sha256: str | None = Field(
-        default=None,
-        pattern=r"^[0-9a-f]{64}$",
-        description="Hash of the exact Barrier 2 bundle consumed by this leaf author.",
-    )
-    discovery_sha256: str | None = Field(
-        default=None,
-        pattern=r"^[0-9a-f]{64}$",
-        description="Hash of the exact Wave 1A discovery consumed by this leaf author.",
-    )
-
-    @model_validator(mode="after")
-    def exact_leaf_scope(self) -> "SubmoduleAuthoringInput":
-        definition = resolve_submodule(self.submodule_id)
-        if definition.module_id != self.module_id:
-            raise ValueError("submodule authoring input belongs to another module")
         return self
 
 
@@ -1033,6 +1001,198 @@ class CrossReviewInput(StrictModel):
                 for report in self.machine_validation_reports
             ):
                 raise ValueError("cross recheck validation is stale or not content-bound")
+        return self
+
+
+class CrossOwnerRelatedModuleView(StrictModel):
+    """Compact read-only relation view supplied to one Cross owner."""
+
+    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] = Field(
+        description="Related module represented by this read-only compact view."
+    )
+    revision: int = Field(
+        ge=0,
+        description="Persisted revision of the related module subject."
+    )
+    subject_ref: str = Field(
+        min_length=1,
+        description="Immutable artifact ref for the related module subject."
+    )
+    subject_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+        description="SHA-256 hash binding the related module subject artifact."
+    )
+    submodule_ids: list[str] = Field(
+        min_length=1,
+        description="Fixed submodule ids visible in the related compact view."
+    )
+    claims: list[ClaimRecord] = Field(
+        default_factory=list,
+        description=(
+            "Compact claim summaries carrying text, type, E-* sources, confidence, "
+            "and unresolved status for related-module reasoning."
+        ),
+    )
+    evidence_ids_by_submodule: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Registered E-* evidence ids bound to each related submodule."
+    )
+    unresolved_questions: list[str] = Field(
+        default_factory=list,
+        description="Open questions recorded by the related module author."
+    )
+
+    @model_validator(mode="after")
+    def claims_match_module(self) -> "CrossOwnerRelatedModuleView":
+        if any(claim.module_id != self.module_id for claim in self.claims):
+            raise ValueError("related compact claims must remain in their module scope")
+        if any(claim.submodule_id not in self.submodule_ids for claim in self.claims):
+            raise ValueError("related compact claims must target visible submodules")
+        return self
+
+
+class CrossOwnerInput(StrictModel):
+    """Typed input for one fixed Cross-owner reviewer.
+
+    The owner receives its complete module view.  Every other module is present
+    only as a compact, hash-bound relation view; those modules are read-only and
+    cannot become revision targets for this lane.
+    """
+
+    kind: Literal["cross_owner_input"] = "cross_owner_input"
+    phase: Literal["initial", "recheck"] = Field(
+        description="Whether this is the owner's initial review or its bound recheck."
+    )
+    run_id: str = Field(min_length=1, description="Immutable current report run id.")
+    review_round: int = Field(
+        ge=0,
+        description="Cross-owner review round represented by this input."
+    )
+    owner_module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] = Field(
+        description="Only module this owner may review and revise."
+    )
+    owner_subject_ref: str = Field(
+        min_length=1,
+        description="Immutable artifact ref for the owner's complete module subject."
+    )
+    owner_subject_revision: int = Field(
+        ge=0,
+        description="Revision of the owner's complete module subject."
+    )
+    owner_subject: ModuleContentView = Field(
+        description="Complete current view of the module owned by this reviewer."
+    )
+    related_module_refs: dict[
+        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
+    ] = Field(description="Immutable refs for the other four read-only module subjects.")
+    related_module_revisions: dict[
+        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], int
+    ] = Field(description="Revisions for the other four read-only module subjects.")
+    related_module_sha256: dict[
+        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
+    ] = Field(description="SHA-256 hashes for the other four read-only module subjects.")
+    related_module_views: dict[
+        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], CrossOwnerRelatedModuleView
+    ] = Field(description="Compact, hash-bound views for the other four modules.")
+    required_findings: list[CrossReviewFinding] = Field(
+        default_factory=list,
+        description="Owner-scoped findings that the recheck must resolve."
+    )
+    revision_responses: list[RevisionResponse] = Field(
+        default_factory=list,
+        description="Owner responses corresponding one-for-one to required findings."
+    )
+    prior_synthesis_inputs: list[CrossSynthesisInput] = Field(
+        default_factory=list,
+        description="Cross synthesis entries carried into the owner's recheck."
+    )
+    local_regression_review_ref: str | None = Field(
+        default=None,
+        description="Immutable owner-module Auditor completion used by recheck."
+    )
+    machine_validation_ref: str | None = Field(
+        default=None,
+        description="Immutable machine validation artifact for the owner revision."
+    )
+    machine_validation_report: "ValidationReport | None" = Field(
+        default=None,
+        description="Hash-bound passed machine validation report for the owner revision."
+    )
+    interface_registry_ref: str | None = Field(
+        default=None,
+        description="Optional immutable interface registry artifact consulted by the owner."
+    )
+    interface_registry_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="SHA-256 binding for the optional interface registry artifact."
+    )
+    pending_interface_request_ids: list[str] = Field(
+        default_factory=list,
+        description="Interface request ids still requiring owner-scoped closure."
+    )
+    @model_validator(mode="after")
+    def exact_owner_and_relation_scope(self) -> "CrossOwnerInput":
+        expected_related = set(REPORT_TAXONOMY) - {self.owner_module_id}
+        if self.owner_subject.module_id != self.owner_module_id:
+            raise ValueError("Cross owner subject belongs to another module")
+        if self.owner_subject.revision != self.owner_subject_revision:
+            raise ValueError("Cross owner subject revision does not match owner metadata")
+        if set(self.related_module_refs) != expected_related:
+            raise ValueError("Cross owner input must include exactly the other four modules")
+        if set(self.related_module_revisions) != expected_related:
+            raise ValueError("Cross owner relation revisions must cover the other four modules")
+        if set(self.related_module_sha256) != expected_related:
+            raise ValueError("Cross owner relation hashes must cover the other four modules")
+        if set(self.related_module_views) != expected_related:
+            raise ValueError("Cross owner compact relation views must cover the other four modules")
+        for module_id in expected_related:
+            view = self.related_module_views[module_id]
+            if (
+                view.module_id != module_id
+                or view.revision != self.related_module_revisions[module_id]
+                or view.subject_ref != self.related_module_refs[module_id]
+                or view.subject_sha256 != self.related_module_sha256[module_id]
+            ):
+                raise ValueError("Cross owner relation view/hash binding is inconsistent")
+        if len(self.pending_interface_request_ids) != len(
+            set(self.pending_interface_request_ids)
+        ):
+            raise ValueError("Cross owner interface request ids must be unique")
+        if (self.interface_registry_ref is None) != (
+            self.interface_registry_sha256 is None
+        ):
+            raise ValueError("interface registry ref and hash must be supplied together")
+        for finding in self.required_findings:
+            if finding.owner_module_id != self.owner_module_id:
+                raise ValueError("Cross owner required finding lies outside owner scope")
+        if self.phase == "initial":
+            if self.review_round != 0:
+                raise ValueError("initial Cross owner review must use round zero")
+            if self.required_findings or self.revision_responses:
+                raise ValueError("initial Cross owner input cannot contain recheck state")
+            if self.local_regression_review_ref or self.machine_validation_ref:
+                raise ValueError("initial Cross owner input cannot contain regression refs")
+            if self.machine_validation_report is not None:
+                raise ValueError("initial Cross owner input cannot contain validation state")
+        else:
+            if self.review_round <= 0:
+                raise ValueError("Cross owner recheck requires a positive review round")
+            required = {finding.id for finding in self.required_findings}
+            responses = {response.finding_id for response in self.revision_responses}
+            if not required or responses != required:
+                raise ValueError("Cross owner recheck requires one response per finding")
+            if not self.local_regression_review_ref:
+                raise ValueError("Cross owner recheck requires local regression completion")
+            if not self.machine_validation_ref or self.machine_validation_report is None:
+                raise ValueError("Cross owner recheck requires bound machine validation")
+            if (
+                self.machine_validation_report.subject_ref != self.owner_subject_ref
+                or self.machine_validation_report.subject_revision
+                != self.owner_subject_revision
+                or not self.machine_validation_report.passed
+            ):
+                raise ValueError("Cross owner recheck machine validation is stale or failed")
         return self
 
 
@@ -1821,9 +1981,9 @@ class FinalAuditSnapshot(StrictModel):
 INPUT_CONTRACT_TYPES = {
     "template_distillation_input": TemplateDistillationInput,
     "module_authoring_input": ModuleAuthoringInput,
-    "submodule_authoring_input": SubmoduleAuthoringInput,
     "module_review_input": ModuleReviewInput,
     "cross_review_input": CrossReviewInput,
+    "cross_owner_input": CrossOwnerInput,
     "final_review_input": FinalReviewInput,
     "aggregate_final_review_input": AggregateFinalReviewInput,
     "module_revision_input": ModuleRevisionInput,
@@ -1836,9 +1996,9 @@ INPUT_CONTRACT_TYPES = {
 INPUT_CONTRACT_SUMMARIES = {
     "template_distillation_input": "One exact template snapshot and five required durable output parts.",
     "module_authoring_input": "One fixed module scope with role-labelled current-run evidence inputs.",
-    "submodule_authoring_input": "One exact leaf-submodule discovery and Barrier-2 collaboration bundle.",
     "module_review_input": "One exact module subject plus phase-specific immutable review state.",
     "cross_review_input": "Five exact module subjects plus phase-specific Cross closure state.",
+    "cross_owner_input": "One complete owner module plus four compact hash-bound read-only relation views.",
     "final_review_input": "One exact edited report plus a hash-bound terminal CrossDecisionPack and seven-section final-review state.",
     "aggregate_final_review_input": "Independent aggregate_existing final review with null cross_context and seven-section audit state; no CrossDecisionPack.",
     "module_revision_input": "One exact module baseline and only the findings assigned to its author.",
@@ -2019,23 +2179,6 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "saved_part_ids": [],
         "rewrite_part_ids": [],
     },
-    "submodule_authoring_input": {
-        "kind": "submodule_authoring_input",
-        "run_id": "report-example",
-        "module_id": "2.1",
-        "submodule_id": "2.1.1",
-        "revision": 0,
-        "coverage_ref": "Work/runs/report-example/preparation/coverage.json",
-        "evidence_ref": "Work/runs/report-example/preparation/evidence.jsonl",
-        "manifest_ref": "Work/runs/report-example/preparation/manifest.json",
-        "knowledge_ref": "Work/runs/report-example/knowledge/module-2.1.md",
-        "collaboration_bundle_ref": (
-            "Work/runs/report-example/collaboration/bundles/submodules/2.1.1.json"
-        ),
-        "discovery_ref": (
-            "Work/runs/report-example/collaboration/wave-1/submodules/2.1.1.json"
-        ),
-    },
     "module_review_input": {
         "kind": "module_review_input",
         "phase": "initial",
@@ -2080,6 +2223,47 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "prior_synthesis_inputs": [],
         "machine_validation_refs": [],
         "machine_validation_reports": [],
+    },
+    "cross_owner_input": {
+        "kind": "cross_owner_input",
+        "phase": "initial",
+        "run_id": "report-example",
+        "review_round": 0,
+        "owner_module_id": "2.1",
+        "owner_subject_ref": _EXAMPLE_MODULE_REFS["2.1"],
+        "owner_subject_revision": 0,
+        "owner_subject": _EXAMPLE_MODULES["2.1"],
+        "related_module_refs": {
+            module_id: _EXAMPLE_MODULE_REFS[module_id]
+            for module_id in REPORT_TAXONOMY
+            if module_id != "2.1"
+        },
+        "related_module_revisions": {
+            module_id: 0 for module_id in REPORT_TAXONOMY if module_id != "2.1"
+        },
+        "related_module_sha256": {
+            module_id: "0" * 64
+            for module_id in REPORT_TAXONOMY
+            if module_id != "2.1"
+        },
+        "related_module_views": {
+            module_id: {
+                "module_id": module_id,
+                "revision": 0,
+                "subject_ref": _EXAMPLE_MODULE_REFS[module_id],
+                "subject_sha256": "0" * 64,
+                "submodule_ids": list(REPORT_TAXONOMY[module_id].submodules),
+                "claims": [],
+                "evidence_ids_by_submodule": {},
+                "unresolved_questions": [],
+            }
+            for module_id in REPORT_TAXONOMY
+            if module_id != "2.1"
+        },
+        "required_findings": [],
+        "revision_responses": [],
+        "prior_synthesis_inputs": [],
+        "pending_interface_request_ids": [],
     },
     "final_review_input": {
         "kind": "final_review_input",

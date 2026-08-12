@@ -1,3 +1,5 @@
+import errno
+
 import pytest
 
 from manyselves.core.reporting.agentic_models import SourceKind, SourceRecord
@@ -50,3 +52,33 @@ def test_write_run_model_rejects_symlink_escape(tmp_path):
         store.write_run_model("run-1", "ledgers/R-001.json", _source())
 
     assert not (outside / "R-001.json").exists()
+
+
+def test_strict_directory_fsync_propagates_eio(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_fsync(_descriptor: int) -> None:
+        raise OSError(errno.EIO, "injected directory fsync failure")
+
+    monkeypatch.setattr("manyselves.core.reporting.store.os.fsync", fail_fsync)
+
+    with pytest.raises(OSError) as captured:
+        ReportingStore.fsync_directory(tmp_path)
+
+    assert captured.value.errno == errno.EIO
+
+
+def test_strict_directory_open_propagates_eio(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_open(*_args, **_kwargs) -> int:
+        raise OSError(errno.EIO, "injected directory open failure")
+
+    monkeypatch.setattr("manyselves.core.reporting.store.os.open", fail_open)
+
+    with pytest.raises(OSError) as captured:
+        ReportingStore.fsync_directory(tmp_path)
+
+    assert captured.value.errno == errno.EIO

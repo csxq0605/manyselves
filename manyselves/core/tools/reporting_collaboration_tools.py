@@ -30,6 +30,8 @@ from ..reporting.agentic_models import (
     ChiefRevisionSubmissionInput,
     CrossReviewFindingSubmission,
     CrossReviewVerdictSubmission,
+    CrossOwnerFindingSubmission,
+    CrossOwnerVerdictSubmission,
     EditedReportSubmission,
     EditedReportSubmissionInput,
     FinalReviewFindingSubmission,
@@ -40,8 +42,6 @@ from ..reporting.agentic_models import (
     ModuleRevisionSubmissionInput,
     ModuleSubmission,
     ModuleSubmissionInput,
-    SubmoduleDraftSubmission,
-    SubmoduleDraftSubmissionInput,
     TableSubmission,
     TemplateSkillSubmission,
     WorkflowDecisionSubmission,
@@ -54,12 +54,12 @@ from ..reporting.input_contracts import (
     AggregateEditorInput,
     ChiefEditorInput,
     ChiefRevisionInput,
+    CrossOwnerInput,
     CrossReviewInput,
     FinalReviewInput,
     ModuleAuthoringInput,
     ModuleReviewInput,
     ModuleRevisionInput,
-    SubmoduleAuthoringInput,
     TemplateDistillationInput,
     WorkflowExceptionInput,
 )
@@ -504,65 +504,6 @@ class SubmitResultTool(_ResultTool):
                 "revision_responses": [
                     response.model_dump(mode="python") for response in commit.revision_responses
                 ],
-            }
-        )
-
-    def _assemble_submodule_commit(
-        self,
-        commit: SubmoduleDraftSubmissionInput,
-    ) -> SubmoduleDraftSubmission:
-        """Materialize one exact leaf part without exposing prose paths or Claim ids."""
-
-        contract = self._feedback_input_contract()
-        if not isinstance(contract, SubmoduleAuthoringInput):
-            raise SubmissionValidationError(
-                "submodule commit requires its active submodule_authoring_input",
-                field="$contract",
-                expected="one exact current-run submodule authoring input",
-                received=self.input_contract_ref,
-            )
-        if (
-            commit.module_id != contract.module_id
-            or commit.submodule_id != contract.submodule_id
-            or commit.revision != contract.revision
-        ):
-            raise SubmissionValidationError(
-                "submodule commit identity differs from the active authoring input",
-                field="$identity",
-                expected={
-                    "module_id": contract.module_id,
-                    "submodule_id": contract.submodule_id,
-                    "revision": contract.revision,
-                },
-                received={
-                    "module_id": commit.module_id,
-                    "submodule_id": commit.submodule_id,
-                    "revision": commit.revision,
-                },
-            )
-        prose, evidence_ids, _ = self._bound_module_part(commit.submodule_id)
-        claim_payload = self._runtime_claim_for_part(
-            module_id=commit.module_id,
-            part_id=commit.submodule_id,
-            prose=prose,
-            evidence_ids=evidence_ids,
-        )
-        claim_id = str(claim_payload["id"])
-        narrative = (
-            prose.rstrip() + f"\n\n[[CLAIM:{claim_id}]]"
-            if evidence_ids
-            else prose
-        )
-        return SubmoduleDraftSubmission.model_validate(
-            {
-                "kind": "submodule_draft_submission",
-                "module_id": commit.module_id,
-                "submodule_id": commit.submodule_id,
-                "narrative": narrative,
-                "claim": claim_payload,
-                "source_ids": list(evidence_ids),
-                "unresolved_questions": commit.unresolved_questions,
-                "revision": commit.revision,
             }
         )
 
@@ -1083,13 +1024,7 @@ class SubmitResultTool(_ResultTool):
         contract,
     ) -> object:
         example = deepcopy(schema.get("examples", [{}])[0])
-        if kind == "submodule_draft_submission" and isinstance(
-            contract, SubmoduleAuthoringInput
-        ):
-            example["module_id"] = contract.module_id
-            example["submodule_id"] = contract.submodule_id
-            example["revision"] = contract.revision
-        elif kind == "module_submission" and isinstance(contract, ModuleAuthoringInput):
+        if kind == "module_submission" and isinstance(contract, ModuleAuthoringInput):
             example["module_id"] = contract.module_id
             example["revision"] = contract.revision
         elif kind == "module_revision_submission" and isinstance(contract, ModuleRevisionInput):
@@ -1542,20 +1477,19 @@ class SubmitResultTool(_ResultTool):
                         else None
                     )
                     if candidate is not None:
-                        requester_leaf = candidate.get("requester_submodule_id")
-                        target_leaf = candidate.get("target_submodule_id")
-                        if requester_leaf and target_leaf:
+                        requester_module = candidate.get("requester_module_id")
+                        target_module = candidate.get("target_module_id")
+                        if requester_module and target_module:
                             corrected = deepcopy(candidate)
                             corrected["request_id"] = (
-                                f"IF-{requester_leaf}-{target_leaf}-001"
+                                f"IF-{requester_module}-{target_module}-001"
                             )
                             field_example = corrected
                             repair_instruction = (
-                                "Keep requester_submodule_id and target_submodule_id. Set "
-                                "request_id to IF-<requester_submodule_id>-"
-                                "<target_submodule_id>-NNN (for this request, for example "
-                                f"{corrected['request_id']!r}). Do not delete the leaf fields "
-                                "or downgrade the request to legacy module identity. Preserve "
+                                "Keep requester_module_id and target_module_id. Set "
+                                "request_id to IF-<requester_module_id>-"
+                                "<target_module_id>-NNN (for this request, for example "
+                                f"{corrected['request_id']!r}). Preserve "
                                 "all unrelated valid content and resubmit the complete native "
                                 "JSON object."
                             )
@@ -1837,29 +1771,6 @@ class SubmitResultTool(_ResultTool):
                 str(cached["text"]),
             )
             return
-        if isinstance(contract, SubmoduleAuthoringInput):
-            if not isinstance(payload, SubmoduleDraftSubmission):
-                return
-            if (
-                payload.module_id != contract.module_id
-                or payload.submodule_id != contract.submodule_id
-                or payload.revision != contract.revision
-            ):
-                raise SubmissionValidationError(
-                    "submodule submission identity differs from its input contract",
-                    field="$identity",
-                    expected={
-                        "module_id": contract.module_id,
-                        "submodule_id": contract.submodule_id,
-                        "revision": contract.revision,
-                    },
-                    received={
-                        "module_id": payload.module_id,
-                        "submodule_id": payload.submodule_id,
-                        "revision": payload.revision,
-                    },
-                )
-            return
         if isinstance(contract, ModuleAuthoringInput):
             if not isinstance(payload, ModuleSubmission):
                 return
@@ -2076,6 +1987,134 @@ class SubmitResultTool(_ResultTool):
             if unknown_evidence:
                 raise SubmissionValidationError(
                     "Cross synthesis uses unregistered project evidence",
+                    field="synthesis_inputs.evidence_refs",
+                    expected=sorted(known_evidence),
+                    received=unknown_evidence,
+                )
+            return
+        if isinstance(contract, CrossOwnerInput):
+            required_dimensions = set(CROSS_REVIEW_DIMENSIONS)
+            owner_module_id = contract.owner_module_id
+            if isinstance(payload, CrossOwnerFindingSubmission):
+                if contract.phase != "initial":
+                    raise SubmissionValidationError(
+                        "Cross owner finding submission is only valid for initial phase",
+                        field="kind",
+                        expected="cross_owner_verdict_submission during recheck",
+                        example="cross_owner_verdict_submission",
+                        received=payload.kind,
+                    )
+                findings = payload.findings
+            elif isinstance(payload, CrossOwnerVerdictSubmission):
+                if contract.phase != "recheck":
+                    raise SubmissionValidationError(
+                        "Cross owner verdict submission is only valid for recheck phase",
+                        field="kind",
+                        expected="cross_owner_finding_submission during initial review",
+                        example="cross_owner_finding_submission",
+                        received=payload.kind,
+                    )
+                self._require_exact_ids(
+                    {verdict.finding_id for verdict in payload.verdicts},
+                    {finding.id for finding in contract.required_findings},
+                    "Cross owner verdicts",
+                    field="verdicts.finding_id",
+                )
+                if payload.new_findings:
+                    raise SubmissionValidationError(
+                        "Cross owner recheck cannot create a second finding wave",
+                        field="new_findings",
+                        expected="an empty array during owner recheck",
+                        example=[],
+                        received=[finding.id for finding in payload.new_findings],
+                        repair_instruction=(
+                            "Resolve or leave open only the required prior findings. "
+                            "Do not create new_findings in this one-shot owner recheck."
+                        ),
+                    )
+                findings = []
+            else:
+                return
+            if payload.owner_module_id != owner_module_id:
+                raise SubmissionValidationError(
+                    "Cross owner submission is outside its fixed owner scope",
+                    field="owner_module_id",
+                    expected=owner_module_id,
+                    example=owner_module_id,
+                    received=payload.owner_module_id,
+                )
+            if payload.coverage.module_id != owner_module_id:
+                raise SubmissionValidationError(
+                    "Cross owner coverage must identify its fixed owner module",
+                    field="coverage.module_id",
+                    expected=owner_module_id,
+                    example=owner_module_id,
+                    received=payload.coverage.module_id,
+                )
+            if set(payload.coverage.checked_dimensions) != required_dimensions:
+                raise SubmissionValidationError(
+                    "Cross owner coverage must include every declared dimension",
+                    field="coverage.checked_dimensions",
+                    expected=f"exactly these dimensions: {sorted(required_dimensions)}",
+                    example=sorted(required_dimensions),
+                    received=payload.coverage.checked_dimensions,
+                )
+            allowed_submodules = set(REPORT_TAXONOMY[owner_module_id].submodules)
+            out_of_scope = [
+                {
+                    "id": finding.id,
+                    "owner_module_id": finding.owner_module_id,
+                    "target_submodule_ids": finding.target_submodule_ids,
+                    "related_module_ids": finding.related_module_ids,
+                }
+                for finding in findings
+                if (
+                    finding.owner_module_id != owner_module_id
+                    or not set(finding.target_submodule_ids).issubset(allowed_submodules)
+                    or owner_module_id in finding.related_module_ids
+                )
+            ]
+            if out_of_scope:
+                raise SubmissionValidationError(
+                    "Cross owner finding target or related modules leave owner scope",
+                    field="findings",
+                    expected=(
+                        f"owner_module_id={owner_module_id!r}, target_submodule_ids within "
+                        f"{sorted(allowed_submodules)}, and related_module_ids excluding owner"
+                    ),
+                    example=[],
+                    received=out_of_scope,
+                )
+            invalid_closures = [
+                closure.request_id
+                for closure in payload.interface_closures
+                if closure.owner_module_id is not None
+                and closure.owner_module_id != owner_module_id
+            ]
+            if invalid_closures:
+                raise SubmissionValidationError(
+                    "Cross owner interface closures leave owner scope",
+                    field="interface_closures.owner_module_id",
+                    expected=owner_module_id,
+                    example=[],
+                    received=invalid_closures,
+                )
+            known_evidence = {
+                source.id
+                for source in SourceLedger(self.store.workspace, self.run_id).records
+                if source.id.startswith("E-")
+            }
+            unknown_evidence = sorted(
+                {
+                    ref
+                    for synthesis in payload.synthesis_inputs
+                    for ref in synthesis.evidence_refs
+                    if ref.startswith("E-") and ref not in known_evidence
+                }
+            )
+            if unknown_evidence:
+                raise SubmissionValidationError(
+                    "Cross owner synthesis uses unregistered project evidence",
                     field="synthesis_inputs.evidence_refs",
                     expected=sorted(known_evidence),
                     received=unknown_evidence,
@@ -2450,6 +2489,45 @@ class SubmitResultTool(_ResultTool):
                     prefix="XMR-",
                     existing_ids=existing_ids,
                 )
+        elif isinstance(contract, CrossOwnerInput):
+            owner_module_id = contract.owner_module_id
+            normalized["owner_module_id"] = owner_module_id
+            normalized["coverage"] = {
+                "module_id": owner_module_id,
+                "checked_dimensions": list(CROSS_REVIEW_DIMENSIONS),
+            }
+            existing_ids = [finding.id for finding in contract.required_findings]
+            if kind == "cross_owner_finding_submission":
+                normalized["findings"] = self._runtime_finding_ids(
+                    normalized.get("findings", []),
+                    prefix=f"XMR-{owner_module_id}-",
+                    existing_ids=[],
+                )
+            elif kind == "cross_owner_verdict_submission":
+                if normalized.get("new_findings"):
+                    raise SubmissionValidationError(
+                        "Cross owner recheck cannot create a second finding wave",
+                        field="new_findings",
+                        expected="an empty array during owner recheck",
+                        example=[],
+                        received=normalized.get("new_findings"),
+                        repair_instruction=(
+                            "Resolve or leave open only the required prior findings. "
+                            "Do not create new_findings in this one-shot owner recheck."
+                        ),
+                    )
+                verdicts = normalized.get("verdicts")
+                if isinstance(verdicts, list) and len(verdicts) == len(existing_ids):
+                    normalized["verdicts"] = [
+                        {**dict(verdict), "finding_id": finding_id}
+                        if isinstance(verdict, dict)
+                        else verdict
+                        for verdict, finding_id in zip(verdicts, existing_ids, strict=True)
+                    ]
+                # The current owner lane is one-shot: recheck may close prior
+                # findings but cannot create a second finding wave.
+                if "new_findings" not in normalized:
+                    normalized["new_findings"] = []
         elif isinstance(contract, (FinalReviewInput, AggregateFinalReviewInput)):
             normalized["checked_section_ids"] = list(contract.required_section_ids)
             existing_ids = [finding.id for finding in contract.required_findings]
@@ -2532,12 +2610,7 @@ class SubmitResultTool(_ResultTool):
                     "stringify the payload."
                 ),
             )
-        if submission_kind == "submodule_draft_submission":
-            commit = SubmoduleDraftSubmissionInput.model_validate(normalized_payload)
-            normalized_payload = self._assemble_submodule_commit(commit).model_dump(
-                mode="python"
-            )
-        elif submission_kind == "module_submission":
+        if submission_kind == "module_submission":
             commit = ModuleSubmissionInput.model_validate(normalized_payload)
             normalized_payload = self._assemble_module_commit(commit).model_dump(mode="python")
         elif submission_kind == "module_revision_submission":
@@ -2609,30 +2682,6 @@ class SubmitResultTool(_ResultTool):
                         "reported by ClaimLedger. Do not weaken, invent, or silently drop "
                         "unrelated Claims; then resubmit the complete payload."
                     ),
-                ) from exc
-        if isinstance(result.payload, SubmoduleDraftSubmission):
-            sources = SourceLedger(self.store.workspace, self.run_id).records
-            known_source_ids = {source.id for source in sources}
-            unknown_declared = sorted(
-                set(result.payload.source_ids) - known_source_ids
-            )
-            if unknown_declared:
-                raise SubmissionValidationError(
-                    "submodule_draft_submission contains unregistered sources: "
-                    f"{unknown_declared}",
-                    field="source_ids",
-                    expected="only current-run registered source ids",
-                    received=result.payload.source_ids,
-                )
-            try:
-                ClaimLedger(claims=[result.payload.claim], sources=sources)
-            except ValueError as exc:
-                raise SubmissionValidationError(
-                    "submodule_draft_submission Claim validation failed: "
-                    f"{exc}",
-                    field="claim",
-                    expected="one runtime-owned Claim bound to this exact leaf submodule",
-                    received=result.payload.claim.model_dump(mode="json"),
                 ) from exc
         if isinstance(result.payload, ModuleRevisionSubmission):
             sources = SourceLedger(self.store.workspace, self.run_id).records

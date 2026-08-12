@@ -394,6 +394,7 @@ class ReportingRetentionPlanner:
                 "v1/v2/v3 report-version manifests",
                 "v1/v2/v3 delivery manifests",
                 "typed delivery receipts",
+                "completed-run storage compaction manifests",
                 "conversation, template, session, and storage manifests",
                 "active and pinned protection markers",
             ],

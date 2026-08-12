@@ -45,6 +45,9 @@ def test_retention_planner_reports_reuse_and_never_deletes(tmp_path) -> None:
 
     assert result["plan"]["mode"] == "dry_run"
     assert result["plan"]["automatic_deletion"] is False
+    assert "completed-run storage compaction manifests" in result["plan"][
+        "mark_sources"
+    ]
     assert result["usage"]["blob_count"] == 3
     assert result["usage"]["referenced_blob_count"] == 2
     assert result["usage"]["unreferenced_blob_count"] == 1

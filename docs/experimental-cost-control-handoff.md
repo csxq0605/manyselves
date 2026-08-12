@@ -1,14 +1,11 @@
-# Manyselves 成本控制实验分支交接说明
+# Manyselves 成本控制实验分支交接说明（历史记录）
 
-> 2026-08-11 更新：成本控制、共享上下文和加速是同一项 Agent 编排要求。37 个固定
-> 叶子保留独立 task/artifact/completion/recovery 身份。Wave 1 的 37 个 discovery、
-> Wave 2 的非空 leaf inbox 和 Wave 3 的 37 个 leaf author 都各自拥有真实
-> dispatch/session/result/completion，并由 `submodule_task_concurrency` 控制并发。
-> 同模块叶子不再重复内联整模块 Knowledge、manifest 和完整写作 Skill：运行时生成
-> 同胞任务共用的 hash/ref 目录，并只内联当前叶子的 coverage、Evidence、Knowledge
-> 小节、inbox/bundle 以及核心写作方法。完整共享资料仍可按需读取。
-> dispatch 内实际 Provider turns 由 UsageLedger 计量；
-> 当前证据仍是 fake/unit/offline，不是 Provider A/B。
+> **架构状态（2026-08-12）：本文件只保留历史实验与证据，不是生产执行说明。**
+> 旧实验曾把 37 个 taxonomy 终端小节拆成 Wave 1/2/3 的独立任务；该运行架构已废止。
+> 当前生产路径只调度五个模块 lane。taxonomy 小节仍保留为 `submodule_narratives`、
+> Claim/finding target 和渲染标题，但不再拥有独立 task/session/result/completion/recovery
+> 身份，也不再使用 `submodule_task_concurrency`。旧 Wave/leaf 产物应作为不可变历史证据保留。
+> 本文件后续段落中对 37-leaf/Wave 的描述均为历史快照，不得据此排期或恢复运行时。
 
 > 现场日期：2026-08-11
 >
@@ -22,9 +19,9 @@
 
 | 文档 | 用途 | 状态 |
 | --- | --- | --- |
-| 本文件 `experimental-cost-control-handoff.md` | 交接入口、已做/未做边界、Git 与验证说明 | 当前 |
+| 本文件 `experimental-cost-control-handoff.md` | 历史实验入口、已做/未做边界、Git 与验证说明 | 历史记录；非生产架构 |
 | `experimental-cost-control-plan.md` | Phase A–D 的设计、实现范围和初始验收说明 | 已实现机制说明；其中旧基线 SHA/测试数只作历史记录 |
-| `experimental-cost-parallel-agent-orchestration-plan-v2.md` | 输入输出成本、并行调度、加速、Agent 编排和部署的后续实施顺序 | 当前唯一执行计划 |
+| `experimental-cost-parallel-agent-orchestration-plan-v2.md` | 输入输出成本、并行调度、加速、Agent 编排和部署的历史实施顺序 | 历史计划；不覆盖五模块生产路径 |
 | `experimental-parallel-agent-deployment-plan.md` | 合并 main 之前的第一版并行/部署设计 | 历史记录，不按此继续排期 |
 
 交接时应先读本文件，再读 V2 的第 5–11 节。不要把旧计划中的阶段编号与
@@ -38,7 +35,8 @@ V2 的 `M0/P0–P5/D0–D4` 混用。
   分支 `cost-control-experiments`。
 - 最新 main 已通过 `a0df065` **单向合入实验分支**；main 是当前实验分支的
   祖先。
-- 成本控制和三波并行实验从未反向进入 main；main 的完整模块流水线仍是串行。
+- 旧三波并行实验从未反向进入 main；当前实验分支已删除其运行入口、合同与恢复状态，
+  并改为固定五模块 lane 与五 Cross owner 的双 barrier 架构。
 - V2 提交前 `origin/cost-control-experiments` 与本地都停在 `aa63771`；V2 提交后
   远端仍需另行显式推送，不能把本地新 HEAD 冒充远端已发布身份。
 
@@ -72,15 +70,15 @@ V2 的 `M0/P0–P5/D0–D4` 混用。
 | 存储 | 项目级 SHA-256 CAS；Delivery v2、ReportVersion v2 使用 blob 引用/兼容视图；新写入停止部分 legacy 双写；retention 生成 dry-run 计划 | `manyselves/core/artifacts/content_store.py`、`reporting/delivery.py`、`versions.py`、`retention.py` 及对应测试 |
 | 审查成本 | 付费语义审查前执行确定性 module preflight；module recheck 发送 changed content、相关 finding/evidence 和未改内容 hash；Chief completion 可按当前 run/ref/hash 恢复 | `manyselves/core/reporting/review_preflight.py`、`review_lifecycle.py`、`workflow.py` 及对应测试 |
 | 成本计量与暂停 | UsageLedger 扩展 Provider usage、cache、message/tool schema、阶段和 payload 指纹；`observe/warn/pause_at_boundary` 只在安全 checkpoint 边界处理，并支持同 run 恢复 | `manyselves/core/usage_ledger.py`、`reporting/cost_control.py`、`workflow.py::ReportingRunBudget`、`tests/reporting/test_cost_control.py`、`tests/test_usage_ledger.py` |
-| 子模块协作、写作与归并 | Wave 1、稀疏 Wave 2、Wave 3 均通过同一叶子 scheduler 真实调度；每叶拥有独立 envelope/session/result/completion，失败时保留已完成叶，resume 只重派缺失叶，reducer 仍生成既有 `ModuleSubmission` | `workflow.py::_run_scheduled_submodule_stage`、`workflow.py::_submodule_discovery`、`workflow.py::_submodule_interface_response`、`workflow.py::_run_submodule_authoring_stage`、`test_three_wave_workflow.py` |
+| 子模块协作、写作与归并（历史） | 旧实验曾通过叶子 scheduler 调度 Wave 1/2/3；这些机制已从生产路径删除。保留旧代码引用和 run 产物只用于审计，不得重新启用 | 历史 `workflow.py`/`test_three_wave_workflow.py` 记录 |
 | main 同步能力 | 默认缺证 `draft`、evidence/photo traceability、decision reconciliation、MessageBus DEBUG 日志汇总已进入实验分支 | main 合并 `4a1f375` 与 `a0df065`；相关 reporting、mapper、bus 代码和测试 |
 
 ## 4. 当前实际执行边界
 
-完整报告的现状是：
+旧实验快照（非当前生产执行路径）是：
 
 ```text
-Wave 1A：37 个真实独立 leaf discovery / 配置化限并发
+Wave 1A：37 个真实独立 leaf discovery / 配置化限并发（历史）
   → 5 个模块内 discovery barrier/reducer
   → Barrier 1
   → Wave 2：仅非空 target-leaf inbox；每个非空 leaf 独立 Agent dispatch
@@ -94,11 +92,17 @@ Wave 1A：37 个真实独立 leaf discovery / 配置化限并发
   → verifier/render/publish
 ```
 
-因此：
+以上仅描述历史实验，不代表当前生产执行。当前生产路径为五个模块 lane 并行：每个 lane
+完成模块写作、Evidence Auditor 审计、定向修订和原 Auditor 复核，再统一进入 Cross →
+Chief → Final → verifier/render/publish。taxonomy 小节只作为文档结构和审查作用域。
 
-- 可以说“当前工作树的 Wave 1/2/3 均有真实 leaf dispatch/session/result/completion、模块内 reducer 和离线恢复证据”；
+历史证据边界：
+
+- 只能说“历史提交与旧 run 产物曾实现 Wave 1/2/3 leaf dispatch”；当前工作树不得再将
+  它描述为可执行能力，也不得恢复旧 leaf session/result/checkpoint；
 - 不可以说“main 已并行”；
-- 不可以说“五条完整 module pipeline 已并行”；
+- 可以说“五条模块 Editor/Auditor pipeline 与五条 Cross owner pipeline 已有离线并行、
+  exact-five barrier 和恢复门禁证据”；
 - 不可以把 MessageBus 日志降噪说成 MessageBus 已具备并行 QoS；
 - 不可以把 fake/unit/offline 通过说成真实报告已完成。
 
@@ -107,7 +111,7 @@ Wave 1A：37 个真实独立 leaf discovery / 配置化限并发
 | 阶段 | 能力 | 当前状态 |
 | --- | --- | --- |
 | `M0` | 固定 post-main fixture，按 policy/cohort 建真实 Provider、CPU/I/O、storage、bus 分层基线 | 未完成 |
-| `P0–P3` | terminal/result identity、Bus QoS、lane journal、lease/fencing、三波编排和受限 module/Cross-owner lanes | 离线实现完成 |
+| `P0–P3` | terminal/result identity、Bus QoS、lane journal、lease/fencing、固定五 module/Cross-owner lanes | 离线实现完成 |
 | `P4` | ProviderRouter/profile 执行路径 | plumbing 完成；真实模型/effort A/B 未完成 |
 | `P5` | 确定性 preparation、Knowledge/Evidence index、SourceLedger batch、trusted blob、pure-read 工具并行 | 离线实现完成 |
 | `D0–D4` | Headless、持久队列、项目隔离、Web API、生产安全端口、可选对象存储 | 本地参考适配完成；外部生产集成未完成 |

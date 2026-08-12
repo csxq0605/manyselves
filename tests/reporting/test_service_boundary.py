@@ -302,7 +302,7 @@ async def test_revision_wait_resume_reuses_one_runner_and_releases_on_terminal(
             status="needs_decision" if len(runner_ids) == 1 else "completed",
         )
 
-    monkeypatch.setattr(RevisionCoordinator, "run", scripted_run)
+    monkeypatch.setattr(RevisionCoordinator, "_run_locked", scripted_run)
     first = await service.revise(request, run_id=run_id)
     assert first.status == "needs_decision"
     assert list(service._active_agent_runners) == [f"report-revision:{run_id}"]
@@ -900,13 +900,15 @@ async def test_user_decision_resume_syncs_new_facts_into_same_run(
     )
     seen = {}
 
-    async def resumed_execute(request, resumed_run_id, *, resume=False):
+    async def resumed_execute(
+        request, resumed_run_id, *, resume=False, project_write_lease=None
+    ):
         seen["request"] = request
         seen["run_id"] = resumed_run_id
         seen["resume"] = resume
         return ReportingRunResult(run_id=resumed_run_id, status="needs_decision")
 
-    monkeypatch.setattr(service, "_execute", resumed_execute)
+    monkeypatch.setattr(service, "_execute_locked", resumed_execute)
 
     result = await service.resume_run(
         run_id,
@@ -974,13 +976,15 @@ async def test_checkpointed_terminal_run_can_resume_same_run(
     )
     seen = {}
 
-    async def resumed_execute(request, resumed_run_id, *, resume=False):
+    async def resumed_execute(
+        request, resumed_run_id, *, resume=False, project_write_lease=None
+    ):
         seen["request"] = request
         seen["run_id"] = resumed_run_id
         seen["resume"] = resume
         return ReportingRunResult(run_id=resumed_run_id, status="needs_decision")
 
-    monkeypatch.setattr(service, "_execute", resumed_execute)
+    monkeypatch.setattr(service, "_execute_locked", resumed_execute)
 
     result = await service.resume_run(
         run_id, max_provider_attempts=6, max_total_tokens=20_000
@@ -1019,12 +1023,14 @@ async def test_crashed_in_progress_checkpoint_without_terminal_result_can_resume
     )
     seen = {}
 
-    async def resumed_execute(request, resumed_run_id, *, resume=False):
+    async def resumed_execute(
+        request, resumed_run_id, *, resume=False, project_write_lease=None
+    ):
         seen["run_id"] = resumed_run_id
         seen["resume"] = resume
         return ReportingRunResult(run_id=resumed_run_id, status="needs_decision")
 
-    monkeypatch.setattr(service, "_execute", resumed_execute)
+    monkeypatch.setattr(service, "_execute_locked", resumed_execute)
 
     result = await service.resume_run(
         run_id, max_provider_attempts=6, max_total_tokens=20_000
@@ -1108,7 +1114,7 @@ async def test_budget_resume_reuses_same_revision_run(
         seen["resume"] = resume
         return ReportingRunResult(run_id=run_id, status="needs_decision")
 
-    monkeypatch.setattr(RevisionCoordinator, "run", resumed_revision)
+    monkeypatch.setattr(RevisionCoordinator, "_run_locked", resumed_revision)
     result = await service.resume_run(
         run_id,
         cost_control_mode="warn",
@@ -1160,7 +1166,7 @@ async def test_revision_resume_keeps_new_supplements_structured(
         seen["request"] = revision
         return ReportingRunResult(run_id=run_id, status="needs_decision")
 
-    monkeypatch.setattr(RevisionCoordinator, "run", resumed_revision)
+    monkeypatch.setattr(RevisionCoordinator, "_run_locked", resumed_revision)
     supplement = UserSupplement(
         id="US-revision-device-name",
         content="设备名称确认为 1A2 进线柜。",

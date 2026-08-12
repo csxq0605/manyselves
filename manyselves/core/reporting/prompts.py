@@ -149,7 +149,7 @@ class PromptAssembler:
                     "Never JSON-encode, quote, or stringify the complete object."
                     "</payload_encoding>"
                     "<task_example_source>Use the current task-specific example in "
-                    "submit_result.input_schema; its module, leaf, revision, and request "
+                    "submit_result.input_schema; its module, taxonomy subsection, revision, and request "
                     "identities are authoritative for this task.</task_example_source>"
                     "</submission_contract>"
                 )

@@ -31,7 +31,6 @@ from .models import (
 )
 from .parallel_runtime import atomic_write_json, exclusive_file_lock
 from .production_runtime import ProductionPolicy, SecurityAuditLog
-from .taxonomy import REPORT_TAXONOMY, resolve_submodule
 
 Role = Literal["viewer", "editor", "owner"]
 
@@ -347,9 +346,6 @@ class ReportingApi:
         candidate = str(event.payload.get("module_id") or "")
         if candidate in REPORT_MODULE_IDS:
             return candidate
-        submodule_id = ReportingApi._submodule_id(event)
-        if submodule_id is not None:
-            return resolve_submodule(submodule_id).module_id
         for module_id in REPORT_MODULE_IDS:
             if re.search(
                 rf"(?<![\d.]){re.escape(module_id)}(?![\d.])",
@@ -359,35 +355,18 @@ class ReportingApi:
         return None
 
     @staticmethod
-    def _submodule_id(event) -> str | None:
-        candidate = str(event.payload.get("submodule_id") or "")
-        known = {
-            submodule_id
-            for module_id in REPORT_MODULE_IDS
-            for submodule_id in REPORT_TAXONOMY[module_id].submodules
-        }
-        if candidate in known:
-            return candidate
-        task_id = str(event.task_id or "")
-        for submodule_id in sorted(known, key=len, reverse=True):
-            if re.search(
-                rf"(?<![\d.]){re.escape(submodule_id)}(?![\d.])",
-                task_id,
-            ):
-                return submodule_id
-        return None
-
-    @staticmethod
     def _task_phase(task_id: str | None) -> str:
         value = str(task_id or "").replace("_", "-")
+        if "cross" in value:
+            return "cross_review"
+        if "chief" in value:
+            return "chief_edit"
+        if "final" in value:
+            return "final_review"
         if "revision" in value:
-            return "leaf_revision"
+            return "module_revision"
         if "author" in value:
-            return "leaf_authoring"
-        if "interface-response" in value:
-            return "leaf_interface"
-        if "discovery" in value:
-            return "leaf_discovery"
+            return "module_authoring"
         if "review" in value or "audit" in value:
             return "module_review"
         return "module_task"
@@ -456,11 +435,6 @@ class ReportingApi:
     def progress(self, token: str, project_id: str, run_id: str) -> dict:
         self._user(token, project_id)
         job = self.runtime.jobs.get_run(run_id)
-        leaf_states = {
-            submodule_id: {"status": "not_started", "phase": "not_started"}
-            for module_id in REPORT_MODULE_IDS
-            for submodule_id in REPORT_TAXONOMY[module_id].submodules
-        }
         module_task_states = {
             module_id: {"status": "not_started", "phase": "not_started"}
             for module_id in REPORT_MODULE_IDS
@@ -474,13 +448,6 @@ class ReportingApi:
         for event in LocalEventStore(self.runtime.paths.project_storage_root, run_id).read():
             if event.event_type not in event_status:
                 continue
-            submodule_id = self._submodule_id(event)
-            if submodule_id is not None:
-                leaf_states[submodule_id] = {
-                    "status": event_status[event.event_type],
-                    "phase": self._task_phase(event.task_id),
-                }
-                continue
             module_id = self._module_id(event)
             if module_id is None:
                 continue
@@ -489,12 +456,6 @@ class ReportingApi:
                 "phase": self._task_phase(event.task_id),
             }
         checkpoint = self._checkpoint_projection(run_id)
-        reducer_refs = self._verified_module_checkpoint_refs(
-            run_id,
-            checkpoint,
-            "submodule_authoring_barrier_refs",
-            expected_kind="module_submodule_authoring_barrier",
-        )
         review_refs = self._verified_module_checkpoint_refs(
             run_id,
             checkpoint,
@@ -503,39 +464,9 @@ class ReportingApi:
         )
         modules = []
         for module_id in REPORT_MODULE_IDS:
-            scoped_leafs = [
-                {
-                    "submodule_id": submodule_id,
-                    **leaf_states[submodule_id],
-                }
-                for submodule_id in REPORT_TAXONOMY[module_id].submodules
-            ]
             if module_id in review_refs:
                 status = "completed"
                 phase = "completed"
-            elif any(item["status"] == "failed" for item in scoped_leafs):
-                status = "failed"
-                phase = next(
-                    item["phase"] for item in scoped_leafs if item["status"] == "failed"
-                )
-            elif module_id in reducer_refs:
-                status = "running"
-                phase = "module_review"
-            elif any(item["status"] != "not_started" for item in scoped_leafs):
-                status = "running"
-                phase = max(
-                    (
-                        item["phase"]
-                        for item in scoped_leafs
-                        if item["status"] != "not_started"
-                    ),
-                    key=(
-                        "leaf_discovery",
-                        "leaf_interface",
-                        "leaf_authoring",
-                        "leaf_revision",
-                    ).index,
-                )
             else:
                 task_state = module_task_states[module_id]
                 status = (
@@ -550,10 +481,7 @@ class ReportingApi:
                     "role": f"Module {module_id} Specialist",
                     "status": status,
                     "phase": phase,
-                    "leafs": scoped_leafs,
-                    "reducer_status": (
-                        "completed" if module_id in reducer_refs else "not_started"
-                    ),
+                    "task_status": module_task_states[module_id]["status"],
                     "review_status": (
                         "completed" if module_id in review_refs else "not_started"
                     ),
@@ -576,30 +504,8 @@ class ReportingApi:
         for event in events:
             if event.sequence <= cursor:
                 continue
-            submodule_id = self._submodule_id(event)
             module_id = self._module_id(event)
-            if submodule_id is not None and event.event_type in {
-                "TaskDispatched",
-                "AttemptStarted",
-                "TypedResultAccepted",
-                "TaskFailed",
-            }:
-                public.append(
-                    {
-                        "sequence": event.sequence,
-                        "type": "leaf_status",
-                        "module_id": module_id,
-                        "submodule_id": submodule_id,
-                        "phase": self._task_phase(event.task_id),
-                        "status": {
-                            "TaskDispatched": "pending",
-                            "AttemptStarted": "running",
-                            "TypedResultAccepted": "completed",
-                            "TaskFailed": "failed",
-                        }[event.event_type],
-                    }
-                )
-            elif module_id is not None and event.event_type in {
+            if module_id is not None and event.event_type in {
                 "TaskDispatched",
                 "AttemptStarted",
                 "TypedResultAccepted",

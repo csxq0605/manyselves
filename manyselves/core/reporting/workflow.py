@@ -22,14 +22,12 @@ from .agentic_models import (
     FINAL_REPORT_SECTION_IDS,
     AgentResult,
     AgentRunStatus,
-    CrossDecisionIFClosure,
     CrossDecisionPack,
     CrossDecisionXMRVerdict,
     CrossSynthesisInput,
     EditedReportSubmission,
     ModuleDispatchPlan,
     ModuleSubmission,
-    SubmoduleDraftSubmission,
     StrictModel,
     TaskEnvelope,
     TemplateSkillBoundaryManifest,
@@ -60,7 +58,6 @@ from .input_contracts import (
     ModuleAuthoringInput,
     RequestedModuleChange,
     ReviewCompletionRecord,
-    SubmoduleAuthoringInput,
     TemplateDistillationInput,
     ValidationFailure,
     ValidationReport,
@@ -80,29 +77,12 @@ from .models import (
     SpecialTopicPlan,
 )
 from .output_verifier import OutputVerificationError, verify_current_run_outputs
-from .module_collaboration import (
-    MODULE_IDS,
-    ModuleCollaborationBundle,
-    ModuleDiscoverySubmission,
-    ModuleInterfaceCoverage,
-    ModuleInterfaceResponseSubmission,
-    ModuleSubmoduleDiscoveryBarrier,
-    InterfaceResolutionRegistry,
-    InterfaceResolutionClosureBatch,
-    SubmoduleCollaborationBundle,
-    SubmoduleDiscoveryBatchSubmission,
-    SubmoduleDiscoverySubmission,
-    SubmoduleInterfaceResponseSubmission,
-    build_collaboration_bundles,
-    build_interface_inboxes,
-    build_interface_resolution_registry,
-    build_submodule_collaboration_bundles,
-    build_submodule_interface_inboxes,
-    reduce_submodule_discoveries,
-)
 from .module_skills import ModuleSkillLibrary
 from .parallel_runtime import (
     ArtifactRef,
+    CohortBarrier,
+    CrossOwnerBarrier,
+    CrossOwnerCompletion,
     LaneAttemptRecord,
     LaneCompletion,
     LaneExceptionCandidate,
@@ -129,6 +109,7 @@ from .review_lifecycle import (
     run_cross_review,
     run_final_review,
     run_module_review,
+    verify_cross_owner_barrier,
 )
 from .revision_diff import build_revision_diff
 from .retention import ReportingRetentionPlanner
@@ -169,27 +150,6 @@ class FullReportCheckpoint(StrictModel):
     specialist_modules: list[str] = Field(default_factory=list)
     module_dispatch_ref: str | None = None
     module_knowledge_refs: dict[str, str] = Field(default_factory=dict)
-    collaboration_barrier1_ref: str | None = None
-    collaboration_barrier2_ref: str | None = None
-    collaboration_bundle_refs: dict[str, str] = Field(default_factory=dict)
-    submodule_discovery_barrier_refs: dict[str, str] = Field(default_factory=dict)
-    submodule_collaboration_bundle_refs: dict[str, str] = Field(default_factory=dict)
-    submodule_authoring_barrier_refs: dict[str, str] = Field(default_factory=dict)
-    # Per-leaf context fingerprints make a resumed task prove it is consuming
-    # the same immutable inputs that crossed the previous barrier.  The maps
-    # are optional for legacy checkpoints and populated by active three-wave
-    # runs.
-    submodule_discovery_context_sha256: dict[str, str] = Field(default_factory=dict)
-    submodule_response_context_sha256: dict[str, str] = Field(default_factory=dict)
-    submodule_authoring_context_sha256: dict[str, str] = Field(default_factory=dict)
-    submodule_ambiguous_task_refs: dict[str, str] = Field(default_factory=dict)
-    interface_resolution_registry_ref: str | None = None
-    interface_resolution_registry_sha256: str | None = Field(
-        default=None, pattern=r"^[0-9a-f]{64}$"
-    )
-    interface_closure_refs: list[str] = Field(default_factory=list)
-    interface_closure_sha256: dict[str, str] = Field(default_factory=dict)
-    interface_residual_risks: dict[str, str] = Field(default_factory=dict)
     module_lane_barrier_ref: str | None = None
     cross_owner_barrier_ref: str | None = None
     quality_context_ref: str | None = None
@@ -398,37 +358,6 @@ class ReportWorkflowRunner:
             raise AgentWorkflowError(f"reporting Agent identities are missing: {missing}")
         self._budget: ReportingRunBudget | None = None
         self._main_exception_lock = asyncio.Lock()
-        # Every leaf cohort in one run shares this physical task gate.  Module
-        # lanes may remain fully parallel, but their Wave/revision children
-        # must not multiply ``submodule_task_concurrency`` per module.
-        self._run_leaf_task_gates: dict[str, tuple[int, asyncio.Semaphore]] = {}
-
-    def _run_leaf_task_gate(
-        self,
-        run_id: str,
-        concurrency: int,
-    ) -> tuple[int, asyncio.Semaphore]:
-        """Return the one leaf-task semaphore shared by every lane in a run."""
-
-        limit = max(1, int(concurrency))
-        # A few focused tests construct the runner with ``object.__new__``;
-        # lazy creation keeps that supported without weakening production use.
-        gates = getattr(self, "_run_leaf_task_gates", None)
-        if gates is None:
-            gates = {}
-            self._run_leaf_task_gates = gates
-        existing = gates.get(run_id)
-        if existing is not None:
-            existing_limit, gate = existing
-            if existing_limit != limit:
-                raise AgentWorkflowError(
-                    "one reporting run cannot use conflicting global leaf-task "
-                    f"limits: run_id={run_id}, existing={existing_limit}, requested={limit}"
-                )
-            return existing
-        created = (limit, asyncio.Semaphore(limit))
-        gates[run_id] = created
-        return created
 
     def _raise_if_cancel_requested(self, run_id: str) -> None:
         """Stop before a new task/stage when the durable job requested cancel."""
@@ -781,133 +710,6 @@ class ReportWorkflowRunner:
             + self._role_skill_context(state, "module-author")
         )
 
-    @staticmethod
-    def _leaf_knowledge_excerpt(text: str, submodule_id: str) -> str:
-        """Return the shared header plus exactly one taxonomy leaf Knowledge block."""
-
-        heading = re.compile(r"(?m)^##\s+(\d+(?:\.\d+)+)\b.*$")
-        matches = list(heading.finditer(text))
-        header = text[: matches[0].start()].strip() if matches else ""
-        leaf = ""
-        for index, match in enumerate(matches):
-            if match.group(1) != submodule_id:
-                continue
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-            leaf = text[match.start() : end].strip()
-            break
-        if not leaf:
-            leaf = (
-                f"## {submodule_id}\n"
-                "未找到该叶子的确定性 Knowledge 小节；需要时打开共享 Knowledge 引用，"
-                "且不得把通用知识写成客户事实。"
-            )
-        return "\n\n".join(item for item in (header, leaf) if item)
-
-    @staticmethod
-    def _artifact_sha256(workspace: Path, ref: str | None) -> str | None:
-        if not ref:
-            return None
-        path = (workspace / ref).resolve()
-        if not path.is_relative_to(workspace) or not path.is_file():
-            return None
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-
-    def _shared_module_context_ref(
-        self,
-        state: dict,
-        module_id: str,
-        *,
-        purpose: str,
-        include_author_skill: bool = False,
-    ) -> str:
-        """Persist a small sibling-shared directory; large sources remain references."""
-
-        workspace = self.service.workspace
-        preparation = state.get("preparation_refs", {})
-        source_refs: dict[str, str] = {
-            "knowledge": state["module_knowledge_refs"][module_id],
-        }
-        if preparation.get("manifest"):
-            source_refs["manifest"] = preparation["manifest"]
-        if include_author_skill:
-            for key in ("core", "analysis", "visual", "rubric"):
-                ref = state.get("template_skill_refs", {}).get(key)
-                if ref:
-                    source_refs[f"template_skill_{key}"] = ref
-        body = {
-            "kind": "shared_module_context",
-            "version": 1,
-            "purpose": purpose,
-            "run_id": state["run_id"],
-            "module_id": module_id,
-            "module_title": REPORT_TAXONOMY[module_id].title,
-            "peer_target_taxonomy": {
-                peer_id: {
-                    "title": definition.title,
-                    "leaves": [
-                        {"id": item.id, "title": item.title}
-                        for item in definition.submodules.values()
-                    ],
-                }
-                for peer_id, definition in REPORT_TAXONOMY.items()
-                if peer_id != module_id
-            },
-            "source_refs": source_refs,
-            "source_sha256": {
-                name: self._artifact_sha256(workspace, ref)
-                for name, ref in source_refs.items()
-            },
-        }
-        canonical = json.dumps(
-            body, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        )
-        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        body["content_sha256"] = digest
-        path = self.service.store.write_json(
-            (
-                f"Work/runs/{state['run_id']}/context/shared/"
-                f"{purpose}-module-{module_id}-{digest[:12]}.json"
-            ),
-            body,
-        )
-        return path.relative_to(workspace).as_posix()
-
-    def _module_author_leaf_inline_context(
-        self,
-        state: dict,
-        module_id: str,
-        submodule_id: str,
-        shared_ref: str,
-    ) -> str:
-        knowledge_ref = state["module_knowledge_refs"][module_id]
-        knowledge_path = self.service.workspace / knowledge_ref
-        knowledge_text = (
-            knowledge_path.read_text(encoding="utf-8")
-            if knowledge_path.is_file()
-            else ""
-        )
-        leaf_knowledge = self._leaf_knowledge_excerpt(knowledge_text, submodule_id)
-        core_method = state.get("template_skill_text", {}).get("core", "").strip()
-        parts = [
-            (
-                f'<shared_module_context ref="{shared_ref}" delivery_mode="reference">'
-                "完整模块 Knowledge、manifest 与写作 Skill 只在需要补充当前叶子增量时按需读取。"
-                "</shared_module_context>"
-            ),
-            (
-                f'<leaf_knowledge_delta submodule_id="{submodule_id}" '
-                f'provenance_ref="{knowledge_ref}" project_fact_authority="false">\n'
-                f"{leaf_knowledge}\n</leaf_knowledge_delta>"
-            ),
-        ]
-        if core_method:
-            parts.append(
-                '<module_author_core_method delivery_mode="inline">\n'
-                + core_method
-                + "\n</module_author_core_method>"
-            )
-        return "\n\n".join(parts)
-
     async def _distill_template_skill(self, state: dict, workflow_id: str) -> None:
         """Let Template Distiller refresh the fixed project writing Skill."""
         selected, source = self.service.resolve_skill_distillation_template(
@@ -1180,78 +982,15 @@ class ReportWorkflowRunner:
         requested_modules: tuple[str, ...],
         state: dict,
         workflow_id: str,
-    ) -> tuple[bool, bool, bool]:
-        """Select leaf authoring or complete module lanes for this request."""
+    ) -> None:
+        """Run the only authoring architecture: isolated module-level lanes."""
 
-        full_scope = set(requested_modules) == set(REPORT_MODULE_IDS)
-        execution_mode = getattr(
-            state["request"],
-            "execution_mode",
-            # Checkpoints created before the all-ready contract did not carry
-            # this field.  New full-report calls must nevertheless take the
-            # business path rather than silently falling back to serial work.
-            "all_ready",
-        )
-        all_ready_lanes = execution_mode == "all_ready"
-        authoring_granularity = getattr(
-            state["request"], "authoring_granularity", "leaf_37"
-        )
-        bounded_lanes = (
-            execution_mode == "bounded_module_lanes" or all_ready_lanes
-        ) and len(requested_modules) > 1
-        if authoring_granularity == "module_5":
-            await self.service._notice(
-                "五个专业模块进入完整模块 lane 并行：每条 lane 独立完成模块写作、"
-                "Evidence Auditor 审计、定向修订和原审计者复核；全部终态后再进入 Cross。"
-            )
-            await self._run_bounded_module_lanes(
-                requested_modules,
-                state,
-                workflow_id,
-                concurrency=state["request"].module_lane_concurrency,
-                # authoring_granularity is the sole A/B switch.  module_5
-                # always admits all five complete author/auditor lanes; the
-                # legacy execution_mode cannot silently serialize review.
-                all_ready=True,
-            )
-            return False, True, full_scope
         await self.service._notice(
-            (
-                "五个专业模块的固定叶子进入独立调度：先并行发现接口问题，经两次"
-                "确定性跨模块屏障形成叶子协作包，再独立写作、归并和审查。"
-                if full_scope
-                else "所请求模块将拆成固定叶子的独立、可恢复任务；叶子归并后再进入模块审查。"
-            )
+            "专业模块进入完整模块 lane 并行：每条 lane 独立完成模块写作、"
+            "Evidence Auditor 审计、定向修订和原 Auditor 复核；"
+            "所有目标模块终态后才可进入 Cross。"
         )
-        if full_scope:
-            await self._module_collaboration(
-                requested_modules,
-                state,
-                workflow_id,
-            )
-        else:
-            await self._module_local_submodule_preparation(
-                requested_modules,
-                state,
-                workflow_id,
-            )
-        await self._run_submodule_authoring_stage(
-            requested_modules,
-            state,
-            workflow_id,
-        )
-        if bounded_lanes:
-            await self._run_bounded_module_lanes(
-                requested_modules,
-                state,
-                workflow_id,
-                concurrency=state["request"].module_lane_concurrency,
-                # all_ready is the normal full-report business path.  The
-                # bounded compatibility mode keeps its historical admission
-                # semantics, including an explicit concurrency limit.
-                all_ready=all_ready_lanes,
-            )
-        return True, bounded_lanes, full_scope
+        await self._run_module_lanes(requested_modules, state, workflow_id)
 
     async def run(self, state: dict) -> None:
         run_id = state["run_id"]
@@ -1332,130 +1071,11 @@ class ReportWorkflowRunner:
                 "module-work",
             )
             activity = "module-work"
-            (
-                bounded_leaf_mode,
-                bounded_lanes,
-                full_scope,
-            ) = await self._prepare_module_authoring_mode(
+            await self._prepare_module_authoring_mode(
                 requested_modules,
                 state,
                 workflow_id,
             )
-            pending_author_modules = tuple(
-                module_id
-                for module_id in requested_modules
-                if not bounded_lanes
-                if module_id
-                not in (
-                    state.get("specialist_submissions", {})
-                    if bounded_leaf_mode or full_scope
-                    else state.get("module_submissions", {})
-                )
-            )
-            if pending_author_modules and (bounded_leaf_mode or full_scope):
-                author_results = await asyncio.gather(
-                    *(
-                        self._module_pipeline(
-                            module_id,
-                            state,
-                            workflow_id,
-                            review=False,
-                        )
-                        for module_id in pending_author_modules
-                    ),
-                    return_exceptions=True,
-                )
-                author_failures = [
-                    result
-                    for result in author_results
-                    if isinstance(result, BaseException)
-                ]
-                if author_failures:
-                    self._checkpoint(
-                        state,
-                        activity,
-                        "failed",
-                        "; ".join(str(error) for error in author_failures),
-                    )
-                    raise author_failures[0]
-                await self._checkpoint_then_cost_boundary(
-                    state,
-                    activity,
-                    "in_progress",
-                    "module-authoring",
-                    f"module-review-{requested_modules[0]}",
-                )
-            elif pending_author_modules:
-                for module_index, module_id in enumerate(pending_author_modules):
-                    try:
-                        submission = await self._module_pipeline(
-                            module_id,
-                            state,
-                            workflow_id,
-                        )
-                    except BaseException:
-                        self._checkpoint(state, activity, "failed")
-                        raise
-                    state.setdefault("module_submissions", {})[
-                        submission.module_id
-                    ] = submission
-                    remaining = pending_author_modules[module_index + 1 :]
-                    if remaining:
-                        await self._checkpoint_then_cost_boundary(
-                            state,
-                            activity,
-                            "in_progress",
-                            f"module-{module_id}",
-                            f"module-{remaining[0]}",
-                        )
-                    else:
-                        self._checkpoint(state, activity, "in_progress")
-            state["module_submissions"] = dict(
-                state.get("module_submissions", {})
-            )
-            pending_review_modules = tuple(
-                module_id
-                for module_id in requested_modules
-                if (bounded_leaf_mode or full_scope)
-                if module_id not in state["module_submissions"]
-            )
-            for module_index, module_id in enumerate(pending_review_modules):
-                specialist_payload = state.get("specialist_submissions", {}).get(
-                    module_id
-                )
-                if specialist_payload is None:
-                    raise AgentWorkflowError(
-                        f"module {module_id} has no specialist submission after Wave 3"
-                    )
-                try:
-                    submission = await self._module_review_loop(
-                        module_id,
-                        specialist_payload,
-                        state,
-                        workflow_id,
-                        initial_scope=set(REPORT_TAXONOMY[module_id].submodules),
-                    )
-                except BaseException:
-                    self._checkpoint(state, activity, "failed")
-                    raise
-                state["module_submissions"][submission.module_id] = submission
-                self._bind_reviewed_module_to_authoring_context(
-                    state,
-                    module_id,
-                    submission,
-                    provenance="module_review",
-                )
-                remaining = pending_review_modules[module_index + 1 :]
-                if remaining:
-                    await self._checkpoint_then_cost_boundary(
-                        state,
-                        activity,
-                        "in_progress",
-                        f"module-review-{module_id}",
-                        f"module-review-{remaining[0]}",
-                    )
-                else:
-                    self._checkpoint(state, activity, "in_progress")
             if set(requested_modules) != set(REPORT_MODULE_IDS):
                 self._checkpoint(state, activity, "completed")
                 state["output_artifacts"] = [
@@ -1480,13 +1100,6 @@ class ReportWorkflowRunner:
             if "cross_review_completion_ref" not in state:
                 await self.service._notice("五个模块均已通过各自独立审查，开始跨模块一致性审查。")
                 await self._cross_review(state, workflow_id)
-                for module_id, submission in state["module_submissions"].items():
-                    self._bind_reviewed_module_to_authoring_context(
-                        state,
-                        module_id,
-                        submission,
-                        provenance="cross_review",
-                    )
                 await self._checkpoint_then_cost_boundary(
                     state,
                     activity,
@@ -2344,41 +1957,6 @@ class ReportWorkflowRunner:
                 else None
             ),
             module_knowledge_refs=dict(state.get("module_knowledge_refs", {})),
-            collaboration_barrier1_ref=state.get("collaboration_barrier1_ref"),
-            collaboration_barrier2_ref=state.get("collaboration_barrier2_ref"),
-            collaboration_bundle_refs=dict(
-                state.get("collaboration_bundle_refs", {})
-            ),
-            submodule_discovery_barrier_refs=dict(
-                state.get("submodule_discovery_barrier_refs", {})
-            ),
-            submodule_collaboration_bundle_refs=dict(
-                state.get("submodule_collaboration_bundle_refs", {})
-            ),
-            submodule_authoring_barrier_refs=dict(
-                state.get("submodule_authoring_barrier_refs", {})
-            ),
-            submodule_discovery_context_sha256=dict(
-                state.get("submodule_discovery_context_sha256", {})
-            ),
-            submodule_response_context_sha256=dict(
-                state.get("submodule_response_context_sha256", {})
-            ),
-            submodule_authoring_context_sha256=dict(
-                state.get("submodule_authoring_context_sha256", {})
-            ),
-            submodule_ambiguous_task_refs=dict(
-                state.get("submodule_ambiguous_task_refs", {})
-            ),
-            interface_resolution_registry_ref=state.get(
-                "interface_resolution_registry_ref"
-            ),
-            interface_resolution_registry_sha256=state.get(
-                "interface_resolution_registry_sha256"
-            ),
-            interface_closure_refs=list(state.get("interface_closure_refs", [])),
-            interface_closure_sha256=dict(state.get("interface_closure_sha256", {})),
-            interface_residual_risks=dict(state.get("interface_residual_risks", {})),
             module_lane_barrier_ref=state.get("module_lane_barrier_ref"),
             cross_owner_barrier_ref=state.get("cross_owner_barrier_ref"),
             quality_context_ref=state.get("quality_context_ref"),
@@ -2963,7 +2541,7 @@ class ReportWorkflowRunner:
                 completion_ref=completion_ref,
                 lifecycle="cross",
                 reviewer_agent_id="cross-module-reviewer",
-                reviewer_session_key="cross-module-reviewer",
+                reviewer_session_key={"cross-module-reviewer", "cross-owner-wave"},
                 subject_refs=module_refs,
             )
         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
@@ -3788,7 +3366,7 @@ class ReportWorkflowRunner:
         state: dict,
         module_id: str,
     ) -> str:
-        """Fingerprint every durable input that makes a Wave 3 draft reusable."""
+        """Fingerprint every durable input that makes a module draft reusable."""
 
         request = state.get("request")
 
@@ -3831,7 +3409,7 @@ class ReportWorkflowRunner:
             else []
         )
         payload = {
-            "version": 2,
+            "version": 3,
             "run_id": state["run_id"],
             "module_id": module_id,
             "required_submodule_ids": list(
@@ -3857,27 +3435,6 @@ class ReportWorkflowRunner:
             "knowledge": ref_record(
                 state.get("module_knowledge_refs", {}).get(module_id)
             ),
-            "collaboration_bundle": ref_record(
-                state.get("collaboration_bundle_refs", {}).get(module_id)
-            ),
-            "collaboration_barrier_2": ref_record(
-                state.get("collaboration_barrier2_ref")
-            ),
-            "submodule_discoveries": [
-                ref_record(
-                    f"Work/runs/{state['run_id']}/collaboration/"
-                    f"wave-1/submodules/{submodule_id}.json"
-                )
-                for submodule_id in REPORT_TAXONOMY[module_id].submodules
-            ],
-            "submodule_collaboration_bundles": [
-                ref_record(
-                    state.get("submodule_collaboration_bundle_refs", {}).get(
-                        submodule_id
-                    )
-                )
-                for submodule_id in REPORT_TAXONOMY[module_id].submodules
-            ],
         }
         return hashlib.sha256(
             json.dumps(
@@ -3888,151 +3445,93 @@ class ReportWorkflowRunner:
             ).encode("utf-8")
         ).hexdigest()
 
-    def _module_authoring_completion_is_current(
+    def _verify_resume_cross_owner_barrier(
         self,
-        state: dict,
-        module_id: str,
-        submission: ModuleSubmission,
-    ) -> bool:
-        """Require a Wave 3 subject to prove which current bundle it consumed."""
-
-        completion_ref = (
-            f"Work/runs/{state['run_id']}/collaboration/wave-3/"
-            f"module-{module_id}-r{submission.revision}.json"
-        )
-        completion_path = self.service.workspace / completion_ref
-        subject_ref = (
-            f"Work/runs/{state['run_id']}/modules/"
-            f"{module_id}-r{submission.revision}.json"
-        )
-        subject_path = self.service.workspace / subject_ref
-        if not completion_path.is_file() or not subject_path.is_file():
-            return False
-        try:
-            completion = json.loads(
-                completion_path.read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError):
-            return False
-        common_valid = (
-            completion.get("kind") == "module_authoring_completion"
-            and completion.get("run_id") == state["run_id"]
-            and completion.get("module_id") == module_id
-            and completion.get("subject_ref") == subject_ref
-            and completion.get("subject_sha256")
-            == self._sha256(subject_path)
-            and completion.get("authoring_context_sha256")
-            == self._module_authoring_context_sha256(state, module_id)
-        )
-        if not common_valid:
-            return False
-        if completion.get("source_mode") != "submodule_reducer":
-            return True
-        barrier_ref = state.get("submodule_authoring_barrier_refs", {}).get(
-            module_id
-        )
-        if not barrier_ref or completion.get("submodule_barrier_ref") != barrier_ref:
-            return False
-        barrier_path = self.service.workspace / barrier_ref
-        if not barrier_path.is_file():
-            return False
-        return completion.get("submodule_barrier_sha256") == self._sha256(
-            barrier_path
-        )
-
-    def _write_module_authoring_completion(
-        self,
-        state: dict,
-        module_id: str,
-        submission: ModuleSubmission,
         *,
-        module_input_ref: str,
-        envelope: TaskEnvelope,
-    ) -> str:
-        subject_ref = (
-            f"Work/runs/{state['run_id']}/modules/"
-            f"{module_id}-r{submission.revision}.json"
-        )
-        subject_path = self.service.workspace / subject_ref
-        module_input_path = self.service.workspace / module_input_ref
-        completion_path = self.service.store.write_json(
-            (
-                f"Work/runs/{state['run_id']}/collaboration/wave-3/"
-                f"module-{module_id}-r{submission.revision}.json"
-            ),
-            {
-                "kind": "module_authoring_completion",
-                "version": 1,
-                "run_id": state["run_id"],
-                "module_id": module_id,
-                "revision": submission.revision,
-                "subject_ref": subject_ref,
-                "subject_sha256": self._sha256(subject_path),
-                "module_input_ref": module_input_ref,
-                "module_input_sha256": self._sha256(module_input_path),
-                "authoring_context_sha256": (
-                    self._module_authoring_context_sha256(state, module_id)
-                ),
-                "envelope_sha256": hashlib.sha256(
-                    json.dumps(
-                        envelope.model_dump(mode="json"),
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest(),
-            },
-        )
-        return completion_path.relative_to(
-            self.service.workspace
-        ).as_posix()
+        run_id: str,
+        barrier_ref: str | None,
+        module_refs: list[str],
+    ) -> None:
+        """Require the canonical exact-five Cross-owner barrier before Chief replay."""
 
-    def _bind_reviewed_module_to_authoring_context(
-        self,
-        state: dict,
-        module_id: str,
-        submission: ModuleSubmission,
-        *,
-        provenance: str,
-    ) -> str | None:
-        """Carry the current Wave 3 context binding across reviewed revisions."""
-
-        if module_id not in state.get("collaboration_bundle_refs", {}):
-            return None
-        subject_ref = (
-            f"Work/runs/{state['run_id']}/modules/"
-            f"{module_id}-r{submission.revision}.json"
-        )
-        subject_path = self.service.workspace / subject_ref
-        if not subject_path.is_file():
+        expected_ref = f"Work/runs/{run_id}/lanes/cross-r1/owner-barrier.json"
+        if barrier_ref != expected_ref:
             raise AgentWorkflowError(
-                f"reviewed module subject is missing: {subject_ref}"
+                "Cross completion cannot be replayed without the canonical round-1 "
+                "exact-five owner barrier"
             )
-        completion_path = self.service.store.write_json(
-            (
-                f"Work/runs/{state['run_id']}/collaboration/wave-3/"
-                f"module-{module_id}-r{submission.revision}.json"
-            ),
-            {
-                "kind": "module_authoring_completion",
-                "version": 1,
-                "run_id": state["run_id"],
-                "module_id": module_id,
-                "revision": submission.revision,
-                "subject_ref": subject_ref,
-                "subject_sha256": self._sha256(subject_path),
-                "authoring_context_sha256": (
-                    self._module_authoring_context_sha256(state, module_id)
-                ),
-                "provenance": provenance,
-            },
+        barrier_path = self.service.workspace / expected_ref
+        if not barrier_path.is_file():
+            raise AgentWorkflowError(
+                f"Cross owner barrier is missing from the current run: {expected_ref}"
+            )
+        try:
+            barrier = CrossOwnerBarrier.model_validate_json(
+                barrier_path.read_text(encoding="utf-8")
+            )
+            verify_cross_owner_barrier(
+                self,
+                barrier,
+                barrier_path=barrier_path,
+                expected_run_id=run_id,
+                expected_round=1,
+                expected_modules=set(REPORT_MODULE_IDS),
+            )
+            barrier_subject_refs = []
+            for module_id in sorted(REPORT_MODULE_IDS, key=float):
+                completion = CrossOwnerCompletion.model_validate_json(
+                    (
+                        self.service.workspace
+                        / barrier.completion_refs[module_id]
+                    ).read_text(encoding="utf-8")
+                )
+                barrier_subject_refs.append(completion.subject.ref)
+            if barrier_subject_refs != module_refs:
+                raise AgentWorkflowError(
+                    "Cross owner barrier subjects do not match current module revisions"
+                )
+        except AgentWorkflowError:
+            raise
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise AgentWorkflowError(
+                "refusing to replay Cross review because its exact-five owner "
+                f"barrier is invalid: {expected_ref}: {exc}"
+            ) from exc
+
+    def _guard_failed_cross_owner_terminal_resume(self, *, run_id: str) -> None:
+        """Do not silently redispatch a drained failed Cross-owner wave."""
+
+        completion_path = self.service.workspace / (
+            f"Work/runs/{run_id}/reviews/cross-completion.json"
         )
-        return completion_path.relative_to(
-            self.service.workspace
-        ).as_posix()
+        if completion_path.is_file():
+            return
+        for review_round in (0, 1):
+            terminal_path = self.service.workspace / (
+                f"Work/runs/{run_id}/lanes/cross-r{review_round}/owner-terminal.json"
+            )
+            if not terminal_path.is_file():
+                continue
+            try:
+                terminal = json.loads(terminal_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                raise AgentWorkflowError(
+                    "refusing to resume after an unreadable Cross owner terminal "
+                    f"manifest: {terminal_path}"
+                ) from exc
+            if terminal.get("run_id") != run_id:
+                raise AgentWorkflowError(
+                    f"Cross owner terminal manifest belongs to another run: {terminal_path}"
+                )
+            if terminal.get("status") == "failed":
+                raise AgentWorkflowError(
+                    "Cross owner wave is durably failed after all admitted owners "
+                    f"drained ({terminal_path}); explicit re-dispatch is required"
+                )
 
     def _restore_resume_state(self, state: dict, checkpoint: dict | None = None) -> None:
         run_id = state["run_id"]
+        self._guard_failed_cross_owner_terminal_resume(run_id=run_id)
         if checkpoint is None:
             checkpoint_path = self.service.workspace / f"Work/runs/{run_id}/workflow-state.json"
             if not checkpoint_path.is_file():
@@ -4084,235 +3583,6 @@ class ReportWorkflowRunner:
                 raise AgentWorkflowError(
                     f"checkpoint lacks module knowledge refs: {missing_knowledge}"
                 )
-        collaboration_refs_present = bool(
-            typed_checkpoint.collaboration_barrier1_ref
-            or typed_checkpoint.collaboration_barrier2_ref
-            or typed_checkpoint.collaboration_bundle_refs
-        )
-        if collaboration_refs_present:
-            if typed_checkpoint.collaboration_barrier1_ref is None:
-                raise AgentWorkflowError(
-                    "checkpoint has collaboration output without Barrier 1"
-                )
-            state["collaboration_barrier1_ref"] = require_run_ref(
-                typed_checkpoint.collaboration_barrier1_ref,
-                label="collaboration Barrier 1",
-            )
-            if typed_checkpoint.collaboration_barrier2_ref is not None:
-                state["collaboration_barrier2_ref"] = require_run_ref(
-                    typed_checkpoint.collaboration_barrier2_ref,
-                    label="collaboration Barrier 2",
-                )
-            target_modules = set(state.get("request").target_modules)
-            unexpected_bundles = sorted(
-                set(typed_checkpoint.collaboration_bundle_refs) - target_modules
-            )
-            if unexpected_bundles:
-                raise AgentWorkflowError(
-                    "checkpoint contains collaboration bundles outside the request: "
-                    f"{unexpected_bundles}"
-                )
-            state["collaboration_bundle_refs"] = {
-                module_id: require_run_ref(
-                    ref,
-                    label=f"module {module_id} collaboration bundle",
-                )
-                for module_id, ref in (
-                    typed_checkpoint.collaboration_bundle_refs.items()
-                )
-            }
-            if typed_checkpoint.collaboration_barrier2_ref is not None:
-                missing_bundles = sorted(
-                    target_modules - set(state["collaboration_bundle_refs"])
-                )
-                if missing_bundles:
-                    raise AgentWorkflowError(
-                        "Barrier 2 checkpoint lacks module bundles: "
-                        f"{missing_bundles}"
-                    )
-        submodule_refs_present = bool(
-            typed_checkpoint.submodule_discovery_barrier_refs
-            or typed_checkpoint.submodule_collaboration_bundle_refs
-            or typed_checkpoint.submodule_authoring_barrier_refs
-        )
-        requested_modules = set(
-            getattr(state.get("request"), "target_modules", ())
-        )
-        if submodule_refs_present and not requested_modules:
-            raise AgentWorkflowError(
-                "checkpoint has submodule orchestration refs without a current request"
-            )
-        requested_submodules = {
-            submodule_id
-            for module_id in requested_modules
-            for submodule_id in REPORT_TAXONOMY[module_id].submodules
-        }
-        if typed_checkpoint.submodule_discovery_barrier_refs:
-            unexpected = sorted(
-                set(typed_checkpoint.submodule_discovery_barrier_refs)
-                - requested_modules
-            )
-            if unexpected:
-                raise AgentWorkflowError(
-                    "checkpoint contains submodule discovery barriers outside request: "
-                    f"{unexpected}"
-                )
-            state["submodule_discovery_barrier_refs"] = {
-                module_id: require_run_ref(
-                    ref,
-                    label=f"module {module_id} submodule discovery barrier",
-                )
-                for module_id, ref in (
-                    typed_checkpoint.submodule_discovery_barrier_refs.items()
-                )
-            }
-        if typed_checkpoint.submodule_collaboration_bundle_refs:
-            unexpected = sorted(
-                set(typed_checkpoint.submodule_collaboration_bundle_refs)
-                - requested_submodules
-            )
-            if unexpected:
-                raise AgentWorkflowError(
-                    "checkpoint contains collaboration bundles outside leaf scope: "
-                    f"{unexpected}"
-                )
-            state["submodule_collaboration_bundle_refs"] = {
-                submodule_id: require_run_ref(
-                    ref,
-                    label=f"submodule {submodule_id} collaboration bundle",
-                )
-                for submodule_id, ref in (
-                    typed_checkpoint.submodule_collaboration_bundle_refs.items()
-                )
-            }
-        if typed_checkpoint.submodule_authoring_barrier_refs:
-            unexpected = sorted(
-                set(typed_checkpoint.submodule_authoring_barrier_refs)
-                - requested_modules
-            )
-            if unexpected:
-                raise AgentWorkflowError(
-                    "checkpoint contains submodule authoring barriers outside request: "
-                    f"{unexpected}"
-                )
-            state["submodule_authoring_barrier_refs"] = {
-                module_id: require_run_ref(
-                    ref,
-                    label=f"module {module_id} submodule authoring barrier",
-                )
-                for module_id, ref in (
-                    typed_checkpoint.submodule_authoring_barrier_refs.items()
-                )
-            }
-        # Context maps are additive checkpoint fields.  Accept their absence
-        # for old runs, but reject identities outside this request's fixed
-        # 37-leaf set so a stale task cannot be promoted on resume.
-        for field_name in (
-            "submodule_discovery_context_sha256",
-            "submodule_response_context_sha256",
-            "submodule_authoring_context_sha256",
-        ):
-            values = dict(getattr(typed_checkpoint, field_name, {}))
-            unexpected = sorted(set(values) - requested_submodules)
-            if unexpected:
-                raise AgentWorkflowError(
-                    f"checkpoint {field_name} contains leaves outside request: {unexpected}"
-                )
-            malformed = sorted(
-                key
-                for key, digest in values.items()
-                if not isinstance(digest, str)
-                or re.fullmatch(r"[0-9a-f]{64}", digest) is None
-            )
-            if malformed:
-                raise AgentWorkflowError(
-                    f"checkpoint {field_name} contains malformed context hashes: {malformed}"
-                )
-            if values:
-                state[field_name] = values
-        ambiguous_refs = dict(getattr(typed_checkpoint, "submodule_ambiguous_task_refs", {}))
-        unexpected_ambiguous = sorted(
-            set(ambiguous_refs)
-            - {
-                f"submodule-discovery-{submodule_id}"
-                for submodule_id in requested_submodules
-            }
-            - {
-                f"submodule-discovery-local-{submodule_id}"
-                for submodule_id in requested_submodules
-            }
-            - {
-                f"submodule-interface-response-{submodule_id}"
-                for submodule_id in requested_submodules
-            }
-            - {
-                f"submodule-author-{submodule_id}"
-                for submodule_id in requested_submodules
-            }
-        )
-        if unexpected_ambiguous:
-            raise AgentWorkflowError(
-                "checkpoint contains ambiguous leaf tasks outside request: "
-                f"{unexpected_ambiguous}"
-            )
-        if ambiguous_refs:
-            state["submodule_ambiguous_task_refs"] = {
-                task_id: require_run_ref(
-                    ref,
-                    label=f"ambiguous submodule task {task_id}",
-                )
-                for task_id, ref in ambiguous_refs.items()
-            }
-        if typed_checkpoint.interface_resolution_registry_ref is not None:
-            registry_ref = require_run_ref(
-                typed_checkpoint.interface_resolution_registry_ref,
-                label="interface resolution registry",
-            )
-            registry_path = self.service.workspace / registry_ref
-            actual_registry_sha256 = self._sha256(registry_path)
-            if (
-                typed_checkpoint.interface_resolution_registry_sha256 is None
-                or actual_registry_sha256
-                != typed_checkpoint.interface_resolution_registry_sha256
-            ):
-                raise AgentWorkflowError(
-                    "interface resolution registry hash does not match checkpoint"
-                )
-            try:
-                registry = InterfaceResolutionRegistry.model_validate_json(
-                    registry_path.read_text(encoding="utf-8")
-                )
-            except (OSError, ValueError) as exc:
-                raise AgentWorkflowError(
-                    "interface resolution registry is unreadable or invalid"
-                ) from exc
-            if registry.run_id != run_id:
-                raise AgentWorkflowError(
-                    "interface resolution registry belongs to another run"
-                )
-            state["interface_resolution_registry_ref"] = registry_ref
-            state["interface_resolution_registry_sha256"] = actual_registry_sha256
-            state["interface_resolution_registry"] = registry
-        if typed_checkpoint.interface_closure_refs:
-            closure_hashes: dict[str, str] = {}
-            for ref in typed_checkpoint.interface_closure_refs:
-                current_ref = require_run_ref(ref, label="interface closure")
-                closure_hashes[current_ref] = self._sha256(
-                    self.service.workspace / current_ref
-                )
-            expected_hashes = dict(typed_checkpoint.interface_closure_sha256)
-            if closure_hashes != expected_hashes:
-                raise AgentWorkflowError(
-                    "interface closure artifact hashes do not match checkpoint"
-                )
-            state["interface_closure_refs"] = list(
-                typed_checkpoint.interface_closure_refs
-            )
-            state["interface_closure_sha256"] = closure_hashes
-        if typed_checkpoint.interface_residual_risks:
-            state["interface_residual_risks"] = dict(
-                typed_checkpoint.interface_residual_risks
-            )
         if typed_checkpoint.module_lane_barrier_ref is not None:
             state["module_lane_barrier_ref"] = require_run_ref(
                 typed_checkpoint.module_lane_barrier_ref,
@@ -4328,11 +3598,9 @@ class ReportWorkflowRunner:
         restored_subjects: dict[str, ModuleSubmission] = {}
         approved_subjects: dict[str, ModuleSubmission] = {}
         rejected: dict[str, str] = {}
-        invalidated_authoring_revisions: dict[str, int] = {}
         modules_root = self.service.workspace / f"Work/runs/{run_id}/modules"
         for module_id in REPORT_MODULE_IDS:
             valid: list[ModuleSubmission] = []
-            context_mismatch_revisions: list[int] = []
             for path in modules_root.glob(f"{module_id}-r*.json"):
                 try:
                     submission = ModuleSubmission.model_validate_json(
@@ -4344,29 +3612,8 @@ class ReportWorkflowRunner:
                             f"module subject declares unregistered sources: {unknown_sources}"
                         )
                     ClaimLedger(claims=submission.claims, sources=source_records)
-                    if (
-                        typed_checkpoint.collaboration_barrier2_ref is not None
-                        and not self._module_authoring_completion_is_current(
-                            state,
-                            module_id,
-                            submission,
-                        )
-                    ):
-                        raise ValueError(
-                            "Wave 3 subject is not bound to the current "
-                            "collaboration bundle and authoring context"
-                        )
                 except (OSError, ValueError) as exc:
                     rejected[module_id] = str(exc)
-                    if (
-                        "not bound to the current collaboration bundle"
-                        in str(exc)
-                    ):
-                        match = re.search(r"-r([0-9]+)\.json$", path.name)
-                        if match:
-                            context_mismatch_revisions.append(
-                                int(match.group(1))
-                            )
                     continue
                 valid.append(submission)
             if valid:
@@ -4412,16 +3659,9 @@ class ReportWorkflowRunner:
                         f"Outputs/Modules/{module_id}.md", candidate.markdown
                     )
                     break
-            elif context_mismatch_revisions:
-                invalidated_authoring_revisions[module_id] = (
-                    max(context_mismatch_revisions) + 1
-                )
         state["specialist_submissions"] = restored_subjects
         state["module_submissions"] = approved_subjects
         state["rejected_specialist_submissions"] = rejected
-        state["invalidated_authoring_revisions"] = (
-            invalidated_authoring_revisions
-        )
         if set(approved_subjects) != set(REPORT_MODULE_IDS):
             return
 
@@ -4435,13 +3675,18 @@ class ReportWorkflowRunner:
         cross_ref = f"Work/runs/{run_id}/reviews/cross-completion.json"
         if not (self.service.workspace / cross_ref).is_file():
             return
+        self._verify_resume_cross_owner_barrier(
+            run_id=run_id,
+            barrier_ref=typed_checkpoint.cross_owner_barrier_ref,
+            module_refs=module_refs,
+        )
         try:
             _, cross_artifacts = self._load_current_review_completion(
                 run_id=run_id,
                 completion_ref=cross_ref,
                 lifecycle="cross",
                 reviewer_agent_id="cross-module-reviewer",
-                reviewer_session_key="cross-module-reviewer",
+                reviewer_session_key={"cross-module-reviewer", "cross-owner-wave"},
                 subject_refs=module_refs,
             )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -4781,13 +4026,18 @@ class ReportWorkflowRunner:
         cross_ref = f"Work/runs/{run_id}/reviews/cross-completion.json"
         if not (self.service.workspace / cross_ref).is_file():
             return
+        self._verify_resume_cross_owner_barrier(
+            run_id=run_id,
+            barrier_ref=checkpoint.get("cross_owner_barrier_ref"),
+            module_refs=module_refs,
+        )
         try:
             _, cross_artifacts = self._load_current_review_completion(
                 run_id=run_id,
                 completion_ref=cross_ref,
                 lifecycle="cross",
                 reviewer_agent_id="cross-module-reviewer",
-                reviewer_session_key="cross-module-reviewer",
+                reviewer_session_key={"cross-module-reviewer", "cross-owner-wave"},
                 subject_refs=module_refs,
             )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -5362,3124 +4612,6 @@ class ReportWorkflowRunner:
             return ["必须保留固定报告目录；缺少客户证据的子模块仅标注“未评估”，不得给出专业结论"]
         return []
 
-    @staticmethod
-    def _leaf_session_key(submodule_id: str) -> str:
-        """Return the original stable identity for one taxonomy leaf.
-
-        All three waves for the same leaf deliberately reuse this identity;
-        different leaves never share a ReportingAgentRunner lease.
-        """
-
-        return f"submodule-{submodule_id}"
-
-    def _load_collaboration_submission(
-        self,
-        *,
-        run_id: str,
-        artifact_ref: str,
-        task_id: str,
-        module_id: str,
-        expected_type: type[Any],
-        submodule_id: str | None = None,
-        wave: str | None = None,
-        expected_context_sha256: str | None = None,
-        require_payload_submodule_identity: bool = True,
-    ) -> Any | None:
-        """Recover a typed wave candidate without promoting it before its Barrier."""
-
-        candidate_wave = wave or (
-            "wave-1" if "discovery" in task_id else "wave-2"
-        )
-
-        ambiguity_ref = (
-            self.service.workspace
-            / f"Work/runs/{run_id}/collaboration/ambiguities/{candidate_wave}/{task_id}.json"
-        )
-        if ambiguity_ref.is_file():
-            raise AgentWorkflowError(
-                f"{task_id} is ambiguous (accepted_or_unknown); reconcile the existing "
-                "Provider attempt before dispatching another request"
-            )
-        # A process may have died after the Provider journal was written but
-        # before the scheduler could persist the compact ambiguity marker.
-        # Detect that evidence directly and fail closed on resume.
-        provider_calls_root = (
-            self.service.workspace
-            / f"Work/runs/{run_id}/context-manifests/provider-calls"
-        )
-        if provider_calls_root.is_dir():
-            for manifest_path in provider_calls_root.glob("*.json"):
-                try:
-                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                except (OSError, ValueError, TypeError):
-                    continue
-                if (
-                    manifest.get("run_id") == run_id
-                    and manifest.get("task_id") == task_id
-                    and manifest.get("attempt_disposition")
-                    == "accepted_or_unknown"
-                    and manifest.get("usage_status") == "error"
-                ):
-                    raise AgentWorkflowError(
-                        f"{task_id} has an accepted_or_unknown Provider journal; "
-                        "automatic replay is disabled"
-                    )
-
-        artifact_path = self.service.workspace / artifact_ref
-        completion_ref = (
-            f"Work/runs/{run_id}/collaboration/completions/"
-            f"{candidate_wave}/{task_id}.json"
-        )
-        completion_path = self.service.workspace / completion_ref
-        if expected_context_sha256 is not None:
-            if not artifact_path.is_file() or not completion_path.is_file():
-                return None
-            try:
-                completion = json.loads(
-                    completion_path.read_text(encoding="utf-8")
-                )
-            except (OSError, ValueError):
-                return None
-            if (
-                completion.get("kind") != "submodule_task_completion"
-                or completion.get("run_id") != run_id
-                or completion.get("task_id") != task_id
-                or completion.get("module_id") != module_id
-                or completion.get("submodule_id") != submodule_id
-                or completion.get("wave") != candidate_wave
-                or completion.get("artifact_ref") != artifact_ref
-                or completion.get("context_sha256")
-                != expected_context_sha256
-                or completion.get("artifact_sha256")
-                != self._sha256(artifact_path)
-                or (
-                    completion.get("task_attempt_id") is not None
-                    and completion.get("task_attempt_id")
-                    != f"{task_id}-attempt-1"
-                )
-                or (
-                    completion.get("session_key") is not None
-                    and completion.get("session_key")
-                    != self._leaf_session_key(submodule_id)
-                )
-            ):
-                self._reject_collaboration_candidates(
-                    run_id=run_id,
-                    wave=candidate_wave,
-                    artifact_refs=[artifact_ref, completion_ref],
-                    task_ids=[task_id],
-                    reason="submodule completion no longer matches its exact task context",
-                )
-                return None
-        if artifact_path.is_file():
-            run_root = (
-                self.service.workspace / f"Work/runs/{run_id}"
-            ).resolve()
-            if (
-                artifact_path.is_symlink()
-                or not artifact_path.resolve().is_relative_to(run_root)
-            ):
-                self._reject_collaboration_candidates(
-                    run_id=run_id,
-                    wave=candidate_wave,
-                    artifact_refs=[artifact_ref],
-                    task_ids=[task_id],
-                    reason="collaboration artifact is not a regular current-run file",
-                )
-                return None
-            try:
-                payload = expected_type.model_validate_json(
-                    artifact_path.read_text(encoding="utf-8")
-                )
-            except (OSError, ValueError) as exc:
-                self._reject_collaboration_candidates(
-                    run_id=run_id,
-                    wave=candidate_wave,
-                    artifact_refs=[artifact_ref],
-                    task_ids=[task_id],
-                    reason=f"invalid persisted collaboration artifact: {exc}",
-                )
-                return None
-        else:
-            result_path = (
-                self.service.workspace
-                / f"Work/runs/{run_id}/results/{task_id}.json"
-            )
-            if not result_path.is_file():
-                return None
-            try:
-                result = AgentResult.model_validate_json(
-                    result_path.read_text(encoding="utf-8")
-                )
-            except (OSError, ValueError) as exc:
-                self._reject_collaboration_candidates(
-                    run_id=run_id,
-                    wave=candidate_wave,
-                    artifact_refs=[],
-                    task_ids=[task_id],
-                    reason=f"invalid persisted collaboration task result: {exc}",
-                )
-                return None
-            if (
-                result.run_id != run_id
-                or result.task_id != task_id
-                or result.agent_id
-                != f"module-{module_id}-specialist"
-            ):
-                self._reject_collaboration_candidates(
-                    run_id=run_id,
-                    wave=candidate_wave,
-                    artifact_refs=[],
-                    task_ids=[task_id],
-                    reason=(
-                        "collaboration result identity does not match its "
-                        "current-run task and specialist"
-                    ),
-                )
-                return None
-            if (
-                result.status is not AgentRunStatus.COMPLETED
-                or not isinstance(result.payload, expected_type)
-            ):
-                return None
-            payload = result.payload
-        if payload.module_id != module_id:
-            self._reject_collaboration_candidates(
-                run_id=run_id,
-                wave=candidate_wave,
-                artifact_refs=[artifact_ref],
-                task_ids=[task_id],
-                reason=(
-                    f"collaboration payload belongs to module {payload.module_id}, "
-                    f"expected {module_id}"
-                ),
-            )
-            return None
-        if (
-            submodule_id is not None
-            and require_payload_submodule_identity
-            and getattr(payload, "submodule_id", None) != submodule_id
-        ):
-            self._reject_collaboration_candidates(
-                run_id=run_id,
-                wave=candidate_wave,
-                artifact_refs=[artifact_ref],
-                task_ids=[task_id],
-                reason=(
-                    "collaboration payload belongs to submodule "
-                    f"{getattr(payload, 'submodule_id', None)}, expected {submodule_id}"
-                ),
-            )
-            return None
-        return payload
-
-    def _submodule_task_context_sha256(
-        self,
-        state: dict,
-        *,
-        task_kind: str,
-        submodule_id: str,
-        input_refs: list[str],
-    ) -> str:
-        """Fingerprint the exact durable inputs and plan for one leaf task."""
-
-        module_id = resolve_submodule(submodule_id).module_id
-        planned = next(
-            (
-                item.model_dump(mode="json")
-                for item in state["module_dispatch"].module_tasks
-                if item.agent_id == f"module-{module_id}-specialist"
-            ),
-            None,
-        )
-        request = state.get("request")
-        task_prefix = {
-            "submodule_authoring": "submodule-author",
-            "submodule_discovery": "submodule-discovery",
-            "submodule_discovery_local": "submodule-discovery-local",
-            "submodule_interface_response": "submodule-interface-response",
-        }.get(task_kind, task_kind.replace("_", "-"))
-        task_id = f"{task_prefix}-{submodule_id}"
-        ref_records = []
-        for ref in input_refs:
-            path = (self.service.workspace / ref).resolve()
-            ref_records.append(
-                {
-                    "ref": ref,
-                    "sha256": (
-                        self._sha256(path)
-                        if path.is_relative_to(self.service.workspace)
-                        and path.is_file()
-                        else None
-                    ),
-                }
-            )
-        payload = {
-            "version": 1,
-            "run_id": state["run_id"],
-            "task_kind": task_kind,
-            "task_id": task_id,
-            "task_attempt_id": f"{task_id}-attempt-1",
-            "session_key": self._leaf_session_key(submodule_id),
-            "module_id": module_id,
-            "submodule_id": submodule_id,
-            "planned_task": planned,
-            "input_refs": ref_records,
-            "execution_requirements": list(
-                getattr(request, "execution_requirements", [])
-            ),
-            "missing_evidence_policy": getattr(
-                request, "missing_evidence_policy", None
-            ),
-            "supplement_constraints": (
-                self._user_supplement_constraints(
-                    state,
-                    stage=task_kind,
-                    target_ids={module_id, submodule_id},
-                )
-                if request is not None
-                and hasattr(request, "user_supplements")
-                else []
-            ),
-        }
-        return hashlib.sha256(
-            json.dumps(
-                payload,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-
-    def _persist_submodule_task_completion(
-        self,
-        *,
-        state: dict,
-        task_kind: str,
-        wave: str,
-        submodule_id: str,
-        artifact_ref: str,
-        context_sha256: str,
-        payload: Any,
-    ) -> None:
-        """Persist a typed leaf result and its exact-context recovery proof."""
-
-        module_id = resolve_submodule(submodule_id).module_id
-        artifact_path = self.service.store.write_json(
-            artifact_ref, payload.model_dump(mode="json")
-        )
-        task_prefix = {
-            "submodule_authoring": "submodule-author",
-        }.get(task_kind, task_kind.replace("_", "-"))
-        task_id = f"{task_prefix}-{submodule_id}"
-        self.service.store.write_json(
-            (
-                f"Work/runs/{state['run_id']}/collaboration/completions/"
-                f"{wave}/{task_id}.json"
-            ),
-            {
-                "kind": "submodule_task_completion",
-                "version": 1,
-                "run_id": state["run_id"],
-                "wave": wave,
-                "task_id": task_id,
-                "task_attempt_id": f"{task_id}-attempt-1",
-                "session_key": self._leaf_session_key(submodule_id),
-                "module_id": module_id,
-                "submodule_id": submodule_id,
-                "artifact_ref": artifact_ref,
-                "artifact_sha256": self._sha256(artifact_path),
-                "context_sha256": context_sha256,
-            },
-        )
-
-    def _persist_submodule_task_ambiguity(
-        self,
-        *,
-        state: dict,
-        task_kind: str,
-        wave: str,
-        submodule_id: str,
-        context_sha256: str,
-        error: BaseException,
-    ) -> str:
-        """Record an accepted-or-unknown Provider attempt as non-replayable."""
-
-        module_id = resolve_submodule(submodule_id).module_id
-        task_prefix = {
-            "submodule_authoring": "submodule-author",
-        }.get(task_kind, task_kind.replace("_", "-"))
-        task_id = f"{task_prefix}-{submodule_id}"
-        manifest_refs = list(getattr(error, "manifest_refs", ()) or ())
-        ref = (
-            f"Work/runs/{state['run_id']}/collaboration/ambiguities/"
-            f"{wave}/{task_id}.json"
-        )
-        self.service.store.write_json(
-            ref,
-            {
-                "kind": "submodule_task_ambiguity",
-                "version": 1,
-                "run_id": state["run_id"],
-                "wave": wave,
-                "task_kind": task_kind,
-                "task_id": task_id,
-                "task_attempt_id": f"{task_id}-attempt-1",
-                "session_key": self._leaf_session_key(submodule_id),
-                "module_id": module_id,
-                "submodule_id": submodule_id,
-                "status": "ambiguous",
-                "attempt_disposition": "accepted_or_unknown",
-                "context_sha256": context_sha256,
-                "provider_call_refs": manifest_refs,
-                "error": str(error),
-            },
-        )
-        state.setdefault("submodule_ambiguous_task_refs", {})[task_id] = ref
-        return ref
-
-    def _verify_submodule_discovery_barrier(
-        self,
-        *,
-        state: dict,
-        module_id: str,
-        barrier_ref: str,
-        context_sha256: dict[str, str],
-    ) -> None:
-        """Verify an exact leaf discovery barrier before any downstream wave."""
-
-        barrier_path = (self.service.workspace / barrier_ref).resolve()
-        run_root = (self.service.workspace / f"Work/runs/{state['run_id']}").resolve()
-        if not barrier_path.is_file() or not barrier_path.is_relative_to(run_root):
-            raise AgentWorkflowError(
-                f"submodule discovery barrier is unreadable: {barrier_ref}"
-            )
-        try:
-            barrier = ModuleSubmoduleDiscoveryBarrier.model_validate_json(
-                barrier_path.read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError) as exc:
-            raise AgentWorkflowError(
-                f"submodule discovery barrier is invalid: {barrier_ref}"
-            ) from exc
-        expected = set(REPORT_TAXONOMY[module_id].submodules)
-        if barrier.run_id != state["run_id"] or barrier.module_id != module_id:
-            raise AgentWorkflowError(
-                f"submodule discovery barrier identity mismatch: {module_id}"
-            )
-        if set(barrier.discovery_refs) != expected or set(barrier.discovery_sha256) != expected:
-            raise AgentWorkflowError(
-                f"submodule discovery barrier has non-exact leaf set: {module_id}"
-            )
-        if set(barrier.context_sha256) != expected:
-            raise AgentWorkflowError(
-                f"submodule discovery barrier lacks exact context hashes: {module_id}"
-            )
-        for submodule_id in sorted(expected):
-            ref = barrier.discovery_refs[submodule_id]
-            path = (self.service.workspace / ref).resolve()
-            if not path.is_file() or not path.is_relative_to(run_root):
-                raise AgentWorkflowError(
-                    f"submodule discovery artifact is unreadable: {ref}"
-                )
-            if self._sha256(path) != barrier.discovery_sha256[submodule_id]:
-                raise AgentWorkflowError(
-                    f"submodule discovery artifact hash mismatch: {submodule_id}"
-                )
-            expected_context = context_sha256.get(submodule_id)
-            if expected_context is not None and barrier.context_sha256[submodule_id] != expected_context:
-                raise AgentWorkflowError(
-                    f"submodule discovery context hash mismatch: {submodule_id}"
-                )
-
-    def _reject_collaboration_candidates(
-        self,
-        *,
-        run_id: str,
-        wave: str,
-        artifact_refs: list[str],
-        task_ids: list[str],
-        reason: str,
-    ) -> str:
-        """Move Barrier-invalid candidates aside so explicit resume can retry."""
-
-        rejection_id = uuid4().hex
-        run_root = (
-            self.service.workspace / f"Work/runs/{run_id}"
-        ).resolve()
-        rejected_root = (
-            run_root / "collaboration" / "rejected" / wave / rejection_id
-        )
-        moved: dict[str, str] = {}
-        candidates = [
-            *(
-                ("artifact", ref, self.service.workspace / ref)
-                for ref in artifact_refs
-            ),
-            *(
-                (
-                    "result",
-                    f"Work/runs/{run_id}/results/{task_id}.json",
-                    run_root / "results" / f"{task_id}.json",
-                )
-                for task_id in task_ids
-            ),
-        ]
-        for category, ref, source in candidates:
-            lexical = source.absolute()
-            if (
-                not lexical.is_relative_to(run_root)
-                or not (source.exists() or source.is_symlink())
-            ):
-                continue
-            target = rejected_root / category / source.name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            source.replace(target)
-            moved[ref] = target.relative_to(
-                self.service.workspace
-            ).as_posix()
-        manifest_ref = (
-            rejected_root / "rejection.json"
-        ).relative_to(self.service.workspace).as_posix()
-        self.service.store.write_json(
-            manifest_ref,
-            {
-                "kind": "module_collaboration_rejection",
-                "run_id": run_id,
-                "wave": wave,
-                "reason": reason,
-                "moved": moved,
-            },
-        )
-        return manifest_ref
-
-    async def _run_scheduled_submodule_stage(
-        self,
-        submodule_ids: tuple[str, ...],
-        *,
-        run_id: str,
-        workflow_id: str,
-        task_kind: str,
-        concurrency: int,
-        execute,
-        persist=None,
-        all_ready: bool = False,
-        state: dict | None = None,
-        wave: str | None = None,
-        context_sha256: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
-        """Run one leaf cohort with stable history-informed dispatch.
-
-        ``all_ready`` means every business-ready leaf remains eligible after a
-        sibling failure; it does not mean unbounded physical concurrency.
-        Wave 1/2/3 and every module-audit revision cohort share one run-global
-        ``submodule_task_concurrency`` gate (default 8), drain the complete
-        queue, and retain each successful leaf for recovery.  Only a
-        workflow-level cancellation can stop dispatch in the all-ready path.
-        """
-
-        ordered = tuple(dict.fromkeys(submodule_ids))
-        history = TaskTimingHistory(self.service.workspace)
-        scheduler = AdaptiveTaskScheduler(
-            [
-                SchedulingCandidate(
-                    task_id=f"{task_kind}:{submodule_id}",
-                    owner_key=resolve_submodule(submodule_id).module_id,
-                    task_kind=task_kind,
-                    ordinal=index,
-                    expected_duration_ms=history.estimate_ms(
-                        task_kind,
-                        submodule_id,
-                        default=60_000,
-                    ),
-                )
-                for index, submodule_id in enumerate(ordered)
-            ]
-        )
-        global_limit, global_gate = self._run_leaf_task_gate(run_id, concurrency)
-        event_store = LocalEventStore(self.service.workspace, run_id)
-        stage_id = task_kind.replace("_", "-")
-        event_store.append(
-            "StageReady",
-            stage_id=stage_id,
-            correlation_id=workflow_id,
-            payload={
-                "submodule_ids": list(ordered),
-                "concurrency": min(
-                    max(1, concurrency), max(1, len(ordered))
-                ),
-                "cohort_worker_count": min(
-                    max(1, concurrency), max(1, len(ordered))
-                ),
-                "run_global_leaf_concurrency": global_limit,
-            },
-        )
-        results: dict[str, Any] = {}
-        failures: list[BaseException] = []
-        stop_dispatch = asyncio.Event()
-
-        async def worker() -> None:
-            while not stop_dispatch.is_set():
-                candidate = await scheduler.next()
-                if candidate is None:
-                    return
-                submodule_id = candidate.task_id.split(":", 1)[1]
-                event_store.append(
-                    "TaskDispatched",
-                    stage_id=stage_id,
-                    task_id=candidate.task_id,
-                    correlation_id=workflow_id,
-                    payload={"submodule_id": submodule_id},
-                )
-                started = time.perf_counter_ns()
-                try:
-                    # Separate concurrently running module lanes all pass
-                    # through this same run-scoped semaphore.  Persisting the
-                    # immutable result happens after release and therefore
-                    # does not hold scarce Provider/task capacity.
-                    async with global_gate:
-                        payload = await execute(submodule_id)
-                    if persist is not None:
-                        persist(submodule_id, payload)
-                    results[submodule_id] = payload
-                except BaseException as exc:
-                    failures.append(exc)
-                    accepted_unknown = (
-                        isinstance(exc, ProviderAttemptRecoveryRequired)
-                        or getattr(exc, "attempt_disposition", None)
-                        == "accepted_or_unknown"
-                    )
-                    hard_stop = isinstance(exc, asyncio.CancelledError) or bool(
-                        getattr(exc, "hard_stop", False)
-                    )
-                    if accepted_unknown and state is not None and wave is not None:
-                        self._persist_submodule_task_ambiguity(
-                            state=state,
-                            task_kind=task_kind,
-                            wave=wave,
-                            submodule_id=submodule_id,
-                            context_sha256=(context_sha256 or {}).get(
-                                submodule_id, ""
-                            ),
-                            error=exc,
-                        )
-                    # In the three-wave path, keep draining queued siblings
-                    # within the configured worker bound. Preserve the helper's
-                    # fail-fast behavior for non-business callers.
-                    if not all_ready or hard_stop:
-                        stop_dispatch.set()
-                    history.record(
-                        run_id=run_id,
-                        task_id=candidate.task_id,
-                        task_kind=task_kind,
-                        owner_key=submodule_id,
-                        duration_ms=max(
-                            0, (time.perf_counter_ns() - started) // 1_000_000
-                        ),
-                        status="failed",
-                    )
-                    event_store.append(
-                        "TaskFailed",
-                        stage_id=stage_id,
-                        task_id=candidate.task_id,
-                        correlation_id=workflow_id,
-                        payload={"error": str(exc)},
-                    )
-                    if all_ready and not hard_stop:
-                        continue
-                    return
-                duration_ms = max(
-                    0, (time.perf_counter_ns() - started) // 1_000_000
-                )
-                history.record(
-                    run_id=run_id,
-                    task_id=candidate.task_id,
-                    task_kind=task_kind,
-                    owner_key=submodule_id,
-                    duration_ms=duration_ms,
-                    status="completed",
-                )
-                event_store.append(
-                    "TypedResultAccepted",
-                    stage_id=stage_id,
-                    task_id=candidate.task_id,
-                    correlation_id=workflow_id,
-                    payload={
-                        "submodule_id": submodule_id,
-                        "duration_ms": duration_ms,
-                    },
-                )
-
-        worker_count = min(max(1, concurrency), max(1, len(ordered)))
-        # Keep every worker terminal even when one leaf fails.  The workers
-        # convert ordinary leaf failures to terminal records above, and
-        # return_exceptions=True also protects the sibling drain from an
-        # unexpected scheduler/worker exception.
-        worker_outcomes = await asyncio.gather(
-            *(worker() for _ in range(worker_count)),
-            return_exceptions=True,
-        )
-        failures.extend(
-            outcome
-            for outcome in worker_outcomes
-            if isinstance(outcome, BaseException)
-        )
-        self.service.store.write_json(
-            f"Work/runs/{run_id}/scheduling/{stage_id}.json",
-            {
-                "kind": "submodule_scheduling_decisions",
-                "run_id": run_id,
-                "stage_id": stage_id,
-                "policy": "longest_critical_path_first_v1",
-                "concurrency": worker_count,
-                "run_global_leaf_concurrency": global_limit,
-                "decisions": [
-                    item.model_dump(mode="json") for item in scheduler.decisions
-                ],
-            },
-        )
-        if failures:
-            raise failures[0]
-        if set(results) != set(ordered):
-            raise AgentWorkflowError(
-                f"{task_kind} ended without exact leaf completion; "
-                f"missing={sorted(set(ordered) - set(results))}"
-            )
-        event_store.append(
-            "StageCompleted",
-            stage_id=stage_id,
-            correlation_id=workflow_id,
-            payload={"submodule_ids": list(ordered)},
-        )
-        return results
-
-    @staticmethod
-    def _jsonable_context_item(item: object) -> dict[str, object]:
-        """Serialize runtime evidence without requiring test doubles to be Pydantic."""
-
-        if hasattr(item, "model_dump"):
-            return item.model_dump(mode="json")
-        if isinstance(item, dict):
-            return dict(item)
-        return {
-            key: value
-            for key, value in vars(item).items()
-            if not key.startswith("_")
-        }
-
-    def _leaf_collaboration_context_packet(
-        self,
-        submodule_ids: tuple[str, ...],
-        state: dict,
-        *,
-        purpose: str,
-    ) -> tuple[str, str, str]:
-        """Persist one leaf delta plus one sibling-shared context directory."""
-
-        ordered = tuple(dict.fromkeys(submodule_ids))
-        if not ordered:
-            raise AgentWorkflowError("leaf collaboration context requires at least one leaf")
-        module_ids = {resolve_submodule(item).module_id for item in ordered}
-        if len(module_ids) != 1:
-            raise AgentWorkflowError("leaf collaboration context may not cross module owners")
-        module_id = next(iter(module_ids))
-        workspace = self.service.workspace
-
-        def read_json_ref(ref: str | None) -> object:
-            if not ref:
-                return {}
-            path = workspace / ref
-            if not path.is_file():
-                return {}
-            return json.loads(path.read_text(encoding="utf-8"))
-
-        preparation = state.get("preparation_refs", {})
-        coverage_payload = read_json_ref(preparation.get("coverage"))
-        coverage_entry = (
-            coverage_payload.get("entries", {}).get(module_id, {})
-            if isinstance(coverage_payload, dict)
-            else {}
-        )
-        scoped_coverage = dict(coverage_entry) if isinstance(coverage_entry, dict) else {}
-        submodule_coverage = scoped_coverage.get("submodules", {})
-        scoped_coverage["submodules"] = {
-            submodule_id: submodule_coverage.get(submodule_id, {})
-            for submodule_id in ordered
-        }
-        evidence_ids = {
-            evidence_id
-            for submodule_id in ordered
-            for evidence_id in scoped_coverage["submodules"]
-            .get(submodule_id, {})
-            .get("evidence_ids", [])
-        }
-
-        evidence_items: list[dict[str, object]] = []
-        evidence_path = workspace / preparation.get("evidence", "")
-        if evidence_path.is_file():
-            for line in evidence_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                item = json.loads(line)
-                if item.get("id") in evidence_ids:
-                    evidence_items.append(item)
-        else:
-            candidates = [
-                self._jsonable_context_item(item)
-                for item in state.get("evidence_items", [])
-            ]
-            evidence_items = [
-                item
-                for item in candidates
-                if not evidence_ids or item.get("id") in evidence_ids
-            ]
-
-        knowledge_ref = state.get("module_knowledge_refs", {}).get(module_id)
-        knowledge_path = workspace / knowledge_ref if knowledge_ref else None
-        knowledge_text = (
-            knowledge_path.read_text(encoding="utf-8")
-            if knowledge_path is not None and knowledge_path.is_file()
-            else ""
-        )
-        shared_ref = self._shared_module_context_ref(
-            state,
-            module_id,
-            purpose="collaboration",
-        )
-        packet_body = {
-            "kind": "leaf_context_delta",
-            "version": 2,
-            "purpose": purpose,
-            "run_id": state["run_id"],
-            "shared_context_ref": shared_ref,
-            "module": {
-                "id": module_id,
-                "title": REPORT_TAXONOMY[module_id].title,
-                "target_leaves": [
-                    {
-                        "id": submodule_id,
-                        "title": REPORT_TAXONOMY[module_id]
-                        .submodules[submodule_id]
-                        .title,
-                    }
-                    for submodule_id in ordered
-                ],
-            },
-            "coverage": scoped_coverage,
-            "evidence_items": evidence_items,
-            "leaf_knowledge": {
-                submodule_id: self._leaf_knowledge_excerpt(
-                    knowledge_text, submodule_id
-                )
-                for submodule_id in ordered
-            },
-            "source_refs": {
-                "coverage": preparation.get("coverage"),
-                "evidence": preparation.get("evidence"),
-                "manifest": preparation.get("manifest"),
-                "knowledge": knowledge_ref,
-                "shared_context": shared_ref,
-            },
-        }
-        canonical = json.dumps(
-            packet_body,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        if len(canonical) > 90_000:
-            raise AgentWorkflowError(
-                f"leaf collaboration context for module {module_id} exceeds 90000 chars; "
-                "refine deterministic evidence scoping instead of starting an unbounded "
-                "search conversation"
-            )
-        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        packet_body["content_sha256"] = digest
-        path = self.service.store.write_json(
-            (
-                f"Work/runs/{state['run_id']}/context/collaboration/"
-                f"{purpose}-module-{module_id}-{digest[:12]}.json"
-            ),
-            packet_body,
-        )
-        ref = path.relative_to(workspace).as_posix()
-        inline = (
-            f'<leaf_context_delta ref="{ref}" shared_ref="{shared_ref}" sha256="{digest}">\n'
-            + canonical
-            + "\n</leaf_context_delta>"
-        )
-        return ref, inline, shared_ref
-
-    async def _submodule_discovery(
-        self,
-        submodule_id: str,
-        state: dict,
-        workflow_id: str,
-        *,
-        allow_cross_module_interfaces: bool = True,
-    ) -> SubmoduleDiscoverySubmission:
-        """Run Wave 1A for one exact fixed leaf submodule."""
-
-        module_id = resolve_submodule(submodule_id).module_id
-        specialist_id = f"module-{module_id}-specialist"
-        planned = next(
-            item
-            for item in state["module_dispatch"].module_tasks
-            if item.agent_id == specialist_id
-        )
-        context_ref, context_inline, shared_ref = self._leaf_collaboration_context_packet(
-            (submodule_id,),
-            state,
-            purpose=("wave-1a" if allow_cross_module_interfaces else "module-local"),
-        )
-        knowledge_ref = state["module_knowledge_refs"][module_id]
-        manifest_ref = state.get("preparation_refs", {}).get("manifest")
-        shared_input_refs = [shared_ref, knowledge_ref]
-        if manifest_ref:
-            shared_input_refs.append(manifest_ref)
-        task_id = (
-            f"submodule-discovery-{submodule_id}"
-            if allow_cross_module_interfaces
-            else f"submodule-discovery-local-{submodule_id}"
-        )
-        envelope = TaskEnvelope.model_validate(
-            planned.model_copy(
-                update={
-                    "task_id": task_id,
-                    "task_attempt_id": f"{task_id}-attempt-1",
-                    "objective": (
-                        f"独立完成固定子模块 {submodule_id} 的 Wave 1A 证据发现；"
-                        + (
-                            "只提交该叶子范围的事实、缺口、初步发现和精确跨模块依赖。"
-                            if allow_cross_module_interfaces
-                            else "只提交该叶子范围的事实、缺口和初步发现；本路径不激活跨模块接口。"
-                        )
-                    ),
-                    "input_refs": [context_ref, *shared_input_refs],
-                    "constraints": [
-                        f"唯一工作范围是叶子子模块 {submodule_id}",
-                        "不得用模块级摘要替代本子模块发现，也不得写其他子模块正文",
-                        "保留全部相关 E-*、证据缺口和初步发现；本阶段不形成 reviewer verdict",
-                        *(
-                            [
-                                "跨模块依赖必须指向一个固定 target_submodule_id",
-                                "不得发明 request_id；运行时 reducer 将为 request/conflict 信号分配稳定 id",
-                            ]
-                            if allow_cross_module_interfaces
-                            else [
-                                "module_report 不激活跨模块协作；interface_signals 必须为空",
-                            ]
-                        ),
-                        "不得实时 query_peer；只提交类型化 interface_signals",
-                        "当前叶子的证据与 Knowledge 增量已内联；只有准备提交非空 interface_signals 时，才先用 open_artifact 读取 shared_context_ref 的 peer_target_taxonomy 并选择合法目标叶子",
-                        "没有跨模块接口时不要打开整模块共享资料；仅在确需补充当前叶子增量、计算或记录缺口时使用辅助工具",
-                        *self._evidence_policy_constraints(
-                            state["request"].missing_evidence_policy
-                        ),
-                        *state["request"].execution_requirements,
-                    ],
-                    "allowed_outputs": ["submodule_discovery_submission"],
-                    "allowed_tools": [
-                        "open_artifact",
-                        "search_text",
-                        "calculate",
-                        "report_gap",
-                        "report_blocked",
-                        "submit_result",
-                    ],
-                    "target_submodule_ids": [submodule_id],
-                    "revision": 0,
-                    "prior_result_ref": None,
-                    "context_summary_refs": [],
-                    "inline_context": (
-                        "<submodule_wave_1a>只完成一个固定叶子子模块的独立发现；"
-                        "不得压缩、代写或推断其他子模块。"
-                        + (
-                            "</submodule_wave_1a>"
-                            if allow_cross_module_interfaces
-                            else "本任务不请求、不回答跨模块接口。</submodule_wave_1a>"
-                        )
-                        + "\n"
-                        + context_inline
-                    ),
-                    "input_contract_kind": None,
-                    "input_contract_ref": None,
-                    "artifact_delivery_modes": {
-                        context_ref: "reference",
-                        **{ref: "reference" for ref in shared_input_refs},
-                    },
-                }
-            ).model_dump(mode="python")
-        )
-        payload = await self._agent(
-            specialist_id,
-            envelope,
-            envelope.input_refs,
-            workflow_id,
-            session_key=self._leaf_session_key(submodule_id),
-        )
-        if (
-            not isinstance(payload, SubmoduleDiscoverySubmission)
-            or payload.module_id != module_id
-            or payload.submodule_id != submodule_id
-        ):
-            raise AgentWorkflowError(
-                f"{specialist_id} returned the wrong Wave 1A submodule discovery"
-            )
-        if not allow_cross_module_interfaces and payload.interface_signals:
-            raise AgentWorkflowError(
-                f"module-local leaf discovery activated a cross-module interface: {submodule_id}"
-            )
-        return payload
-
-    async def _legacy_submodule_discovery_batch(
-        self,
-        submodule_ids: tuple[str, ...],
-        state: dict,
-        workflow_id: str,
-        *,
-        allow_cross_module_interfaces: bool = True,
-    ) -> dict[str, SubmoduleDiscoverySubmission]:
-        """Legacy compatibility helper; active workflows never batch leaf calls."""
-
-        ordered = tuple(dict.fromkeys(submodule_ids))
-        if not ordered:
-            return {}
-        module_ids = {resolve_submodule(item).module_id for item in ordered}
-        if len(module_ids) != 1:
-            raise AgentWorkflowError("one discovery microbatch may not cross module ownership")
-        module_id = next(iter(module_ids))
-        specialist_id = f"module-{module_id}-specialist"
-        planned = next(
-            item
-            for item in state["module_dispatch"].module_tasks
-            if item.agent_id == specialist_id
-        )
-        context_ref, context_inline, shared_ref = self._leaf_collaboration_context_packet(
-            ordered,
-            state,
-            purpose=("wave-1a" if allow_cross_module_interfaces else "module-local"),
-        )
-        knowledge_ref = state["module_knowledge_refs"][module_id]
-        manifest_ref = state.get("preparation_refs", {}).get("manifest")
-        shared_input_refs = [shared_ref, knowledge_ref]
-        if manifest_ref:
-            shared_input_refs.append(manifest_ref)
-        batch_label = "-".join(ordered)
-        envelope = TaskEnvelope.model_validate(
-            planned.model_copy(
-                update={
-                    "task_id": (
-                        f"submodule-discovery-batch-{batch_label}"
-                        if allow_cross_module_interfaces
-                        else f"submodule-discovery-local-batch-{batch_label}"
-                    ),
-                    "objective": (
-                        f"在一次模块 {module_id} 共享上下文会话中，分别完成 "
-                        f"{', '.join(ordered)} 的 Wave 1A 发现；每个叶子必须独立提交。"
-                    ),
-                    "input_refs": [context_ref, *shared_input_refs],
-                    "constraints": [
-                        f"本批次仅包含固定叶子 {', '.join(ordered)}",
-                        "discoveries 必须对每个 target_submodule_id 恰好返回一次，禁止遗漏、重复或越界",
-                        "各叶子的 summary、E-*、缺口、初步发现和接口信号必须分别保留，不得用一个模块摘要复制替代",
-                        *(
-                            [
-                                "跨模块依赖必须指向固定 target_submodule_id",
-                                "不得发明 request_id；运行时 reducer 为 request/conflict 信号分配稳定 id",
-                            ]
-                            if allow_cross_module_interfaces
-                            else ["module_report 不激活跨模块协作；所有 interface_signals 必须为空"]
-                        ),
-                        "共享检索结果可在本批次复用，但 evidence_ids 必须按叶子实际适用范围声明",
-                        "各叶子的证据与 Knowledge 增量已内联；只有准备提交非空 interface_signals 时，才先用 open_artifact 读取 shared_context_ref 的 peer_target_taxonomy 并选择合法目标叶子",
-                        "没有跨模块接口时不要打开整模块共享资料；仅在确需补充叶子增量、计算或记录缺口时使用辅助工具",
-                        *self._evidence_policy_constraints(
-                            state["request"].missing_evidence_policy
-                        ),
-                        *state["request"].execution_requirements,
-                    ],
-                    "allowed_outputs": ["submodule_discovery_batch_submission"],
-                    "allowed_tools": [
-                        "open_artifact",
-                        "search_text",
-                        "calculate",
-                        "report_gap",
-                        "report_blocked",
-                        "submit_result",
-                    ],
-                    "target_submodule_ids": list(ordered),
-                    "revision": 0,
-                    "prior_result_ref": None,
-                    "context_summary_refs": [],
-                    "inline_context": (
-                        "<submodule_wave_1a_batch>共享模块级不变输入；输出仍是可单独验收和恢复的叶子结果。"
-                        "</submodule_wave_1a_batch>\n"
-                        + context_inline
-                    ),
-                    "input_contract_kind": None,
-                    "input_contract_ref": None,
-                    "artifact_delivery_modes": {
-                        context_ref: "hash_retained",
-                        **{ref: "reference" for ref in shared_input_refs},
-                    },
-                }
-            ).model_dump(mode="python")
-        )
-        payload = await self._agent(
-            specialist_id,
-            envelope,
-            envelope.input_refs,
-            workflow_id,
-            session_key=f"specialist-{module_id}",
-        )
-        if (
-            not isinstance(payload, SubmoduleDiscoveryBatchSubmission)
-            or payload.module_id != module_id
-        ):
-            raise AgentWorkflowError(
-                f"{specialist_id} returned the wrong Wave 1A discovery batch"
-            )
-        discoveries = {item.submodule_id: item for item in payload.discoveries}
-        if set(discoveries) != set(ordered):
-            raise AgentWorkflowError(
-                "Wave 1A discovery batch did not return the exact requested leaves; "
-                f"missing={sorted(set(ordered) - set(discoveries))}; "
-                f"extra={sorted(set(discoveries) - set(ordered))}"
-            )
-        if not allow_cross_module_interfaces:
-            activated = sorted(
-                item.submodule_id for item in payload.discoveries if item.interface_signals
-            )
-            if activated:
-                raise AgentWorkflowError(
-                    "module-local discovery batch activated cross-module interfaces: "
-                    + ", ".join(activated)
-                )
-        return discoveries
-
-    async def _legacy_run_batched_submodule_discovery_stage(
-        self,
-        submodule_ids: tuple[str, ...],
-        *,
-        state: dict,
-        workflow_id: str,
-        task_kind: str,
-        wave: str,
-        artifact_refs: dict[str, str],
-        context_sha256: dict[str, str],
-        allow_cross_module_interfaces: bool,
-    ) -> dict[str, SubmoduleDiscoverySubmission]:
-        """Legacy compatibility helper; active workflows use the leaf scheduler."""
-
-        ordered = tuple(dict.fromkeys(submodule_ids))
-        batch_size = int(getattr(state["request"], "submodule_batch_size", 14))
-        by_module: dict[str, list[str]] = {}
-        for submodule_id in ordered:
-            by_module.setdefault(resolve_submodule(submodule_id).module_id, []).append(
-                submodule_id
-            )
-        batches = [
-            tuple(leaves[index : index + batch_size])
-            for module_id in MODULE_IDS
-            for leaves in [by_module.get(module_id, [])]
-            for index in range(0, len(leaves), batch_size)
-        ]
-        results: dict[str, SubmoduleDiscoverySubmission] = {}
-        result_lock = asyncio.Lock()
-
-        async def run_module(module_id: str, leaves: list[str]) -> None:
-            for index in range(0, len(leaves), batch_size):
-                batch = tuple(leaves[index : index + batch_size])
-                payloads = await self._legacy_submodule_discovery_batch(
-                    batch,
-                    state,
-                    workflow_id,
-                    allow_cross_module_interfaces=allow_cross_module_interfaces,
-                )
-                for submodule_id, payload in payloads.items():
-                    self._persist_submodule_task_completion(
-                        state=state,
-                        task_kind=task_kind,
-                        wave=wave,
-                        submodule_id=submodule_id,
-                        artifact_ref=artifact_refs[submodule_id],
-                        context_sha256=context_sha256[submodule_id],
-                        payload=payload,
-                    )
-                async with result_lock:
-                    results.update(payloads)
-
-        outcomes = await asyncio.gather(
-            *(run_module(module_id, leaves) for module_id, leaves in by_module.items()),
-            return_exceptions=True,
-        )
-        self.service.store.write_json(
-            f"Work/runs/{state['run_id']}/scheduling/{task_kind.replace('_', '-')}.json",
-            {
-                "kind": "submodule_microbatch_scheduling_decisions",
-                "version": 1,
-                "run_id": state["run_id"],
-                "stage_id": task_kind.replace("_", "-"),
-                "policy": "module_shared_context_microbatch_v1",
-                "logical_task_count": len(ordered),
-                "agent_dispatch_count": len(batches),
-                "avoided_independent_agent_dispatches": len(ordered) - len(batches),
-                "provider_attempt_count_source": "UsageLedger",
-                "batch_size_limit": batch_size,
-                "batches": [list(batch) for batch in batches],
-            },
-        )
-        failures = [item for item in outcomes if isinstance(item, BaseException)]
-        if failures:
-            raise failures[0]
-        if set(results) != set(ordered):
-            raise AgentWorkflowError(
-                f"{task_kind} ended without exact leaf completion; "
-                f"missing={sorted(set(ordered) - set(results))}"
-            )
-        return results
-
-    async def _submodule_interface_response(
-        self,
-        submodule_id: str,
-        *,
-        inbox_ref: str,
-        discovery_ref: str,
-        state: dict,
-        workflow_id: str,
-    ) -> SubmoduleInterfaceResponseSubmission:
-        """Answer one exact sparse Wave 2 leaf inbox."""
-
-        module_id = resolve_submodule(submodule_id).module_id
-        specialist_id = f"module-{module_id}-specialist"
-        planned = next(
-            item
-            for item in state["module_dispatch"].module_tasks
-            if item.agent_id == specialist_id
-        )
-        inbox_text = (self.service.workspace / inbox_ref).read_text(encoding="utf-8")
-        knowledge_ref = state["module_knowledge_refs"][module_id]
-        knowledge_path = self.service.workspace / knowledge_ref
-        knowledge_text = (
-            knowledge_path.read_text(encoding="utf-8")
-            if knowledge_path.is_file()
-            else ""
-        )
-        shared_ref = self._shared_module_context_ref(
-            state,
-            module_id,
-            purpose="collaboration",
-        )
-        evidence_ref = state["preparation_refs"]["evidence"]
-        task_id = f"submodule-interface-response-{submodule_id}"
-        envelope = TaskEnvelope.model_validate(
-            planned.model_copy(
-                update={
-                    "task_id": task_id,
-                    "task_attempt_id": f"{task_id}-attempt-1",
-                    "objective": (
-                        f"回答目标为叶子子模块 {submodule_id} 的全部 Wave 2 请求；"
-                        "无法回答时逐项提交明确 unresolved 边界。"
-                    ),
-                    "input_refs": [
-                        inbox_ref,
-                        discovery_ref,
-                        evidence_ref,
-                        knowledge_ref,
-                        shared_ref,
-                    ],
-                    "constraints": [
-                        f"只回答 target_submodule_id={submodule_id} 的 inbox",
-                        "每个 request_id 必须恰好一个 answered 或 unresolved disposition",
-                        "不得回答其他叶子子模块的问题，也不得发明 request_id",
-                        "answered 必须包含适用条件；证据不足时明确 unresolved_reason 和 boundary",
-                        "Wave 2 只允许 answered 或 unresolved；不得 block、请求 Main 或用户介入；unresolved 仅作为 Wave 3 的透明边界，不阻塞下游",
-                        "不得实时 query_peer",
-                        "inbox 与回答所需上下文已完整注入，应优先直接提交；仅在确需计算或记录缺口时使用辅助工具",
-                    ],
-                    "allowed_outputs": [
-                        "submodule_interface_response_submission"
-                    ],
-                    "allowed_tools": [
-                        "search_project_evidence",
-                        "open_project_source",
-                        "open_artifact",
-                        "search_text",
-                        "calculate",
-                        "report_gap",
-                        "submit_result",
-                    ],
-                    "target_submodule_ids": [submodule_id],
-                    "revision": 0,
-                    "prior_result_ref": None,
-                    "context_summary_refs": [],
-                    "inline_context": (
-                        "<submodule_interface_inbox>\n"
-                        + inbox_text
-                        + "\n</submodule_interface_inbox>\n"
-                        + f'<leaf_knowledge_delta submodule_id="{submodule_id}" '
-                        + f'provenance_ref="{knowledge_ref}" '
-                        + 'project_fact_authority="false">\n'
-                        + self._leaf_knowledge_excerpt(knowledge_text, submodule_id)
-                        + "\n</leaf_knowledge_delta>"
-                    ),
-                    "input_contract_kind": None,
-                    "input_contract_ref": None,
-                    "artifact_delivery_modes": {
-                        inbox_ref: "hash_retained",
-                        discovery_ref: "hash_retained",
-                        evidence_ref: "reference",
-                        knowledge_ref: "reference",
-                        shared_ref: "reference",
-                    },
-                }
-            ).model_dump(mode="python")
-        )
-        payload = await self._agent(
-            specialist_id,
-            envelope,
-            envelope.input_refs,
-            workflow_id,
-            session_key=self._leaf_session_key(submodule_id),
-        )
-        if (
-            not isinstance(payload, SubmoduleInterfaceResponseSubmission)
-            or payload.module_id != module_id
-            or payload.submodule_id != submodule_id
-        ):
-            raise AgentWorkflowError(
-                f"{specialist_id} returned the wrong Wave 2 submodule response"
-            )
-        return payload
-
-    async def _module_discovery(
-        self,
-        module_id: str,
-        state: dict,
-        workflow_id: str,
-    ) -> ModuleDiscoverySubmission:
-        specialist_id = f"module-{module_id}-specialist"
-        planned = next(
-            item
-            for item in state["module_dispatch"].module_tasks
-            if item.agent_id == specialist_id
-        )
-        preparation = state["preparation_refs"]
-        knowledge_ref = state["module_knowledge_refs"][module_id]
-        envelope = TaskEnvelope.model_validate(
-            planned.model_copy(
-                update={
-                    "task_id": f"module-discovery-{module_id}",
-                    "objective": (
-                        f"完成模块 {module_id} 的 Wave 1 证据与接口发现；"
-                        "此阶段不撰写最终报告正文。"
-                    ),
-                    "input_refs": [
-                        preparation["coverage"],
-                        preparation["evidence"],
-                        preparation["manifest"],
-                        knowledge_ref,
-                    ],
-                    "constraints": [
-                        f"只研究固定责任模块 {module_id}，不得提前撰写最终报告正文",
-                        "必须对其余四个固定模块各提交一条 interface_coverage，且不得遗漏或重复",
-                        "只有 request 或 conflict 状态可创建 InterfaceRequest",
-                        (
-                            "若请求包含 requester_submodule_id 和 target_submodule_id，"
-                            "request_id 必须采用 IF-<requester_submodule_id>-"
-                            "<target_submodule_id>-NNN；只有不含叶子身份的历史兼容请求"
-                            f"才可采用 IF-{module_id}-<目标模块>-NNN。不得通过删除叶子"
-                            "字段绕过已声明的叶子身份，且 id 在当前 discovery 内唯一"
-                        ),
-                        "所有 evidence_ids 只能使用当前 run 已注册的 E-*",
-                        "不得实时 query_peer；问题只通过类型化 InterfaceRequest 进入 Barrier 1",
-                        *self._evidence_policy_constraints(
-                            state["request"].missing_evidence_policy
-                        ),
-                        *state["request"].execution_requirements,
-                    ],
-                    "allowed_outputs": ["module_discovery_submission"],
-                    "allowed_tools": [
-                        "search_project_evidence",
-                        "open_project_source",
-                        "search_reference_library",
-                        "open_reference",
-                        "web_search",
-                        "open_web_source",
-                        "inspect_document",
-                        "inspect_image",
-                        "calculate",
-                        "open_artifact",
-                        "search_text",
-                        "report_gap",
-                        "report_blocked",
-                        "submit_result",
-                    ],
-                    "target_submodule_ids": list(
-                        REPORT_TAXONOMY[module_id].submodules
-                    ),
-                    "revision": 0,
-                    "prior_result_ref": None,
-                    "context_summary_refs": [],
-                    "inline_context": (
-                        "<collaboration_wave>\n"
-                        "Wave 1 只形成简洁 discovery、四模块接口覆盖和必要请求。"
-                        "模块 Knowledge 以引用方式提供，仅在确有需要时打开；"
-                        "不要输出最终小节正文或调用长正文写入工具。\n"
-                        "</collaboration_wave>"
-                    ),
-                    "input_contract_kind": None,
-                    "input_contract_ref": None,
-                    "artifact_delivery_modes": {},
-                }
-            ).model_dump(mode="python")
-        )
-        payload = await self._agent(
-            specialist_id,
-            envelope,
-            envelope.input_refs,
-            workflow_id,
-            session_key=f"specialist-{module_id}",
-        )
-        if (
-            not isinstance(payload, ModuleDiscoverySubmission)
-            or payload.module_id != module_id
-        ):
-            raise AgentWorkflowError(
-                f"{specialist_id} returned the wrong Wave 1 discovery"
-            )
-        return payload
-
-    async def _legacy_module_interface_response(
-        self,
-        module_id: str,
-        *,
-        inbox_ref: str,
-        discovery_ref: str,
-        state: dict,
-        workflow_id: str,
-        target_submodule_ids: tuple[str, ...] | None = None,
-    ) -> ModuleInterfaceResponseSubmission:
-        """Legacy module-wide response helper; active Wave 2 is leaf-scoped."""
-
-        specialist_id = f"module-{module_id}-specialist"
-        planned = next(
-            item
-            for item in state["module_dispatch"].module_tasks
-            if item.agent_id == specialist_id
-        )
-        inbox_text = (
-            self.service.workspace / inbox_ref
-        ).read_text(encoding="utf-8")
-        discovery_text = (
-            self.service.workspace / discovery_ref
-        ).read_text(encoding="utf-8")
-        target_leaves = target_submodule_ids or tuple(
-            REPORT_TAXONOMY[module_id].submodules
-        )
-        context_ref, context_inline, shared_ref = self._leaf_collaboration_context_packet(
-            target_leaves,
-            state,
-            purpose="wave-2",
-        )
-        envelope = TaskEnvelope.model_validate(
-            planned.model_copy(
-                update={
-                    "task_id": f"module-interface-response-{module_id}",
-                    "objective": (
-                        f"批量回答发送到模块 {module_id} 的 Wave 2 接口请求；"
-                        "无法回答时提交明确 unresolved 边界。"
-                    ),
-                    "input_refs": [
-                        context_ref,
-                        shared_ref,
-                        inbox_ref,
-                        discovery_ref,
-                    ],
-                    "constraints": [
-                        f"只回答 inbox 中目标为 {module_id} 的 request_id",
-                        "每个 inbox 请求必须恰好提交一个 answered 或 unresolved disposition",
-                        "不得发明 request_id，也不得回答发给其他模块的问题",
-                        "answered 必须给出适用条件；证据不足时用 unresolved_reason 和 boundary 明确边界",
-                        "Wave 2 只允许 answered 或 unresolved；不得 block、请求 Main 或用户介入；unresolved 仅作为 Wave 3 的透明边界，不阻塞下游",
-                        "所有 evidence_ids 只能使用当前 run 已注册的 E-*",
-                        "不得实时 query_peer；本轮只批量提交接口响应",
-                        "inbox 与回答所需上下文已完整注入，应优先直接提交；仅在确需计算或记录缺口时使用辅助工具",
-                    ],
-                    "allowed_outputs": [
-                        "module_interface_response_submission"
-                    ],
-                    "allowed_tools": [
-                        "calculate",
-                        "report_gap",
-                        "submit_result",
-                    ],
-                    "target_submodule_ids": list(target_leaves),
-                    "revision": 0,
-                    "prior_result_ref": None,
-                    "context_summary_refs": [],
-                    "inline_context": (
-                        "<module_interface_inbox>\n"
-                        + inbox_text
-                        + "\n</module_interface_inbox>\n"
-                        + "<module_discovery>\n"
-                        + discovery_text
-                        + "\n</module_discovery>\n"
-                        + context_inline
-                    ),
-                    "input_contract_kind": None,
-                    "input_contract_ref": None,
-                    "artifact_delivery_modes": {
-                        context_ref: "hash_retained",
-                        shared_ref: "reference",
-                        inbox_ref: "hash_retained",
-                        discovery_ref: "hash_retained",
-                    },
-                }
-            ).model_dump(mode="python")
-        )
-        payload = await self._agent(
-            specialist_id,
-            envelope,
-            envelope.input_refs,
-            workflow_id,
-            session_key=f"specialist-{module_id}",
-        )
-        if (
-            not isinstance(payload, ModuleInterfaceResponseSubmission)
-            or payload.module_id != module_id
-        ):
-            raise AgentWorkflowError(
-                f"{specialist_id} returned the wrong Wave 2 response"
-            )
-        return payload
-
-    async def _legacy_run_batched_submodule_interface_response_stage(
-        self,
-        pending_submodule_ids: tuple[str, ...],
-        *,
-        inboxes: dict[str, tuple],
-        discovery_refs: dict[str, str],
-        module_discovery_refs: dict[str, str],
-        response_refs: dict[str, str],
-        response_contexts: dict[str, str],
-        state: dict,
-        workflow_id: str,
-    ) -> dict[str, SubmoduleInterfaceResponseSubmission]:
-        """Legacy compatibility helper; active Wave 2 dispatches each leaf inbox."""
-
-        pending = tuple(dict.fromkeys(pending_submodule_ids))
-        by_module: dict[str, list[str]] = {}
-        for submodule_id in pending:
-            by_module.setdefault(resolve_submodule(submodule_id).module_id, []).append(
-                submodule_id
-            )
-        results: dict[str, SubmoduleInterfaceResponseSubmission] = {}
-
-        async def run_module(
-            module_id: str, leaves: list[str]
-        ) -> dict[str, SubmoduleInterfaceResponseSubmission]:
-            requests = [request for leaf in leaves for request in inboxes[leaf]]
-            inbox_path = self.service.store.write_json(
-                f"Work/runs/{state['run_id']}/collaboration/inboxes/module-{module_id}.json",
-                {
-                    "kind": "module_interface_inbox",
-                    "version": 2,
-                    "run_id": state["run_id"],
-                    "module_id": module_id,
-                    "target_submodule_ids": leaves,
-                    "requests": [
-                        request.model_dump(mode="json") for request in requests
-                    ],
-                },
-            )
-            inbox_ref = inbox_path.relative_to(self.service.workspace).as_posix()
-            response = await self._legacy_module_interface_response(
-                module_id,
-                inbox_ref=inbox_ref,
-                discovery_ref=module_discovery_refs[module_id],
-                state=state,
-                workflow_id=workflow_id,
-                target_submodule_ids=tuple(leaves),
-            )
-            expected_ids = {request.request_id for request in requests}
-            actual_ids = {item.request_id for item in response.dispositions}
-            if actual_ids != expected_ids:
-                raise AgentWorkflowError(
-                    f"Wave 2 module batch {module_id} violated exact inbox; "
-                    f"missing={sorted(expected_ids - actual_ids)}; "
-                    f"extra={sorted(actual_ids - expected_ids)}"
-                )
-            target_by_request = {
-                request.request_id: request.target_submodule_id for request in requests
-            }
-            scoped: dict[str, SubmoduleInterfaceResponseSubmission] = {}
-            for submodule_id in leaves:
-                payload = SubmoduleInterfaceResponseSubmission(
-                    module_id=module_id,
-                    submodule_id=submodule_id,
-                    dispositions=[
-                        item.model_copy(deep=True)
-                        for item in response.dispositions
-                        if target_by_request[item.request_id] == submodule_id
-                    ],
-                )
-                self._persist_submodule_task_completion(
-                    state=state,
-                    task_kind="submodule_interface_response",
-                    wave="wave-2",
-                    submodule_id=submodule_id,
-                    artifact_ref=response_refs[submodule_id],
-                    context_sha256=response_contexts[submodule_id],
-                    payload=payload,
-                )
-                scoped[submodule_id] = payload
-            return scoped
-
-        outcomes = await asyncio.gather(
-            *(run_module(module_id, leaves) for module_id, leaves in by_module.items()),
-            return_exceptions=True,
-        )
-        failures: list[BaseException] = []
-        for outcome in outcomes:
-            if isinstance(outcome, BaseException):
-                failures.append(outcome)
-            else:
-                results.update(outcome)
-        self.service.store.write_json(
-            f"Work/runs/{state['run_id']}/scheduling/submodule-interface-response.json",
-            {
-                "kind": "submodule_microbatch_scheduling_decisions",
-                "version": 1,
-                "run_id": state["run_id"],
-                "stage_id": "submodule-interface-response",
-                "policy": "module_shared_inbox_batch_v1",
-                "logical_task_count": len(pending),
-                "agent_dispatch_count": len(by_module),
-                "avoided_independent_agent_dispatches": len(pending) - len(by_module),
-                "provider_attempt_count_source": "UsageLedger",
-                "batches": [
-                    leaves for _module_id, leaves in sorted(by_module.items())
-                ],
-            },
-        )
-        if failures:
-            raise failures[0]
-        return results
-
-    @staticmethod
-    def _invalid_discovery_modules(
-        discoveries: dict[str, ModuleDiscoverySubmission],
-        known_evidence_ids: set[str],
-    ) -> set[str]:
-        """Locate Barrier 1 candidates that can be retried independently."""
-
-        invalid: set[str] = set()
-        request_owners: dict[str, set[str]] = {}
-        for module_id, discovery in discoveries.items():
-            declared = {
-                *discovery.evidence_ids,
-                *(
-                    evidence_id
-                    for request in discovery.requests
-                    for evidence_id in request.evidence_ids
-                ),
-            }
-            if declared - known_evidence_ids:
-                invalid.add(module_id)
-            for request in discovery.requests:
-                request_owners.setdefault(
-                    request.request_id, set()
-                ).add(module_id)
-        for owners in request_owners.values():
-            if len(owners) > 1:
-                invalid.update(owners)
-        return invalid
-
-    @staticmethod
-    def _invalid_response_modules(
-        responses: dict[str, ModuleInterfaceResponseSubmission],
-        inboxes: dict[str, tuple],
-        known_evidence_ids: set[str],
-    ) -> set[str]:
-        """Locate Wave 2 responders whose exact inbox contract was violated."""
-
-        invalid: set[str] = set()
-        for module_id, response in responses.items():
-            expected_ids = {
-                request.request_id
-                for request in inboxes.get(module_id, ())
-            }
-            actual_ids = {
-                disposition.request_id
-                for disposition in response.dispositions
-            }
-            response_evidence_ids = {
-                evidence_id
-                for disposition in response.dispositions
-                for evidence_id in disposition.evidence_ids
-            }
-            if (
-                actual_ids != expected_ids
-                or response_evidence_ids - known_evidence_ids
-            ):
-                invalid.add(module_id)
-        return invalid
-
-    async def _module_local_submodule_preparation(
-        self,
-        module_ids: tuple[str, ...],
-        state: dict,
-        workflow_id: str,
-    ) -> None:
-        """Prepare independent leaf authoring without activating peer workflows."""
-
-        run_id = state["run_id"]
-        submodule_ids = tuple(
-            submodule_id
-            for module_id in module_ids
-            for submodule_id in REPORT_TAXONOMY[module_id].submodules
-        )
-        discovery_refs = {
-            submodule_id: (
-                f"Work/runs/{run_id}/collaboration/wave-1/submodules/"
-                f"{submodule_id}.json"
-            )
-            for submodule_id in submodule_ids
-        }
-        discovery_contexts = {
-            submodule_id: self._submodule_task_context_sha256(
-                state,
-                task_kind="submodule_discovery_local",
-                submodule_id=submodule_id,
-                input_refs=[
-                    state["preparation_refs"]["coverage"],
-                    state["preparation_refs"]["evidence"],
-                    state["preparation_refs"]["manifest"],
-                    state["module_knowledge_refs"][
-                        resolve_submodule(submodule_id).module_id
-                    ],
-                ],
-            )
-            for submodule_id in submodule_ids
-        }
-        state["submodule_discovery_context_sha256"] = dict(discovery_contexts)
-        discoveries: dict[str, SubmoduleDiscoverySubmission] = {}
-        pending: list[str] = []
-        for submodule_id in submodule_ids:
-            module_id = resolve_submodule(submodule_id).module_id
-            payload = self._load_collaboration_submission(
-                run_id=run_id,
-                artifact_ref=discovery_refs[submodule_id],
-                task_id=f"submodule-discovery-local-{submodule_id}",
-                module_id=module_id,
-                submodule_id=submodule_id,
-                expected_type=SubmoduleDiscoverySubmission,
-                wave="module-local-discovery",
-                expected_context_sha256=discovery_contexts[submodule_id],
-            )
-            if payload is None:
-                pending.append(submodule_id)
-            else:
-                discoveries[submodule_id] = payload
-        if pending:
-            discoveries.update(
-                await self._run_scheduled_submodule_stage(
-                    tuple(pending),
-                    run_id=run_id,
-                    workflow_id=workflow_id,
-                    task_kind="submodule_discovery_local",
-                    concurrency=state["request"].submodule_task_concurrency,
-                    all_ready=True,
-                    state=state,
-                    wave="module-local-discovery",
-                    context_sha256=discovery_contexts,
-                    execute=lambda submodule_id: self._submodule_discovery(
-                        submodule_id,
-                        state,
-                        workflow_id,
-                        allow_cross_module_interfaces=False,
-                    ),
-                    persist=lambda submodule_id, payload: (
-                        self._persist_submodule_task_completion(
-                            state=state,
-                            task_kind="submodule_discovery_local",
-                            wave="module-local-discovery",
-                            submodule_id=submodule_id,
-                            artifact_ref=discovery_refs[submodule_id],
-                            context_sha256=discovery_contexts[submodule_id],
-                            payload=payload,
-                        )
-                    ),
-                )
-            )
-
-        known_evidence_ids = {
-            item.id for item in state.get("evidence_items", [])
-        } | {
-            item.id
-            for item in SourceLedger(self.service.workspace, run_id).records
-            if item.id.startswith("E-")
-        }
-        for submodule_id, discovery in discoveries.items():
-            unknown = sorted(set(discovery.evidence_ids) - known_evidence_ids)
-            if unknown:
-                raise AgentWorkflowError(
-                    f"module-local discovery {submodule_id} uses unknown evidence: {unknown}"
-                )
-            if discovery.interface_signals:
-                raise AgentWorkflowError(
-                    "module_report leaf discovery must not activate cross-module interfaces: "
-                    f"{submodule_id}"
-                )
-            self.service.store.write_json(
-                discovery_refs[submodule_id],
-                discovery.model_dump(mode="json"),
-            )
-
-        module_barrier_refs: dict[str, str] = {}
-        for module_id in module_ids:
-            scoped_refs = {
-                submodule_id: discovery_refs[submodule_id]
-                for submodule_id in REPORT_TAXONOMY[module_id].submodules
-            }
-            barrier = ModuleSubmoduleDiscoveryBarrier(
-                run_id=run_id,
-                module_id=module_id,
-                discovery_refs=scoped_refs,
-                discovery_sha256={
-                    submodule_id: self._sha256(
-                        self.service.workspace / scoped_refs[submodule_id]
-                    )
-                    for submodule_id in scoped_refs
-                },
-                context_sha256={
-                    submodule_id: discovery_contexts[submodule_id]
-                    for submodule_id in scoped_refs
-                },
-            )
-            path = self.service.store.write_json(
-                (
-                    f"Work/runs/{run_id}/collaboration/wave-1/module-barriers/"
-                    f"module-{module_id}.json"
-                ),
-                barrier.model_dump(mode="json"),
-            )
-            module_barrier_refs[module_id] = path.relative_to(
-                self.service.workspace
-            ).as_posix()
-            self._verify_submodule_discovery_barrier(
-                state=state,
-                module_id=module_id,
-                barrier_ref=module_barrier_refs[module_id],
-                context_sha256=discovery_contexts,
-            )
-
-        bundle_refs: dict[str, str] = {}
-        for submodule_id in submodule_ids:
-            discovery = discoveries[submodule_id]
-            bundle = SubmoduleCollaborationBundle(
-                module_id=discovery.module_id,
-                submodule_id=submodule_id,
-                discovery=discovery,
-                discovery_context_sha256=discovery_contexts[submodule_id],
-                requested_interfaces=[],
-                responded_interfaces=[],
-            )
-            path = self.service.store.write_json(
-                (
-                    f"Work/runs/{run_id}/collaboration/bundles/submodules/"
-                    f"{submodule_id}.json"
-                ),
-                bundle.model_dump(mode="json"),
-            )
-            bundle_refs[submodule_id] = path.relative_to(
-                self.service.workspace
-            ).as_posix()
-        state["submodule_discovery_barrier_refs"] = module_barrier_refs
-        state["submodule_collaboration_bundle_refs"] = bundle_refs
-        module_bundle_refs: dict[str, str] = {}
-        for module_id in module_ids:
-            scoped = [
-                discoveries[submodule_id]
-                for submodule_id in REPORT_TAXONOMY[module_id].submodules
-            ]
-            module_bundle = ModuleCollaborationBundle(
-                module_id=module_id,
-                discovery_summary="\n\n".join(
-                    f"[{item.submodule_id}] {item.discovery_summary}"
-                    for item in scoped
-                ),
-                discovery_evidence_ids=sorted(
-                    {
-                        evidence_id
-                        for item in scoped
-                        for evidence_id in item.evidence_ids
-                    }
-                ),
-                peer_coverage=[
-                    ModuleInterfaceCoverage(
-                        target_module_id=peer_id,
-                        status="not_applicable",
-                        rationale=(
-                            "Partial module_report path intentionally does not activate "
-                            "unrequested cross-module workflows."
-                        ),
-                    )
-                    for peer_id in MODULE_IDS
-                    if peer_id != module_id
-                ],
-            )
-            module_bundle_path = self.service.store.write_json(
-                (
-                    f"Work/runs/{run_id}/collaboration/bundles/"
-                    f"module-{module_id}.json"
-                ),
-                module_bundle.model_dump(mode="json"),
-            )
-            module_bundle_refs[module_id] = module_bundle_path.relative_to(
-                self.service.workspace
-            ).as_posix()
-        state["collaboration_bundle_refs"] = module_bundle_refs
-        await self._checkpoint_then_cost_boundary(
-            state,
-            "module-local-leaf-preparation",
-            "completed",
-            "submodule-discovery",
-            "submodule-authoring",
-        )
-        await self.service._notice(
-            "指定模块的叶子发现已完成；未激活跨模块问答，正在恢复或调度各叶子写作。"
-        )
-
-    async def _module_collaboration(
-        self,
-        module_ids: tuple[str, ...],
-        state: dict,
-        workflow_id: str,
-    ) -> None:
-        """Run leaf discovery, exact interface closure, and two global barriers."""
-
-        if set(module_ids) != set(MODULE_IDS):
-            raise AgentWorkflowError(
-                "submodule collaboration requires the complete fixed module set"
-            )
-        run_id = state["run_id"]
-        submodule_ids = tuple(
-            submodule_id
-            for module_id in MODULE_IDS
-            for submodule_id in REPORT_TAXONOMY[module_id].submodules
-        )
-        known_evidence_ids = {
-            item.id for item in state.get("evidence_items", [])
-        } | {
-            item.id
-            for item in SourceLedger(self.service.workspace, run_id).records
-            if item.id.startswith("E-")
-        }
-        discovery_refs = {
-            submodule_id: (
-                f"Work/runs/{run_id}/collaboration/wave-1/submodules/"
-                f"{submodule_id}.json"
-            )
-            for submodule_id in submodule_ids
-        }
-        discovery_contexts = {
-            submodule_id: self._submodule_task_context_sha256(
-                state,
-                task_kind="submodule_discovery",
-                submodule_id=submodule_id,
-                input_refs=[
-                    state["preparation_refs"]["coverage"],
-                    state["preparation_refs"]["evidence"],
-                    state["preparation_refs"]["manifest"],
-                    state["module_knowledge_refs"][
-                        resolve_submodule(submodule_id).module_id
-                    ],
-                ],
-            )
-            for submodule_id in submodule_ids
-        }
-        state["submodule_discovery_context_sha256"] = dict(discovery_contexts)
-        discoveries: dict[str, SubmoduleDiscoverySubmission] = {}
-        pending_discovery: list[str] = []
-        for submodule_id in submodule_ids:
-            module_id = resolve_submodule(submodule_id).module_id
-            payload = self._load_collaboration_submission(
-                run_id=run_id,
-                artifact_ref=discovery_refs[submodule_id],
-                task_id=f"submodule-discovery-{submodule_id}",
-                module_id=module_id,
-                submodule_id=submodule_id,
-                expected_type=SubmoduleDiscoverySubmission,
-                wave="wave-1a",
-                expected_context_sha256=discovery_contexts[submodule_id],
-            )
-            if payload is None:
-                pending_discovery.append(submodule_id)
-            else:
-                discoveries[submodule_id] = payload
-        if pending_discovery:
-            discoveries.update(
-                await self._run_scheduled_submodule_stage(
-                    tuple(pending_discovery),
-                    run_id=run_id,
-                    workflow_id=workflow_id,
-                    task_kind="submodule_discovery",
-                    concurrency=state["request"].submodule_task_concurrency,
-                    all_ready=True,
-                    state=state,
-                    wave="wave-1a",
-                    context_sha256=discovery_contexts,
-                    execute=lambda submodule_id: self._submodule_discovery(
-                        submodule_id,
-                        state,
-                        workflow_id,
-                        allow_cross_module_interfaces=True,
-                    ),
-                    persist=lambda submodule_id, payload: (
-                        self._persist_submodule_task_completion(
-                            state=state,
-                            task_kind="submodule_discovery",
-                            wave="wave-1a",
-                            submodule_id=submodule_id,
-                            artifact_ref=discovery_refs[submodule_id],
-                            context_sha256=discovery_contexts[submodule_id],
-                            payload=payload,
-                        )
-                    ),
-                )
-            )
-        ordered_discoveries = [discoveries[item] for item in submodule_ids]
-        try:
-            module_discoveries = reduce_submodule_discoveries(
-                ordered_discoveries,
-                known_evidence_ids=known_evidence_ids,
-            )
-        except ValueError as exc:
-            raise AgentWorkflowError(f"Wave 1A module reduction failed: {exc}") from exc
-
-        for submodule_id, payload in discoveries.items():
-            self.service.store.write_json(
-                discovery_refs[submodule_id],
-                payload.model_dump(mode="json"),
-            )
-        module_barrier_refs: dict[str, str] = {}
-        for module_id in MODULE_IDS:
-            scoped_refs = {
-                submodule_id: discovery_refs[submodule_id]
-                for submodule_id in REPORT_TAXONOMY[module_id].submodules
-            }
-            barrier = ModuleSubmoduleDiscoveryBarrier(
-                run_id=run_id,
-                module_id=module_id,
-                discovery_refs=scoped_refs,
-                discovery_sha256={
-                    submodule_id: self._sha256(
-                        self.service.workspace / scoped_refs[submodule_id]
-                    )
-                    for submodule_id in scoped_refs
-                },
-                context_sha256={
-                    submodule_id: discovery_contexts[submodule_id]
-                    for submodule_id in scoped_refs
-                },
-            )
-            barrier_path = self.service.store.write_json(
-                (
-                    f"Work/runs/{run_id}/collaboration/wave-1/module-barriers/"
-                    f"module-{module_id}.json"
-                ),
-                barrier.model_dump(mode="json"),
-            )
-            module_barrier_refs[module_id] = barrier_path.relative_to(
-                self.service.workspace
-            ).as_posix()
-            self._verify_submodule_discovery_barrier(
-                state=state,
-                module_id=module_id,
-                barrier_ref=module_barrier_refs[module_id],
-                context_sha256=discovery_contexts,
-            )
-        state["submodule_discovery_barrier_refs"] = module_barrier_refs
-
-        module_discovery_refs: dict[str, str] = {}
-        for module_id, discovery in module_discoveries.items():
-            path = self.service.store.write_json(
-                (
-                    f"Work/runs/{run_id}/collaboration/wave-1/"
-                    f"module-{module_id}.json"
-                ),
-                discovery.model_dump(mode="json"),
-            )
-            module_discovery_refs[module_id] = path.relative_to(
-                self.service.workspace
-            ).as_posix()
-        ordered_module_discoveries = [
-            module_discoveries[module_id] for module_id in MODULE_IDS
-        ]
-        try:
-            inboxes = build_submodule_interface_inboxes(
-                ordered_module_discoveries,
-                known_evidence_ids=known_evidence_ids,
-            )
-        except ValueError as exc:
-            raise AgentWorkflowError(f"Barrier 1 failed: {exc}") from exc
-        inbox_refs: dict[str, str] = {}
-        for submodule_id, requests in inboxes.items():
-            module_id = resolve_submodule(submodule_id).module_id
-            inbox_path = self.service.store.write_json(
-                (
-                    f"Work/runs/{run_id}/collaboration/inboxes/"
-                    f"submodule-{submodule_id}.json"
-                ),
-                {
-                    "kind": "submodule_interface_inbox",
-                    "run_id": run_id,
-                    "module_id": module_id,
-                    "submodule_id": submodule_id,
-                    "requests": [
-                        request.model_dump(mode="json") for request in requests
-                    ],
-                },
-            )
-            inbox_refs[submodule_id] = inbox_path.relative_to(
-                self.service.workspace
-            ).as_posix()
-        barrier1_path = self.service.store.write_json(
-            f"Work/runs/{run_id}/collaboration/barrier-1.json",
-            {
-                "kind": "submodule_collaboration_barrier_1",
-                "version": 2,
-                "run_id": run_id,
-                "module_ids": list(MODULE_IDS),
-                "submodule_ids": list(submodule_ids),
-                "module_discovery_barrier_refs": module_barrier_refs,
-                "module_discovery_barrier_sha256": {
-                    module_id: self._sha256(self.service.workspace / ref)
-                    for module_id, ref in module_barrier_refs.items()
-                },
-                "submodule_discovery_refs": discovery_refs,
-                "submodule_discovery_sha256": {
-                    submodule_id: self._sha256(
-                        self.service.workspace / discovery_refs[submodule_id]
-                    )
-                    for submodule_id in submodule_ids
-                },
-                "module_discovery_refs": module_discovery_refs,
-                "inbox_refs": inbox_refs,
-                "request_index": [
-                    {
-                        "request_id": request.request_id,
-                        "requester_module_id": request.requester_module_id,
-                        "requester_submodule_id": request.requester_submodule_id,
-                        "target_module_id": request.target_module_id,
-                        "target_submodule_id": request.target_submodule_id,
-                    }
-                    for discovery in ordered_module_discoveries
-                    for request in discovery.requests
-                ],
-            },
-        )
-        state["collaboration_barrier1_ref"] = barrier1_path.relative_to(
-            self.service.workspace
-        ).as_posix()
-        await self._checkpoint_then_cost_boundary(
-            state,
-            "collaboration-barrier-1",
-            "completed",
-            "submodule-discovery",
-            "submodule-interface-response",
-        )
-
-        response_refs = {
-            submodule_id: (
-                f"Work/runs/{run_id}/collaboration/wave-2/submodules/"
-                f"{submodule_id}.json"
-            )
-            for submodule_id in inboxes
-        }
-        response_contexts = {
-            submodule_id: self._submodule_task_context_sha256(
-                state,
-                task_kind="submodule_interface_response",
-                submodule_id=submodule_id,
-                input_refs=[
-                    inbox_refs[submodule_id],
-                    discovery_refs[submodule_id],
-                    state["preparation_refs"]["evidence"],
-                    state["module_knowledge_refs"][
-                        resolve_submodule(submodule_id).module_id
-                    ],
-                ],
-            )
-            for submodule_id in inboxes
-        }
-        state["submodule_response_context_sha256"] = dict(response_contexts)
-        responses: dict[str, SubmoduleInterfaceResponseSubmission] = {}
-        pending_responses: list[str] = []
-        for submodule_id in inboxes:
-            module_id = resolve_submodule(submodule_id).module_id
-            payload = self._load_collaboration_submission(
-                run_id=run_id,
-                artifact_ref=response_refs[submodule_id],
-                task_id=f"submodule-interface-response-{submodule_id}",
-                module_id=module_id,
-                submodule_id=submodule_id,
-                expected_type=SubmoduleInterfaceResponseSubmission,
-                wave="wave-2",
-                expected_context_sha256=response_contexts[submodule_id],
-            )
-            if payload is None:
-                pending_responses.append(submodule_id)
-            else:
-                responses[submodule_id] = payload
-        if pending_responses:
-            responses.update(
-                await self._run_scheduled_submodule_stage(
-                    tuple(pending_responses),
-                    run_id=run_id,
-                    workflow_id=workflow_id,
-                    task_kind="submodule_interface_response",
-                    concurrency=state["request"].submodule_task_concurrency,
-                    all_ready=True,
-                    state=state,
-                    wave="wave-2",
-                    context_sha256=response_contexts,
-                    execute=lambda submodule_id: self._submodule_interface_response(
-                        submodule_id,
-                        inbox_ref=inbox_refs[submodule_id],
-                        discovery_ref=discovery_refs[submodule_id],
-                        state=state,
-                        workflow_id=workflow_id,
-                    ),
-                    persist=lambda submodule_id, payload: (
-                        self._persist_submodule_task_completion(
-                            state=state,
-                            task_kind="submodule_interface_response",
-                            wave="wave-2",
-                            submodule_id=submodule_id,
-                            artifact_ref=response_refs[submodule_id],
-                            context_sha256=response_contexts[submodule_id],
-                            payload=payload,
-                        )
-                    ),
-                )
-            )
-        ordered_responses = [responses[item] for item in inboxes]
-        try:
-            submodule_bundles = build_submodule_collaboration_bundles(
-                ordered_discoveries,
-                ordered_module_discoveries,
-                ordered_responses,
-                known_evidence_ids=known_evidence_ids,
-                discovery_context_sha256=discovery_contexts,
-                response_context_sha256=response_contexts,
-            )
-            grouped_responses = [
-                ModuleInterfaceResponseSubmission(
-                    module_id=module_id,
-                    dispositions=[
-                        disposition.model_copy(deep=True)
-                        for response in ordered_responses
-                        if response.module_id == module_id
-                        for disposition in response.dispositions
-                    ],
-                )
-                for module_id in MODULE_IDS
-                if any(response.module_id == module_id for response in ordered_responses)
-            ]
-            module_bundles = build_collaboration_bundles(
-                ordered_module_discoveries,
-                grouped_responses,
-                known_evidence_ids=known_evidence_ids,
-            )
-        except ValueError as exc:
-            raise AgentWorkflowError(f"Barrier 2 failed: {exc}") from exc
-        for submodule_id, payload in responses.items():
-            self.service.store.write_json(
-                response_refs[submodule_id],
-                payload.model_dump(mode="json"),
-            )
-        for submodule_id, response_ref in response_refs.items():
-            response_path = (self.service.workspace / response_ref).resolve()
-            if (
-                not response_path.is_file()
-                or response_contexts.get(submodule_id) is None
-            ):
-                raise AgentWorkflowError(
-                    f"Wave 2 response artifact is unreadable: {submodule_id}"
-                )
-        response_artifact_sha256 = {
-            submodule_id: self._sha256(self.service.workspace / response_ref)
-            for submodule_id, response_ref in response_refs.items()
-        }
-        try:
-            interface_registry = build_interface_resolution_registry(
-                ordered_module_discoveries,
-                ordered_responses,
-                run_id=run_id,
-                known_evidence_ids=known_evidence_ids,
-            )
-        except ValueError as exc:
-            raise AgentWorkflowError(
-                f"Wave 2 interface resolution registry failed: {exc}"
-            ) from exc
-        registry_path = self.service.store.write_json(
-            f"Work/runs/{run_id}/collaboration/interface-resolution-registry.json",
-            interface_registry.model_dump(mode="json"),
-        )
-        registry_ref = registry_path.relative_to(self.service.workspace).as_posix()
-        state["interface_resolution_registry"] = interface_registry
-        state["interface_resolution_registry_ref"] = registry_ref
-        state["interface_resolution_registry_sha256"] = self._sha256(
-            registry_path
-        )
-        state["interface_residual_risks"] = {
-            request_id: resolution.disposition.boundary or ""
-            for request_id, resolution in interface_registry.resolutions.items()
-            if resolution.closure_status == "pending_cross"
-        }
-        submodule_bundle_refs: dict[str, str] = {}
-        for submodule_id, bundle in submodule_bundles.items():
-            path = self.service.store.write_json(
-                (
-                    f"Work/runs/{run_id}/collaboration/bundles/submodules/"
-                    f"{submodule_id}.json"
-                ),
-                bundle.model_dump(mode="json"),
-            )
-            submodule_bundle_refs[submodule_id] = path.relative_to(
-                self.service.workspace
-            ).as_posix()
-        module_bundle_refs: dict[str, str] = {}
-        for module_id, bundle in module_bundles.items():
-            path = self.service.store.write_json(
-                (
-                    f"Work/runs/{run_id}/collaboration/bundles/"
-                    f"module-{module_id}.json"
-                ),
-                bundle.model_dump(mode="json"),
-            )
-            module_bundle_refs[module_id] = path.relative_to(
-                self.service.workspace
-            ).as_posix()
-        unresolved_request_ids = sorted(
-            disposition.request_id
-            for response in ordered_responses
-            for disposition in response.dispositions
-            if disposition.status == "unresolved"
-        )
-        barrier2_path = self.service.store.write_json(
-            f"Work/runs/{run_id}/collaboration/barrier-2.json",
-            {
-                "kind": "submodule_collaboration_barrier_2",
-                "version": 2,
-                "run_id": run_id,
-                "barrier_1_ref": state["collaboration_barrier1_ref"],
-                "barrier_1_sha256": self._sha256(
-                    self.service.workspace / state["collaboration_barrier1_ref"]
-                ),
-                "response_refs": response_refs,
-                "response_sha256": response_artifact_sha256,
-                "response_context_sha256": response_contexts,
-                "submodule_bundle_refs": submodule_bundle_refs,
-                "module_bundle_refs": module_bundle_refs,
-                "request_count": sum(
-                    len(discovery.requests)
-                    for discovery in ordered_module_discoveries
-                ),
-                "unresolved_request_ids": unresolved_request_ids,
-                "interface_resolution_registry_ref": registry_ref,
-                "interface_resolution_registry_sha256": state[
-                    "interface_resolution_registry_sha256"
-                ],
-            },
-        )
-        state["collaboration_barrier2_ref"] = barrier2_path.relative_to(
-            self.service.workspace
-        ).as_posix()
-        state["collaboration_bundle_refs"] = module_bundle_refs
-        state["submodule_collaboration_bundle_refs"] = submodule_bundle_refs
-        await self._checkpoint_then_cost_boundary(
-            state,
-            "collaboration-barrier-2",
-            "completed",
-            "submodule-interface-response",
-            "submodule-authoring",
-        )
-
-    async def _module_collaboration_legacy(
-        self,
-        module_ids: tuple[str, ...],
-        state: dict,
-        workflow_id: str,
-    ) -> None:
-        """Run sparse Wave 1/2 tasks and persist two deterministic barriers."""
-
-        if set(module_ids) != set(MODULE_IDS):
-            raise AgentWorkflowError(
-                "three-wave collaboration requires the complete fixed module set"
-            )
-        run_id = state["run_id"]
-        known_evidence_ids = {
-            item.id for item in state.get("evidence_items", [])
-        }
-        discovery_refs = {
-            module_id: (
-                f"Work/runs/{run_id}/collaboration/wave-1/"
-                f"module-{module_id}.json"
-            )
-            for module_id in MODULE_IDS
-        }
-        discoveries: dict[str, ModuleDiscoverySubmission] = {}
-        pending_discovery: list[str] = []
-        for module_id in MODULE_IDS:
-            payload = self._load_collaboration_submission(
-                run_id=run_id,
-                artifact_ref=discovery_refs[module_id],
-                task_id=f"module-discovery-{module_id}",
-                module_id=module_id,
-                expected_type=ModuleDiscoverySubmission,
-            )
-            if payload is None:
-                pending_discovery.append(module_id)
-            else:
-                discoveries[module_id] = payload
-
-        if pending_discovery:
-            results = await asyncio.gather(
-                *(
-                    self._module_discovery(
-                        module_id,
-                        state,
-                        workflow_id,
-                    )
-                    for module_id in pending_discovery
-                ),
-                return_exceptions=True,
-            )
-            failures: list[BaseException] = []
-            for module_id, result in zip(
-                pending_discovery,
-                results,
-                strict=True,
-            ):
-                if isinstance(result, BaseException):
-                    failures.append(result)
-                    continue
-                discoveries[module_id] = result
-            if failures:
-                raise failures[0]
-
-        ordered_discoveries = [
-            discoveries[module_id] for module_id in MODULE_IDS
-        ]
-        try:
-            inboxes = build_interface_inboxes(
-                ordered_discoveries,
-                known_evidence_ids=known_evidence_ids,
-            )
-        except ValueError as exc:
-            invalid_modules = self._invalid_discovery_modules(
-                discoveries,
-                known_evidence_ids,
-            ) or set(MODULE_IDS)
-            for module_id in set(MODULE_IDS) - invalid_modules:
-                self.service.store.write_json(
-                    discovery_refs[module_id],
-                    discoveries[module_id].model_dump(mode="json"),
-                )
-            self._reject_collaboration_candidates(
-                run_id=run_id,
-                wave="wave-1",
-                artifact_refs=[
-                    discovery_refs[module_id]
-                    for module_id in invalid_modules
-                ],
-                task_ids=[
-                    f"module-discovery-{module_id}"
-                    for module_id in invalid_modules
-                ],
-                reason=str(exc),
-            )
-            state.pop("collaboration_barrier1_ref", None)
-            state.pop("collaboration_barrier2_ref", None)
-            state.pop("collaboration_bundle_refs", None)
-            raise AgentWorkflowError(f"Barrier 1 failed: {exc}") from exc
-        for module_id, payload in discoveries.items():
-            self.service.store.write_json(
-                discovery_refs[module_id],
-                payload.model_dump(mode="json"),
-            )
-        inbox_refs: dict[str, str] = {}
-        for module_id, requests in inboxes.items():
-            inbox_path = self.service.store.write_json(
-                (
-                    f"Work/runs/{run_id}/collaboration/inboxes/"
-                    f"module-{module_id}.json"
-                ),
-                {
-                    "kind": "module_interface_inbox",
-                    "run_id": run_id,
-                    "module_id": module_id,
-                    "requests": [
-                        request.model_dump(mode="json")
-                        for request in requests
-                    ],
-                },
-            )
-            inbox_refs[module_id] = inbox_path.relative_to(
-                self.service.workspace
-            ).as_posix()
-        barrier1_path = self.service.store.write_json(
-            f"Work/runs/{run_id}/collaboration/barrier-1.json",
-            {
-                "kind": "module_collaboration_barrier_1",
-                "run_id": run_id,
-                "module_ids": list(MODULE_IDS),
-                "discovery_refs": discovery_refs,
-                "inbox_refs": inbox_refs,
-                "request_index": [
-                    {
-                        "request_id": request.request_id,
-                        "requester_module_id": request.requester_module_id,
-                        "target_module_id": request.target_module_id,
-                        "discovery_ref": discovery_refs[
-                            request.requester_module_id
-                        ],
-                    }
-                    for discovery in ordered_discoveries
-                    for request in discovery.requests
-                ],
-            },
-        )
-        state["collaboration_barrier1_ref"] = barrier1_path.relative_to(
-            self.service.workspace
-        ).as_posix()
-        await self._checkpoint_then_cost_boundary(
-            state,
-            "collaboration-barrier-1",
-            "completed",
-            "collaboration-discovery",
-            "collaboration-interface-response",
-        )
-
-        response_refs = {
-            module_id: (
-                f"Work/runs/{run_id}/collaboration/wave-2/"
-                f"module-{module_id}.json"
-            )
-            for module_id in inboxes
-        }
-        responses: dict[str, ModuleInterfaceResponseSubmission] = {}
-        pending_responses: list[str] = []
-        for module_id in inboxes:
-            payload = self._load_collaboration_submission(
-                run_id=run_id,
-                artifact_ref=response_refs[module_id],
-                task_id=f"module-interface-response-{module_id}",
-                module_id=module_id,
-                expected_type=ModuleInterfaceResponseSubmission,
-            )
-            if payload is None:
-                pending_responses.append(module_id)
-            else:
-                responses[module_id] = payload
-        if pending_responses:
-            response_results = await asyncio.gather(
-                *(
-                    self._legacy_module_interface_response(
-                        module_id,
-                        inbox_ref=inbox_refs[module_id],
-                        discovery_ref=discovery_refs[module_id],
-                        state=state,
-                        workflow_id=workflow_id,
-                    )
-                    for module_id in pending_responses
-                ),
-                return_exceptions=True,
-            )
-            failures = []
-            for module_id, result in zip(
-                pending_responses,
-                response_results,
-                strict=True,
-            ):
-                if isinstance(result, BaseException):
-                    failures.append(result)
-                    continue
-                responses[module_id] = result
-            if failures:
-                raise failures[0]
-
-        ordered_responses = [
-            responses[module_id] for module_id in inboxes
-        ]
-        try:
-            bundles = build_collaboration_bundles(
-                ordered_discoveries,
-                ordered_responses,
-                known_evidence_ids=known_evidence_ids,
-            )
-        except ValueError as exc:
-            invalid_modules = self._invalid_response_modules(
-                responses,
-                inboxes,
-                known_evidence_ids,
-            ) or set(inboxes)
-            for module_id in set(inboxes) - invalid_modules:
-                self.service.store.write_json(
-                    response_refs[module_id],
-                    responses[module_id].model_dump(mode="json"),
-                )
-            self._reject_collaboration_candidates(
-                run_id=run_id,
-                wave="wave-2",
-                artifact_refs=[
-                    response_refs[module_id]
-                    for module_id in invalid_modules
-                ],
-                task_ids=[
-                    f"module-interface-response-{module_id}"
-                    for module_id in invalid_modules
-                ],
-                reason=str(exc),
-            )
-            state.pop("collaboration_barrier2_ref", None)
-            state.pop("collaboration_bundle_refs", None)
-            raise AgentWorkflowError(f"Barrier 2 failed: {exc}") from exc
-        for module_id, payload in responses.items():
-            self.service.store.write_json(
-                response_refs[module_id],
-                payload.model_dump(mode="json"),
-            )
-        bundle_refs: dict[str, str] = {}
-        for module_id, bundle in bundles.items():
-            bundle_path = self.service.store.write_json(
-                (
-                    f"Work/runs/{run_id}/collaboration/bundles/"
-                    f"module-{module_id}.json"
-                ),
-                bundle.model_dump(mode="json"),
-            )
-            bundle_refs[module_id] = bundle_path.relative_to(
-                self.service.workspace
-            ).as_posix()
-        unresolved_request_ids = sorted(
-            item.request_id
-            for response in ordered_responses
-            for item in response.dispositions
-            if item.status == "unresolved"
-        )
-        barrier2_path = self.service.store.write_json(
-            f"Work/runs/{run_id}/collaboration/barrier-2.json",
-            {
-                "kind": "module_collaboration_barrier_2",
-                "run_id": run_id,
-                "barrier_1_ref": state["collaboration_barrier1_ref"],
-                "response_refs": response_refs,
-                "bundle_refs": bundle_refs,
-                "request_count": sum(
-                    len(discovery.requests)
-                    for discovery in ordered_discoveries
-                ),
-                "unresolved_request_ids": unresolved_request_ids,
-            },
-        )
-        state["collaboration_barrier2_ref"] = barrier2_path.relative_to(
-            self.service.workspace
-        ).as_posix()
-        state["collaboration_bundle_refs"] = bundle_refs
-        await self._checkpoint_then_cost_boundary(
-            state,
-            "collaboration-barrier-2",
-            "completed",
-            "collaboration-interface-response",
-            "module-authoring",
-        )
-
-    def _submodule_authoring_input(
-        self,
-        submodule_id: str,
-        state: dict,
-    ) -> tuple[SubmoduleAuthoringInput, str, SubmoduleCollaborationBundle]:
-        """Write the immutable current input for one Wave 3 leaf task."""
-
-        module_id = resolve_submodule(submodule_id).module_id
-        bundle_ref = state.get("submodule_collaboration_bundle_refs", {}).get(
-            submodule_id
-        )
-        if not bundle_ref:
-            raise AgentWorkflowError(
-                f"submodule {submodule_id} lacks its Barrier 2 bundle"
-            )
-        bundle_path = (self.service.workspace / bundle_ref).resolve()
-        run_root = (
-            self.service.workspace / f"Work/runs/{state['run_id']}"
-        ).resolve()
-        if not bundle_path.is_relative_to(run_root) or not bundle_path.is_file():
-            raise AgentWorkflowError(
-                f"submodule collaboration bundle is unreadable: {bundle_ref}"
-            )
-        bundle = SubmoduleCollaborationBundle.model_validate_json(
-            bundle_path.read_text(encoding="utf-8")
-        )
-        if bundle.module_id != module_id or bundle.submodule_id != submodule_id:
-            raise AgentWorkflowError(
-                f"submodule collaboration bundle identity mismatch: {submodule_id}"
-            )
-        expected_discovery_context = state.get(
-            "submodule_discovery_context_sha256", {}
-        ).get(submodule_id)
-        if (
-            expected_discovery_context is not None
-            and bundle.discovery_context_sha256 != expected_discovery_context
-        ):
-            raise AgentWorkflowError(
-                f"submodule collaboration bundle discovery context mismatch: {submodule_id}"
-            )
-        expected_response_context = state.get(
-            "submodule_response_context_sha256", {}
-        ).get(submodule_id)
-        if expected_response_context is not None:
-            if bundle.response_context_sha256 != expected_response_context:
-                raise AgentWorkflowError(
-                    f"submodule collaboration bundle response context mismatch: {submodule_id}"
-                )
-        elif bundle.response_context_sha256 is not None:
-            raise AgentWorkflowError(
-                f"submodule collaboration bundle has stale response context: {submodule_id}"
-            )
-        discovery_ref = (
-            f"Work/runs/{state['run_id']}/collaboration/wave-1/submodules/"
-            f"{submodule_id}.json"
-        )
-        contract = SubmoduleAuthoringInput(
-            run_id=state["run_id"],
-            module_id=module_id,
-            submodule_id=submodule_id,
-            revision=0,
-            coverage_ref=state["preparation_refs"]["coverage"],
-            evidence_ref=state["preparation_refs"]["evidence"],
-            manifest_ref=state["preparation_refs"]["manifest"],
-            knowledge_ref=state["module_knowledge_refs"][module_id],
-            collaboration_bundle_ref=bundle_ref,
-            discovery_ref=discovery_ref,
-            collaboration_bundle_sha256=self._sha256(bundle_path),
-            discovery_sha256=self._sha256(
-                self.service.workspace / discovery_ref
-            ),
-        )
-        path = self.service.store.write_json(
-            (
-                f"Work/runs/{state['run_id']}/context/"
-                f"submodule-authoring-{submodule_id}-r0.json"
-            ),
-            contract.model_dump(mode="json"),
-        )
-        return (
-            contract,
-            path.relative_to(self.service.workspace).as_posix(),
-            bundle,
-        )
-
-    async def _submodule_authoring(
-        self,
-        submodule_id: str,
-        state: dict,
-        workflow_id: str,
-    ) -> SubmoduleDraftSubmission:
-        """Run one independently fenced and recoverable Wave 3 leaf author."""
-
-        module_id = resolve_submodule(submodule_id).module_id
-        specialist_id = f"module-{module_id}-specialist"
-        planned = next(
-            item
-            for item in state["module_dispatch"].module_tasks
-            if item.agent_id == specialist_id
-        )
-        contract, contract_ref, bundle = self._submodule_authoring_input(
-            submodule_id, state
-        )
-        shared_ref = self._shared_module_context_ref(
-            state,
-            module_id,
-            purpose="module-author",
-            include_author_skill=True,
-        )
-        role_skill_refs = [
-            ref
-            for key in ("core", "analysis", "visual", "rubric")
-            if (ref := state.get("template_skill_refs", {}).get(key))
-        ]
-        bundle_context = bundle.model_dump_json()
-        constraints = list(
-            dict.fromkeys(
-                [
-                    *planned.constraints,
-                    f"唯一写作范围是固定叶子子模块 {submodule_id}",
-                    "只调用 write_result_part 写入当前 submodule_id；不得写其他 part_id",
-                    "必须消费当前子模块 discovery 以及全部 requested/responded interface",
-                    "每个 answered 接口都保留答案和适用条件；每个 unresolved 接口都保留边界",
-                    "固定标题之外，内部现状、判断、机理、建议和验收标签不得使用数字编号",
-                    "不得调用 query_peer/reply_peer；Barrier 2 已冻结接口",
-                    *state["request"].execution_requirements,
-                    *self._evidence_policy_constraints(
-                        state["request"].missing_evidence_policy
-                    ),
-                    *self._user_supplement_constraints(
-                        state,
-                        stage="module_authoring",
-                        target_ids={module_id, submodule_id},
-                    ),
-                ]
-            )
-        )
-        task_id = f"submodule-author-{submodule_id}"
-        envelope = TaskEnvelope.model_validate(
-            planned.model_copy(
-                update={
-                    "task_id": task_id,
-                    "task_attempt_id": f"{task_id}-attempt-1",
-                    "run_id": state["run_id"],
-                    "agent_id": specialist_id,
-                    "objective": (
-                        f"完成叶子子模块 {submodule_id} 的最终专业正文；"
-                        "提交前持久化该唯一正文 part。"
-                    ),
-                    "allowed_outputs": ["submodule_draft_submission"],
-                    "allowed_tools": [
-                        "search_project_evidence",
-                        "open_project_source",
-                        "search_reference_library",
-                        "open_reference",
-                        "web_search",
-                        "open_web_source",
-                        "inspect_document",
-                        "inspect_image",
-                        "calculate",
-                        "open_artifact",
-                        "search_text",
-                        "report_gap",
-                        "write_result_part",
-                        "list_result_parts",
-                        "report_blocked",
-                        "submit_result",
-                    ],
-                    "target_submodule_ids": [submodule_id],
-                    "constraints": constraints,
-                    "revision": 0,
-                    "input_refs": [
-                        contract_ref,
-                        contract.coverage_ref,
-                        contract.evidence_ref,
-                        contract.manifest_ref,
-                        contract.collaboration_bundle_ref,
-                        contract.discovery_ref,
-                        contract.knowledge_ref,
-                        shared_ref,
-                        *role_skill_refs,
-                    ],
-                    "input_contract_kind": "submodule_authoring_input",
-                    "input_contract_ref": contract_ref,
-                    "prior_result_ref": None,
-                    "context_summary_refs": [],
-                    "inline_context": (
-                        self._module_author_leaf_inline_context(
-                            state,
-                            module_id,
-                            submodule_id,
-                            shared_ref,
-                        )
-                        + "\n\n<submodule_collaboration_bundle>\n"
-                        + bundle_context
-                        + "\n</submodule_collaboration_bundle>"
-                    ),
-                    "artifact_delivery_modes": {
-                        contract_ref: "inline",
-                        contract.coverage_ref: "reference",
-                        contract.evidence_ref: "reference",
-                        contract.manifest_ref: "reference",
-                        contract.collaboration_bundle_ref: "hash_retained",
-                        contract.discovery_ref: "hash_retained",
-                        contract.knowledge_ref: "reference",
-                        shared_ref: "reference",
-                        **{ref: "reference" for ref in role_skill_refs},
-                    },
-                }
-            ).model_dump(mode="python")
-        )
-        payload = await self._agent(
-            specialist_id,
-            envelope,
-            envelope.input_refs,
-            workflow_id,
-            session_key=self._leaf_session_key(submodule_id),
-        )
-        if (
-            not isinstance(payload, SubmoduleDraftSubmission)
-            or payload.module_id != module_id
-            or payload.submodule_id != submodule_id
-        ):
-            raise AgentWorkflowError(
-                f"{specialist_id} returned the wrong Wave 3 submodule draft"
-            )
-        return payload
-
-    def _write_submodule_module_completion(
-        self,
-        state: dict,
-        module_id: str,
-        submission: ModuleSubmission,
-        *,
-        barrier_ref: str,
-    ) -> str:
-        """Bind a reduced module subject to all leaf completions and current context."""
-
-        subject_ref = (
-            f"Work/runs/{state['run_id']}/modules/"
-            f"{module_id}-r{submission.revision}.json"
-        )
-        subject_path = self.service.workspace / subject_ref
-        barrier_path = self.service.workspace / barrier_ref
-        completion_path = self.service.store.write_json(
-            (
-                f"Work/runs/{state['run_id']}/collaboration/wave-3/"
-                f"module-{module_id}-r{submission.revision}.json"
-            ),
-            {
-                "kind": "module_authoring_completion",
-                "version": 2,
-                "source_mode": "submodule_reducer",
-                "run_id": state["run_id"],
-                "module_id": module_id,
-                "revision": submission.revision,
-                "subject_ref": subject_ref,
-                "subject_sha256": self._sha256(subject_path),
-                "submodule_barrier_ref": barrier_ref,
-                "submodule_barrier_sha256": self._sha256(barrier_path),
-                "authoring_context_sha256": (
-                    self._module_authoring_context_sha256(state, module_id)
-                ),
-            },
-        )
-        return completion_path.relative_to(self.service.workspace).as_posix()
-
-    async def _run_submodule_authoring_stage(
-        self,
-        module_ids: tuple[str, ...],
-        state: dict,
-        workflow_id: str,
-    ) -> None:
-        """Run 37 leaf authors, then reduce exactly once per module."""
-
-        submodule_ids = tuple(
-            submodule_id
-            for module_id in module_ids
-            for submodule_id in REPORT_TAXONOMY[module_id].submodules
-        )
-        run_id = state["run_id"]
-        draft_refs = {
-            submodule_id: (
-                f"Work/runs/{run_id}/collaboration/wave-3/submodules/"
-                f"{submodule_id}-r0.json"
-            )
-            for submodule_id in submodule_ids
-        }
-        draft_contexts: dict[str, str] = {}
-        for submodule_id in submodule_ids:
-            contract, contract_ref, _bundle = self._submodule_authoring_input(
-                submodule_id, state
-            )
-            draft_contexts[submodule_id] = self._submodule_task_context_sha256(
-                state,
-                task_kind="submodule_authoring",
-                submodule_id=submodule_id,
-                input_refs=[
-                    contract_ref,
-                    contract.coverage_ref,
-                    contract.evidence_ref,
-                    contract.manifest_ref,
-                    contract.collaboration_bundle_ref,
-                    contract.discovery_ref,
-                ],
-            )
-        state["submodule_authoring_context_sha256"] = dict(draft_contexts)
-        drafts: dict[str, SubmoduleDraftSubmission] = {}
-        pending: list[str] = []
-        for submodule_id in submodule_ids:
-            module_id = resolve_submodule(submodule_id).module_id
-            payload = self._load_collaboration_submission(
-                run_id=run_id,
-                artifact_ref=draft_refs[submodule_id],
-                task_id=f"submodule-author-{submodule_id}",
-                module_id=module_id,
-                submodule_id=submodule_id,
-                expected_type=SubmoduleDraftSubmission,
-                wave="wave-3",
-                expected_context_sha256=draft_contexts[submodule_id],
-            )
-            if payload is None:
-                pending.append(submodule_id)
-            else:
-                drafts[submodule_id] = payload
-        if pending:
-            drafts.update(
-                await self._run_scheduled_submodule_stage(
-                    tuple(pending),
-                    run_id=run_id,
-                    workflow_id=workflow_id,
-                    task_kind="submodule_authoring",
-                    concurrency=state["request"].submodule_task_concurrency,
-                    all_ready=True,
-                    state=state,
-                    wave="wave-3",
-                    context_sha256=draft_contexts,
-                    execute=lambda submodule_id: self._submodule_authoring(
-                        submodule_id,
-                        state,
-                        workflow_id,
-                    ),
-                    persist=lambda submodule_id, payload: (
-                        self._persist_submodule_task_completion(
-                            state=state,
-                            task_kind="submodule_authoring",
-                            wave="wave-3",
-                            submodule_id=submodule_id,
-                            artifact_ref=draft_refs[submodule_id],
-                            context_sha256=draft_contexts[submodule_id],
-                            payload=payload,
-                        )
-                    ),
-                )
-            )
-        for submodule_id, payload in drafts.items():
-            self.service.store.write_json(
-                draft_refs[submodule_id], payload.model_dump(mode="json")
-            )
-
-        source_records = SourceLedger(self.service.workspace, run_id).records
-        barrier_refs: dict[str, str] = {}
-        for module_id in module_ids:
-            expected = tuple(REPORT_TAXONOMY[module_id].submodules)
-            scoped = {submodule_id: drafts[submodule_id] for submodule_id in expected}
-            if set(scoped) != set(expected):
-                raise AgentWorkflowError(
-                    f"module {module_id} reducer lacks exact leaf completion"
-                )
-            claim_ids = [item.claim.id for item in scoped.values()]
-            if len(claim_ids) != len(set(claim_ids)):
-                raise AgentWorkflowError(
-                    f"module {module_id} reducer received duplicate Claim ids"
-                )
-            submission = ModuleSubmission(
-                module_id=module_id,
-                submodule_narratives={
-                    submodule_id: scoped[submodule_id].narrative
-                    for submodule_id in expected
-                },
-                claims=[scoped[submodule_id].claim for submodule_id in expected],
-                source_ids=sorted(
-                    {
-                        source_id
-                        for submodule_id in expected
-                        for source_id in scoped[submodule_id].source_ids
-                    }
-                ),
-                unresolved_questions=list(
-                    dict.fromkeys(
-                        question
-                        for submodule_id in expected
-                        for question in scoped[submodule_id].unresolved_questions
-                    )
-                ),
-                revision=0,
-            )
-            ClaimLedger(claims=submission.claims, sources=source_records)
-            subject_path = self.service.store.write_json(
-                f"Work/runs/{run_id}/modules/{module_id}-r0.json",
-                submission.model_dump(mode="json"),
-            )
-            scoped_refs = {
-                submodule_id: draft_refs[submodule_id] for submodule_id in expected
-            }
-            barrier_path = self.service.store.write_json(
-                (
-                    f"Work/runs/{run_id}/collaboration/wave-3/module-barriers/"
-                    f"module-{module_id}.json"
-                ),
-                {
-                    "kind": "module_submodule_authoring_barrier",
-                    "version": 1,
-                    "run_id": run_id,
-                    "module_id": module_id,
-                    "submodule_ids": list(expected),
-                    "completion_refs": scoped_refs,
-                    "completion_sha256": {
-                        submodule_id: self._sha256(
-                            self.service.workspace / scoped_refs[submodule_id]
-                        )
-                        for submodule_id in expected
-                    },
-                    "context_sha256": {
-                        submodule_id: draft_contexts[submodule_id]
-                        for submodule_id in expected
-                    },
-                    "subject_ref": subject_path.relative_to(
-                        self.service.workspace
-                    ).as_posix(),
-                    "subject_sha256": self._sha256(subject_path),
-                },
-            )
-            barrier_ref = barrier_path.relative_to(
-                self.service.workspace
-            ).as_posix()
-            barrier_payload = json.loads(
-                barrier_path.read_text(encoding="utf-8")
-            )
-            if (
-                set(barrier_payload.get("completion_refs", {})) != set(expected)
-                or set(barrier_payload.get("completion_sha256", {})) != set(expected)
-                or set(barrier_payload.get("context_sha256", {})) != set(expected)
-            ):
-                raise AgentWorkflowError(
-                    f"module {module_id} authoring barrier lacks exact leaf/hash set"
-                )
-            for submodule_id in expected:
-                completion_ref = barrier_payload["completion_refs"][submodule_id]
-                completion_path = (self.service.workspace / completion_ref).resolve()
-                if (
-                    not completion_path.is_file()
-                    or not completion_path.is_relative_to(
-                        (self.service.workspace / f"Work/runs/{run_id}").resolve()
-                    )
-                    or self._sha256(completion_path)
-                    != barrier_payload["completion_sha256"][submodule_id]
-                    or barrier_payload["context_sha256"][submodule_id]
-                    != draft_contexts[submodule_id]
-                ):
-                    raise AgentWorkflowError(
-                        f"module {module_id} authoring barrier hash mismatch: {submodule_id}"
-                    )
-            barrier_refs[module_id] = barrier_ref
-            self._write_submodule_module_completion(
-                state,
-                module_id,
-                submission,
-                barrier_ref=barrier_ref,
-            )
-            state.setdefault("specialist_submissions", {})[module_id] = submission
-        state["submodule_authoring_barrier_refs"] = barrier_refs
-        await self._checkpoint_then_cost_boundary(
-            state,
-            "module-work",
-            "in_progress",
-            "submodule-authoring",
-            "module-review",
-        )
-
     def _inherit_module_result_parts(
         self,
         run_id: str,
@@ -8524,26 +4656,16 @@ class ReportWorkflowRunner:
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
-        bundle_ref = state.get("collaboration_bundle_refs", {}).get(module_id)
-        bundle_sha256 = None
-        if bundle_ref:
-            bundle_path = (self.service.workspace / bundle_ref).resolve()
-            if not bundle_path.is_file():
-                raise AgentWorkflowError(
-                    f"module lane bundle is missing: {module_id}: {bundle_ref}"
-                )
-            bundle_sha256 = self._sha256(bundle_path)
         semantic_key = hashlib.sha256(
             json.dumps(
                 {
                     "run_id": state["run_id"],
                     "module_id": module_id,
                     "preparation_sha256": preparation_sha256,
-                    "collaboration_bundle_sha256": bundle_sha256,
                     "authoring_context_sha256": self._module_authoring_context_sha256(
                         state, module_id
                     ),
-                    "schema_version": "1",
+                    "schema_version": "2",
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -8556,7 +4678,7 @@ class ReportWorkflowRunner:
             module_id=module_id,
             semantic_key=semantic_key,
             preparation_sha256=preparation_sha256,
-            collaboration_bundle_sha256=bundle_sha256,
+            collaboration_bundle_sha256=None,
         )
 
     def _artifact_ref(self, ref: str) -> ArtifactRef:
@@ -8751,7 +4873,7 @@ class ReportWorkflowRunner:
         # state would re-run the author/auditor and could duplicate Provider
         # work before the serialized exception decision.
         lane_state = deepcopy(lane_state_override if lane_state_override is not None else state)
-        lane_state["_bounded_module_lane"] = module_id
+        lane_state["_module_lane"] = module_id
         lane_state["_defer_main_exceptions"] = defer_main_exceptions
         spec = self._lane_task_spec(lane_state, module_id)
         spec_ref = (
@@ -8888,22 +5010,16 @@ class ReportWorkflowRunner:
         )
         return submission, completion_ref, completion, lane_state
 
-    async def _run_bounded_module_lanes(
+    async def _run_module_lanes(
         self,
         requested_modules: tuple[str, ...],
         state: dict,
         workflow_id: str,
-        *,
-        concurrency: int,
-        all_ready: bool = False,
     ) -> None:
         """Run isolated module lanes and reduce them at one terminal barrier.
 
-        ``all_ready`` is the normal full-report business path: every ready
-        module gets a worker immediately and ordinary lane failures do not
-        cancel or stop admission of siblings.  ``False`` preserves the
-        historical bounded cohort primitive for explicit compatibility
-        requests/checkpoints.
+        Every requested module gets one worker immediately.  An ordinary lane
+        failure is preserved without cancelling already-admitted siblings.
         """
 
         results: dict[
@@ -8961,12 +5077,8 @@ class ReportWorkflowRunner:
             correlation_id=workflow_id,
             payload={
                 "target_modules": list(requested_modules),
-                "concurrency": (
-                    len(pending)
-                    if all_ready
-                    else min(max(1, concurrency), len(pending) or 1)
-                ),
-                "admission": "all_ready" if all_ready else "bounded",
+                "concurrency": len(pending),
+                "admission": "all_ready_modules",
                 "recovered_modules": sorted(results, key=float),
                 "scheduling_policy": "longest_critical_path_first_v1",
                 "scheduling_candidates": [
@@ -9035,8 +5147,6 @@ class ReportWorkflowRunner:
                 except BaseException as exc:
                     failures.append(exc)
                     failures_by_module[module_id] = exc
-                    if not all_ready:
-                        freeze_admission.set()
                     timing_history.record(
                         run_id=state["run_id"],
                         task_id=module_id,
@@ -9048,11 +5158,7 @@ class ReportWorkflowRunner:
                         status="failed",
                     )
 
-        worker_count = (
-            len(pending)
-            if all_ready
-            else min(max(1, concurrency), len(pending) or 1)
-        )
+        worker_count = len(pending)
         workers = [
             asyncio.create_task(
                 worker(), name=f"module-lane-worker-{index + 1}"
@@ -9115,12 +5221,6 @@ class ReportWorkflowRunner:
                     for ref in lane_state.get("review_exception_refs", [])
                     if ref not in state.get("review_exception_refs", [])
                 )
-                self._bind_reviewed_module_to_authoring_context(
-                    state,
-                    module_id,
-                    submission,
-                    provenance="bounded_module_lane",
-                )
             elif module_id in state.get("module_submissions", {}):
                 submission = state["module_submissions"][module_id]
                 spec = self._lane_task_spec(state, module_id)
@@ -9133,12 +5233,6 @@ class ReportWorkflowRunner:
                 # and record this terminal state in the cohort barrier below.
                 continue
             completions.append((completion_ref, completion))
-
-        if failures_by_module and not all_ready:
-            # Preserve the legacy bounded primitive's fail-fast surface.  The
-            # all-ready business path below additionally emits a terminal
-            # mixed-success barrier so successful siblings remain promotable.
-            raise failures[0]
 
         if failures_by_module:
             failure_refs: dict[str, list[str]] = {}
@@ -9246,13 +5340,8 @@ class ReportWorkflowRunner:
         planned = next(
             item for item in state["module_dispatch"].module_tasks if item.agent_id == specialist_id
         )
-        collaboration_bundle_ref = state.get(
-            "collaboration_bundle_refs", {}
-        ).get(module_id)
         resumed_payload = state.get("specialist_submissions", {}).get(module_id)
-        forced_fresh_revision = state.get(
-            "invalidated_authoring_revisions", {}
-        ).get(module_id)
+        forced_fresh_revision = None
         revision = (
             resumed_payload.revision
             if resumed_payload is not None
@@ -9336,8 +5425,8 @@ class ReportWorkflowRunner:
                     ),
                     (
                         "共享模块会话中，若 Provider 支持同一轮多个工具调用，应在一个"
-                        " assistant turn 内为所有 ready 叶子分别调用 write_result_part，"
-                        "再在下一轮提交小型 module commit；不得把多个叶子合并成一个 part"
+                        " assistant turn 内为所有 ready 小节分别调用 write_result_part，"
+                        "再在下一轮提交小型 module commit；小节是文档 part，不是独立任务或会话"
                     ),
                     *state["request"].execution_requirements,
                     f"缺失证据策略={state['request'].missing_evidence_policy}",
@@ -9355,7 +5444,7 @@ class ReportWorkflowRunner:
         )
         if forced_fresh_revision is not None:
             base_constraints.append(
-                "协作 bundle、输入或用户补充约束已变化；本 revision 必须从当前上下文完整重写全部固定子模块，禁止复用旧 draft parts"
+                "输入或用户补充约束已变化；本 revision 必须从当前上下文完整重写全部固定小节，禁止复用旧 draft parts"
             )
         if state.get("resume"):
             if revision > 0 and forced_fresh_revision is None:
@@ -9400,62 +5489,9 @@ class ReportWorkflowRunner:
                     "submit_result",
                 ]
 
-        collaboration_context = ""
-        if collaboration_bundle_ref:
-            collaboration_path = (
-                self.service.workspace / collaboration_bundle_ref
-            ).resolve()
-            run_root = (
-                self.service.workspace / f"Work/runs/{state['run_id']}"
-            ).resolve()
-            if (
-                not collaboration_path.is_relative_to(run_root)
-                or not collaboration_path.is_file()
-            ):
-                raise AgentWorkflowError(
-                    "module collaboration bundle is not a readable current-run "
-                    f"artifact: {collaboration_bundle_ref}"
-                )
-            try:
-                collaboration_bundle = (
-                    ModuleCollaborationBundle.model_validate_json(
-                        collaboration_path.read_text(encoding="utf-8")
-                    )
-                )
-            except (OSError, ValueError) as exc:
-                raise AgentWorkflowError(
-                    "module collaboration bundle is invalid: "
-                    f"{collaboration_bundle_ref}: {exc}"
-                ) from exc
-            if collaboration_bundle.module_id != module_id:
-                raise AgentWorkflowError(
-                    "module collaboration bundle ownership mismatch: "
-                    f"{collaboration_bundle.module_id} != {module_id}"
-                )
-            base_constraints.extend(
-                [
-                    (
-                        "这是 Wave 3 最终写作；必须先消费内联的 "
-                        "module_collaboration_bundle，并复用其中 Wave 1 "
-                        "discovery，禁止重复已经完成的宽泛检索"
-                    ),
-                    (
-                        "只对 bundle 尚未覆盖的具体证据缺口追加检索；"
-                        "把 requested/responded interface 的答案、适用条件和"
-                        " unresolved 边界写入相关小节"
-                    ),
-                    "不得调用 query_peer/reply_peer；两道 Barrier 已冻结本轮模块接口",
-                ]
-            )
-            collaboration_context = (
-                "\n\n<module_collaboration_bundle>\n"
-                + collaboration_bundle.model_dump_json()
-                + "\n</module_collaboration_bundle>"
-            )
-        else:
-            base_constraints.append(
-                "本次没有三波协作包；不得调用 query_peer/reply_peer，部分模块运行不等待未调度的同伴"
-            )
+        base_constraints.append(
+            "模块作者只在本模块会话内工作；不得调用 query_peer/reply_peer。跨模块关系由后续五个 Cross owner 处理。"
+        )
 
         module_input = ModuleAuthoringInput(
             run_id=state["run_id"],
@@ -9466,7 +5502,6 @@ class ReportWorkflowRunner:
             evidence_ref=state["preparation_refs"]["evidence"],
             manifest_ref=state["preparation_refs"]["manifest"],
             knowledge_ref=state["module_knowledge_refs"][module_id],
-            collaboration_bundle_ref=collaboration_bundle_ref,
             saved_part_ids=saved_parts,
             rewrite_part_ids=rewrite_part_ids,
         )
@@ -9519,31 +5554,15 @@ class ReportWorkflowRunner:
                         module_input.coverage_ref,
                         module_input.evidence_ref,
                         module_input.manifest_ref,
-                        *(
-                            [module_input.collaboration_bundle_ref]
-                            if module_input.collaboration_bundle_ref
-                            else []
-                        ),
                     ],
                     "input_contract_kind": "module_authoring_input",
                     "input_contract_ref": module_input_ref,
-                    "inline_context": (
-                        (planned.inline_context or "") + collaboration_context
-                    ),
+                    "inline_context": planned.inline_context or "",
                     "artifact_delivery_modes": {
                         module_input_ref: "inline",
                         module_input.coverage_ref: "reference",
                         module_input.evidence_ref: "reference",
                         module_input.manifest_ref: "reference",
-                        **(
-                            {
-                                module_input.collaboration_bundle_ref: (
-                                    "hash_retained"
-                                )
-                            }
-                            if module_input.collaboration_bundle_ref
-                            else {}
-                        ),
                     },
                 }
             ).model_dump(mode="python")
@@ -9568,14 +5587,6 @@ class ReportWorkflowRunner:
                 f"Work/runs/{state['run_id']}/modules/{module_id}-r{revision}.json",
                 payload.model_dump(mode="json"),
             )
-            if collaboration_bundle_ref:
-                self._write_module_authoring_completion(
-                    state,
-                    module_id,
-                    payload,
-                    module_input_ref=module_input_ref,
-                    envelope=envelope,
-                )
             state.setdefault("specialist_submissions", {})[module_id] = payload
             if review and checkpoint:
                 self._checkpoint(state, "module-work", "in_progress")
@@ -9610,7 +5621,72 @@ class ReportWorkflowRunner:
         )
 
     async def _cross_review(self, state: dict, workflow_id: str) -> None:
+        self._verify_module_lane_barrier(state)
         await run_cross_review(self, state, workflow_id)
+
+    def _verify_module_lane_barrier(self, state: dict) -> CohortBarrier:
+        """Fail closed unless the current run has exactly five verified lanes."""
+
+        run_id = state["run_id"]
+        expected_ref = f"Work/runs/{run_id}/lanes/module-barrier.json"
+        if state.get("module_lane_barrier_ref") != expected_ref:
+            raise AgentWorkflowError("Cross requires the canonical five-module barrier")
+        barrier_path = self.service.workspace / expected_ref
+        try:
+            barrier = CohortBarrier.model_validate_json(
+                barrier_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise AgentWorkflowError("five-module barrier is missing or invalid") from exc
+        expected_modules = set(REPORT_MODULE_IDS)
+        if (
+            barrier.run_id != run_id
+            or barrier.scope != "full"
+            or barrier.status != "committed"
+            or set(barrier.target_modules) != expected_modules
+            or set(barrier.completion_refs) != expected_modules
+            or set(barrier.completion_hashes) != expected_modules
+        ):
+            raise AgentWorkflowError("five-module barrier has incomplete ownership")
+        barrier_identity = {
+            "run_id": run_id,
+            "target_modules": sorted(barrier.target_modules, key=float),
+            "completion_refs": barrier.completion_refs,
+            "completion_hashes": barrier.completion_hashes,
+            "scope": "full",
+        }
+        if barrier.barrier_sha256 != hashlib.sha256(
+            json.dumps(
+                barrier_identity,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest():
+            raise AgentWorkflowError("five-module barrier identity hash is invalid")
+        for module_id in REPORT_MODULE_IDS:
+            ref = barrier.completion_refs[module_id]
+            path = self.service.workspace / ref
+            try:
+                completion = LaneCompletion.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError) as exc:
+                raise AgentWorkflowError(
+                    f"module completion is missing or invalid: {module_id}"
+                ) from exc
+            if (
+                completion.run_id != run_id
+                or completion.module_id != module_id
+                or completion.completion_sha256()
+                != barrier.completion_hashes[module_id]
+            ):
+                raise AgentWorkflowError(
+                    f"module completion does not match barrier: {module_id}"
+                )
+            self._verify_artifact_ref(completion.subject)
+            self._verify_artifact_ref(completion.review_completion)
+        return barrier
 
     async def _chief_edit(self, state: dict, workflow_id: str) -> None:
         interface_registry = state.get("interface_resolution_registry")
@@ -10404,7 +6480,10 @@ class ReportWorkflowRunner:
             self._delivery_root(self.service.workspace, state["run_id"])
         ).deliver(
             DeliveryPackage(
-                report_id="power-distribution-report",
+                # One run owns one immutable report-version namespace.  The
+                # shared human-facing output path is bound separately by the
+                # output-owner contract after verified completion.
+                report_id=state["run_id"],
                 version=state["run_id"],
                 module_files={
                     module_id: self.service.workspace / f"Outputs/Modules/{module_id}.md"

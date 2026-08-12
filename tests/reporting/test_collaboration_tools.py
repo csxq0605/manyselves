@@ -9,6 +9,7 @@ from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting.agentic_models import (
     SUBMISSION_INPUT_TYPES,
     ClaimRecord,
+    CrossReviewFinding,
     EditedReportSubmission,
     ModuleSubmission,
 )
@@ -17,9 +18,10 @@ from manyselves.core.reporting.agent_runner import ReportingAgentRunner
 from manyselves.core.reporting.input_contracts import (
     ChiefEditorInput,
     ChiefRevisionInput,
+    CrossOwnerInput,
+    INPUT_CONTRACT_EXAMPLES,
     ModuleContentView,
     ModuleReviewInput,
-    SubmoduleAuthoringInput,
     ValidationReport,
     module_content_view,
 )
@@ -368,6 +370,181 @@ async def test_review_submit_runtime_assigns_coverage_and_finding_id(
     )
     assert result["payload"]["coverage"] == {"submodule_ids": ["2.1.1"]}
     assert result["payload"]["findings"][0]["id"] == ("M-2.1-initial-r0-001")
+
+
+def _cross_owner_contract(
+    *,
+    phase: str = "initial",
+    required_findings: list[CrossReviewFinding] | None = None,
+) -> CrossOwnerInput:
+    payload = dict(INPUT_CONTRACT_EXAMPLES["cross_owner_input"])
+    payload["phase"] = phase
+    payload["review_round"] = 0 if phase == "initial" else 1
+    payload["required_findings"] = [
+        finding.model_dump(mode="json")
+        for finding in (required_findings or [])
+    ]
+    if phase == "recheck":
+        payload["revision_responses"] = [
+            {
+                "finding_id": finding.id,
+                "action": "implemented",
+                "summary": "已完成 owner 小节修订并保留相关模块只读边界。",
+                "changed_target_ids": [finding.target_submodule_ids[0]],
+            }
+            for finding in (required_findings or [])
+        ]
+        payload["local_regression_review_ref"] = (
+            "Work/runs/run-1/reviews/module/cross-r1/2.1/completion.json"
+        )
+        payload["machine_validation_ref"] = (
+            "Work/runs/run-1/validations/cross-2.1-r0.json"
+        )
+        payload["machine_validation_report"] = {
+            "kind": "validation_report",
+            "validation_protocol_version": 2,
+            "run_id": "run-1",
+            "subject_ref": payload["owner_subject_ref"],
+            "subject_revision": payload["owner_subject_revision"],
+            "content_sha256": "0" * 64,
+            "validator": "test-cross-owner/v2",
+            "check_ids": ["cross.owner"],
+            "failures": [],
+            "observations": [],
+            "passed": True,
+        }
+    return CrossOwnerInput.model_validate(payload)
+
+
+def _cross_owner_finding() -> CrossReviewFinding:
+    return CrossReviewFinding(
+        id="XMR-2.1-001",
+        owner_module_id="2.1",
+        target_submodule_ids=["2.1.1"],
+        related_module_ids=["2.2"],
+        category="dependencies",
+        impact="blocking",
+        observation="当前模块正文尚未明确跨模块责任接口、实施顺序和联合验收边界。",
+        evidence_refs=["Work/runs/run-1/modules/2.1-r0.json"],
+        required_change="请在 2.1.1 补充责任接口、实施顺序和联合验收记录要求。",
+        reviewer_checks=["责任接口、顺序和联合验收均已写入目标小节。"],
+        machine_checks=[],
+    )
+
+
+@pytest.mark.asyncio
+async def test_cross_owner_submit_runtime_assigns_owner_scope_and_finding_id(
+    tmp_path: Path,
+) -> None:
+    contract = _cross_owner_contract()
+    contract_ref = "Work/runs/run-1/reviews/cross-owner-input-2.1.json"
+    ReportingStore(tmp_path).write_json(contract_ref, contract.model_dump(mode="json"))
+    tool = _tool(
+        tmp_path,
+        task_id="cross-owner-2.1-r0",
+        allowed_outputs=["cross_owner_finding_submission"],
+        input_contract_kind="cross_owner_input",
+        input_contract_ref=contract_ref,
+    )
+    outcome = await tool(
+        payload={
+            "kind": "cross_owner_finding_submission",
+            "findings": [
+                {
+                    "owner_module_id": "2.1",
+                    "target_submodule_ids": ["2.1.1"],
+                    "related_module_ids": ["2.2"],
+                    "category": "dependencies",
+                    "impact": "blocking",
+                    "observation": "当前模块正文尚未明确跨模块责任接口、实施顺序和联合验收边界。",
+                    "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
+                    "required_change": "请在 2.1.1 补充责任接口、实施顺序和联合验收记录要求。",
+                    "reviewer_checks": ["责任接口、顺序和联合验收均已写入目标小节。"],
+                    "machine_checks": [],
+                }
+            ],
+        }
+    )
+    assert outcome["status"] == "completed", outcome
+    result = json.loads(
+        (tmp_path / "Work/runs/run-1/results/cross-owner-2.1-r0.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert result["payload"]["owner_module_id"] == "2.1"
+    assert result["payload"]["coverage"]["module_id"] == "2.1"
+    assert result["payload"]["findings"][0]["id"] == "XMR-2.1-001"
+
+
+@pytest.mark.asyncio
+async def test_cross_owner_recheck_injects_exact_verdict_ids_and_rejects_new_findings(
+    tmp_path: Path,
+) -> None:
+    finding = _cross_owner_finding()
+    contract = _cross_owner_contract(phase="recheck", required_findings=[finding])
+    contract_ref = "Work/runs/run-1/reviews/cross-owner-input-2.1-r1.json"
+    ReportingStore(tmp_path).write_json(contract_ref, contract.model_dump(mode="json"))
+    tool = _tool(
+        tmp_path,
+        task_id="cross-owner-2.1-r1",
+        allowed_outputs=["cross_owner_verdict_submission"],
+        revision=1,
+        input_contract_kind="cross_owner_input",
+        input_contract_ref=contract_ref,
+    )
+    outcome = await tool(
+        payload={
+            "kind": "cross_owner_verdict_submission",
+            "verdicts": [
+                {
+                    "verdict": "resolved",
+                    "reason": "责任模块已完成修订并通过同一 owner 的语义复核。",
+                    "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
+                }
+            ],
+        }
+    )
+    assert outcome["status"] == "completed", outcome
+    result = json.loads(
+        (tmp_path / "Work/runs/run-1/results/cross-owner-2.1-r1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert [item["finding_id"] for item in result["payload"]["verdicts"]] == [
+        "XMR-2.1-001"
+    ]
+    assert result["payload"]["new_findings"] == []
+
+    bad = await tool(
+        payload={
+            "kind": "cross_owner_verdict_submission",
+            "verdicts": [
+                {
+                    "verdict": "resolved",
+                    "reason": "责任模块已完成修订并通过同一 owner 的语义复核。",
+                    "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
+                }
+            ],
+            "new_findings": [
+                {
+                    "owner_module_id": "2.1",
+                    "target_submodule_ids": ["2.1.1"],
+                    "related_module_ids": ["2.2"],
+                    "category": "dependencies",
+                    "impact": "advisory",
+                    "observation": "新的回归观察不应在同一 owner 重检中另起 finding 波次。",
+                    "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
+                    "required_change": "由下一轮 Cross owner 输入明确新的责任边界。",
+                    "reviewer_checks": ["新的 finding 不应被当前重检接受。"],
+                    "machine_checks": [],
+                }
+            ],
+        }
+    )
+    assert bad["status"] == "correction_required"
+    assert any(
+        item["field"] == "new_findings" for item in bad["validation_errors"]
+    )
 
 
 @pytest.mark.asyncio
@@ -723,34 +900,6 @@ async def test_module_revision_correction_example_uses_each_finding_target(
 
 
 @pytest.mark.asyncio
-async def test_correction_reuses_exact_current_leaf_submission_example(
-    tmp_path: Path,
-) -> None:
-    kind = "submodule_interface_response_submission"
-    request_ids = ["IF-2.1.1-2.3.2-001", "IF-2.4.1-2.3.2-002"]
-    schema = ReportingAgentRunner._task_submission_schema(
-        kind,
-        None,
-        module_id="2.3",
-        submodule_id="2.3.2",
-        collaboration_request_ids=request_ids,
-    )
-    tool = _tool(
-        tmp_path,
-        allowed_outputs=[kind],
-        submission_schemas={kind: schema},
-    )
-
-    outcome = await tool(payload="not-json")
-
-    example = outcome["validation_errors"][0]["example"]
-    assert example == schema["examples"][0]
-    assert example["module_id"] == "2.3"
-    assert example["submodule_id"] == "2.3.2"
-    assert [item["request_id"] for item in example["dispositions"]] == request_ids
-
-
-@pytest.mark.asyncio
 async def test_module_commit_materializes_bound_parts_without_model_refs(
     tmp_path: Path,
 ) -> None:
@@ -1051,74 +1200,6 @@ async def test_runtime_claim_boundary_uses_project_evidence_metadata(
     assert claims["2.1.2"]["confidence"] == 0.0
     assert claims["2.1.2"]["unresolved"] is True
     assert claims["2.1.2"]["footnote_required"] is False
-
-
-@pytest.mark.asyncio
-async def test_submodule_commit_materializes_one_bound_leaf_and_runtime_claim(
-    tmp_path: Path,
-) -> None:
-    task_id = "submodule-author-2.1.1"
-    contract_ref = "Work/runs/run-1/context/submodule-authoring-2.1.1-r0.json"
-    contract = SubmoduleAuthoringInput(
-        run_id="run-1",
-        module_id="2.1",
-        submodule_id="2.1.1",
-        coverage_ref="Work/runs/run-1/coverage.json",
-        evidence_ref="Work/runs/run-1/evidence.jsonl",
-        manifest_ref="Work/runs/run-1/manifest.json",
-        knowledge_ref="Work/runs/run-1/knowledge/module-2.1.md",
-        collaboration_bundle_ref=(
-            "Work/runs/run-1/collaboration/bundles/submodules/2.1.1.json"
-        ),
-        discovery_ref=(
-            "Work/runs/run-1/collaboration/wave-1/submodules/2.1.1.json"
-        ),
-    )
-    ReportingStore(tmp_path).write_json(
-        contract_ref, contract.model_dump(mode="json")
-    )
-    SourceLedger(tmp_path, "run-1").register_project(
-        "E-0001", "测试证据", "Inputs/test.txt", "测试事实"
-    )
-    writer = WriteResultPartTool(
-        "run-1",
-        task_id,
-        0,
-        ReportingStore(tmp_path),
-        ["2.1.1"],
-        evidence_binding_required=True,
-    )
-    await writer(
-        part_id="2.1.1",
-        content="供配电系统现状已经形成可追溯的独立判断。",
-        evidence_ids=["E-0001"],
-    )
-    tool = _tool(
-        tmp_path,
-        task_id=task_id,
-        allowed_outputs=["submodule_draft_submission"],
-        input_contract_kind="submodule_authoring_input",
-        input_contract_ref=contract_ref,
-    )
-
-    outcome = await tool(
-        payload={
-            "kind": "submodule_draft_submission",
-            "module_id": "2.1",
-            "submodule_id": "2.1.1",
-            "unresolved_questions": [],
-            "revision": 0,
-        }
-    )
-
-    assert outcome["status"] == "completed", outcome
-    result = json.loads(
-        (tmp_path / outcome["result_path"]).read_text(encoding="utf-8")
-    )["payload"]
-    assert result["submodule_id"] == "2.1.1"
-    assert result["source_ids"] == ["E-0001"]
-    assert result["claim"]["submodule_id"] == "2.1.1"
-    assert f"[[CLAIM:{result['claim']['id']}]]" in result["narrative"]
 
 
 @pytest.mark.asyncio

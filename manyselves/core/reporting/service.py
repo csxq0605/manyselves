@@ -6,10 +6,14 @@ import hashlib
 import io
 import json
 import os
+import re
+import stat
 import tempfile
 import time
 import uuid
 from pathlib import Path
+from contextlib import contextmanager
+from typing import Iterator
 
 from docx import Document
 from pydantic import BaseModel, ConfigDict, Field
@@ -32,6 +36,7 @@ from .input_snapshot import RunInputSnapshotStore
 from .intake.manifest import build_manifest
 from .intake.wps_images import canonicalize_photo_bindings, extract_wps_images
 from .mappers import map_s2_1, map_s4_4, map_s4_6
+from .locks import exclusive_reporting_writer_lock
 from .models import (
     CostControlMode,
     EvidenceDecisionAction,
@@ -45,6 +50,7 @@ from .models import (
     UserSupplement,
 )
 from .output_verifier import OutputVerificationError, verify_current_run_outputs
+from .output_ownership import OutputOwnerStore, build_output_owner
 from .parallel_runtime import (
     ProjectWriteLease,
     ProjectWriteLeaseManager,
@@ -59,6 +65,7 @@ from .rendering.packaged_docx import verify_rendered_markdown
 from .retention import ReportingRetentionPlanner
 from .store import ReportingStore
 from .workflow import AgentWorkflowBlocked, ReportingNeedsDecisionError, ReportWorkflowRunner
+from .versions import ReportVersionStore
 
 
 class ReportingRunResult(BaseModel):
@@ -264,27 +271,31 @@ class ReportingService:
 
     def prepare_run(self, request: ReportRequest) -> str:
         """Persist a new run request and return its stable id before execution starts."""
-        self.store.ensure_layout()
         run_id = f"report-{uuid.uuid4().hex[:10]}"
-        self.store.write_json(f"Work/runs/{run_id}/request.json", request.model_dump(mode="json"))
-        explicit_refs: list[Path] = []
-        if request.source_markdown_ref is not None:
-            explicit_refs.append(request.source_markdown_ref)
-        if request.operation == "aggregate_existing":
-            if request.source_module_refs is not None:
-                explicit_refs.extend(request.source_module_refs.values())
-            else:
-                default_refs = [
-                    Path(f"Outputs/Modules/{module_id}.md")
-                    for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5")
-                ]
-                explicit_refs.extend(
-                    ref for ref in default_refs if (self.workspace / ref).is_file()
-                )
-        RunInputSnapshotStore(self.workspace).freeze(
-            run_id,
-            extra_refs=tuple(explicit_refs),
-        )
+        with exclusive_reporting_writer_lock(self.workspace):
+            self.store.ensure_layout()
+            self.store.write_json(
+                f"Work/runs/{run_id}/request.json",
+                request.model_dump(mode="json"),
+            )
+            explicit_refs: list[Path] = []
+            if request.source_markdown_ref is not None:
+                explicit_refs.append(request.source_markdown_ref)
+            if request.operation == "aggregate_existing":
+                if request.source_module_refs is not None:
+                    explicit_refs.extend(request.source_module_refs.values())
+                else:
+                    default_refs = [
+                        Path(f"Outputs/Modules/{module_id}.md")
+                        for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5")
+                    ]
+                    explicit_refs.extend(
+                        ref for ref in default_refs if (self.workspace / ref).is_file()
+                    )
+            RunInputSnapshotStore(self.workspace).freeze(
+                run_id,
+                extra_refs=tuple(explicit_refs),
+            )
         return run_id
 
     async def run_prepared(self, request: ReportRequest, run_id: str) -> ReportingRunResult:
@@ -311,13 +322,14 @@ class ReportingService:
         token = bind_project_write_lease(self.workspace, project_write_lease)
         lock_handle = None
         try:
-            lock_handle = self._acquire_run_lock(run_id)
-            return await self._execute_locked(
-                request,
-                run_id,
-                resume=resume,
-                project_write_lease=project_write_lease,
-            )
+            with exclusive_reporting_writer_lock(self.workspace):
+                lock_handle = self._acquire_run_lock(run_id)
+                return await self._execute_locked(
+                    request,
+                    run_id,
+                    resume=resume,
+                    project_write_lease=project_write_lease,
+                )
         finally:
             if lock_handle is not None:
                 fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
@@ -325,13 +337,14 @@ class ReportingService:
             reset_project_write_lease(token)
 
     def prepare_revision_run(self, request: RevisionRequest) -> str:
-        self.store.ensure_layout()
         run_id = f"report-revision-{uuid.uuid4().hex[:10]}"
-        self.store.write_json(
-            f"Work/runs/{run_id}/revision-request.json",
-            request.model_dump(mode="json"),
-        )
-        RunInputSnapshotStore(self.workspace).freeze(run_id)
+        with exclusive_reporting_writer_lock(self.workspace):
+            self.store.ensure_layout()
+            self.store.write_json(
+                f"Work/runs/{run_id}/revision-request.json",
+                request.model_dump(mode="json"),
+            )
+            RunInputSnapshotStore(self.workspace).freeze(run_id)
         return run_id
 
     async def run_revision_claimed(
@@ -355,15 +368,16 @@ class ReportingService:
         lock_handle = None
         workflow_id = f"report-revision:{run_id}"
         try:
-            lock_handle = self._acquire_run_lock(run_id)
-            result = await RevisionCoordinator(
-                self,
-                self._agent_runner_for(workflow_id),
-            ).run(
-                request,
-                run_id=run_id,
-                resume=resume,
-            )
+            with exclusive_reporting_writer_lock(self.workspace):
+                lock_handle = self._acquire_run_lock(run_id)
+                result = await RevisionCoordinator(
+                    self,
+                    self._agent_runner_for(workflow_id),
+                )._run_locked(
+                    request,
+                    run_id=run_id,
+                    resume=resume,
+                )
             if result.status != "needs_decision":
                 self._forget_agent_runner(workflow_id)
             return result
@@ -379,42 +393,85 @@ class ReportingService:
     async def _execute(
         self, request: ReportRequest, run_id: str, *, resume: bool = False
     ) -> ReportingRunResult:
-        project_lease = ProjectWriteLeaseManager(self.workspace).acquire(
-            run_id,
-            request.operation,
-        )
-        lease_token = bind_project_write_lease(
-            self.workspace,
-            project_lease.lease,
-        )
-        lock_handle = None
-        try:
-            lock_handle = self._acquire_run_lock(run_id)
-            return await self._execute_locked(
-                request,
+        with exclusive_reporting_writer_lock(self.workspace):
+            project_lease = ProjectWriteLeaseManager(self.workspace).acquire(
                 run_id,
-                resume=resume,
-                project_write_lease=project_lease.lease,
+                request.operation,
             )
-        finally:
-            if lock_handle is not None:
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-                lock_handle.close()
+            lease_token = bind_project_write_lease(
+                self.workspace,
+                project_lease.lease,
+            )
+            lock_handle = None
             try:
-                project_lease.release()
+                lock_handle = self._acquire_run_lock(run_id)
+                return await self._execute_locked(
+                    request,
+                    run_id,
+                    resume=resume,
+                    project_write_lease=project_lease.lease,
+                )
             finally:
-                reset_project_write_lease(lease_token)
+                if lock_handle is not None:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                    lock_handle.close()
+                try:
+                    project_lease.release()
+                finally:
+                    reset_project_write_lease(lease_token)
 
     def _acquire_run_lock(self, run_id: str):
-        lock_path = self.workspace / f"Work/runs/{run_id}/.active.lock"
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        handle = lock_path.open("a+", encoding="utf-8")
+        safe_run_id = self._safe_run_id(run_id)
+        runs_root = self.workspace / "Work" / "runs"
+        if runs_root.is_symlink():
+            raise ValueError("Work/runs must not be a symbolic link")
+        runs_root.mkdir(parents=True, exist_ok=True)
+        run_root = runs_root / safe_run_id
+        if run_root.is_symlink():
+            raise ValueError("report run root must not be a symbolic link")
+        run_root.mkdir(parents=True, exist_ok=True)
+        lock_path = run_root / ".active.lock"
+        if lock_path.is_symlink():
+            raise ValueError("report run lock must not be a symbolic link")
+        flags = os.O_RDWR | os.O_CREAT
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(lock_path, flags, 0o600)
+        handle = os.fdopen(descriptor, "a+", encoding="utf-8")
         try:
+            opened = os.fstat(handle.fileno())
+            path_stat = os.lstat(lock_path)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or not stat.S_ISREG(path_stat.st_mode)
+                or opened.st_nlink != 1
+                or path_stat.st_nlink != 1
+                or (opened.st_dev, opened.st_ino)
+                != (path_stat.st_dev, path_stat.st_ino)
+            ):
+                raise ValueError("report run lock must be one verified regular file")
+            os.fchmod(handle.fileno(), 0o600)
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = os.lstat(lock_path)
+            if (
+                locked.st_nlink != 1
+                or (opened.st_dev, opened.st_ino)
+                != (locked.st_dev, locked.st_ino)
+            ):
+                raise ValueError("report run lock identity changed while acquiring")
         except BlockingIOError as exc:
             handle.close()
             raise RuntimeError(f"report run is already active: {run_id}") from exc
+        except Exception:
+            handle.close()
+            raise
         return handle
+
+    @staticmethod
+    def _safe_run_id(run_id: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", run_id or "") or run_id in {".", ".."}:
+            raise ValueError("run_id must be a single safe path component")
+        return run_id
 
     async def _execute_locked(
         self,
@@ -586,7 +643,16 @@ class ReportingService:
             output_paths=output_paths,
             error=str(warning) if warning else None,
         )
-        self._save_run(result)
+        result = self._finalize_verified_run(
+            result,
+            publish_output_owner=(
+                state.get("delivery_completion_ref")
+                == f"Work/runs/{run_id}/delivery-completion.json"
+            ),
+        )
+        if result.status == "failed":
+            await self._notice(f"配电报告流程失败：{result.error}")
+            return result
         await self._notice(
             "配电报告流程已完成："
             + ", ".join(str(path.relative_to(self.workspace)) for path in result.output_paths)
@@ -737,6 +803,42 @@ class ReportingService:
         if not decision_id:
             raise ValueError("decision_id is required")
         current = self.decisions.load(decision_id)
+        request_path = self.workspace / f"Work/runs/{current.run_id}/request.json"
+        if not request_path.is_file():
+            raise FileNotFoundError(f"report request is missing for run: {current.run_id}")
+        request = ReportRequest.model_validate_json(request_path.read_text(encoding="utf-8"))
+        with exclusive_reporting_writer_lock(self.workspace):
+            project_lease = ProjectWriteLeaseManager(self.workspace).acquire(
+                current.run_id, request.operation
+            )
+            token = bind_project_write_lease(self.workspace, project_lease.lease)
+            lock_handle = None
+            try:
+                lock_handle = self._acquire_run_lock(current.run_id)
+                return await self._resume_decision_locked(
+                    decision_id,
+                    action,
+                    supplements,
+                    project_write_lease=project_lease.lease,
+                )
+            finally:
+                if lock_handle is not None:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                    lock_handle.close()
+                try:
+                    project_lease.release()
+                finally:
+                    reset_project_write_lease(token)
+
+    async def _resume_decision_locked(
+        self,
+        decision_id: str,
+        action: EvidenceDecisionAction,
+        supplements: list[UserSupplement] | None,
+        *,
+        project_write_lease: ProjectWriteLease,
+    ) -> ReportingRunResult:
+        current = self.decisions.load(decision_id)
         if action not in current.allowed_actions:
             raise ValueError(f"action is not allowed for evidence decision: {action}")
         if current.status == "resolved" and current.selected_action != action:
@@ -820,10 +922,11 @@ class ReportingService:
                     ],
                 },
             )
-        return await self._execute(
+        return await self._execute_locked(
             resumed_request,
             decision.run_id,
             resume=True,
+            project_write_lease=project_write_lease,
         )
 
     async def resume_run(
@@ -836,6 +939,53 @@ class ReportingService:
         supplements: list[UserSupplement] | None = None,
     ) -> ReportingRunResult:
         """Resume a checkpoint and synchronize any newly supplied user facts."""
+
+        _result_path, request_path, _revision_path, _checkpoint_path, _previous = (
+            self.validate_resume_run(run_id)
+        )
+        operation = (
+            ReportRequest.model_validate_json(
+                request_path.read_text(encoding="utf-8")
+            ).operation
+            if request_path.is_file()
+            else "revision"
+        )
+        with exclusive_reporting_writer_lock(self.workspace):
+            project_lease = ProjectWriteLeaseManager(self.workspace).acquire(
+                run_id, operation
+            )
+            token = bind_project_write_lease(self.workspace, project_lease.lease)
+            lock_handle = None
+            try:
+                lock_handle = self._acquire_run_lock(run_id)
+                return await self._resume_run_locked(
+                    run_id,
+                    cost_control_mode=cost_control_mode,
+                    max_provider_attempts=max_provider_attempts,
+                    max_total_tokens=max_total_tokens,
+                    supplements=supplements,
+                    project_write_lease=project_lease.lease,
+                )
+            finally:
+                if lock_handle is not None:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                    lock_handle.close()
+                try:
+                    project_lease.release()
+                finally:
+                    reset_project_write_lease(token)
+
+    async def _resume_run_locked(
+        self,
+        run_id: str,
+        *,
+        cost_control_mode: CostControlMode | None,
+        max_provider_attempts: int | None,
+        max_total_tokens: int | None,
+        supplements: list[UserSupplement] | None,
+        project_write_lease: ProjectWriteLease,
+    ) -> ReportingRunResult:
+        """Resume after writer, project lease, and run lock are held."""
 
         _result_path, request_path, revision_path, _checkpoint_path, _previous = (
             self.validate_resume_run(run_id)
@@ -881,7 +1031,12 @@ class ReportingService:
                         ],
                     },
                 )
-            return await self._execute(resumed_request, run_id, resume=True)
+            return await self._execute_locked(
+                resumed_request,
+                run_id,
+                resume=True,
+                project_write_lease=project_write_lease,
+            )
 
         from .revisions import RevisionCoordinator
 
@@ -925,7 +1080,7 @@ class ReportingService:
             result = await RevisionCoordinator(
                 self,
                 self._agent_runner_for(workflow_id),
-            ).run(resumed_revision, run_id=run_id, resume=True)
+            )._run_locked(resumed_revision, run_id=run_id, resume=True)
         except BaseException:
             self._forget_agent_runner(workflow_id)
             raise
@@ -1115,6 +1270,74 @@ class ReportingService:
         return self.store.write_json(
             f"Work/runs/{result.run_id}.json",
             result.model_dump(mode="json"),
+        )
+
+    def _finalize_verified_run(
+        self,
+        result: ReportingRunResult,
+        *,
+        publish_output_owner: bool,
+    ) -> ReportingRunResult:
+        """Durably save verified delivery, then publish shared-output ownership."""
+
+        if result.status not in {"completed", "delivered_with_archive_warning"}:
+            raise ValueError("only a verified delivered run can be finalized")
+        try:
+            result_path = self._save_run(result)
+            self.store.fsync_directory(result_path.parent)
+            if publish_output_owner:
+                self._publish_completed_output_owner(result.run_id)
+        except Exception as exc:
+            failed = result.model_copy(
+                update={
+                    "status": "failed",
+                    "error": (
+                        "verified output finalization failed: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                }
+            )
+            failed_path = self._save_run(failed)
+            self.store.fsync_directory(failed_path.parent)
+            return failed
+        return result
+
+    def _publish_completed_output_owner(self, run_id: str) -> Path:
+        safe_run_id = self._safe_run_id(run_id)
+        result_path = self.workspace / f"Work/runs/{safe_run_id}.json"
+        persisted = ReportingRunResult.model_validate_json(
+            result_path.read_text(encoding="utf-8")
+        )
+        if persisted.run_id != safe_run_id or persisted.status not in {
+            "completed",
+            "delivered_with_archive_warning",
+        }:
+            raise ValueError("output owner requires a persisted verified delivery")
+        receipt_ref = Path(f"Work/runs/{safe_run_id}/delivery-receipt.json")
+        receipt = DeliveryReceipt.model_validate_json(
+            (self.workspace / receipt_ref).read_text(encoding="utf-8")
+        )
+        version = ReportVersionStore(self.workspace).load(safe_run_id)
+        final_docx_sha256 = receipt.artifact_sha256.get("final_docx")
+        if (
+            not receipt.success
+            or receipt.storage_version not in {2, 3}
+            or version.version_id != safe_run_id
+            or version.run_id != safe_run_id
+            or version.storage_version not in {2, 3}
+            or not final_docx_sha256
+            or version.artifact_sha256.get("final_docx") != final_docx_sha256
+        ):
+            raise ValueError(
+                "output owner requires matching successful receipt and report version"
+            )
+        return OutputOwnerStore(self.workspace).publish(
+            build_output_owner(
+                run_id=safe_run_id,
+                report_version_id=version.version_id,
+                final_docx_sha256=final_docx_sha256,
+                delivery_receipt_ref=receipt_ref,
+            )
         )
 
     async def _build_manifest(self, state: dict) -> None:

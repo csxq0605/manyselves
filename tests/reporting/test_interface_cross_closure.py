@@ -197,7 +197,7 @@ def test_cross_closure_rejects_answered_or_inexact_sets() -> None:
         )
 
 
-def test_resume_rejects_foreign_or_mutated_registry_hash(tmp_path) -> None:
+def test_resume_rejects_legacy_pre_cross_interface_registry_checkpoint(tmp_path) -> None:
     store = ReportingStore(tmp_path)
     run_id = "run-interface-resume"
     registry = InterfaceResolutionRegistry(run_id=run_id, resolutions={})
@@ -212,23 +212,5 @@ def test_resume_rejects_foreign_or_mutated_registry_hash(tmp_path) -> None:
         "interface_resolution_registry_ref": ref,
         "interface_resolution_registry_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
     }
-    runner._restore_resume_state(state, checkpoint)
-    assert state["interface_resolution_registry_ref"] == ref
-
-    mutated = path.read_bytes() + b"\n"
-    path.write_bytes(mutated)
-    with pytest.raises(Exception, match="registry hash"):
-        runner._restore_resume_state(
-            {"run_id": run_id, "request": SimpleNamespace(target_modules=[])},
-            checkpoint,
-        )
-
-    foreign_checkpoint = dict(checkpoint)
-    foreign_checkpoint["interface_resolution_registry_ref"] = (
-        "Work/runs/other-run/collaboration/interface-resolution-registry.json"
-    )
-    with pytest.raises(Exception, match="outside the current run"):
-        runner._restore_resume_state(
-            {"run_id": run_id, "request": SimpleNamespace(target_modules=[])},
-            foreign_checkpoint,
-        )
+    with pytest.raises(Exception, match="invalid resume checkpoint"):
+        runner._restore_resume_state(state, checkpoint)

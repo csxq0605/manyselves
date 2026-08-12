@@ -414,13 +414,6 @@ class RunReportingWorkflowTool(Tool):
         cost_control_mode: CostControlMode = "observe",
         max_provider_attempts: int = 80,
         max_total_tokens: int = 800000,
-        execution_mode: Literal[
-            "all_ready", "current_serial_review", "bounded_module_lanes"
-        ] = "all_ready",
-        authoring_granularity: Literal["leaf_37", "module_5"] = "leaf_37",
-        module_lane_concurrency: int = 5,
-        submodule_task_concurrency: int = 8,
-        submodule_batch_size: int = 14,
     ) -> dict[str, Any]:
         """Run the report workflow.
 
@@ -441,20 +434,8 @@ class RunReportingWorkflowTool(Tool):
             cost_control_mode: Observe, warn, or pause only after a completed stage/checkpoint.
             max_provider_attempts: Provider-attempt window for cost observation or boundary pause.
             max_total_tokens: Token window for cost observation or boundary pause.
-            execution_mode: ``all_ready`` dispatches every ready module in the
-                business path.  ``current_serial_review`` and
-                ``bounded_module_lanes`` remain compatibility modes for older
-                requests/checkpoints.
-            authoring_granularity: Sole authoring A/B switch. ``leaf_37`` runs
-                the three leaf waves before deterministic module reduction.
-                ``module_5`` skips the leaf waves and always runs five complete
-                author-review-revise-recheck lanes concurrently.
-            module_lane_concurrency: Legacy scheduling hint retained for
-                telemetry; all_ready does not use it as a hard cap.
-            submodule_task_concurrency: Maximum simultaneously active leaf
-                discovery, response, or authoring tasks. Defaults to 8; all 37
-                leaves remain queued and recoverable rather than launching at once.
-            submodule_batch_size: Deprecated compatibility input; active Wave 1/2/3 tasks are never physically batched.
+            Full reports always run exactly five isolated module-level
+                author-review-revise-recheck lanes before Cross review.
         """
 
         request = ReportRequest(
@@ -479,11 +460,6 @@ class RunReportingWorkflowTool(Tool):
             cost_control_mode=cost_control_mode,
             max_provider_attempts=max_provider_attempts,
             max_total_tokens=max_total_tokens,
-            execution_mode=execution_mode,
-            authoring_granularity=authoring_granularity,
-            module_lane_concurrency=module_lane_concurrency,
-            submodule_task_concurrency=submodule_task_concurrency,
-            submodule_batch_size=submodule_batch_size,
         )
         return self.controller.start(request)
 

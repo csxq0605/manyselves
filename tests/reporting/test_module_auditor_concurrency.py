@@ -91,12 +91,10 @@ async def test_all_ready_module_lanes_admit_every_ready_module(tmp_path: Path) -
         return _submission(runner, lane_state, module_id)
 
     runner._module_pipeline = pipeline
-    await runner._run_bounded_module_lanes(
+    await runner._run_module_lanes(
         MODULES,
         state,
         "workflow-module-all-ready",
-        concurrency=1,  # legacy hint; all_ready must not use it as a cap
-        all_ready=True,
     )
 
     assert maximum_active == len(MODULES)
@@ -131,12 +129,10 @@ async def test_module_lane_failure_drains_siblings_and_writes_terminal_barrier(
 
     runner._module_pipeline = pipeline
     with pytest.raises(AgentWorkflowError, match="injected module lane failure"):
-        await runner._run_bounded_module_lanes(
+        await runner._run_module_lanes(
             MODULES,
             state,
             "workflow-module-failure",
-            concurrency=1,
-            all_ready=True,
         )
 
     assert set(started) == set(MODULES)

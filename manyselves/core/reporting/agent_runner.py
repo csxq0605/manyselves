@@ -88,11 +88,11 @@ from .input_contracts import (
     ChiefEditorInput,
     ChiefRevisionInput,
     CrossReviewInput,
+    CrossOwnerInput,
     FinalReviewInput,
     ModuleAuthoringInput,
     ModuleReviewInput,
     ModuleRevisionInput,
-    SubmoduleAuthoringInput,
     TemplateDistillationInput,
 )
 from .message_router import WorkflowMessageRouter, artifact_path_refs
@@ -200,16 +200,6 @@ MODULE_COLLABORATION_SUBMISSION_KINDS = frozenset(
     {
         "module_discovery_submission",
         "module_interface_response_submission",
-        "submodule_discovery_batch_submission",
-        "submodule_discovery_submission",
-        "submodule_interface_response_submission",
-    }
-)
-SUBMODULE_SCOPED_SUBMISSION_KINDS = frozenset(
-    {
-        "submodule_discovery_submission",
-        "submodule_interface_response_submission",
-        "submodule_draft_submission",
     }
 )
 
@@ -658,15 +648,6 @@ class ReportingAgentRunner:
             return "module_revision"
         if "module_submission" in outputs:
             return "module_authoring"
-        if "submodule_draft_submission" in outputs:
-            return "submodule_authoring"
-        if (
-            "submodule_discovery_submission" in outputs
-            or "submodule_discovery_batch_submission" in outputs
-        ):
-            return "submodule_collaboration_discovery"
-        if "submodule_interface_response_submission" in outputs:
-            return "submodule_collaboration_response"
         if "module_discovery_submission" in outputs:
             return "module_collaboration_discovery"
         if "module_interface_response_submission" in outputs:
@@ -1723,7 +1704,6 @@ class ReportingAgentRunner:
         contract,
         *,
         module_id: str | None = None,
-        submodule_id: str | None = None,
         collaboration_request_ids: list[str] | None = None,
     ) -> dict:
         """Specialize provider-visible review schemas to the exact active task."""
@@ -1742,24 +1722,7 @@ class ReportingAgentRunner:
             schema.get("properties", {}).get("module_id", {}).update(
                 {"const": module_id}
             )
-            if kind in {
-                "submodule_discovery_submission",
-                "submodule_interface_response_submission",
-            }:
-                if submodule_id is None:
-                    raise ValueError(
-                        f"{kind} requires one fixed leaf-submodule identity"
-                    )
-                schema.get("properties", {}).get("submodule_id", {}).update(
-                    {"const": submodule_id}
-                )
-            if (
-                kind in {
-                    "module_interface_response_submission",
-                    "submodule_interface_response_submission",
-                }
-                and collaboration_request_ids is not None
-            ):
+            if kind == "module_interface_response_submission" and collaboration_request_ids is not None:
                 dispositions = schema.get("properties", {}).get(
                     "dispositions", {}
                 )
@@ -1780,36 +1743,7 @@ class ReportingAgentRunner:
             if examples and isinstance(examples[0], dict):
                 example = examples[0]
                 example["module_id"] = module_id
-                if kind == "submodule_discovery_submission":
-                    example.update(
-                        {
-                            "submodule_id": submodule_id,
-                            "discovery_summary": (
-                                f"已完成固定叶子 {submodule_id} 的独立证据发现。"
-                            ),
-                            "evidence_ids": [],
-                            "evidence_gaps": [],
-                            "provisional_findings": [],
-                            "interface_signals": [],
-                        }
-                    )
-                elif kind == "submodule_discovery_batch_submission":
-                    first_leaf = next(iter(REPORT_TAXONOMY[module_id].submodules))
-                    example["discoveries"] = [
-                        {
-                            "kind": "submodule_discovery_submission",
-                            "module_id": module_id,
-                            "submodule_id": first_leaf,
-                            "discovery_summary": (
-                                f"已完成固定叶子 {first_leaf} 的独立证据发现。"
-                            ),
-                            "evidence_ids": [],
-                            "evidence_gaps": [],
-                            "provisional_findings": [],
-                            "interface_signals": [],
-                        }
-                    ]
-                elif kind == "module_discovery_submission":
+                if kind == "module_discovery_submission":
                     example.update(
                         {
                             "discovery_summary": (
@@ -1828,19 +1762,6 @@ class ReportingAgentRunner:
                             "requests": [],
                         }
                     )
-                elif kind == "submodule_interface_response_submission":
-                    example["submodule_id"] = submodule_id
-                    example["dispositions"] = [
-                        {
-                            "request_id": request_id,
-                            "status": "unresolved",
-                            "evidence_ids": [],
-                            "conditions": [],
-                            "unresolved_reason": "当前证据不足以形成可靠回答。",
-                            "boundary": "正文保留该接口为未决边界，不推断目标模块事实。",
-                        }
-                        for request_id in (collaboration_request_ids or [])
-                    ]
                 elif kind == "module_interface_response_submission" and (
                     collaboration_request_ids is not None
                 ):
@@ -1855,16 +1776,6 @@ class ReportingAgentRunner:
                         }
                         for request_id in collaboration_request_ids
                     ]
-        elif isinstance(contract, SubmoduleAuthoringInput):
-            schema.get("properties", {}).get("module_id", {}).update(
-                {"const": contract.module_id}
-            )
-            schema.get("properties", {}).get("submodule_id", {}).update(
-                {"const": contract.submodule_id}
-            )
-            schema.get("properties", {}).get("revision", {}).update(
-                {"const": contract.revision}
-            )
         elif isinstance(contract, ModuleAuthoringInput):
             schema.get("properties", {}).get("module_id", {}).update({"const": contract.module_id})
             schema.get("properties", {}).get("revision", {}).update({"const": contract.revision})
@@ -1915,6 +1826,28 @@ class ReportingAgentRunner:
                 schema.get("properties", {}).get("verdicts", {}).update(
                     {"minItems": required_count, "maxItems": required_count}
                 )
+        elif isinstance(contract, CrossOwnerInput):
+            # A Cross-owner lane is bound to one durable owner identity.  The
+            # runtime allocates newly-created finding ids, while rechecks must
+            # copy one exact verdict id for each immutable prior finding.
+            schema.get("properties", {}).get("owner_module_id", {}).update(
+                {"const": contract.owner_module_id}
+            )
+            coverage = schema.get("$defs", {}).get("CrossReviewCoverageEntry", {})
+            coverage.get("properties", {}).get("module_id", {}).update(
+                {"const": contract.owner_module_id}
+            )
+            finding = schema.get("$defs", {}).get("CrossReviewFinding", {})
+            remove_property(finding, "id")
+            if kind == "cross_owner_verdict_submission":
+                required_ids = [finding.id for finding in contract.required_findings]
+                verdicts = schema.get("properties", {}).get("verdicts", {})
+                verdicts.update(
+                    {"minItems": len(required_ids), "maxItems": len(required_ids)}
+                )
+                schema.get("$defs", {}).get("ResolutionVerdict", {}).get(
+                    "properties", {}
+                ).get("finding_id", {}).update({"enum": required_ids})
         elif isinstance(contract, FinalReviewInput):
             remove_property(schema, "checked_section_ids")
             remove_property(
@@ -1936,15 +1869,16 @@ class ReportingAgentRunner:
             if isinstance(contract, ModuleAuthoringInput):
                 example["module_id"] = contract.module_id
                 example["revision"] = contract.revision
-            elif isinstance(contract, SubmoduleAuthoringInput):
-                example["module_id"] = contract.module_id
-                example["submodule_id"] = contract.submodule_id
-                example["revision"] = contract.revision
             elif isinstance(contract, ModuleRevisionInput):
                 example["module_id"] = contract.module_id
                 example["base_revision"] = contract.subject.revision
                 example["revision"] = contract.subject.revision + 1
-            example.pop("coverage", None)
+            elif isinstance(contract, CrossOwnerInput):
+                example["owner_module_id"] = contract.owner_module_id
+                if isinstance(example.get("coverage"), dict):
+                    example["coverage"]["module_id"] = contract.owner_module_id
+            if not isinstance(contract, CrossOwnerInput):
+                example.pop("coverage", None)
             example.pop("checked_section_ids", None)
             for field in ("findings", "new_findings"):
                 values = example.get(field, [])
@@ -1974,25 +1908,30 @@ class ReportingAgentRunner:
                     base["evidence_refs"] = [contract.subject_ref]
                 elif isinstance(contract, CrossReviewInput):
                     base["evidence_refs"] = [next(iter(contract.module_refs.values()))]
+                elif isinstance(contract, CrossOwnerInput):
+                    base["evidence_refs"] = [contract.owner_subject_ref]
                 elif isinstance(contract, FinalReviewInput):
                     base["evidence_refs"] = [contract.subject_ref]
-                example["verdicts"] = [deepcopy(base) for _ in required_findings]
+                if isinstance(contract, CrossOwnerInput):
+                    example["verdicts"] = [
+                        {
+                            **deepcopy(base),
+                            "finding_id": finding.id,
+                        }
+                        for finding in required_findings
+                    ]
+                else:
+                    example["verdicts"] = [deepcopy(base) for _ in required_findings]
         return schema
 
     def _collaboration_request_ids(
         self,
         envelope: TaskEnvelope,
         module_id: str | None,
-        submodule_id: str | None,
     ) -> list[str] | None:
-        """Load the exact sparse Wave 2 inbox for task-scoped schema binding."""
+        """Load the exact module-level Wave 2 inbox for schema binding."""
 
-        if (
-            not {
-                "module_interface_response_submission",
-                "submodule_interface_response_submission",
-            }.intersection(envelope.allowed_outputs)
-        ):
+        if "module_interface_response_submission" not in envelope.allowed_outputs:
             return None
         if module_id is None:
             raise ValueError("Wave 2 response requires a fixed module identity")
@@ -2005,19 +1944,8 @@ class ReportingAgentRunner:
             raise ValueError(
                 "Wave 2 response requires exactly one collaboration inbox ref"
             )
-        submodule_response = (
-            "submodule_interface_response_submission"
-            in envelope.allowed_outputs
-        )
-        if submodule_response and submodule_id is None:
-            raise ValueError("Wave 2 submodule response requires one fixed leaf identity")
         expected_ref = (
-            f"Work/runs/{envelope.run_id}/collaboration/inboxes/"
-            + (
-                f"submodule-{submodule_id}.json"
-                if submodule_response
-                else f"module-{module_id}.json"
-            )
+            f"Work/runs/{envelope.run_id}/collaboration/inboxes/module-{module_id}.json"
         )
         if inbox_refs[0] != expected_ref:
             raise ValueError(
@@ -2039,18 +1967,9 @@ class ReportingAgentRunner:
             raise ValueError("Wave 2 collaboration inbox is invalid JSON") from exc
         requests = inbox.get("requests") if isinstance(inbox, dict) else None
         if (
-            inbox.get("kind")
-            != (
-                "submodule_interface_inbox"
-                if submodule_response
-                else "module_interface_inbox"
-            )
+            inbox.get("kind") != "module_interface_inbox"
             or inbox.get("run_id") != envelope.run_id
             or inbox.get("module_id") != module_id
-            or (
-                submodule_response
-                and inbox.get("submodule_id") != submodule_id
-            )
             or not isinstance(requests, list)
             or not requests
         ):
@@ -2072,13 +1991,6 @@ class ReportingAgentRunner:
         ):
             raise ValueError(
                 "Wave 2 collaboration inbox contains a request for another module"
-            )
-        if submodule_response and any(
-            request.target_submodule_id != submodule_id
-            for request in typed_requests
-        ):
-            raise ValueError(
-                "Wave 2 collaboration inbox contains a request for another submodule"
             )
         request_ids = [
             request.request_id for request in typed_requests
@@ -2388,11 +2300,6 @@ class ReportingAgentRunner:
                     "template distillation template_ref is not one canonical workspace file"
                 )
         input_contract = self._input_contract(envelope)
-        submodule_id = (
-            envelope.target_submodule_ids[0]
-            if len(envelope.target_submodule_ids) == 1
-            else None
-        )
         collaboration_outputs = (
             set(envelope.allowed_outputs) & MODULE_COLLABORATION_SUBMISSION_KINDS
         )
@@ -2403,24 +2310,15 @@ class ReportingAgentRunner:
                 "a collaboration wave task requires exactly one collaboration "
                 "submission kind and one fixed module specialist identity"
             )
-        if (
-            collaboration_outputs & SUBMODULE_SCOPED_SUBMISSION_KINDS
-            and submodule_id is None
-        ):
-            raise ValueError(
-                "a submodule collaboration task requires exactly one fixed leaf scope"
-            )
         collaboration_request_ids = self._collaboration_request_ids(
             envelope,
             module_id,
-            submodule_id,
         )
         task_submission_schemas = {
             kind: self._task_submission_schema(
                 kind,
                 input_contract,
                 module_id=module_id,
-                submodule_id=submodule_id,
                 collaboration_request_ids=collaboration_request_ids,
             )
             for kind in envelope.allowed_outputs
@@ -2430,8 +2328,6 @@ class ReportingAgentRunner:
             if template_inspection is not None
             else list(input_contract.required_submodule_ids)
             if isinstance(input_contract, ModuleAuthoringInput)
-            else [input_contract.submodule_id]
-            if isinstance(input_contract, SubmoduleAuthoringInput)
             else list(input_contract.target_submodule_ids)
             if isinstance(input_contract, ModuleRevisionInput)
             else [
@@ -2457,7 +2353,6 @@ class ReportingAgentRunner:
             {
                 "module_submission",
                 "module_revision_submission",
-                "submodule_draft_submission",
             }
             & set(envelope.allowed_outputs)
         )
@@ -2707,20 +2602,18 @@ class ReportingAgentRunner:
         envelope: TaskEnvelope,
         session_key: str | None,
     ) -> str:
-        """Scope concurrent leaf tasks without weakening durable role ownership."""
+        """Scope concurrent module tasks without weakening durable role ownership."""
 
         if definition.id == "evidence-auditor" and session_key:
             return session_key
         if (
-            session_key
-            and re.fullmatch(r"module-2\.[1-5]-specialist", definition.id)
-            and len(envelope.target_submodule_ids) == 1
-            and (
-                set(envelope.allowed_outputs) & SUBMODULE_SCOPED_SUBMISSION_KINDS
-                or "module_revision_submission" in envelope.allowed_outputs
-            )
-            and session_key == f"submodule-{envelope.target_submodule_ids[0]}"
+            definition.id == "cross-module-reviewer"
+            and session_key
+            and session_key.startswith("cross-owner-")
         ):
+            # Cross-owner lanes share one packaged reviewer definition but must
+            # keep one durable Provider identity per owner module.  The same
+            # key is intentionally reused for that owner's recheck.
             return session_key
         return definition.id
 

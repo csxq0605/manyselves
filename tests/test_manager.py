@@ -106,30 +106,18 @@ def test_create_tools_for_main(manager):
         "aggregate_existing",
         "render_existing",
     }
-    execution_mode = reporting_schema["properties"]["execution_mode"]
-    assert set(execution_mode["enum"]) == {
-        "all_ready",
-        "current_serial_review",
-        "bounded_module_lanes",
-    }
-    assert "execution_mode" not in reporting_schema["required"]
-    authoring_granularity = reporting_schema["properties"]["authoring_granularity"]
-    assert set(authoring_granularity["enum"]) == {"leaf_37", "module_5"}
-    assert "authoring_granularity" not in reporting_schema["required"]
+    assert {
+        "execution_mode",
+        "authoring_granularity",
+        "module_lane_concurrency",
+        "submodule_task_concurrency",
+        "submodule_batch_size",
+    }.isdisjoint(reporting_schema["properties"])
     reporting_tool = tools.get("run_reporting_workflow")
     assert reporting_tool is not None
-    assert (
-        inspect.signature(reporting_tool.__call__)
-        .parameters["execution_mode"]
-        .default
-        == "all_ready"
-    )
-    assert (
-        inspect.signature(reporting_tool.__call__)
-        .parameters["authoring_granularity"]
-        .default
-        == "leaf_37"
-    )
+    assert "authoring_granularity" not in inspect.signature(
+        reporting_tool.__call__
+    ).parameters
 
 
 def test_main_does_not_advertise_mineru_when_cli_is_unavailable(manager):
@@ -179,7 +167,8 @@ async def test_start_creates_loops(mock_factory, manager):
         "render_existing",
     ):
         assert operation in system_prompt
-    assert "独立、可调度、可恢复任务" in system_prompt
+    assert "五个模块分别以" in system_prompt
+    assert "小节级 Agent、Task、Session 或 Lane" in system_prompt
     assert all(
         legacy not in manager._loops
         for legacy in ("data_analysis", "plotting", "theory", "report")

@@ -28,12 +28,18 @@ from manyselves.core.reporting.agent_runner import (
     ReportingAgentRunner,
     load_conversation_trace,
 )
-from manyselves.core.reporting.agentic_models import AgentRunStatus, ModuleSubmission, TaskEnvelope
+from manyselves.core.reporting.agentic_models import (
+    AgentRunStatus,
+    CrossReviewFinding,
+    ModuleSubmission,
+    TaskEnvelope,
+)
 from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.reporting.input_contracts import (
     INPUT_CONTRACT_EXAMPLES,
     INPUT_CONTRACT_TYPES,
     ChiefEditorInput,
+    CrossOwnerInput,
     ModuleAuthoringInput,
     ModuleContentView,
     ModuleReviewInput,
@@ -450,113 +456,6 @@ async def test_new_dispatch_refuses_unreconciled_provider_attempt(
     )
 
 
-def test_leaf_tasks_use_distinct_durable_identity_leases_within_one_module() -> None:
-    definition = load_packaged_agents()["module-2.1-specialist"]
-    first = TaskEnvelope(
-        task_id="submodule-discovery-2.1.1",
-        run_id="run-leaf-identities",
-        agent_id=definition.id,
-        objective="发现 2.1.1",
-        allowed_outputs=["submodule_discovery_submission"],
-        target_submodule_ids=["2.1.1"],
-    )
-    second = first.model_copy(
-        update={
-            "task_id": "submodule-discovery-2.1.2",
-            "target_submodule_ids": ["2.1.2"],
-        }
-    )
-    module_task = first.model_copy(
-        update={
-            "task_id": "module-2.1",
-            "allowed_outputs": ["module_submission"],
-            "target_submodule_ids": list(REPORT_TAXONOMY["2.1"].submodules),
-        }
-    )
-    revision_task = first.model_copy(
-        update={
-            "task_id": "submodule-revision-r1-2.1.1",
-            "allowed_outputs": ["module_revision_submission"],
-        }
-    )
-
-    first_key = ReportingAgentRunner._identity_key(
-        definition, first, "submodule-2.1.1"
-    )
-    second_key = ReportingAgentRunner._identity_key(
-        definition, second, "submodule-2.1.2"
-    )
-
-    assert first_key == "submodule-2.1.1"
-    assert second_key == "submodule-2.1.2"
-    assert first_key != second_key
-    assert ReportingAgentRunner._identity_key(
-        definition, revision_task, "submodule-2.1.1"
-    ) == "submodule-2.1.1"
-    assert ReportingAgentRunner._identity_key(
-        definition, module_task, "specialist-2.1"
-    ) == definition.id
-
-    all_leaf_keys: set[str] = set()
-    for module_id, taxonomy in REPORT_TAXONOMY.items():
-        specialist = load_packaged_agents()[f"module-{module_id}-specialist"]
-        for submodule_id in taxonomy.submodules:
-            task_id = f"submodule-discovery-{submodule_id}"
-            leaf = TaskEnvelope(
-                task_id=task_id,
-                run_id="run-all-leaf-identities",
-                agent_id=specialist.id,
-                objective=f"发现 {submodule_id}",
-                allowed_outputs=["submodule_discovery_submission"],
-                target_submodule_ids=[submodule_id],
-            )
-            key = ReportingAgentRunner._identity_key(
-                specialist, leaf, f"submodule-{submodule_id}"
-            )
-            assert key == f"submodule-{submodule_id}"
-            all_leaf_keys.add(key)
-    assert len(all_leaf_keys) == 37
-
-
-def test_collaboration_submission_examples_are_specialized_to_current_leaf() -> None:
-    discovery = ReportingAgentRunner._task_submission_schema(
-        "submodule_discovery_submission",
-        None,
-        module_id="2.3",
-        submodule_id="2.3.2",
-        collaboration_request_ids=[],
-    )
-    discovery_example = discovery["examples"][0]
-    assert discovery_example["module_id"] == "2.3"
-    assert discovery_example["submodule_id"] == "2.3.2"
-    assert discovery_example["evidence_ids"] == []
-    assert discovery_example["interface_signals"] == []
-
-    request_ids = [
-        "IF-2.1.1-2.3.2-001",
-        "IF-2.4.1-2.3.2-002",
-    ]
-    response = ReportingAgentRunner._task_submission_schema(
-        "submodule_interface_response_submission",
-        None,
-        module_id="2.3",
-        submodule_id="2.3.2",
-        collaboration_request_ids=request_ids,
-    )
-    response_example = response["examples"][0]
-    assert response_example["module_id"] == "2.3"
-    assert response_example["submodule_id"] == "2.3.2"
-    assert [
-        item["request_id"] for item in response_example["dispositions"]
-    ] == request_ids
-    assert all(
-        item["status"] == "unresolved"
-        and item["unresolved_reason"]
-        and item["boundary"]
-        for item in response_example["dispositions"]
-    )
-
-
 def test_module_authoring_schema_and_example_use_current_identity(
     tmp_path: Path,
 ) -> None:
@@ -619,6 +518,76 @@ def test_module_authoring_schema_and_example_use_current_identity(
     assert "list_result_parts" in content_description
     assert registry.get("write_result_parts") is None
     assert "write_result_parts" not in registry._schema_cache
+
+
+def test_cross_owner_reviewers_use_one_identity_per_owner_and_reuse_on_recheck() -> None:
+    definition = load_packaged_agents()["cross-module-reviewer"]
+    initial = TaskEnvelope(
+        task_id="cross-owner-2.1-r0-initial",
+        run_id="run-cross-owner-identity",
+        agent_id=definition.id,
+        objective="检查模块 2.1 的跨模块关系",
+        allowed_outputs=["cross_owner_finding_submission"],
+        target_submodule_ids=list(REPORT_TAXONOMY["2.1"].submodules),
+    )
+    recheck = initial.model_copy(
+        update={
+            "task_id": "cross-owner-2.1-r1-recheck",
+            "allowed_outputs": ["cross_owner_verdict_submission"],
+        }
+    )
+    other_owner = initial.model_copy(
+        update={"task_id": "cross-owner-2.3-r0-initial"}
+    )
+
+    assert ReportingAgentRunner._identity_key(
+        definition, initial, "cross-owner-2.1"
+    ) == "cross-owner-2.1"
+    assert ReportingAgentRunner._identity_key(
+        definition, recheck, "cross-owner-2.1"
+    ) == "cross-owner-2.1"
+    assert ReportingAgentRunner._identity_key(
+        definition, other_owner, "cross-owner-2.3"
+    ) == "cross-owner-2.3"
+    assert ReportingAgentRunner._identity_key(
+        definition, initial, "cross-module-reviewer"
+    ) == definition.id
+
+
+def test_cross_owner_submission_schema_binds_owner_and_required_verdict_ids() -> None:
+    contract = CrossOwnerInput.model_validate(
+        INPUT_CONTRACT_EXAMPLES["cross_owner_input"]
+    )
+    initial = ReportingAgentRunner._task_submission_schema(
+        "cross_owner_finding_submission",
+        contract,
+    )
+    assert initial["properties"]["owner_module_id"]["const"] == "2.1"
+    assert (
+        initial["$defs"]["CrossReviewCoverageEntry"]["properties"]["module_id"]["const"]
+        == "2.1"
+    )
+    assert "id" not in initial["$defs"]["CrossReviewFinding"]["required"]
+    assert "id" not in initial["$defs"]["CrossReviewFinding"]["properties"]
+
+    required = CrossReviewFinding.model_construct(id="X-2.1-001")
+    recheck_contract = contract.model_copy(
+        update={
+            "phase": "recheck",
+            "review_round": 1,
+            "required_findings": [required],
+        }
+    )
+    recheck = ReportingAgentRunner._task_submission_schema(
+        "cross_owner_verdict_submission",
+        recheck_contract,
+    )
+    assert recheck["properties"]["verdicts"]["minItems"] == 1
+    assert recheck["properties"]["verdicts"]["maxItems"] == 1
+    assert recheck["$defs"]["ResolutionVerdict"]["properties"]["finding_id"]["enum"] == [
+        "X-2.1-001"
+    ]
+    assert recheck["examples"][0]["verdicts"][0]["finding_id"] == "X-2.1-001"
 
 
 def test_wave_two_submission_schema_is_bound_to_exact_sparse_inbox(

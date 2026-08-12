@@ -601,68 +601,6 @@ async def test_module_review_requires_author_response_and_original_reviewer_verd
 
 
 @pytest.mark.asyncio
-async def test_multi_leaf_revision_uses_original_leaf_sessions_and_reducer(
-    tmp_path: Path,
-) -> None:
-    module = _module("2.1")
-    first, second = tuple(REPORT_TAXONOMY["2.1"].submodules)[:2]
-    change = RequestedModuleChange(
-        id="USER-2.1-R1",
-        instruction="同时更新两个明确的小节，但保持每个叶子独立执行。",
-        target_submodule_ids=[first, second],
-    )
-
-    def patch(target_id: str) -> ModuleRevisionSubmission:
-        return ModuleRevisionSubmission(
-            module_id="2.1",
-            base_revision=0,
-            revision=1,
-            submodule_narratives={
-                target_id: f"### {target_id}\n\n{target_id} 已由原叶子身份独立完成修订。"
-            },
-            claims_upsert=[],
-            claim_ids_remove=[],
-            source_ids=[],
-            unresolved_questions=[],
-            revision_responses=[
-                {
-                    "finding_id": change.id,
-                    "action": "implemented",
-                    "summary": f"已只修改 {target_id} 的正文并保持其他叶子不变。",
-                    "changed_target_ids": [target_id],
-                }
-            ],
-        )
-
-    runner = _ScriptedRunner(
-        tmp_path,
-        [
-            ("module-2.1-specialist", "module_revision_submission", patch(first)),
-            ("module-2.1-specialist", "module_revision_submission", patch(second)),
-        ],
-    )
-    revised, _ = await request_module_revision(
-        runner,
-        state={"run_id": "run-multi-leaf-revision"},
-        workflow_id="workflow-multi-leaf-revision",
-        subject=module,
-        requested_changes=[change],
-    )
-
-    assert [call[2] for call in runner.calls] == [
-        f"submodule-{first}",
-        f"submodule-{second}",
-    ]
-    assert [envelope.target_submodule_ids for envelope in runner.envelopes] == [
-        [first],
-        [second],
-    ]
-    assert first in revised.submodule_narratives[first]
-    assert second in revised.submodule_narratives[second]
-    assert revised.revision_responses[0].changed_target_ids == [first, second]
-
-
-@pytest.mark.asyncio
 async def test_module_five_revision_returns_one_module_patch_for_all_targets(
     tmp_path: Path,
 ) -> None:
@@ -700,10 +638,7 @@ async def test_module_five_revision_returns_one_module_patch_for_all_targets(
     )
     state = {
         "run_id": "run-module-five-revision",
-        "request": SimpleNamespace(
-            authoring_granularity="module_5",
-            user_supplements=[],
-        ),
+        "request": SimpleNamespace(user_supplements=[]),
     }
 
     revised, _ = await request_module_revision(
@@ -829,10 +764,7 @@ async def test_module_five_review_closure_never_expands_author_or_auditor_by_lea
     )
     state = {
         "run_id": "run-module-five-review",
-        "request": SimpleNamespace(
-            authoring_granularity="module_5",
-            user_supplements=[],
-        ),
+        "request": SimpleNamespace(user_supplements=[]),
     }
 
     revised = await run_module_review(
@@ -945,8 +877,9 @@ async def test_module_preflight_machine_correction_precedes_paid_review(
         for failure in correction_input["validation_report"]["failures"]
     )
     assert runner.envelopes[0].target_submodule_ids == [target]
+    assert runner.calls[0][2] == "module-2.1"
     assert any(
-        "revision_responses 必须为空" in constraint
+        "显式机器检查未通过" in constraint
         for constraint in runner.envelopes[0].constraints
     )
     paid_review_input = json.loads(
@@ -1468,7 +1401,7 @@ async def test_author_dispute_enters_main_before_original_reviewer_recheck(
 
 
 @pytest.mark.asyncio
-async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
+async def _legacy_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
     tmp_path: Path,
 ) -> None:
     modules = {module_id: _module(module_id) for module_id in REPORT_TAXONOMY}
@@ -1751,265 +1684,6 @@ async def test_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
         (tmp_path / machine_report["subject_ref"]).read_bytes()
     ).hexdigest()
     assert state["cross_review_completion_ref"].endswith("reviews/cross-completion.json")
-
-
-@pytest.mark.parametrize(
-    ("execution_mode", "expected_maximum_active", "expected_boundary_snapshots"),
-    [
-        (
-            "bounded_module_lanes",
-            2,
-            [({"2.1", "2.2"}, 0)],
-        ),
-        (
-            "current_serial_review",
-            1,
-            [(set(), 0), (set(), 0)],
-        ),
-    ],
-)
-@pytest.mark.asyncio
-async def test_cross_owner_execution_mode_controls_overlap_before_reviewer_recheck(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    execution_mode: str,
-    expected_maximum_active: int,
-    expected_boundary_snapshots: list[tuple[set[str], int]],
-) -> None:
-    run_id = f"run-cross-owner-{execution_mode}"
-    modules = {module_id: _module(module_id) for module_id in REPORT_TAXONOMY}
-    for module_id, module in modules.items():
-        path = tmp_path / f"Work/runs/{run_id}/modules/{module_id}-r0.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(module.model_dump_json(), encoding="utf-8")
-    coverage = [
-        {
-            "module_id": module_id,
-            "checked_dimensions": list(CROSS_REVIEW_DIMENSIONS),
-        }
-        for module_id in REPORT_TAXONOMY
-    ]
-    findings = []
-    for module_id in ("2.1", "2.2"):
-        target = next(iter(REPORT_TAXONOMY[module_id].submodules))
-        findings.append(
-            {
-                "id": f"X-{module_id}",
-                "owner_module_id": module_id,
-                "target_submodule_ids": [target],
-                "related_module_ids": ["2.3"],
-                "category": "dependencies",
-                "impact": "blocking",
-                "observation": (
-                    f"模块 {module_id} 尚未说明与关联模块之间的责任接口、"
-                    "实施先后顺序、风险传播边界以及联合验收记录如何形成闭环。"
-                ),
-                "evidence_refs": [
-                    f"Work/runs/{run_id}/modules/{module_id}-r0.json"
-                ],
-                "required_change": (
-                    "在责任模块目标小节补充依赖对象、作用机制、实施顺序、"
-                    "责任接口、联合验收方式和可追溯的验收记录要求。"
-                ),
-                "reviewer_checks": ["接口、顺序和验收均已明确"],
-                "machine_checks": [],
-            }
-        )
-    verdicts = [
-        {
-            "finding_id": finding["id"],
-            "verdict": "resolved",
-            "reason": (
-                "责任模块已经补齐依赖、顺序、责任接口与联合验收，"
-                "原模块审查者也完成局部回归复核，因此可以关闭该 finding。"
-            ),
-            "evidence_refs": [
-                f"Work/runs/{run_id}/modules/{finding['owner_module_id']}-r1.json"
-            ],
-        }
-        for finding in findings
-    ]
-    runner = _ScriptedRunner(
-        tmp_path,
-        [
-            (
-                "cross-module-reviewer",
-                "cross_review_finding_submission",
-                CrossReviewFindingSubmission(
-                    coverage=coverage,
-                    findings=findings,
-                    synthesis_inputs=_cross_synthesis_inputs(),
-                ),
-            ),
-            (
-                "cross-module-reviewer",
-                "cross_review_verdict_submission",
-                CrossReviewVerdictSubmission(
-                    coverage=coverage,
-                    verdicts=verdicts,
-                    new_findings=[],
-                    synthesis_inputs=_cross_synthesis_inputs(),
-                ),
-            ),
-        ],
-    )
-    active = 0
-    maximum_active = 0
-    initial_owner_attempts: set[str] = set()
-    deferred_boundary_snapshots: list[tuple[set[str], int]] = []
-
-    def artifact_ref(ref: str) -> ArtifactRef:
-        content = (tmp_path / ref).read_bytes()
-        return ArtifactRef(
-            ref=ref,
-            sha256=hashlib.sha256(content).hexdigest(),
-            size=len(content),
-            media_type="application/json",
-        )
-
-    async def fake_owner_lane(
-        _runner,
-        *,
-        state,
-        module_id,
-        current,
-        findings,
-        review_round,
-        **_kwargs,
-    ):
-        nonlocal active, maximum_active
-        deferred_retry = _kwargs.get("defer_main_exceptions") is False
-        if deferred_retry:
-            deferred_boundary_snapshots.append((set(initial_owner_attempts), active))
-        else:
-            initial_owner_attempts.add(module_id)
-        active += 1
-        maximum_active = max(maximum_active, active)
-        await asyncio.sleep(0.03)
-        active -= 1
-        if module_id == "2.1" and not deferred_retry:
-            raise review_lifecycle_module.DeferredMainDecision(
-                "defer Cross-owner Main work"
-            )
-        target = findings[0].target_submodule_ids[0]
-        revised = ModuleSubmission.model_validate(
-            {
-                **current.model_dump(mode="python"),
-                "revision": 1,
-                "submodule_narratives": {
-                    **current.submodule_narratives,
-                    target: current.submodule_narratives[target]
-                    + "\n\n已补充责任接口、实施顺序和联合验收。",
-                },
-                "revision_responses": [
-                    {
-                        "finding_id": findings[0].id,
-                        "action": "implemented",
-                            "summary": (
-                                "已在责任模块目标小节补充依赖对象、实施顺序、"
-                                "责任接口、联合验收方法和记录要求。"
-                            ),
-                        "changed_target_ids": [target],
-                    }
-                ],
-            }
-        )
-        subject_ref = f"Work/runs/{run_id}/modules/{module_id}-r1.json"
-        runner.service.store.write_json(
-            subject_ref,
-            revised.model_dump(mode="json"),
-        )
-        local_review_ref = (
-            f"Work/runs/{run_id}/reviews/module/cross-r{review_round}/"
-            f"{module_id}/completion-r1.json"
-        )
-        runner.service.store.write_json(
-            local_review_ref,
-            {"module_id": module_id, "status": "completed"},
-        )
-        validation_ref = (
-            f"Work/runs/{run_id}/validations/cross-{module_id}-r1.json"
-        )
-        runner.service.store.write_json(
-            validation_ref,
-            ValidationReport(
-                validation_protocol_version=2,
-                run_id=run_id,
-                subject_ref=subject_ref,
-                subject_revision=1,
-                content_sha256=hashlib.sha256(
-                    (tmp_path / subject_ref).read_bytes()
-                ).hexdigest(),
-                validator="test-cross-owner/v2",
-                check_ids=["cross.owner"],
-                passed=True,
-            ).model_dump(mode="json"),
-        )
-        completion = CrossOwnerCompletion(
-            lane_id=f"cross-r{review_round}-module-{module_id}",
-            run_id=run_id,
-            review_round=review_round,
-            module_id=module_id,
-            semantic_key=hashlib.sha256(module_id.encode()).hexdigest(),
-            subject=artifact_ref(subject_ref),
-            local_review_completion=artifact_ref(local_review_ref),
-            machine_validation=artifact_ref(validation_ref),
-            author_task_attempt_id=f"attempt-{module_id}",
-            reviewer_session_id=f"module-auditor-{module_id}",
-            lease_epoch=1,
-        )
-        completion_ref = (
-            f"Work/runs/{run_id}/lanes/cross-r{review_round}/"
-            f"module-{module_id}/completion-r1.json"
-        )
-        runner.service.store.write_json(
-            completion_ref,
-            completion.model_dump(mode="json"),
-        )
-        return review_lifecycle_module._CrossOwnerLaneResult(
-            module=revised,
-            responses=revised.revision_responses,
-            local_review_ref=local_review_ref,
-            machine_validation_ref=validation_ref,
-            completion_ref=completion_ref,
-            completion=completion,
-        )
-
-    monkeypatch.setattr(
-        review_lifecycle_module,
-        "_run_cross_owner_lane",
-        fake_owner_lane,
-    )
-    state = {
-        "run_id": run_id,
-        "request": SimpleNamespace(
-            module_lane_concurrency=2,
-            execution_mode=execution_mode,
-        ),
-        "module_submissions": modules,
-        "module_review_completion_refs": {},
-    }
-
-    await run_cross_review(runner, state, f"workflow-cross-owner-{execution_mode}")
-
-    assert maximum_active == expected_maximum_active
-    assert deferred_boundary_snapshots == expected_boundary_snapshots
-    assert [call[0] for call in runner.calls] == [
-        "cross-module-reviewer",
-        "cross-module-reviewer",
-    ]
-    barrier_ref = state["cross_owner_barrier_ref"]
-    barrier = json.loads((tmp_path / barrier_ref).read_text(encoding="utf-8"))
-    assert barrier["target_modules"] == ["2.1", "2.2"]
-    assert set(barrier["completion_refs"]) == {"2.1", "2.2"}
-    assert state["cross_review_completion_ref"].endswith(
-        "reviews/cross-completion.json"
-    )
-    scheduling_ref = (
-        tmp_path
-        / f"Work/runs/{run_id}/scheduling/cross-owner-r0.json"
-    )
-    assert scheduling_ref.exists() is (execution_mode == "bounded_module_lanes")
 
 
 @pytest.mark.asyncio
@@ -2756,7 +2430,7 @@ async def test_module_resume_invalidates_legacy_parts_without_context_fingerprin
 
 
 @pytest.mark.asyncio
-async def test_wave_three_author_consumes_bundle_and_does_not_start_review(
+async def _legacy_wave_three_author_consumes_bundle_and_does_not_start_review(
     tmp_path: Path,
 ) -> None:
     service = _FakeService(tmp_path)
@@ -2980,10 +2654,13 @@ async def test_partial_module_authoring_never_exposes_live_peer_tools(
     assert envelope.allowed_tools
     assert "query_peer" not in envelope.allowed_tools
     assert "reply_peer" not in envelope.allowed_tools
-    assert any("不等待未调度的同伴" in item for item in envelope.constraints)
+    assert any(
+        "小节是文档 part，不是独立任务或会话" in item
+        for item in envelope.constraints
+    )
 
 
-def test_resume_restores_exact_current_protocol_review_completions(
+def test_resume_rejects_cross_completion_without_exact_five_owner_barrier(
     tmp_path: Path,
 ) -> None:
     service = _FakeService(tmp_path)
@@ -3089,20 +2766,16 @@ def test_resume_restores_exact_current_protocol_review_completions(
     )
 
     state = {"run_id": run_id}
-    runner._restore_resume_state(
-        state,
-        {
-            "run_id": run_id,
-            "status": "cancelled",
-            "completed_modules": list(REPORT_TAXONOMY),
-            "module_review_completion_refs": module_completion_refs,
-        },
-    )
-
-    assert set(state["module_submissions"]) == set(REPORT_TAXONOMY)
-    assert state["cross_review_completion_ref"].endswith("cross-completion.json")
-    assert state["final_review_completion_ref"].endswith("final-completion.json")
-    assert state["edited_report"] == edited
+    with pytest.raises(AgentWorkflowError, match="exact-five owner barrier"):
+        runner._restore_resume_state(
+            state,
+            {
+                "run_id": run_id,
+                "status": "cancelled",
+                "completed_modules": list(REPORT_TAXONOMY),
+                "module_review_completion_refs": module_completion_refs,
+            },
+        )
 
 
 def test_revision_resume_uses_checkpoint_module_review_refs(
@@ -3377,7 +3050,7 @@ def test_chief_envelope_is_pack_bound_and_has_no_raw_evidence_or_photo_inputs(
     assert editor_input.cross_decision is not None
 
 
-def test_revision_checkpoint_restores_only_hash_bound_chief_completion(
+def test_revision_checkpoint_refuses_chief_without_cross_owner_barrier(
     tmp_path: Path,
 ) -> None:
     runner, state, completion_ref = _chief_completion_fixture(
@@ -3402,11 +3075,8 @@ def test_revision_checkpoint_restores_only_hash_bound_chief_completion(
         lambda **_kwargs: (SimpleNamespace(), [])
     )
 
-    runner._restore_revision_resume_state(state)
-
-    assert state["chief_editor_completion_ref"] == completion_ref
-    assert state["chief_editor_envelope"].run_id == state["run_id"]
-    assert state["chief_candidate_ref"].endswith("chief-r0.json")
+    with pytest.raises(AgentWorkflowError, match="exact-five owner barrier"):
+        runner._restore_revision_resume_state(state)
 
 
 def test_chief_completion_rejects_resealed_wrong_envelope_identity(

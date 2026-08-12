@@ -4,8 +4,9 @@
 >
 > 原始评审核对基线：2026-07-29，`main@25b5350`
 >
-> 当前实验同步基线：2026-07-31，`cost-control-experiments@a0df065`，已单向包含
-> `main@a84d409`；本文中的三波协作和并行写作是实验分支行为，不代表 main。
+> 当前实验架构：2026-08-12，`cost-control-experiments` 已单向包含 `main`；旧三波、
+> 37 叶协作只保留为历史审计证据。当前运行路径固定为五个模块 Editor/Auditor lane
+> 与五个模块级 Cross owner，经双 barrier 后串行进入 Chief、Final 和 Delivery。
 > 交接和实施边界见
 > [`experimental-cost-control-handoff.md`](experimental-cost-control-handoff.md)。
 >
@@ -277,12 +278,12 @@ Main 的 `inspect_document` 可本地读取 DOCX、XLSX/XLSM、PDF 和文本；M
 | 操作 | 适用场景 | 会启动的主要环节 |
 | --- | --- | --- |
 | `distill_template_skill` | 只学习/更新模板写作 Skill | Template Distiller；不生成报告 |
-| `full_report` | 从 `Inputs/` 重新生成完整报告 | `leaf_37`：三波叶协作/写作后归并；`module_5`：五条“模块写作→审计→修订→复核”完整 lane 并行；之后统一进入 Cross → 总编 → 成稿审计 → 渲染 |
+| `full_report` | 从 `Inputs/` 重新生成完整报告 | 五个固定模块各自进入“写作→审计→修订→复核”完整 lane 并行；每个模块内部保留 taxonomy 小节作为文档结果 parts；之后统一进入 Cross → 总编 → 成稿审计 → 渲染 |
 | `module_report` | 只新写或重写指定模块 | 指定模块专家 + 各自独立审计 |
 | `aggregate_existing` | 已有五份模块稿，需要汇总报告 | 总编 → 成稿审计 → 渲染 |
 | `render_existing` | 已有完整 Markdown，只要 Word | 确定性 DOCX 渲染，不调用写作 Agent |
 
-完整报告用 `authoring_granularity` 选择一个作者粒度。`leaf_37` 先运行三波叶协作/写作并归并五模块；37 个逻辑叶全部排队，但物理并发遵守 `submodule_task_concurrency`，默认最多 8 个。`module_5` 不启动叶波，五个模块各自在独立 lane 内完成写作、责任审计、定向修改和原审查者复核，五条 lane 全量并行。两种模式都必须等五模块全部闭环后，才开始跨模块审查和总编。
+完整报告固定使用五模块作者粒度。每个模块在独立 lane 内一次完成写作、责任审计、定向修改和原审查者复核；taxonomy 小节（`submodule_narratives`）只是模块正文的结构化 parts，不会被拆成独立 task、session 或恢复单元。五个模块全部闭环后，才开始跨模块审查和总编。
 
 ### 4.4 缺资、恢复与修订
 

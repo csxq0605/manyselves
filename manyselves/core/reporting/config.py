@@ -22,6 +22,8 @@ KNOWN_CARRIERS = {
     "resolution_verdicts",
     "cross_findings",
     "cross_synthesis_inputs",
+    "cross_owner_findings",
+    "cross_owner_synthesis_inputs",
     "chief_editor_input",
     "final_review_input",
     "project_evidence",

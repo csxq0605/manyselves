@@ -89,3 +89,16 @@ class ReportingStore:
             temporary = Path(handle.name)
         os.replace(temporary, path)
         return path
+
+    @staticmethod
+    def fsync_directory(path: Path) -> None:
+        """Durably publish directory-entry changes or propagate the OS error."""
+
+        flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            flags |= os.O_DIRECTORY
+        descriptor = os.open(Path(path), flags)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)

@@ -19,9 +19,6 @@ from .module_collaboration import (
     InterfaceCrossClosure,
     ModuleDiscoverySubmission,
     ModuleInterfaceResponseSubmission,
-    SubmoduleDiscoveryBatchSubmission,
-    SubmoduleDiscoverySubmission,
-    SubmoduleInterfaceResponseSubmission,
 )
 from .taxonomy import REPORT_TAXONOMY, compose_module_markdown, resolve_submodule
 
@@ -114,9 +111,9 @@ class TaskEnvelope(StrictModel):
         Literal[
             "template_distillation_input",
             "module_authoring_input",
-            "submodule_authoring_input",
             "module_review_input",
             "cross_review_input",
+            "cross_owner_input",
             "final_review_input",
             "aggregate_final_review_input",
             "module_revision_input",
@@ -348,35 +345,6 @@ class ModuleSubmission(StrictModel):
         """Deterministically render the typed submodule narratives for consumers."""
 
         return compose_module_markdown(self.module_id, self.submodule_narratives)
-
-
-class SubmoduleDraftSubmission(StrictModel):
-    """Runtime-materialized Wave 3 result for one fixed leaf submodule."""
-
-    kind: Literal["submodule_draft_submission"] = "submodule_draft_submission"
-    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
-    submodule_id: str
-    narrative: str = Field(min_length=1)
-    claim: ClaimRecord
-    source_ids: list[str]
-    unresolved_questions: list[str] = Field(default_factory=list)
-    revision: int = Field(default=0, ge=0)
-
-    @model_validator(mode="after")
-    def exact_leaf_identity(self) -> "SubmoduleDraftSubmission":
-        definition = resolve_submodule(self.submodule_id)
-        if definition.module_id != self.module_id:
-            raise ValueError("submodule draft belongs to another module")
-        if (
-            self.claim.module_id != self.module_id
-            or self.claim.submodule_id != self.submodule_id
-        ):
-            raise ValueError("submodule draft Claim identity mismatch")
-        if set(self.source_ids) != set(self.claim.source_ids):
-            raise ValueError("submodule draft source_ids must match its runtime Claim")
-        if extra_numbered_submodule_headings(self.submodule_id, self.narrative):
-            raise ValueError("submodule draft contains an out-of-scope numbered heading")
-        return self
 
 
 class ModuleRevisionSubmission(StrictModel):
@@ -1460,6 +1428,50 @@ class CrossReviewVerdictSubmission(StrictModel):
         return self
 
 
+class CrossOwnerFindingSubmission(StrictModel):
+    """Initial typed result from one fixed module Cross-owner reviewer."""
+
+    kind: Literal["cross_owner_finding_submission"] = "cross_owner_finding_submission"
+    owner_module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
+    coverage: CrossReviewCoverageEntry
+    findings: list[CrossReviewFinding] = Field(default_factory=list)
+    synthesis_inputs: list[CrossSynthesisInput] = Field(default_factory=list)
+    interface_closures: list[InterfaceCrossClosure] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def findings_stay_in_owner_scope(self) -> "CrossOwnerFindingSubmission":
+        if self.coverage.module_id != self.owner_module_id:
+            raise ValueError("Cross owner coverage must identify its owner module")
+        if any(
+            finding.owner_module_id != self.owner_module_id for finding in self.findings
+        ):
+            raise ValueError("Cross owner findings must stay in owner scope")
+        return self
+
+
+class CrossOwnerVerdictSubmission(StrictModel):
+    """Recheck result from the same fixed module Cross-owner reviewer."""
+
+    kind: Literal["cross_owner_verdict_submission"] = "cross_owner_verdict_submission"
+    owner_module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
+    coverage: CrossReviewCoverageEntry
+    verdicts: list[ResolutionVerdict] = Field(default_factory=list)
+    new_findings: list[CrossReviewFinding] = Field(default_factory=list)
+    synthesis_inputs: list[CrossSynthesisInput] = Field(default_factory=list)
+    interface_closures: list[InterfaceCrossClosure] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def findings_stay_in_owner_scope(self) -> "CrossOwnerVerdictSubmission":
+        if self.coverage.module_id != self.owner_module_id:
+            raise ValueError("Cross owner coverage must identify its owner module")
+        if any(
+            finding.owner_module_id != self.owner_module_id
+            for finding in self.new_findings
+        ):
+            raise ValueError("Cross owner new findings must stay in owner scope")
+        return self
+
+
 class FinalReviewFindingSubmission(StrictModel):
     kind: Literal["final_review_finding_submission"] = "final_review_finding_submission"
     checked_section_ids: list[str] = Field(
@@ -1696,22 +1708,6 @@ class ModuleSubmissionInput(StrictModel):
     revision_responses: list[RevisionResponse] = Field(default_factory=list)
 
 
-class SubmoduleDraftSubmissionInput(StrictModel):
-    """Small leaf commit; runtime owns prose, evidence bindings, and Claim identity."""
-
-    kind: Literal["submodule_draft_submission"] = "submodule_draft_submission"
-    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
-    submodule_id: str
-    unresolved_questions: list[str] = Field(default_factory=list)
-    revision: int = Field(default=0, ge=0)
-
-    @model_validator(mode="after")
-    def fixed_leaf_identity(self) -> "SubmoduleDraftSubmissionInput":
-        if resolve_submodule(self.submodule_id).module_id != self.module_id:
-            raise ValueError("submodule draft commit belongs to another module")
-        return self
-
-
 class ModuleRevisionSubmissionInput(StrictModel):
     """Small revision commit; changed prose and evidence live in result parts."""
 
@@ -1804,13 +1800,14 @@ class SkillEvolutionSubmission(StrictModel):
 
 Submission = Annotated[
     ModuleSubmission
-    | SubmoduleDraftSubmission
     | ModuleRevisionSubmission
     | TemplateSkillSubmission
     | ModuleReviewFindingSubmission
     | ModuleReviewVerdictSubmission
     | CrossReviewFindingSubmission
     | CrossReviewVerdictSubmission
+    | CrossOwnerFindingSubmission
+    | CrossOwnerVerdictSubmission
     | FinalReviewFindingSubmission
     | FinalReviewVerdictSubmission
     | WorkflowDecisionSubmission
@@ -1818,9 +1815,6 @@ Submission = Annotated[
     | EditedReportSubmission
     | ModuleDiscoverySubmission
     | ModuleInterfaceResponseSubmission
-    | SubmoduleDiscoveryBatchSubmission
-    | SubmoduleDiscoverySubmission
-    | SubmoduleInterfaceResponseSubmission
     | SkillEvolutionSubmission,
     Field(discriminator="kind"),
 ]
@@ -1828,7 +1822,6 @@ Submission = Annotated[
 
 SubmissionInput = Annotated[
     ModuleSubmissionInput
-    | SubmoduleDraftSubmissionInput
     | ModuleRevisionSubmissionInput
     | ChiefRevisionSubmissionInput
     | TemplateSkillSubmissionInput
@@ -1836,15 +1829,14 @@ SubmissionInput = Annotated[
     | ModuleReviewVerdictSubmission
     | CrossReviewFindingSubmission
     | CrossReviewVerdictSubmission
+    | CrossOwnerFindingSubmission
+    | CrossOwnerVerdictSubmission
     | FinalReviewFindingSubmission
     | FinalReviewVerdictSubmission
     | WorkflowDecisionSubmission
     | EditedReportSubmissionInput
     | ModuleDiscoverySubmission
     | ModuleInterfaceResponseSubmission
-    | SubmoduleDiscoveryBatchSubmission
-    | SubmoduleDiscoverySubmission
-    | SubmoduleInterfaceResponseSubmission
     | SkillEvolutionSubmission,
     Field(discriminator="kind"),
 ]
@@ -1852,7 +1844,6 @@ SubmissionInput = Annotated[
 
 SUBMISSION_INPUT_TYPES: dict[str, type[BaseModel]] = {
     "module_submission": ModuleSubmissionInput,
-    "submodule_draft_submission": SubmoduleDraftSubmissionInput,
     "module_revision_submission": ModuleRevisionSubmissionInput,
     "chief_revision_submission": ChiefRevisionSubmissionInput,
     "template_skill_submission": TemplateSkillSubmissionInput,
@@ -1860,15 +1851,14 @@ SUBMISSION_INPUT_TYPES: dict[str, type[BaseModel]] = {
     "module_review_verdict_submission": ModuleReviewVerdictSubmission,
     "cross_review_finding_submission": CrossReviewFindingSubmission,
     "cross_review_verdict_submission": CrossReviewVerdictSubmission,
+    "cross_owner_finding_submission": CrossOwnerFindingSubmission,
+    "cross_owner_verdict_submission": CrossOwnerVerdictSubmission,
     "final_review_finding_submission": FinalReviewFindingSubmission,
     "final_review_verdict_submission": FinalReviewVerdictSubmission,
     "workflow_decision_submission": WorkflowDecisionSubmission,
     "edited_report_submission": EditedReportSubmissionInput,
     "module_discovery_submission": ModuleDiscoverySubmission,
     "module_interface_response_submission": ModuleInterfaceResponseSubmission,
-    "submodule_discovery_batch_submission": SubmoduleDiscoveryBatchSubmission,
-    "submodule_discovery_submission": SubmoduleDiscoverySubmission,
-    "submodule_interface_response_submission": SubmoduleInterfaceResponseSubmission,
     "skill_evolution_submission": SkillEvolutionSubmission,
 }
 

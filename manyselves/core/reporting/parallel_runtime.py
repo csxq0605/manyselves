@@ -1289,6 +1289,10 @@ class CrossOwnerCompletion(_StrictModel):
     # solely from a filename.  The optional default keeps older persisted
     # completions readable; active writers always populate it.
     subject_revision: int | None = Field(default=None, ge=0)
+    owner_input: ArtifactRef | None = Field(
+        default=None,
+        description="Hash-bound CrossOwnerInput consumed by this owner reviewer.",
+    )
     subject: ArtifactRef
     local_review_completion: ArtifactRef
     machine_validation: ArtifactRef
@@ -1311,6 +1315,8 @@ class CrossOwnerCompletion(_StrictModel):
         # revision in their immutable identity.
         if self.subject_revision is None:
             deterministic.pop("subject_revision", None)
+        if self.owner_input is None:
+            deterministic.pop("owner_input", None)
         return _sha256_bytes(_canonical_json_bytes(deterministic))
 
 
