@@ -584,6 +584,8 @@ def test_cross_owner_submission_schema_binds_owner_and_required_verdict_ids() ->
     )
     assert recheck["properties"]["verdicts"]["minItems"] == 1
     assert recheck["properties"]["verdicts"]["maxItems"] == 1
+    assert "synthesis_inputs" not in recheck["properties"]
+    assert "interface_closures" not in recheck["properties"]
     assert recheck["$defs"]["ResolutionVerdict"]["properties"]["finding_id"]["enum"] == [
         "X-2.1-001"
     ]

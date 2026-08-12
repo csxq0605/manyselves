@@ -502,6 +502,10 @@ async def test_cross_owner_recheck_injects_exact_verdict_ids_and_rejects_new_fin
                     "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
                 }
             ],
+            # Legacy/model echoes are ignored: these artifacts belong to the
+            # immutable initial owner result and cannot be rewritten at recheck.
+            "synthesis_inputs": [],
+            "interface_closures": [],
         }
     )
     assert outcome["status"] == "completed", outcome
@@ -514,6 +518,8 @@ async def test_cross_owner_recheck_injects_exact_verdict_ids_and_rejects_new_fin
         "XMR-2.1-001"
     ]
     assert result["payload"]["new_findings"] == []
+    assert result["payload"]["synthesis_inputs"] == []
+    assert result["payload"]["interface_closures"] == []
 
     bad = await tool(
         payload={

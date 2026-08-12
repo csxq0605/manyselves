@@ -2099,6 +2099,32 @@ class SubmitResultTool(_ResultTool):
                     example=[],
                     received=invalid_closures,
                 )
+            if isinstance(payload, CrossOwnerFindingSubmission):
+                expected_closure_ids = set(contract.pending_interface_request_ids)
+                actual_closure_ids = {
+                    closure.request_id for closure in payload.interface_closures
+                }
+                if actual_closure_ids != expected_closure_ids:
+                    raise SubmissionValidationError(
+                        "Cross owner interface closure coverage is incomplete",
+                        field="interface_closures.request_id",
+                        expected=sorted(expected_closure_ids),
+                        example=sorted(expected_closure_ids),
+                        received=sorted(actual_closure_ids),
+                    )
+                invalid_synthesis_ids = [
+                    item.id
+                    for item in payload.synthesis_inputs
+                    if not item.id.startswith(f"SI-{owner_module_id}-")
+                ]
+                if invalid_synthesis_ids:
+                    raise SubmissionValidationError(
+                        "Cross owner synthesis ids leave the owner namespace",
+                        field="synthesis_inputs.id",
+                        expected=f"ids beginning with SI-{owner_module_id}-",
+                        example=f"SI-{owner_module_id}-RISK-001",
+                        received=invalid_synthesis_ids,
+                    )
             known_evidence = {
                 source.id
                 for source in SourceLedger(self.store.workspace, self.run_id).records
@@ -2504,6 +2530,12 @@ class SubmitResultTool(_ResultTool):
                     existing_ids=[],
                 )
             elif kind == "cross_owner_verdict_submission":
+                # These fields are not part of the provider-visible recheck
+                # schema.  Normalize legacy/model echoes away before typed
+                # validation; the immutable initial owner artifact remains the
+                # sole source of synthesis and interface closure semantics.
+                normalized["synthesis_inputs"] = []
+                normalized["interface_closures"] = []
                 if normalized.get("new_findings"):
                     raise SubmissionValidationError(
                         "Cross owner recheck cannot create a second finding wave",

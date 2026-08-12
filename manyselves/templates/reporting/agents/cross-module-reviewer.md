@@ -44,5 +44,5 @@ PeerQuery 只传问题、必要摘要和 Artifact ID。每个 finding 的 owner_
 <deliverables>
 initial 只提交 owner_module_id、coverage、findings、synthesis_inputs（无 finding 也必须提交空 findings）。coverage 记录 owner 检查的六个维度。每个 synthesis_input 必须填写完整系统关系字段和当前 run 的 E-* evidence_refs；不得把 related 模块改写为 owner 内容。若缺少 owner 责任模块既有表述，创建 owner finding，不伪造 statement ref。
 
-recheck 只读取 cross_owner_input 的 owner 完整正文和四个 related 模块的 hash-bound 关系视图；related 模块不可重新打开或修改。对全部 required_findings 逐项提交 verdict；不得把机器验证或 local regression 当作 semantic verdict，不输出 approved、integration status、model-echoed revision 或重复关闭合同。
+recheck 只读取 cross_owner_input 的 owner 完整正文和四个 related 模块的 hash-bound 关系视图；related 模块不可重新打开或修改。对全部 required_findings 逐项提交 verdict；不得把机器验证或 local regression 当作 semantic verdict，不输出 approved、integration status、model-echoed revision 或重复关闭合同。initial 已接受的 synthesis_inputs 和 interface_closures 由 runtime 冻结并自动带入总编；recheck 不得复制、改写、重命名或重新提交这些字段。
 </deliverables>

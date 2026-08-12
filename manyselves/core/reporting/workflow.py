@@ -3499,7 +3499,13 @@ class ReportWorkflowRunner:
             ) from exc
 
     def _guard_failed_cross_owner_terminal_resume(self, *, run_id: str) -> None:
-        """Do not silently redispatch a drained failed Cross-owner wave."""
+        """Validate a drained Cross wave before owner-scoped explicit resume.
+
+        A failed terminal is evidence, not a command to replay the cohort.  The
+        Cross lifecycle verifies and reuses every completed owner pipeline and
+        dispatches only owners that have no valid promoted completion.  Invalid
+        or cross-run terminal manifests still fail closed here.
+        """
 
         completion_path = self.service.workspace / (
             f"Work/runs/{run_id}/reviews/cross-completion.json"
@@ -3523,11 +3529,38 @@ class ReportWorkflowRunner:
                 raise AgentWorkflowError(
                     f"Cross owner terminal manifest belongs to another run: {terminal_path}"
                 )
-            if terminal.get("status") == "failed":
-                raise AgentWorkflowError(
-                    "Cross owner wave is durably failed after all admitted owners "
-                    f"drained ({terminal_path}); explicit re-dispatch is required"
+            target_modules = terminal.get("target_modules")
+            statuses = terminal.get("terminal_statuses")
+            if (
+                terminal.get("kind") != "cross_owner_terminal_barrier"
+                or target_modules != list(REPORT_MODULE_IDS)
+                or not isinstance(statuses, dict)
+                or set(statuses) != set(REPORT_MODULE_IDS)
+                or any(
+                    status not in {"completed", "failed"}
+                    for status in statuses.values()
                 )
+                or terminal.get("status") != "failed"
+            ):
+                raise AgentWorkflowError(
+                    "refusing to resume after an invalid Cross owner terminal "
+                    f"manifest: {terminal_path}"
+                )
+            if terminal.get("version") == 2:
+                retry_scope = terminal.get("retry_scope")
+                expected_retry_scope = sorted(
+                    (
+                        module_id
+                        for module_id, status in statuses.items()
+                        if status == "failed"
+                    ),
+                    key=float,
+                )
+                if retry_scope != expected_retry_scope:
+                    raise AgentWorkflowError(
+                        "Cross owner terminal retry scope does not match its failed "
+                        f"owners: {terminal_path}"
+                    )
 
     def _restore_resume_state(self, state: dict, checkpoint: dict | None = None) -> None:
         run_id = state["run_id"]

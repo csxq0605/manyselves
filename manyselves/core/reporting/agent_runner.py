@@ -1840,6 +1840,11 @@ class ReportingAgentRunner:
             finding = schema.get("$defs", {}).get("CrossReviewFinding", {})
             remove_property(finding, "id")
             if kind == "cross_owner_verdict_submission":
+                # Initial synthesis and interface closures are immutable
+                # runtime-owned inputs.  Recheck is verdict-only so a model
+                # cannot silently rewrite an already accepted Cross relation.
+                remove_property(schema, "synthesis_inputs")
+                remove_property(schema, "interface_closures")
                 required_ids = [finding.id for finding in contract.required_findings]
                 verdicts = schema.get("properties", {}).get("verdicts", {})
                 verdicts.update(

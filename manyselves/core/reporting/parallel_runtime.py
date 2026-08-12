@@ -1293,6 +1293,20 @@ class CrossOwnerCompletion(_StrictModel):
         default=None,
         description="Hash-bound CrossOwnerInput consumed by this owner reviewer.",
     )
+    initial_result: ArtifactRef | None = Field(
+        default=None,
+        description=(
+            "Hash-bound initial Cross-owner finding/synthesis result. Active v2 "
+            "pipeline completions always populate this field."
+        ),
+    )
+    verdict_result: ArtifactRef | None = Field(
+        default=None,
+        description=(
+            "Hash-bound same-owner recheck verdict. It is absent only when the "
+            "initial owner result contained no findings."
+        ),
+    )
     subject: ArtifactRef
     local_review_completion: ArtifactRef
     machine_validation: ArtifactRef
@@ -1317,6 +1331,10 @@ class CrossOwnerCompletion(_StrictModel):
             deterministic.pop("subject_revision", None)
         if self.owner_input is None:
             deterministic.pop("owner_input", None)
+        if self.initial_result is None:
+            deterministic.pop("initial_result", None)
+        if self.verdict_result is None:
+            deterministic.pop("verdict_result", None)
         return _sha256_bytes(_canonical_json_bytes(deterministic))
 
 

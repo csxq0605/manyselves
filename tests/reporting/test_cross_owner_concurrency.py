@@ -19,6 +19,8 @@ from manyselves.core.reporting.agentic_models import (
 from manyselves.core.reporting.parallel_runtime import (
     ArtifactRef,
     CrossOwnerCompletion,
+    TaskCorrelation,
+    TaskTerminal,
 )
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
@@ -39,7 +41,7 @@ def _module(module_id: str, revision: int = 0) -> ModuleSubmission:
     )
 
 
-def _synthesis() -> list[CrossSynthesisInput]:
+def _synthesis(owner_module_id: str) -> list[CrossSynthesisInput]:
     shared = {
         "related_module_ids": ["2.1", "2.2"],
         "root_causes": ["2.1 与 2.2 共同根因"],
@@ -59,8 +61,16 @@ def _synthesis() -> list[CrossSynthesisInput]:
         "evidence_refs": ["E-0001"],
     }
     return [
-        CrossSynthesisInput(id="SI-RISK", cluster_type="risk_cluster", **shared),
-        CrossSynthesisInput(id="SI-GLOBAL", cluster_type="global_propagation", **shared),
+        CrossSynthesisInput(
+            id=f"SI-{owner_module_id}-RISK",
+            cluster_type="risk_cluster",
+            **shared,
+        ),
+        CrossSynthesisInput(
+            id=f"SI-{owner_module_id}-GLOBAL",
+            cluster_type="global_propagation",
+            **shared,
+        ),
     ]
 
 
@@ -94,7 +104,7 @@ class _Runner:
                 checked_dimensions=list(CROSS_REVIEW_DIMENSIONS),
             ),
             findings=[],
-            synthesis_inputs=_synthesis(),
+            synthesis_inputs=_synthesis(owner_module_id),
             interface_closures=[],
         )
 
@@ -179,6 +189,117 @@ def _write_modules(runner: _Runner, run_id: str) -> None:
         )
 
 
+def _write_legacy_completed_task_binding(
+    runner: _Runner,
+    *,
+    run_id: str,
+    owner_module_id: str,
+    payload: CrossOwnerFindingSubmission,
+) -> None:
+    task_id = f"cross-owner-{owner_module_id}-r0-initial"
+    attempt_id = f"attempt-legacy-{owner_module_id}"
+    correlation = TaskCorrelation(
+        workflow_id=f"workflow:{run_id}",
+        run_id=run_id,
+        task_id=task_id,
+        task_attempt_id=attempt_id,
+        agent_id="cross-module-reviewer",
+        identity_key=f"cross-owner-{owner_module_id}",
+        session_id=f"session-{owner_module_id}",
+        lease_owner_id=f"test-owner-{owner_module_id}",
+        lease_epoch=1,
+    )
+    runner.service.store.write_json(
+        f"Work/runs/{run_id}/task-attempts/{task_id}/current.json",
+        correlation.model_dump(mode="json"),
+    )
+    result = {
+        "task_id": task_id,
+        "run_id": run_id,
+        "agent_id": "cross-module-reviewer",
+        "session_id": f"session-{owner_module_id}",
+        "status": "completed",
+        "payload": payload.model_dump(mode="json"),
+    }
+    result_ref = (
+        f"Work/runs/{run_id}/results/attempts/{task_id}/{attempt_id}.json"
+    )
+    result_path = runner.service.store.write_json(result_ref, result)
+    result_bytes = result_path.read_bytes()
+    canonical = json.dumps(
+        result,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    terminal = TaskTerminal(
+        correlation=correlation,
+        status="completed",
+        result_ref=result_ref,
+        result_sha256=hashlib.sha256(result_bytes).hexdigest(),
+        payload_sha256=hashlib.sha256(canonical).hexdigest(),
+        promoted_to_canonical=True,
+        persisted_at_ns=1,
+    )
+    runner.service.store.write_json(
+        result_ref.removesuffix(".json") + ".terminal.json",
+        terminal.model_dump(mode="json"),
+    )
+
+
+def test_legacy_cross_owner_promotion_requires_matching_completed_task_payload(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-cross-legacy-binding"
+    owner_module_id = "2.1"
+    runner = _Runner(tmp_path)
+    payload = CrossOwnerFindingSubmission(
+        owner_module_id=owner_module_id,
+        coverage=CrossReviewCoverageEntry(
+            module_id=owner_module_id,
+            checked_dimensions=list(CROSS_REVIEW_DIMENSIONS),
+        ),
+        findings=[],
+        synthesis_inputs=_synthesis(owner_module_id),
+        interface_closures=[],
+    )
+    ref = (
+        f"Work/runs/{run_id}/reviews/"
+        f"cross-owner-findings-r0-{owner_module_id}.json"
+    )
+    runner.service.store.write_json(ref, payload.model_dump(mode="json"))
+    _write_legacy_completed_task_binding(
+        runner,
+        run_id=run_id,
+        owner_module_id=owner_module_id,
+        payload=payload,
+    )
+
+    loaded, loaded_ref = lifecycle._load_cross_owner_initial_result(
+        runner,
+        run_id=run_id,
+        owner_module_id=owner_module_id,
+        require_task_binding=True,
+    )
+    assert loaded == payload
+    assert loaded_ref == ref
+
+    tampered = payload.model_copy(
+        update={"synthesis_inputs": _synthesis("2.2")}
+    )
+    runner.service.store.write_json(ref, tampered.model_dump(mode="json"))
+    with pytest.raises(
+        lifecycle.ReviewLifecycleError,
+        match="does not match its completed task result",
+    ):
+        lifecycle._load_cross_owner_initial_result(
+            runner,
+            run_id=run_id,
+            owner_module_id=owner_module_id,
+            require_task_binding=True,
+        )
+
+
 @pytest.mark.asyncio
 async def test_fixed_five_owner_wave_has_full_owner_views_distinct_sessions_and_exact_barrier(
     tmp_path: Path,
@@ -229,14 +350,36 @@ async def test_fixed_five_owner_wave_has_full_owner_views_distinct_sessions_and_
     assert pack.module_ids == list(owner_ids)
     assert state["cross_decision_pack_ref"].endswith("cross-decision-pack.json")
 
+    # A completed owner pipeline is reused only while every hash-bound input
+    # and result still matches the exact-five barrier.
+    initial_result_path = (
+        tmp_path
+        / f"Work/runs/{run_id}/reviews/cross-owner-findings-r0-2.1.json"
+    )
+    initial_result_path.write_text(
+        initial_result_path.read_text(encoding="utf-8") + "\n",
+        encoding="utf-8",
+    )
+    calls_before_tamper_check = len(runner.calls)
+    state["resume"] = True
+    with pytest.raises(lifecycle.ReviewLifecycleError, match="initial result hash mismatch"):
+        await lifecycle.run_cross_review(runner, state, "workflow-cross-tamper")
+    assert len(runner.calls) == calls_before_tamper_check
+
 
 @pytest.mark.asyncio
 async def test_cross_owner_initial_failure_drains_all_five_and_writes_no_barrier(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run_id = "run-cross-five-failure"
     runner = _Runner(tmp_path, failed_owner="2.3")
     _write_modules(runner, run_id)
+    monkeypatch.setattr(
+        lifecycle,
+        "_verified_cross_owner_noop",
+        lambda runner, **kwargs: _fake_noop(runner, **kwargs),
+    )
     state = _state(run_id)
 
     with pytest.raises(RuntimeError, match="injected owner failure: 2.3"):
@@ -245,7 +388,7 @@ async def test_cross_owner_initial_failure_drains_all_five_and_writes_no_barrier
     owner_ids = tuple(REPORT_TAXONOMY)
     assert {owner for owner, _session in runner.calls} == set(owner_ids)
     terminal_path = (
-        tmp_path / f"Work/runs/{run_id}/lanes/cross-r0/owner-terminal.json"
+        tmp_path / f"Work/runs/{run_id}/lanes/cross-r1/owner-terminal.json"
     )
     terminal = json.loads(terminal_path.read_text(encoding="utf-8"))
     assert terminal["target_modules"] == list(owner_ids)
@@ -256,6 +399,87 @@ async def test_cross_owner_initial_failure_drains_all_five_and_writes_no_barrier
         for module_id, status in terminal["terminal_statuses"].items()
         if module_id != "2.3"
     } == {module_id: "completed" for module_id in owner_ids if module_id != "2.3"}
+    assert terminal["retry_scope"] == ["2.3"]
+    assert set(terminal["completion_refs"]) == set(owner_ids) - {"2.3"}
     assert not (
-        tmp_path / f"Work/runs/{run_id}/lanes/cross-r0/owner-barrier.json"
+        tmp_path / f"Work/runs/{run_id}/lanes/cross-r1/owner-barrier.json"
     ).exists()
+
+    workflow_runner = object.__new__(ReportWorkflowRunner)
+    workflow_runner.service = runner.service
+    # The workflow-level resume guard validates the failure evidence but does
+    # not reject a valid owner-scoped retry plan.
+    workflow_runner._guard_failed_cross_owner_terminal_resume(run_id=run_id)
+
+    # Explicit resume reuses the four verified promoted completions and calls
+    # only the failed owner.  It then commits the exact-five barrier and
+    # continues from the merged result.
+    runner.failed_owner = None
+    calls_before_resume = len(runner.calls)
+    state["resume"] = True
+    await lifecycle.run_cross_review(runner, state, "workflow-cross-five-resume")
+
+    assert runner.calls[calls_before_resume:] == [("2.3", "cross-owner-2.3")]
+    barrier = json.loads(
+        (
+            tmp_path
+            / f"Work/runs/{run_id}/lanes/cross-r1/owner-barrier.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert set(barrier["completion_refs"]) == set(owner_ids)
+    assert (
+        tmp_path / f"Work/runs/{run_id}/reviews/cross-completion.json"
+    ).is_file()
+
+
+@pytest.mark.asyncio
+async def test_fast_cross_owner_enters_local_pipeline_without_waiting_for_slow_initial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-cross-owner-independent-pipelines"
+    slow_release = asyncio.Event()
+    fast_promoted = asyncio.Event()
+
+    class _StaggeredRunner(_Runner):
+        async def _agent(
+            self,
+            _agent_id,
+            envelope,
+            _artifacts,
+            _workflow_id,
+            *,
+            session_key=None,
+        ):
+            owner_module_id = envelope.task_id.split("-")[2]
+            self.calls.append((owner_module_id, session_key or ""))
+            if owner_module_id == "2.5":
+                await slow_release.wait()
+            return CrossOwnerFindingSubmission(
+                owner_module_id=owner_module_id,
+                coverage=CrossReviewCoverageEntry(
+                    module_id=owner_module_id,
+                    checked_dimensions=list(CROSS_REVIEW_DIMENSIONS),
+                ),
+                findings=[],
+                synthesis_inputs=_synthesis(owner_module_id),
+                interface_closures=[],
+            )
+
+    runner = _StaggeredRunner(tmp_path)
+    _write_modules(runner, run_id)
+
+    def _recording_noop(runner, **kwargs):
+        result = _fake_noop(runner, **kwargs)
+        if kwargs["owner_module_id"] == "2.1":
+            fast_promoted.set()
+        return result
+
+    monkeypatch.setattr(lifecycle, "_verified_cross_owner_noop", _recording_noop)
+    task = asyncio.create_task(
+        lifecycle.run_cross_review(runner, _state(run_id), "workflow-cross-independent")
+    )
+    await asyncio.wait_for(fast_promoted.wait(), timeout=1)
+    assert not task.done()
+    slow_release.set()
+    await task

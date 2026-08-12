@@ -255,7 +255,7 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
         "owner_module_id is the one fixed module owned by this Cross-owner lane; coverage.module_id must match it.",
         "Return exactly one verdict for every required prior owner finding id; an empty verdicts list is valid only when no prior finding is assigned.",
         "new_findings may be empty or contain only genuinely new regressions owned by owner_module_id; do not restate required findings.",
-        "synthesis_inputs and interface_closures are optional; related modules remain read-only and no cross-owner lane may write them.",
+        "Do not submit synthesis_inputs or interface_closures during recheck; runtime carries the immutable initial owner artifacts forward.",
     ],
     "edited_report_submission": [
         "Runtime preserves all approved module bindings automatically.",
