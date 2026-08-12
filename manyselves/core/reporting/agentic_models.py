@@ -740,6 +740,17 @@ class MachineCheckSpec(StrictModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def predicate_shape_matches_declared_semantics(self) -> "MachineCheckSpec":
+        if self.kind == "field_equals" and len(self.target_paths) != len(
+            self.expected_values
+        ):
+            raise ValueError(
+                "field_equals requires exactly one expected value per target path; "
+                "use required_terms_present when one text path must contain multiple terms"
+            )
+        return self
+
 
 class CrossReviewFinding(StrictModel):
     id: str = Field(

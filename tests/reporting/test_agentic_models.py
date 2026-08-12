@@ -12,6 +12,7 @@ from manyselves.core.reporting.agentic_models import (
     EditedReportSubmission,
     FinalReviewFinding,
     FinalReviewFindingSubmission,
+    MachineCheckSpec,
     ModuleRevisionSubmission,
     ModuleSubmission,
     ResolutionVerdict,
@@ -45,6 +46,22 @@ def _module(module_id: str = "2.1", revision: int = 0) -> ModuleSubmission:
         unresolved_questions=[],
         revision=revision,
     )
+
+
+def test_field_equals_requires_one_expected_value_per_path() -> None:
+    with pytest.raises(ValidationError, match="one expected value per target path"):
+        MachineCheckSpec(
+            kind="field_equals",
+            target_paths=["submodule_narratives.2.4.1.1"],
+            expected_values=["96.99", "3500"],
+        )
+
+    check = MachineCheckSpec(
+        kind="required_terms_present",
+        target_paths=["submodule_narratives.2.4.1.1"],
+        expected_values=["96.99", "3500"],
+    )
+    assert check.kind == "required_terms_present"
 
 
 def test_task_envelope_requires_a_role_labelled_input_contract_ref() -> None:

@@ -663,6 +663,209 @@ async def test_multi_leaf_revision_uses_original_leaf_sessions_and_reducer(
 
 
 @pytest.mark.asyncio
+async def test_module_five_revision_returns_one_module_patch_for_all_targets(
+    tmp_path: Path,
+) -> None:
+    module = _module("2.1")
+    first, second = tuple(REPORT_TAXONOMY["2.1"].submodules)[:2]
+    change = RequestedModuleChange(
+        id="USER-2.1-R1",
+        instruction="以完整模块作者身份同时更新两个明确小节。",
+        target_submodule_ids=[first, second],
+    )
+    patch = ModuleRevisionSubmission(
+        module_id="2.1",
+        base_revision=0,
+        revision=1,
+        submodule_narratives={
+            first: f"### {first}\n\n{first} 已由模块作者完成修订。",
+            second: f"### {second}\n\n{second} 已由模块作者完成修订。",
+        },
+        claims_upsert=[],
+        claim_ids_remove=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision_responses=[
+            {
+                "finding_id": change.id,
+                "action": "implemented",
+                "summary": "两个目标小节已在同一次模块级修订中完成，并保持其他小节内容不变。",
+                "changed_target_ids": [first, second],
+            }
+        ],
+    )
+    runner = _ScriptedRunner(
+        tmp_path,
+        [("module-2.1-specialist", "module_revision_submission", patch)],
+    )
+    state = {
+        "run_id": "run-module-five-revision",
+        "request": SimpleNamespace(
+            authoring_granularity="module_5",
+            user_supplements=[],
+        ),
+    }
+
+    revised, _ = await request_module_revision(
+        runner,
+        state=state,
+        workflow_id="workflow-module-five-revision",
+        subject=module,
+        requested_changes=[change],
+    )
+
+    assert len(runner.calls) == 1
+    assert runner.calls[0][2] == "module-2.1"
+    assert runner.envelopes[0].task_id == "module-revision-r1-2.1"
+    assert runner.envelopes[0].target_submodule_ids == [first, second]
+    assert revised.revision_responses[0].changed_target_ids == [first, second]
+    barrier = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-module-five-revision/reviews/module-revisions/"
+            "2.1/r1/module-barrier.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert barrier["kind"] == "module_revision_barrier"
+    assert barrier["target_submodule_ids"] == [first, second]
+
+
+@pytest.mark.asyncio
+async def test_module_five_review_closure_never_expands_author_or_auditor_by_leaf(
+    tmp_path: Path,
+) -> None:
+    module = _module("2.1")
+    first, second = tuple(REPORT_TAXONOMY["2.1"].submodules)[:2]
+    first_id = "M-2.1-initial-r0-001"
+    second_id = "M-2.1-initial-r0-002"
+    findings = [
+        {
+            "id": first_id,
+            "target_submodule_id": first,
+            "category": "analysis_depth",
+            "impact": "advisory",
+            "observation": "第一个目标小节缺少明确责任、执行动作和可复核的验收闭环。",
+            "evidence_refs": [f"Work/runs/run-module-five-review/modules/2.1-r0.json"],
+            "required_change": "在第一个目标小节补充明确责任、执行动作和可复核验收方法。",
+            "reviewer_checks": ["核对第一个小节的责任、动作和验收闭环"],
+        },
+        {
+            "id": second_id,
+            "target_submodule_id": second,
+            "category": "analysis_depth",
+            "impact": "advisory",
+            "observation": "第二个目标小节缺少明确责任、执行动作和可复核的验收闭环。",
+            "evidence_refs": [f"Work/runs/run-module-five-review/modules/2.1-r0.json"],
+            "required_change": "在第二个目标小节补充明确责任、执行动作和可复核验收方法。",
+            "reviewer_checks": ["核对第二个小节的责任、动作和验收闭环"],
+        },
+    ]
+    patch = ModuleRevisionSubmission(
+        module_id="2.1",
+        base_revision=0,
+        revision=1,
+        submodule_narratives={
+            first: f"### {first}\n\n已补充责任、执行动作和验收闭环。",
+            second: f"### {second}\n\n已补充责任、执行动作和验收闭环。",
+        },
+        claims_upsert=[],
+        claim_ids_remove=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision_responses=[
+            {
+                "finding_id": first_id,
+                "action": "implemented",
+                "summary": "第一个目标小节已补充责任、执行动作与可复核的验收闭环。",
+                "changed_target_ids": [first],
+            },
+            {
+                "finding_id": second_id,
+                "action": "implemented",
+                "summary": "第二个目标小节已补充责任、执行动作与可复核的验收闭环。",
+                "changed_target_ids": [second],
+            },
+        ],
+    )
+    runner = _ScriptedRunner(
+        tmp_path,
+        [
+            (
+                "evidence-auditor",
+                "module_review_finding_submission",
+                ModuleReviewFindingSubmission(
+                    coverage={"submodule_ids": [first, second]},
+                    findings=findings,
+                ),
+            ),
+            ("module-2.1-specialist", "module_revision_submission", patch),
+            (
+                "evidence-auditor",
+                "module_review_verdict_submission",
+                ModuleReviewVerdictSubmission(
+                    coverage={"submodule_ids": [first, second]},
+                    verdicts=[
+                        {
+                            "finding_id": first_id,
+                            "verdict": "resolved",
+                            "reason": "第一个小节的责任、动作和验收闭环已经补齐。",
+                            "evidence_refs": [
+                                "Work/runs/run-module-five-review/modules/2.1-r1.json"
+                            ],
+                        },
+                        {
+                            "finding_id": second_id,
+                            "verdict": "resolved",
+                            "reason": "第二个小节的责任、动作和验收闭环已经补齐。",
+                            "evidence_refs": [
+                                "Work/runs/run-module-five-review/modules/2.1-r1.json"
+                            ],
+                        },
+                    ],
+                    new_findings=[],
+                ),
+            ),
+        ],
+    )
+    state = {
+        "run_id": "run-module-five-review",
+        "request": SimpleNamespace(
+            authoring_granularity="module_5",
+            user_supplements=[],
+        ),
+    }
+
+    revised = await run_module_review(
+        runner,
+        "2.1",
+        module,
+        state,
+        "workflow-module-five-review",
+        initial_scope={first, second},
+        lifecycle_id="initial",
+    )
+
+    assert revised.revision == 1
+    assert [call[0] for call in runner.calls] == [
+        "evidence-auditor",
+        "module-2.1-specialist",
+        "evidence-auditor",
+    ]
+    assert [call[2] for call in runner.calls] == [
+        "module-auditor-2.1",
+        "module-2.1",
+        "module-auditor-2.1",
+    ]
+    assert all(
+        not (session_key or "").startswith("submodule-")
+        for _agent, _output, session_key in runner.calls
+    )
+    assert runner.envelopes[0].target_submodule_ids == [first, second]
+    assert runner.envelopes[1].target_submodule_ids == [first, second]
+    assert runner.envelopes[2].target_submodule_ids == [first, second]
+
+
+@pytest.mark.asyncio
 async def test_module_preflight_machine_correction_precedes_paid_review(
     tmp_path: Path,
 ) -> None:

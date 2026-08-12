@@ -25,6 +25,8 @@ background: true
 </owned_decisions>
 <tools_and_loop>
 先读取 task 中声明的 cross_review_input；它包含五个精确 subject、工作流绑定的 revision，以及 recheck 时的不可变 findings、owner responses、局部回归完成记录和机器 ValidationReport。首轮提交 cross_review_finding_submission；复审提交 cross_review_verdict_submission。机器检查通过和 module auditor 的局部回归通过都不能替代你的语义 verdict。
+
+机器检查必须使用正确谓词：`field_equals` 要求每个 `target_path` 恰好对应一个完整精确值；若同一个正文路径需要同时包含多个数字或术语，必须使用 `required_terms_present`，不得给一个 `field_equals` 路径配置多个 `expected_values`。
 </tools_and_loop>
 <collaboration>
 PeerQuery 只传问题、必要摘要和 Artifact ID。每个 finding 只能指定一个 owner_module_id，并列出 related_module_ids 与 owner 模块内的 target_submodule_ids。

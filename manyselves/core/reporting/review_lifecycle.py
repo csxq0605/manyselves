@@ -933,7 +933,7 @@ async def request_module_revision(
     validation_ref: str | None = None,
     validation_target_submodule_ids: set[str] | None = None,
 ) -> tuple[ModuleSubmission, str]:
-    """Fan one module correction out to its original fixed leaf identities."""
+    """Revise one module at the request's declared authoring granularity."""
 
     module_findings = module_findings or []
     cross_findings = cross_findings or []
@@ -998,6 +998,103 @@ async def request_module_revision(
         _write_model(runner, revision_input.subject_ref, subject)
     specialist_id = f"module-{subject.module_id}-specialist"
     revision = subject.revision + 1
+
+    if getattr(state.get("request"), "authoring_granularity", "leaf_37") == "module_5":
+        envelope = TaskEnvelope(
+            task_id=f"module-revision-r{revision}-{subject.module_id}",
+            run_id=state["run_id"],
+            agent_id=specialist_id,
+            objective=(
+                f"以完整模块 {subject.module_id} 的单一作者身份，一次完成所有明确分配的"
+                "定向修订；只替换受影响小节，不重复提交未变正文。"
+            ),
+            input_refs=[input_ref],
+            constraints=[
+                f"唯一写作范围是模块 {subject.module_id}",
+                f"本轮必须在一次 module_revision_submission 中覆盖目标 {sorted(targets)}",
+                "submodule_narratives 只包含实际改变的已分配小节；不得修改其他模块或未分配小节",
+                "revision_responses 必须逐项且仅覆盖全部分配的 finding ids",
+                "disputed 或 needs_input 不得伪造 changed_target_ids",
+                *(
+                    [f"上一版显式机器检查未通过；只修复 {validation_ref} 中列出的谓词失败"]
+                    if validation_report is not None
+                    else []
+                ),
+                *runner._user_supplement_constraints(
+                    state,
+                    stage="module_authoring",
+                    target_ids={
+                        subject.module_id,
+                        *targets,
+                        *(
+                            claim.id
+                            for claim in subject.claims
+                            if claim.submodule_id in targets
+                        ),
+                    },
+                ),
+            ],
+            allowed_outputs=["module_revision_submission"],
+            revision=revision,
+            prior_result_ref=revision_input.subject_ref,
+            artifact_delivery_modes={
+                input_ref: "inline",
+                revision_input.subject_ref: "hash_retained",
+            },
+            target_submodule_ids=sorted(targets),
+            input_contract_kind="module_revision_input",
+            input_contract_ref=input_ref,
+            inline_context=runner._role_skill_context(state, "module-author"),
+        )
+        patch = await runner._agent(
+            specialist_id,
+            envelope,
+            envelope.input_refs,
+            workflow_id,
+            session_key=f"module-{subject.module_id}",
+        )
+        if not isinstance(patch, ModuleRevisionSubmission):
+            raise ReviewLifecycleError(
+                f"module specialist returned the wrong revision type for {subject.module_id}"
+            )
+        revised = _apply_module_patch(
+            subject,
+            patch,
+            target_submodule_ids=targets,
+            required_finding_ids=required_ids,
+        )
+        subject_ref = _write_model(
+            runner,
+            f"Work/runs/{state['run_id']}/modules/{subject.module_id}-r{revision}.json",
+            revised,
+        )
+        runner.service.store.write_json(
+            (
+                f"Work/runs/{state['run_id']}/reviews/module-diff-"
+                f"{subject.module_id}-r{revision}.json"
+            ),
+            build_revision_diff(subject, revised),
+        )
+        runner.service.store.write_json(
+            (
+                f"Work/runs/{state['run_id']}/reviews/module-revisions/"
+                f"{subject.module_id}/r{revision}/module-barrier.json"
+            ),
+            {
+                "kind": "module_revision_barrier",
+                "version": 1,
+                "run_id": state["run_id"],
+                "module_id": subject.module_id,
+                "base_revision": subject.revision,
+                "revision": revision,
+                "target_submodule_ids": sorted(targets),
+                "subject_ref": subject_ref,
+                "subject_sha256": hashlib.sha256(
+                    (runner.service.workspace / subject_ref).read_bytes()
+                ).hexdigest(),
+            },
+        )
+        return revised, subject_ref
 
     def finding_ids_for(target_id: str) -> set[str]:
         return {
@@ -1796,6 +1893,17 @@ async def run_module_review(
             input_refs=[input_ref],
             constraints=[
                 "coverage 记录实际检查范围，不是批准状态",
+                *(
+                    [
+                        "本次采用 module_5：一次返回整个模块检查范围的 findings/verdicts；"
+                        "小节 id 只用于定位问题，不得拆成独立叶子审查任务"
+                    ]
+                    if getattr(
+                        state.get("request"), "authoring_granularity", "leaf_37"
+                    )
+                    == "module_5"
+                    else []
+                ),
                 "finding 首次提出后不可改写；复审不得复述旧 finding",
                 "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
                 "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
