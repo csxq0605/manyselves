@@ -113,6 +113,9 @@ def test_create_tools_for_main(manager):
         "bounded_module_lanes",
     }
     assert "execution_mode" not in reporting_schema["required"]
+    authoring_granularity = reporting_schema["properties"]["authoring_granularity"]
+    assert set(authoring_granularity["enum"]) == {"leaf_37", "module_5"}
+    assert "authoring_granularity" not in reporting_schema["required"]
     reporting_tool = tools.get("run_reporting_workflow")
     assert reporting_tool is not None
     assert (
@@ -120,6 +123,12 @@ def test_create_tools_for_main(manager):
         .parameters["execution_mode"]
         .default
         == "all_ready"
+    )
+    assert (
+        inspect.signature(reporting_tool.__call__)
+        .parameters["authoring_granularity"]
+        .default
+        == "leaf_37"
     )
 
 

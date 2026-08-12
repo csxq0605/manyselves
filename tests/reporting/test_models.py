@@ -114,6 +114,10 @@ def test_report_request_defaults_to_all_ready_and_keeps_legacy_modes() -> None:
     )
 
     assert request.execution_mode == "all_ready"
+    assert request.authoring_granularity == "leaf_37"
+    assert request.model_copy(
+        update={"authoring_granularity": "module_5"}
+    ).authoring_granularity == "module_5"
     assert bounded.execution_mode == "bounded_module_lanes"
     serial = request.model_copy(update={"execution_mode": "current_serial_review"})
     assert serial.execution_mode == "current_serial_review"
@@ -121,6 +125,19 @@ def test_report_request_defaults_to_all_ready_and_keeps_legacy_modes() -> None:
         ReportRequest.model_json_schema()["properties"]["execution_mode"]["default"]
         == "all_ready"
     )
+    assert (
+        ReportRequest.model_json_schema()["properties"]["authoring_granularity"][
+            "default"
+        ]
+        == "leaf_37"
+    )
+    with pytest.raises(ValidationError, match="only valid for full_report"):
+        ReportRequest(
+            operation="module_report",
+            instruction="错误的五模块模式",
+            target_modules=["2.1"],
+            authoring_granularity="module_5",
+        )
 
 
 def test_typed_supplements_filter_by_stage_scope_and_supersession() -> None:

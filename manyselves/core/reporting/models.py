@@ -323,6 +323,8 @@ class ReportRequest(ReportingModel):
     execution_mode: Literal[
         "all_ready", "current_serial_review", "bounded_module_lanes"
     ] = "all_ready"
+    authoring_granularity: Literal["leaf_37", "module_5"] = "leaf_37"
+    """Choose independent taxonomy-leaf authors or five complete module lanes."""
     # Retained as a scheduling hint/telemetry field.  ``all_ready`` dispatches
     # every ready module and leaves physical backpressure to the Provider
     # router, so this value must not impose the former five-lane ceiling.
@@ -370,6 +372,8 @@ class ReportRequest(ReportingModel):
             raise ValueError("distill_template_skill does not accept target modules")
         if self.operation == "full_report" and requested != all_modules:
             raise ValueError("full_report requires exactly modules 2.1-2.5")
+        if self.authoring_granularity == "module_5" and self.operation != "full_report":
+            raise ValueError("module_5 authoring is only valid for full_report")
         if self.operation == "module_report" and not requested:
             raise ValueError("module_report requires at least one target module")
         if self.operation == "module_report" and requested == all_modules:

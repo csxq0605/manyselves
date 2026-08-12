@@ -215,6 +215,45 @@ async def test_execution_mode_gates_leaf_authoring_and_module_lane_expansion(
 
 
 @pytest.mark.asyncio
+async def test_module_five_runs_complete_module_lanes_without_leaf_waves(
+    tmp_path: Path,
+) -> None:
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = _Service(tmp_path)
+    calls: list[tuple[str, int | bool]] = []
+
+    async def unexpected_leaf(*_args, **_kwargs):
+        raise AssertionError("module_5 must not start leaf collaboration or authoring")
+
+    async def module_lanes(*_args, concurrency: int, all_ready: bool, **_kwargs):
+        calls.append(("module_lanes", concurrency))
+        calls.append(("all_ready", all_ready))
+
+    runner._module_collaboration = unexpected_leaf
+    runner._module_local_submodule_preparation = unexpected_leaf
+    runner._run_submodule_authoring_stage = unexpected_leaf
+    runner._run_bounded_module_lanes = module_lanes
+    request = ReportRequest(
+        operation="full_report",
+        instruction="验证五模块完整 lane",
+        authoring_granularity="module_5",
+        # The authoring switch alone must force five complete all-ready lanes;
+        # a legacy review mode cannot serialize this A/B arm.
+        execution_mode="current_serial_review",
+        module_lane_concurrency=1,
+    )
+
+    selected = await runner._prepare_module_authoring_mode(
+        tuple(request.target_modules),
+        {"request": request},
+        "workflow-module-five",
+    )
+
+    assert selected == (False, True, True)
+    assert calls == [("module_lanes", 1), ("all_ready", True)]
+
+
+@pytest.mark.asyncio
 async def test_submodule_three_wave_dispatches_independent_wave_one_and_two_leaves(
     tmp_path: Path,
 ) -> None:

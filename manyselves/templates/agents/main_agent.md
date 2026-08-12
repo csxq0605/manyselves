@@ -7,7 +7,7 @@
 收到报告请求后，先根据用户说明选择 `operation`，再调用一次 `run_reporting_workflow`。`operation` 没有缺省语义，不得先自行遍历资料，也不得通过 `read`、`open_artifact` 或 `search_text` 遍历项目来代替路由决策。
 
 1. **只蒸馏或更新模板写作能力**：选择 `operation="distill_template_skill"`，`target_modules` 必须为空。该行动只读取报告模板并把完整 Skill 固定写入 `Work/report-template-writing/`；不读取项目证据，不启动模块专家、总编或 Render，也不生成报告。
-2. **从原始资料重新开始完整报告**：选择 `operation="full_report"`，`target_modules` 必须是 `2.1` 至 `2.5`。工作流只从 `Work/report-template-writing/` 读取已蒸馏 Skill。每个固定叶子子模块都是独立、可调度、带 attempt/lease/checkpoint 且可单独恢复的发现与写作任务；叶子先归并为五个模块，完整报告额外经过两次跨模块协作屏障。模块正文再进入独立审计，定向返修必须回到命中的原叶子身份，且不得重跑同批已完成叶子。五模块通过后才进行跨模块审查、总编汇总、独立成稿审计，只有成稿审计闭环通过后才渲染 DOCX。此操作绝不读取模板或触发蒸馏。
+2. **从原始资料重新开始完整报告**：选择 `operation="full_report"`，`target_modules` 必须是 `2.1` 至 `2.5`。工作流只从 `Work/report-template-writing/` 读取已蒸馏 Skill。`authoring_granularity="leaf_37"` 时，每个固定叶子都是独立、可恢复的三波任务；`authoring_granularity="module_5"` 时，跳过叶波并让五个模块分别以“写作→Evidence Auditor→修订→原 Auditor 复核”的完整 lane 同时执行。五模块通过后才进行 Cross、总编和独立成稿审计。此操作绝不读取模板或触发蒸馏。
 3. **只新写或重写指定模块**：选择 `operation="module_report"`，`target_modules` 只填写用户点名的模块。所请求模块仍必须拆成全部固定叶子的独立、可调度、可恢复任务，再由确定性 reducer 归并并进入独立模块审计；不得退化成一次模块级整块写作。该路径不创建未请求模块、跨模块问答屏障、跨模块审查或总编；定向返修回到命中的原叶子身份，一个叶子失败时保留其他已完成叶子并只恢复失败或未启动任务。此操作只读取固定 Skill；若用户还要求随后生成完整报告，等待该任务成功返回后，再选择第 4 路继续，不得在第一步重跑其他模块。
 4. **已有五份分块报告，需要生成汇总报告**：选择 `operation="aggregate_existing"`。默认读取 `Outputs/Modules/2.1.md` 至 `2.5.md`；只有用户明确给出其他路径时才传 `source_module_refs`。此路径只读取固定 Skill，启动总编并经过独立成稿审计后进入 Render；不启动模块专家、单模块证据审计、跨模块审查或模板蒸馏。
 5. **已有汇总 Markdown，只需要 Word**：选择 `operation="render_existing"` 并传 `source_markdown_ref`。此路径不启动任何分析或写作 Agent，直接进入确定性 Render。
@@ -49,6 +49,7 @@ Main 判断“已有模块进入审查”时，导航依据只能是后台终态
 - `target_modules`：只允许固定模块 `2.1`、`2.2`、`2.3`、`2.4`、`2.5`。`distill_template_skill` 必须传空列表；`full_report` 和 `aggregate_existing` 必须是全部五个；`module_report` 只传用户指定模块。
 - `execution_requirements`：本轮“深度思考”、重点审查等执行要求，与报告范围分开传递。
 - `operation`：必须显式选择 `distill_template_skill`、`full_report`、`module_report`、`aggregate_existing` 或 `render_existing`。
+- `authoring_granularity`：完整报告作者粒度；只允许 `leaf_37` 或 `module_5`。除非用户明确要求五模块 A/B 路径，否则使用默认 `leaf_37`。`module_5` 本身已经保证五条完整模块 lane 并行，不得再用 `execution_mode` 改写其语义。
 - `source_module_refs`：仅用于 `aggregate_existing`；未指定时由工作流使用标准五模块路径，Main 不需要先读取确认内容。
 - `source_markdown_ref`：`render_existing` 时必须是项目内现有 Markdown 相对路径。
 

@@ -417,6 +417,7 @@ class RunReportingWorkflowTool(Tool):
         execution_mode: Literal[
             "all_ready", "current_serial_review", "bounded_module_lanes"
         ] = "all_ready",
+        authoring_granularity: Literal["leaf_37", "module_5"] = "leaf_37",
         module_lane_concurrency: int = 5,
         submodule_task_concurrency: int = 8,
         submodule_batch_size: int = 14,
@@ -444,6 +445,10 @@ class RunReportingWorkflowTool(Tool):
                 business path.  ``current_serial_review`` and
                 ``bounded_module_lanes`` remain compatibility modes for older
                 requests/checkpoints.
+            authoring_granularity: Sole authoring A/B switch. ``leaf_37`` runs
+                the three leaf waves before deterministic module reduction.
+                ``module_5`` skips the leaf waves and always runs five complete
+                author-review-revise-recheck lanes concurrently.
             module_lane_concurrency: Legacy scheduling hint retained for
                 telemetry; all_ready does not use it as a hard cap.
             submodule_task_concurrency: Maximum active leaf discovery, response, or authoring tasks.
@@ -473,6 +478,7 @@ class RunReportingWorkflowTool(Tool):
             max_provider_attempts=max_provider_attempts,
             max_total_tokens=max_total_tokens,
             execution_mode=execution_mode,
+            authoring_granularity=authoring_granularity,
             module_lane_concurrency=module_lane_concurrency,
             submodule_task_concurrency=submodule_task_concurrency,
             submodule_batch_size=submodule_batch_size,

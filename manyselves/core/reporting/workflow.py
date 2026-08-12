@@ -1150,7 +1150,7 @@ class ReportWorkflowRunner:
         state: dict,
         workflow_id: str,
     ) -> tuple[bool, bool, bool]:
-        """Prepare leaf work for every writing path; only review overlap is optional."""
+        """Select leaf authoring or complete module lanes for this request."""
 
         full_scope = set(requested_modules) == set(REPORT_MODULE_IDS)
         execution_mode = getattr(
@@ -1162,9 +1162,28 @@ class ReportWorkflowRunner:
             "all_ready",
         )
         all_ready_lanes = execution_mode == "all_ready"
+        authoring_granularity = getattr(
+            state["request"], "authoring_granularity", "leaf_37"
+        )
         bounded_lanes = (
             execution_mode == "bounded_module_lanes" or all_ready_lanes
         ) and len(requested_modules) > 1
+        if authoring_granularity == "module_5":
+            await self.service._notice(
+                "五个专业模块进入完整模块 lane 并行：每条 lane 独立完成模块写作、"
+                "Evidence Auditor 审计、定向修订和原审计者复核；全部终态后再进入 Cross。"
+            )
+            await self._run_bounded_module_lanes(
+                requested_modules,
+                state,
+                workflow_id,
+                concurrency=state["request"].module_lane_concurrency,
+                # authoring_granularity is the sole A/B switch.  module_5
+                # always admits all five complete author/auditor lanes; the
+                # legacy execution_mode cannot silently serialize review.
+                all_ready=True,
+            )
+            return False, True, full_scope
         await self.service._notice(
             (
                 "五个专业模块的固定叶子进入独立调度：先并行发现接口问题，经两次"
