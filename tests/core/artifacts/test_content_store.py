@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from manyselves.core.artifacts.content_store import ContentAddressedStore
+from manyselves.core.artifacts.storage_policy import CasPolicy, StorageMode
 
 
 def test_content_store_reuses_one_blob_and_exposes_suffix_preserving_view(
@@ -146,3 +147,80 @@ def test_trusted_handle_rejects_blob_changed_after_ingestion(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="changed"):
         store.resolve_trusted_handle(handle)
+
+
+def test_policy_materialized_copy_is_atomic_hashed_and_does_not_create_blob(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    source = workspace / "Inputs/state.json"
+    destination = workspace / "Work/runs/run-1/state.json"
+    source.parent.mkdir(parents=True)
+    source.write_text('{"status":"ok"}\n', encoding="utf-8")
+    store = ContentAddressedStore(workspace)
+
+    result = store.persist_with_policy(
+        source,
+        destination=destination,
+        logical_role="state",
+    )
+
+    assert result.storage_mode is StorageMode.MATERIALIZED
+    assert result.blob_ref is None
+    assert result.opaque_ref is None
+    assert result.view_path == destination.resolve()
+    assert destination.read_bytes() == source.read_bytes()
+    assert result.sha256 == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert not store.root.exists()
+    assert not list(destination.parent.glob(".*.materialized"))
+
+
+def test_policy_cas_persists_blob_and_atomic_compatibility_view(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    source = workspace / "Inputs/source.bin"
+    destination = workspace / "Outputs/source.bin"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"snapshot bytes")
+    store = ContentAddressedStore(workspace)
+
+    result = store.persist_with_policy(
+        source,
+        destination=destination,
+        logical_role="input_snapshot",
+        policy=CasPolicy(policy_version="g1-test"),
+    )
+
+    assert result.storage_mode is StorageMode.CAS
+    assert result.policy_version == "g1-test"
+    assert result.blob_ref is not None
+    assert result.opaque_ref is None
+    assert result.view_path == destination
+    assert destination.read_bytes() == source.read_bytes()
+    assert destination.is_symlink()
+    assert store.resolve_blob(result.blob_ref, expected_sha256=result.sha256).is_file()
+
+
+def test_policy_can_replace_an_existing_view_without_touching_canonical_blob(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    source = workspace / "Inputs/source.docx"
+    destination = workspace / "Outputs/final.docx"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"docx bytes")
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(b"old materialized bytes")
+    store = ContentAddressedStore(workspace)
+
+    result = store.persist_with_policy(
+        source,
+        destination=destination,
+        logical_role="final_docx",
+    )
+
+    assert result.storage_mode is StorageMode.CAS
+    assert destination.is_symlink()
+    assert destination.read_bytes() == b"docx bytes"
+    assert result.blob_ref is not None
+    canonical = store.resolve_blob(result.blob_ref, expected_sha256=result.sha256)
+    assert canonical.read_bytes() == b"docx bytes"

@@ -16,6 +16,7 @@ from manyselves.core.providers.base import (
     ProviderRequestDisposition,
     annotate_provider_request_failure,
 )
+from manyselves.core.reporting.provider_admission import ProviderAdmissionController
 from manyselves.core.tools.registry import Tool, ToolRegistry
 from manyselves.core.usage_ledger import UsageLedger
 from manyselves.interfaces.types import SystemNotice
@@ -300,6 +301,40 @@ async def test_provider_round_propagates_request_idle_timeout(tmp_path: Path):
     )
 
     assert provider.idle_timeouts == [600.0]
+
+
+@pytest.mark.asyncio
+async def test_provider_admission_lease_wraps_one_real_request(tmp_path: Path):
+    class SlowProvider(LLMProvider):
+        def __init__(self):
+            super().__init__("key", model="admission-model")
+            self.active = 0
+            self.max_active = 0
+            self.calls = 0
+
+        async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+            self.calls += 1
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0.01)
+            self.active -= 1
+            return LLMResponse(content="ok")
+
+    provider = SlowProvider()
+    controller = ProviderAdmissionController(global_concurrency=1)
+    first = _loop(tmp_path / "one", provider)
+    second = _loop(tmp_path / "two", provider)
+    for loop in (first, second):
+        loop.provider_admission = controller
+        loop.provider_admission_provider = "fake"
+        loop.provider_admission_model = "admission-model"
+
+    await asyncio.gather(
+        first._chat_with_retries([], None, "message-1"),
+        second._chat_with_retries([], None, "message-2"),
+    )
+    assert provider.calls == 2
+    assert provider.max_active == 1
 
 
 @pytest.mark.asyncio

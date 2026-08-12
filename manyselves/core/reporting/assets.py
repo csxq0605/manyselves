@@ -77,6 +77,17 @@ def validate_editor_protection(edited: EditedReportSubmission, claims: list[Clai
         raise ValueError(f"protected claim set mismatch: missing={missing}, extra={extra}")
 
     for claim in claims:
+        if len(claim.source_ids) != len(set(claim.source_ids)):
+            raise ValueError(f"Claim {claim.id} contains duplicate source ids")
+        invalid_source_ids = sorted(
+            source_id
+            for source_id in claim.source_ids
+            if not source_id.startswith(("E-", "R-", "W-"))
+        )
+        if invalid_source_ids:
+            raise ValueError(
+                f"Claim {claim.id} contains non-canonical source ids: {invalid_source_ids}"
+            )
         if not claim.footnote_required or not claim.source_ids:
             continue
         marker = f"[[CLAIM:{claim.id}]]"
@@ -86,6 +97,33 @@ def validate_editor_protection(edited: EditedReportSubmission, claims: list[Clai
                 f"citation marker for {claim.id} must occur exactly once in module "
                 f"{claim.module_id}"
             )
+        # Structured module submissions already bind a marker to one leaf.
+        # Chief prose is a flattened module view, so repeat that ownership
+        # check whenever fixed submodule headings are still present.  Legacy
+        # module prose without headings remains valid at module scope.
+        marker_line = next(
+            index for index, line in enumerate(narrative.splitlines()) if marker in line
+        )
+        headings = [
+            (index, heading.group(1).strip())
+            for index, line in enumerate(narrative.splitlines())
+            if (heading := re.match(r"^#{1,6}\s+(.+?)\s*$", line))
+        ]
+        fixed_headings = [
+            (index, title)
+            for index, title in headings
+            if re.match(r"^\d+(?:\.\d+)*\b", title)
+        ]
+        if fixed_headings:
+            preceding = [item for item in fixed_headings if item[0] <= marker_line]
+            if preceding:
+                owner_title = preceding[-1][1]
+                owner_id = owner_title.split(maxsplit=1)[0].rstrip(".")
+                if owner_id != claim.submodule_id:
+                    raise ValueError(
+                        f"Claim {claim.id} marker must remain in submodule "
+                        f"{claim.submodule_id}; found under {owner_id}"
+                    )
 
 
 def validate_editor_quality(
@@ -444,6 +482,37 @@ class ReportAssetAssembler:
     ) -> list[str]:
         """Return every source-table photo in manifest order or reject an orphan."""
 
+        photo_ids = [photo.id for photo in photos]
+        if len(photo_ids) != len(set(photo_ids)):
+            duplicates = sorted(
+                photo_id
+                for photo_id in set(photo_ids)
+                if photo_ids.count(photo_id) > 1
+            )
+            raise ValueError(f"project photo manifest contains duplicate ids: {duplicates}")
+        evidence_photo_refs = {
+            photo_id
+            for item in evidence
+            for photo_id in item.photo_refs
+        }
+        unknown_refs = sorted(evidence_photo_refs - set(photo_ids))
+        if unknown_refs:
+            raise ValueError(
+                "source-table evidence references photos missing from the runtime manifest: "
+                f"{unknown_refs}"
+            )
+        noncanonical_evidence = sorted(
+            {
+                item.id
+                for item in evidence
+                if item.photo_refs and not item.id.startswith("E-")
+            }
+        )
+        if noncanonical_evidence:
+            raise ValueError(
+                "photo evidence must use canonical E-* ids: "
+                f"{noncanonical_evidence}"
+            )
         evidence_by_photo: dict[str, list[EvidenceItem]] = {}
         for item in evidence:
             if item.submodule_id is None:

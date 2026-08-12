@@ -11,6 +11,7 @@ from docx.shared import Inches
 from PIL import Image
 
 from manyselves.config.schema import AgentDefaults
+from manyselves.core.artifacts import ToolContractError
 from manyselves.core.artifacts.content_store import ContentAddressedStore
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import (
@@ -22,6 +23,7 @@ from manyselves.core.providers.base import (
 )
 from manyselves.core.reporting.agent_runner import (
     InspectDocumentTool,
+    InspectImageTool,
     ProviderAttemptRecoveryRequired,
     ReportingAgentRunner,
     load_conversation_trace,
@@ -101,6 +103,25 @@ def test_runner_loads_every_registered_model_input_contract(
     loaded = runner._input_contract(envelope)
 
     assert isinstance(loaded, INPUT_CONTRACT_TYPES[kind])
+
+
+@pytest.mark.asyncio
+async def test_inspect_image_requires_current_run_photo_scope(tmp_path: Path) -> None:
+    image_path = tmp_path / "Work/runs/run-photo/photos/photo.png"
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (2, 2), color="white").save(image_path)
+    tool = InspectImageTool(
+        tmp_path,
+        allowed_refs=("Work/runs/run-photo/photos/photo.png",),
+        photo_refs={"P-001": "Work/runs/run-photo/photos/photo.png"},
+    )
+
+    inspected = await tool(path="P-001")
+    assert inspected["path"] == "Work/runs/run-photo/photos/photo.png"
+    with pytest.raises(ToolContractError, match="current run PhotoAsset map"):
+        await tool(path="P-999")
+    with pytest.raises(PermissionError):
+        await tool(path="../outside.png")
 
 
 class DirectSubmissionProvider(LLMProvider):
@@ -2075,10 +2096,19 @@ async def test_reporting_identity_keeps_one_stable_session_across_workflow_turns
         ]
         assert all(item["attempt"] == 1 for item in provider_manifests)
         assert all(len(item["request_sha256"]) == 64 for item in provider_manifests)
+        initial_provider_manifests = [
+            item for item in provider_manifests if item["phase"] == "initial"
+        ]
+        # H2 records the exact typed Provider payload (stable prefix,
+        # typed-task state, and task turn), while the logical task view keeps
+        # the historical two-message contract available to consumers that do
+        # not count typed context scaffolding.
+        assert [item["message_count"] for item in initial_provider_manifests] == [4, 4]
         assert [
-            item["message_count"]
-            for item in provider_manifests
-            if item["phase"] == "initial"
+            item["provider_message_count"] for item in initial_provider_manifests
+        ] == [4, 4]
+        assert [
+            item["logical_task_message_count"] for item in initial_provider_manifests
         ] == [2, 2]
         assert all(
             "content" not in message

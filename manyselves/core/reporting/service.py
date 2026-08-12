@@ -4,6 +4,7 @@ import asyncio
 import fcntl
 import hashlib
 import io
+import json
 import os
 import tempfile
 import time
@@ -23,6 +24,7 @@ from ..usage_ledger import UsageLedger
 from .agent_runner import ReportingAgentRunner
 from .config import load_packaged_agents
 from .coverage import evaluate_coverage
+from .delivery import DeliveryReceipt
 from .decisions import EvidenceDecisionStore
 from .evidence_readiness import ReportingBlockedError
 from .execution_runtime import ProviderRouter
@@ -53,6 +55,7 @@ from .parallel_runtime import (
 from .preparation import FilePreparationResult, prepare_manifest_file
 from .rendering import PackagedV2DocxCore, PdsDocxRenderer, RenderRequest, RenderResult
 from .rendering.packaged_docx import verify_rendered_markdown
+from .retention import ReportingRetentionPlanner
 from .store import ReportingStore
 from .workflow import AgentWorkflowBlocked, ReportingNeedsDecisionError, ReportWorkflowRunner
 
@@ -559,10 +562,17 @@ class ReportingService:
                 f"配电报告流程失败：{run_id} 未生成可验证的本次交付产物。"
             )
             return result
+        delivery_status = str(state.get("delivery_status", ""))
+        warning = state.get("delivery_warning")
         result = ReportingRunResult(
             run_id=run_id,
-            status="completed",
+            status=(
+                "delivered_with_archive_warning"
+                if delivery_status == "delivered_with_archive_warning"
+                else "completed"
+            ),
             output_paths=output_paths,
+            error=str(warning) if warning else None,
         )
         self._save_run(result)
         await self._notice(
@@ -818,6 +828,9 @@ class ReportingService:
         _result_path, request_path, revision_path, _checkpoint_path, _previous = (
             self.validate_resume_run(run_id)
         )
+        archive_only = self._resume_delivery_archive_only(run_id)
+        if archive_only is not None:
+            return archive_only
         await self._notice(f"正在从已保存检查点恢复报告流程 {run_id}。")
         if request_path.is_file():
             request = ReportRequest.model_validate_json(request_path.read_text(encoding="utf-8"))
@@ -908,6 +921,102 @@ class ReportingService:
             self._forget_agent_runner(workflow_id)
         return result
 
+    def archive_delivery(
+        self,
+        run_id: str,
+        receipt: DeliveryReceipt | None = None,
+    ) -> dict:
+        """Run the read-only archive/retention boundary for one delivery.
+
+        ``receipt`` is accepted as an explicit typed capability so callers
+        cannot accidentally archive a path reconstructed from untrusted JSON.
+        The current retention planner is read-only apart from its two summary
+        files; it never removes delivery or CAS bytes.
+        """
+
+        if receipt is not None and not isinstance(receipt, DeliveryReceipt):
+            raise TypeError("archive_delivery requires a typed DeliveryReceipt")
+        return ReportingRetentionPlanner(self.workspace).generate()
+
+    def _resume_delivery_archive_only(self, run_id: str) -> ReportingRunResult | None:
+        """Complete a persisted delivery without entering workflow/Provider code."""
+
+        completion_path = self.workspace / f"Work/runs/{run_id}/delivery-completion.json"
+        if not completion_path.is_file():
+            return None
+        try:
+            payload = json.loads(completion_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if payload.get("run_id") != run_id:
+            return None
+        status = str(payload.get("status", ""))
+        if status not in {"receipt_persisted", "delivered", "archive_pending", "archive_failed"}:
+            return None
+
+        receipt_ref = str(payload.get("delivery_receipt_ref", ""))
+        prefix = f"Work/runs/{run_id}/"
+        if not receipt_ref.startswith(prefix):
+            result = ReportingRunResult(
+                run_id=run_id,
+                status="failed_before_delivery",
+                error="delivery receipt is outside the current run",
+            )
+            self._save_run(result)
+            return result
+        receipt_path = self.workspace / receipt_ref
+        try:
+            receipt = DeliveryReceipt.model_validate_json(
+                receipt_path.read_text(encoding="utf-8")
+            )
+            output_paths = verify_current_run_outputs(
+                self.workspace,
+                run_id,
+                [receipt.final_docx, receipt.source_index, receipt.source_index_docx],
+                0,
+                allow_existing_artifacts=True,
+            )
+        except Exception as exc:
+            # Only an invalid/missing receipt is a pre-delivery failure.  Do not
+            # turn a valid receipt into a Provider replay merely because archive
+            # metadata is incomplete.
+            result = ReportingRunResult(
+                run_id=run_id,
+                status="failed_before_delivery",
+                error=str(exc),
+            )
+            self._save_run(result)
+            return result
+
+        try:
+            self.archive_delivery(run_id, receipt)
+            payload["status"] = "archived"
+            payload["delivery_status"] = "archived"
+            payload.pop("warning", None)
+            self.store.write_json(
+                f"Work/runs/{run_id}/delivery-completion.json", payload
+            )
+            result = ReportingRunResult(
+                run_id=run_id,
+                status="completed",
+                output_paths=output_paths,
+            )
+        except Exception as exc:
+            payload["status"] = "archive_failed"
+            payload["delivery_status"] = "delivered_with_archive_warning"
+            payload["warning"] = str(exc)
+            self.store.write_json(
+                f"Work/runs/{run_id}/delivery-completion.json", payload
+            )
+            result = ReportingRunResult(
+                run_id=run_id,
+                status="delivered_with_archive_warning",
+                output_paths=output_paths,
+                error=str(exc),
+            )
+        self._save_run(result)
+        return result
+
     def validate_resume_run(
         self, run_id: str
     ) -> tuple[Path, Path, Path, Path, ReportingRunResult | None]:
@@ -938,8 +1047,10 @@ class ReportingService:
                 or previous.status
                 in {
                     "failed",
+                    "failed_before_delivery",
                     "cancelled",
                     "ambiguous",
+                    "delivered_with_archive_warning",
                     "in_progress",
                     "needs_decision",
                     "blocked",

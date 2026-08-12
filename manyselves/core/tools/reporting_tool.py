@@ -415,8 +415,8 @@ class RunReportingWorkflowTool(Tool):
         max_provider_attempts: int = 80,
         max_total_tokens: int = 800000,
         execution_mode: Literal[
-            "current_serial_review", "bounded_module_lanes"
-        ] = "current_serial_review",
+            "all_ready", "current_serial_review", "bounded_module_lanes"
+        ] = "all_ready",
         module_lane_concurrency: int = 5,
         submodule_task_concurrency: int = 8,
         submodule_batch_size: int = 14,
@@ -440,8 +440,12 @@ class RunReportingWorkflowTool(Tool):
             cost_control_mode: Observe, warn, or pause only after a completed stage/checkpoint.
             max_provider_attempts: Provider-attempt window for cost observation or boundary pause.
             max_total_tokens: Token window for cost observation or boundary pause.
-            execution_mode: Current five-module review path by default; select bounded_module_lanes explicitly for leaf/lane execution.
-            module_lane_concurrency: Maximum simultaneously active module lanes.
+            execution_mode: ``all_ready`` dispatches every ready module in the
+                business path.  ``current_serial_review`` and
+                ``bounded_module_lanes`` remain compatibility modes for older
+                requests/checkpoints.
+            module_lane_concurrency: Legacy scheduling hint retained for
+                telemetry; all_ready does not use it as a hard cap.
             submodule_task_concurrency: Maximum active leaf discovery, response, or authoring tasks.
             submodule_batch_size: Deprecated compatibility input; active Wave 1/2/3 tasks are never physically batched.
         """

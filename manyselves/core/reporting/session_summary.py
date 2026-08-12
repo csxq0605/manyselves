@@ -28,6 +28,12 @@ class AgentSessionSummary(ReportingModel):
     tool_names: list[str]
     agent_rationale: str
     context_only: Literal[True] = True
+    # Typed context provenance is an optional reference/hash carrier.  The
+    # summary never embeds conversation messages or tool-result prose.
+    context_manifest_ref: Path | None = None
+    context_manifest_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    capsule_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    remaining_work: list[str] = Field(default_factory=list)
 
 
 class SessionSummarySkeleton(ReportingModel):
@@ -41,6 +47,10 @@ class SessionSummarySkeleton(ReportingModel):
     prior_result_ref: Path | None
     message_count: int
     tool_names: list[str]
+    context_manifest_ref: Path | None = None
+    context_manifest_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    capsule_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    remaining_work: list[str] = Field(default_factory=list)
 
 
 class SessionSummaryBuilder:
@@ -67,6 +77,10 @@ class SessionSummaryBuilder:
         *,
         session_id: str,
         message_log: list[Any],
+        context_manifest_ref: str | Path | None = None,
+        context_manifest_sha256: str | None = None,
+        capsule_sha256: str | None = None,
+        remaining_work: list[str] | None = None,
     ) -> SessionSummarySkeleton:
         refs = self._validate_refs(
             [*envelope.input_refs, *envelope.context_summary_refs, *shared_artifacts]
@@ -96,6 +110,14 @@ class SessionSummaryBuilder:
             prior_result_ref=prior[0] if prior else None,
             message_count=len(message_log),
             tool_names=tool_names,
+            context_manifest_ref=(
+                self._validate_refs([context_manifest_ref])[0]
+                if context_manifest_ref
+                else None
+            ),
+            context_manifest_sha256=context_manifest_sha256,
+            capsule_sha256=capsule_sha256,
+            remaining_work=list(dict.fromkeys(str(item) for item in (remaining_work or ()) if str(item))),
         )
 
     def finalize(

@@ -108,6 +108,7 @@ def test_create_tools_for_main(manager):
     }
     execution_mode = reporting_schema["properties"]["execution_mode"]
     assert set(execution_mode["enum"]) == {
+        "all_ready",
         "current_serial_review",
         "bounded_module_lanes",
     }
@@ -118,7 +119,7 @@ def test_create_tools_for_main(manager):
         inspect.signature(reporting_tool.__call__)
         .parameters["execution_mode"]
         .default
-        == "current_serial_review"
+        == "all_ready"
     )
 
 

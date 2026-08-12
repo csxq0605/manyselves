@@ -8,9 +8,12 @@ import os
 import shutil
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+
+from .storage_policy import CasPolicy, StorageMode, StoredArtifact
 
 
 @dataclass(frozen=True)
@@ -139,6 +142,77 @@ class ContentAddressedStore:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
 
+    def persist_with_policy(
+        self,
+        source: Path,
+        *,
+        destination: Path,
+        logical_role: str,
+        policy: CasPolicy | None = None,
+    ) -> StoredArtifact:
+        """Persist one file according to an explicit selective-CAS policy.
+
+        This is intentionally opt-in.  Legacy ``ingest_file`` callers still
+        create a canonical blob exactly as before; this method is the only new
+        entry point that chooses between a blob-backed view and an ordinary
+        materialized copy.
+        """
+
+        source = Path(source)
+        if not source.is_file():
+            raise FileNotFoundError(f"content source is missing: {source}")
+        destination = self._require_mutable_view_path(self._workspace_path(destination))
+        selected_policy = policy or CasPolicy()
+        decision = selected_policy.decide(
+            source,
+            logical_role=logical_role,
+            size_bytes=source.stat().st_size,
+            suffix=source.suffix,
+        )
+
+        if decision.mode is StorageMode.CAS:
+            blob = self.ingest_file(source)
+            view = self._atomic_link_view(
+                blob,
+                destination,
+            )
+            return StoredArtifact(
+                storage_mode=StorageMode.CAS,
+                sha256=blob.sha256,
+                size_bytes=blob.size,
+                view_path=view.path,
+                blob_ref=blob.relative_path,
+                policy_version=decision.policy_version,
+            )
+
+        digest, size = self._atomic_copy_verified(source, destination)
+        # Deliberately omit both blob_ref and opaque_ref.  A materialized
+        # receipt must remain independently readable if the CAS is unavailable.
+        return StoredArtifact(
+            storage_mode=StorageMode.MATERIALIZED,
+            sha256=digest,
+            size_bytes=size,
+            view_path=destination,
+            policy_version=decision.policy_version,
+        )
+
+    def store_file(
+        self,
+        source: Path,
+        *,
+        destination: Path,
+        logical_role: str,
+        policy: CasPolicy | None = None,
+    ) -> StoredArtifact:
+        """Small compatibility alias for ``persist_with_policy``."""
+
+        return self.persist_with_policy(
+            source,
+            destination=destination,
+            logical_role=logical_role,
+            policy=policy,
+        )
+
     def link_view(
         self,
         blob: ContentBlob,
@@ -158,6 +232,93 @@ class ContentAddressedStore:
             target,
             final_path=final_path,
         )
+
+    def _atomic_link_view(
+        self,
+        blob: ContentBlob,
+        target: Path,
+    ) -> ContentView:
+        """Publish a CAS view at *target* with an atomic destination replace."""
+
+        target = self._require_mutable_view_path(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        staged = target.with_name(f".{target.name}.{uuid.uuid4().hex}.cas-view")
+        view: ContentView | None = None
+        try:
+            # ``blob`` has just crossed ingest_file's hash/identity boundary;
+            # avoid a second full scan while linking the temporary view.
+            view = self._link_view_without_rehash(
+                blob,
+                staged,
+                final_path=target,
+            )
+            os.replace(staged, target)
+            self._fsync_directory(target.parent)
+        finally:
+            staged.unlink(missing_ok=True)
+        if view is None:
+            raise OSError("CAS view publication did not create a view")
+        return ContentView(path=target, mode=view.mode)
+
+    def _atomic_copy_verified(
+        self,
+        source: Path,
+        target: Path,
+        *,
+        mode: int = 0o644,
+    ) -> tuple[str, int]:
+        """Copy bytes to a staged file, verify SHA-256, then atomically publish.
+
+        The source is read once into a private temporary file while computing
+        its digest.  The staged bytes and final bytes are each checked before
+        returning, so a failed copy leaves the old destination untouched and
+        never creates a CAS blob or opaque handle.
+        """
+
+        source = Path(source)
+        if not source.is_file():
+            raise FileNotFoundError(f"content source is missing: {source}")
+        target = self._require_mutable_view_path(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary: Path | None = None
+        source_digest = hashlib.sha256()
+        source_size = 0
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                prefix=f".{target.name}.",
+                suffix=".materialized",
+                dir=target.parent,
+                delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                with source.open("rb") as source_handle:
+                    for chunk in iter(
+                        lambda: source_handle.read(1024 * 1024),
+                        b"",
+                    ):
+                        handle.write(chunk)
+                        source_digest.update(chunk)
+                        source_size += len(chunk)
+                handle.flush()
+                os.fsync(handle.fileno())
+
+            expected_digest = source_digest.hexdigest()
+            staged_digest, staged_size = self._digest(temporary)
+            if staged_digest != expected_digest or staged_size != source_size:
+                raise OSError("materialized staging copy failed SHA-256 validation")
+            os.chmod(temporary, mode)
+            os.replace(temporary, target)
+            temporary = None
+            self._fsync_directory(target.parent)
+
+            final_digest, final_size = self._digest(target)
+            if final_digest != expected_digest or final_size != source_size:
+                raise OSError("materialized copy failed post-write SHA-256 validation")
+            return final_digest, final_size
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def _link_view_without_rehash(
         self,
@@ -376,10 +537,64 @@ class ContentAddressedStore:
             relative_path=path.relative_to(self.workspace),
         )
 
+    def _workspace_path(self, path: Path) -> Path:
+        candidate = Path(path)
+        return candidate if candidate.is_absolute() else self.workspace / candidate
+
     def _require_project_path(self, path: Path, *, label: str) -> None:
         resolved = path.resolve()
         if not resolved.is_relative_to(self.workspace):
             raise ValueError(f"{label} must stay inside the project workspace")
+
+    def _require_mutable_view_path(self, path: Path) -> Path:
+        """Validate a destination without allowing an alias into immutable CAS."""
+
+        absolute = Path(os.path.abspath(Path(path)))
+        if not absolute.is_relative_to(self.workspace):
+            # Temporary directories on macOS are commonly addressed through a
+            # ``/var`` symlink while ``workspace`` is resolved to
+            # ``/private/var``.  Canonicalize only this prefix mismatch; real
+            # project-local symlink ancestors are rejected below.
+            canonical = absolute.resolve(strict=False)
+            if not canonical.is_relative_to(self.workspace):
+                raise ValueError(
+                    "mutable content view must stay inside the project and outside CAS"
+                )
+            absolute = canonical
+
+        # A symlinked ancestor could make an apparently safe destination point
+        # into CAS (or outside the workspace).  The destination itself may be
+        # a controlled CAS symlink that this class atomically replaces.
+        relative_parent = absolute.parent.relative_to(self.workspace)
+        current = self.workspace
+        for part in relative_parent.parts:
+            current /= part
+            if current.is_symlink():
+                raise ValueError(
+                    "mutable content view must not use a symbolic-link ancestor"
+                )
+
+        resolved_parent = absolute.parent.resolve()
+        resolved_root = self.root.resolve()
+        if (
+            not resolved_parent.is_relative_to(self.workspace)
+            or resolved_parent.is_relative_to(resolved_root)
+        ):
+            raise ValueError(
+                "mutable content view must stay inside the project and outside CAS"
+            )
+        return absolute
+
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            flags |= os.O_DIRECTORY
+        descriptor = os.open(path, flags)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
     def _verify_existing(self, target: Path, digest: str, size: int) -> None:
         if target.is_symlink() or not target.is_file():

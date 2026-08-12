@@ -8,6 +8,7 @@ from .base import (
     Message,
     ProviderRequestDisposition,
     ProviderRequestError,
+    provider_retry_after,
     ToolResult,
 )
 from .factory import ALL_PROVIDER_TYPES, ProviderFactory, ProviderManager
@@ -21,6 +22,7 @@ __all__ = [
     "LLMResponse",
     "ProviderRequestDisposition",
     "ProviderRequestError",
+    "provider_retry_after",
     "AnthropicProvider",
     "OpenAICompatProvider",
     "ProviderFactory",

@@ -37,6 +37,18 @@ REPORT_FINAL_AUDIT_SECTION_IDS = (
     "3.2",
     "4",
 )
+# Semantic summary/conclusion audit scope.  Chapter 2 is owned by the five
+# module reviews and Chapter 4 is an optional Inputs topic, so neither is a
+# final summary/conclusion finding target.
+FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS = (
+    "1.1",
+    "1.2",
+    "1.3",
+    "3.1.1",
+    "3.1.2",
+    "3.1.3",
+    "3.2",
+)
 CHIEF_SECTION_RESULT_PART_IDS = {
     "1.1": "assessment_background",
     "1.2": "findings_overview",
@@ -62,6 +74,30 @@ class ReportingModel(BaseModel):
     """Strict base model for persisted workflow state."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+def __getattr__(name: str):
+    """Lazily expose Cross decision carriers without creating an import cycle.
+
+    ``agentic_models`` owns the nested Cross synthesis/IF/XMR contracts, but
+    callers historically import persisted carriers from ``models``.  Keeping
+    this compatibility bridge lazy lets both import paths resolve while the
+    semantic definitions remain single-sourced.
+    """
+
+    if name in {
+        "CrossDecisionPack",
+        "CrossDecisionIFClosure",
+        "CrossDecisionXMRVerdict",
+    }:
+        from . import agentic_models
+
+        return getattr(agentic_models, name)
+    if name == "CrossDecisionPackView":
+        from . import input_contracts
+
+        return input_contracts.CrossDecisionPackView
+    raise AttributeError(name)
 
 
 class SpecialTopicSectionRequirement(ReportingModel):
@@ -281,10 +317,16 @@ class ReportRequest(ReportingModel):
     cost_control_mode: CostControlMode = "observe"
     max_provider_attempts: int = Field(default=80, ge=1, le=1000)
     max_total_tokens: int = Field(default=800_000, ge=1_000)
+    # ``all_ready`` is the default business path.  The two historical values
+    # remain accepted so an older checkpoint/request can still be resumed, but
+    # they are compatibility modes rather than a cap on active module work.
     execution_mode: Literal[
-        "current_serial_review", "bounded_module_lanes"
-    ] = "current_serial_review"
-    module_lane_concurrency: int = Field(default=5, ge=1, le=5)
+        "all_ready", "current_serial_review", "bounded_module_lanes"
+    ] = "all_ready"
+    # Retained as a scheduling hint/telemetry field.  ``all_ready`` dispatches
+    # every ready module and leaves physical backpressure to the Provider
+    # router, so this value must not impose the former five-lane ceiling.
+    module_lane_concurrency: int = Field(default=5, ge=1, le=1000)
     submodule_task_concurrency: int = Field(default=8, ge=1, le=37)
     submodule_batch_size: int = Field(
         default=14,

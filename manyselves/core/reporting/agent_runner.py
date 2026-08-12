@@ -25,7 +25,7 @@ from ...interfaces.types import (
     Error,
     UserMessage,
 )
-from ..artifacts import ArtifactGateway, ArtifactGrant, parse_artifact
+from ..artifacts import ArtifactGateway, ArtifactGrant, ToolContractError, parse_artifact
 from ..artifacts.content_store import ContentAddressedStore
 from ..loops.agent_loop import (
     AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
@@ -34,6 +34,7 @@ from ..loops.agent_loop import (
 )
 from ..loops.bus import MessageBus
 from ..providers.base import LLMProvider
+from ..providers.base import Message as LLMMessage
 from ..tools.artifact_tools import OpenArtifactTool, OpenToolResultTool, SearchTextTool
 from ..tools.document_tool import InspectDocumentTool
 from ..tools.registry import Tool, ToolRegistry
@@ -55,10 +56,30 @@ from ..tools.reporting_research_tools import (
     SearchReferenceLibraryTool,
     WebSearchTool,
 )
+from ..tools.result_memory import RunToolResultIndex
 from ..tools.skill_evolution_tools import ProductSkillEvolutionTool
 from .agentic_models import AgentResult, AgentRunStatus, TaskEnvelope
-from .capabilities import compile_agent_access, scoped_gateway
+from .capabilities import (
+    Capability,
+    collect_reference_refs,
+    compile_agent_access,
+    scoped_gateway,
+)
 from .config import AgentDefinition
+from .context_rebase import ReportingContextRebuilder
+from .context_state import (
+    ContextManifest,
+    EvidenceSlice,
+    KnowledgeSlice,
+    TaskStateCapsule,
+    TaskStateStore,
+    ToolResultMemoStore,
+)
+from .context_manifest import (
+    HashOccurrenceTracker,
+    build_manifest_payload,
+    sha256_value,
+)
 from .execution_runtime import ProviderRouter, ResolvedTaskExecutionProfile
 from .input_snapshot import RunInputSnapshotStore
 from .input_contracts import (
@@ -85,6 +106,7 @@ from .parallel_runtime import (
     TaskCorrelation,
     exclusive_file_lock,
 )
+from .provider_admission import ProviderAdmissionController
 from .prompts import PromptAssembler
 from .research.evidence_memory import EvidenceResearchMemory
 from .research.reference_library import ReferenceLibrary
@@ -121,6 +143,56 @@ class ProviderAttemptRecoveryRequired(RuntimeError):
             "Provider attempt status is ambiguous; reconcile the existing same-task "
             "journal before dispatching another physical request: "
             + ", ".join(manifest_refs)
+        )
+
+
+class _RunnerContextRebuilder(ReportingContextRebuilder):
+    """Reporting rebaser with Provider-safe ordering for legacy one-call tails.
+
+    The shared rebaser emits typed state, complete tool units, then a bounded
+    tail.  A first one-call tool round can leave the immutable ``task_context``
+    user message in that tail; move that *initial* task header before the
+    assistant tool call so the Provider sees ``assistant -> tool`` as the last
+    pair.  Semantic continuation/correction tails intentionally stay after the
+    unit because they are the next user turn.
+    """
+
+    def rebuild(self, messages, tool_definitions=None, **kwargs):
+        rebased = super().rebuild(messages, tool_definitions, **kwargs)
+        items = list(rebased.messages)
+        assistant_index = next(
+            (
+                index
+                for index, item in enumerate(items)
+                if getattr(item, "role", None) == "assistant"
+                and getattr(item, "tool_calls", None)
+            ),
+            None,
+        )
+        if assistant_index is None:
+            return rebased
+        trailing = items[assistant_index + 1 :]
+        task_headers = [
+            item
+            for item in trailing
+            if getattr(item, "role", None) == "user"
+            and str(getattr(item, "content", "") or "").lstrip().startswith(
+                "<task_context>"
+            )
+        ]
+        if not task_headers:
+            return rebased
+        remaining = [item for item in trailing if item not in task_headers]
+        reordered = items[:assistant_index] + task_headers + items[assistant_index:assistant_index + 1]
+        # Keep any tool results and semantic tail after the assistant unit.
+        reordered.extend(remaining)
+        return rebased.__class__(
+            messages=reordered,
+            tool_definitions=rebased.tool_definitions,
+            manifest=rebased.manifest,
+            dropped_message_count=rebased.dropped_message_count,
+            forensic_only=rebased.forensic_only,
+            reason=rebased.reason,
         )
 
 
@@ -202,26 +274,202 @@ class InspectImageTool(Tool):
     name = "inspect_image"
     description = "Inspect dimensions and format of one project-local image."
 
-    def __init__(self, workspace: Path):
-        self.workspace = Path(workspace).resolve()
+    side_effect = "pure_read"
+    parallel_safe = True
 
-    async def __call__(self, path: str) -> dict:
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        gateway: ArtifactGateway | None = None,
+        capabilities: tuple[Capability, ...] | list[Capability] = (),
+        allowed_refs: tuple[str, ...] | list[str] = (),
+        photo_refs: dict[str, str] | tuple[tuple[str, str], ...] | None = None,
+    ):
+        self.workspace = Path(workspace).resolve()
+        self.gateway = gateway
+        self.capabilities = {
+            item.canonical_ref: item for item in capabilities
+        }
+        self.allowed_refs = frozenset(str(ref) for ref in allowed_refs)
+        self.photo_refs = dict(photo_refs or ())
+
+    def _resolve_ref(self, value: str) -> tuple[str, Path, Capability | None]:
+        if not isinstance(value, str) or not value.strip():
+            raise ToolContractError(
+                "image reference is required",
+                code="invalid_reference",
+            )
+        ref = value.strip()
+        if ref.upper().startswith("P-") and "/" not in ref and "\\" not in ref:
+            mapped = self.photo_refs.get(ref)
+            if mapped is None:
+                raise ToolContractError(
+                    "image identifier is not in the current run PhotoAsset map",
+                    code="image_scope_unresolved",
+                    repair_code="resolve_image_scope",
+                    details={"identifier": ref},
+                )
+            ref = mapped
+        if ref not in self.allowed_refs:
+            raise PermissionError(
+                "image was not delivered by reference for this task"
+            )
+        capability = self.capabilities.get(ref)
+        if capability is None and self.gateway is not None:
+            descriptor = self.gateway.describe(ref)
+            if descriptor.kind != "image" or "inspect_image" not in descriptor.allowed_operations:
+                raise ToolContractError(
+                    "artifact is not an inspectable image",
+                    code="unsupported_operation",
+                    repair_code="use_format_reader",
+                    details={"ref": ref, "kind": descriptor.kind},
+                )
+        elif capability is not None:
+            if capability.kind != "image" or not capability.allows_operation("inspect_image"):
+                raise ToolContractError(
+                    "artifact capability does not allow image inspection",
+                    code="capability_denied",
+                    details={"ref": ref},
+                )
+        if self.gateway is not None and ref.startswith("artifact:v1:"):
+            target = self.gateway._resolve(ref)
+        else:
+            target = (self.workspace / ref).resolve()
+        if not target.is_relative_to(self.workspace) or not target.is_file():
+            raise PermissionError("image must resolve to a current workspace file")
+        return ref, target, capability
+
+    async def __call__(self, path: str | None = None, ref: str | None = None) -> dict:
         """Inspect an image.
 
         Args:
-            path: Project-relative image path.
+            path: Authorized project-relative image path or a current-run P-ID.
+            ref: Alias for an authorized opaque/current image reference.
         """
-        target = (self.workspace / path).resolve()
-        if not target.is_relative_to(self.workspace) or not target.is_file():
-            raise ValueError("image must be a file inside the project")
+        selected = ref if ref is not None else path
+        canonical_ref, target, _capability = self._resolve_ref(selected or "")
         parsed = parse_artifact(target)
         return {
-            "path": path,
+            "path": canonical_ref,
             "kind": parsed.kind,
             "metadata": parsed.blocks[0].text if parsed.blocks else "",
             "visual_verified": False,
             "error": parsed.error,
         }
+
+
+class _IndexedOpenArtifactTool(OpenArtifactTool):
+    """Run-scoped idempotency wrapper for the bounded artifact reader."""
+
+    def __init__(self, *args, result_index: RunToolResultIndex, task_id: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.result_index = result_index
+        self.task_id = task_id
+
+    async def __call__(
+        self, ref: str, offset: int = 0, limit: int | None = None
+    ) -> dict:
+        arguments = {"ref": ref, "offset": offset, "limit": limit}
+        existing = self.result_index.lookup(self.task_id, self.name, arguments)
+        if existing is not None and existing.get("status") == "completed":
+            return existing.get("result")
+        result = await super().__call__(ref=ref, offset=offset, limit=limit)
+        self.result_index.record(
+            self.task_id,
+            self.name,
+            arguments,
+            result,
+            status="completed",
+            ref=ref,
+        )
+        return result
+
+
+class _IndexedSearchTextTool(SearchTextTool):
+    def __init__(self, *args, result_index: RunToolResultIndex, task_id: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.result_index = result_index
+        self.task_id = task_id
+
+    async def __call__(
+        self,
+        ref: str,
+        query: str,
+        max_matches: int = 20,
+        context_lines: int = 2,
+    ) -> dict:
+        arguments = {
+            "ref": ref,
+            "query": query,
+            "max_matches": max_matches,
+            "context_lines": context_lines,
+        }
+        existing = self.result_index.lookup(self.task_id, self.name, arguments)
+        if existing is not None and existing.get("status") == "completed":
+            return existing.get("result")
+        result = await super().__call__(
+            ref=ref,
+            query=query,
+            max_matches=max_matches,
+            context_lines=context_lines,
+        )
+        self.result_index.record(
+            self.task_id,
+            self.name,
+            arguments,
+            result,
+            status="completed",
+            ref=ref,
+        )
+        return result
+
+
+class _IndexedOpenToolResultTool(OpenToolResultTool):
+    def __init__(self, *args, result_index: RunToolResultIndex, task_id: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.result_index = result_index
+        self.task_id = task_id
+
+    async def __call__(self, ref: str, offset: int = 0, limit: int = 8000) -> dict:
+        arguments = {"ref": ref, "offset": offset, "limit": limit}
+        existing = self.result_index.lookup(self.task_id, self.name, arguments)
+        if existing is not None and existing.get("status") == "completed":
+            return existing.get("result")
+        result = await super().__call__(ref=ref, offset=offset, limit=limit)
+        self.result_index.record(
+            self.task_id,
+            self.name,
+            arguments,
+            result,
+            status="completed",
+            ref=ref,
+        )
+        return result
+
+
+class _IndexedInspectImageTool(InspectImageTool):
+    def __init__(self, *args, result_index: RunToolResultIndex, task_id: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.result_index = result_index
+        self.task_id = task_id
+
+    async def __call__(self, path: str | None = None, ref: str | None = None) -> dict:
+        arguments = {"path": path, "ref": ref}
+        existing = self.result_index.lookup(self.task_id, self.name, arguments)
+        if existing is not None and existing.get("status") == "completed":
+            return existing.get("result")
+        result = await super().__call__(path=path, ref=ref)
+        selected = ref if ref is not None else path
+        self.result_index.record(
+            self.task_id,
+            self.name,
+            arguments,
+            result,
+            status="completed",
+            ref=selected,
+        )
+        return result
 
 
 class CalculateTool(Tool):
@@ -275,11 +523,14 @@ class ReportingAgentRunner:
         timeout: float | None = None,
         product_skill_root: Path | None = None,
         provider_router: ProviderRouter | None = None,
+        provider_admission: ProviderAdmissionController | None = None,
+        provider_admission_controller: ProviderAdmissionController | None = None,
     ):
         self.workspace = Path(workspace).resolve()
         self.bus = bus
         self.llm_provider = llm_provider
         self.provider_router = provider_router or ProviderRouter(llm_provider)
+        self.provider_admission = provider_admission or provider_admission_controller
         self.defaults = defaults
         # Reporting tasks are already bounded by provider idle timeouts, tool-turn
         # limits, and the run-level request/token budget.  A second wall-clock
@@ -304,6 +555,13 @@ class ReportingAgentRunner:
         )
         self._routers: dict[str, WorkflowMessageRouter] = {}
         self._provider_attempt_guard: Callable[[str, str], Awaitable[None]] | None = None
+        # Typed context is scoped to the complete run/task/revision identity,
+        # not to the durable professional Agent identity.  Keeping the map
+        # separate from ``_sessions`` means a cached loop can safely receive a
+        # fresh capsule when the workflow advances to another task.
+        self._context_rebuilders: dict[
+            tuple[str, str, str, int], ReportingContextRebuilder
+        ] = {}
 
     def _loop_config(self, definition: AgentDefinition, envelope: TaskEnvelope) -> AgentDefaults:
         """Build task-sensitive limits without changing the durable Agent identity."""
@@ -548,6 +806,23 @@ class ReportingAgentRunner:
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
     @staticmethod
+    def _provider_round_reason(phase: str, attempt: int = 1) -> str:
+        """Return H1's explicit reason for one physical Provider attempt."""
+
+        phase = str(phase or "initial")
+        if int(attempt or 1) > 1:
+            return "provider_retry"
+        if phase == "tool_followup":
+            return "evidence_lookup"
+        if phase == "guard" or phase.startswith("guard"):
+            return "tool_contract_error"
+        if "continuation" in phase:
+            return "long_output_continuation"
+        if "correction" in phase or "revision" in phase:
+            return "semantic_correction"
+        return "direct_submit"
+
+    @staticmethod
     def _continuation_limits(
         resolved_profile: ResolvedTaskExecutionProfile,
     ) -> dict[str, int]:
@@ -775,6 +1050,16 @@ class ReportingAgentRunner:
         index_path = self.workspace / index_ref
         claims: dict[str, str] = {}
         claim_root = index_path.parent / "hash-index-claims"
+        # v3 repeats are scoped to the complete logical identity.  Keep the
+        # legacy aggregate claim index above for v1/v2 forensic readers; it is
+        # intentionally not used for v3 character counters.
+        v3_tracker = HashOccurrenceTracker(
+            index_path.parent / "v3-hash-index",
+            run_id=envelope.run_id,
+            task_id=envelope.task_id,
+            identity_key=identity_key,
+            revision=envelope.revision,
+        )
         safe_task_id = re.sub(r"[^A-Za-z0-9_.-]", "_", envelope.task_id)
         task_sha256 = self._sha256_text(task_message)
         manifest_ref = (
@@ -797,6 +1082,7 @@ class ReportingAgentRunner:
 
         declared_modes = envelope.artifact_delivery_modes
         artifact_entries: list[dict] = []
+        artifact_payloads: dict[str, bytes | str] = {}
         declared_refs = [
             *envelope.input_refs,
             *envelope.context_summary_refs,
@@ -817,6 +1103,7 @@ class ReportingAgentRunner:
                 path = (self.workspace / ref).resolve()
                 if path.is_relative_to(self.workspace) and path.is_file():
                     payload = path.read_bytes()
+                    artifact_payloads[ref] = payload
                     digest = hashlib.sha256(payload).hexdigest()
                     occurrence = f"{manifest_ref}#artifact:{ref}"
                     first = self._claim_hash_occurrence(
@@ -846,8 +1133,84 @@ class ReportingAgentRunner:
                 component("input_contract", input_contract_payload)
             )
         selected_skills = self._selected_module_skills(definition, envelope)
+        v3_segments: list[dict[str, Any]] = []
+
+        def v3_segment(
+            kind: str,
+            value: Any,
+            *,
+            label: str,
+            stable: bool | None = None,
+            duplicate: bool = False,
+        ) -> None:
+            v3_segments.append(
+                v3_tracker.observe(
+                    kind,
+                    value,
+                    ref=f"{manifest_ref}#segment:{label}",
+                    occurrence=f"{manifest_ref}#segment:{label}",
+                    stable=stable,
+                    duplicate=duplicate,
+                )
+            )
+
+        v3_segment("system_prompt", system_prompt, label="system_prompt", stable=True)
+        v3_segment("task_contract", task_message, label="task_contract")
+        v3_segment(
+            "task_state_capsule",
+            {
+                "run_id": envelope.run_id,
+                "task_id": envelope.task_id,
+                "task_attempt_id": envelope.task_attempt_id,
+                "revision": envelope.revision,
+                "agent_id": definition.id,
+                "objective": envelope.objective,
+                "constraints": envelope.constraints,
+                "allowed_outputs": envelope.allowed_outputs,
+                "target_submodule_ids": envelope.target_submodule_ids,
+            },
+            label="task_state_capsule",
+        )
+        for index, ref in enumerate(envelope.context_summary_refs):
+            v3_segment(
+                "knowledge_slice",
+                artifact_payloads.get(ref, ref),
+                label=f"knowledge_slice-{index}",
+            )
+        for index, ref in enumerate(shared_artifacts):
+            v3_segment(
+                "evidence_slice",
+                artifact_payloads.get(ref, ref),
+                label=f"evidence_slice-{index}",
+            )
+        if input_contract_payload is not None:
+            v3_segment("input_contract", input_contract_payload, label="input_contract")
+        for index, skill in enumerate(selected_skills):
+            v3_segment(
+                "module_skill",
+                skill.content,
+                label=f"module_skill-{index}",
+                stable=True,
+            )
+        for index, ref in enumerate(dict.fromkeys(declared_refs)):
+            v3_segment(
+                "artifact_ref",
+                artifact_payloads.get(ref, ref),
+                label=f"artifact_ref-{index}",
+            )
+        if envelope.prior_result_ref:
+            v3_segment(
+                "completed_result_ref",
+                envelope.prior_result_ref,
+                label="completed_result_ref",
+            )
         manifest = {
-            "context_manifest_version": 1,
+            # v1 fields remain below (prompt_components/artifacts) so old
+            # forensic readers keep working; v3 is the authoritative view.
+            "context_manifest_version": 3,
+            "legacy_context_manifest_version": 1,
+            "schema_version": 3,
+            "manifest_version": 3,
             "run_id": envelope.run_id,
             "task_id": envelope.task_id,
             "task_attempt_id": envelope.task_attempt_id,
@@ -882,6 +1245,30 @@ class ReportingAgentRunner:
                 for mode in ("inline", "reference", "hash_retained")
             },
         }
+        manifest.update(
+            build_manifest_payload(
+                run_id=envelope.run_id,
+                task_id=envelope.task_id,
+                identity_key=identity_key,
+                revision=envelope.revision,
+                task_attempt_id=envelope.task_attempt_id,
+                session_id=session_id,
+                segments=v3_segments,
+                manifest_kind="context_manifest_v3",
+                # Preserve the v1 fields already assembled above instead of
+                # serializing any prompt/artifact body into v3.
+            )
+        )
+        manifest.pop("manifest_sha256", None)
+        manifest["manifest_sha256"] = self._sha256_text(
+            json.dumps(
+                manifest,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+        )
         self._merge_hash_index(index_path, claims)
         return self.store.write_json(manifest_ref, manifest)
 
@@ -906,6 +1293,13 @@ class ReportingAgentRunner:
         index_path = self.workspace / index_ref
         claims: dict[str, str] = {}
         claim_root = index_path.parent / "provider-hash-index-claims"
+        v3_tracker = HashOccurrenceTracker(
+            index_path.parent / "v3-provider-hash-index",
+            run_id=envelope.run_id,
+            task_id=envelope.task_id,
+            identity_key=identity_key,
+            revision=envelope.revision,
+        )
         safe_task_id = re.sub(r"[^A-Za-z0-9_.-]", "_", envelope.task_id)
         safe_phase = re.sub(r"[^A-Za-z0-9_.-]", "_", phase)
         manifest_ref = (
@@ -931,6 +1325,28 @@ class ReportingAgentRunner:
             return result
 
         message_components: list[dict] = []
+        v3_segments: list[dict[str, Any]] = []
+        seen_v3_hashes: set[str] = set()
+
+        def v3_segment(
+            kind: str,
+            value: Any,
+            *,
+            label: str,
+            stable: bool | None = None,
+        ) -> None:
+            preview_digest, _ = sha256_value(value)
+            item = v3_tracker.observe(
+                kind,
+                value,
+                ref=f"{manifest_ref}#segment:{label}",
+                occurrence=f"{manifest_ref}#segment:{label}",
+                stable=stable,
+                duplicate=preview_digest in seen_v3_hashes,
+            )
+            seen_v3_hashes.add(preview_digest)
+            v3_segments.append(item)
+
         serialized_messages: list[dict] = []
         for index, message in enumerate(messages):
             payload = (
@@ -962,6 +1378,14 @@ class ReportingAgentRunner:
             )
             message_components.append(item)
             serialized_messages.append(payload)
+            v3_segment(
+                "tool_result"
+                if bool(getattr(message, "is_tool_result", False))
+                else ("system_prompt" if getattr(message, "role", "") == "system" else "message"),
+                serialized,
+                label=f"message-{index}",
+                stable=(getattr(message, "role", "") == "system"),
+            )
 
         serialized_tools = json.dumps(
             tool_definitions or [],
@@ -980,9 +1404,55 @@ class ReportingAgentRunner:
             separators=(",", ":"),
             default=str,
         )
+        v3_segment("tool_schema", serialized_tools, label="tool_schema")
+        v3_segment(
+            "task_contract",
+            {
+                "objective": envelope.objective,
+                "allowed_outputs": envelope.allowed_outputs,
+                "allowed_tools": envelope.allowed_tools,
+                "input_contract_kind": envelope.input_contract_kind,
+            },
+            label="task_contract",
+        )
+        v3_segment(
+            "task_state_capsule",
+            {
+                "run_id": envelope.run_id,
+                "task_id": envelope.task_id,
+                "task_attempt_id": envelope.task_attempt_id,
+                "revision": envelope.revision,
+            },
+            label="task_state_capsule",
+        )
+        if envelope.input_contract_ref:
+            v3_segment("input_contract", envelope.input_contract_ref, label="input_contract")
+        for index, ref in enumerate(
+            dict.fromkeys(
+                [
+                    *envelope.input_refs,
+                    *envelope.context_summary_refs,
+                    *([envelope.prior_result_ref] if envelope.prior_result_ref else []),
+                ]
+            )
+        ):
+            v3_segment("artifact_ref", ref, label=f"artifact_ref-{index}")
+        if envelope.prior_result_ref:
+            v3_segment(
+                "completed_result_ref",
+                envelope.prior_result_ref,
+                label="completed_result_ref",
+            )
+        request_sha256 = self._sha256_text(serialized_request)
         manifest = {
             "provider_context_manifest_version": 3,
+            "schema_version": 3,
+            "manifest_version": 3,
+            "context_manifest_version": 3,
             "provider_call_id": provider_call_id,
+            "provider_call_ref": manifest_ref,
+            "provider_call_hash": request_sha256,
+            "provider_call_sha256": request_sha256,
             "run_id": envelope.run_id,
             "task_id": envelope.task_id,
             "task_attempt_id": envelope.task_attempt_id,
@@ -999,9 +1469,22 @@ class ReportingAgentRunner:
                 else None
             ),
             "message_count": len(messages),
+            "provider_message_count": len(messages),
+            "logical_task_message_count": sum(
+                1
+                for message in messages
+                if not (
+                    str(getattr(message, "content", "") or "").lstrip().startswith(
+                        "<typed_task_state>"
+                    )
+                    or str(getattr(message, "content", "") or "").lstrip().startswith(
+                        "<bounded_context>"
+                    )
+                )
+            ),
             "messages": message_components,
             "tool_definitions": component("tool_definitions", serialized_tools),
-            "request_sha256": self._sha256_text(serialized_request),
+            "request_sha256": request_sha256,
             "request_sha256_scope": "agent_pre_adapter",
             "pre_adapter_request": {
                 "representation": "agent_llm_messages_and_tool_definitions_v1",
@@ -1014,6 +1497,33 @@ class ReportingAgentRunner:
             "provider_payload_status": "pending",
             "provider_payload": None,
         }
+        manifest.update(
+            build_manifest_payload(
+                run_id=envelope.run_id,
+                task_id=envelope.task_id,
+                identity_key=identity_key,
+                revision=envelope.revision,
+                task_attempt_id=envelope.task_attempt_id,
+                session_id=session_id,
+                provider_call_id=provider_call_id,
+                provider_call_ref=manifest_ref,
+                provider_call_hash=request_sha256,
+                manifest_kind="provider_context_observation",
+                segments=v3_segments,
+                # Keep the pre-adapter/provider payload fields above; the
+                # v3 helper only adds hash-only segments and counters.
+            )
+        )
+        manifest.pop("manifest_sha256", None)
+        manifest["manifest_sha256"] = self._sha256_text(
+            json.dumps(
+                manifest,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+        )
         self._merge_hash_index(index_path, claims)
         return self.store.write_json(manifest_ref, manifest)
 
@@ -1034,6 +1544,22 @@ class ReportingAgentRunner:
         if provider_call_id != str(manifest.get("provider_call_id") or ""):
             raise ValueError(
                 "usage provider_call_id does not match provider context manifest"
+            )
+        expected_ref = str(manifest.get("provider_call_ref") or relative)
+        supplied_ref = record.get("provider_call_ref")
+        if supplied_ref is not None and str(supplied_ref) != expected_ref:
+            raise ValueError(
+                "usage provider_call_ref does not match provider context manifest"
+            )
+        expected_hash = str(
+            manifest.get("provider_call_hash")
+            or manifest.get("request_sha256")
+            or ""
+        )
+        supplied_hash = record.get("provider_call_hash")
+        if supplied_hash is not None and str(supplied_hash) != expected_hash:
+            raise ValueError(
+                "usage provider_call_hash does not match provider context manifest"
             )
         observed = record.get("request_metric_source") == "provider_adapter_payload"
         manifest["provider_payload_status"] = (
@@ -1062,6 +1588,56 @@ class ReportingAgentRunner:
         manifest["usage_source"] = record.get("usage_source")
         manifest["attempt_disposition"] = record.get("attempt_disposition")
         manifest["retry_decision"] = record.get("retry_decision")
+        disposition = str(record.get("attempt_disposition") or "")
+        provider_request_sent = record.get("provider_request_sent")
+        if provider_request_sent is None:
+            provider_request_sent = disposition not in {"not_sent", "pre_send"}
+        provider_request_sent = bool(provider_request_sent)
+        attempt = int(record.get("attempt", manifest.get("attempt", 1)) or 1)
+        phase = str(record.get("phase") or manifest.get("phase") or "initial")
+        if record.get("round_reason"):
+            round_reason = str(record["round_reason"])
+        elif attempt > 1 and disposition != "accepted_or_unknown":
+            round_reason = "provider_retry"
+        elif phase == "tool_followup":
+            round_reason = "evidence_lookup"
+        elif phase == "guard" or phase.startswith("guard"):
+            round_reason = "tool_contract_error"
+        elif "continuation" in phase:
+            round_reason = "long_output_continuation"
+        elif "correction" in phase or "revision" in phase:
+            round_reason = "semantic_correction"
+        else:
+            round_reason = "direct_submit"
+        manifest.update(
+            {
+                "provider_call_ref": expected_ref,
+                "provider_call_hash": expected_hash or manifest.get("request_sha256"),
+                "provider_request_sent": provider_request_sent,
+                "attempt_kind": (
+                    str(record.get("attempt_kind") or "provider_request")
+                    if provider_request_sent
+                    else str(record.get("attempt_kind") or "pre_send_block")
+                ),
+                "round_reason": round_reason,
+                "pre_send_guard_status": record.get("pre_send_guard_status"),
+                "rebuild_count": int(record.get("rebuild_count", 0) or 0),
+                "context_manifest_version": 3,
+            }
+        )
+        # Finalization changes usage fields, so refresh the manifest integrity
+        # hash.  provider_call_hash remains the pre-adapter request hash and is
+        # therefore stable across this update.
+        manifest.pop("manifest_sha256", None)
+        manifest["manifest_sha256"] = self._sha256_text(
+            json.dumps(
+                manifest,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+        )
         return self.store.write_json(relative, manifest)
 
     def _ambiguous_provider_call_refs(
@@ -1119,18 +1695,25 @@ class ReportingAgentRunner:
             return None
         return model.model_validate_json(path.read_text(encoding="utf-8"))
 
-    @staticmethod
-    def _reference_artifacts(envelope: TaskEnvelope) -> list[str]:
-        """Expose only artifacts explicitly delivered by reference to model tools."""
+    def _reference_artifacts(self, envelope: TaskEnvelope) -> list[str]:
+        """Return recursively declared refs which are reopenable in this task.
 
-        declared = [
-            *envelope.input_refs,
-            *envelope.context_summary_refs,
-            *([envelope.prior_result_ref] if envelope.prior_result_ref else []),
-        ]
+        The public TaskEnvelope fields remain the first compatibility source;
+        typed input refs are added only after the gateway/compiler has checked
+        them.  Inline/hash-retained values stay out of the tool allowlist.
+        """
+
+        try:
+            typed_input = self._input_contract(envelope)
+        except Exception:
+            # ``_tools`` will report the typed contract error with its strict
+            # compiler context.  Keep this helper side-effect free for legacy
+            # callers that use it while constructing a prompt.
+            typed_input = None
+        declared = collect_reference_refs(envelope, typed_input=typed_input)
         return [
             ref
-            for ref in dict.fromkeys(declared)
+            for ref in declared
             if envelope.artifact_delivery_modes.get(ref) == "reference"
         ]
 
@@ -1717,12 +2300,15 @@ class ReportingAgentRunner:
         access = compile_agent_access(
             definition,
             envelope,
-            [
-                *self._reference_artifacts(envelope),
-                *reference_shared_artifacts,
-            ],
+            self._reference_artifacts(envelope),
             gateway=gateway,
+            shared_refs=reference_shared_artifacts,
         )
+        # One result index belongs to the run, not to a process-local Agent
+        # session.  Read-only wrappers below consult it before executing a
+        # duplicate local parse/search.
+        result_index = RunToolResultIndex(self.workspace, envelope.run_id)
+        result_index.capabilities = access.capabilities  # type: ignore[attr-defined]
         ledger = SourceLedger(self.workspace, envelope.run_id)
         module_id = self._reporting_module_id(definition, envelope)
         evidence_memory = (
@@ -1914,7 +2500,13 @@ class ReportingAgentRunner:
                     else None
                 ),
             ),
-            "inspect_image": InspectImageTool(self.workspace),
+            "inspect_image": InspectImageTool(
+                self.workspace,
+                gateway=gateway,
+                capabilities=access.capabilities,
+                allowed_refs=access.readable_refs,
+                photo_refs=access.photo_map(),
+            ),
             "open_artifact": OpenArtifactTool(
                 gateway,
                 default_limit=(
@@ -2029,6 +2621,41 @@ class ReportingAgentRunner:
             if name not in available:
                 raise ValueError(f"unsupported tool in {definition.id}: {name}")
             registry.register(available[name])
+        for name in (
+            "open_artifact",
+            "open_tool_result",
+            "search_text",
+            "inspect_image",
+        ):
+            tool = registry.get(name)
+            if tool is not None:
+                # The index is an injected run-level dependency.  The concrete
+                # bounded readers retain their legacy call/schema behaviour;
+                # H2 callers may opt into lookup/record without broadening the
+                # provider-visible contract.
+                tool.result_index = result_index  # type: ignore[attr-defined]
+                tool.task_id = envelope.task_id  # type: ignore[attr-defined]
+        # Keep the compiler object attached to the registry for local callers
+        # and tests; it is not serialized into provider-visible schemas.
+        registry.capabilities = access.capabilities  # type: ignore[attr-defined]
+        registry.capability_access = access  # type: ignore[attr-defined]
+        registry.result_index = result_index  # type: ignore[attr-defined]
+        if registry.get("inspect_image") is not None:
+            registry._schema_cache["inspect_image"] = {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Authorized image path or current-run P-ID.",
+                    },
+                    "ref": {
+                        "type": "string",
+                        "description": "Authorized current-run image reference.",
+                    },
+                },
+                "anyOf": [{"required": ["path"]}, {"required": ["ref"]}],
+                "additionalProperties": False,
+            }
         if registry.get("write_result_part") is not None:
             # Expose one exact write shape to providers. The former automatic batch
             # companion encouraged providers to stringify ``parts`` or omit fields,
@@ -2097,6 +2724,408 @@ class ReportingAgentRunner:
             return session_key
         return definition.id
 
+    # ------------------------------------------------------------------
+    # Typed Provider-context lifecycle (H3)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _context_store_identity(
+        envelope: TaskEnvelope,
+    ) -> tuple[str, str, str, int]:
+        """Return the complete key used for a typed context capsule."""
+
+        return (
+            str(envelope.run_id),
+            str(envelope.task_id),
+            str(envelope.agent_id),
+            int(envelope.revision),
+        )
+
+    def _context_stores(
+        self, envelope: TaskEnvelope
+    ) -> tuple[TaskStateStore, ToolResultMemoStore]:
+        """Create run-scoped stores with task/revision identity checks.
+
+        ``TaskStateStore`` intentionally keeps one atomic sequence per run.  The
+        runner selects entries by the full task/revision key below, so advancing
+        one durable Agent to another task cannot make the later task read the
+        previous task's current pointer.
+        """
+
+        return (
+            TaskStateStore(
+                self.workspace,
+                envelope.run_id,
+                envelope.task_id,
+                envelope.revision,
+            ),
+            ToolResultMemoStore(
+                self.workspace,
+                envelope.run_id,
+                envelope.task_id,
+                envelope.revision,
+            ),
+        )
+
+    @staticmethod
+    def _manifest_matches_envelope(
+        manifest: ContextManifest, envelope: TaskEnvelope
+    ) -> bool:
+        return (
+            manifest.run_id == envelope.run_id
+            and manifest.task_id == envelope.task_id
+            and manifest.revision == envelope.revision
+        )
+
+    def _load_verified_context_manifest(
+        self,
+        store: TaskStateStore,
+        envelope: TaskEnvelope,
+    ) -> ContextManifest | None:
+        """Load only a hash- and identity-verified capsule.
+
+        A missing state sequence is a normal first run.  A present matching
+        entry whose bytes or canonical hash are invalid is a hard failure: a
+        crash/resume path must never fall back to a forensic conversation.
+        Entries for another task in the same run are ignored and do not bleed
+        into this task's Provider context.
+        """
+
+        pointer = store.current_pointer()
+        if pointer is not None:
+            pointer_identity = (
+                pointer.get("run_id"),
+                pointer.get("task_id"),
+                pointer.get("revision"),
+            )
+            expected_identity = (
+                envelope.run_id,
+                envelope.task_id,
+                envelope.revision,
+            )
+            if pointer_identity == expected_identity:
+                try:
+                    return store.load(
+                        expected_sha256=str(pointer.get("manifest_sha256") or "")
+                        or None,
+                        run_id=envelope.run_id,
+                        task_id=envelope.task_id,
+                        revision=envelope.revision,
+                    )
+                except FileNotFoundError:
+                    # The pointer may have been written just before a process
+                    # crash.  The append-only sequence remains the only safe
+                    # migration source; continue with the identity-filtered
+                    # lookup below.
+                    pass
+
+        # Do not use a different task's current pointer.  Search the immutable
+        # sequence for the newest exact identity and verify its recorded hash.
+        for entry in reversed(store._read_sequence()):  # type: ignore[attr-defined]
+            if (
+                entry.get("run_id") != envelope.run_id
+                or entry.get("task_id") != envelope.task_id
+                or int(entry.get("revision", -1)) != envelope.revision
+            ):
+                continue
+            reference = str(entry.get("ref") or "")
+            if not reference:
+                raise ValueError("typed context sequence entry lacks a manifest ref")
+            return store.load(
+                reference,
+                expected_sha256=str(entry.get("manifest_sha256") or "") or None,
+                run_id=envelope.run_id,
+                task_id=envelope.task_id,
+                revision=envelope.revision,
+            )
+        return None
+
+    def _context_slice(
+        self,
+        ref: str,
+        *,
+        kind: str,
+        gateway: ArtifactGateway | None,
+        include_content: bool = True,
+        max_chars: int = 4096,
+    ) -> EvidenceSlice | KnowledgeSlice:
+        """Bind one envelope ref to a hash-addressed, bounded context slice."""
+
+        digest: str | None = None
+        content: str | None = None
+        canonical_ref = str(ref)
+        target: Path | None = None
+        if gateway is not None:
+            try:
+                descriptor = gateway.describe(canonical_ref)
+                canonical_ref = descriptor.canonical_ref
+                digest = descriptor.sha256
+                target = gateway._resolve(canonical_ref)
+            except Exception:
+                # A typed contract can carry provenance refs that are not
+                # reopenable in the current task.  Keep their identity as a
+                # hash-only hint instead of inventing a path or reading a
+                # legacy transcript.
+                target = None
+        if target is None:
+            candidate = (self.workspace / canonical_ref).resolve()
+            if candidate.is_relative_to(self.workspace) and candidate.is_file():
+                target = candidate
+                try:
+                    payload = candidate.read_bytes()
+                    digest = hashlib.sha256(payload).hexdigest()
+                    if include_content:
+                        try:
+                            content = payload.decode("utf-8")[:max_chars]
+                        except UnicodeDecodeError:
+                            content = None
+                except OSError:
+                    target = None
+        if digest is None:
+            digest = hashlib.sha256(canonical_ref.encode("utf-8")).hexdigest()
+        common = {
+            "ref": canonical_ref,
+            "sha256": digest,
+            "content": content,
+            "summary": (
+                re.sub(r"\s+", " ", content).strip()[:768]
+                if content
+                else None
+            ),
+            "chars": len(content or ""),
+        }
+        if kind == "knowledge":
+            return KnowledgeSlice(kind="knowledge", **common)
+        return EvidenceSlice(kind="evidence", **common)
+
+    def _context_rebuilder_for_task(
+        self,
+        *,
+        definition: AgentDefinition,
+        envelope: TaskEnvelope,
+        identity_key: str,
+        session_id: str,
+        system_prompt: str,
+        gateway: ArtifactGateway | None,
+        shared_artifacts: list[str],
+    ) -> ReportingContextRebuilder:
+        """Create/load one typed capsule and return its Provider rebaser."""
+
+        cache_key = self._context_store_identity(envelope)
+        state_store, memo_store = self._context_stores(envelope)
+        loaded = self._load_verified_context_manifest(state_store, envelope)
+        evidence_refs = list(
+            dict.fromkeys(
+                [
+                    *envelope.input_refs,
+                    *shared_artifacts,
+                ]
+            )
+        )
+        knowledge_refs = list(
+            dict.fromkeys(
+                [
+                    *envelope.context_summary_refs,
+                    *([envelope.prior_result_ref] if envelope.prior_result_ref else []),
+                ]
+            )
+        )
+        evidence = [
+            self._context_slice(
+                ref,
+                kind="evidence",
+                gateway=gateway,
+                include_content=True,
+            )
+            for ref in evidence_refs
+            if ref
+        ]
+        knowledge = [
+            self._context_slice(
+                ref,
+                kind="knowledge",
+                gateway=gateway,
+                include_content=True,
+            )
+            for ref in knowledge_refs
+            if ref
+        ]
+
+        rebuilder = _RunnerContextRebuilder(
+            self.workspace,
+            store=state_store,
+            memo_store=memo_store,
+            persist=True,
+        )
+        required_tool_names = list(
+            dict.fromkeys([*envelope.allowed_tools, *definition.tools])
+        )
+        if loaded is not None and loaded.task_state is not None:
+            capsule = loaded.task_state
+            # The durable task state is tied to run/task/revision.  A fresh
+            # attempt id may change after a crash, but never changes that
+            # semantic identity; update the attempt marker and re-hash it.
+            if capsule.input_refs and list(capsule.input_refs) != list(envelope.input_refs):
+                raise ValueError("typed context capsule input refs mismatch")
+            capsule_updates: dict[str, Any] = {}
+            if capsule.task_attempt_id != envelope.task_attempt_id:
+                capsule_updates["task_attempt_id"] = envelope.task_attempt_id
+            if required_tool_names and any(
+                item not in capsule.required_tool_names for item in required_tool_names
+            ):
+                capsule_updates["required_tool_names"] = list(
+                    dict.fromkeys([*capsule.required_tool_names, *required_tool_names])
+                )
+                capsule_updates["allowed_tool_names"] = list(
+                    dict.fromkeys([*capsule.allowed_tool_names, *required_tool_names])
+                )
+            if capsule_updates:
+                capsule = capsule.model_copy(
+                    update=capsule_updates
+                ).with_hash()
+                loaded = loaded.model_copy(
+                    update={
+                        "task_state_capsule": capsule,
+                        "manifest_sha256": None,
+                    }
+                ).with_hash()
+                state_store.save(loaded)
+            rebuilder.load_verify(
+                loaded,
+                run_id=envelope.run_id,
+                task_id=envelope.task_id,
+                revision=envelope.revision,
+                expected_sha256=loaded.manifest_sha256,
+            )
+        else:
+            capsule = TaskStateCapsule(
+                run_id=envelope.run_id,
+                task_id=envelope.task_id,
+                revision=envelope.revision,
+                task_attempt_id=envelope.task_attempt_id,
+                objective=envelope.objective,
+                input_refs=list(dict.fromkeys(envelope.input_refs)),
+                evidence_refs=list(dict.fromkeys(item.ref for item in evidence)),
+                knowledge_refs=list(dict.fromkeys(item.ref for item in knowledge)),
+                required_tool_names=required_tool_names,
+                allowed_tool_names=required_tool_names,
+                state={
+                    "identity_key": identity_key,
+                    "agent_id": definition.id,
+                    "session_id": session_id,
+                    "artifact_delivery_modes": dict(envelope.artifact_delivery_modes),
+                },
+            ).with_hash()
+            rebuilder.begin_task(
+                envelope=envelope,
+                stable_prefix=[LLMMessage(role="system", content=system_prompt)],
+                evidence=evidence,
+                knowledge=knowledge,
+                capsule=capsule,
+                persist=True,
+            )
+        self._context_rebuilders[cache_key] = rebuilder
+        return rebuilder
+
+    @staticmethod
+    def _sync_context_messages(
+        rebuilder: ReportingContextRebuilder,
+        messages: list[Any],
+    ) -> None:
+        """Record complete tool pairs without ever reading forensic traces."""
+
+        known_calls = getattr(rebuilder, "_calls", {})
+        known_results = getattr(rebuilder, "_results", {})
+        consumed = getattr(rebuilder, "_consumed_calls", set())
+        for message in messages:
+            calls = list(getattr(message, "tool_calls", None) or ())
+            if getattr(message, "role", None) == "assistant" and calls:
+                if any(str(getattr(call, "id", "") or "") not in known_calls for call in calls):
+                    rebuilder.record_tool_call(message)
+                known_calls = getattr(rebuilder, "_calls", known_calls)
+            call_id = str(getattr(message, "tool_call_id", "") or "")
+            if not call_id or not bool(getattr(message, "is_tool_result", False)):
+                continue
+            if call_id in known_results or call_id in consumed:
+                continue
+            try:
+                rebuilder.record_tool_result(message, consumed=False)
+            except (TypeError, ValueError, RuntimeError):
+                # A malformed forensic tail is never promoted into the typed
+                # Provider context; the atomic parser will ignore it as well.
+                continue
+            known_results = getattr(rebuilder, "_results", known_results)
+
+    @staticmethod
+    def _context_reason_turn(
+        rebuilder: ReportingContextRebuilder | None,
+        *,
+        content: str,
+        turn_kind: str,
+        prior_output: str | None = None,
+    ) -> None:
+        if rebuilder is None:
+            return
+        try:
+            partial_tail = []
+            if prior_output:
+                # Provider calls are stateless.  Once the full evidence slices
+                # become ref/summary-only, retain the immediately preceding
+                # model conclusion or partial output as the semantic bridge to
+                # a correction/continuation round.  The full forensic trace is
+                # still never used as prompt input.
+                partial_tail.append(
+                    LLMMessage(role="assistant", content=prior_output[-2048:])
+                )
+            partial_tail.append(LLMMessage(role="user", content=content))
+            rebuilder.record_terminal(
+                "in_progress",
+                next_action=turn_kind,
+                continuation_required=True,
+                partial_tail=partial_tail,
+            )
+        except (RuntimeError, ValueError):
+            # A legacy loop may expose the hook but not a writable capsule;
+            # preserving its legacy behavior is safer than reconstructing from
+            # a forensic transcript.
+            return
+
+    @staticmethod
+    def _context_terminal(
+        rebuilder: ReportingContextRebuilder | None,
+        *,
+        status: str,
+        result: AgentResult | None = None,
+    ) -> None:
+        if rebuilder is None:
+            return
+        try:
+            rebuilder.record_terminal(
+                status,
+                next_action=None,
+                continuation_required=False,
+                partial_tail=[],
+            )
+        except (RuntimeError, ValueError):
+            return
+
+    @staticmethod
+    def _typed_context_pre_send_guard(**kwargs: Any) -> dict[str, Any] | None:
+        """Treat the typed rebuild as the context gate's successful decision.
+
+        ``AgentLoop`` still performs its normal duplicate check on subsequent
+        attempts.  Returning an explicit allow for the first rebuilt payload
+        avoids emitting a second zero-cost ``pre_send_rebuild`` ledger row for
+        the same physical Provider request.
+        """
+
+        if kwargs.get("rebuilt"):
+            return {
+                "status": "allow",
+                "reason": "typed_context_rebased",
+                "rebuild_count": max(1, int(kwargs.get("rebuild_count", 1) or 1)),
+            }
+        return None
+
     async def run(
         self,
         definition: AgentDefinition,
@@ -2122,7 +3151,16 @@ class ReportingAgentRunner:
                 f"{envelope.task_attempt_id}"
             ),
         )
+        task_lease = None
         try:
+            if self.provider_admission is not None:
+                # The durable identity lease remains the cross-process fence;
+                # this in-process task lease prevents two typed dispatches for
+                # the same (workflow, identity) from entering cached-session
+                # setup concurrently.
+                task_lease = await self.provider_admission.task_acquire(
+                    f"{workflow_id}:{identity_key}", envelope.task_id
+                )
             return await self._run_with_identity_lease(
                 definition,
                 envelope,
@@ -2132,6 +3170,8 @@ class ReportingAgentRunner:
                 identity_lease=lease_handle.lease,
             )
         finally:
+            if task_lease is not None:
+                await task_lease.release()
             lease_handle.release()
 
     async def _run_with_identity_lease(
@@ -2273,6 +3313,7 @@ class ReportingAgentRunner:
         )
         if ambiguous_provider_refs:
             raise ProviderAttemptRecoveryRequired(ambiguous_provider_refs)
+        context_rebuilder: ReportingContextRebuilder | None = None
         if cached is None:
             identity_digest = hashlib.sha256(
                 f"{workflow_id}:{identity_key}".encode("utf-8")
@@ -2294,12 +3335,21 @@ class ReportingAgentRunner:
                 agent_id=definition.id,
                 session_id=session_id,
             )
+            context_rebuilder = self._context_rebuilder_for_task(
+                definition=definition,
+                envelope=envelope,
+                identity_key=identity_key,
+                session_id=session_id,
+                system_prompt=system_prompt,
+                gateway=gateway,
+                shared_artifacts=shared_artifacts,
+            )
             runtime_id = f"{definition.id}--{session_id}"
             config = resolved_config
-            loop = AgentLoop(
-                agent_type=runtime_id,
-                workspace=self.workspace,
-                tools=self._tools(
+            loop_kwargs = {
+                "agent_type": runtime_id,
+                "workspace": self.workspace,
+                "tools": self._tools(
                     definition,
                     envelope,
                     session_id,
@@ -2308,19 +3358,52 @@ class ReportingAgentRunner:
                     shared_artifacts=shared_artifacts,
                     task_correlation=task_correlation,
                 ),
-                bus=self.bus,
-                config=config,
-                llm_provider=routed_provider,
-                system_prompt=system_prompt,
-                usage_run_id=envelope.run_id,
-                usage_task_id=envelope.task_id,
-                artifact_gateway=gateway,
-                before_provider_attempt=(
+                "bus": self.bus,
+                "config": config,
+                "llm_provider": routed_provider,
+                "system_prompt": system_prompt,
+                "usage_run_id": envelope.run_id,
+                "usage_task_id": envelope.task_id,
+                "artifact_gateway": gateway,
+                "before_provider_attempt": (
                     None
                     if self._provider_attempt_guard is None
                     else lambda: self._provider_attempt_guard(definition.id, envelope.task_id)
                 ),
-            )
+                "context_rebuilder": context_rebuilder,
+                "pre_send_context_guard": self._typed_context_pre_send_guard,
+            }
+            if self.provider_admission is not None:
+                loop_kwargs.update(
+                    {
+                        "provider_admission": self.provider_admission,
+                        "provider_admission_provider": (
+                            resolved_profile.resolved_provider_route
+                        ),
+                        "provider_admission_model": resolved_profile.resolved_model,
+                        "provider_admission_identity_key": (
+                            f"{workflow_id}:{identity_key}"
+                        ),
+                    }
+                )
+            try:
+                loop = AgentLoop(**loop_kwargs)
+            except TypeError as exc:
+                # Older AgentLoop versions predate the optional hook.  Keep
+                # their construction path usable; the reporting task still
+                # has a persisted typed capsule for callers that can install
+                # one later.
+                if "context_rebuilder" not in str(exc) and "pre_send_context_guard" not in str(exc):
+                    raise
+                loop_kwargs.pop("context_rebuilder", None)
+                loop_kwargs.pop("pre_send_context_guard", None)
+                loop = AgentLoop(**loop_kwargs)
+            if hasattr(loop, "set_context_rebuilder"):
+                loop.set_context_rebuilder(context_rebuilder)
+            else:
+                setattr(loop, "context_rebuilder", context_rebuilder)
+            if hasattr(loop, "pre_send_context_guard"):
+                loop.pre_send_context_guard = self._typed_context_pre_send_guard
             self._sessions[cache_key] = (loop, session_id, runtime_id)
             self._session_route_bindings[cache_key] = route_binding
             loop.usage_stage = task_kind
@@ -2337,16 +3420,45 @@ class ReportingAgentRunner:
                 execution_profile_sha256=resolved_profile.profile_sha256,
             )
             TaskAttemptStore(self.workspace, envelope.run_id).activate(task_correlation)
+            gateway = scoped_gateway(
+                self._artifact_root,
+                workflow_id=workflow_id,
+                envelope=envelope,
+                agent_id=definition.id,
+                session_id=session_id,
+            )
+            context_rebuilder = self._context_rebuilder_for_task(
+                definition=definition,
+                envelope=envelope,
+                identity_key=identity_key,
+                session_id=session_id,
+                system_prompt=system_prompt,
+                gateway=gateway,
+                shared_artifacts=shared_artifacts,
+            )
             # A durable role identity is not a license to replay every prior task
             # prompt. Each reporting transition carries a complete typed input
             # contract, so start the new task with clean provider working memory.
             # Tool follow-ups and continuation slices inside this run() call still
             # share the same conversation.
-            loop.reset_working_memory_for_typed_task()
+            if hasattr(loop, "reset_working_memory_for_typed_task"):
+                loop.reset_working_memory_for_typed_task()
+            elif getattr(loop, "context_rebuilder", None) is not None:
+                # Compatibility for an older loop that has no dedicated reset
+                # helper: do not carry the previous task's conversation into a
+                # new typed capsule.
+                if hasattr(loop, "_conversation_history"):
+                    loop._conversation_history = []
             loop.config = resolved_config
             loop.llm_provider = routed_provider
             loop.artifact_gateway = gateway
             loop._system_prompt_override = system_prompt
+            if hasattr(loop, "set_context_rebuilder"):
+                loop.set_context_rebuilder(context_rebuilder)
+            else:
+                setattr(loop, "context_rebuilder", context_rebuilder)
+            if hasattr(loop, "pre_send_context_guard"):
+                loop.pre_send_context_guard = self._typed_context_pre_send_guard
             loop.tools = self._tools(
                 definition,
                 envelope,
@@ -2364,6 +3476,11 @@ class ReportingAgentRunner:
                 if self._provider_attempt_guard is None
                 else lambda: self._provider_attempt_guard(definition.id, envelope.task_id)
             )
+            if self.provider_admission is not None:
+                loop.provider_admission = self.provider_admission
+                loop.provider_admission_provider = resolved_profile.resolved_provider_route
+                loop.provider_admission_model = resolved_profile.resolved_model
+                loop.provider_admission_identity_key = f"{workflow_id}:{identity_key}"
         loop.usage_execution_profile_id = resolved_profile.profile.profile_id
         loop.usage_execution_profile_version = resolved_profile.profile.version
         loop.usage_execution_profile_sha256 = resolved_profile.profile_sha256
@@ -2395,6 +3512,11 @@ class ReportingAgentRunner:
             attempt: int,
         ) -> None:
             nonlocal provider_call_index
+            if context_rebuilder is not None:
+                # The observer receives the exact typed Provider view.  Record
+                # only complete assistant-call/result pairs in the capsule;
+                # the compressed conversation trace remains forensic write-only.
+                self._sync_context_messages(context_rebuilder, messages)
             provider_call_index += 1
             manifest_path = self._write_provider_call_manifest(
                 definition=definition,
@@ -2412,6 +3534,52 @@ class ReportingAgentRunner:
                 self.workspace
             ).as_posix()
             loop.usage_provider_call_id = manifest_path.stem
+            # AgentLoop versions carrying the H1 ledger fields read these
+            # attributes when they append the physical-attempt row.  Setting
+            # them here keeps this Runner compatible with older loops (which
+            # simply ignore unknown attributes) and gives every actual call an
+            # explicit, non-inferred reason/send classification.
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            loop.usage_provider_call_ref = loop.usage_context_manifest_ref
+            loop.usage_provider_call_hash = manifest_payload.get("provider_call_hash")
+            loop.usage_context_manifest_version = 3
+            loop.usage_provider_request_sent = True
+            loop.usage_attempt_kind = "provider_request"
+            loop.usage_round_reason = self._provider_round_reason(
+                phase,
+                attempt,
+            )
+            metrics = manifest_payload.get("metrics")
+            if not isinstance(metrics, dict):
+                metrics = {}
+            for metric_name in (
+                "new_chars",
+                "repeated_chars",
+                "stable_chars",
+                "dynamic_chars",
+                "duplicate_chars",
+                "repeated_stable_chars",
+                "repeated_dynamic_chars",
+                "duplicate_tool_result_chars",
+                "duplicate_completed_result_chars",
+                "duplicate_evidence_chars",
+            ):
+                setattr(loop, f"usage_{metric_name}", int(metrics.get(metric_name, 0) or 0))
+            loop.usage_parent_provider_call_id = None
+            loop.usage_logical_round_id = (
+                f"{envelope.run_id}:{envelope.task_id}:{envelope.revision}:{phase}"
+            )
+            # ``_chat_with_retries`` marks the exact first Provider payload as
+            # a typed rebase (count=1).  The observer runs immediately before
+            # that payload is sent, so do not clear the marker here or the H3
+            # ledger row would claim that no context rebuild occurred.
+            loop.usage_rebuild_count = max(
+                1 if context_rebuilder is not None else 0,
+                int(getattr(loop, "usage_rebuild_count", 0) or 0),
+            )
+            loop.usage_pre_send_guard_status = (
+                "typed_context_rebased" if context_rebuilder is not None else None
+            )
 
         async def finalize_provider_context(record: dict[str, Any]) -> None:
             self._finalize_provider_call_manifest(record)
@@ -2787,11 +3955,32 @@ class ReportingAgentRunner:
                         if max_tokens_continuation
                         else "上一工具执行片段已达到单次轮次边界，但任务没有失败。你仍是原 Agent。"
                     )
+                    semantic_reason = PromptAssembler.semantic_turn(
+                        (
+                            f"{boundary_explanation}{continuation_instruction}"
+                            "完成后必须调用 submit_result 提交本任务规定的结构化结果。"
+                        ),
+                        turn_kind=continuation_kind,
+                        next_action="submit_result",
+                    )
                     continuation_message = (
                         "<same_identity_continuation>\n"
-                        f"{boundary_explanation}{continuation_instruction}"
-                        "完成后必须调用 submit_result 提交本任务规定的结构化结果。\n"
+                        f"{semantic_reason}\n"
                         "</same_identity_continuation>"
+                    )
+                    self._context_reason_turn(
+                        context_rebuilder,
+                        content=continuation_message,
+                        turn_kind=continuation_kind,
+                        prior_output=next(
+                            (
+                                str(getattr(item, "content", "") or "")
+                                for item in reversed(loop._conversation_history)
+                                if getattr(item, "role", None) == "assistant"
+                                and str(getattr(item, "content", "") or "")
+                            ),
+                            None,
+                        ),
                     )
                     turn = await one_turn(
                         continuation_message,
@@ -2921,6 +4110,14 @@ class ReportingAgentRunner:
                         "不得压缩或省略已完成内容，不得重新读取文件或重新检索。\n"
                         "</submission_correction>"
                     )
+                self._context_reason_turn(
+                    context_rebuilder,
+                    content=correction,
+                    turn_kind="submission_correction",
+                    prior_output=(
+                        turn.content if isinstance(turn, AgentResponse) else None
+                    ),
+                )
                 corrected = await finish_tool_slices(
                     await one_turn(
                         correction,
@@ -2942,11 +4139,19 @@ class ReportingAgentRunner:
             else:
                 result = turn
         except asyncio.CancelledError:
+            self._context_terminal(
+                context_rebuilder,
+                status="cancelled",
+            )
             self._save_conversation_trace(
                 loop, envelope, runtime_id, session_id, status="cancelled"
             )
             raise
         except Exception as exc:
+            self._context_terminal(
+                context_rebuilder,
+                status="failed",
+            )
             self._save_conversation_trace(
                 loop,
                 envelope,
@@ -2957,10 +4162,21 @@ class ReportingAgentRunner:
             )
             raise
         await loop.wait_until_turn_complete()
+        self._context_terminal(
+            context_rebuilder,
+            status=result.status.value,
+            result=result,
+        )
         self._save_conversation_trace(
             loop, envelope, runtime_id, session_id, status=result.status.value
         )
-        self._save_session_summary(loop, envelope, shared_artifacts, result)
+        self._save_session_summary(
+            loop,
+            envelope,
+            shared_artifacts,
+            result,
+            context_rebuilder,
+        )
         self._record_identity(
             workflow_id=workflow_id,
             envelope=envelope,
@@ -3076,13 +4292,37 @@ class ReportingAgentRunner:
         envelope: TaskEnvelope,
         shared_artifacts: list[str],
         result: AgentResult,
+        context_rebuilder: ReportingContextRebuilder | None = None,
     ) -> Path:
         builder = SessionSummaryBuilder(self.workspace)
+        context_manifest_ref: str | None = None
+        context_manifest_sha256: str | None = None
+        capsule_sha256: str | None = None
+        remaining_work: list[str] = []
+        manifest = getattr(context_rebuilder, "manifest", None)
+        if manifest is not None:
+            context_manifest_sha256 = manifest.manifest_sha256
+            capsule = manifest.task_state
+            capsule_sha256 = capsule.capsule_sha256 if capsule is not None else None
+            remaining_work = list(capsule.remaining_work if capsule is not None else ())
+            store = getattr(context_rebuilder, "store", None)
+            if store is not None:
+                for entry in reversed(store._read_sequence()):  # type: ignore[attr-defined]
+                    if entry.get("manifest_sha256") != manifest.manifest_sha256:
+                        continue
+                    candidate = store.root / str(entry.get("ref") or "")
+                    if candidate.is_file():
+                        context_manifest_ref = candidate.relative_to(self.workspace).as_posix()
+                        break
         skeleton = builder.build_skeleton(
             envelope,
             shared_artifacts,
             session_id=result.session_id,
             message_log=list(loop._conversation_history),
+            context_manifest_ref=context_manifest_ref,
+            context_manifest_sha256=context_manifest_sha256,
+            capsule_sha256=capsule_sha256,
+            remaining_work=remaining_work,
         )
         payload = result.payload
         rationale = str(getattr(payload, "rationale", "") or result.reason or "")

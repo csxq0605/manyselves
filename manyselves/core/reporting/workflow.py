@@ -17,11 +17,14 @@ from uuid import uuid4
 from pydantic import Field
 
 from ..usage_ledger import UsageLedger
-from .agent_runner import ReportingAgentRunner
+from .agent_runner import ProviderAttemptRecoveryRequired, ReportingAgentRunner
 from .agentic_models import (
     FINAL_REPORT_SECTION_IDS,
     AgentResult,
     AgentRunStatus,
+    CrossDecisionIFClosure,
+    CrossDecisionPack,
+    CrossDecisionXMRVerdict,
     CrossSynthesisInput,
     EditedReportSubmission,
     ModuleDispatchPlan,
@@ -52,6 +55,7 @@ from .evidence_readiness import EvidenceReadinessPolicy, ReportingBlockedError
 from .input_contracts import (
     AggregateEditorInput,
     ChiefEditorInput,
+    CrossDecisionPackView,
     FinalAuditSnapshot,
     ModuleAuthoringInput,
     RequestedModuleChange,
@@ -75,6 +79,7 @@ from .models import (
     ScopeExpansionRequest,
     SpecialTopicPlan,
 )
+from .output_verifier import OutputVerificationError, verify_current_run_outputs
 from .module_collaboration import (
     MODULE_IDS,
     ModuleCollaborationBundle,
@@ -82,12 +87,15 @@ from .module_collaboration import (
     ModuleInterfaceCoverage,
     ModuleInterfaceResponseSubmission,
     ModuleSubmoduleDiscoveryBarrier,
+    InterfaceResolutionRegistry,
+    InterfaceResolutionClosureBatch,
     SubmoduleCollaborationBundle,
     SubmoduleDiscoveryBatchSubmission,
     SubmoduleDiscoverySubmission,
     SubmoduleInterfaceResponseSubmission,
     build_collaboration_bundles,
     build_interface_inboxes,
+    build_interface_resolution_registry,
     build_submodule_collaboration_bundles,
     build_submodule_interface_inboxes,
     reduce_submodule_discoveries,
@@ -167,11 +175,30 @@ class FullReportCheckpoint(StrictModel):
     submodule_discovery_barrier_refs: dict[str, str] = Field(default_factory=dict)
     submodule_collaboration_bundle_refs: dict[str, str] = Field(default_factory=dict)
     submodule_authoring_barrier_refs: dict[str, str] = Field(default_factory=dict)
+    # Per-leaf context fingerprints make a resumed task prove it is consuming
+    # the same immutable inputs that crossed the previous barrier.  The maps
+    # are optional for legacy checkpoints and populated by active three-wave
+    # runs.
+    submodule_discovery_context_sha256: dict[str, str] = Field(default_factory=dict)
+    submodule_response_context_sha256: dict[str, str] = Field(default_factory=dict)
+    submodule_authoring_context_sha256: dict[str, str] = Field(default_factory=dict)
+    submodule_ambiguous_task_refs: dict[str, str] = Field(default_factory=dict)
+    interface_resolution_registry_ref: str | None = None
+    interface_resolution_registry_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    interface_closure_refs: list[str] = Field(default_factory=list)
+    interface_closure_sha256: dict[str, str] = Field(default_factory=dict)
+    interface_residual_risks: dict[str, str] = Field(default_factory=dict)
     module_lane_barrier_ref: str | None = None
     cross_owner_barrier_ref: str | None = None
     quality_context_ref: str | None = None
     module_review_completion_refs: dict[str, str] = Field(default_factory=dict)
     cross_review_completion_ref: str | None = None
+    cross_decision_pack_ref: str | None = None
+    cross_decision_pack_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
     chief_candidate_ref: str | None = None
     chief_editor_input_ref: str | None = None
     chief_editor_envelope_ref: str | None = None
@@ -1126,13 +1153,17 @@ class ReportWorkflowRunner:
         """Prepare leaf work for every writing path; only review overlap is optional."""
 
         full_scope = set(requested_modules) == set(REPORT_MODULE_IDS)
+        execution_mode = getattr(
+            state["request"],
+            "execution_mode",
+            # Checkpoints created before the all-ready contract did not carry
+            # this field.  New full-report calls must nevertheless take the
+            # business path rather than silently falling back to serial work.
+            "all_ready",
+        )
+        all_ready_lanes = execution_mode == "all_ready"
         bounded_lanes = (
-            getattr(
-                state["request"],
-                "execution_mode",
-                "current_serial_review",
-            )
-            == "bounded_module_lanes"
+            execution_mode == "bounded_module_lanes" or all_ready_lanes
         ) and len(requested_modules) > 1
         await self.service._notice(
             (
@@ -1165,6 +1196,10 @@ class ReportWorkflowRunner:
                 state,
                 workflow_id,
                 concurrency=state["request"].module_lane_concurrency,
+                # all_ready is the normal full-report business path.  The
+                # bounded compatibility mode keeps its historical admission
+                # semantics, including an explicit concurrency limit.
+                all_ready=all_ready_lanes,
             )
         return True, bounded_lanes, full_scope
 
@@ -2273,6 +2308,27 @@ class ReportWorkflowRunner:
             submodule_authoring_barrier_refs=dict(
                 state.get("submodule_authoring_barrier_refs", {})
             ),
+            submodule_discovery_context_sha256=dict(
+                state.get("submodule_discovery_context_sha256", {})
+            ),
+            submodule_response_context_sha256=dict(
+                state.get("submodule_response_context_sha256", {})
+            ),
+            submodule_authoring_context_sha256=dict(
+                state.get("submodule_authoring_context_sha256", {})
+            ),
+            submodule_ambiguous_task_refs=dict(
+                state.get("submodule_ambiguous_task_refs", {})
+            ),
+            interface_resolution_registry_ref=state.get(
+                "interface_resolution_registry_ref"
+            ),
+            interface_resolution_registry_sha256=state.get(
+                "interface_resolution_registry_sha256"
+            ),
+            interface_closure_refs=list(state.get("interface_closure_refs", [])),
+            interface_closure_sha256=dict(state.get("interface_closure_sha256", {})),
+            interface_residual_risks=dict(state.get("interface_residual_risks", {})),
             module_lane_barrier_ref=state.get("module_lane_barrier_ref"),
             cross_owner_barrier_ref=state.get("cross_owner_barrier_ref"),
             quality_context_ref=state.get("quality_context_ref"),
@@ -2280,6 +2336,8 @@ class ReportWorkflowRunner:
             module_review_completion_refs=dict(state.get("module_review_completion_refs", {})),
             cross_review_completed="cross_review_completion_ref" in state,
             cross_review_completion_ref=state.get("cross_review_completion_ref"),
+            cross_decision_pack_ref=state.get("cross_decision_pack_ref"),
+            cross_decision_pack_sha256=state.get("cross_decision_pack_sha256"),
             chief_candidate_ref=state.get("chief_candidate_ref"),
             chief_editor_input_ref=state.get("chief_editor_input_ref"),
             chief_editor_envelope_ref=state.get("chief_editor_envelope_ref"),
@@ -2728,7 +2786,505 @@ class ReportWorkflowRunner:
             ).encode("utf-8")
         ).hexdigest()
 
+    def _cross_decision_pack_semantic_sha256(
+        self, pack: CrossDecisionPack
+    ) -> str:
+        """Hash the complete pack payload without its self-referential hash."""
+
+        payload = pack.model_dump(mode="json")
+        payload.pop("pack_sha256", None)
+        return self._canonical_payload_sha256(payload)
+
+    def _require_current_run_artifact(
+        self,
+        run_id: str,
+        ref: str,
+        *,
+        label: str,
+    ) -> Path:
+        """Resolve one immutable artifact while enforcing the current-run boundary."""
+
+        run_prefix = f"Work/runs/{run_id}/"
+        if not isinstance(ref, str) or not ref.startswith(run_prefix):
+            raise AgentWorkflowError(f"{label} is outside the current run: {ref}")
+        lexical = self.service.workspace / ref
+        path = lexical.resolve()
+        run_root = (self.service.workspace / f"Work/runs/{run_id}").resolve()
+        if (
+            lexical.is_symlink()
+            or not path.is_file()
+            or not path.is_relative_to(run_root)
+        ):
+            raise AgentWorkflowError(
+                f"{label} is not a readable current-run artifact: {ref}"
+            )
+        return path
+
+    def _load_current_cross_decision_pack(
+        self,
+        state: dict,
+    ) -> CrossDecisionPack | None:
+        """Load and verify a previously materialized pack, if the checkpoint names one."""
+
+        run_id = state["run_id"]
+        ref = state.get("cross_decision_pack_ref")
+        expected_hash = state.get("cross_decision_pack_sha256")
+        if ref is None and expected_hash is None:
+            return None
+        if not ref or not expected_hash:
+            raise AgentWorkflowError(
+                "Chief CrossDecisionPack binding is incomplete (ref/hash required)"
+            )
+        path = self._require_current_run_artifact(
+            run_id, str(ref), label="CrossDecisionPack"
+        )
+        actual_file_hash = self._sha256(path)
+        if actual_file_hash != expected_hash:
+            raise AgentWorkflowError(
+                "Chief CrossDecisionPack artifact hash does not match its checkpoint"
+            )
+        try:
+            pack = CrossDecisionPack.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise AgentWorkflowError(
+                "Chief CrossDecisionPack is unreadable or invalid"
+            ) from exc
+        if pack.run_id != run_id:
+            raise AgentWorkflowError(
+                "Chief CrossDecisionPack belongs to another run"
+            )
+        if pack.pack_sha256 != self._cross_decision_pack_semantic_sha256(pack):
+            raise AgentWorkflowError(
+                "Chief CrossDecisionPack semantic hash is invalid"
+            )
+        completion_ref = state.get("cross_review_completion_ref")
+        if completion_ref and pack.cross_review_completion_ref != completion_ref:
+            raise AgentWorkflowError(
+                "Chief CrossDecisionPack is bound to another Cross completion"
+            )
+        for artifact_ref, expected_artifact_hash in pack.artifact_sha256.items():
+            artifact_path = self._require_current_run_artifact(
+                run_id, artifact_ref, label="CrossDecisionPack artifact"
+            )
+            if self._sha256(artifact_path) != expected_artifact_hash:
+                raise AgentWorkflowError(
+                    "CrossDecisionPack artifact hash mismatch: "
+                    f"{artifact_ref}"
+                )
+        state["cross_decision_pack"] = pack
+        return pack
+
+    def _materialize_chief_cross_decision_pack(
+        self, state: dict
+    ) -> CrossDecisionPack:
+        """Materialize the terminal Cross boundary consumed by Chief/Final.
+
+        This reducer consumes the already completed Cross review and IF registry;
+        it never performs a second semantic Cross pass.  Every reference and
+        E-* binding is checked before writing the immutable pack.
+        """
+
+        run_id = state.get("run_id")
+        if not isinstance(run_id, str) or not run_id:
+            raise AgentWorkflowError("Chief cannot materialize a pack without run_id")
+        existing = self._load_current_cross_decision_pack(state)
+        if existing is not None:
+            return existing
+
+        modules = state.get("module_submissions")
+        if not isinstance(modules, dict) or set(modules) != set(REPORT_MODULE_IDS):
+            raise AgentWorkflowError(
+                "Chief cannot start: CrossDecisionPack requires all five approved modules"
+            )
+        module_refs = [
+            f"Work/runs/{run_id}/modules/{module_id}-r{modules[module_id].revision}.json"
+            for module_id in REPORT_MODULE_IDS
+        ]
+        completion_ref = state.get("cross_review_completion_ref")
+        if not isinstance(completion_ref, str) or not completion_ref:
+            raise AgentWorkflowError(
+                "Chief cannot start: Cross review completion is missing"
+            )
+        try:
+            completion, cross_artifacts = self._load_current_review_completion(
+                run_id=run_id,
+                completion_ref=completion_ref,
+                lifecycle="cross",
+                reviewer_agent_id="cross-module-reviewer",
+                reviewer_session_key="cross-module-reviewer",
+                subject_refs=module_refs,
+            )
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+            raise AgentWorkflowError(
+                "Chief cannot start: current Cross completion is invalid"
+            ) from exc
+
+        registry = state.get("interface_resolution_registry")
+        registry_ref = state.get("interface_resolution_registry_ref")
+        if registry is not None and not isinstance(registry, InterfaceResolutionRegistry):
+            try:
+                registry = InterfaceResolutionRegistry.model_validate(registry)
+            except ValueError as exc:
+                raise AgentWorkflowError(
+                    "Chief cannot start: interface registry is invalid"
+                ) from exc
+        if registry is None and registry_ref:
+            registry_path = self._require_current_run_artifact(
+                run_id, str(registry_ref), label="interface resolution registry"
+            )
+            expected_registry_hash = state.get("interface_resolution_registry_sha256")
+            actual_registry_hash = self._sha256(registry_path)
+            if expected_registry_hash != actual_registry_hash:
+                raise AgentWorkflowError(
+                    "Chief cannot start: interface registry hash is stale"
+                )
+            try:
+                registry = InterfaceResolutionRegistry.model_validate_json(
+                    registry_path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                raise AgentWorkflowError(
+                    "Chief cannot start: interface registry is invalid"
+                ) from exc
+        if registry is not None:
+            if registry.run_id != run_id:
+                raise AgentWorkflowError(
+                    "Chief cannot start: interface registry belongs to another run"
+                )
+            if not registry_ref:
+                raise AgentWorkflowError(
+                    "Chief cannot start: interface registry lacks an immutable ref"
+                )
+            if registry.pending_request_ids:
+                raise AgentWorkflowError(
+                    "Chief cannot start while IF/XMR records remain pending: "
+                    f"{list(registry.pending_request_ids)}"
+                )
+            state["interface_resolution_registry"] = registry
+
+        # Verify closure artifacts and map each terminal IF to its immutable
+        # closure batch.  The registry remains the source of truth for status.
+        closure_source_by_request: dict[str, str] = {}
+        closure_history_by_request: dict[str, list[tuple[str, object]]] = {}
+        closure_refs = list(state.get("interface_closure_refs", []))
+        closure_hashes = dict(state.get("interface_closure_sha256", {}))
+        for closure_ref in closure_refs:
+            closure_path = self._require_current_run_artifact(
+                run_id, str(closure_ref), label="interface closure"
+            )
+            expected_hash = closure_hashes.get(closure_ref)
+            if expected_hash is not None and self._sha256(closure_path) != expected_hash:
+                raise AgentWorkflowError(
+                    "Chief cannot start: interface closure hash is stale"
+                )
+            try:
+                batch = InterfaceResolutionClosureBatch.model_validate_json(
+                    closure_path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                raise AgentWorkflowError(
+                    "Chief cannot start: interface closure artifact is invalid"
+                ) from exc
+            if batch.run_id != run_id:
+                raise AgentWorkflowError(
+                    "Chief cannot start: interface closure belongs to another run"
+                )
+            for closure in batch.closures:
+                closure_source_by_request[closure.request_id] = str(closure_ref)
+                closure_history_by_request.setdefault(closure.request_id, []).append(
+                    (str(closure_ref), closure)
+                )
+
+        if registry_ref:
+            registry_path = self._require_current_run_artifact(
+                run_id, str(registry_ref), label="interface resolution registry"
+            )
+        known_evidence_ids = {
+            source.id
+            for source in SourceLedger(self.service.workspace, run_id).records
+            if source.id.startswith("E-")
+        }
+
+        def terminal_evidence_ids(values: list[str]) -> list[str]:
+            evidence_ids = list(dict.fromkeys(value for value in values if value.startswith("E-")))
+            if not evidence_ids:
+                raise AgentWorkflowError(
+                    "Chief cannot start: terminal Cross IF/XMR decision lacks E-* evidence"
+                )
+            if known_evidence_ids and not set(evidence_ids).issubset(known_evidence_ids):
+                missing = sorted(set(evidence_ids) - known_evidence_ids)
+                raise AgentWorkflowError(
+                    "Chief cannot start: IF/XMR decision references unknown E-* ids: "
+                    f"{missing}"
+                )
+            return evidence_ids
+
+        if_closures: list = []
+        if registry is not None:
+            for request_id, resolution in sorted(registry.resolutions.items()):
+                request = resolution.request
+                status = resolution.closure_status
+                if status in {"pending_cross", "reroute_to_owner"}:
+                    raise AgentWorkflowError(
+                        "Chief cannot start while IF/XMR records remain pending: "
+                        f"{request_id}"
+                    )
+                cross_closure = resolution.cross_closure
+                historical_reroute = next(
+                    (
+                        (source_ref, closure)
+                        for source_ref, closure in closure_history_by_request.get(
+                            request_id, []
+                        )
+                        if getattr(closure, "outcome", None) == "reroute_to_owner"
+                    ),
+                    None,
+                )
+                # A reroute is intentionally represented in the terminal pack
+                # even after r1 has resolved its XMR finding; the final registry
+                # no longer reports it as pending, but the owner decision remains
+                # part of the Chief/Final audit boundary.
+                pack_status = (
+                    "reroute_to_owner" if historical_reroute is not None else status
+                )
+                if historical_reroute is not None:
+                    reroute_source_ref, reroute_closure = historical_reroute
+                    cross_closure = reroute_closure
+                else:
+                    reroute_source_ref = None
+                evidence_values = [
+                    *request.evidence_ids,
+                    *resolution.disposition.evidence_ids,
+                    *resolution.disposition.checked_evidence_ids,
+                ]
+                if cross_closure is not None:
+                    evidence_values.extend(cross_closure.checked_evidence_ids)
+                evidence_ids = terminal_evidence_ids(evidence_values)
+                requester_submodule_id = (
+                    request.requester_submodule_id
+                    or REPORT_TAXONOMY[request.requester_module_id].submodules[0]
+                )
+                target_submodule_id = (
+                    request.target_submodule_id
+                    or REPORT_TAXONOMY[request.target_module_id].submodules[0]
+                )
+                source_ref = closure_source_by_request.get(request_id)
+                if reroute_source_ref is not None:
+                    source_ref = reroute_source_ref
+                if source_ref is None:
+                    source_ref = str(registry_ref) if registry_ref else ""
+                if not source_ref:
+                    raise AgentWorkflowError(
+                        f"Chief cannot start: IF closure {request_id} lacks source ref"
+                    )
+                if pack_status == "answered":
+                    answer = resolution.disposition.answer
+                    conditions = list(resolution.disposition.conditions)
+                    boundary = None
+                    residual_risk = None
+                    owner_finding_id = None
+                elif pack_status == "resolved_by_cross":
+                    answer = cross_closure.reason if cross_closure is not None else None
+                    conditions = list(resolution.disposition.conditions) or [
+                        "Cross 已基于当前五模块证据闭合该接口。"
+                    ]
+                    boundary = None
+                    residual_risk = None
+                    owner_finding_id = None
+                elif pack_status == "confirmed_missing":
+                    answer = None
+                    conditions = []
+                    boundary = (
+                        cross_closure.boundary
+                        if cross_closure is not None
+                        else resolution.disposition.boundary
+                    )
+                    residual_risk = (
+                        cross_closure.residual_risk
+                        if cross_closure is not None
+                        else resolution.disposition.unresolved_reason
+                    )
+                    owner_finding_id = None
+                elif pack_status == "reroute_to_owner":
+                    answer = None
+                    conditions = []
+                    boundary = cross_closure.boundary if cross_closure is not None else None
+                    residual_risk = (
+                        cross_closure.residual_risk
+                        if cross_closure is not None
+                        else None
+                    )
+                    owner_finding_id = (
+                        cross_closure.owner_finding_id
+                        if cross_closure is not None
+                        else f"XMR-{request_id}"
+                    )
+                else:
+                    raise AgentWorkflowError(
+                        f"Chief cannot start: unsupported terminal IF status {status}"
+                    )
+                if_closures.append(
+                    CrossDecisionIFClosure(
+                        request_id=request_id,
+                        requester_submodule_id=requester_submodule_id,
+                        target_submodule_id=target_submodule_id,
+                        question=request.question,
+                        status=pack_status,
+                        answer=answer,
+                        conditions=conditions,
+                        evidence_ids=evidence_ids,
+                        source_ref=source_ref,
+                        boundary=boundary,
+                        residual_risk=residual_risk,
+                        owner_finding_id=owner_finding_id,
+                    )
+                )
+
+        # Cross artifacts are the sole source of XMR finding/verdict semantics;
+        # this reducer merely translates the already closed immutable records.
+        finding_records: dict[str, tuple[dict, str]] = {}
+        verdict_records: dict[str, tuple[dict, str]] = {}
+        completion_artifact_refs = [
+            *completion.finding_refs,
+            *completion.verdict_refs,
+        ]
+        for artifact_ref in completion_artifact_refs:
+            artifact_path = self._require_current_run_artifact(
+                run_id, artifact_ref, label="Cross review artifact"
+            )
+            try:
+                artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                raise AgentWorkflowError(
+                    "Chief cannot start: Cross review artifact is unreadable"
+                ) from exc
+            for finding in [
+                *artifact_payload.get("findings", []),
+                *artifact_payload.get("new_findings", []),
+            ]:
+                if isinstance(finding, dict) and isinstance(finding.get("id"), str):
+                    finding_records[finding["id"]] = (finding, artifact_ref)
+            for verdict in artifact_payload.get("verdicts", []):
+                if isinstance(verdict, dict) and isinstance(verdict.get("finding_id"), str):
+                    verdict_records[verdict["finding_id"]] = (verdict, artifact_ref)
+
+        xmr_verdicts: list = []
+        xmr_ids = sorted(
+            finding_id
+            for finding_id in finding_records
+            if finding_id.startswith("XMR-")
+        )
+        for finding_id in xmr_ids:
+            finding, finding_ref = finding_records[finding_id]
+            verdict_record = verdict_records.get(finding_id)
+            if verdict_record is None:
+                raise AgentWorkflowError(
+                    f"Chief cannot start: XMR finding {finding_id} lacks a verdict"
+                )
+            verdict, verdict_ref = verdict_record
+            if verdict.get("verdict") != "resolved":
+                raise AgentWorkflowError(
+                    f"Chief cannot start: XMR finding {finding_id} is not resolved"
+                )
+            evidence_values = [
+                *finding.get("evidence_refs", []),
+                *verdict.get("evidence_refs", []),
+            ]
+            evidence_ids = terminal_evidence_ids(evidence_values)
+            xmr_verdicts.append(
+                CrossDecisionXMRVerdict(
+                    finding_id=finding_id,
+                    owner_module_id=finding["owner_module_id"],
+                    target_submodule_ids=list(finding["target_submodule_ids"]),
+                    related_module_ids=list(finding["related_module_ids"]),
+                    verdict=verdict["verdict"],
+                    reason=str(verdict.get("reason") or verdict.get("summary") or "Cross 已关闭该接口。"),
+                    evidence_refs=evidence_ids,
+                    source_refs=list(dict.fromkeys([finding_ref, verdict_ref])),
+                )
+            )
+
+        synthesis_inputs = [
+            item
+            if isinstance(item, CrossSynthesisInput)
+            else CrossSynthesisInput.model_validate(item)
+            for item in state.get("cross_synthesis_inputs", [])
+        ]
+        residual_risks = list(
+            dict.fromkeys(
+                value.strip()
+                for value in [
+                    *dict(state.get("interface_residual_risks", {})).values(),
+                    *[
+                        closure.residual_risk
+                        for closure in if_closures
+                        if closure.residual_risk
+                    ],
+                ]
+                if isinstance(value, str) and value.strip()
+            )
+        )
+
+        artifact_refs = {
+            completion_ref,
+            *(closure.source_ref for closure in if_closures),
+            *(ref for verdict in xmr_verdicts for ref in verdict.source_refs),
+        }
+        artifact_sha256: dict[str, str] = {}
+        for artifact_ref in sorted(artifact_refs):
+            artifact_path = self._require_current_run_artifact(
+                run_id, artifact_ref, label="CrossDecisionPack artifact"
+            )
+            artifact_sha256[artifact_ref] = self._sha256(artifact_path)
+        provisional = CrossDecisionPack(
+            run_id=run_id,
+            module_ids=list(REPORT_MODULE_IDS),
+            cross_review_completion_ref=completion_ref,
+            synthesis_inputs=synthesis_inputs,
+            if_closures=if_closures,
+            xmr_verdicts=xmr_verdicts,
+            residual_risks=residual_risks,
+            artifact_sha256=artifact_sha256,
+            pack_sha256="0" * 64,
+        )
+        pack = provisional.model_copy(
+            update={
+                "pack_sha256": self._cross_decision_pack_semantic_sha256(provisional)
+            }
+        )
+        pack_ref = f"Work/runs/{run_id}/reviews/cross-decision-pack.json"
+        pack_path = self.service.workspace / pack_ref
+        if pack_path.is_file():
+            try:
+                existing_pack = CrossDecisionPack.model_validate_json(
+                    pack_path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                raise AgentWorkflowError(
+                    "Chief cannot start: existing CrossDecisionPack is invalid"
+                ) from exc
+            if existing_pack != pack:
+                raise AgentWorkflowError(
+                    "Chief cannot start: immutable CrossDecisionPack differs from current Cross completion"
+                )
+            pack = existing_pack
+        else:
+            self.service.store.write_json(pack_ref, pack.model_dump(mode="json"))
+        state["cross_decision_pack"] = pack
+        state["cross_decision_pack_ref"] = pack_ref
+        state["cross_decision_pack_sha256"] = self._sha256(
+            self.service.workspace / pack_ref
+        )
+        return pack
+
     def _current_chief_editor_input(self, state: dict) -> ChiefEditorInput:
+        pack = self._materialize_chief_cross_decision_pack(state)
+        pack_view_payload = pack.model_dump(mode="python")
+        pack_view_payload.pop("artifact_sha256", None)
+        pack_view_payload.pop("pack_sha256", None)
+        pack_view_payload["artifact_refs"] = sorted(pack.artifact_sha256)
         return ChiefEditorInput(
             run_id=state["run_id"],
             approved_module_markers={
@@ -2741,9 +3297,12 @@ class ReportWorkflowRunner:
                 )
                 for module_id in REPORT_MODULE_IDS
             },
-            cross_review_completion_ref=state[
-                "cross_review_completion_ref"
-            ],
+            cross_decision=CrossDecisionPackView.model_validate(pack_view_payload),
+            cross_decision_pack_ref=state["cross_decision_pack_ref"],
+            cross_decision_pack_sha256=state["cross_decision_pack_sha256"],
+            # Keep the legacy completion ref in persisted inputs for old
+            # checkpoint readers; the pack/ref/hash above are authoritative.
+            cross_review_completion_ref=state["cross_review_completion_ref"],
             special_topic_plan=state.get("special_topic_plan"),
         )
 
@@ -2810,22 +3369,14 @@ class ReportWorkflowRunner:
         return ref, text
 
     def _chief_expected_envelope_inputs(self, state: dict) -> list[str]:
-        preparation = state.get("preparation_refs", {})
-        missing = [
-            name
-            for name in ("evidence", "photo_manifest")
-            if not preparation.get(name)
-        ]
-        if missing:
-            raise AgentWorkflowError(
-                "Chief completion cannot reconstruct preparation refs: "
-                f"{missing}"
-            )
+        # Chief receives only the typed five-module input and optional
+        # special-topic context.  Evidence/photo artifacts are assembled by
+        # runtime and are intentionally absent from the provider envelope.
+        if not state.get("cross_decision_pack_ref"):
+            self._materialize_chief_cross_decision_pack(state)
         special_ref, _ = self._chief_special_topic_context(state)
         return [
             f"Work/runs/{state['run_id']}/context/chief-editor-input.json",
-            str(preparation["evidence"]),
-            str(preparation["photo_manifest"]),
             *([special_ref] if special_ref else []),
         ]
 
@@ -2849,6 +3400,8 @@ class ReportWorkflowRunner:
         envelope_input_refs: list[str],
     ) -> dict:
         run_id = state["run_id"]
+        if not state.get("cross_decision_pack_ref"):
+            self._materialize_chief_cross_decision_pack(state)
         return {
             "candidate": (
                 f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
@@ -2862,6 +3415,7 @@ class ReportWorkflowRunner:
             "claim_ledger": (
                 f"Work/runs/{run_id}/ledgers/claims.json"
             ),
+            "cross_decision_pack": state["cross_decision_pack_ref"],
             "cross_review_completion": state[
                 "cross_review_completion_ref"
             ],
@@ -2889,6 +3443,7 @@ class ReportWorkflowRunner:
             refs.get("editor_input"),
             refs.get("envelope"),
             refs.get("claim_ledger"),
+            refs.get("cross_decision_pack"),
             refs.get("cross_review_completion"),
             *dict(refs.get("module_subjects", {})).values(),
             *dict(refs.get("module_review_completions", {})).values(),
@@ -2955,6 +3510,10 @@ class ReportWorkflowRunner:
                     )
                     else "full"
                 ),
+                "cross_decision_pack_ref": state["cross_decision_pack_ref"],
+                "cross_decision_pack_sha256": state[
+                    "cross_decision_pack_sha256"
+                ],
                 "refs": refs,
                 "artifact_sha256": {
                     ref: self._sha256(self.service.workspace / ref)
@@ -3008,6 +3567,20 @@ class ReportWorkflowRunner:
                     "Chief completion identity does not match this workflow"
                 )
 
+            pack = self._materialize_chief_cross_decision_pack(state)
+            if completion.get("cross_decision_pack_ref") != state.get(
+                "cross_decision_pack_ref"
+            ) or completion.get("cross_decision_pack_sha256") != state.get(
+                "cross_decision_pack_sha256"
+            ):
+                raise ValueError(
+                    "Chief completion is not bound to the current CrossDecisionPack"
+                )
+            if pack.cross_review_completion_ref != state.get(
+                "cross_review_completion_ref"
+            ):
+                raise ValueError("Chief completion CrossDecisionPack binding is stale")
+
             envelope_ref = (
                 f"Work/runs/{run_id}/context/"
                 "chief-editor-envelope.json"
@@ -3031,6 +3604,11 @@ class ReportWorkflowRunner:
                 or envelope.allowed_outputs
                 != ["edited_report_submission"]
                 or envelope.allowed_tools
+                != [
+                    "write_result_part",
+                    "list_result_parts",
+                    "submit_result",
+                ]
                 or envelope.revision != 0
                 or envelope.prior_result_ref is not None
                 or envelope.context_summary_refs
@@ -3576,6 +4154,115 @@ class ReportWorkflowRunner:
                     typed_checkpoint.submodule_authoring_barrier_refs.items()
                 )
             }
+        # Context maps are additive checkpoint fields.  Accept their absence
+        # for old runs, but reject identities outside this request's fixed
+        # 37-leaf set so a stale task cannot be promoted on resume.
+        for field_name in (
+            "submodule_discovery_context_sha256",
+            "submodule_response_context_sha256",
+            "submodule_authoring_context_sha256",
+        ):
+            values = dict(getattr(typed_checkpoint, field_name, {}))
+            unexpected = sorted(set(values) - requested_submodules)
+            if unexpected:
+                raise AgentWorkflowError(
+                    f"checkpoint {field_name} contains leaves outside request: {unexpected}"
+                )
+            malformed = sorted(
+                key
+                for key, digest in values.items()
+                if not isinstance(digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            )
+            if malformed:
+                raise AgentWorkflowError(
+                    f"checkpoint {field_name} contains malformed context hashes: {malformed}"
+                )
+            if values:
+                state[field_name] = values
+        ambiguous_refs = dict(getattr(typed_checkpoint, "submodule_ambiguous_task_refs", {}))
+        unexpected_ambiguous = sorted(
+            set(ambiguous_refs)
+            - {
+                f"submodule-discovery-{submodule_id}"
+                for submodule_id in requested_submodules
+            }
+            - {
+                f"submodule-discovery-local-{submodule_id}"
+                for submodule_id in requested_submodules
+            }
+            - {
+                f"submodule-interface-response-{submodule_id}"
+                for submodule_id in requested_submodules
+            }
+            - {
+                f"submodule-author-{submodule_id}"
+                for submodule_id in requested_submodules
+            }
+        )
+        if unexpected_ambiguous:
+            raise AgentWorkflowError(
+                "checkpoint contains ambiguous leaf tasks outside request: "
+                f"{unexpected_ambiguous}"
+            )
+        if ambiguous_refs:
+            state["submodule_ambiguous_task_refs"] = {
+                task_id: require_run_ref(
+                    ref,
+                    label=f"ambiguous submodule task {task_id}",
+                )
+                for task_id, ref in ambiguous_refs.items()
+            }
+        if typed_checkpoint.interface_resolution_registry_ref is not None:
+            registry_ref = require_run_ref(
+                typed_checkpoint.interface_resolution_registry_ref,
+                label="interface resolution registry",
+            )
+            registry_path = self.service.workspace / registry_ref
+            actual_registry_sha256 = self._sha256(registry_path)
+            if (
+                typed_checkpoint.interface_resolution_registry_sha256 is None
+                or actual_registry_sha256
+                != typed_checkpoint.interface_resolution_registry_sha256
+            ):
+                raise AgentWorkflowError(
+                    "interface resolution registry hash does not match checkpoint"
+                )
+            try:
+                registry = InterfaceResolutionRegistry.model_validate_json(
+                    registry_path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError) as exc:
+                raise AgentWorkflowError(
+                    "interface resolution registry is unreadable or invalid"
+                ) from exc
+            if registry.run_id != run_id:
+                raise AgentWorkflowError(
+                    "interface resolution registry belongs to another run"
+                )
+            state["interface_resolution_registry_ref"] = registry_ref
+            state["interface_resolution_registry_sha256"] = actual_registry_sha256
+            state["interface_resolution_registry"] = registry
+        if typed_checkpoint.interface_closure_refs:
+            closure_hashes: dict[str, str] = {}
+            for ref in typed_checkpoint.interface_closure_refs:
+                current_ref = require_run_ref(ref, label="interface closure")
+                closure_hashes[current_ref] = self._sha256(
+                    self.service.workspace / current_ref
+                )
+            expected_hashes = dict(typed_checkpoint.interface_closure_sha256)
+            if closure_hashes != expected_hashes:
+                raise AgentWorkflowError(
+                    "interface closure artifact hashes do not match checkpoint"
+                )
+            state["interface_closure_refs"] = list(
+                typed_checkpoint.interface_closure_refs
+            )
+            state["interface_closure_sha256"] = closure_hashes
+        if typed_checkpoint.interface_residual_risks:
+            state["interface_residual_risks"] = dict(
+                typed_checkpoint.interface_residual_risks
+            )
         if typed_checkpoint.module_lane_barrier_ref is not None:
             state["module_lane_barrier_ref"] = require_run_ref(
                 typed_checkpoint.module_lane_barrier_ref,
@@ -3715,6 +4402,24 @@ class ReportWorkflowRunner:
         state["cross_review_completion_ref"] = cross_ref
         state["cross_synthesis_inputs"] = self._latest_cross_synthesis(cross_artifacts)
 
+        if typed_checkpoint.cross_decision_pack_ref is not None:
+            if typed_checkpoint.cross_decision_pack_sha256 is None:
+                raise AgentWorkflowError(
+                    "checkpoint CrossDecisionPack is missing its hash"
+                )
+            state["cross_decision_pack_ref"] = require_run_ref(
+                typed_checkpoint.cross_decision_pack_ref,
+                label="CrossDecisionPack",
+            )
+            state["cross_decision_pack_sha256"] = (
+                typed_checkpoint.cross_decision_pack_sha256
+            )
+            self._load_current_cross_decision_pack(state)
+        elif typed_checkpoint.chief_editor_completion_ref is not None:
+            raise AgentWorkflowError(
+                "checkpoint has Chief completion without CrossDecisionPack binding"
+            )
+
         final_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
         if (
             not (self.service.workspace / final_ref).is_file()
@@ -3787,14 +4492,29 @@ class ReportWorkflowRunner:
         self._restore_delivery_completion(state)
 
     def _restore_delivery_completion(self, state: dict) -> None:
+        """Restore a receipt and, when needed, retry only its archive boundary."""
+
         run_id = state["run_id"]
         completion_ref = f"Work/runs/{run_id}/delivery-completion.json"
         completion_path = self.service.workspace / completion_ref
         if not completion_path.is_file():
             return
         payload = json.loads(completion_path.read_text(encoding="utf-8"))
-        if payload.get("run_id") != run_id or payload.get("status") != "completed":
+        if payload.get("run_id") != run_id:
             raise AgentWorkflowError("delivery completion identity/status is invalid")
+        status = str(payload.get("status", ""))
+        # ``completed`` is the pre-archive spelling and remains read-compatible.
+        legacy_completed = status == "completed"
+        if status not in {
+            "receipt_persisted",
+            "delivered",
+            "archive_pending",
+            "archived",
+            "archive_failed",
+            "completed",
+        }:
+            raise AgentWorkflowError("delivery completion identity/status is invalid")
+
         receipt_ref = str(payload.get("delivery_receipt_ref", ""))
         run_prefix = f"Work/runs/{run_id}/"
         if not receipt_ref.startswith(run_prefix):
@@ -3802,51 +4522,90 @@ class ReportWorkflowRunner:
         receipt_path = self.service.workspace / receipt_ref
         if not receipt_path.is_file():
             raise AgentWorkflowError("delivery completion references a missing receipt")
-        receipt = DeliveryReceipt.model_validate_json(receipt_path.read_text(encoding="utf-8"))
-        delivery_root = self._delivery_root(self.service.workspace, run_id).resolve()
-        if not receipt.manifest_path.resolve().is_relative_to(delivery_root):
-            return
-        required_paths = {
-            "final_docx": receipt.final_docx,
-            "report_state": receipt.report_state,
-            "manifest": receipt.manifest_path,
-            **{f"module:{module_id}": path for module_id, path in receipt.module_files.items()},
-        }
-        for key, path in required_paths.items():
-            resolved = Path(path).resolve()
-            if (
-                not resolved.is_relative_to(self.service.workspace)
-                or not resolved.is_file()
-                or self._sha256(resolved) != receipt.artifact_sha256.get(key)
-            ):
-                raise AgentWorkflowError(
-                    f"delivery completion artifact failed hash validation: {key}"
-                )
-        version = ReportVersionStore(self.service.workspace).load(run_id)
-        if version.run_id != run_id:
-            raise AgentWorkflowError("delivery completion report version belongs to another run")
+        try:
+            receipt = DeliveryReceipt.model_validate_json(
+                receipt_path.read_text(encoding="utf-8")
+            )
+            verify_current_run_outputs(
+                self.service.workspace,
+                run_id,
+                [receipt.final_docx, receipt.source_index, receipt.source_index_docx],
+                0,
+                allow_existing_artifacts=True,
+            )
+        except (OSError, ValueError, json.JSONDecodeError, OutputVerificationError) as exc:
+            # Preserve the old behavior for obsolete ``completed`` records: a
+            # malformed completion is left for deterministic regeneration.
+            if legacy_completed:
+                return
+            raise AgentWorkflowError(
+                f"delivery receipt failed current-run validation: {receipt_ref}: {exc}"
+            ) from exc
+
         artifacts = [
-            OutputArtifact.model_validate(item) for item in payload.get("output_artifacts", [])
+            OutputArtifact.model_validate(item)
+            for item in payload.get("output_artifacts", [])
         ]
-        if not artifacts:
-            raise AgentWorkflowError("delivery completion lacks output artifacts")
         expected_artifacts = self._delivery_output_artifacts(
-            final_review_ref=state["final_review_completion_ref"],
+            final_review_ref=state.get(
+                "final_review_completion_ref",
+                f"Work/runs/{run_id}/reviews/final-completion.json",
+            ),
             delivery_manifest_ref=receipt.manifest_path.resolve().relative_to(
                 self.service.workspace
             ),
+            source_index_ref=receipt.source_index.resolve().relative_to(
+                self.service.workspace
+            ),
+            source_index_docx_ref=receipt.source_index_docx.resolve().relative_to(
+                self.service.workspace
+            ),
         )
-        if artifacts != expected_artifacts:
-            # The persisted completion does not implement the current delivery
-            # contract. Leave delivery unrestored so this same run deterministically
-            # regenerates and republishes its outputs.
-            return
-        state["report_version"] = version
+        if not artifacts:
+            if legacy_completed:
+                return
+            artifacts = expected_artifacts
+        elif artifacts != expected_artifacts:
+            if legacy_completed:
+                return
+            raise AgentWorkflowError("delivery completion output declaration is stale")
+
+        version = None
+        version_id = payload.get("report_version_id")
+        if version_id:
+            try:
+                version = ReportVersionStore(self.service.workspace).load(str(version_id))
+                if version.run_id != run_id:
+                    raise ValueError("report version belongs to another run")
+            except (OSError, ValueError, FileNotFoundError):
+                # A valid receipt remains delivered even when version publication
+                # was interrupted; archive-only recovery must not invoke Provider.
+                version = None
+        if version is not None:
+            state["report_version"] = version
+
+        if status in {"receipt_persisted", "delivered", "archive_pending", "archive_failed"}:
+            try:
+                storage_plan = ReportingRetentionPlanner(self.service.workspace).generate()
+                state["storage_usage_ref"] = "Work/storage-usage.json"
+                state["retention_plan_ref"] = "Work/retention-plan.json"
+                state["storage_usage"] = storage_plan["usage"]
+                payload["status"] = "archived"
+                payload["delivery_status"] = "archived"
+                payload.pop("warning", None)
+                self.service.store.write_json(completion_ref, payload)
+            except Exception as exc:
+                payload["status"] = "archive_failed"
+                payload["delivery_status"] = "delivered_with_archive_warning"
+                payload["warning"] = str(exc)
+                self.service.store.write_json(completion_ref, payload)
+                state["delivery_status"] = "delivered_with_archive_warning"
+        else:
+            state["delivery_status"] = payload.get("delivery_status", "archived")
         state["output_artifacts"] = artifacts
         state["delivery_completion_ref"] = completion_ref
-        # The completion record and receipt hashes above prove these artifacts
-        # belong to this exact run.  A later resume may therefore reuse them
-        # without pretending they were regenerated during the new invocation.
+        # Receipt/hash validation above proves these artifacts belong to this
+        # exact run. A later resume may reuse them without regenerating work.
         state["delivery_restored"] = True
 
     def _revision_checkpoint(
@@ -3869,6 +4628,10 @@ class ReportWorkflowRunner:
                     state.get("module_review_completion_refs", {})
                 ),
                 "cross_review_completion_ref": state.get("cross_review_completion_ref"),
+                "cross_decision_pack_ref": state.get("cross_decision_pack_ref"),
+                "cross_decision_pack_sha256": state.get(
+                    "cross_decision_pack_sha256"
+                ),
                 "chief_candidate_ref": state.get("chief_candidate_ref"),
                 "chief_editor_input_ref": state.get(
                     "chief_editor_input_ref"
@@ -3984,6 +4747,20 @@ class ReportWorkflowRunner:
             ) from exc
         state["cross_review_completion_ref"] = cross_ref
         state["cross_synthesis_inputs"] = self._latest_cross_synthesis(cross_artifacts)
+        checkpoint_pack_ref = checkpoint.get("cross_decision_pack_ref")
+        checkpoint_pack_hash = checkpoint.get("cross_decision_pack_sha256")
+        if checkpoint_pack_ref is not None:
+            if not checkpoint_pack_hash:
+                raise AgentWorkflowError(
+                    "revision checkpoint CrossDecisionPack is missing its hash"
+                )
+            state["cross_decision_pack_ref"] = str(checkpoint_pack_ref)
+            state["cross_decision_pack_sha256"] = str(checkpoint_pack_hash)
+            self._load_current_cross_decision_pack(state)
+        elif checkpoint.get("chief_editor_completion_ref") is not None:
+            raise AgentWorkflowError(
+                "revision checkpoint has Chief completion without CrossDecisionPack binding"
+            )
         final_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
         completion_ref = checkpoint.get("chief_editor_completion_ref")
         if (
@@ -4535,6 +5312,18 @@ class ReportWorkflowRunner:
             return ["必须保留固定报告目录；缺少客户证据的子模块仅标注“未评估”，不得给出专业结论"]
         return []
 
+    @staticmethod
+    def _leaf_session_key(task_id: str) -> str:
+        """Return a stable session identity unique to one leaf task.
+
+        A module specialist owns many leaves, but each Wave 1/2/3 leaf call
+        must have its own conversation fence.  Keeping the task id in the
+        session key also prevents a stale response from another wave from
+        being attached to this task during resume.
+        """
+
+        return f"{task_id}-session"
+
     def _load_collaboration_submission(
         self,
         *,
@@ -4553,6 +5342,40 @@ class ReportWorkflowRunner:
         candidate_wave = wave or (
             "wave-1" if "discovery" in task_id else "wave-2"
         )
+
+        ambiguity_ref = (
+            self.service.workspace
+            / f"Work/runs/{run_id}/collaboration/ambiguities/{candidate_wave}/{task_id}.json"
+        )
+        if ambiguity_ref.is_file():
+            raise AgentWorkflowError(
+                f"{task_id} is ambiguous (accepted_or_unknown); reconcile the existing "
+                "Provider attempt before dispatching another request"
+            )
+        # A process may have died after the Provider journal was written but
+        # before the scheduler could persist the compact ambiguity marker.
+        # Detect that evidence directly and fail closed on resume.
+        provider_calls_root = (
+            self.service.workspace
+            / f"Work/runs/{run_id}/context-manifests/provider-calls"
+        )
+        if provider_calls_root.is_dir():
+            for manifest_path in provider_calls_root.glob("*.json"):
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, TypeError):
+                    continue
+                if (
+                    manifest.get("run_id") == run_id
+                    and manifest.get("task_id") == task_id
+                    and manifest.get("attempt_disposition")
+                    == "accepted_or_unknown"
+                    and manifest.get("usage_status") == "error"
+                ):
+                    raise AgentWorkflowError(
+                        f"{task_id} has an accepted_or_unknown Provider journal; "
+                        "automatic replay is disabled"
+                    )
 
         artifact_path = self.service.workspace / artifact_ref
         completion_ref = (
@@ -4581,6 +5404,16 @@ class ReportWorkflowRunner:
                 != expected_context_sha256
                 or completion.get("artifact_sha256")
                 != self._sha256(artifact_path)
+                or (
+                    completion.get("task_attempt_id") is not None
+                    and completion.get("task_attempt_id")
+                    != f"{task_id}-attempt-1"
+                )
+                or (
+                    completion.get("session_key") is not None
+                    and completion.get("session_key")
+                    != self._leaf_session_key(task_id)
+                )
             ):
                 self._reject_collaboration_candidates(
                     run_id=run_id,
@@ -4712,6 +5545,13 @@ class ReportWorkflowRunner:
             None,
         )
         request = state.get("request")
+        task_prefix = {
+            "submodule_authoring": "submodule-author",
+            "submodule_discovery": "submodule-discovery",
+            "submodule_discovery_local": "submodule-discovery-local",
+            "submodule_interface_response": "submodule-interface-response",
+        }.get(task_kind, task_kind.replace("_", "-"))
+        task_id = f"{task_prefix}-{submodule_id}"
         ref_records = []
         for ref in input_refs:
             path = (self.service.workspace / ref).resolve()
@@ -4730,6 +5570,9 @@ class ReportWorkflowRunner:
             "version": 1,
             "run_id": state["run_id"],
             "task_kind": task_kind,
+            "task_id": task_id,
+            "task_attempt_id": f"{task_id}-attempt-1",
+            "session_key": self._leaf_session_key(task_id),
             "module_id": module_id,
             "submodule_id": submodule_id,
             "planned_task": planned,
@@ -4792,6 +5635,8 @@ class ReportWorkflowRunner:
                 "run_id": state["run_id"],
                 "wave": wave,
                 "task_id": task_id,
+                "task_attempt_id": f"{task_id}-attempt-1",
+                "session_key": self._leaf_session_key(task_id),
                 "module_id": module_id,
                 "submodule_id": submodule_id,
                 "artifact_ref": artifact_ref,
@@ -4799,6 +5644,105 @@ class ReportWorkflowRunner:
                 "context_sha256": context_sha256,
             },
         )
+
+    def _persist_submodule_task_ambiguity(
+        self,
+        *,
+        state: dict,
+        task_kind: str,
+        wave: str,
+        submodule_id: str,
+        context_sha256: str,
+        error: BaseException,
+    ) -> str:
+        """Record an accepted-or-unknown Provider attempt as non-replayable."""
+
+        module_id = resolve_submodule(submodule_id).module_id
+        task_prefix = {
+            "submodule_authoring": "submodule-author",
+        }.get(task_kind, task_kind.replace("_", "-"))
+        task_id = f"{task_prefix}-{submodule_id}"
+        manifest_refs = list(getattr(error, "manifest_refs", ()) or ())
+        ref = (
+            f"Work/runs/{state['run_id']}/collaboration/ambiguities/"
+            f"{wave}/{task_id}.json"
+        )
+        self.service.store.write_json(
+            ref,
+            {
+                "kind": "submodule_task_ambiguity",
+                "version": 1,
+                "run_id": state["run_id"],
+                "wave": wave,
+                "task_kind": task_kind,
+                "task_id": task_id,
+                "task_attempt_id": f"{task_id}-attempt-1",
+                "session_key": self._leaf_session_key(task_id),
+                "module_id": module_id,
+                "submodule_id": submodule_id,
+                "status": "ambiguous",
+                "attempt_disposition": "accepted_or_unknown",
+                "context_sha256": context_sha256,
+                "provider_call_refs": manifest_refs,
+                "error": str(error),
+            },
+        )
+        state.setdefault("submodule_ambiguous_task_refs", {})[task_id] = ref
+        return ref
+
+    def _verify_submodule_discovery_barrier(
+        self,
+        *,
+        state: dict,
+        module_id: str,
+        barrier_ref: str,
+        context_sha256: dict[str, str],
+    ) -> None:
+        """Verify an exact leaf discovery barrier before any downstream wave."""
+
+        barrier_path = (self.service.workspace / barrier_ref).resolve()
+        run_root = (self.service.workspace / f"Work/runs/{state['run_id']}").resolve()
+        if not barrier_path.is_file() or not barrier_path.is_relative_to(run_root):
+            raise AgentWorkflowError(
+                f"submodule discovery barrier is unreadable: {barrier_ref}"
+            )
+        try:
+            barrier = ModuleSubmoduleDiscoveryBarrier.model_validate_json(
+                barrier_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise AgentWorkflowError(
+                f"submodule discovery barrier is invalid: {barrier_ref}"
+            ) from exc
+        expected = set(REPORT_TAXONOMY[module_id].submodules)
+        if barrier.run_id != state["run_id"] or barrier.module_id != module_id:
+            raise AgentWorkflowError(
+                f"submodule discovery barrier identity mismatch: {module_id}"
+            )
+        if set(barrier.discovery_refs) != expected or set(barrier.discovery_sha256) != expected:
+            raise AgentWorkflowError(
+                f"submodule discovery barrier has non-exact leaf set: {module_id}"
+            )
+        if set(barrier.context_sha256) != expected:
+            raise AgentWorkflowError(
+                f"submodule discovery barrier lacks exact context hashes: {module_id}"
+            )
+        for submodule_id in sorted(expected):
+            ref = barrier.discovery_refs[submodule_id]
+            path = (self.service.workspace / ref).resolve()
+            if not path.is_file() or not path.is_relative_to(run_root):
+                raise AgentWorkflowError(
+                    f"submodule discovery artifact is unreadable: {ref}"
+                )
+            if self._sha256(path) != barrier.discovery_sha256[submodule_id]:
+                raise AgentWorkflowError(
+                    f"submodule discovery artifact hash mismatch: {submodule_id}"
+                )
+            expected_context = context_sha256.get(submodule_id)
+            if expected_context is not None and barrier.context_sha256[submodule_id] != expected_context:
+                raise AgentWorkflowError(
+                    f"submodule discovery context hash mismatch: {submodule_id}"
+                )
 
     def _reject_collaboration_candidates(
         self,
@@ -4871,8 +5815,21 @@ class ReportWorkflowRunner:
         concurrency: int,
         execute,
         persist=None,
+        all_ready: bool = False,
+        state: dict | None = None,
+        wave: str | None = None,
+        context_sha256: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        """Run one bounded leaf cohort with stable history-informed dispatch."""
+        """Run one leaf cohort with stable history-informed dispatch.
+
+        ``all_ready`` is the three-wave business path.  The historical helper
+        default remains bounded for callers that explicitly use it as a small
+        cohort primitive, while Wave 1/2/3 pass ``all_ready=True`` so every
+        ready leaf is dispatched immediately.  A normal leaf failure records a
+        terminal failure and drains already-started siblings; it never freezes
+        the ready queue.  Only a workflow-level cancellation can stop the
+        dispatch loop in the all-ready path.
+        """
 
         ordered = tuple(dict.fromkeys(submodule_ids))
         history = TaskTimingHistory(self.service.workspace)
@@ -4928,7 +5885,31 @@ class ReportWorkflowRunner:
                     results[submodule_id] = payload
                 except BaseException as exc:
                     failures.append(exc)
-                    stop_dispatch.set()
+                    accepted_unknown = (
+                        isinstance(exc, ProviderAttemptRecoveryRequired)
+                        or getattr(exc, "attempt_disposition", None)
+                        == "accepted_or_unknown"
+                    )
+                    hard_stop = isinstance(exc, asyncio.CancelledError) or bool(
+                        getattr(exc, "hard_stop", False)
+                    )
+                    if accepted_unknown and state is not None and wave is not None:
+                        self._persist_submodule_task_ambiguity(
+                            state=state,
+                            task_kind=task_kind,
+                            wave=wave,
+                            submodule_id=submodule_id,
+                            context_sha256=(context_sha256 or {}).get(
+                                submodule_id, ""
+                            ),
+                            error=exc,
+                        )
+                    # In the three-wave path all ready siblings are already
+                    # business work and must be allowed to reach a terminal
+                    # state.  Preserve the bounded helper's old fail-fast
+                    # behavior for non-business callers.
+                    if not all_ready or hard_stop:
+                        stop_dispatch.set()
                     history.record(
                         run_id=run_id,
                         task_id=candidate.task_id,
@@ -4969,8 +5950,24 @@ class ReportWorkflowRunner:
                     },
                 )
 
-        worker_count = min(max(1, concurrency), max(1, len(ordered)))
-        await asyncio.gather(*(worker() for _ in range(worker_count)))
+        worker_count = (
+            max(1, len(ordered))
+            if all_ready
+            else min(max(1, concurrency), max(1, len(ordered)))
+        )
+        # Keep every worker terminal even when one leaf fails.  The workers
+        # convert ordinary leaf failures to terminal records above, and
+        # return_exceptions=True also protects the sibling drain from an
+        # unexpected scheduler/worker exception.
+        worker_outcomes = await asyncio.gather(
+            *(worker() for _ in range(worker_count)),
+            return_exceptions=True,
+        )
+        failures.extend(
+            outcome
+            for outcome in worker_outcomes
+            if isinstance(outcome, BaseException)
+        )
         self.service.store.write_json(
             f"Work/runs/{run_id}/scheduling/{stage_id}.json",
             {
@@ -5183,14 +6180,16 @@ class ReportWorkflowRunner:
         shared_input_refs = [shared_ref, knowledge_ref]
         if manifest_ref:
             shared_input_refs.append(manifest_ref)
+        task_id = (
+            f"submodule-discovery-{submodule_id}"
+            if allow_cross_module_interfaces
+            else f"submodule-discovery-local-{submodule_id}"
+        )
         envelope = TaskEnvelope.model_validate(
             planned.model_copy(
                 update={
-                    "task_id": (
-                        f"submodule-discovery-{submodule_id}"
-                        if allow_cross_module_interfaces
-                        else f"submodule-discovery-local-{submodule_id}"
-                    ),
+                    "task_id": task_id,
+                    "task_attempt_id": f"{task_id}-attempt-1",
                     "objective": (
                         f"独立完成固定子模块 {submodule_id} 的 Wave 1A 证据发现；"
                         + (
@@ -5260,7 +6259,7 @@ class ReportWorkflowRunner:
             envelope,
             envelope.input_refs,
             workflow_id,
-            session_key=f"submodule-{submodule_id}",
+            session_key=self._leaf_session_key(task_id),
         )
         if (
             not isinstance(payload, SubmoduleDiscoverySubmission)
@@ -5516,10 +6515,12 @@ class ReportWorkflowRunner:
             purpose="collaboration",
         )
         evidence_ref = state["preparation_refs"]["evidence"]
+        task_id = f"submodule-interface-response-{submodule_id}"
         envelope = TaskEnvelope.model_validate(
             planned.model_copy(
                 update={
-                    "task_id": f"submodule-interface-response-{submodule_id}",
+                    "task_id": task_id,
+                    "task_attempt_id": f"{task_id}-attempt-1",
                     "objective": (
                         f"回答目标为叶子子模块 {submodule_id} 的全部 Wave 2 请求；"
                         "无法回答时逐项提交明确 unresolved 边界。"
@@ -5536,6 +6537,7 @@ class ReportWorkflowRunner:
                         "每个 request_id 必须恰好一个 answered 或 unresolved disposition",
                         "不得回答其他叶子子模块的问题，也不得发明 request_id",
                         "answered 必须包含适用条件；证据不足时明确 unresolved_reason 和 boundary",
+                        "Wave 2 只允许 answered 或 unresolved；不得 block、请求 Main 或用户介入；unresolved 仅作为 Wave 3 的透明边界，不阻塞下游",
                         "不得实时 query_peer",
                         "inbox 与回答所需上下文已完整注入，应优先直接提交；仅在确需计算或记录缺口时使用辅助工具",
                     ],
@@ -5549,7 +6551,6 @@ class ReportWorkflowRunner:
                         "search_text",
                         "calculate",
                         "report_gap",
-                        "report_blocked",
                         "submit_result",
                     ],
                     "target_submodule_ids": [submodule_id],
@@ -5583,7 +6584,7 @@ class ReportWorkflowRunner:
             envelope,
             envelope.input_refs,
             workflow_id,
-            session_key=f"submodule-{submodule_id}",
+            session_key=self._leaf_session_key(task_id),
         )
         if (
             not isinstance(payload, SubmoduleInterfaceResponseSubmission)
@@ -5744,6 +6745,7 @@ class ReportWorkflowRunner:
                         "每个 inbox 请求必须恰好提交一个 answered 或 unresolved disposition",
                         "不得发明 request_id，也不得回答发给其他模块的问题",
                         "answered 必须给出适用条件；证据不足时用 unresolved_reason 和 boundary 明确边界",
+                        "Wave 2 只允许 answered 或 unresolved；不得 block、请求 Main 或用户介入；unresolved 仅作为 Wave 3 的透明边界，不阻塞下游",
                         "所有 evidence_ids 只能使用当前 run 已注册的 E-*",
                         "不得实时 query_peer；本轮只批量提交接口响应",
                         "inbox 与回答所需上下文已完整注入，应优先直接提交；仅在确需计算或记录缺口时使用辅助工具",
@@ -5754,7 +6756,6 @@ class ReportWorkflowRunner:
                     "allowed_tools": [
                         "calculate",
                         "report_gap",
-                        "report_blocked",
                         "submit_result",
                     ],
                     "target_submodule_ids": list(target_leaves),
@@ -6006,6 +7007,7 @@ class ReportWorkflowRunner:
             )
             for submodule_id in submodule_ids
         }
+        state["submodule_discovery_context_sha256"] = dict(discovery_contexts)
         discoveries: dict[str, SubmoduleDiscoverySubmission] = {}
         pending: list[str] = []
         for submodule_id in submodule_ids:
@@ -6032,6 +7034,10 @@ class ReportWorkflowRunner:
                     workflow_id=workflow_id,
                     task_kind="submodule_discovery_local",
                     concurrency=state["request"].submodule_task_concurrency,
+                    all_ready=True,
+                    state=state,
+                    wave="module-local-discovery",
+                    context_sha256=discovery_contexts,
                     execute=lambda submodule_id: self._submodule_discovery(
                         submodule_id,
                         state,
@@ -6091,6 +7097,10 @@ class ReportWorkflowRunner:
                     )
                     for submodule_id in scoped_refs
                 },
+                context_sha256={
+                    submodule_id: discovery_contexts[submodule_id]
+                    for submodule_id in scoped_refs
+                },
             )
             path = self.service.store.write_json(
                 (
@@ -6102,6 +7112,12 @@ class ReportWorkflowRunner:
             module_barrier_refs[module_id] = path.relative_to(
                 self.service.workspace
             ).as_posix()
+            self._verify_submodule_discovery_barrier(
+                state=state,
+                module_id=module_id,
+                barrier_ref=module_barrier_refs[module_id],
+                context_sha256=discovery_contexts,
+            )
 
         bundle_refs: dict[str, str] = {}
         for submodule_id in submodule_ids:
@@ -6110,6 +7126,7 @@ class ReportWorkflowRunner:
                 module_id=discovery.module_id,
                 submodule_id=submodule_id,
                 discovery=discovery,
+                discovery_context_sha256=discovery_contexts[submodule_id],
                 requested_interfaces=[],
                 responded_interfaces=[],
             )
@@ -6227,6 +7244,7 @@ class ReportWorkflowRunner:
             )
             for submodule_id in submodule_ids
         }
+        state["submodule_discovery_context_sha256"] = dict(discovery_contexts)
         discoveries: dict[str, SubmoduleDiscoverySubmission] = {}
         pending_discovery: list[str] = []
         for submodule_id in submodule_ids:
@@ -6253,6 +7271,10 @@ class ReportWorkflowRunner:
                     workflow_id=workflow_id,
                     task_kind="submodule_discovery",
                     concurrency=state["request"].submodule_task_concurrency,
+                    all_ready=True,
+                    state=state,
+                    wave="wave-1a",
+                    context_sha256=discovery_contexts,
                     execute=lambda submodule_id: self._submodule_discovery(
                         submodule_id,
                         state,
@@ -6302,6 +7324,10 @@ class ReportWorkflowRunner:
                     )
                     for submodule_id in scoped_refs
                 },
+                context_sha256={
+                    submodule_id: discovery_contexts[submodule_id]
+                    for submodule_id in scoped_refs
+                },
             )
             barrier_path = self.service.store.write_json(
                 (
@@ -6313,6 +7339,12 @@ class ReportWorkflowRunner:
             module_barrier_refs[module_id] = barrier_path.relative_to(
                 self.service.workspace
             ).as_posix()
+            self._verify_submodule_discovery_barrier(
+                state=state,
+                module_id=module_id,
+                barrier_ref=module_barrier_refs[module_id],
+                context_sha256=discovery_contexts,
+            )
         state["submodule_discovery_barrier_refs"] = module_barrier_refs
 
         module_discovery_refs: dict[str, str] = {}
@@ -6367,7 +7399,17 @@ class ReportWorkflowRunner:
                 "module_ids": list(MODULE_IDS),
                 "submodule_ids": list(submodule_ids),
                 "module_discovery_barrier_refs": module_barrier_refs,
+                "module_discovery_barrier_sha256": {
+                    module_id: self._sha256(self.service.workspace / ref)
+                    for module_id, ref in module_barrier_refs.items()
+                },
                 "submodule_discovery_refs": discovery_refs,
+                "submodule_discovery_sha256": {
+                    submodule_id: self._sha256(
+                        self.service.workspace / discovery_refs[submodule_id]
+                    )
+                    for submodule_id in submodule_ids
+                },
                 "module_discovery_refs": module_discovery_refs,
                 "inbox_refs": inbox_refs,
                 "request_index": [
@@ -6417,6 +7459,7 @@ class ReportWorkflowRunner:
             )
             for submodule_id in inboxes
         }
+        state["submodule_response_context_sha256"] = dict(response_contexts)
         responses: dict[str, SubmoduleInterfaceResponseSubmission] = {}
         pending_responses: list[str] = []
         for submodule_id in inboxes:
@@ -6443,6 +7486,10 @@ class ReportWorkflowRunner:
                     workflow_id=workflow_id,
                     task_kind="submodule_interface_response",
                     concurrency=state["request"].submodule_task_concurrency,
+                    all_ready=True,
+                    state=state,
+                    wave="wave-2",
+                    context_sha256=response_contexts,
                     execute=lambda submodule_id: self._submodule_interface_response(
                         submodule_id,
                         inbox_ref=inbox_refs[submodule_id],
@@ -6470,6 +7517,8 @@ class ReportWorkflowRunner:
                 ordered_module_discoveries,
                 ordered_responses,
                 known_evidence_ids=known_evidence_ids,
+                discovery_context_sha256=discovery_contexts,
+                response_context_sha256=response_contexts,
             )
             grouped_responses = [
                 ModuleInterfaceResponseSubmission(
@@ -6496,6 +7545,45 @@ class ReportWorkflowRunner:
                 response_refs[submodule_id],
                 payload.model_dump(mode="json"),
             )
+        for submodule_id, response_ref in response_refs.items():
+            response_path = (self.service.workspace / response_ref).resolve()
+            if (
+                not response_path.is_file()
+                or response_contexts.get(submodule_id) is None
+            ):
+                raise AgentWorkflowError(
+                    f"Wave 2 response artifact is unreadable: {submodule_id}"
+                )
+        response_artifact_sha256 = {
+            submodule_id: self._sha256(self.service.workspace / response_ref)
+            for submodule_id, response_ref in response_refs.items()
+        }
+        try:
+            interface_registry = build_interface_resolution_registry(
+                ordered_module_discoveries,
+                ordered_responses,
+                run_id=run_id,
+                known_evidence_ids=known_evidence_ids,
+            )
+        except ValueError as exc:
+            raise AgentWorkflowError(
+                f"Wave 2 interface resolution registry failed: {exc}"
+            ) from exc
+        registry_path = self.service.store.write_json(
+            f"Work/runs/{run_id}/collaboration/interface-resolution-registry.json",
+            interface_registry.model_dump(mode="json"),
+        )
+        registry_ref = registry_path.relative_to(self.service.workspace).as_posix()
+        state["interface_resolution_registry"] = interface_registry
+        state["interface_resolution_registry_ref"] = registry_ref
+        state["interface_resolution_registry_sha256"] = self._sha256(
+            registry_path
+        )
+        state["interface_residual_risks"] = {
+            request_id: resolution.disposition.boundary or ""
+            for request_id, resolution in interface_registry.resolutions.items()
+            if resolution.closure_status == "pending_cross"
+        }
         submodule_bundle_refs: dict[str, str] = {}
         for submodule_id, bundle in submodule_bundles.items():
             path = self.service.store.write_json(
@@ -6533,7 +7621,12 @@ class ReportWorkflowRunner:
                 "version": 2,
                 "run_id": run_id,
                 "barrier_1_ref": state["collaboration_barrier1_ref"],
+                "barrier_1_sha256": self._sha256(
+                    self.service.workspace / state["collaboration_barrier1_ref"]
+                ),
                 "response_refs": response_refs,
+                "response_sha256": response_artifact_sha256,
+                "response_context_sha256": response_contexts,
                 "submodule_bundle_refs": submodule_bundle_refs,
                 "module_bundle_refs": module_bundle_refs,
                 "request_count": sum(
@@ -6541,6 +7634,10 @@ class ReportWorkflowRunner:
                     for discovery in ordered_module_discoveries
                 ),
                 "unresolved_request_ids": unresolved_request_ids,
+                "interface_resolution_registry_ref": registry_ref,
+                "interface_resolution_registry_sha256": state[
+                    "interface_resolution_registry_sha256"
+                ],
             },
         )
         state["collaboration_barrier2_ref"] = barrier2_path.relative_to(
@@ -6876,6 +7973,28 @@ class ReportWorkflowRunner:
             raise AgentWorkflowError(
                 f"submodule collaboration bundle identity mismatch: {submodule_id}"
             )
+        expected_discovery_context = state.get(
+            "submodule_discovery_context_sha256", {}
+        ).get(submodule_id)
+        if (
+            expected_discovery_context is not None
+            and bundle.discovery_context_sha256 != expected_discovery_context
+        ):
+            raise AgentWorkflowError(
+                f"submodule collaboration bundle discovery context mismatch: {submodule_id}"
+            )
+        expected_response_context = state.get(
+            "submodule_response_context_sha256", {}
+        ).get(submodule_id)
+        if expected_response_context is not None:
+            if bundle.response_context_sha256 != expected_response_context:
+                raise AgentWorkflowError(
+                    f"submodule collaboration bundle response context mismatch: {submodule_id}"
+                )
+        elif bundle.response_context_sha256 is not None:
+            raise AgentWorkflowError(
+                f"submodule collaboration bundle has stale response context: {submodule_id}"
+            )
         discovery_ref = (
             f"Work/runs/{state['run_id']}/collaboration/wave-1/submodules/"
             f"{submodule_id}.json"
@@ -6891,6 +8010,10 @@ class ReportWorkflowRunner:
             knowledge_ref=state["module_knowledge_refs"][module_id],
             collaboration_bundle_ref=bundle_ref,
             discovery_ref=discovery_ref,
+            collaboration_bundle_sha256=self._sha256(bundle_path),
+            discovery_sha256=self._sha256(
+                self.service.workspace / discovery_ref
+            ),
         )
         path = self.service.store.write_json(
             (
@@ -6957,10 +8080,12 @@ class ReportWorkflowRunner:
                 ]
             )
         )
+        task_id = f"submodule-author-{submodule_id}"
         envelope = TaskEnvelope.model_validate(
             planned.model_copy(
                 update={
-                    "task_id": f"submodule-author-{submodule_id}",
+                    "task_id": task_id,
+                    "task_attempt_id": f"{task_id}-attempt-1",
                     "run_id": state["run_id"],
                     "agent_id": specialist_id,
                     "objective": (
@@ -7034,7 +8159,7 @@ class ReportWorkflowRunner:
             envelope,
             envelope.input_refs,
             workflow_id,
-            session_key=f"submodule-{submodule_id}",
+            session_key=self._leaf_session_key(task_id),
         )
         if (
             not isinstance(payload, SubmoduleDraftSubmission)
@@ -7124,6 +8249,7 @@ class ReportWorkflowRunner:
                     contract.discovery_ref,
                 ],
             )
+        state["submodule_authoring_context_sha256"] = dict(draft_contexts)
         drafts: dict[str, SubmoduleDraftSubmission] = {}
         pending: list[str] = []
         for submodule_id in submodule_ids:
@@ -7150,6 +8276,10 @@ class ReportWorkflowRunner:
                     workflow_id=workflow_id,
                     task_kind="submodule_authoring",
                     concurrency=state["request"].submodule_task_concurrency,
+                    all_ready=True,
+                    state=state,
+                    wave="wave-3",
+                    context_sha256=draft_contexts,
                     execute=lambda submodule_id: self._submodule_authoring(
                         submodule_id,
                         state,
@@ -7236,6 +8366,10 @@ class ReportWorkflowRunner:
                         )
                         for submodule_id in expected
                     },
+                    "context_sha256": {
+                        submodule_id: draft_contexts[submodule_id]
+                        for submodule_id in expected
+                    },
                     "subject_ref": subject_path.relative_to(
                         self.service.workspace
                     ).as_posix(),
@@ -7245,6 +8379,33 @@ class ReportWorkflowRunner:
             barrier_ref = barrier_path.relative_to(
                 self.service.workspace
             ).as_posix()
+            barrier_payload = json.loads(
+                barrier_path.read_text(encoding="utf-8")
+            )
+            if (
+                set(barrier_payload.get("completion_refs", {})) != set(expected)
+                or set(barrier_payload.get("completion_sha256", {})) != set(expected)
+                or set(barrier_payload.get("context_sha256", {})) != set(expected)
+            ):
+                raise AgentWorkflowError(
+                    f"module {module_id} authoring barrier lacks exact leaf/hash set"
+                )
+            for submodule_id in expected:
+                completion_ref = barrier_payload["completion_refs"][submodule_id]
+                completion_path = (self.service.workspace / completion_ref).resolve()
+                if (
+                    not completion_path.is_file()
+                    or not completion_path.is_relative_to(
+                        (self.service.workspace / f"Work/runs/{run_id}").resolve()
+                    )
+                    or self._sha256(completion_path)
+                    != barrier_payload["completion_sha256"][submodule_id]
+                    or barrier_payload["context_sha256"][submodule_id]
+                    != draft_contexts[submodule_id]
+                ):
+                    raise AgentWorkflowError(
+                        f"module {module_id} authoring barrier hash mismatch: {submodule_id}"
+                    )
             barrier_refs[module_id] = barrier_ref
             self._write_submodule_module_completion(
                 state,
@@ -7526,8 +8687,13 @@ class ReportWorkflowRunner:
         workflow_id: str,
         *,
         defer_main_exceptions: bool = True,
+        lane_state_override: dict | None = None,
     ) -> tuple[ModuleSubmission, str, LaneCompletion, dict]:
-        lane_state = deepcopy(state)
+        # A deferred Main exception is resumed from the exact private lane
+        # state that reached the cohort boundary.  Rebuilding from the shared
+        # state would re-run the author/auditor and could duplicate Provider
+        # work before the serialized exception decision.
+        lane_state = deepcopy(lane_state_override if lane_state_override is not None else state)
         lane_state["_bounded_module_lane"] = module_id
         lane_state["_defer_main_exceptions"] = defer_main_exceptions
         spec = self._lane_task_spec(lane_state, module_id)
@@ -7582,6 +8748,15 @@ class ReportWorkflowRunner:
                 lane_state, module_id, submission, spec
             )
         except BaseException as exc:
+            if isinstance(exc, DeferredMainDecision):
+                # Keep the exact in-memory lane state available to the cohort
+                # drain.  The state is also represented by durable progress
+                # and candidate artifacts; this attribute is only a
+                # same-process continuation hint.
+                try:
+                    setattr(exc, "lane_state", lane_state)
+                except Exception:
+                    pass
             if isinstance(exc, DeferredMainDecision):
                 disposition = "escalate"
             elif isinstance(
@@ -7663,8 +8838,16 @@ class ReportWorkflowRunner:
         workflow_id: str,
         *,
         concurrency: int,
+        all_ready: bool = False,
     ) -> None:
-        """Incrementally admit isolated module lanes and reduce at one barrier."""
+        """Run isolated module lanes and reduce them at one terminal barrier.
+
+        ``all_ready`` is the normal full-report business path: every ready
+        module gets a worker immediately and ordinary lane failures do not
+        cancel or stop admission of siblings.  ``False`` preserves the
+        historical bounded cohort primitive for explicit compatibility
+        requests/checkpoints.
+        """
 
         results: dict[
             str, tuple[ModuleSubmission, str, LaneCompletion, dict]
@@ -7721,7 +8904,12 @@ class ReportWorkflowRunner:
             correlation_id=workflow_id,
             payload={
                 "target_modules": list(requested_modules),
-                "concurrency": min(max(1, concurrency), len(pending) or 1),
+                "concurrency": (
+                    len(pending)
+                    if all_ready
+                    else min(max(1, concurrency), len(pending) or 1)
+                ),
+                "admission": "all_ready" if all_ready else "bounded",
                 "recovered_modules": sorted(results, key=float),
                 "scheduling_policy": "longest_critical_path_first_v1",
                 "scheduling_candidates": [
@@ -7731,7 +8919,9 @@ class ReportWorkflowRunner:
             },
         )
         failures: list[BaseException] = []
+        failures_by_module: dict[str, BaseException] = {}
         deferred_main_modules: set[str] = set()
+        deferred_lane_states: dict[str, dict] = {}
         freeze_admission = asyncio.Event()
 
         async def worker() -> None:
@@ -7752,7 +8942,13 @@ class ReportWorkflowRunner:
                     return
                 try:
                     results[module_id] = await self._execute_module_lane(
-                        module_id, state, workflow_id
+                        module_id,
+                        state,
+                        workflow_id,
+                        # Main exception decisions are always deferred while
+                        # an all-ready cohort is draining.  The lane is
+                        # resumed below from its persisted private state.
+                        defer_main_exceptions=True,
                     )
                     timing_history.record(
                         run_id=state["run_id"],
@@ -7764,8 +8960,11 @@ class ReportWorkflowRunner:
                         ),
                         status="completed",
                     )
-                except DeferredMainDecision:
+                except DeferredMainDecision as exc:
                     deferred_main_modules.add(module_id)
+                    lane_state = getattr(exc, "lane_state", None)
+                    if isinstance(lane_state, dict):
+                        deferred_lane_states[module_id] = lane_state
                     timing_history.record(
                         run_id=state["run_id"],
                         task_id=module_id,
@@ -7778,7 +8977,9 @@ class ReportWorkflowRunner:
                     )
                 except BaseException as exc:
                     failures.append(exc)
-                    freeze_admission.set()
+                    failures_by_module[module_id] = exc
+                    if not all_ready:
+                        freeze_admission.set()
                     timing_history.record(
                         run_id=state["run_id"],
                         task_id=module_id,
@@ -7790,11 +8991,16 @@ class ReportWorkflowRunner:
                         status="failed",
                     )
 
+        worker_count = (
+            len(pending)
+            if all_ready
+            else min(max(1, concurrency), len(pending) or 1)
+        )
         workers = [
             asyncio.create_task(
                 worker(), name=f"module-lane-worker-{index + 1}"
             )
-            for index in range(min(max(1, concurrency), len(pending) or 1))
+            for index in range(worker_count)
         ]
         await asyncio.gather(*workers)
         self.service.store.write_json(
@@ -7807,15 +9013,34 @@ class ReportWorkflowRunner:
                 ],
             },
         )
-        if failures:
-            raise failures[0]
         for module_id in sorted(deferred_main_modules, key=float):
-            results[module_id] = await self._execute_module_lane(
-                module_id,
-                state,
-                workflow_id,
-                defer_main_exceptions=False,
-            )
+            # A deferred Main decision is the only reason to leave the
+            # private lane cohort.  Retry after every initially ready lane has
+            # reached a terminal state, and never re-run a verified finding or
+            # revision artifact.
+            try:
+                resumed_lane_state = deferred_lane_states.get(module_id)
+                if isinstance(resumed_lane_state, dict):
+                    # run_module_review only consults persisted progress during
+                    # an explicit resume.  Mark this same-process continuation
+                    # as a resume so the already-written finding/candidate is
+                    # consumed instead of triggering a second auditor turn.
+                    resumed_lane_state["resume"] = True
+                results[module_id] = await self._execute_module_lane(
+                    module_id,
+                    state,
+                    workflow_id,
+                    defer_main_exceptions=False,
+                    lane_state_override=resumed_lane_state,
+                )
+            except BaseException as exc:
+                failures.append(exc)
+                failures_by_module[module_id] = exc
+
+        # If a test double or an older helper cannot expose its private state,
+        # the durable progress file still allows the next invocation to
+        # recover the missing lane.  Keep this map intentionally best-effort;
+        # no ordinary failure is replayed inside the same cohort.
 
         completions: list[tuple[str, LaneCompletion]] = []
         for module_id in requested_modules:
@@ -7839,13 +9064,93 @@ class ReportWorkflowRunner:
                     submission,
                     provenance="bounded_module_lane",
                 )
-            else:
+            elif module_id in state.get("module_submissions", {}):
                 submission = state["module_submissions"][module_id]
                 spec = self._lane_task_spec(state, module_id)
                 completion_ref, completion = self._build_lane_completion(
                     state, module_id, submission, spec
                 )
+            else:
+                # The lane failed (or was left ambiguous) and has no
+                # promotable typed completion.  Preserve successful siblings
+                # and record this terminal state in the cohort barrier below.
+                continue
             completions.append((completion_ref, completion))
+
+        if failures_by_module and not all_ready:
+            # Preserve the legacy bounded primitive's fail-fast surface.  The
+            # all-ready business path below additionally emits a terminal
+            # mixed-success barrier so successful siblings remain promotable.
+            raise failures[0]
+
+        if failures_by_module:
+            failure_refs: dict[str, list[str]] = {}
+            for module_id in sorted(failures_by_module, key=float):
+                exception_root = (
+                    self.service.workspace
+                    / f"Work/runs/{state['run_id']}/lanes/module-{module_id}/exceptions"
+                )
+                failure_refs[module_id] = [
+                    path.relative_to(self.service.workspace).as_posix()
+                    for path in sorted(exception_root.glob("*.json"))
+                    if path.is_file()
+                ]
+            terminal_ref = (
+                f"Work/runs/{state['run_id']}/lanes/"
+                + (
+                    "module-barrier.json"
+                    if set(requested_modules) == set(REPORT_MODULE_IDS)
+                    else "partial-module-barrier.json"
+                )
+            )
+            self.service.store.write_json(
+                terminal_ref,
+                {
+                    "kind": "module_lane_terminal_barrier",
+                    "version": 1,
+                    "run_id": state["run_id"],
+                    "target_modules": sorted(requested_modules, key=float),
+                    "status": "failed",
+                    "scope": (
+                        "full"
+                        if set(requested_modules) == set(REPORT_MODULE_IDS)
+                        else "partial"
+                    ),
+                    "completion_refs": {
+                        completion.module_id: ref for ref, completion in completions
+                    },
+                    "completion_hashes": {
+                        completion.module_id: completion.completion_sha256()
+                        for _ref, completion in completions
+                    },
+                    "failure_refs": failure_refs,
+                    "terminal_statuses": {
+                        module_id: (
+                            "completed"
+                            if any(
+                                completion.module_id == module_id
+                                for _ref, completion in completions
+                            )
+                            else "failed"
+                        )
+                        for module_id in sorted(requested_modules, key=float)
+                    },
+                },
+            )
+            state["module_lane_barrier_ref"] = terminal_ref
+            self._checkpoint(
+                state,
+                "module-work",
+                "failed",
+                "; ".join(
+                    f"{module_id}: {failures_by_module[module_id]}"
+                    for module_id in sorted(failures_by_module, key=float)
+                ),
+            )
+            # Do not enter Cross when any module lane failed.  The caller will
+            # surface the first deterministic error while all successful lane
+            # artifacts remain recoverable.
+            raise failures[0]
 
         barrier = WorkflowReducer(
             self.service.workspace, state["run_id"]
@@ -8251,6 +9556,36 @@ class ReportWorkflowRunner:
         await run_cross_review(self, state, workflow_id)
 
     async def _chief_edit(self, state: dict, workflow_id: str) -> None:
+        interface_registry = state.get("interface_resolution_registry")
+        if interface_registry is None and state.get("interface_resolution_registry_ref"):
+            registry_ref = str(state["interface_resolution_registry_ref"])
+            registry_path = self.service.workspace / registry_ref
+            if not registry_path.is_file():
+                raise AgentWorkflowError(
+                    f"Chief cannot start: interface registry is missing ({registry_ref})"
+                )
+            expected_hash = state.get("interface_resolution_registry_sha256")
+            actual_hash = self._sha256(registry_path)
+            if expected_hash != actual_hash:
+                raise AgentWorkflowError(
+                    "Chief cannot start: interface registry hash is stale"
+                )
+            try:
+                interface_registry = InterfaceResolutionRegistry.model_validate_json(
+                    registry_path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError) as exc:
+                raise AgentWorkflowError(
+                    "Chief cannot start: interface registry is invalid"
+                ) from exc
+            state["interface_resolution_registry"] = interface_registry
+        if isinstance(interface_registry, InterfaceResolutionRegistry):
+            pending_interfaces = interface_registry.pending_request_ids
+            if pending_interfaces:
+                raise AgentWorkflowError(
+                    "Chief cannot start while Cross interface IF/XMR records remain pending: "
+                    f"{list(pending_interfaces)}"
+                )
         special_topic_plan: SpecialTopicPlan | None = state.get("special_topic_plan")
         special_topic_input_refs: list[str] = []
         special_topic_context = ""
@@ -8278,18 +9613,10 @@ class ReportWorkflowRunner:
             claim_ledger.model_dump(mode="json"),
         )
         self._require_template_skill(state)
-        editor_input = ChiefEditorInput(
-            run_id=state["run_id"],
-            approved_module_markers={
-                module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_MODULE_IDS
-            },
-            modules={
-                module_id: module_content_view(state["module_submissions"][module_id])
-                for module_id in REPORT_MODULE_IDS
-            },
-            cross_review_completion_ref=state["cross_review_completion_ref"],
-            special_topic_plan=special_topic_plan,
-        )
+        # This call is the only Chief input boundary: it materializes and
+        # validates the immutable CrossDecisionPack before exposing five
+        # approved ModuleContentView values.
+        editor_input = self._current_chief_editor_input(state)
         editor_input_path = self.service.store.write_json(
             f"Work/runs/{state['run_id']}/context/chief-editor-input.json",
             editor_input.model_dump(mode="json"),
@@ -8302,8 +9629,6 @@ class ReportWorkflowRunner:
             objective="整合已批准五模块，形成自然、丰富、有专业差异且可溯源的完整报告。",
             input_refs=[
                 editor_input_ref,
-                state["preparation_refs"]["evidence"],
-                state["preparation_refs"]["photo_manifest"],
                 *special_topic_input_refs,
             ],
             constraints=[
@@ -8311,7 +9636,7 @@ class ReportWorkflowRunner:
                 "批准正文的引用与脚注由运行时保护和装配，总编只提交 schema 声明字段",
                 "protected_claim_ids 由 submit_result 根据运行时已批准模块确定性注入；不得自行提交、打开或重传 Claim/Source ledger",
                 "正文不得套用统一的事实-证据-风险模板",
-                "tables 只提交可追溯的 E-* evidence_ids；photo_ids 提交空数组，运行时将原始表图片全量绑定到 Evidence 所属最小子模块",
+                "tables 只提交 CrossDecisionPack 与已批准模块声明的 E-* evidence_ids；photo_ids 提交空数组，图片由运行时按 Evidence 绑定装配",
                 "每个 module_narrative 必须逐一保留该模块全部固定 submodule_id 和标题，不得压缩为核心发现摘要",
                 "每个已批准子模块正文必须原样包含在所属 module_narrative 中；总编只能增加章节引言、过渡、交叉引用和综合判断，不能删除或缩写专家正文",
                 "为避免重复输出和截断，每个 module_narrative 使用对应 [[APPROVED_MODULE:2.x]] 标记作为正文基线，可在标记前后增加短过渡；工作流会确定性嵌回批准正文",
@@ -8360,6 +9685,11 @@ class ReportWorkflowRunner:
                 *state.get("chief_editor_constraints", []),
             ],
             allowed_outputs=["edited_report_submission"],
+            allowed_tools=[
+                "write_result_part",
+                "list_result_parts",
+                "submit_result",
+            ],
             input_contract_kind="chief_editor_input",
             input_contract_ref=editor_input_ref,
             inline_context="\n\n".join(
@@ -8717,7 +10047,7 @@ class ReportWorkflowRunner:
             # exact edited JSON. Reconstruct only its deterministic Markdown
             # projection; no provider or reviewer call is repeated.
             _, canonical = self._delivery_projection(state, audited)
-            validate_final_report_markdown(canonical)
+            validate_final_report_markdown(canonical, audited.special_topic_plan)
             canonical_ref = (
                 f"Work/runs/{run_id}/validation/report-final-audit-legacy.md"
             )
@@ -8916,7 +10246,14 @@ class ReportWorkflowRunner:
             edited,
             claims,
         )
-        self.service.store.write_json("Work/report-state.json", report.model_dump(mode="json"))
+        # Keep the report-state input run-scoped.  The delivery package is the
+        # only public snapshot consumed by version publication; a global
+        # ``Work/report-state.json`` view would let a later run overwrite the
+        # current receipt's provenance.
+        report_state_path = self.service.store.write_json(
+            f"Work/runs/{state['run_id']}/report-state.json",
+            report.model_dump(mode="json"),
+        )
         self._validate_final_report_structure(state, delivery_markdown, "delivery-final")
         markdown_path = self.service.store.write_text(
             "Outputs/Reports/配电安全专家咨询报告.md", delivery_markdown
@@ -8926,11 +10263,12 @@ class ReportWorkflowRunner:
             photo_assets=state.get("photo_assets", []),
         )
         source_index_path = self.service.store.write_text(
-            "Outputs/Reports/证据与来源索引.md",
+            f"Work/runs/{state['run_id']}/source-index/证据与来源索引.md",
             source_index_markdown.rstrip() + "\n",
         )
         source_index_docx_path = (
-            self.service.workspace / "Outputs/Reports/证据与来源索引.docx"
+            self.service.workspace
+            / f"Work/runs/{state['run_id']}/source-index/证据与来源索引.docx"
         )
         SourceIndexDocxRenderer.render(
             source_index_markdown.rstrip() + "\n",
@@ -9016,7 +10354,7 @@ class ReportWorkflowRunner:
                     for module_id in REPORT_MODULE_IDS
                 },
                 final_docx=output,
-                report_state=self.service.workspace / "Work/report-state.json",
+                report_state=report_state_path,
                 source_index=source_index_path,
                 source_index_docx=source_index_docx_path,
             )
@@ -9024,6 +10362,31 @@ class ReportWorkflowRunner:
         receipt_path = self.service.store.write_json(
             f"Work/runs/{state['run_id']}/delivery-receipt.json",
             receipt.model_dump(mode="json"),
+        )
+        # A receipt is durable before any version/archive work begins.  A
+        # crash after this point is therefore an archive/version recovery, not
+        # a reason to invoke a Provider again.
+        completion_ref = f"Work/runs/{state['run_id']}/delivery-completion.json"
+        state["delivery_status"] = "receipt_persisted"
+        state["output_artifacts"] = self._delivery_output_artifacts(
+            final_review_ref=state["final_review_completion_ref"],
+            delivery_manifest_ref=receipt.manifest_path.relative_to(self.service.workspace),
+            source_index_ref=receipt.source_index.relative_to(self.service.workspace),
+            source_index_docx_ref=receipt.source_index_docx.relative_to(self.service.workspace),
+        )
+        self.service.store.write_json(
+            completion_ref,
+            {
+                "run_id": state["run_id"],
+                "status": "receipt_persisted",
+                "delivery_status": "receipt_persisted",
+                "delivery_receipt_ref": receipt_path.relative_to(self.service.workspace).as_posix(),
+                "report_version_id": None,
+                "final_audit_snapshot_ref": final_audit_snapshot_ref,
+                "output_artifacts": [
+                    artifact.model_dump(mode="json") for artifact in state["output_artifacts"]
+                ],
+            },
         )
         provenance_loader = getattr(self.agent_runner, "skill_provenance", None)
         skill_provenance = (
@@ -9058,95 +10421,112 @@ class ReportWorkflowRunner:
             dict.fromkeys([*state.get("inherited_summary_refs", []), *summary_refs])
         )
         version_store = ReportVersionStore(self.service.workspace)
-        version = version_store.publish(
-            ReportVersion(
-                version_id=state["run_id"],
-                run_id=state["run_id"],
-                parent_version_id=state.get("parent_version_id"),
-                artifact_refs={
-                    "final_docx": receipt.final_docx.relative_to(self.service.workspace),
-                    "report_state": receipt.report_state.relative_to(self.service.workspace),
-                    "claim_ledger": claim_ledger_path.relative_to(self.service.workspace),
-                    "source_ledger": source_ledger_path.relative_to(self.service.workspace),
-                    "evidence": evidence_snapshot_path.relative_to(self.service.workspace),
-                    "delivery_receipt": receipt_path.relative_to(self.service.workspace),
-                    "delivery_manifest": receipt.manifest_path.relative_to(self.service.workspace),
-                    **{
-                        f"module:{module_id}": path.relative_to(self.service.workspace)
-                        for module_id, path in receipt.module_files.items()
-                    },
-                    **{
-                        f"module_submission:{module_id}": path.relative_to(self.service.workspace)
-                        for module_id, path in approved_module_paths.items()
-                    },
-                    "edited_submission": edited_submission_path.relative_to(self.service.workspace),
-                    "canonical_markdown": markdown_path.relative_to(self.service.workspace),
-                    "source_index": source_index_path.relative_to(self.service.workspace),
-                    "source_index_docx": source_index_docx_path.relative_to(
-                        self.service.workspace
-                    ),
-                    "render_request": Path(f"Work/runs/{state['run_id']}/render-request.json"),
-                    "render_result": render_result_ref,
-                    "handoff_contracts": Path(
-                        f"Work/runs/{state['run_id']}/handoff-contracts.json"
-                    ),
-                    "final_review_completion": Path(state["final_review_completion_ref"]),
-                    "final_audit_snapshot": Path(final_audit_snapshot_ref),
-                    **(
-                        {
-                            "cross_review_completion": Path(state["cross_review_completion_ref"]),
-                        }
-                        if state.get("cross_review_completion_ref")
-                        else {}
-                    ),
-                    "report_request": request_snapshot_path.relative_to(self.service.workspace),
-                    "photo_manifest": photo_manifest_path.relative_to(self.service.workspace),
-                    "report_template": template_snapshot.relative_to(self.service.workspace),
-                    "template_provenance": template_provenance_path.relative_to(
-                        self.service.workspace
-                    ),
-                    **{
-                        f"template_skill:{part}": Path(ref)
-                        for part, ref in template_skill_refs.items()
-                    },
-                    **{
-                        f"photo_asset:{asset.id}": asset.path
-                        for asset in state.get("photo_assets", [])
-                    },
-                },
-                skill_provenance=skill_provenance,
-                session_summary_refs=summary_refs,
+        # The typed receipt owns every package view.  In particular, source
+        # indexes are never reconstructed as hand-written Outputs artifacts
+        # while publishing a version.
+        additional_artifacts: dict[str, Path] = {
+            "delivery_manifest": receipt.manifest_path.relative_to(self.service.workspace),
+            "claim_ledger": claim_ledger_path.relative_to(self.service.workspace),
+            "source_ledger": source_ledger_path.relative_to(self.service.workspace),
+            "evidence": evidence_snapshot_path.relative_to(self.service.workspace),
+            **{
+                f"module_submission:{module_id}": path.relative_to(self.service.workspace)
+                for module_id, path in approved_module_paths.items()
+            },
+            "edited_submission": edited_submission_path.relative_to(self.service.workspace),
+            "canonical_markdown": markdown_path.relative_to(self.service.workspace),
+            "render_request": Path(f"Work/runs/{state['run_id']}/render-request.json"),
+            "render_result": render_result_ref,
+            "handoff_contracts": Path(
+                f"Work/runs/{state['run_id']}/handoff-contracts.json"
             ),
-            trusted_handle_refs={
-                key: receipt.trusted_handle_refs[key]
-                for key in (
-                    "final_docx",
-                    "report_state",
-                    "source_index",
-                    "source_index_docx",
-                    *(f"module:{module_id}" for module_id in REPORT_MODULE_IDS),
-                )
-                if key in receipt.trusted_handle_refs
+            "final_review_completion": Path(state["final_review_completion_ref"]),
+            "final_audit_snapshot": Path(final_audit_snapshot_ref),
+            **(
+                {
+                    "cross_review_completion": Path(state["cross_review_completion_ref"]),
+                }
+                if state.get("cross_review_completion_ref")
+                else {}
+            ),
+            "report_request": request_snapshot_path.relative_to(self.service.workspace),
+            "photo_manifest": photo_manifest_path.relative_to(self.service.workspace),
+            "report_template": template_snapshot.relative_to(self.service.workspace),
+            "template_provenance": template_provenance_path.relative_to(
+                self.service.workspace
+            ),
+            **{
+                f"template_skill:{part}": Path(ref)
+                for part, ref in template_skill_refs.items()
+            },
+            **{
+                f"photo_asset:{asset.id}": asset.path
+                for asset in state.get("photo_assets", [])
+            },
+        }
+        version = version_store.publish_from_delivery(
+            receipt,
+            receipt_path.relative_to(self.service.workspace),
+            additional_artifacts=additional_artifacts,
+            session_summary_refs=summary_refs,
+            skill_provenance=skill_provenance,
+        )
+        state["delivery_status"] = "delivered"
+        self.service.store.write_json(
+            completion_ref,
+            {
+                "run_id": state["run_id"],
+                "status": "delivered",
+                "delivery_status": "delivered",
+                "delivery_receipt_ref": receipt_path.relative_to(self.service.workspace).as_posix(),
+                "report_version_id": version.version_id,
+                "final_audit_snapshot_ref": final_audit_snapshot_ref,
+                "output_artifacts": [
+                    artifact.model_dump(mode="json") for artifact in state["output_artifacts"]
+                ],
             },
         )
         state["delivery_to_version_cas_metrics"] = (
             version_store.content_store.metrics_snapshot()
         )
         state["report_version"] = version
-        storage_plan = ReportingRetentionPlanner(self.service.workspace).generate()
-        state["storage_usage_ref"] = "Work/storage-usage.json"
-        state["retention_plan_ref"] = "Work/retention-plan.json"
-        state["storage_usage"] = storage_plan["usage"]
-        state["output_artifacts"] = self._delivery_output_artifacts(
-            final_review_ref=state["final_review_completion_ref"],
-            delivery_manifest_ref=receipt.manifest_path.relative_to(self.service.workspace),
-        )
-        completion_ref = f"Work/runs/{state['run_id']}/delivery-completion.json"
+        state["delivery_status"] = "archive_pending"
         self.service.store.write_json(
             completion_ref,
             {
                 "run_id": state["run_id"],
-                "status": "completed",
+                "status": "archive_pending",
+                "delivery_status": "archive_pending",
+                "delivery_receipt_ref": receipt_path.relative_to(self.service.workspace).as_posix(),
+                "report_version_id": version.version_id,
+                "final_audit_snapshot_ref": final_audit_snapshot_ref,
+                "output_artifacts": [
+                    artifact.model_dump(mode="json") for artifact in state["output_artifacts"]
+                ],
+            },
+        )
+        archive_error: str | None = None
+        try:
+            storage_plan = ReportingRetentionPlanner(self.service.workspace).generate()
+            state["storage_usage_ref"] = "Work/storage-usage.json"
+            state["retention_plan_ref"] = "Work/retention-plan.json"
+            state["storage_usage"] = storage_plan["usage"]
+            state["delivery_status"] = "archived"
+            final_status = "archived"
+        except Exception as exc:
+            # The receipt and version are already durable and hash-verified;
+            # retention is advisory and must never replay Provider work.
+            archive_error = str(exc)
+            state["delivery_status"] = "delivered_with_archive_warning"
+            state["delivery_warning"] = archive_error
+            final_status = "archive_failed"
+        self.service.store.write_json(
+            completion_ref,
+            {
+                "run_id": state["run_id"],
+                "status": final_status,
+                "delivery_status": state["delivery_status"],
+                "warning": archive_error,
                 "delivery_receipt_ref": receipt_path.relative_to(self.service.workspace).as_posix(),
                 "report_version_id": version.version_id,
                 "final_audit_snapshot_ref": final_audit_snapshot_ref,
@@ -9168,6 +10548,8 @@ class ReportWorkflowRunner:
         *,
         final_review_ref: str,
         delivery_manifest_ref: Path,
+        source_index_ref: Path | None = None,
+        source_index_docx_ref: Path | None = None,
     ) -> list[OutputArtifact]:
         """Declare only artifacts that the current delivery lifecycle creates."""
 
@@ -9181,8 +10563,15 @@ class ReportWorkflowRunner:
             OutputArtifact(kind="review", path=Path(final_review_ref)),
             OutputArtifact(kind="report", path=Path("Outputs/Reports/配电安全专家咨询报告.md")),
             OutputArtifact(kind="report", path=Path("Outputs/Reports/配电安全专家咨询报告.docx")),
-            OutputArtifact(kind="report", path=Path("Outputs/Reports/证据与来源索引.md")),
-            OutputArtifact(kind="report", path=Path("Outputs/Reports/证据与来源索引.docx")),
+            OutputArtifact(
+                kind="report",
+                path=source_index_ref or Path("Outputs/Reports/证据与来源索引.md"),
+            ),
+            OutputArtifact(
+                kind="report",
+                path=source_index_docx_ref
+                or Path("Outputs/Reports/证据与来源索引.docx"),
+            ),
             OutputArtifact(
                 kind="run",
                 path=delivery_manifest_ref,

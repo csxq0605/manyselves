@@ -32,6 +32,7 @@ from manyselves.core.reporting.agentic_models import (
     WorkflowDecisionSubmission,
 )
 from manyselves.core.reporting.input_contracts import (
+    ChiefEditorInput,
     RequestedModuleChange,
     ReviewCompletionRecord,
     ValidationReport,
@@ -2141,65 +2142,31 @@ async def test_final_review_rejects_chapter_four_finding_when_plan_is_absent(
     active_sections = [
         section_id for section_id in FINAL_AUDIT_SECTION_IDS if section_id != "4"
     ]
-    runner = _ScriptedRunner(
-        tmp_path,
-        [
-            (
-                "chief-editor-auditor",
-                "final_review_finding_submission",
-                FinalReviewFindingSubmission(
-                    checked_section_ids=active_sections,
-                    findings=[
+    with pytest.raises(Exception, match="invalid section"):
+        FinalReviewFindingSubmission(
+            checked_section_ids=active_sections,
+            findings=[
+                {
+                    "id": "F-INACTIVE-4",
+                    "target_section_ids": ["4"],
+                    "target_changes": [
                         {
-                            "id": "F-INACTIVE-4",
-                            "target_section_ids": ["4"],
-                            "target_changes": [
-                                {
-                                    "target_section_id": "4",
-                                    "required_change": (
-                                        "不得为不存在的专项计划补写第四章内容，必须保持实际报告范围。"
-                                    ),
-                                    "reviewer_checks": ["确认报告保持没有第四章"],
-                                }
-                            ],
-                            "category": "scope",
-                            "impact": "blocking",
-                            "observation": "审计结果错误地把未启用的第四章当成当前报告范围。",
-                            "evidence_refs": [
-                                "Work/runs/run-no-special/edited-revisions/chief-r0.json"
-                            ],
+                            "target_section_id": "4",
+                            "required_change": (
+                                "不得为不存在的专项计划补写第四章内容，必须保持实际报告范围。"
+                            ),
+                            "reviewer_checks": ["确认报告保持没有第四章"],
                         }
                     ],
-                    residual_risks=[],
-                ),
-            ),
-        ],
-    )
-    state = {
-        "run_id": "run-no-special",
-        "edited_report": current,
-        "module_submissions": {
-            module_id: _module(module_id) for module_id in REPORT_TAXONOMY
-        },
-        "cross_synthesis_inputs": [],
-    }
-
-    with pytest.raises(ReviewLifecycleError, match="inactive report section"):
-        await run_final_review(
-            runner,
-            state,
-            "workflow",
-            chief_envelope=TaskEnvelope(
-                task_id="chief-edit",
-                run_id="run-no-special",
-                agent_id="chief-editor",
-                objective="总编",
-                allowed_outputs=["edited_report_submission"],
-            ),
-            chief_session_key="chief-editor",
-            approved_module_text=module_text,
-            claims=[],
-            aggregate_mode=True,
+                    "category": "scope",
+                    "impact": "blocking",
+                    "observation": "审计结果错误地把未启用的第四章当成当前报告范围。",
+                    "evidence_refs": [
+                        "Work/runs/run-no-special/edited-revisions/chief-r0.json"
+                    ],
+                }
+            ],
+            residual_risks=[],
         )
 
 
@@ -2898,7 +2865,7 @@ def test_resume_restores_exact_current_protocol_review_completions(
     service.store.write_json(
         final_finding_ref,
         FinalReviewFindingSubmission(
-            checked_section_ids=list(FINAL_REPORT_SECTION_IDS),
+            checked_section_ids=list(FINAL_AUDIT_SECTION_IDS),
             findings=[],
             residual_risks=[],
         ).model_dump(mode="json"),
@@ -3034,12 +3001,43 @@ def _chief_completion_fixture(
             f"Work/runs/{run_id}/modules/{module_id}-r0.json",
             module.model_dump(mode="json"),
         )
-    evidence_ref = f"Work/runs/{run_id}/preparation/evidence.jsonl"
-    photo_ref = f"Work/runs/{run_id}/preparation/photo-manifest.json"
     cross_ref = f"Work/runs/{run_id}/reviews/cross-completion.json"
-    service.store.write_text(evidence_ref, "")
-    service.store.write_json(photo_ref, {"assets": []})
-    service.store.write_json(cross_ref, {"kind": "test-cross-completion"})
+    cross_finding_ref = f"Work/runs/{run_id}/reviews/cross-findings-r0.json"
+    service.store.write_json(
+        cross_finding_ref,
+        CrossReviewFindingSubmission(
+            coverage=[
+                {
+                    "module_id": module_id,
+                    "checked_dimensions": list(CROSS_REVIEW_DIMENSIONS),
+                }
+                for module_id in REPORT_TAXONOMY
+            ],
+            findings=[],
+            synthesis_inputs=[],
+        ).model_dump(mode="json"),
+    )
+    module_refs = [
+        f"Work/runs/{run_id}/modules/{module_id}-r0.json"
+        for module_id in REPORT_TAXONOMY
+    ]
+    service.store.write_json(
+        cross_ref,
+        ReviewCompletionRecord(
+            lifecycle="cross",
+            run_id=run_id,
+            reviewer_agent_id="cross-module-reviewer",
+            reviewer_session_key="cross-module-reviewer",
+            subject_refs=module_refs,
+            finding_refs=[cross_finding_ref],
+            verdict_refs=[],
+            resolved_finding_ids=[],
+            artifact_sha256=_artifact_hashes(
+                tmp_path,
+                [*module_refs, cross_finding_ref],
+            ),
+        ).model_dump(mode="json"),
+    )
     service.store.write_json(
         f"Work/runs/{run_id}/ledgers/claims.json",
         {"claims": [], "sources": []},
@@ -3058,10 +3056,6 @@ def _chief_completion_fixture(
         "module_submissions": modules,
         "module_review_completion_refs": {},
         "cross_review_completion_ref": cross_ref,
-        "preparation_refs": {
-            "evidence": evidence_ref,
-            "photo_manifest": photo_ref,
-        },
     }
     if revision:
         state["revision_request"] = RevisionRequest(
@@ -3084,13 +3078,16 @@ def _chief_completion_fixture(
         objective="整合已批准五模块。",
         input_refs=[
             editor_input_ref,
-            evidence_ref,
-            photo_ref,
         ],
         constraints=list(
             state.get("chief_editor_constraints", [])
         ),
         allowed_outputs=["edited_report_submission"],
+        allowed_tools=[
+            "write_result_part",
+            "list_result_parts",
+            "submit_result",
+        ],
         input_contract_kind="chief_editor_input",
         input_contract_ref=editor_input_ref,
         inline_context="",
@@ -3140,6 +3137,41 @@ def test_chief_completion_restores_hash_bound_current_context(
     assert candidate.title == "示例配电安全专家咨询报告"
     assert envelope.run_id == state["run_id"]
     assert refs["editor_input"].endswith("chief-editor-input.json")
+
+
+@pytest.mark.parametrize("revision", [False, True])
+def test_chief_envelope_is_pack_bound_and_has_no_raw_evidence_or_photo_inputs(
+    tmp_path: Path,
+    revision: bool,
+) -> None:
+    runner, state, _completion_ref = _chief_completion_fixture(
+        tmp_path,
+        revision=revision,
+    )
+    envelope = TaskEnvelope.model_validate_json(
+        (
+            runner.service.workspace
+            / f"Work/runs/{state['run_id']}/context/chief-editor-envelope.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert envelope.input_refs == [
+        f"Work/runs/{state['run_id']}/context/chief-editor-input.json"
+    ]
+    assert envelope.allowed_tools == [
+        "write_result_part",
+        "list_result_parts",
+        "submit_result",
+    ]
+    assert all("evidence" not in ref and "photo" not in ref for ref in envelope.input_refs)
+    editor_input = ChiefEditorInput.model_validate_json(
+        (
+            runner.service.workspace
+            / envelope.input_contract_ref
+        ).read_text(encoding="utf-8")
+    )
+    assert editor_input.cross_decision_pack_ref == state["cross_decision_pack_ref"]
+    assert editor_input.cross_decision_pack_sha256 == state["cross_decision_pack_sha256"]
+    assert editor_input.cross_decision is not None
 
 
 def test_revision_checkpoint_restores_only_hash_bound_chief_completion(

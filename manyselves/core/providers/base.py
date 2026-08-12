@@ -78,11 +78,48 @@ def annotate_provider_request_failure(
 ) -> BaseException:
     """Attach adapter disposition without erasing the SDK exception type."""
 
+    retry_after = provider_retry_after(exc)
+    if retry_after is not None:
+        try:
+            setattr(exc, "retry_after", retry_after)
+        except (AttributeError, TypeError):
+            pass
+
     try:
         setattr(exc, "attempt_disposition", disposition.value)
     except (AttributeError, TypeError):
         return ProviderRequestError(exc, disposition)
     return exc
+
+
+def provider_retry_after(exc: BaseException) -> float | None:
+    """Extract a bounded Retry-After hint without making it mandatory.
+
+    SDKs expose headers differently.  This helper is deliberately advisory:
+    admission still applies its shared cooldown and jitter, while the absence
+    of a parseable header falls back to the controller's default delay.
+    """
+
+    original = getattr(exc, "original", exc)
+    value = getattr(original, "retry_after", None)
+    response = getattr(original, "response", None)
+    headers = getattr(response, "headers", None)
+    if value is None and headers is not None:
+        try:
+            value = headers.get("retry-after") or headers.get("Retry-After")
+        except AttributeError:
+            value = None
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        # HTTP-date values are optional and provider SDKs usually normalize
+        # them before exposing the exception.  Keep this path conservative.
+        return None
+    if parsed < 0:
+        return 0.0
+    return min(parsed, 3600.0)
 
 
 def build_provider_request_metrics(

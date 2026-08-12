@@ -8,6 +8,8 @@ from typing import Any
 from loguru import logger
 
 from ..checkpoints import CheckpointManager, FileOperation, _is_binary
+from ..artifacts.gateway import ToolContractError
+from ..artifacts.types import descriptor_for_path
 from ..tools.registry import Tool
 from ..access_policy import (
     FORBIDDEN_AGENT_DOCUMENT_NAME,
@@ -23,6 +25,25 @@ from .path_utils import (
     resolve_and_validate_path,
     suggest_canonical_path,
 )
+
+
+class StructuredToolErrorMessage(str):
+    """String-compatible structured error used by legacy file-tool clients."""
+
+    def __new__(cls, payload: dict[str, Any]):
+        message = str(payload.get("message") or payload.get("code") or "tool error")
+        value = super().__new__(cls, message)
+        value.payload = dict(payload)  # type: ignore[attr-defined]
+        return value
+
+    def __getitem__(self, key):
+        return self.payload[key]  # type: ignore[attr-defined]
+
+    def get(self, key, default=None):
+        return self.payload.get(key, default)  # type: ignore[attr-defined]
+
+    def as_dict(self) -> dict[str, Any]:
+        return dict(self.payload)  # type: ignore[attr-defined]
 
 
 class FileSafetyMixin:
@@ -144,15 +165,58 @@ class ReadTool(Tool):
         if file_path.is_dir():
             return await self._read_directory(file_path, recursive=recursive)
 
-        if file_path.suffix.lower() == ".pdf":
-            raise ValueError(
-                f"read does not support PDF files: {file_path.name}. "
-                "Use inspect_document to extract local text first."
+        # Describe bytes before selecting a decoder.  In particular, a
+        # workbook/image must never enter ``read_text`` and produce the old
+        # repeated UTF-8 error loop.
+        descriptor = descriptor_for_path(file_path, canonical_ref=path)
+        if descriptor.kind != "text":
+            required = descriptor.required_tool or (
+                "inspect_image" if descriptor.kind == "image" else "inspect_document"
             )
+            if descriptor.kind == "pdf":
+                # Preserve the legacy ValueError contract (ToolContractError
+                # is a ValueError subclass) while exposing machine-readable
+                # code/details to newer callers.
+                raise ToolContractError(
+                    f"read does not support PDF files: {file_path.name}. "
+                    "Use inspect_document to extract local text first.",
+                    code="unsupported_operation",
+                    repair_code="use_format_reader",
+                    details={
+                        "path": path,
+                        "kind": descriptor.kind,
+                        "media_type": descriptor.media_type,
+                        "required_tool": required,
+                    },
+                )
+            return {
+                "status": "failed",
+                "error": StructuredToolErrorMessage({
+                    "category": "tool_contract",
+                    "code": "unsupported_operation",
+                    "message": f"read does not support {descriptor.kind} artifacts as UTF-8 text",
+                    "retryable": False,
+                    "repair_code": "use_format_reader",
+                    "details": {
+                        "path": path,
+                        "kind": descriptor.kind,
+                        "media_type": descriptor.media_type,
+                        "required_tool": required,
+                    },
+                }),
+                "code": "unsupported_operation",
+                "path": str(file_path),
+                "descriptor": descriptor.as_dict(),
+                "required_tool": required,
+                "is_binary": descriptor.kind in {"binary", "manual_required"},
+            }
 
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
+            # Descriptor validation already decoded the bytes once.  Reading
+            # bytes here avoids a second implicit text probe and preserves
+            # strict behaviour if the file changes between the two operations.
+            content = file_path.read_bytes().decode("utf-8")
+            lines = content.splitlines(keepends=True)
 
             line_count = len(lines)
 
@@ -177,47 +241,21 @@ class ReadTool(Tool):
             }
         except UnicodeDecodeError:
             logger.warning("Binary file detected (not UTF-8): {}", file_path)
-            # Detect common binary file extensions for a helpful message
-            ext = file_path.suffix.lower()
-            binary_exts = {
-                ".png": "image",
-                ".jpg": "image",
-                ".jpeg": "image",
-                ".gif": "image",
-                ".bmp": "image",
-                ".ico": "image",
-                ".svg": "image",
-                ".webp": "image",
-                ".pdf": "PDF document",
-                ".pyc": "Python bytecode",
-                ".pyd": "Python DLL",
-                ".so": "shared library",
-                ".dll": "DLL",
-                ".exe": "executable",
-                ".bin": "binary",
-                ".zip": "archive",
-                ".tar": "archive",
-                ".gz": "archive",
-                ".rar": "archive",
-                ".7z": "archive",
-                ".mp3": "audio",
-                ".mp4": "video",
-                ".wav": "audio",
-                ".avi": "video",
-                ".mov": "video",
-                ".ttf": "font",
-                ".otf": "font",
-                ".woff": "font",
-                ".woff2": "font",
-            }
-            detected_type = binary_exts.get(ext, "binary")
+            detected_type = descriptor.media_type
             return {
-                "error": f"Cannot read '{file_path.name}' as text: it appears to be a {detected_type} file (not UTF-8 encoded text). "
-                         f"The read tool only supports UTF-8 text files. If you need to work with this file type, "
-                         f"please use a different approach (e.g., exec for file analysis).",
+                "status": "failed",
+                "error": StructuredToolErrorMessage({
+                    "category": "tool_contract",
+                    "code": "unsupported_operation",
+                    "message": f"Cannot read '{file_path.name}' as text: media type {detected_type} is not UTF-8 text.",
+                    "retryable": False,
+                    "repair_code": "use_format_reader",
+                }),
+                "code": "unsupported_operation",
                 "path": str(file_path),
                 "is_binary": True,
                 "detected_type": detected_type,
+                "descriptor": descriptor.as_dict(),
             }
         except Exception as e:
             logger.error("Failed to read file {}: {}", file_path, e)
@@ -339,7 +377,34 @@ class ApplyPatchTool(WriteEnabledTool):
 
         try:
             if file_exists:
-                content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
+                descriptor = descriptor_for_path(file_path, canonical_ref=path)
+                if descriptor.kind != "text":
+                    required = descriptor.required_tool or (
+                        "inspect_image" if descriptor.kind == "image" else "inspect_document"
+                    )
+                    return {
+                        "status": "failed",
+                        "error": StructuredToolErrorMessage({
+                            "category": "tool_contract",
+                            "code": "unsupported_operation",
+                            "message": f"Cannot patch {descriptor.kind} artifact as UTF-8 text",
+                            "retryable": False,
+                            "repair_code": "use_format_reader",
+                            "details": {
+                                "path": path,
+                                "kind": descriptor.kind,
+                                "media_type": descriptor.media_type,
+                                "required_tool": required,
+                            },
+                        }),
+                        "code": "unsupported_operation",
+                        "path": str(file_path),
+                        "descriptor": descriptor.as_dict(),
+                        "required_tool": required,
+                        "is_binary": descriptor.kind in {"binary", "manual_required"},
+                    }
+                content = await asyncio.to_thread(file_path.read_bytes)
+                content = content.decode("utf-8")
             else:
                 content = ""
         except UnicodeDecodeError:

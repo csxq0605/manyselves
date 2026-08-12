@@ -50,6 +50,7 @@ from ..reporting.agentic_models import (
 from ..reporting.claim_ledger import ClaimLedger
 from ..reporting.input_contracts import (
     INPUT_CONTRACT_TYPES,
+    AggregateFinalReviewInput,
     AggregateEditorInput,
     ChiefEditorInput,
     ChiefRevisionInput,
@@ -2080,7 +2081,7 @@ class SubmitResultTool(_ResultTool):
                     received=unknown_evidence,
                 )
             return
-        if isinstance(contract, FinalReviewInput):
+        if isinstance(contract, (FinalReviewInput, AggregateFinalReviewInput)):
             required_sections = set(contract.required_section_ids)
             if isinstance(payload, FinalReviewFindingSubmission):
                 if contract.phase != "initial":
@@ -2449,7 +2450,7 @@ class SubmitResultTool(_ResultTool):
                     prefix="XMR-",
                     existing_ids=existing_ids,
                 )
-        elif isinstance(contract, FinalReviewInput):
+        elif isinstance(contract, (FinalReviewInput, AggregateFinalReviewInput)):
             normalized["checked_section_ids"] = list(contract.required_section_ids)
             existing_ids = [finding.id for finding in contract.required_findings]
             if kind == "final_review_finding_submission":

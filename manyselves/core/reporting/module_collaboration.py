@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
+import hashlib
+import json
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -231,6 +233,10 @@ class ModuleSubmoduleDiscoveryBarrier(_StrictModel):
     module_id: ModuleId
     discovery_refs: dict[str, str]
     discovery_sha256: dict[str, str]
+    # Added in the leaf-orchestration protocol.  Older checkpoints did not
+    # carry context hashes, therefore the field remains optional for read
+    # compatibility; active barriers always populate the exact leaf set.
+    context_sha256: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def contains_every_leaf_exactly_once(self) -> "ModuleSubmoduleDiscoveryBarrier":
@@ -238,6 +244,10 @@ class ModuleSubmoduleDiscoveryBarrier(_StrictModel):
         if set(self.discovery_refs) != expected or set(self.discovery_sha256) != expected:
             raise ValueError(
                 "module discovery barrier requires every fixed leaf submodule exactly once"
+            )
+        if self.context_sha256 and set(self.context_sha256) != expected:
+            raise ValueError(
+                "module discovery barrier context hashes must cover every fixed leaf"
             )
         return self
 
@@ -330,6 +340,25 @@ class InterfaceDisposition(_StrictModel):
         max_length=_MAX_EVIDENCE_IDS,
         description="Current-run E-* evidence ids supporting the response.",
     )
+    # Wave 2 unresolved responses carry a bounded audit trail.  ``evidence_ids``
+    # remains the historical answered-response field; the explicit alias keeps
+    # the unresolved contract visible and prevents a model from hiding checks in
+    # free-form prose.
+    checked_evidence_ids: list[EvidenceId] = Field(
+        default_factory=list,
+        max_length=_MAX_EVIDENCE_IDS,
+        description="E-* ids actually checked before declaring an unresolved boundary.",
+    )
+    queries_performed: list[str] = Field(
+        default_factory=list,
+        max_length=64,
+        description="Bounded names of the checks or queries performed for this request.",
+    )
+    missing_fields: list[str] = Field(
+        default_factory=list,
+        max_length=64,
+        description="Concrete fields or artifacts still missing after the checks.",
+    )
     conditions: list[ConditionText] = Field(
         default_factory=list,
         max_length=_MAX_CONDITIONS,
@@ -350,6 +379,14 @@ class InterfaceDisposition(_StrictModel):
         max_length=800,
         description="Explicit authoring or escalation boundary for an unresolved request.",
     )
+    # ``reason`` is accepted as a compact contract spelling.  Runtime and
+    # persisted artifacts normalize it to unresolved_reason so old callers keep
+    # round-tripping unchanged.
+    reason: str | None = Field(
+        default=None,
+        max_length=800,
+        description="Compact unresolved reason; normalized to unresolved_reason.",
+    )
 
     @model_validator(mode="after")
     def answer_or_boundary_is_explicit(self) -> "InterfaceDisposition":
@@ -365,12 +402,20 @@ class InterfaceDisposition(_StrictModel):
                 raise ValueError(
                     "answered interface disposition requires at least one condition"
                 )
-            if self.unresolved_reason is not None or self.boundary is not None:
+            if (
+                self.unresolved_reason is not None
+                or self.boundary is not None
+                or self.reason is not None
+                or self.checked_evidence_ids
+                or self.queries_performed
+                or self.missing_fields
+            ):
                 raise ValueError(
                     "answered interface disposition cannot declare an unresolved boundary"
                 )
         else:
-            if not self.unresolved_reason or not self.unresolved_reason.strip():
+            normalized_reason = self.unresolved_reason or self.reason
+            if not normalized_reason or not normalized_reason.strip():
                 raise ValueError(
                     "unresolved interface disposition requires unresolved_reason"
                 )
@@ -378,8 +423,24 @@ class InterfaceDisposition(_StrictModel):
                 raise ValueError("unresolved interface disposition requires boundary")
             if self.answer is not None:
                 raise ValueError("unresolved interface disposition cannot declare answer")
+            # Do not require these fields for legacy direct model construction;
+            # the active registry barrier applies the stricter unresolved audit
+            # contract before promotion to Cross.
+            if self.unresolved_reason is None:
+                self.unresolved_reason = normalized_reason
+            if self.reason is None:
+                self.reason = normalized_reason
         if any(not condition.strip() for condition in self.conditions):
             raise ValueError("interface disposition conditions cannot contain blank items")
+        if (
+            any(not value.startswith("E-") for value in self.checked_evidence_ids)
+            or len(self.checked_evidence_ids) != len(set(self.checked_evidence_ids))
+        ):
+            raise ValueError("checked_evidence_ids must be unique E-* ids")
+        if any(not value.strip() for value in self.queries_performed):
+            raise ValueError("queries_performed cannot contain blank items")
+        if any(not value.strip() for value in self.missing_fields):
+            raise ValueError("missing_fields cannot contain blank items")
         return self
 
 
@@ -436,6 +497,198 @@ class ResolvedInterface(_StrictModel):
         if self.request.request_id != self.disposition.request_id:
             raise ValueError("request and disposition ids must match")
         return self
+
+
+InterfaceClosureOutcome = Literal[
+    "resolved_by_cross",
+    "confirmed_missing",
+    "reroute_to_owner",
+]
+
+
+def interface_owner_finding_id(request_id: str) -> str:
+    """Return the deterministic Cross finding id for one unresolved IF."""
+
+    if not request_id.startswith("IF-"):
+        raise ValueError("interface owner finding requires an IF-* request id")
+    return f"XMR-{request_id}"
+
+
+class InterfaceCrossClosure(_StrictModel):
+    """One Cross reviewer disposition for an unresolved Wave 2 request.
+
+    Cross r0 is deliberately narrower than a normal semantic review: it may
+    confirm that the boundary is sufficient, resolve the relationship from the
+    available module subjects, or create one deterministic owner finding.  The
+    same typed record is reused at r1 after owner writeback.
+    """
+
+    request_id: str = Field(pattern=_INTERFACE_ID_PATTERN, max_length=128)
+    outcome: InterfaceClosureOutcome
+    reason: str = Field(min_length=1, max_length=1200)
+    checked_evidence_ids: list[EvidenceId] = Field(
+        default_factory=list,
+        max_length=_MAX_EVIDENCE_IDS,
+    )
+    boundary: str | None = Field(default=None, max_length=1200)
+    residual_risk: str | None = Field(default=None, max_length=1200)
+    owner_module_id: ModuleId | None = None
+    owner_submodule_id: str | None = None
+    owner_finding_id: str | None = Field(default=None, max_length=256)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_status_spelling(cls, value):
+        if isinstance(value, dict) and "outcome" not in value and "status" in value:
+            value = dict(value)
+            value["outcome"] = value.pop("status")
+        return value
+
+    @model_validator(mode="after")
+    def exact_outcome_payload(self) -> "InterfaceCrossClosure":
+        if (
+            any(not value.startswith("E-") for value in self.checked_evidence_ids)
+            or len(self.checked_evidence_ids) != len(set(self.checked_evidence_ids))
+        ):
+            raise ValueError("Cross interface checked_evidence_ids must be unique E-* ids")
+        if self.outcome == "confirmed_missing":
+            if not self.boundary or not self.boundary.strip():
+                raise ValueError("confirmed_missing requires boundary")
+            if not self.residual_risk or not self.residual_risk.strip():
+                raise ValueError("confirmed_missing requires residual_risk")
+            if self.owner_finding_id is not None:
+                raise ValueError("confirmed_missing cannot carry an owner finding")
+        elif self.outcome == "reroute_to_owner":
+            if self.owner_submodule_id is not None:
+                target = resolve_submodule(self.owner_submodule_id)
+                if (
+                    self.owner_module_id is not None
+                    and target.module_id != self.owner_module_id
+                ):
+                    raise ValueError("reroute owner submodule belongs to another module")
+            expected = interface_owner_finding_id(self.request_id)
+            if self.owner_finding_id != expected:
+                raise ValueError(
+                    "reroute_to_owner requires the stable XMR-IF-* owner finding id"
+                )
+        else:
+            if self.boundary is not None or self.residual_risk is not None:
+                raise ValueError("resolved_by_cross cannot carry missing-boundary fields")
+            if self.owner_finding_id is not None:
+                raise ValueError("resolved_by_cross cannot carry an owner finding")
+        return self
+
+
+class InterfaceResolution(_StrictModel):
+    """Canonical request + Wave 2 disposition + current Cross closure state."""
+
+    request: InterfaceRequest
+    disposition: InterfaceDisposition
+    closure_status: Literal[
+        "answered",
+        "pending_cross",
+        "resolved_by_cross",
+        "confirmed_missing",
+        "reroute_to_owner",
+    ]
+    cross_closure: InterfaceCrossClosure | None = None
+
+    @model_validator(mode="after")
+    def request_disposition_and_state_match(self) -> "InterfaceResolution":
+        if self.request.request_id != self.disposition.request_id:
+            raise ValueError("interface registry request/disposition ids must match")
+        if self.disposition.status == "answered":
+            if self.closure_status != "answered" or self.cross_closure is not None:
+                raise ValueError("Wave 2 answered interface closes immediately")
+        elif self.closure_status == "answered":
+            raise ValueError("unresolved Wave 2 interface cannot be marked answered")
+        if self.closure_status == "pending_cross" and self.cross_closure is not None:
+            raise ValueError("pending Cross interface cannot already carry a closure")
+        if self.cross_closure is not None:
+            expected = self.cross_closure.outcome
+            if self.closure_status != expected:
+                raise ValueError("registry closure status must match Cross outcome")
+            if self.cross_closure.request_id != self.request.request_id:
+                raise ValueError("Cross closure request id does not match registry request")
+        return self
+
+    @property
+    def status(self) -> str:
+        """Compatibility/readability alias for the current closure status."""
+
+        return self.closure_status
+
+
+class InterfaceResolutionRegistry(_StrictModel):
+    """Durable exact-set registry spanning Wave 2 and Cross closure."""
+
+    kind: Literal["interface_resolution_registry"] = "interface_resolution_registry"
+    run_id: str = Field(min_length=1)
+    resolutions: dict[str, InterfaceResolution]
+    version: int = Field(default=1, ge=1)
+
+    @model_validator(mode="after")
+    def exact_unique_request_set(self) -> "InterfaceResolutionRegistry":
+        for request_id, resolution in self.resolutions.items():
+            if request_id != resolution.request.request_id:
+                raise ValueError("interface registry map key must equal request_id")
+        if len(self.resolutions) != len(set(self.resolutions)):
+            raise ValueError("interface registry request ids must be unique")
+        return self
+
+    @property
+    def request_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self.resolutions))
+
+    @property
+    def entries(self) -> dict[str, InterfaceResolution]:
+        """Alias used by reducers that call registry members ``entries``."""
+
+        return self.resolutions
+
+    @property
+    def pending_request_ids(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                request_id
+                for request_id, resolution in self.resolutions.items()
+                if resolution.closure_status == "pending_cross"
+                or resolution.closure_status == "reroute_to_owner"
+            )
+        )
+
+    def content_sha256(self) -> str:
+        payload = self.model_dump(mode="json")
+        return hashlib.sha256(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
+
+class InterfaceResolutionClosureBatch(_StrictModel):
+    """Typed Cross r0/r1 exact-set closure artifact."""
+
+    kind: Literal["interface_resolution_closure_batch"] = (
+        "interface_resolution_closure_batch"
+    )
+    run_id: str = Field(min_length=1)
+    review_round: Literal[0, 1]
+    closures: list[InterfaceCrossClosure]
+
+    @model_validator(mode="after")
+    def unique_closure_ids(self) -> "InterfaceResolutionClosureBatch":
+        ids = [closure.request_id for closure in self.closures]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Cross interface closure request ids must be unique")
+        return self
+
+    @property
+    def outcomes(self) -> tuple[InterfaceCrossClosure, ...]:
+        return tuple(self.closures)
 
 
 class PeerInterfaceSignal(_StrictModel):
@@ -554,6 +807,16 @@ class SubmoduleCollaborationBundle(_StrictModel):
     module_id: ModuleId
     submodule_id: str
     discovery: SubmoduleDiscoverySubmission
+    discovery_context_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Wave 1A task context hash bound to this leaf bundle.",
+    )
+    response_context_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Wave 2 task context hash when this leaf had a non-empty inbox.",
+    )
     requested_interfaces: list[ResolvedInterface] = Field(default_factory=list)
     responded_interfaces: list[ResolvedInterface] = Field(default_factory=list)
 
@@ -772,6 +1035,8 @@ def build_submodule_collaboration_bundles(
     responses: Sequence[SubmoduleInterfaceResponseSubmission],
     *,
     known_evidence_ids: Collection[str] | None = None,
+    discovery_context_sha256: Mapping[str, str] | None = None,
+    response_context_sha256: Mapping[str, str] | None = None,
 ) -> dict[str, SubmoduleCollaborationBundle]:
     """Barrier 2: pair every exact request and build 37 leaf author bundles."""
 
@@ -804,7 +1069,7 @@ def build_submodule_collaboration_bundles(
             )
         for disposition in response.dispositions:
             _validate_known_evidence(
-                disposition.evidence_ids,
+                [*disposition.evidence_ids, *disposition.checked_evidence_ids],
                 known_evidence_ids,
                 label=f"response {disposition.request_id}",
             )
@@ -828,11 +1093,25 @@ def build_submodule_collaboration_bundles(
     }
     if set(discovery_by_submodule) != expected_submodules:
         raise ValueError("Barrier 2 requires every Wave 1A leaf discovery")
+    if discovery_context_sha256 is not None and set(discovery_context_sha256) != expected_submodules:
+        raise ValueError("Barrier 2 discovery context hashes must cover every leaf")
+    if response_context_sha256 is not None and set(response_context_sha256) != set(inboxes):
+        raise ValueError("Barrier 2 response context hashes must cover only non-empty inbox leaves")
     return {
         submodule_id: SubmoduleCollaborationBundle(
             module_id=discovery.module_id,
             submodule_id=submodule_id,
             discovery=discovery.model_copy(deep=True),
+            discovery_context_sha256=(
+                discovery_context_sha256.get(submodule_id)
+                if discovery_context_sha256 is not None
+                else None
+            ),
+            response_context_sha256=(
+                response_context_sha256.get(submodule_id)
+                if response_context_sha256 is not None and submodule_id in response_context_sha256
+                else None
+            ),
             requested_interfaces=sorted(
                 (
                     item.model_copy(deep=True)
@@ -902,6 +1181,196 @@ def build_interface_inboxes(
     }
 
 
+def build_interface_resolution_registry(
+    discoveries: Sequence[ModuleDiscoverySubmission],
+    responses: Sequence[
+        ModuleInterfaceResponseSubmission | SubmoduleInterfaceResponseSubmission
+    ],
+    *,
+    run_id: str,
+    known_evidence_ids: Collection[str] | None = None,
+    require_unresolved_audit: bool = True,
+) -> InterfaceResolutionRegistry:
+    """Build the canonical exact IF registry immediately after Wave 2.
+
+    The registry contains every request, not only unresolved requests.  An
+    ``answered`` disposition is terminal at Wave 2; unresolved records are the
+    only entries admitted to Cross.  This function intentionally performs the
+    strict typed barrier independently of the authoring bundles so resume can
+    rebuild/verify it without re-running Provider work.
+    """
+
+    if not run_id:
+        raise ValueError("interface registry requires run_id")
+    module_inboxes = build_interface_inboxes(
+        discoveries,
+        known_evidence_ids=known_evidence_ids,
+    )
+    requests_by_id = {
+        request.request_id: request
+        for inbox in module_inboxes.values()
+        for request in inbox
+    }
+    if any(
+        request.requester_submodule_id is not None
+        or request.target_submodule_id is not None
+        for request in requests_by_id.values()
+    ) and any(
+        request.requester_submodule_id is None
+        or request.target_submodule_id is None
+        for request in requests_by_id.values()
+    ):
+        raise ValueError("interface registry cannot mix legacy and leaf request identities")
+
+    if not responses:
+        if requests_by_id:
+            raise ValueError("Wave 2 responses are required for every non-empty inbox")
+        return InterfaceResolutionRegistry(run_id=run_id, resolutions={})
+
+    dispositions_by_id: dict[str, InterfaceDisposition] = {}
+    response_ids: set[str] = set()
+    submodule_mode = all(
+        isinstance(response, SubmoduleInterfaceResponseSubmission)
+        for response in responses
+    )
+    module_mode = all(
+        isinstance(response, ModuleInterfaceResponseSubmission)
+        for response in responses
+    )
+    if not (submodule_mode or module_mode):
+        raise ValueError("Wave 2 responses must use one exact response contract")
+    if submodule_mode:
+        response_by_submodule = {
+            response.submodule_id: response
+            for response in responses
+            if isinstance(response, SubmoduleInterfaceResponseSubmission)
+        }
+        inboxes = build_submodule_interface_inboxes(
+            discoveries,
+            known_evidence_ids=known_evidence_ids,
+        )
+        if set(response_by_submodule) != set(inboxes):
+            raise ValueError(
+                "Wave 2 responses must cover exactly the non-empty leaf inbox set"
+            )
+        for submodule_id, inbox in inboxes.items():
+            response = response_by_submodule[submodule_id]
+            expected_ids = {request.request_id for request in inbox}
+            actual_ids = {item.request_id for item in response.dispositions}
+            if actual_ids != expected_ids:
+                raise ValueError(
+                    f"Wave 2 response {submodule_id} must disposition its exact inbox"
+                )
+            response_ids.update(actual_ids)
+            for disposition in response.dispositions:
+                _validate_known_evidence(
+                    [*disposition.evidence_ids, *disposition.checked_evidence_ids],
+                    known_evidence_ids,
+                    label=f"response {disposition.request_id}",
+                )
+                dispositions_by_id[disposition.request_id] = disposition
+    else:
+        response_by_module = {
+            response.module_id: response
+            for response in responses
+            if isinstance(response, ModuleInterfaceResponseSubmission)
+        }
+        if len(response_by_module) != len(responses):
+            raise ValueError("Wave 2 response module identities must be unique")
+        if set(response_by_module) != set(module_inboxes):
+            raise ValueError(
+                "Wave 2 responses must cover exactly the non-empty module inbox set"
+            )
+        for module_id, inbox in module_inboxes.items():
+            response = response_by_module[module_id]
+            expected_ids = {request.request_id for request in inbox}
+            actual_ids = {item.request_id for item in response.dispositions}
+            if actual_ids != expected_ids:
+                raise ValueError(
+                    f"Wave 2 response {module_id} must disposition its exact inbox"
+                )
+            response_ids.update(actual_ids)
+            for disposition in response.dispositions:
+                _validate_known_evidence(
+                    [*disposition.evidence_ids, *disposition.checked_evidence_ids],
+                    known_evidence_ids,
+                    label=f"response {disposition.request_id}",
+                )
+                dispositions_by_id[disposition.request_id] = disposition
+
+    if response_ids != set(requests_by_id):
+        raise ValueError("interface registry requires one disposition for every IF")
+    resolutions: dict[str, InterfaceResolution] = {}
+    for request_id in sorted(requests_by_id):
+        disposition = dispositions_by_id[request_id]
+        if disposition.status == "unresolved" and require_unresolved_audit:
+            if not disposition.checked_evidence_ids:
+                raise ValueError(
+                    f"unresolved {request_id} requires checked_evidence_ids"
+                )
+            if not disposition.queries_performed:
+                raise ValueError(
+                    f"unresolved {request_id} requires queries_performed"
+                )
+            if not disposition.missing_fields:
+                raise ValueError(f"unresolved {request_id} requires missing_fields")
+            if not (disposition.unresolved_reason or disposition.reason):
+                raise ValueError(f"unresolved {request_id} requires reason")
+            if not disposition.boundary:
+                raise ValueError(f"unresolved {request_id} requires boundary")
+        resolutions[request_id] = InterfaceResolution(
+            request=requests_by_id[request_id].model_copy(deep=True),
+            disposition=disposition.model_copy(deep=True),
+            closure_status=(
+                "answered" if disposition.status == "answered" else "pending_cross"
+            ),
+        )
+    return InterfaceResolutionRegistry(run_id=run_id, resolutions=resolutions)
+
+
+def apply_interface_cross_closure(
+    registry: InterfaceResolutionRegistry,
+    closures: Sequence[InterfaceCrossClosure],
+    *,
+    review_round: Literal[0, 1] = 0,
+) -> InterfaceResolutionRegistry:
+    """Apply one exact Cross closure wave without mutating the prior registry."""
+
+    by_id = {closure.request_id: closure for closure in closures}
+    if len(by_id) != len(closures):
+        raise ValueError("Cross interface closure ids must be unique")
+    pending = {
+        request_id
+        for request_id, resolution in registry.resolutions.items()
+        if resolution.closure_status == "pending_cross"
+        or resolution.closure_status == "reroute_to_owner"
+    }
+    if set(by_id) != pending:
+        raise ValueError(
+            "Cross interface closure must cover the exact pending IF set; "
+            f"missing={sorted(pending - set(by_id))}; extra={sorted(set(by_id) - pending)}"
+        )
+    if review_round == 1 and any(
+        closure.outcome == "reroute_to_owner" for closure in closures
+    ):
+        raise ValueError("Cross r1 cannot leave an IF rerouted to an owner")
+    updated: dict[str, InterfaceResolution] = {}
+    for request_id, resolution in registry.resolutions.items():
+        closure = by_id.get(request_id)
+        if closure is None:
+            updated[request_id] = resolution.model_copy(deep=True)
+            continue
+        if resolution.disposition.status != "unresolved":
+            raise ValueError("Cross closure may only consume unresolved Wave 2 records")
+        updated[request_id] = InterfaceResolution(
+            request=resolution.request.model_copy(deep=True),
+            disposition=resolution.disposition.model_copy(deep=True),
+            closure_status=closure.outcome,
+            cross_closure=closure.model_copy(deep=True),
+        )
+    return InterfaceResolutionRegistry(run_id=registry.run_id, resolutions=updated)
+
+
 def build_collaboration_bundles(
     discoveries: Sequence[ModuleDiscoverySubmission],
     responses: Sequence[ModuleInterfaceResponseSubmission],
@@ -938,7 +1407,7 @@ def build_collaboration_bundles(
             )
         for disposition in response.dispositions:
             _validate_known_evidence(
-                disposition.evidence_ids,
+                [*disposition.evidence_ids, *disposition.checked_evidence_ids],
                 known_evidence_ids,
                 label=f"response {disposition.request_id}",
             )

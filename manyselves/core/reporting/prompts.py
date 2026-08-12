@@ -24,6 +24,33 @@ class PromptAssembler:
     """Assemble identity and task prompts without mixing their lifecycles."""
 
     @staticmethod
+    def semantic_turn(
+        reason: str,
+        *,
+        turn_kind: str = "semantic_continuation",
+        next_action: str | None = None,
+    ) -> str:
+        """Build a small continuation/correction message.
+
+        Follow-up turns intentionally carry only a semantic reason and the
+        next action.  The immutable task contract and any prior tool trace are
+        supplied by the typed context capsule, never copied into this message.
+        """
+
+        kind = str(turn_kind or "semantic_continuation").strip() or "semantic_continuation"
+        action = (
+            f"<next_action>{escape(str(next_action))}</next_action>"
+            if next_action
+            else ""
+        )
+        message = (
+            f"<semantic_turn kind={quoteattr(kind)}>"
+            f"<reason>{escape(str(reason))}</reason>{action}"
+            "</semantic_turn>"
+        )
+        return _validated_xml(message, label="semantic turn")
+
+    @staticmethod
     def system_prompt(
         definition: AgentDefinition,
         module_skills: list[ModuleSkill] | tuple[ModuleSkill, ...] = (),

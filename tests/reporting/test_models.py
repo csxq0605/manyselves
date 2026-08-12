@@ -104,7 +104,7 @@ def test_report_request_rejects_invalid_run_budget() -> None:
         ReportRequest(instruction="生成 2.4", max_total_tokens=999)
 
 
-def test_report_request_defaults_to_current_serial_review() -> None:
+def test_report_request_defaults_to_all_ready_and_keeps_legacy_modes() -> None:
     request = ReportRequest(
         operation="full_report",
         instruction="生成完整报告",
@@ -113,11 +113,13 @@ def test_report_request_defaults_to_current_serial_review() -> None:
         update={"execution_mode": "bounded_module_lanes"}
     )
 
-    assert request.execution_mode == "current_serial_review"
+    assert request.execution_mode == "all_ready"
     assert bounded.execution_mode == "bounded_module_lanes"
+    serial = request.model_copy(update={"execution_mode": "current_serial_review"})
+    assert serial.execution_mode == "current_serial_review"
     assert (
         ReportRequest.model_json_schema()["properties"]["execution_mode"]["default"]
-        == "current_serial_review"
+        == "all_ready"
     )
 
 

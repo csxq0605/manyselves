@@ -10,6 +10,9 @@ from typing import Any, Literal
 from pydantic import Field, TypeAdapter, model_validator
 
 from .agentic_models import (
+    CrossDecisionIFClosure,
+    CrossDecisionPack,
+    CrossDecisionXMRVerdict,
     FINAL_AUDIT_SECTION_IDS,
     CrossReviewFinding,
     CrossSynthesisInput,
@@ -40,6 +43,56 @@ class ModuleContentView(StrictModel):
         description="Registered E-* evidence ids already bound to each visible submodule."
     )
     unresolved_questions: list[str] = Field(default_factory=list)
+
+
+class CrossDecisionPackView(StrictModel):
+    """Model-visible, lossless Cross decision boundary.
+
+    The complete persisted :class:`CrossDecisionPack` remains hash-bound by
+    runtime.  The model-facing view intentionally omits the internal hash map,
+    while retaining every immutable artifact reference and every E-* binding
+    needed to reason about the decisions.
+    """
+
+    version: int = Field(default=1, ge=1)
+    run_id: str = Field(min_length=1)
+    module_ids: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(
+        min_length=5,
+        max_length=5,
+    )
+    cross_review_completion_ref: str = Field(min_length=1)
+    synthesis_inputs: list[CrossSynthesisInput] = Field(default_factory=list)
+    if_closures: list[CrossDecisionIFClosure] = Field(default_factory=list)
+    xmr_verdicts: list[CrossDecisionXMRVerdict] = Field(default_factory=list)
+    residual_risks: list[str] = Field(default_factory=list)
+    artifact_refs: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Current-run immutable completion, IF, and XMR refs retained for runtime hash binding."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def view_matches_closed_pack(self) -> "CrossDecisionPackView":
+        expected_refs = {
+            self.cross_review_completion_ref,
+            *(closure.source_ref for closure in self.if_closures),
+            *(ref for verdict in self.xmr_verdicts for ref in verdict.source_refs),
+        }
+        if not self.artifact_refs:
+            self.artifact_refs = sorted(expected_refs)
+        if sorted(set(self.artifact_refs)) != sorted(expected_refs):
+            raise ValueError(
+                "Cross decision view artifact_refs must exactly cover completion, IF, and XMR refs"
+            )
+        # Reuse the complete pack's fail-closed semantic checks without exposing
+        # its internal artifact hash map to the Provider-facing contract.
+        payload = self.model_dump(mode="python")
+        payload.pop("artifact_refs", None)
+        payload["artifact_sha256"] = {ref: "0" * 64 for ref in expected_refs}
+        payload["pack_sha256"] = "0" * 64
+        CrossDecisionPack.model_validate(payload)
+        return self
 
 
 class ReviewEvidenceExcerpt(StrictModel):
@@ -417,6 +470,16 @@ class SubmoduleAuthoringInput(StrictModel):
     knowledge_ref: str = Field(min_length=1)
     collaboration_bundle_ref: str = Field(min_length=1)
     discovery_ref: str = Field(min_length=1)
+    collaboration_bundle_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Hash of the exact Barrier 2 bundle consumed by this leaf author.",
+    )
+    discovery_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Hash of the exact Wave 1A discovery consumed by this leaf author.",
+    )
 
     @model_validator(mode="after")
     def exact_leaf_scope(self) -> "SubmoduleAuthoringInput":
@@ -869,6 +932,27 @@ class CrossReviewInput(StrictModel):
         default_factory=list,
         description="Typed reports corresponding one-for-one to machine_validation_refs.",
     )
+    interface_registry_ref: str | None = Field(
+        default=None,
+        description="Current-run canonical exact IF resolution registry artifact.",
+    )
+    interface_registry_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="SHA-256 binding for interface_registry_ref.",
+    )
+    pending_interface_request_ids: list[str] = Field(
+        default_factory=list,
+        description="Exact unresolved IF ids admitted to this Cross pass.",
+    )
+    interface_closure_refs: list[str] = Field(
+        default_factory=list,
+        description="Current-run immutable r0/r1 IF closure artifacts already persisted.",
+    )
+    interface_residual_risks: dict[str, str] = Field(
+        default_factory=dict,
+        description="Confirmed missing IF boundaries retained for Chief synthesis.",
+    )
 
     @model_validator(mode="after")
     def five_subjects_and_phase_fields_match(self) -> "CrossReviewInput":
@@ -884,6 +968,16 @@ class CrossReviewInput(StrictModel):
         changed = set(self.changed_module_ids)
         if len(changed) != len(self.changed_module_ids):
             raise ValueError("changed_module_ids must be unique")
+        if len(self.pending_interface_request_ids) != len(
+            set(self.pending_interface_request_ids)
+        ):
+            raise ValueError("pending interface request ids must be unique")
+        if (self.interface_registry_ref is None) != (
+            self.interface_registry_sha256 is None
+        ):
+            raise ValueError(
+                "interface registry ref and sha256 must be supplied together"
+            )
         if self.phase == "initial" and (
             self.required_findings
             or self.revision_responses_by_module
@@ -948,6 +1042,24 @@ class FinalReviewInput(StrictModel):
         description="initial creates final findings; recheck closes required final findings."
     )
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
+    cross_decision: CrossDecisionPackView = Field(
+        description=(
+            "Complete terminal Cross decision view. It is the only semantic source for "
+            "cross-module synthesis, IF closures, and XMR verdicts in final review."
+        )
+    )
+    cross_decision_pack_ref: str = Field(
+        min_length=1,
+        description="Current-run immutable CrossDecisionPack artifact reference.",
+    )
+    cross_decision_pack_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+        description="SHA-256 binding for cross_decision_pack_ref.",
+    )
+    residual_risks: list[str] = Field(
+        default_factory=list,
+        description="Transparent non-corrective Cross/final limitations retained for the reader.",
+    )
     subject_ref: str = Field(
         min_length=1,
         description="Exact current edited-report artifact reviewed in this pass.",
@@ -1009,16 +1121,21 @@ class FinalReviewInput(StrictModel):
 
     @model_validator(mode="after")
     def phase_fields_match(self) -> "FinalReviewInput":
-        base_sections = set(FINAL_AUDIT_SECTION_IDS) - {"4"}
+        base_sections = set(FINAL_AUDIT_SECTION_IDS)
         active_sections = set(self.required_section_ids)
         if (
             len(self.required_section_ids) != len(set(self.required_section_ids))
-            or active_sections not in (base_sections, base_sections | {"4"})
+            or active_sections != base_sections
         ):
             raise ValueError(
-                "final review must cover exactly the active chief-owned sections; "
-                "Chapter 4 is required only when a special-topic plan is present"
+                "final review must cover exactly the seven summary/conclusion sections; "
+                "Chapter 2 and Chapter 4 are not semantic final-review targets"
             )
+        if self.cross_decision.run_id != self.run_id:
+            raise ValueError("final review CrossDecisionPack belongs to another run")
+        expected_pack_ref = f"Work/runs/{self.run_id}/"
+        if not self.cross_decision_pack_ref.startswith(expected_pack_ref):
+            raise ValueError("final review CrossDecisionPack ref belongs to another run")
         if not self.validation_report.passed:
             raise ValueError("final review requires a passed structural validation report")
         if (
@@ -1035,6 +1152,10 @@ class FinalReviewInput(StrictModel):
                 raise ValueError("initial final review cannot contain prior findings or responses")
             if self.canonical_markdown is None or self.subject_metadata is None:
                 raise ValueError("initial final review requires full prose and metadata")
+            if re.search(r"(?m)^#{1,6}\s+2(?:\.|\s)|^#{1,6}\s+4(?:\.|\s)", self.canonical_markdown):
+                raise ValueError(
+                    "final review canonical Markdown cannot contain Chapter 2 or Chapter 4"
+                )
             if (
                 self.subject_metadata_sha256 is not None
                 or changed_sections
@@ -1064,6 +1185,154 @@ class FinalReviewInput(StrictModel):
                 for digest in self.unchanged_section_sha256.values()
             ):
                 raise ValueError("final recheck unchanged section hashes must be SHA-256")
+        return self
+
+
+class AggregateFinalReviewInput(StrictModel):
+    """Independent final-review adapter for ``aggregate_existing``.
+
+    Aggregate reports intentionally have no Cross lifecycle.  This contract
+    carries the same seven-section audit delta as :class:`FinalReviewInput`
+    while making the independent mode and null ``cross_context`` explicit.
+    It must never be populated with a fabricated CrossDecisionPack.
+    """
+
+    kind: Literal["aggregate_final_review_input"] = "aggregate_final_review_input"
+    mode: Literal["aggregate_existing"] = Field(
+        default="aggregate_existing",
+        description="Explicit independent aggregate_existing route with no Cross lifecycle.",
+    )
+    cross_context: None = Field(
+        default=None,
+        description="Aggregate final review has no CrossDecisionPack.",
+    )
+    phase: Literal["initial", "recheck"] = Field(
+        description="Initial creates findings; recheck closes assigned findings."
+    )
+    run_id: str = Field(min_length=1, description="Immutable current report run id.")
+    residual_risks: list[str] = Field(
+        default_factory=list,
+        description="Transparent aggregate limitations retained for the reader.",
+    )
+    subject_ref: str = Field(
+        min_length=1, description="Exact current edited-report artifact under review."
+    )
+    subject_revision: int = Field(
+        ge=0, description="Workflow-owned chief-editor revision number."
+    )
+    subject_metadata: FinalAuditMetadataView | None = Field(
+        default=None,
+        description="Initial-pass non-prose metadata retained outside canonical Markdown.",
+    )
+    subject_metadata_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Recheck hash retaining unchanged initial-pass metadata.",
+    )
+    canonical_markdown: str | None = Field(
+        default=None, min_length=1, description="Initial-pass seven-section audit Markdown."
+    )
+    changed_section_bodies: dict[str, str] = Field(
+        default_factory=dict,
+        description="Recheck bodies for exactly the assigned finding targets.",
+    )
+    unchanged_section_sha256: dict[str, str] = Field(
+        default_factory=dict,
+        description="Recheck SHA-256 values for every unchanged audit section.",
+    )
+    required_section_ids: list[str] = Field(
+        min_length=1, description="Exactly the seven 1.x and 3.x audit section ids."
+    )
+    required_findings: list[FinalReviewFinding] = Field(
+        default_factory=list, description="Immutable prior findings requiring verdicts."
+    )
+    revision_responses: list[RevisionResponse] = Field(
+        default_factory=list, description="Chief responses to required findings."
+    )
+    validation_report_ref: str = Field(
+        min_length=1, description="Current-run deterministic structural validation artifact."
+    )
+    validation_report: "ValidationReport" = Field(
+        description="Passed validation report bound to the exact subject revision."
+    )
+
+    @model_validator(mode="after")
+    def phase_fields_match(self) -> "AggregateFinalReviewInput":
+        base_sections = set(FINAL_AUDIT_SECTION_IDS)
+        active_sections = set(self.required_section_ids)
+        if (
+            len(self.required_section_ids) != len(set(self.required_section_ids))
+            or active_sections != base_sections
+        ):
+            raise ValueError(
+                "aggregate final review must cover exactly the seven summary/conclusion sections; "
+                "Chapter 2 and Chapter 4 are not semantic final-review targets"
+            )
+        if not self.validation_report.passed:
+            raise ValueError("aggregate final review requires a passed structural validation report")
+        if (
+            self.validation_report.validation_protocol_version < 2
+            or self.validation_report.subject_revision != self.subject_revision
+            or self.validation_report.content_sha256 is None
+        ):
+            raise ValueError(
+                "aggregate final review validation is stale or not content-bound"
+            )
+        audit_sections = active_sections
+        changed_sections = set(self.changed_section_bodies)
+        unchanged_sections = set(self.unchanged_section_sha256)
+        if self.phase == "initial":
+            if self.required_findings or self.revision_responses:
+                raise ValueError(
+                    "initial aggregate final review cannot contain prior findings or responses"
+                )
+            if self.canonical_markdown is None or self.subject_metadata is None:
+                raise ValueError(
+                    "initial aggregate final review requires full prose and metadata"
+                )
+            if re.search(r"(?m)^#{1,6}\s+2(?:\.|\s)|^#{1,6}\s+4(?:\.|\s)", self.canonical_markdown):
+                raise ValueError(
+                    "aggregate final review canonical Markdown cannot contain Chapter 2 or Chapter 4"
+                )
+            if self.subject_metadata_sha256 is not None or changed_sections or unchanged_sections:
+                raise ValueError(
+                    "initial aggregate final review cannot contain recheck delta fields"
+                )
+        else:
+            required = {finding.id for finding in self.required_findings}
+            responses = {response.finding_id for response in self.revision_responses}
+            if not required or responses != required:
+                raise ValueError(
+                    "aggregate final recheck requires one chief response per finding"
+                )
+            targets = {
+                section_id
+                for finding in self.required_findings
+                for section_id in finding.target_section_ids
+            }
+            if self.canonical_markdown is not None or self.subject_metadata is not None:
+                raise ValueError(
+                    "aggregate final recheck must not resend full prose or metadata"
+                )
+            if self.subject_metadata_sha256 is None:
+                raise ValueError(
+                    "aggregate final recheck requires the retained metadata hash"
+                )
+            if changed_sections != targets:
+                raise ValueError(
+                    "aggregate final recheck delta must contain exactly finding targets"
+                )
+            if unchanged_sections != audit_sections - targets:
+                raise ValueError(
+                    "aggregate final recheck must hash every unchanged audit section"
+                )
+            if any(
+                re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                for digest in self.unchanged_section_sha256.values()
+            ):
+                raise ValueError(
+                    "aggregate final recheck unchanged section hashes must be SHA-256"
+                )
         return self
 
 
@@ -1233,15 +1502,34 @@ class ChiefRevisionInput(StrictModel):
 class ChiefEditorInput(StrictModel):
     kind: Literal["chief_editor_input"] = "chief_editor_input"
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
+    cross_decision: CrossDecisionPackView | None = Field(
+        default=None,
+        description=(
+            "Terminal Cross decision view. Required for a normal full-report Chief edit; "
+            "legacy aggregate callers may omit it and use cross_review_completion_ref."
+        ),
+    )
+    cross_decision_pack_ref: str | None = Field(
+        default=None,
+        description="Current-run immutable CrossDecisionPack artifact reference.",
+    )
+    cross_decision_pack_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="SHA-256 binding for cross_decision_pack_ref.",
+    )
     approved_module_markers: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str] = Field(
+        default_factory=dict,
         description="Exact marker tokens the chief submits for deterministic prose insertion."
     )
     modules: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], ModuleContentView] = Field(
         description="Five module subjects closed by module review."
     )
-    cross_review_completion_ref: str = Field(
-        min_length=1,
-        description="Current-run record proving the Cross lifecycle completed.",
+    # Compatibility-only alias for pre-pack checkpoints.  New full-report
+    # callers must provide cross_decision + pack ref/hash together.
+    cross_review_completion_ref: str | None = Field(
+        default=None,
+        description="Legacy Cross completion ref retained only for old checkpoints.",
     )
     special_topic_plan: SpecialTopicPlan | None = Field(
         default=None,
@@ -1254,19 +1542,54 @@ class ChiefEditorInput(StrictModel):
     @model_validator(mode="after")
     def five_modules_and_markers_match(self) -> "ChiefEditorInput":
         expected = {"2.1", "2.2", "2.3", "2.4", "2.5"}
-        if set(self.modules) != expected or set(self.approved_module_markers) != expected:
-            raise ValueError("chief editor input requires exactly five modules and markers")
+        if set(self.modules) != expected:
+            raise ValueError("chief editor input requires exactly five modules")
+        if self.approved_module_markers and set(self.approved_module_markers) != expected:
+            raise ValueError("chief editor markers must cover exactly five modules when supplied")
         for module_id, subject in self.modules.items():
             if subject.module_id != module_id:
                 raise ValueError("chief editor module binding is inconsistent")
-            if self.approved_module_markers[module_id] != (f"[[APPROVED_MODULE:{module_id}]]"):
+            if self.approved_module_markers and self.approved_module_markers[module_id] != (
+                f"[[APPROVED_MODULE:{module_id}]]"
+            ):
                 raise ValueError("chief editor marker does not match its module")
+        supplied_pack_fields = (
+            self.cross_decision,
+            self.cross_decision_pack_ref,
+            self.cross_decision_pack_sha256,
+        )
+        if any(value is not None for value in supplied_pack_fields):
+            if not all(value is not None for value in supplied_pack_fields):
+                raise ValueError(
+                    "cross_decision, cross_decision_pack_ref and cross_decision_pack_sha256 "
+                    "must be supplied together"
+                )
+            assert self.cross_decision is not None
+            assert self.cross_decision_pack_ref is not None
+            if self.cross_decision.run_id != self.run_id:
+                raise ValueError("chief CrossDecisionPack belongs to another run")
+            if not self.cross_decision_pack_ref.startswith(f"Work/runs/{self.run_id}/"):
+                raise ValueError("chief CrossDecisionPack ref belongs to another run")
+            if set(self.cross_decision.module_ids) != expected:
+                raise ValueError("chief CrossDecisionPack must bind exactly five modules")
+        elif not self.cross_review_completion_ref:
+            raise ValueError(
+                "chief editor input requires a terminal CrossDecisionPack (or a legacy completion ref)"
+            )
         return self
 
 
 class AggregateEditorInput(StrictModel):
     kind: Literal["aggregate_editor_input"] = "aggregate_editor_input"
+    mode: Literal["aggregate_existing"] = Field(
+        default="aggregate_existing",
+        description="Explicit independent aggregate route; it does not run Cross review.",
+    )
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
+    cross_context: None = Field(
+        default=None,
+        description="Aggregate route has no CrossDecisionPack and must remain null.",
+    )
     source_format: Literal["structured_module", "markdown"] = Field(
         description="Whether modules are typed subjects or validated standalone Markdown."
     )
@@ -1502,6 +1825,7 @@ INPUT_CONTRACT_TYPES = {
     "module_review_input": ModuleReviewInput,
     "cross_review_input": CrossReviewInput,
     "final_review_input": FinalReviewInput,
+    "aggregate_final_review_input": AggregateFinalReviewInput,
     "module_revision_input": ModuleRevisionInput,
     "chief_revision_input": ChiefRevisionInput,
     "chief_editor_input": ChiefEditorInput,
@@ -1515,11 +1839,12 @@ INPUT_CONTRACT_SUMMARIES = {
     "submodule_authoring_input": "One exact leaf-submodule discovery and Barrier-2 collaboration bundle.",
     "module_review_input": "One exact module subject plus phase-specific immutable review state.",
     "cross_review_input": "Five exact module subjects plus phase-specific Cross closure state.",
-    "final_review_input": "One exact edited report plus phase-specific final-review state.",
+    "final_review_input": "One exact edited report plus a hash-bound terminal CrossDecisionPack and seven-section final-review state.",
+    "aggregate_final_review_input": "Independent aggregate_existing final review with null cross_context and seven-section audit state; no CrossDecisionPack.",
     "module_revision_input": "One exact module baseline and only the findings assigned to its author.",
     "chief_revision_input": "One exact edited-report baseline and immutable final findings.",
-    "chief_editor_input": "Five module-review-complete subjects and Cross-supported synthesis inputs.",
-    "aggregate_editor_input": "Five validated existing module bodies with an explicit source format.",
+    "chief_editor_input": "Five module-review-complete subjects and a hash-bound terminal CrossDecisionPack view.",
+    "aggregate_editor_input": "Independent aggregate_existing mode: five validated module bodies and null cross_context, with no fabricated CrossDecisionPack.",
     "workflow_exception_input": "Only explicit author or reviewer exception findings and their immutable artifacts for Main.",
 }
 
@@ -1577,17 +1902,17 @@ def _example_cross_finding() -> dict[str, Any]:
 def _example_final_finding() -> dict[str, Any]:
     return {
         "id": "F-001",
-        "target_section_ids": ["4"],
+        "target_section_ids": ["3.2"],
         "target_changes": [
             {
-                "target_section_id": "4",
-                "required_change": ("按 Inputs 专项计划补齐目标小节的分析、建议与验证边界。"),
-                "reviewer_checks": ["第四章标题与要求匹配且通用知识未冒充项目事实"],
+                "target_section_id": "3.2",
+                "required_change": ("在行动计划中补充跨模块责任接口、依赖顺序、验收指标和剩余风险边界。"),
+                "reviewer_checks": ["行动责任、依赖顺序、验收指标和剩余风险均可核对"],
             }
         ],
         "category": "special_topic",
         "impact": "blocking",
-        "observation": "第四章虽保留了动态标题，但没有落实 Inputs 对专项分析的简要要求。",
+        "observation": "当前行动计划没有清楚说明跨模块责任接口、依赖顺序和联合验收边界。",
         "evidence_refs": ["Work/runs/report-example/edited-revisions/chief-r0.json"],
     }
 
@@ -1660,6 +1985,18 @@ _EXAMPLE_MODULE_REFS = {
     for module_id in REPORT_TAXONOMY
 }
 _EXAMPLE_MARKERS = {module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_TAXONOMY}
+_EXAMPLE_CROSS_COMPLETION_REF = "Work/runs/report-example/reviews/cross-completion.json"
+_EXAMPLE_CROSS_DECISION = {
+    "version": 1,
+    "run_id": "report-example",
+    "module_ids": list(REPORT_TAXONOMY),
+    "cross_review_completion_ref": _EXAMPLE_CROSS_COMPLETION_REF,
+    "synthesis_inputs": [],
+    "if_closures": [],
+    "xmr_verdicts": [],
+    "residual_risks": [],
+    "artifact_refs": [_EXAMPLE_CROSS_COMPLETION_REF],
+}
 
 INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
     "template_distillation_input": {
@@ -1748,6 +2085,39 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "kind": "final_review_input",
         "phase": "initial",
         "run_id": "report-example",
+        "cross_decision": _EXAMPLE_CROSS_DECISION,
+        "cross_decision_pack_ref": "Work/runs/report-example/reviews/cross-decision-pack.json",
+        "cross_decision_pack_sha256": "0" * 64,
+        "residual_risks": [],
+        "subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
+        "subject_revision": 0,
+        "subject_metadata": _example_final_audit_metadata(),
+        "canonical_markdown": "# 示例报告\n\n完整成稿正文。",
+        "required_section_ids": list(FINAL_AUDIT_SECTION_IDS),
+        "required_findings": [],
+        "revision_responses": [],
+        "validation_report_ref": ("Work/runs/report-example/reviews/report-integrity-r0.json"),
+        "validation_report": {
+            "kind": "validation_report",
+            "validation_protocol_version": 2,
+            "run_id": "report-example",
+            "subject_ref": "Work/runs/report-example/validation/report-r0.md",
+            "subject_revision": 0,
+            "content_sha256": "0" * 64,
+            "validator": "final-report-structure/v2",
+            "check_ids": ["final_report.fixed_sections_and_markdown"],
+            "failures": [],
+            "observations": [],
+            "passed": True,
+        },
+    },
+    "aggregate_final_review_input": {
+        "kind": "aggregate_final_review_input",
+        "mode": "aggregate_existing",
+        "cross_context": None,
+        "phase": "initial",
+        "run_id": "report-example",
+        "residual_risks": [],
         "subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
         "subject_revision": 0,
         "subject_metadata": _example_final_audit_metadata(),
@@ -1804,20 +2174,23 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "run_id": "report-example",
         "subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
         "target_section_bodies": {
-            "4": _example_final_audit_subject()["special_topic_analysis"],
+            "3.2": _example_final_audit_subject()["improvement_action_plan"],
         },
         "consistency_context": {
             "1.2": _example_final_audit_subject()["findings_overview"],
             "3.1.1": _example_final_audit_subject()["risk_panorama"],
-            "3.2": _example_final_audit_subject()["improvement_action_plan"],
+            "3.1.3": _example_final_audit_subject()["data_gap_analysis"],
         },
         "revision": 1,
-        "target_section_ids": ["4"],
+        "target_section_ids": ["3.2"],
         "findings": [_example_final_finding()],
     },
     "chief_editor_input": {
         "kind": "chief_editor_input",
         "run_id": "report-example",
+        "cross_decision": _EXAMPLE_CROSS_DECISION,
+        "cross_decision_pack_ref": "Work/runs/report-example/reviews/cross-decision-pack.json",
+        "cross_decision_pack_sha256": "0" * 64,
         "approved_module_markers": _EXAMPLE_MARKERS,
         "modules": _EXAMPLE_MODULES,
         "cross_review_completion_ref": ("Work/runs/report-example/reviews/cross-completion.json"),
@@ -1825,7 +2198,9 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
     },
     "aggregate_editor_input": {
         "kind": "aggregate_editor_input",
+        "mode": "aggregate_existing",
         "run_id": "report-example",
+        "cross_context": None,
         "source_format": "structured_module",
         "approved_module_markers": _EXAMPLE_MARKERS,
         "special_topic_plan": _example_special_topic_plan(),

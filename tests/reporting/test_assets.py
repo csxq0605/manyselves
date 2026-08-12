@@ -310,6 +310,39 @@ def test_editor_claim_marker_must_occur_once_in_claim_module() -> None:
         validate_editor_protection(edited, [_claim()])
 
 
+def test_editor_claim_marker_must_stay_in_its_fixed_submodule() -> None:
+    claim = _claim()
+    edited = _edited(
+        protected_claim_ids=[claim.id],
+        module_narratives={
+            **_edited().module_narratives,
+            "2.4": (
+                "#### 2.4.2.2 等电位连接与接地问题\n"
+                "错误子模块承载了引用 [[CLAIM:C-2.4-001]]。\n\n"
+                "#### 2.4.2.3 电气连接问题\n"
+                "正确子模块正文。"
+            ),
+        },
+    )
+
+    with pytest.raises(ValueError, match="must remain in submodule"):
+        validate_editor_protection(edited, [claim])
+
+
+def test_editor_protection_rejects_noncanonical_claim_source_ids() -> None:
+    claim = _claim().model_copy(update={"source_ids": ["source-table-row-1"]})
+    edited = _edited(
+        protected_claim_ids=[claim.id],
+        module_narratives={
+            **_edited().module_narratives,
+            "2.4": "正文 [[CLAIM:C-2.4-001]]",
+        },
+    )
+
+    with pytest.raises(ValueError, match="non-canonical source ids"):
+        validate_editor_protection(edited, [claim])
+
+
 def test_module_claim_marker_is_owned_by_the_claim_submodule() -> None:
     claim = _claim()
     modules = _approved_modules()
@@ -590,6 +623,53 @@ def test_asset_assembler_requires_and_builds_every_source_table_photo(
             [claim],
             edited.model_copy(update={"photo_ids": ["IMG-1"]}),
         )
+
+
+def test_asset_assembler_rejects_source_table_photo_without_runtime_asset(
+    tmp_path: Path,
+) -> None:
+    evidence = EvidenceItem(
+        id="E-0001",
+        subject="对象",
+        fact="检查结果=NG",
+        source=SourceLocation(
+            file_id="F-1",
+            path=Path("Inputs/check.xlsx"),
+            cell="A1",
+        ),
+        module_id="2.4",
+        submodule_id="2.4.2.1",
+        photo_refs=["P-MISSING"],
+    )
+
+    with pytest.raises(ValueError, match="missing from the runtime manifest"):
+        ReportAssetAssembler.runtime_photo_ids([evidence], [])
+
+
+def test_asset_assembler_rejects_non_e_photo_evidence_binding() -> None:
+    evidence = EvidenceItem(
+        id="row-1",
+        subject="对象",
+        fact="检查结果=NG",
+        source=SourceLocation(
+            file_id="F-1",
+            path=Path("Inputs/check.xlsx"),
+            cell="A1",
+        ),
+        module_id="2.4",
+        submodule_id="2.4.2.1",
+        photo_refs=["P-0001"],
+    )
+    asset = PhotoAsset(
+        id="P-0001",
+        path=Path("Work/assets/P-0001.png"),
+        sha256="abc",
+        media_type="image/png",
+        source_member="media/image1.png",
+    )
+
+    with pytest.raises(ValueError, match=r"canonical E-\* ids"):
+        ReportAssetAssembler.runtime_photo_ids([evidence], [asset])
 
 
 def test_asset_assembler_rejects_unknown_explicit_primary_photo_evidence(

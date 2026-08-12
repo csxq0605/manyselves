@@ -2,7 +2,7 @@ import json
 import multiprocessing
 from pathlib import Path
 
-from manyselves.core.usage_ledger import UsageLedger
+from manyselves.core.usage_ledger import RoundReason, UsageLedger
 
 
 def _append_usage_rows(workspace: str, worker: int, count: int) -> None:
@@ -142,3 +142,111 @@ def test_usage_ledger_appends_are_process_safe(tmp_path) -> None:
     rows = UsageLedger(tmp_path, "run-process-safe").rows()
     assert len(rows) == 100
     assert len({row["task_id"] for row in rows}) == 100
+
+
+def test_usage_ledger_round_reason_and_attempt_kind_are_summarizable(tmp_path) -> None:
+    ledger = UsageLedger(tmp_path, "run-round-reasons")
+    ledger.record_attempt(
+        status="success",
+        attempt=1,
+        round_reason=RoundReason.direct_submit,
+        reason_source="workflow",
+        logical_round_id="round-1",
+        parent_provider_call_id=None,
+        attempt_kind="provider_request",
+        provider_request_sent=True,
+        context_manifest_version=4,
+        new_chars=12,
+        repeated_chars=8,
+        repeated_stable_chars=3,
+        repeated_dynamic_chars=5,
+        duplicate_tool_result_chars=2,
+        duplicate_completed_result_chars=4,
+        duplicate_evidence_chars=6,
+        input_tokens=100,
+        output_tokens=20,
+        total_tokens=120,
+    )
+    ledger.record_attempt(
+        status="error",
+        attempt=1,
+        attempt_kind="pre_send_block",
+        provider_request_sent=False,
+        pre_send_guard_status="blocked",
+        input_tokens=999,
+        output_tokens=999,
+        total_tokens=1998,
+        new_chars=7,
+    )
+
+    by_reason = ledger.summarize(group_by="round_reason")
+    assert by_reason["groups"]["direct_submit"]["provider_attempts"] == 1
+    assert by_reason["groups"]["direct_submit"]["new_chars"] == 12
+    assert by_reason["groups"]["unclassified"]["provider_attempts"] == 0
+    assert by_reason["groups"]["unclassified"]["input_tokens"] == 0
+    assert by_reason["groups"]["unclassified"]["new_chars"] == 7
+    assert by_reason["totals"]["provider_attempts"] == 1
+    assert by_reason["totals"]["input_tokens"] == 100
+    assert by_reason["totals"]["duplicate_tool_result_chars"] == 2
+
+    by_kind = ledger.summarize(group_by="attempt_kind")
+    assert by_kind["groups"]["provider_request"]["provider_attempts"] == 1
+    assert by_kind["groups"]["pre_send_block"]["provider_attempts"] == 0
+
+
+def test_usage_ledger_rejects_provider_retry_before_second_attempt(tmp_path) -> None:
+    ledger = UsageLedger(tmp_path, "run-invalid-retry")
+
+    try:
+        ledger.record_attempt(
+            status="error",
+            attempt=1,
+            round_reason=RoundReason.provider_retry,
+            provider_request_sent=True,
+        )
+    except ValueError as exc:
+        assert "attempt >= 2" in str(exc)
+    else:
+        raise AssertionError("provider_retry must require attempt >= 2")
+
+
+def test_usage_ledger_does_not_infer_retry_from_accepted_or_unknown(tmp_path) -> None:
+    ledger = UsageLedger(tmp_path, "run-ambiguous")
+    row = ledger.record_attempt(
+        status="error",
+        attempt=2,
+        attempt_disposition="accepted_or_unknown",
+        retry=True,
+        provider_request_sent=True,
+    )
+
+    assert row["round_reason"] is None
+    assert row["reason_source"] == "unclassified"
+    summary = ledger.summarize(group_by="round_reason")
+    assert "provider_retry" not in summary["groups"]
+    assert summary["groups"]["unclassified"]["provider_attempts"] == 1
+
+
+def test_usage_ledger_marks_legacy_jsonl_without_guessing_round_reason(tmp_path) -> None:
+    ledger = UsageLedger(tmp_path, "run-legacy-round")
+    ledger.path.parent.mkdir(parents=True, exist_ok=True)
+    ledger.path.write_text(
+        json.dumps(
+            {
+                "stage": "legacy-stage",
+                "status": "success",
+                "input_tokens": 75,
+                "output_tokens": 5,
+                "total_tokens": 80,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    row = ledger.rows()[0]
+    assert row["reason_source"] == "legacy_unclassified"
+    assert "round_reason" not in row
+    summary = ledger.summarize(group_by="round_reason")
+    assert summary["groups"]["legacy_unclassified"]["provider_attempts"] == 1
+    assert summary["groups"]["legacy_unclassified"]["input_tokens"] == 75

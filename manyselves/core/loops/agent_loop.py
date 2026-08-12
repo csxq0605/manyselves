@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Sequence
 
 if TYPE_CHECKING:
     from .manager import LoopManager
@@ -82,6 +82,11 @@ AGENT_TURN_CONTINUATION_REQUIRED = "AGENT_TURN_CONTINUATION_REQUIRED"
 AGENT_MAX_TOKENS_CONTINUATION_REQUIRED = (
     "AGENT_MAX_TOKENS_CONTINUATION_REQUIRED"
 )
+# Deterministic local outcome used when a typed reporting context cannot fit
+# the Provider window even after a lossless rebase.  It is intentionally not a
+# Provider error: no network request was sent and callers may persist a legal
+# continuation/blocked state from the current typed capsule.
+CONTEXT_BUDGET_EXHAUSTED = "context_budget_exhausted"
 
 _CANCEL_REPORT_NEGATIONS = (
     "不要取消",
@@ -298,6 +303,337 @@ class _LoopLLMResponse:
     request_metrics: dict[str, Any] | None = None
     ttft_ms: int | None = None
     provider_active_ms: int | None = None
+
+
+@dataclass(frozen=True)
+class ContextGateDecision:
+    """Pure pre-send decision for one logical Provider round.
+
+    ``allow`` means the supplied context can be sent as-is.  ``rebuilt`` is
+    returned when a reporting rebaser supplied a new Provider view.  ``blocked``
+    is fail-closed: the caller must not invoke a Provider.  Character counters
+    are telemetry only and never affect whether a request is charged.
+    """
+
+    status: Literal["allow", "rebuilt", "blocked"]
+    reason: str = ""
+    provider_request_sent: bool = False
+    duplicate_tool_result_chars: int = 0
+    duplicate_completed_result_chars: int = 0
+    duplicate_evidence_chars: int = 0
+    rebuild_count: int = 0
+
+
+def _context_message_payload(message: Any) -> dict[str, Any]:
+    """Build a deterministic, content-addressable message representation."""
+
+    calls = []
+    for call in getattr(message, "tool_calls", None) or ():
+        calls.append(
+            {
+                "id": str(getattr(call, "id", "") or ""),
+                "name": str(getattr(call, "name", "") or ""),
+                "arguments": getattr(call, "arguments", {}) or {},
+            }
+        )
+    return {
+        "role": str(getattr(message, "role", "") or ""),
+        "content": str(getattr(message, "content", "") or ""),
+        "tool_call_id": str(getattr(message, "tool_call_id", "") or ""),
+        "is_tool_result": bool(getattr(message, "is_tool_result", False)),
+        "tool_calls": calls,
+    }
+
+
+def _context_payload_fingerprint(
+    messages: Sequence[Any], tool_definitions: Sequence[dict[str, Any]] | None = None
+) -> str:
+    payload = {
+        "messages": [_context_message_payload(message) for message in messages],
+        "tools": list(tool_definitions or ()),
+    }
+    serialized = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _context_result_signatures(messages: Sequence[Any]) -> dict[str, tuple[str, int]]:
+    """Return tool-result id -> (content hash, character count)."""
+
+    results: dict[str, tuple[str, int]] = {}
+    for message in messages:
+        if not (
+            bool(getattr(message, "is_tool_result", False))
+            or str(getattr(message, "role", "") or "") == "tool"
+        ):
+            continue
+        call_id = str(getattr(message, "tool_call_id", "") or "")
+        if not call_id:
+            continue
+        content = str(getattr(message, "content", "") or "")
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        results.setdefault(call_id, (digest, len(content)))
+    return results
+
+
+def _context_completed_prose_signatures(messages: Sequence[Any]) -> dict[str, tuple[int, int]]:
+    """Find durable completed prose repeated in a Provider payload.
+
+    This deliberately recognises structured status fields instead of filename
+    or keyword guesses.  A result marked ``persisted``/``completed`` is a
+    durable write and must not be replayed as a fresh write in the same context.
+    """
+
+    found: dict[str, tuple[int, int]] = {}
+    for message in messages:
+        content = str(getattr(message, "content", "") or "")
+        if not content or not re.search(
+            r"(?:\"(?:persisted|status|ready)\"\s*:\s*(?:true|\"completed\"|true))",
+            content,
+            flags=re.IGNORECASE,
+        ):
+            continue
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        chars, count = found.get(digest, (0, 0))
+        found[digest] = (chars + len(content), count + 1)
+    return found
+
+
+def _context_evidence_signatures(messages: Sequence[Any]) -> dict[str, tuple[int, int]]:
+    """Find repeated hash-addressed evidence refs in one Provider payload."""
+
+    found: dict[str, tuple[int, int]] = {}
+    digest_pattern = re.compile(r"(?:sha256|content_sha256|result_sha256)\s*[=:]\s*([0-9a-f]{64})", re.IGNORECASE)
+    for message in messages:
+        content = str(getattr(message, "content", "") or "")
+        if not content:
+            continue
+        for digest in digest_pattern.findall(content):
+            chars, count = found.get(digest, (0, 0))
+            found[digest] = (chars + len(content), count + 1)
+    return found
+
+
+def _context_reference_only(messages: Sequence[Any]) -> bool:
+    """Whether all non-system content is a typed/ref/hash carrier.
+
+    Stable prompts and immutable references are safe to repeat.  This helper
+    intentionally does not classify ordinary prose by filename or keywords.
+    """
+
+    for message in messages:
+        role = str(getattr(message, "role", "") or "")
+        content = str(getattr(message, "content", "") or "").strip()
+        if role == "system" or not content:
+            continue
+        if getattr(message, "tool_calls", None) or getattr(message, "is_tool_result", False):
+            return False
+        if content.startswith(("<typed_task_state>", "<bounded_context>")):
+            continue
+        if re.fullmatch(r"(?:ref|sha256|content_sha256|result_sha256)\s*[=:].+", content, re.IGNORECASE):
+            continue
+        # Hash-only JSON/object carriers contain no reader-visible prose.
+        if re.fullmatch(r"[\[{].*(?:sha256|content_sha256|ref).*[\]}]", content, re.IGNORECASE | re.DOTALL):
+            continue
+        return False
+    return True
+
+
+def pre_send_context_gate(
+    messages: Sequence[Any],
+    *,
+    previous_messages: Sequence[Any] | None = None,
+    tool_definitions: Sequence[dict[str, Any]] | None = None,
+    previous_tool_definitions: Sequence[dict[str, Any]] | None = None,
+    phase: str = "initial",
+    attempt: int = 1,
+    previous_attempt_disposition: str | None = None,
+    rebuilt: bool = False,
+    rebuild_count: int = 0,
+) -> ContextGateDecision:
+    """Pure fail-closed gate used immediately before a Provider request.
+
+    The gate blocks exact replay and duplicate durable units, while retaining
+    explicit allowances for safe no-output retries and typed follow-up rounds.
+    It never performs I/O or invokes a Provider, which makes it suitable for
+    deterministic fake-provider tests.
+    """
+
+    current = list(messages)
+    previous = list(previous_messages or ())
+    safe_retry = (
+        int(attempt or 1) > 1
+        and str(previous_attempt_disposition or "").casefold()
+        in {"not_sent", "definitely_rejected"}
+    )
+    current_results = _context_result_signatures(current)
+    previous_results = _context_result_signatures(previous)
+
+    # Duplicate ids/content inside one request are always malformed.  Normal
+    # conversation replay carries each completed result exactly once.  Keep
+    # malformed in-request duplicates separate from a complete prior unit that
+    # a typed continuation intentionally carries forward: the latter is an
+    # atomic prerequisite and is legal once a new logical round is explicit.
+    duplicate_result_chars = 0
+    duplicate_in_request_result_chars = 0
+    raw_result_ids = [
+        str(getattr(message, "tool_call_id", "") or "")
+        for message in current
+        if bool(getattr(message, "is_tool_result", False))
+        or str(getattr(message, "role", "") or "") == "tool"
+    ]
+    duplicate_ids = {call_id for call_id in raw_result_ids if raw_result_ids.count(call_id) > 1 and call_id}
+    duplicate_in_request_result_chars += sum(
+        chars for call_id, (_digest, chars) in current_results.items() if call_id in duplicate_ids
+    )
+    duplicate_result_chars += duplicate_in_request_result_chars
+
+    # Re-sending an already complete result while adding no new result is a
+    # replay, even if a harness-owned reminder changed the surrounding prose.
+    if previous_results and current_results:
+        shared = {
+            call_id
+            for call_id in set(current_results).intersection(previous_results)
+            if current_results[call_id] == previous_results[call_id]
+        }
+        current_new = set(current_results).difference(previous_results)
+        if shared and not current_new:
+            replayed_result_chars = sum(current_results[item][1] for item in shared)
+            duplicate_result_chars += replayed_result_chars
+        else:
+            replayed_result_chars = 0
+    else:
+        replayed_result_chars = 0
+
+    completed = _context_completed_prose_signatures(current)
+    duplicate_completed_chars = sum(chars for chars, count in completed.values() if count > 1)
+    previous_completed = _context_completed_prose_signatures(previous)
+    if previous_completed:
+        duplicate_completed_chars += sum(
+            chars for digest, (chars, _count) in completed.items() if digest in previous_completed
+        )
+
+    evidence = _context_evidence_signatures(current)
+    duplicate_evidence_chars = sum(chars for chars, count in evidence.values() if count > 1)
+    previous_evidence = _context_evidence_signatures(previous)
+    if previous_evidence:
+        duplicate_evidence_chars += sum(
+            chars for digest, (chars, _count) in evidence.items() if digest in previous_evidence
+        )
+
+    current_fingerprint = _context_payload_fingerprint(current, tool_definitions)
+    previous_fingerprint = _context_payload_fingerprint(previous, previous_tool_definitions)
+    exact_replay = bool(previous and current_fingerprint == previous_fingerprint)
+    reference_only = _context_reference_only(current)
+    phase_text = str(phase or "initial").casefold()
+    explicit_followup = (
+        phase_text == "tool_followup"
+        or "evidence" in phase_text
+        or "continuation" in phase_text
+        or "correction" in phase_text
+        or "revision" in phase_text
+        or phase_text.startswith("guard")
+    )
+    # AgentLoop receives continuation/correction turns as ``phase='initial'``
+    # because each Runner ``one_turn`` is a fresh UserMessage.  Only the
+    # newest non-tool user message can authorize replay; looking through the
+    # whole transcript would let an old boundary marker bless an exact replay.
+    latest_user_content = next(
+        (
+            str(getattr(message, "content", "") or "")
+            for message in reversed(current)
+            if str(getattr(message, "role", "") or "") == "user"
+            and not bool(getattr(message, "is_tool_result", False))
+        ),
+        "",
+    )
+    explicit_followup = explicit_followup or any(
+        marker in latest_user_content
+        for marker in ("<same_identity_continuation>", "<submission_correction>")
+    )
+    if duplicate_in_request_result_chars:
+        return ContextGateDecision(
+            "blocked",
+            "duplicate_complete_tool_result",
+            duplicate_tool_result_chars=duplicate_result_chars,
+            duplicate_completed_result_chars=duplicate_completed_chars,
+            duplicate_evidence_chars=duplicate_evidence_chars,
+            rebuild_count=max(0, int(rebuild_count or 0)),
+        )
+    if replayed_result_chars and not (safe_retry or explicit_followup):
+        return ContextGateDecision(
+            "blocked",
+            "duplicate_complete_tool_result",
+            duplicate_tool_result_chars=duplicate_result_chars,
+            duplicate_completed_result_chars=duplicate_completed_chars,
+            duplicate_evidence_chars=duplicate_evidence_chars,
+            rebuild_count=max(0, int(rebuild_count or 0)),
+        )
+    if duplicate_completed_chars and not (safe_retry or explicit_followup or reference_only):
+        return ContextGateDecision(
+            "blocked",
+            "duplicate_completed_result",
+            duplicate_completed_result_chars=duplicate_completed_chars,
+            duplicate_evidence_chars=duplicate_evidence_chars,
+            rebuild_count=max(0, int(rebuild_count or 0)),
+        )
+    if duplicate_evidence_chars and not (safe_retry or explicit_followup or reference_only):
+        return ContextGateDecision(
+            "blocked",
+            "duplicate_consumed_evidence",
+            duplicate_evidence_chars=duplicate_evidence_chars,
+            rebuild_count=max(0, int(rebuild_count or 0)),
+        )
+    if exact_replay and not (safe_retry or explicit_followup or reference_only):
+        return ContextGateDecision(
+            "blocked",
+            "duplicate_provider_context",
+            rebuild_count=max(0, int(rebuild_count or 0)),
+        )
+    if rebuilt:
+        return ContextGateDecision(
+            "rebuilt",
+            "typed_context_rebased",
+            duplicate_tool_result_chars=duplicate_result_chars,
+            duplicate_completed_result_chars=duplicate_completed_chars,
+            duplicate_evidence_chars=duplicate_evidence_chars,
+            rebuild_count=max(1, int(rebuild_count or 0)),
+        )
+    if safe_retry:
+        return ContextGateDecision(
+            "allow",
+            "safe_no_output_retry",
+            duplicate_tool_result_chars=duplicate_result_chars,
+            duplicate_completed_result_chars=duplicate_completed_chars,
+            duplicate_evidence_chars=duplicate_evidence_chars,
+            rebuild_count=0,
+        )
+    if explicit_followup:
+        return ContextGateDecision(
+            "allow",
+            "typed_followup",
+            duplicate_tool_result_chars=duplicate_result_chars,
+            duplicate_completed_result_chars=duplicate_completed_chars,
+            duplicate_evidence_chars=duplicate_evidence_chars,
+            rebuild_count=0,
+        )
+    return ContextGateDecision(
+        "allow",
+        "new_context",
+        duplicate_tool_result_chars=duplicate_result_chars,
+        duplicate_completed_result_chars=duplicate_completed_chars,
+        duplicate_evidence_chars=duplicate_evidence_chars,
+        rebuild_count=0,
+    )
+
+
+# Descriptive alias used by small offline harnesses and downstream callers.
+evaluate_pre_send_context_gate = pre_send_context_gate
 
 
 @dataclass
@@ -818,44 +1154,26 @@ def _trim_messages_to_budget(
         budget,
     )
 
-    # Always keep system message (index 0)
+    # Always keep system message (index 0). Group the rest into protocol
+    # atomic units so compaction never manufactures an orphan tool result or a
+    # partial assistant tool-call example.
     system_msg = messages[0]
     rest = messages[1:]
+    units = _atomic_history_units(rest)
+    if not units:
+        return [system_msg]
 
-    # Walk backwards, accumulate tokens
-    kept = []
-    kept_tokens = 0
-    for m in reversed(rest):
-        mt = _estimate_tokens([m])
-        if kept_tokens + mt <= budget:
-            kept.insert(0, m)
-            kept_tokens += mt
-        else:
-            break
-
-    # Ensure the boundary is legal.
-    # 1. Strip orphan 'tool' messages whose 'assistant(tool_calls)' was trimmed.
-    # 2. Strip orphan 'assistant' messages whose preceding 'user' was trimmed.
-    # 3. The first real message after system must be 'user'.
-    # 4. Anthropic-style tool results (role="user", is_tool_result=True) whose
-    #    'assistant(tool_calls)' was trimmed.
-    while kept:
-        role = kept[0].role
-        is_tool_result = getattr(kept[0], "is_tool_result", False)
-        if role == "tool":
-            logger.debug("Stripping orphan tool message at trim boundary")
-            kept.pop(0)
-        elif role == "assistant":
-            logger.debug("Stripping orphan assistant message at trim boundary")
-            kept.pop(0)
-        elif role == "user" and is_tool_result:
-            # Anthropic-style orphan: tool result disguised as user message.
-            # Without its preceding assistant(tool_calls), this would cause
-            # an API error (tool result without tool_use).
-            logger.debug("Stripping orphan user/tool_result message at trim boundary")
-            kept.pop(0)
-        else:
-            break
+    # The latest complete unit is the active task boundary and must survive;
+    # admit older complete units newest-first only when the whole unit fits.
+    selected: list[list[LLMMessage]] = [units[-1]]
+    kept_tokens = _estimate_tokens(units[-1])
+    for unit in reversed(units[:-1]):
+        unit_tokens = _estimate_tokens(unit)
+        if kept_tokens + unit_tokens > budget:
+            continue
+        selected.insert(0, unit)
+        kept_tokens += unit_tokens
+    kept = [item for unit in selected for item in unit]
 
     # Always prepend system prompt
     result = [system_msg] + kept
@@ -868,6 +1186,86 @@ def _trim_messages_to_budget(
         _estimate_tokens(result),
     )
     return result
+
+
+@dataclass(frozen=True)
+class _ReportingTrimResult:
+    messages: list[LLMMessage]
+    exhausted: bool = False
+    reason: str | None = None
+
+
+def _trim_reporting_context_to_budget(
+    messages: list[LLMMessage],
+    *,
+    context_window: int = 128000,
+    max_output: int = 4096,
+) -> _ReportingTrimResult:
+    """Trim a rebased reporting context without splitting typed units.
+
+    The stable system prefix, typed task-state/capsule messages, current user
+    tail and latest complete tool unit are mandatory.  If those mandatory
+    units alone exceed the Provider budget, return a deterministic exhausted
+    result instead of dropping a capsule or truncating prose mid-unit.
+    """
+
+    if not messages:
+        return _ReportingTrimResult(messages=[])
+    budget = max(0, int(context_window) - int(max_output) - _SAFETY_BUFFER)
+    if _estimate_tokens(messages) <= budget:
+        return _ReportingTrimResult(messages=messages)
+
+    system = messages[0]
+    rest = messages[1:]
+    units = _atomic_history_units(rest)
+    if not units:
+        if _estimate_tokens([system]) > budget:
+            return _ReportingTrimResult(
+                messages=[system], exhausted=True, reason=CONTEXT_BUDGET_EXHAUSTED
+            )
+        return _ReportingTrimResult(messages=[system])
+
+    mandatory_indices: set[int] = {len(units) - 1}
+    for index, unit in enumerate(units):
+        for message in unit:
+            content = str(getattr(message, "content", "") or "")
+            if any(
+                marker in content
+                for marker in (
+                    "<typed_task_state>",
+                    "<task_state_capsule>",
+                    "<bounded_context>",
+                    "<context_budget>",
+                )
+            ):
+                mandatory_indices.add(index)
+            if message is rest[-1] and message.role == "user" and not message.is_tool_result:
+                mandatory_indices.add(index)
+
+    mandatory_units = [units[index] for index in sorted(mandatory_indices)]
+    mandatory = [system] + [item for unit in mandatory_units for item in unit]
+    mandatory_tokens = _estimate_tokens(mandatory)
+    if mandatory_tokens > budget:
+        return _ReportingTrimResult(
+            messages=mandatory,
+            exhausted=True,
+            reason=CONTEXT_BUDGET_EXHAUSTED,
+        )
+
+    selected_indices = set(mandatory_indices)
+    used = mandatory_tokens
+    for index in reversed(range(len(units))):
+        if index in selected_indices:
+            continue
+        unit_tokens = _estimate_tokens(units[index])
+        if used + unit_tokens > budget:
+            continue
+        selected_indices.add(index)
+        used += unit_tokens
+
+    selected = [item for index, unit in enumerate(units) if index in selected_indices for item in unit]
+    result = [system] + selected
+    return _ReportingTrimResult(messages=result)
 
 
 def _compact_messages_for_working_memory(
@@ -1145,6 +1543,11 @@ class AgentLoop:
         usage_task_id: str | None = None,
         artifact_gateway: ArtifactGateway | None = None,
         before_provider_attempt: Callable[[], Awaitable[None]] | None = None,
+        provider_admission: Any | None = None,
+        provider_admission_controller: Any | None = None,
+        provider_admission_provider: str | None = None,
+        provider_admission_model: str | None = None,
+        provider_admission_identity_key: str | None = None,
         provider_attempt_observer: (
             Callable[
                 [list[LLMMessage], list[dict] | None, str, int],
@@ -1155,6 +1558,8 @@ class AgentLoop:
         provider_attempt_record_observer: (
             Callable[[dict[str, Any]], Awaitable[None]] | None
         ) = None,
+        context_rebuilder: Any | None = None,
+        pre_send_context_guard: Callable[..., Any] | None = None,
     ):
         """Initialize agent loop.
 
@@ -1213,8 +1618,26 @@ class AgentLoop:
         self.usage_context_manifest_ref: str | None = None
         self.usage_provider_call_id: str | None = None
         self.before_provider_attempt = before_provider_attempt
+        # Physical Provider admission is intentionally separate from typed
+        # task/identity admission.  The lease acquired by the helpers below
+        # wraps one actual request and is released before AgentLoop backoff.
+        self.provider_admission = provider_admission or provider_admission_controller
+        self.provider_admission_provider = provider_admission_provider
+        self.provider_admission_model = provider_admission_model
+        self.provider_admission_identity_key = provider_admission_identity_key
         self.provider_attempt_observer = provider_attempt_observer
         self.provider_attempt_record_observer = provider_attempt_record_observer
+        # Optional typed context hook.  ``None`` intentionally preserves the
+        # historical conversation-building path byte-for-byte.
+        self.context_rebuilder = context_rebuilder
+        # Optional synchronous/async policy hook.  The default gate remains
+        # pure and fail-closed for reporting contexts; legacy loops with no
+        # rebuilder retain their historical behavior.
+        self.pre_send_context_guard = pre_send_context_guard
+        self._last_provider_messages: list[LLMMessage] | None = None
+        self._last_provider_tools: list[dict[str, Any]] | None = None
+        self._last_provider_attempt_disposition: str | None = None
+        self._last_provider_request_fingerprint: str | None = None
         self._usage_totals = {"input_tokens": 0, "output_tokens": 0}
         self._last_usage_record: dict[str, Any] | None = None
         self._usage_queue_wait_ms = 0
@@ -1258,6 +1681,45 @@ class AgentLoop:
             raise RuntimeError("cannot reset working memory while the Agent is active")
         self._conversation_history = []
         self._persisted_result_part_contents = {}
+        self._last_provider_messages = None
+        self._last_provider_tools = None
+        self._last_provider_attempt_disposition = None
+        self._last_provider_request_fingerprint = None
+
+    def set_context_rebuilder(self, rebuilder: Any | None) -> None:
+        """Install or remove a typed Provider-context rebaser.
+
+        The hook is deliberately opt-in so legacy AgentLoop users retain the
+        existing conversation history semantics.  Rebuilders may be sync or
+        async objects implementing ``rebuild`` (or a compatible callable).
+        """
+
+        self.context_rebuilder = rebuilder
+
+    async def _mark_provider_context_delivered(
+        self,
+        messages: Sequence[LLMMessage],
+        response: Any | None = None,
+    ) -> None:
+        """Commit a successful typed Provider payload as consumed context."""
+
+        if self.context_rebuilder is None:
+            return
+        marker = getattr(
+            self.context_rebuilder,
+            "mark_provider_context_delivered",
+            None,
+        )
+        if marker is None:
+            return
+        if "response" in inspect.signature(marker).parameters:
+            result = marker(messages, response=response)
+        else:
+            # Compatibility with an earlier experimental hook that accepted
+            # only the sent message list.
+            result = marker(messages)
+        if inspect.isawaitable(result):
+            await result
 
     async def wait_until_turn_complete(self) -> None:
         """Wait until the current queued provider/tool turn has fully finalized."""
@@ -1453,7 +1915,9 @@ class AgentLoop:
         """
         self._conversation_history.append(LLMMessage(role="user", content=reminder))
         try:
-            messages = self._compact_working_memory(await self._build_messages())
+            messages = await self._build_messages()
+            if self.context_rebuilder is None:
+                messages = self._compact_working_memory(messages)
             tool_defs = self.tools.get_definitions()
             response = await self._chat_with_retries(
                 messages,
@@ -2059,8 +2523,12 @@ class AgentLoop:
             context_started = time.perf_counter()
             messages = await self._build_messages()
 
-            # Auto-compact: trim if exceeds context budget
-            messages = self._compact_working_memory(messages)
+            # Legacy loops compact their local history here. Reporting loops
+            # defer trimming until after the typed rebase in
+            # ``_chat_with_retries`` so the current capsule/latest tool unit
+            # cannot be dropped before the gate sees them.
+            if self.context_rebuilder is None:
+                messages = self._compact_working_memory(messages)
 
             # Get tool definitions
             tool_definitions = self.tools.get_definitions()
@@ -2346,6 +2814,98 @@ class AgentLoop:
         except Exception as e:
             logger.warning("Failed to flush manifest for {}: {}", self.agent_type, e)
 
+    async def _acquire_provider_request_lease(
+        self,
+        messages: list[LLMMessage],
+    ) -> Any | None:
+        """Reserve one physical request, if the runner installed admission.
+
+        The reservation is deliberately made after the pre-send context gate
+        and immediately before invoking the adapter.  It therefore does not
+        turn typed-task scheduling into a Provider cap and does not remain held
+        while retry backoff sleeps.
+        """
+
+        controller = self.provider_admission
+        if controller is None:
+            return None
+        provider = self.provider_admission_provider or getattr(
+            self.llm_provider, "provider_type", self.llm_provider.__class__.__name__
+        )
+        model = self.provider_admission_model or getattr(
+            self.llm_provider, "model", None
+        )
+        task_id = str(self.usage_task_id or getattr(self._current_message, "task_id", "") or "")
+        identity_key = self.provider_admission_identity_key
+        estimated_tokens = _estimate_tokens(messages) + max(
+            0, int(getattr(self.config, "max_tokens", 0) or 0)
+        )
+        return await controller.acquire(
+            provider,
+            model,
+            estimated_tokens=estimated_tokens,
+            task_id=task_id or None,
+            identity_key=identity_key,
+        )
+
+    async def _admitted_chat_stream(
+        self,
+        messages: list[LLMMessage],
+        tool_definitions: list[dict] | None,
+        stream_idle_timeout_seconds: float | None,
+    ):
+        """Yield one adapter stream while holding exactly one request lease."""
+
+        lease = await self._acquire_provider_request_lease(messages)
+        try:
+            stream_kwargs: dict[str, Any] = {}
+            if stream_idle_timeout_seconds is not None:
+                stream_kwargs["stream_idle_timeout_seconds"] = stream_idle_timeout_seconds
+            stream = self.llm_provider.chat_stream(
+                messages=messages,
+                tools=tool_definitions if tool_definitions else None,
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
+                **stream_kwargs,
+            )
+            if not hasattr(stream, "__aiter__"):
+                await stream
+                raise NotImplementedError
+            async for chunk in stream:
+                yield chunk
+        except BaseException as exc:
+            if lease is not None:
+                await lease.release(error=exc)
+                lease = None
+            raise
+        finally:
+            if lease is not None:
+                await lease.release()
+
+    async def _admitted_chat(
+        self,
+        messages: list[LLMMessage],
+        tool_definitions: list[dict] | None,
+    ) -> Any:
+        """Fallback non-streaming adapter call with its own request lease."""
+
+        lease = await self._acquire_provider_request_lease(messages)
+        try:
+            return await self.llm_provider.chat(
+                messages=messages,
+                tools=tool_definitions,
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
+            )
+        except BaseException as exc:
+            if lease is not None:
+                await lease.release(error=exc)
+                lease = None
+            raise
+        finally:
+            if lease is not None:
+                await lease.release()
+
     async def _chat_followup(
         self,
         messages: list[LLMMessage],
@@ -2369,16 +2929,11 @@ class AgentLoop:
                     stream_kwargs["stream_idle_timeout_seconds"] = (
                         stream_idle_timeout_seconds
                     )
-                stream = self.llm_provider.chat_stream(
-                    messages=messages,
-                    tools=tool_definitions if tool_definitions else None,
-                    temperature=self.config.temperature,
-                    max_tokens=self.config.max_tokens,
-                    **stream_kwargs,
+                stream = self._admitted_chat_stream(
+                    messages,
+                    tool_definitions,
+                    stream_idle_timeout_seconds,
                 )
-                if not hasattr(stream, "__aiter__"):
-                    await stream
-                    raise NotImplementedError
                 async for chunk in stream:
                     if ttft_ms is None and (
                         chunk.delta
@@ -2455,12 +3010,7 @@ class AgentLoop:
                     ),
                 )
             except NotImplementedError:
-                response = await self.llm_provider.chat(
-                    messages=messages,
-                    tools=tool_definitions,
-                    temperature=self.config.temperature,
-                    max_tokens=self.config.max_tokens,
-                )
+                response = await self._admitted_chat(messages, tool_definitions)
                 return _LoopLLMResponse(
                     content=response.content or "",
                     tool_calls=response.tool_calls,
@@ -2495,6 +3045,226 @@ class AgentLoop:
         except TimeoutError:
             return False
 
+    @staticmethod
+    def _round_reason_for_phase(phase: str, attempt: int = 1) -> str:
+        """Map an explicit loop phase to H1's canonical reason enum."""
+
+        phase_text = str(phase or "initial")
+        if int(attempt or 1) > 1:
+            return "provider_retry"
+        folded = phase_text.casefold()
+        if folded == "tool_followup" or "evidence" in folded:
+            return "evidence_lookup"
+        if folded.startswith("guard"):
+            return "tool_contract_error"
+        if "continuation" in folded:
+            return "long_output_continuation"
+        if "correction" in folded or "revision" in folded:
+            return "semantic_correction"
+        return "direct_submit"
+
+    def _gate_phase_for_message(self, phase: str) -> str:
+        """Use the typed turn kind when a Runner starts a continuation turn.
+
+        ReportingAgentRunner sends every ``one_turn`` through the same AgentLoop
+        entry point, so the physical call's phase is ``initial`` even when the
+        current UserMessage is a continuation/correction.  The turn kind is a
+        durable semantic reason and is the only source used to widen the gate
+        for that fresh logical round.
+        """
+
+        if str(phase or "initial").casefold() != "initial":
+            return phase
+        turn_kind = str(getattr(self._current_message, "turn_kind", "") or "")
+        if turn_kind in {
+            "submission_correction",
+            "tool_slice_continuation",
+            "max_tokens_continuation",
+        }:
+            return turn_kind
+        return phase
+
+    def _context_window_for_request(self) -> int:
+        """Read an optional Provider/config context window without changing caps."""
+
+        for owner in (self.config, self.llm_provider):
+            for name in ("context_window", "max_context_tokens", "context_length"):
+                value = getattr(owner, name, None)
+                if value is not None:
+                    try:
+                        parsed = int(value)
+                    except (TypeError, ValueError):
+                        continue
+                    if parsed > 0:
+                        return parsed
+        return 128_000
+
+    def _apply_rebased_usage_metadata(self, rebased: Any) -> None:
+        """Copy hash-only rebase metrics into the next ledger row."""
+
+        manifest = getattr(rebased, "manifest", None)
+        metrics = getattr(manifest, "metrics", None)
+        if not isinstance(metrics, dict):
+            metrics = {}
+        for metric_name in (
+            "new_chars",
+            "repeated_chars",
+            "stable_chars",
+            "dynamic_chars",
+            "repeated_stable_chars",
+            "repeated_dynamic_chars",
+            "duplicate_tool_result_chars",
+            "duplicate_completed_result_chars",
+            "duplicate_evidence_chars",
+        ):
+            setattr(self, f"usage_{metric_name}", int(metrics.get(metric_name, 0) or 0))
+        if manifest is not None:
+            version = getattr(manifest, "context_manifest_version", None)
+            if version is None:
+                version = getattr(manifest, "schema_version", None)
+            if version is not None:
+                self.usage_context_manifest_version = int(version)
+            for attr, names in {
+                "usage_context_manifest_ref": ("manifest_ref", "context_manifest_ref"),
+                "usage_provider_call_ref": ("provider_call_ref", "provider_call_ref"),
+                "usage_provider_call_hash": ("provider_call_hash", "provider_call_hash"),
+            }.items():
+                for name in names:
+                    value = getattr(manifest, name, None)
+                    if value:
+                        setattr(self, attr, str(value))
+                        break
+
+    async def _invoke_pre_send_context_guard(
+        self,
+        messages: list[LLMMessage],
+        tool_definitions: list[dict] | None,
+        *,
+        phase: str,
+        attempt: int,
+        rebuilt: bool,
+        rebuild_count: int,
+    ) -> ContextGateDecision:
+        """Evaluate the optional policy hook and then the pure default gate."""
+
+        gate_phase = self._gate_phase_for_message(phase)
+        kwargs = {
+            "messages": messages,
+            "tool_definitions": tool_definitions,
+            "phase": gate_phase,
+            "attempt": attempt,
+            "previous_messages": self._last_provider_messages,
+            "previous_tool_definitions": self._last_provider_tools,
+            "previous_attempt_disposition": self._last_provider_attempt_disposition,
+            "rebuilt": rebuilt,
+            "rebuild_count": rebuild_count,
+            "loop": self,
+        }
+        decision: Any = None
+        if self.pre_send_context_guard is not None:
+            function = getattr(self.pre_send_context_guard, "check", self.pre_send_context_guard)
+            try:
+                decision = function(**kwargs)
+            except TypeError:
+                try:
+                    decision = function(messages, tool_definitions, gate_phase, attempt)
+                except TypeError:
+                    decision = function(messages)
+            if inspect.isawaitable(decision):
+                decision = await decision
+            if isinstance(decision, ContextGateDecision):
+                return decision
+            if isinstance(decision, dict):
+                status = str(decision.get("status") or "allow")
+                if status in {"allow", "rebuilt", "blocked"}:
+                    return ContextGateDecision(
+                        status,  # type: ignore[arg-type]
+                        str(decision.get("reason") or "custom_guard"),
+                        duplicate_tool_result_chars=int(decision.get("duplicate_tool_result_chars", 0) or 0),
+                        duplicate_completed_result_chars=int(decision.get("duplicate_completed_result_chars", 0) or 0),
+                        duplicate_evidence_chars=int(decision.get("duplicate_evidence_chars", 0) or 0),
+                        rebuild_count=max(0, int(decision.get("rebuild_count", rebuild_count) or 0)),
+                    )
+            if isinstance(decision, str) and decision in {"allow", "rebuilt", "blocked"}:
+                return ContextGateDecision(decision, "custom_guard", rebuild_count=rebuild_count)  # type: ignore[arg-type]
+
+        return pre_send_context_gate(
+            messages,
+            previous_messages=self._last_provider_messages,
+            tool_definitions=tool_definitions,
+            previous_tool_definitions=self._last_provider_tools,
+            phase=gate_phase,
+            attempt=attempt,
+            previous_attempt_disposition=self._last_provider_attempt_disposition,
+            rebuilt=rebuilt,
+            rebuild_count=rebuild_count,
+        )
+
+    def _record_pre_send_gate(
+        self,
+        decision: ContextGateDecision,
+        *,
+        phase: str,
+        messages: Sequence[LLMMessage],
+        tool_definitions: Sequence[dict[str, Any]] | None,
+    ) -> dict[str, Any]:
+        """Persist a zero-cost pre-send gate event without calling Provider."""
+
+        blocked = decision.status == "blocked"
+        attempt_kind = "pre_send_block" if blocked else "pre_send_rebuild"
+        reason = (
+            "redundant_followup"
+            if blocked and decision.reason.startswith("duplicate")
+            else self._round_reason_for_phase(phase)
+        )
+        self.usage_provider_request_sent = False
+        self.usage_attempt_kind = attempt_kind
+        self.usage_round_reason = reason
+        self.usage_pre_send_guard_status = decision.reason or decision.status
+        self.usage_rebuild_count = max(0, int(decision.rebuild_count or 0))
+        run_id = str(self.usage_run_id or self.agent_type)
+        record = {
+            "run_id": run_id,
+            "task_id": str(self.usage_task_id or "") or None,
+            "agent_id": str(self.agent_type),
+            "stage": str(getattr(self, "usage_stage", "") or phase),
+            "phase": phase,
+            "status": "blocked" if blocked else "rebuilt",
+            "error": decision.reason if blocked else None,
+            "attempt": 0,
+            "retry": False,
+            "attempt_disposition": "not_sent",
+            "retry_decision": "pre_send_block" if blocked else "pre_send_rebuild",
+            "provider_request_sent": False,
+            "attempt_kind": attempt_kind,
+            "round_reason": reason,
+            "reason_source": "pre_send_gate",
+            "logical_round_id": getattr(self, "usage_logical_round_id", None),
+            "parent_provider_call_id": getattr(self, "usage_parent_provider_call_id", None),
+            # A pre-send event has no Provider payload manifest.  Do not point
+            # it at the previous physical call's ref/hash.
+            "context_manifest_ref": None,
+            "provider_call_ref": None,
+            "provider_call_hash": None,
+            "context_manifest_version": getattr(self, "usage_context_manifest_version", None),
+            "pre_send_guard_status": decision.reason or decision.status,
+            "rebuild_count": max(0, int(decision.rebuild_count or 0)),
+            "message_count": len(messages),
+            "message_chars": sum(len(str(getattr(item, "content", "") or "")) for item in messages),
+            "tool_schema_chars": len(json.dumps(tool_definitions or (), ensure_ascii=False, default=str)),
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "new_chars": 0,
+            "repeated_chars": 0,
+            "repeated_stable_chars": 0,
+            "repeated_dynamic_chars": 0,
+            "duplicate_tool_result_chars": decision.duplicate_tool_result_chars,
+            "duplicate_completed_result_chars": decision.duplicate_completed_result_chars,
+            "duplicate_evidence_chars": decision.duplicate_evidence_chars,
+        }
+        return UsageLedger(self.workspace, run_id).record_attempt(**record)
+
     async def _chat_with_retries(
         self,
         messages: list[LLMMessage],
@@ -2505,7 +3275,55 @@ class AgentLoop:
         stream_idle_timeout_seconds: float | None = None,
     ) -> _LoopLLMResponse:
         """Run one provider round with bounded, cancel-aware automatic retries."""
+        rebuilt = False
+        rebuild_count = 0
+        if self.context_rebuilder is not None:
+            # Rebase only the Provider-facing copy.  The lossless local
+            # ``_conversation_history`` remains available to the forensic
+            # trace and is never used as a fallback source by the rebaser.
+            from .context_rebase import invoke_rebuilder
 
+            rebased = await invoke_rebuilder(
+                self.context_rebuilder,
+                messages,
+                tool_definitions,
+                loop=self,
+                phase=phase,
+                user_message_id=user_message_id,
+            )
+            messages = rebased.messages
+            if rebased.tool_definitions is not None:
+                tool_definitions = rebased.tool_definitions
+            rebuilt = True
+            rebuild_count = 1
+            self._apply_rebased_usage_metadata(rebased)
+
+            # Reporting contexts are rebase-first.  Only after the typed view
+            # exists may we remove older complete units; max_tokens and
+            # max_tool_iterations remain untouched.
+            trim = _trim_reporting_context_to_budget(
+                list(messages),
+                context_window=self._context_window_for_request(),
+                max_output=self.config.max_tokens,
+            )
+            messages = trim.messages
+            if trim.exhausted:
+                decision = ContextGateDecision(
+                    "blocked",
+                    trim.reason or CONTEXT_BUDGET_EXHAUSTED,
+                    rebuild_count=rebuild_count,
+                )
+                self._record_pre_send_gate(
+                    decision,
+                    phase=phase,
+                    messages=messages,
+                    tool_definitions=tool_definitions,
+                )
+                return _LoopLLMResponse(
+                    content=CONTEXT_BUDGET_EXHAUSTED,
+                    tool_calls=[],
+                    stop_reason=CONTEXT_BUDGET_EXHAUSTED,
+                )
         provider_messages = _sanitize_provider_messages(messages)
         provider_tool_definitions = _sanitize_provider_visible_value(
             tool_definitions
@@ -2513,6 +3331,46 @@ class AgentLoop:
         attempts = 0
         while True:
             attempts += 1
+            decision = await self._invoke_pre_send_context_guard(
+                provider_messages,
+                provider_tool_definitions,
+                phase=phase,
+                attempt=attempts,
+                rebuilt=rebuilt and attempts == 1,
+                rebuild_count=rebuild_count if attempts == 1 else 0,
+            )
+            if decision.status == "blocked":
+                self._record_pre_send_gate(
+                    decision,
+                    phase=phase,
+                    messages=provider_messages,
+                    tool_definitions=provider_tool_definitions,
+                )
+                return _LoopLLMResponse(
+                    content=decision.reason or "pre_send_blocked",
+                    tool_calls=[],
+                    stop_reason="pre_send_blocked",
+                )
+            if decision.status == "rebuilt" and attempts == 1:
+                self._record_pre_send_gate(
+                    decision,
+                    phase=phase,
+                    messages=provider_messages,
+                    tool_definitions=provider_tool_definitions,
+                )
+            # The next physical attempt must retain the exact typed payload;
+            # only a proven no-output rejection may repeat it.
+            self.usage_provider_request_sent = True
+            self.usage_attempt_kind = "provider_request"
+            self.usage_round_reason = self._round_reason_for_phase(phase, attempts)
+            self.usage_pre_send_guard_status = None
+            self.usage_rebuild_count = rebuild_count if attempts == 1 else 0
+            self._last_provider_messages = list(provider_messages)
+            self._last_provider_tools = list(provider_tool_definitions or ())
+            self._last_provider_request_fingerprint = _context_payload_fingerprint(
+                provider_messages,
+                provider_tool_definitions,
+            )
             attempt_started = time.monotonic()
             if self.before_provider_attempt is not None:
                 await self.before_provider_attempt()
@@ -2530,6 +3388,14 @@ class AgentLoop:
                     user_message_id,
                     stream_idle_timeout_seconds,
                 )
+                # Only a successful physical request advances the typed context
+                # delivery state.  Definite rejects keep the full payload for a
+                # legal retry; accepted-or-unknown attempts never reach here and
+                # remain fail-closed.
+                await self._mark_provider_context_delivered(
+                    provider_messages,
+                    response,
+                )
                 self._last_usage_record = self._record_token_usage(
                     provider_messages,
                     response,
@@ -2542,12 +3408,14 @@ class AgentLoop:
                     tool_definitions=provider_tool_definitions,
                     duration_ms=int((time.monotonic() - attempt_started) * 1000),
                 )
+                self._last_provider_attempt_disposition = "completed"
                 await self._notify_provider_attempt_record(self._last_usage_record)
                 return response
             except _ProviderAttemptError as failure:
                 retry_number = attempts
                 policy = classify_runtime_error(failure.original, retry_number=retry_number)
                 attempt_disposition = failure.attempt_disposition
+                self._last_provider_attempt_disposition = attempt_disposition.value
                 ambiguous = (
                     failure.partial_output
                     or attempt_disposition
@@ -2798,9 +3666,9 @@ class AgentLoop:
                             execution_tool_call,
                             unresolved_part_ids,
                         )
-                    tool = self.tools.get(tool_call.name)
+                    tool = self.tools.get(execution_tool_call.name)
                     if tool is None:
-                        raise ValueError(f"Tool not found: {tool_call.name}")
+                        raise ValueError(f"Tool not found: {execution_tool_call.name}")
 
                     if resolved_historical_marker:
                         # Legacy checkpoints described an already-persisted part
@@ -2877,7 +3745,9 @@ class AgentLoop:
                             "other tool until the user sends a new instruction."
                         )
 
-                    required_args = _tool_required_args(self.tools, tool_call.name, tool)
+                    required_args = _tool_required_args(
+                        self.tools, execution_tool_call.name, tool
+                    )
 
                     # Detect truncated tool calls: output hit max_tokens before arguments were complete
                     if not execution_tool_call.arguments and required_args:
@@ -3169,7 +4039,8 @@ class AgentLoop:
             response = _LoopLLMResponse(content="", tool_calls=[])
 
             try:
-                current_messages = self._compact_working_memory(current_messages)
+                if self.context_rebuilder is None:
+                    current_messages = self._compact_working_memory(current_messages)
                 response = await self._chat_with_retries(
                     current_messages,
                     tool_definitions,
@@ -3497,6 +4368,15 @@ class AgentLoop:
         self._usage_queue_wait_ms = 0
         self._usage_context_build_ms = 0
         self._usage_tool_time_ms = 0
+        round_reason = getattr(self, "usage_round_reason", None)
+        if not round_reason:
+            round_reason = self._round_reason_for_phase(phase, attempt)
+        attempt_kind = str(
+            getattr(self, "usage_attempt_kind", None) or "provider_request"
+        )
+        provider_request_sent = bool(
+            getattr(self, "usage_provider_request_sent", True)
+        )
         record = {
             "timestamp": datetime.now().astimezone().isoformat(),
             "run_id": run_id,
@@ -3545,6 +4425,46 @@ class AgentLoop:
             "pre_adapter_tool_schema_chars": len(serialized_tools),
             "provider_call_id": provider_call_id,
             "context_manifest_ref": context_manifest_ref,
+            "provider_call_ref": getattr(self, "usage_provider_call_ref", None)
+            or context_manifest_ref,
+            "provider_call_hash": getattr(self, "usage_provider_call_hash", None),
+            "provider_request_sent": provider_request_sent,
+            "attempt_kind": attempt_kind,
+            "round_reason": round_reason,
+            "reason_source": getattr(self, "usage_reason_source", None)
+            or "agent_loop",
+            "logical_round_id": getattr(self, "usage_logical_round_id", None),
+            "parent_provider_call_id": getattr(
+                self, "usage_parent_provider_call_id", None
+            ),
+            "context_manifest_version": getattr(
+                self, "usage_context_manifest_version", None
+            ),
+            "pre_send_guard_status": getattr(
+                self, "usage_pre_send_guard_status", None
+            ),
+            "rebuild_count": int(
+                getattr(self, "usage_rebuild_count", 0) or 0
+            ),
+            "new_chars": int(getattr(self, "usage_new_chars", 0) or 0),
+            "repeated_chars": int(
+                getattr(self, "usage_repeated_chars", 0) or 0
+            ),
+            "repeated_stable_chars": int(
+                getattr(self, "usage_repeated_stable_chars", 0) or 0
+            ),
+            "repeated_dynamic_chars": int(
+                getattr(self, "usage_repeated_dynamic_chars", 0) or 0
+            ),
+            "duplicate_tool_result_chars": int(
+                getattr(self, "usage_duplicate_tool_result_chars", 0) or 0
+            ),
+            "duplicate_completed_result_chars": int(
+                getattr(self, "usage_duplicate_completed_result_chars", 0) or 0
+            ),
+            "duplicate_evidence_chars": int(
+                getattr(self, "usage_duplicate_evidence_chars", 0) or 0
+            ),
             "response_tool_call_count": len(
                 getattr(response, "tool_calls", None) or []
             ),
@@ -3787,6 +4707,10 @@ class AgentLoop:
             )
             for msg in self._conversation_history
         ]
+        # This method only assembles the lossless local baseline.  The typed
+        # Provider rebaser is invoked exactly once by ``_chat_with_retries``
+        # for each logical round, after tool schemas are available and before
+        # any budget trim or network admission.
         return [
             LLMMessage(role="system", content=await self._get_system_prompt(), cache_control=True),
             *sanitized_history,

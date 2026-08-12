@@ -199,11 +199,9 @@ async def test_execution_mode_gates_leaf_authoring_and_module_lane_expansion(
     request = ReportRequest(
         operation="full_report",
         instruction="验证执行模式边界",
-        **(
-            {"execution_mode": execution_mode}
-            if execution_mode == "bounded_module_lanes"
-            else {}
-        ),
+        # Keep the historical serial mode explicit; omitted values now mean
+        # the all-ready business path for new requests.
+        execution_mode=execution_mode,
     )
 
     selected = await runner._prepare_module_authoring_mode(
@@ -231,6 +229,8 @@ async def test_submodule_three_wave_dispatches_independent_wave_one_and_two_leav
     )
     runner._cost_boundary = lambda *_args, **_kwargs: asyncio.sleep(0)
     envelopes: list[TaskEnvelope] = []
+    response_active = 0
+    response_max_active = 0
 
     async def agent(
         _agent_id,
@@ -255,27 +255,42 @@ async def test_submodule_three_wave_dispatches_independent_wave_one_and_two_leav
                     [
                         SubmoduleInterfaceSignal(
                             target_module_id="2.3",
-                            target_submodule_id="2.3.1",
+                            target_submodule_id=(
+                                "2.3.1" if submodule_id == "2.1.1" else "2.3.2"
+                            ),
                             status="request",
                             rationale="需要保护边界。",
-                            question="整定是否覆盖异常负荷边界？",
-                            needed_for="完成2.1.1结论。",
+                            question=f"{submodule_id} 整定是否覆盖异常负荷边界？",
+                            needed_for=f"完成{submodule_id}结论。",
                             evidence_ids=["E-0001"],
                         )
                     ]
-                    if submodule_id == "2.1.1"
+                    if submodule_id in {"2.1.1", "2.1.2"}
                     else []
                 ),
             )
         assert envelope.allowed_outputs == ["submodule_interface_response_submission"]
         assert envelope.agent_id == "module-2.3-specialist"
-        assert envelope.target_submodule_ids == ["2.3.1"]
+        nonlocal response_active, response_max_active
+        response_active += 1
+        response_max_active = max(response_max_active, response_active)
+        await asyncio.sleep(0.002)
+        response_active -= 1
+        target_submodule_id = envelope.target_submodule_ids[0]
+        source_submodule_id = {
+            "2.3.1": "2.1.1",
+            "2.3.2": "2.1.2",
+        }[target_submodule_id]
+        request_sequence = {"2.3.1": "001", "2.3.2": "002"}[target_submodule_id]
         return SubmoduleInterfaceResponseSubmission(
             module_id="2.3",
-            submodule_id="2.3.1",
+            submodule_id=target_submodule_id,
             dispositions=[
                 InterfaceDisposition(
-                    request_id="IF-2.1.1-2.3.1-001",
+                    request_id=(
+                        f"IF-{source_submodule_id}-{target_submodule_id}-"
+                        f"{request_sequence}"
+                    ),
                     status="answered",
                     answer="当前整定覆盖正常边界。",
                     evidence_ids=["E-0001"],
@@ -303,6 +318,10 @@ async def test_submodule_three_wave_dispatches_independent_wave_one_and_two_leav
     assert len(discoveries) == 37
     assert all(len(item.target_submodule_ids) == 1 for item in discoveries)
     assert len({item.task_id for item in discoveries}) == 37
+    assert len({item.task_attempt_id for item in discoveries}) == 37
+    assert len({item.task_id for item in discoveries} & {
+        item.task_id for item in responses
+    }) == 0
     assert all(
         item.allowed_tools
         == [
@@ -335,8 +354,14 @@ async def test_submodule_three_wave_dispatches_independent_wave_one_and_two_leav
         if item.agent_id == "module-2.1-specialist"
     }
     assert len(sibling_shared_refs) == 1
-    assert [item.agent_id for item in responses] == ["module-2.3-specialist"]
+    assert len(responses) == 2
+    assert {item.agent_id for item in responses} == {"module-2.3-specialist"}
+    assert len({item.task_id for item in responses}) == len(responses)
+    assert len({item.task_attempt_id for item in responses}) == len(responses)
+    assert response_max_active == len(responses) == 2
     assert set(state["submodule_discovery_barrier_refs"]) == set(MODULE_IDS)
+    assert len(state["submodule_discovery_context_sha256"]) == 37
+    assert len(state["submodule_response_context_sha256"]) == 2
     assert len(state["submodule_collaboration_bundle_refs"]) == 37
     assert set(state["collaboration_bundle_refs"]) == set(MODULE_IDS)
     assert checkpoints[-2:] == [
@@ -374,7 +399,7 @@ async def test_submodule_three_wave_dispatches_independent_wave_one_and_two_leav
 
 
 @pytest.mark.asyncio
-async def test_module_report_leaf_failure_resumes_only_failed_and_unstarted_leafs(
+async def test_module_report_leaf_failure_drains_all_ready_siblings_and_resumes_failed_leaf(
     tmp_path: Path,
 ) -> None:
     runner = object.__new__(ReportWorkflowRunner)
@@ -415,8 +440,8 @@ async def test_module_report_leaf_failure_resumes_only_failed_and_unstarted_leaf
         await runner._module_local_submodule_preparation(
             ("2.4",), state, "workflow-module-local-leaf-resume"
         )
-    assert len(first_started) == 5
-    assert first_succeeded == list(expected[:4])
+    assert len(first_started) == len(expected)
+    assert set(first_succeeded) == set(expected) - {failing_id}
 
     resumed_calls: list[tuple[str, ...]] = []
 
@@ -543,7 +568,9 @@ async def test_leaf_revision_failure_keeps_completed_siblings_for_same_run_resum
             subject=subject,
             requested_changes=[change],
         )
-    assert len(first_started) == 3
+    # all_ready admits every affected leaf; the old fixed worker-cap assertion
+    # (three) no longer describes this revision cohort.
+    assert len(first_started) == len(targets) == 5
     assert set(first_succeeded) == set(first_started) - {failing_id}
 
     resumed_calls: list[str] = []
@@ -666,7 +693,7 @@ async def test_wave_three_dispatches_and_persists_37_independent_leaf_results(
         assert len(envelope.target_submodule_ids) == 1
         submodule_id = envelope.target_submodule_ids[0]
         module_id = resolve_submodule(submodule_id).module_id
-        assert session_key == f"submodule-{submodule_id}"
+        assert session_key == f"submodule-author-{submodule_id}-session"
         assert set(envelope.artifact_delivery_modes) == set(envelope.input_refs)
         author_envelopes.append(envelope)
         calls.append(submodule_id)
@@ -704,7 +731,7 @@ async def test_wave_three_dispatches_and_persists_37_independent_leaf_results(
     }
     assert len(calls) == 37
     assert set(calls) == expected_leaves
-    assert max_active == state["request"].submodule_task_concurrency
+    assert max_active == len(expected_leaves)
     assert all("CORE-METHOD-SENTINEL" in item.inline_context for item in author_envelopes)
     assert all(
         "FULL-ANALYSIS-SENTINEL" not in item.inline_context

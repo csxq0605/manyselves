@@ -17,7 +17,6 @@ from pydantic import Field
 
 from .agentic_models import (
     CROSS_REVIEW_DIMENSIONS,
-    FINAL_AUDIT_SECTION_IDS,
     ChiefRevisionSubmission,
     CrossReviewFinding,
     CrossReviewFindingSubmission,
@@ -45,10 +44,12 @@ from .assets import (
     validate_editor_quality,
 )
 from .input_contracts import (
+    AggregateFinalReviewInput,
     ChiefRevisionInput,
     CrossReviewInput,
     FinalAuditSnapshot,
     FinalReviewInput,
+    CrossDecisionPackView,
     ModuleReviewInput,
     ModuleRevisionDiff,
     ModuleRevisionInput,
@@ -63,7 +64,17 @@ from .input_contracts import (
     module_content_view,
     strip_runtime_claim_markers,
 )
-from .models import CHIEF_SECTION_RESULT_PART_IDS
+from .module_collaboration import (
+    InterfaceCrossClosure,
+    InterfaceResolutionClosureBatch,
+    InterfaceResolutionRegistry,
+    apply_interface_cross_closure,
+    interface_owner_finding_id,
+)
+from .models import (
+    CHIEF_SECTION_RESULT_PART_IDS,
+    FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
+)
 from .parallel_runtime import (
     ArtifactRef,
     CrossOwnerBarrier,
@@ -167,6 +178,11 @@ class CrossReviewProgress(StrictModel):
     review_round: int = 0
     revised_owner_ids: list[str] = Field(default_factory=list)
     cross_owner_barrier_ref: str | None = None
+    interface_registry_ref: str | None = None
+    interface_registry_sha256: str | None = None
+    interface_closure_refs: list[str] = Field(default_factory=list)
+    interface_closure_sha256: dict[str, str] = Field(default_factory=dict)
+    interface_residual_risks: dict[str, str] = Field(default_factory=dict)
 
 
 class FinalReviewProgress(StrictModel):
@@ -310,7 +326,11 @@ def _apply_chief_patch(
 
 
 def _final_audit_markdown(canonical_markdown: str) -> str:
-    """Remove the immutable Chapter 2 block from model-visible final-audit prose."""
+    """Return only Chief-owned Chapter 1/3 prose for semantic final audit.
+
+    Chapter 2 is immutable module prose and Chapter 4 is structural-only for
+    the later deterministic gate; neither is sent to the Final reviewer.
+    """
 
     chapter_two = "\n## 2. 评估内容描述"
     chapter_three = "\n## 3. 结论与建议"
@@ -318,7 +338,11 @@ def _final_audit_markdown(canonical_markdown: str) -> str:
     end = canonical_markdown.find(chapter_three)
     if start < 0 or end < 0 or end <= start:
         raise ReviewLifecycleError("canonical report is missing the fixed Chapter 2/3 boundary")
-    return canonical_markdown[:start] + canonical_markdown[end:]
+    audit_markdown = canonical_markdown[:start] + canonical_markdown[end:]
+    chapter_four = re.search(r"\n#{1,6}\s+4\.\s+", audit_markdown)
+    if chapter_four is not None:
+        audit_markdown = audit_markdown[: chapter_four.start()]
+    return audit_markdown.rstrip()
 
 
 def _final_audit_section_bodies(
@@ -330,8 +354,7 @@ def _final_audit_section_bodies(
         section_id: strip_runtime_claim_markers(
             getattr(subject, CHIEF_SECTION_RESULT_PART_IDS[section_id]) or ""
         ).rstrip()
-        for section_id in FINAL_AUDIT_SECTION_IDS
-        if section_id != "4" or subject.special_topic_plan is not None
+        for section_id in FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS
     }
 
 
@@ -688,6 +711,98 @@ def _validate_final_findings(
                 "final-review finding targets an inactive report section: "
                 f"finding={finding.id}; sections={invalid}"
             )
+
+
+def _final_cross_decision_view(
+    runner: "ReportWorkflowRunner",
+    state: dict,
+) -> CrossDecisionPackView:
+    """Load the current-run CrossDecisionPack view for normal Final review."""
+
+    pack = state.get("cross_decision_pack")
+    if pack is None and hasattr(runner, "_materialize_chief_cross_decision_pack"):
+        try:
+            pack = runner._materialize_chief_cross_decision_pack(state)
+        except Exception as exc:
+            raise ReviewLifecycleError(
+                "Final review requires a materialized current-run CrossDecisionPack"
+            ) from exc
+    if pack is None or not hasattr(pack, "model_dump"):
+        raise ReviewLifecycleError(
+            "Final review requires a materialized current-run CrossDecisionPack"
+        )
+    payload = pack.model_dump(mode="python")
+    payload.pop("artifact_sha256", None)
+    payload.pop("pack_sha256", None)
+    payload["artifact_refs"] = sorted(pack.artifact_sha256)
+    try:
+        return CrossDecisionPackView.model_validate(payload)
+    except ValueError as exc:
+        raise ReviewLifecycleError(
+            "Final review CrossDecisionPack view is invalid"
+        ) from exc
+
+
+def _final_review_input(
+    *,
+    runner: "ReportWorkflowRunner",
+    state: dict,
+    aggregate_mode: bool,
+    phase: str,
+    subject_ref: str,
+    subject_revision: int,
+    subject_metadata,
+    subject_metadata_sha256: str | None,
+    canonical_markdown: str | None,
+    changed_section_bodies: dict[str, str],
+    unchanged_section_sha256: dict[str, str],
+    required_section_ids: list[str],
+    required_findings: list[FinalReviewFinding],
+    revision_responses: list[RevisionResponse],
+    validation_report_ref: str,
+    validation_report: ValidationReport,
+):
+    """Construct the normal or explicit aggregate Final input adapter."""
+
+    common = {
+        "phase": phase,
+        "run_id": state["run_id"],
+        "subject_ref": subject_ref,
+        "subject_revision": subject_revision,
+        "subject_metadata": subject_metadata,
+        "subject_metadata_sha256": subject_metadata_sha256,
+        "canonical_markdown": canonical_markdown,
+        "changed_section_bodies": changed_section_bodies,
+        "unchanged_section_sha256": unchanged_section_sha256,
+        "required_section_ids": required_section_ids,
+        "required_findings": required_findings,
+        "revision_responses": revision_responses,
+        "validation_report_ref": validation_report_ref,
+        "validation_report": validation_report,
+    }
+    if aggregate_mode:
+        return AggregateFinalReviewInput(
+            mode="aggregate_existing",
+            cross_context=None,
+            residual_risks=list(state.get("final_residual_risks", [])),
+            **common,
+        )
+    cross_view = _final_cross_decision_view(runner, state)
+    residual_risks = list(
+        dict.fromkeys(
+            [
+                *getattr(cross_view, "residual_risks", []),
+                *state.get("final_residual_risks", []),
+            ]
+        )
+    )
+    return FinalReviewInput(
+        cross_decision=cross_view,
+        cross_decision_pack_ref=state.get("cross_decision_pack_ref", ""),
+        cross_decision_pack_sha256=state.get("cross_decision_pack_sha256", ""),
+        residual_risks=residual_risks,
+        **common,
+    )
 
 
 async def _main_exception_decision(
@@ -1063,6 +1178,12 @@ async def request_module_revision(
                 concurrency=int(
                     getattr(state.get("request"), "submodule_task_concurrency", 8)
                 ),
+                # A finding round is a business cohort: every affected leaf
+                # is ready once the reviewer emits its typed finding.  The
+                # helper still groups multiple findings for one leaf into a
+                # single task, while all distinct leaves run concurrently;
+                # Provider backpressure is enforced below this scheduler.
+                all_ready=True,
                 execute=execute_leaf,
                 persist=lambda target_id, patch: (
                     runner._persist_submodule_task_completion(
@@ -1317,6 +1438,45 @@ async def run_module_review(
         progress=progress,
         regression_context=regression_context,
     )
+    if progress is not None and progress.next_action == "completed":
+        # A verified completion is terminal.  Resume must return the persisted
+        # typed subject without asking the Provider to repeat the auditor
+        # finding/recheck sequence.  If the completion record is absent or
+        # malformed, treat the progress marker as stale and continue through
+        # the normal deterministic validation path.
+        completion_ref = state.get("module_review_completion_refs", {}).get(module_id)
+        if completion_ref is None:
+            completion_ref = (
+                f"{review_root}/completion-r{progress.current.revision}.json"
+            )
+        completion_path = runner.service.workspace / completion_ref
+        if completion_path.is_file():
+            try:
+                completion = ReviewCompletionRecord.model_validate_json(
+                    completion_path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError) as exc:
+                raise ReviewLifecycleError(
+                    "completed module review marker is unreadable: "
+                    f"{completion_ref}"
+                ) from exc
+            if (
+                completion.lifecycle != "module"
+                or completion.run_id != state["run_id"]
+                or completion.reviewer_session_key != reviewer_session_key
+                or completion.subject_refs
+                != [
+                    f"Work/runs/{state['run_id']}/modules/"
+                    f"{module_id}-r{progress.current.revision}.json"
+                ]
+            ):
+                raise ReviewLifecycleError(
+                    "completed module review marker does not bind the current subject"
+                )
+            state.setdefault("module_review_completion_refs", {})[module_id] = (
+                str(completion_ref)
+            )
+            return progress.current
     if progress is not None and progress.next_action != "completed":
         if progress.run_id != state["run_id"] or progress.module_id != module_id:
             raise ReviewLifecycleError("module review progress identity mismatch")
@@ -1977,6 +2137,131 @@ def _cross_owner_artifact_ref(
     )
 
 
+def _verify_cross_owner_barrier(
+    runner: "ReportWorkflowRunner",
+    barrier: CrossOwnerBarrier,
+    *,
+    barrier_path: Path,
+    expected_run_id: str,
+    expected_round: int,
+    expected_modules: set[str],
+) -> None:
+    """Validate the exact refs, hashes, revisions and owner set at the barrier."""
+
+    run_id = barrier.run_id
+    run_root = (runner.service.workspace / f"Work/runs/{run_id}").resolve()
+    if (
+        barrier.run_id != expected_run_id
+        or not barrier_path.resolve().is_relative_to(run_root)
+        or barrier.review_round != expected_round
+        or set(barrier.target_modules) != expected_modules
+        or set(barrier.completion_refs) != expected_modules
+        or set(barrier.completion_hashes) != expected_modules
+    ):
+        raise ReviewLifecycleError("Cross owner barrier identity mismatch")
+    if barrier.completion_revisions and set(barrier.completion_revisions) != expected_modules:
+        raise ReviewLifecycleError("Cross owner barrier revision set mismatch")
+    payload = {
+        "run_id": barrier.run_id,
+        "review_round": barrier.review_round,
+        "target_modules": sorted(barrier.target_modules, key=float),
+        "completion_refs": {
+            module_id: barrier.completion_refs[module_id]
+            for module_id in sorted(expected_modules, key=float)
+        },
+        "completion_hashes": {
+            module_id: barrier.completion_hashes[module_id]
+            for module_id in sorted(expected_modules, key=float)
+        },
+        **(
+            {
+                "completion_revisions": {
+                    module_id: barrier.completion_revisions[module_id]
+                    for module_id in sorted(expected_modules, key=float)
+                }
+            }
+            if barrier.completion_revisions
+            else {}
+        ),
+    }
+    expected_barrier_sha = hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if barrier.barrier_sha256 != expected_barrier_sha:
+        raise ReviewLifecycleError("Cross owner barrier hash mismatch")
+    revisions: dict[str, int] = {}
+    for module_id in sorted(expected_modules, key=float):
+        ref = barrier.completion_refs[module_id]
+        completion_path = (runner.service.workspace / ref).resolve()
+        if not completion_path.is_relative_to(run_root) or not completion_path.is_file():
+            raise ReviewLifecycleError(
+                f"Cross owner barrier completion is unreadable: {ref}"
+            )
+        try:
+            completion = CrossOwnerCompletion.model_validate_json(
+                completion_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise ReviewLifecycleError(
+                f"Cross owner barrier completion is invalid: {ref}"
+            ) from exc
+        if (
+            completion.run_id != barrier.run_id
+            or completion.review_round != barrier.review_round
+            or completion.module_id != module_id
+            or completion.completion_sha256() != barrier.completion_hashes[module_id]
+        ):
+            raise ReviewLifecycleError(
+                f"Cross owner barrier completion identity/hash mismatch: {module_id}"
+            )
+        for artifact in (
+            completion.subject,
+            completion.local_review_completion,
+            completion.machine_validation,
+        ):
+            if not (
+                runner.service.workspace / artifact.ref
+            ).resolve().is_relative_to(run_root):
+                raise ReviewLifecycleError(
+                    f"Cross owner barrier artifact leaves current run: {artifact.ref}"
+                )
+        subject_actual = _cross_owner_artifact_ref(runner, completion.subject.ref)
+        review_actual = _cross_owner_artifact_ref(
+            runner,
+            completion.local_review_completion.ref,
+        )
+        machine_actual = _cross_owner_artifact_ref(
+            runner,
+            completion.machine_validation.ref,
+        )
+        for label, declared, actual in (
+            ("subject", completion.subject, subject_actual),
+            ("local review", completion.local_review_completion, review_actual),
+            ("machine validation", completion.machine_validation, machine_actual),
+        ):
+            if declared.sha256 != actual.sha256 or declared.size != actual.size:
+                raise ReviewLifecycleError(
+                    f"Cross owner barrier {label} hash mismatch: {module_id}"
+                )
+        subject_match = re.search(r"-r([0-9]+)\.json$", completion.subject.ref)
+        if completion.subject_revision is not None:
+            revision = completion.subject_revision
+        elif subject_match is not None:
+            revision = int(subject_match.group(1))
+        else:
+            raise ReviewLifecycleError(
+                f"Cross owner barrier subject has no revision: {module_id}"
+            )
+        revisions[module_id] = revision
+    if barrier.completion_revisions and revisions != barrier.completion_revisions:
+        raise ReviewLifecycleError("Cross owner barrier revisions do not bind subjects")
+
+
 async def _run_cross_owner_lane(
     runner: "ReportWorkflowRunner",
     *,
@@ -2224,6 +2509,7 @@ async def _run_cross_owner_lane(
         review_round=review_round,
         module_id=module_id,
         semantic_key=semantic_key,
+        subject_revision=local_reviewed.revision,
         subject=_cross_owner_artifact_ref(runner, final_subject_ref),
         local_review_completion=_cross_owner_artifact_ref(
             runner, local_review_ref
@@ -2287,7 +2573,51 @@ async def run_cross_review(
     review_round = 0
     revised_owner_ids: set[str] = set()
     cross_owner_barrier_ref: str | None = None
+    interface_registry: InterfaceResolutionRegistry | None = state.get(
+        "interface_resolution_registry"
+    )
+    interface_registry_ref: str | None = state.get(
+        "interface_resolution_registry_ref"
+    )
+    interface_registry_sha256: str | None = state.get(
+        "interface_resolution_registry_sha256"
+    )
+    interface_closure_refs: list[str] = list(state.get("interface_closure_refs", []))
+    interface_closure_sha256: dict[str, str] = dict(
+        state.get("interface_closure_sha256", {})
+    )
+    interface_residual_risks: dict[str, str] = dict(
+        state.get("interface_residual_risks", {})
+    )
     progress_ref = f"Work/runs/{state['run_id']}/reviews/cross-progress.json"
+
+    if interface_registry_ref is not None:
+        run_prefix = f"Work/runs/{state['run_id']}/"
+        if not interface_registry_ref.startswith(run_prefix):
+            raise ReviewLifecycleError(
+                "Cross interface registry reference is outside the current run"
+            )
+
+    if interface_registry is None and interface_registry_ref is not None:
+        registry_path = runner.service.workspace / interface_registry_ref
+        if not registry_path.is_file():
+            raise ReviewLifecycleError(
+                f"Cross interface registry is missing: {interface_registry_ref}"
+            )
+        actual_hash = hashlib.sha256(registry_path.read_bytes()).hexdigest()
+        if interface_registry_sha256 != actual_hash:
+            raise ReviewLifecycleError(
+                "Cross interface registry hash does not match its checkpoint binding"
+            )
+        try:
+            interface_registry = InterfaceResolutionRegistry.model_validate_json(
+                registry_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise ReviewLifecycleError("Cross interface registry is invalid") from exc
+        if interface_registry.run_id != state["run_id"]:
+            raise ReviewLifecycleError("Cross interface registry belongs to another run")
+        state["interface_resolution_registry"] = interface_registry
 
     def save_progress(next_action: str) -> None:
         _write_model(
@@ -2309,12 +2639,42 @@ async def run_cross_review(
                 review_round=review_round,
                 revised_owner_ids=sorted(revised_owner_ids),
                 cross_owner_barrier_ref=cross_owner_barrier_ref,
+                interface_registry_ref=interface_registry_ref,
+                interface_registry_sha256=interface_registry_sha256,
+                interface_closure_refs=interface_closure_refs,
+                interface_closure_sha256=interface_closure_sha256,
+                interface_residual_risks=interface_residual_risks,
             ),
         )
 
     progress = (
         _load_progress(runner, progress_ref, CrossReviewProgress) if state.get("resume") else None
     )
+    # Crash recovery can leave the immutable Cross r0 finding artifact and an
+    # owner completion on disk before the tiny progress checkpoint write.  Do
+    # not charge Cross r0 again in that window; reconstruct the minimal
+    # revision-wave state from the immutable finding submission below.
+    resume_from_finding_only = False
+    if progress is None and state.get("resume"):
+        finding_ref = f"Work/runs/{state['run_id']}/reviews/cross-findings-r0.json"
+        finding_path = runner.service.workspace / finding_ref
+        if finding_path.is_file():
+            try:
+                finding_submission = CrossReviewFindingSubmission.model_validate_json(
+                    finding_path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError) as exc:
+                raise ReviewLifecycleError(
+                    "Cross r0 finding artifact is unreadable during resume"
+                ) from exc
+            finding_refs = [finding_ref]
+            pending = {
+                finding.id: finding for finding in finding_submission.findings
+            }
+            prior_synthesis = finding_submission.synthesis_inputs
+            phase = "initial"
+            review_round = 0
+            resume_from_finding_only = True
     if progress is not None and progress.next_action != "completed":
         if progress.run_id != state["run_id"]:
             raise ReviewLifecycleError("Cross review progress identity mismatch")
@@ -2332,6 +2692,11 @@ async def run_cross_review(
         review_round = progress.review_round
         revised_owner_ids = set(progress.revised_owner_ids)
         cross_owner_barrier_ref = progress.cross_owner_barrier_ref
+        interface_registry_ref = progress.interface_registry_ref
+        interface_registry_sha256 = progress.interface_registry_sha256
+        interface_closure_refs = list(progress.interface_closure_refs)
+        interface_closure_sha256 = dict(progress.interface_closure_sha256)
+        interface_residual_risks = dict(progress.interface_residual_risks)
         if cross_owner_barrier_ref is not None:
             state["cross_owner_barrier_ref"] = cross_owner_barrier_ref
 
@@ -2345,48 +2710,266 @@ async def run_cross_review(
             responses_by_module = {}
             local_review_refs = {}
             machine_refs = []
-        targets = [
+        owner_targets = [
             module_id
             for module_id in sorted(grouped, key=float)
             if module_id not in revised_owner_ids
         ]
-        if not targets:
+        if not owner_targets:
             if grouped:
                 if cross_owner_barrier_ref is None:
                     raise ReviewLifecycleError(
                         "Cross owner resume lacks its exact owner barrier"
                     )
+                barrier_path = runner.service.workspace / cross_owner_barrier_ref
                 try:
                     barrier = CrossOwnerBarrier.model_validate_json(
-                        (
-                            runner.service.workspace / cross_owner_barrier_ref
-                        ).read_text(encoding="utf-8")
+                        barrier_path.read_text(encoding="utf-8")
                     )
                 except (OSError, ValueError) as exc:
                     raise ReviewLifecycleError(
                         "Cross owner resume barrier is unreadable or invalid"
                     ) from exc
-                if (
-                    barrier.run_id != state["run_id"]
-                    or barrier.review_round != review_round
-                    or set(barrier.target_modules) != set(grouped)
-                ):
-                    raise ReviewLifecycleError(
-                        "Cross owner resume barrier identity mismatch"
-                    )
+                _verify_cross_owner_barrier(
+                    runner,
+                    barrier,
+                    barrier_path=barrier_path,
+                    expected_run_id=state["run_id"],
+                    expected_round=review_round,
+                    expected_modules=set(grouped),
+                )
             return
 
-        parallel_owner_lanes = (
-            getattr(
-                state.get("request"),
-                "execution_mode",
-                "current_serial_review",
-            )
-            == "bounded_module_lanes"
+        execution_mode = getattr(
+            state.get("request"),
+            "execution_mode",
+            "current_serial_review",
         )
+        # ``all_ready`` is the business path: every distinct owner is admitted
+        # immediately and the Provider router, rather than this helper, owns
+        # physical backpressure.  ``bounded_module_lanes`` remains a legacy
+        # compatibility mode for checkpoints/tests that explicitly request its
+        # fixed worker cap.  Cross r0/r1 themselves are always serial.
+        parallel_owner_lanes = execution_mode in {
+            "all_ready",
+            "bounded_module_lanes",
+        }
+        all_ready_owner_lanes = execution_mode == "all_ready"
         results: dict[str, _CrossOwnerLaneResult] = {}
+
+        def _promote_result(module_id: str, result: _CrossOwnerLaneResult) -> None:
+            """Single-writer promotion of one private owner-lane result."""
+
+            modules[module_id] = result.module
+            state["module_submissions"][module_id] = result.module
+            state.setdefault("specialist_submissions", {})[module_id] = result.module
+            state.setdefault("module_review_completion_refs", {})[module_id] = (
+                result.local_review_ref
+            )
+            responses_by_module[module_id] = result.responses
+            if result.machine_validation_ref not in machine_refs:
+                machine_refs.append(result.machine_validation_ref)
+            local_review_refs[module_id] = result.local_review_ref
+            revised_owner_ids.add(module_id)
+
+        def _validate_artifact(artifact: ArtifactRef, *, label: str) -> None:
+            run_root = (runner.service.workspace / f"Work/runs/{state['run_id']}").resolve()
+            path = (runner.service.workspace / artifact.ref).resolve()
+            if not path.is_relative_to(run_root) or not path.is_file():
+                raise ReviewLifecycleError(
+                    f"Cross owner {label} is missing or outside the current run: {artifact.ref}"
+                )
+            content = path.read_bytes()
+            if (
+                hashlib.sha256(content).hexdigest() != artifact.sha256
+                or len(content) != artifact.size
+            ):
+                raise ReviewLifecycleError(
+                    f"Cross owner {label} hash/size mismatch: {artifact.ref}"
+                )
+
+        def _recover_completed_lane(
+            module_id: str,
+        ) -> _CrossOwnerLaneResult | None:
+            """Recover a verified completion without invoking any Agent."""
+
+            lane_root = (
+                runner.service.workspace
+                / f"Work/runs/{state['run_id']}/lanes/cross-r{review_round}/"
+                f"module-{module_id}"
+            )
+            candidates: list[tuple[int, Path, CrossOwnerCompletion]] = []
+            for path in lane_root.glob("completion-r*.json"):
+                try:
+                    completion = CrossOwnerCompletion.model_validate_json(
+                        path.read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError):
+                    continue
+                if (
+                    completion.run_id != state["run_id"]
+                    or completion.review_round != review_round
+                    or completion.module_id != module_id
+                ):
+                    continue
+                revision = completion.subject_revision
+                if revision is None:
+                    match = re.search(r"completion-r([0-9]+)\.json$", path.name)
+                    if match is None:
+                        continue
+                    revision = int(match.group(1))
+                candidates.append((revision, path, completion))
+            for _revision, completion_path, completion in sorted(
+                candidates,
+                key=lambda item: (item[0], item[1].as_posix()),
+                reverse=True,
+            ):
+                _validate_artifact(completion.subject, label="subject")
+                _validate_artifact(
+                    completion.local_review_completion,
+                    label="local review completion",
+                )
+                _validate_artifact(
+                    completion.machine_validation,
+                    label="machine validation",
+                )
+                subject_path = runner.service.workspace / completion.subject.ref
+                try:
+                    subject = ModuleSubmission.model_validate_json(
+                        subject_path.read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError) as exc:
+                    raise ReviewLifecycleError(
+                        f"Cross owner completion subject is invalid: {completion.subject.ref}"
+                    ) from exc
+                if subject.module_id != module_id:
+                    raise ReviewLifecycleError(
+                        "Cross owner completion subject owner mismatch: "
+                        f"expected={module_id}; actual={subject.module_id}"
+                    )
+                if (
+                    completion.subject_revision is not None
+                    and completion.subject_revision != subject.revision
+                ):
+                    raise ReviewLifecycleError(
+                        f"Cross owner completion revision mismatch: {module_id}"
+                    )
+                _validate_responses(
+                    subject.revision_responses,
+                    {finding.id for finding in grouped[module_id]},
+                    {
+                        target_id
+                        for finding in grouped[module_id]
+                        for target_id in finding.target_submodule_ids
+                    },
+                )
+                machine_ref = completion.machine_validation.ref
+                try:
+                    machine_report = ValidationReport.model_validate_json(
+                        (runner.service.workspace / machine_ref).read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                except (OSError, ValueError) as exc:
+                    raise ReviewLifecycleError(
+                        f"Cross owner machine validation is invalid: {machine_ref}"
+                    ) from exc
+                _require_validation_binding(
+                    runner,
+                    machine_report,
+                    subject_ref=completion.subject.ref,
+                    subject_revision=subject.revision,
+                )
+                if not machine_report.passed:
+                    raise ReviewLifecycleError(
+                        f"Cross owner completion binds a failed machine validation: {module_id}"
+                    )
+                # The completion file itself is immutable evidence.  Hashing
+                # its canonical payload catches accidental replacement before
+                # it can be promoted into the next Cross input.
+                expected_completion_ref = completion_path.relative_to(
+                    runner.service.workspace
+                ).as_posix()
+                if expected_completion_ref != (
+                    f"Work/runs/{state['run_id']}/lanes/cross-r{review_round}/"
+                    f"module-{module_id}/completion-r{subject.revision}.json"
+                ):
+                    raise ReviewLifecycleError(
+                        f"Cross owner completion path/revision mismatch: {module_id}"
+                    )
+                return _CrossOwnerLaneResult(
+                    module=subject,
+                    responses=list(subject.revision_responses),
+                    local_review_ref=completion.local_review_completion.ref,
+                    machine_validation_ref=completion.machine_validation.ref,
+                    completion_ref=expected_completion_ref,
+                    completion=completion,
+                )
+            return None
+
+        def _owner_has_accepted_unknown(module_id: str) -> bool:
+            """Fail closed when a Provider attempt may already have been accepted."""
+
+            roots = [
+                runner.service.workspace
+                / f"Work/runs/{state['run_id']}/lanes/cross-r{review_round}/module-{module_id}/exceptions",
+                runner.service.workspace
+                / f"Work/runs/{state['run_id']}/collaboration/ambiguities",
+                runner.service.workspace
+                / f"Work/runs/{state['run_id']}/context-manifests/provider-calls",
+            ]
+            for root in roots:
+                if not root.is_dir():
+                    continue
+                for path in root.rglob("*.json"):
+                    try:
+                        payload = json.loads(path.read_text(encoding="utf-8"))
+                    except (OSError, ValueError, TypeError):
+                        continue
+                    disposition = str(
+                        payload.get("attempt_disposition")
+                        or payload.get("disposition")
+                        or ""
+                    )
+                    task_id = str(payload.get("task_id") or "")
+                    payload_module_id = str(payload.get("module_id") or "")
+                    if (
+                        disposition == "accepted_or_unknown"
+                        and (
+                            payload_module_id == module_id
+                            or f"module-{module_id}" in task_id
+                            or f"-{module_id}." in task_id
+                        )
+                    ):
+                        return True
+            return False
+
+        # A crash can occur after a private lane completion is durable but
+        # before the coordinator writes progress.  Promote such completions
+        # first; only owners with no verified completion are runnable.
+        runnable_targets: list[str] = []
+        for module_id in sorted(set(grouped).intersection(revised_owner_ids), key=float):
+            recovered = _recover_completed_lane(module_id)
+            if recovered is None:
+                raise ReviewLifecycleError(
+                    "Cross owner progress marks an owner complete but its "
+                    f"verified completion is missing: {module_id}"
+                )
+            results[module_id] = recovered
+        for module_id in owner_targets:
+            recovered = _recover_completed_lane(module_id)
+            if recovered is not None:
+                results[module_id] = recovered
+                continue
+            if _owner_has_accepted_unknown(module_id):
+                raise ReviewLifecycleError(
+                    "Cross owner Provider attempt is accepted_or_unknown; "
+                    f"resume will not replay module {module_id}"
+                )
+            runnable_targets.append(module_id)
+
         if not parallel_owner_lanes:
-            for module_id in targets:
+            for module_id in runnable_targets:
                 results[module_id] = await _run_cross_owner_lane(
                     runner,
                     state=state,
@@ -2399,7 +2982,7 @@ async def run_cross_review(
                     defer_main_exceptions=False,
                 )
 
-        parallel_targets = targets if parallel_owner_lanes else []
+        parallel_targets = runnable_targets if parallel_owner_lanes else []
         timing_history = TaskTimingHistory(runner.service.workspace)
         candidates = []
         for index, module_id in enumerate(parallel_targets):
@@ -2433,14 +3016,16 @@ async def run_cross_review(
                 )
             )
         scheduler = AdaptiveTaskScheduler(candidates)
-        failures: list[BaseException] = []
+        failures_by_module: dict[str, BaseException] = {}
         deferred_main_modules: set[str] = set()
         freeze_admission = asyncio.Event()
 
         def persist_exception_candidate(
             module_id: str,
-            disposition: Literal["escalate", "failed"],
+            disposition: Literal["escalate", "failed", "accepted_or_unknown"],
             reason: str,
+            *,
+            attempt_disposition: str | None = None,
         ) -> None:
             attempt_id = f"cross-owner-attempt-{uuid4().hex}"
             runner.service.store.write_json(
@@ -2455,8 +3040,72 @@ async def run_cross_review(
                     disposition=disposition,
                     reason=reason,
                     task_attempt_id=attempt_id,
+                    attempt_disposition=attempt_disposition,
                 ).model_dump(mode="json"),
             )
+
+        async def run_admitted_lane(module_id: str) -> None:
+            started = time.perf_counter()
+            try:
+                results[module_id] = await _run_cross_owner_lane(
+                    runner,
+                    state=state,
+                    workflow_id=workflow_id,
+                    module_id=module_id,
+                    current=modules[module_id],
+                    findings=grouped[module_id],
+                    finding_refs=finding_refs,
+                    review_round=review_round,
+                )
+                timing_history.record(
+                    run_id=state["run_id"],
+                    task_id=module_id,
+                    task_kind="cross_owner_lane",
+                    owner_key=module_id,
+                    duration_ms=int((time.perf_counter() - started) * 1000),
+                    status="completed",
+                )
+            except DeferredMainDecision as exc:
+                persist_exception_candidate(module_id, "escalate", str(exc))
+                deferred_main_modules.add(module_id)
+                timing_history.record(
+                    run_id=state["run_id"],
+                    task_id=module_id,
+                    task_kind="cross_owner_lane",
+                    owner_key=module_id,
+                    duration_ms=int((time.perf_counter() - started) * 1000),
+                    status="deferred",
+                )
+            except BaseException as exc:
+                accepted_unknown = (
+                    getattr(exc, "attempt_disposition", None)
+                    == "accepted_or_unknown"
+                    or exc.__class__.__name__ == "ProviderAttemptRecoveryRequired"
+                )
+                persist_exception_candidate(
+                    module_id,
+                    "accepted_or_unknown" if accepted_unknown else "failed",
+                    str(exc),
+                    attempt_disposition=(
+                        "accepted_or_unknown" if accepted_unknown else None
+                    ),
+                )
+                failures_by_module[module_id] = exc
+                # all_ready has already admitted every ready owner.  Do not
+                # stop siblings when one ordinary owner fails; they must drain
+                # to terminal state before the failure is surfaced.  The
+                # explicit bounded compatibility mode retains its historical
+                # freeze-on-failure behavior.
+                if not all_ready_owner_lanes:
+                    freeze_admission.set()
+                timing_history.record(
+                    run_id=state["run_id"],
+                    task_id=module_id,
+                    task_kind="cross_owner_lane",
+                    owner_key=module_id,
+                    duration_ms=int((time.perf_counter() - started) * 1000),
+                    status="failed",
+                )
 
         async def worker() -> None:
             while True:
@@ -2465,78 +3114,42 @@ async def run_cross_review(
                 candidate = await scheduler.next()
                 if candidate is None:
                     return
-                module_id = candidate.task_id
-                started = time.perf_counter()
                 if freeze_admission.is_set():
                     return
-                try:
-                    results[module_id] = await _run_cross_owner_lane(
-                        runner,
-                        state=state,
-                        workflow_id=workflow_id,
-                        module_id=module_id,
-                        current=modules[module_id],
-                        findings=grouped[module_id],
-                        finding_refs=finding_refs,
-                        review_round=review_round,
-                    )
-                    timing_history.record(
-                        run_id=state["run_id"],
-                        task_id=module_id,
-                        task_kind="cross_owner_lane",
-                        owner_key=module_id,
-                        duration_ms=int(
-                            (time.perf_counter() - started) * 1000
-                        ),
-                        status="completed",
-                    )
-                except DeferredMainDecision as exc:
-                    persist_exception_candidate(
-                        module_id,
-                        "escalate",
-                        str(exc),
-                    )
-                    deferred_main_modules.add(module_id)
-                    timing_history.record(
-                        run_id=state["run_id"],
-                        task_id=module_id,
-                        task_kind="cross_owner_lane",
-                        owner_key=module_id,
-                        duration_ms=int(
-                            (time.perf_counter() - started) * 1000
-                        ),
-                        status="deferred",
-                    )
-                except BaseException as exc:
-                    persist_exception_candidate(
-                        module_id,
-                        "failed",
-                        str(exc),
-                    )
-                    failures.append(exc)
-                    freeze_admission.set()
-                    timing_history.record(
-                        run_id=state["run_id"],
-                        task_id=module_id,
-                        task_kind="cross_owner_lane",
-                        owner_key=module_id,
-                        duration_ms=int(
-                            (time.perf_counter() - started) * 1000
-                        ),
-                        status="failed",
-                    )
+                await run_admitted_lane(candidate.task_id)
 
         configured = int(
             getattr(state.get("request"), "module_lane_concurrency", 5)
         )
-        workers = [
-            asyncio.create_task(
-                worker(),
-                name=f"cross-owner-worker-{index + 1}",
+        worker_count = (
+            len(parallel_targets)
+            if all_ready_owner_lanes
+            else min(max(1, configured), len(parallel_targets))
+        )
+        if all_ready_owner_lanes:
+            # Claim every ready owner before running any lane.  This removes a
+            # scheduler/event-loop race where an immediately failing first
+            # lane could otherwise consume the queue before sibling owners
+            # were admitted.
+            admitted: list[str] = []
+            while True:
+                candidate = await scheduler.next()
+                if candidate is None:
+                    break
+                admitted.append(candidate.task_id)
+            await asyncio.gather(
+                *(run_admitted_lane(module_id) for module_id in admitted)
             )
-            for index in range(min(max(1, configured), len(parallel_targets)))
-        ]
-        await asyncio.gather(*workers)
+        else:
+            workers = [
+                asyncio.create_task(
+                    worker(),
+                    name=f"cross-owner-worker-{index + 1}",
+                )
+                for index in range(worker_count)
+            ]
+            if workers:
+                await asyncio.gather(*workers)
         if parallel_owner_lanes:
             runner.service.store.write_json(
                 (
@@ -2551,52 +3164,262 @@ async def run_cross_review(
                     ],
                 },
             )
-        if failures:
-            raise failures[0]
         for module_id in sorted(deferred_main_modules, key=float):
-            results[module_id] = await _run_cross_owner_lane(
-                runner,
-                state=state,
-                workflow_id=workflow_id,
-                module_id=module_id,
-                current=modules[module_id],
-                findings=grouped[module_id],
-                finding_refs=finding_refs,
-                review_round=review_round,
-                defer_main_exceptions=False,
-            )
+            try:
+                results[module_id] = await _run_cross_owner_lane(
+                    runner,
+                    state=state,
+                    workflow_id=workflow_id,
+                    module_id=module_id,
+                    current=modules[module_id],
+                    findings=grouped[module_id],
+                    finding_refs=finding_refs,
+                    review_round=review_round,
+                    defer_main_exceptions=False,
+                )
+            except BaseException as exc:
+                failures_by_module[module_id] = exc
 
-        barrier_inputs: list[tuple[str, CrossOwnerCompletion]] = []
-        for module_id in targets:
-            result = results[module_id]
-            modules[module_id] = result.module
-            state["module_submissions"][module_id] = result.module
-            state.setdefault("specialist_submissions", {})[module_id] = result.module
-            state.setdefault("module_review_completion_refs", {})[module_id] = (
-                result.local_review_ref
+        for module_id in sorted(results, key=float):
+            _promote_result(module_id, results[module_id])
+
+        if failures_by_module:
+            # Every started owner has reached a terminal result.  Keep all
+            # successful owner artifacts and progress, but emit a failed
+            # terminal manifest instead of the success barrier; Cross r1 is
+            # therefore impossible until a later resume repairs the missing
+            # owners.
+            failure_refs: dict[str, list[str]] = {}
+            for module_id in sorted(failures_by_module, key=float):
+                exception_root = (
+                    runner.service.workspace
+                    / f"Work/runs/{state['run_id']}/lanes/cross-r{review_round}/"
+                    f"module-{module_id}/exceptions"
+                )
+                failure_refs[module_id] = [
+                    path.relative_to(runner.service.workspace).as_posix()
+                    for path in sorted(exception_root.glob("*.json"))
+                    if path.is_file()
+                ]
+            terminal_ref = (
+                f"Work/runs/{state['run_id']}/lanes/cross-r{review_round}/"
+                "owner-terminal.json"
             )
-            responses_by_module[module_id] = result.responses
-            machine_refs.append(result.machine_validation_ref)
-            local_review_refs[module_id] = result.local_review_ref
-            revised_owner_ids.add(module_id)
+            runner.service.store.write_json(
+                terminal_ref,
+                {
+                    "kind": "cross_owner_terminal_barrier",
+                    "version": 1,
+                    "run_id": state["run_id"],
+                    "review_round": review_round,
+                    "target_modules": sorted(grouped, key=float),
+                    "status": "failed",
+                    "completion_refs": {
+                        module_id: result.completion_ref
+                        for module_id, result in sorted(results.items(), key=lambda item: float(item[0]))
+                    },
+                    "completion_hashes": {
+                        module_id: result.completion.completion_sha256()
+                        for module_id, result in sorted(results.items(), key=lambda item: float(item[0]))
+                    },
+                    "completion_revisions": {
+                        module_id: result.module.revision
+                        for module_id, result in sorted(results.items(), key=lambda item: float(item[0]))
+                    },
+                    "failure_refs": failure_refs,
+                    "terminal_statuses": {
+                        module_id: (
+                            "completed" if module_id in results else "failed"
+                        )
+                        for module_id in sorted(grouped, key=float)
+                    },
+                },
+            )
+            save_progress("revise")
+            first_module = sorted(failures_by_module, key=float)[0]
+            raise failures_by_module[first_module]
+
+        # Verified recovered and newly completed lanes are reduced together in
+        # deterministic owner order.  Only this single writer may publish the
+        # exact barrier that unlocks Cross r1.
+        barrier_inputs: list[tuple[str, CrossOwnerCompletion]] = []
+        for module_id in sorted(grouped, key=float):
+            result = results.get(module_id)
+            if result is None:
+                raise ReviewLifecycleError(
+                    f"Cross owner wave missing terminal result: {module_id}"
+                )
             barrier_inputs.append((result.completion_ref, result.completion))
 
-        WorkflowReducer(
+        barrier = WorkflowReducer(
             runner.service.workspace,
             state["run_id"],
         ).write_cross_owner_barrier(
             review_round,
-            targets,
+            sorted(grouped, key=float),
             barrier_inputs,
         )
         cross_owner_barrier_ref = (
             f"Work/runs/{state['run_id']}/lanes/cross-r{review_round}/"
             "owner-barrier.json"
         )
+        _verify_cross_owner_barrier(
+            runner,
+            barrier,
+            barrier_path=runner.service.workspace / cross_owner_barrier_ref,
+            expected_run_id=state["run_id"],
+            expected_round=review_round,
+            expected_modules=set(grouped),
+        )
         state["cross_owner_barrier_ref"] = cross_owner_barrier_ref
         save_progress("revise")
 
-    if progress is not None and progress.next_action == "revise":
+    def persist_interface_closures(
+        closures: list[InterfaceCrossClosure],
+        *,
+        review_round: int,
+    ) -> None:
+        """Persist an immutable closure batch and its hash-bound registry view."""
+
+        nonlocal interface_registry, interface_registry_ref, interface_registry_sha256
+        if interface_registry is None:
+            if closures:
+                raise ReviewLifecycleError(
+                    "Cross returned interface closures without a canonical registry"
+                )
+            return
+        try:
+            interface_registry = apply_interface_cross_closure(
+                interface_registry,
+                closures,
+                review_round=review_round,
+            )
+        except ValueError as exc:
+            raise ReviewLifecycleError(f"invalid Cross interface closure set: {exc}") from exc
+        batch = InterfaceResolutionClosureBatch(
+            run_id=state["run_id"],
+            review_round=review_round,
+            closures=[closure.model_copy(deep=True) for closure in closures],
+        )
+        batch_ref = _write_immutable_model(
+            runner,
+            f"Work/runs/{state['run_id']}/reviews/interface-closures-r{review_round}.json",
+            batch,
+        )
+        registry_ref = _write_immutable_model(
+            runner,
+            f"Work/runs/{state['run_id']}/collaboration/interface-resolution-registry-r{review_round}.json",
+            interface_registry,
+        )
+        interface_closure_refs.append(batch_ref)
+        interface_closure_sha256[batch_ref] = hashlib.sha256(
+            (runner.service.workspace / batch_ref).read_bytes()
+        ).hexdigest()
+        interface_registry_ref = registry_ref
+        interface_registry_sha256 = hashlib.sha256(
+            (runner.service.workspace / registry_ref).read_bytes()
+        ).hexdigest()
+        state["interface_resolution_registry"] = interface_registry
+        state["interface_resolution_registry_ref"] = interface_registry_ref
+        state["interface_resolution_registry_sha256"] = interface_registry_sha256
+        state["interface_closure_refs"] = list(interface_closure_refs)
+        state["interface_closure_sha256"] = dict(interface_closure_sha256)
+        state["interface_residual_risks"] = dict(interface_residual_risks)
+
+    def interface_reroute_finding(
+        closure: InterfaceCrossClosure,
+    ) -> CrossReviewFinding:
+        if interface_registry is None:
+            raise ReviewLifecycleError("cannot materialize XMR-IF without interface registry")
+        try:
+            resolution = interface_registry.resolutions[closure.request_id]
+        except KeyError as exc:
+            raise ReviewLifecycleError(
+                f"Cross reroute references unknown IF: {closure.request_id}"
+            ) from exc
+        request = resolution.request
+        owner_module_id = closure.owner_module_id or request.requester_module_id
+        owner_submodule_id = closure.owner_submodule_id or request.requester_submodule_id
+        if owner_submodule_id is None:
+            # Legacy module-level requests have no fixed leaf target.  Their
+            # requester module's first leaf is the only deterministic owner
+            # lane target, while the request id remains the stable XMR key.
+            owner_submodule_id = REPORT_TAXONOMY[owner_module_id].submodules[0]
+        related = sorted(
+            {
+                request.requester_module_id,
+                request.target_module_id,
+            }
+            - {owner_module_id},
+            key=float,
+        )
+        source_refs = list(
+            dict.fromkeys(
+                [
+                    *request.evidence_ids,
+                    *resolution.disposition.evidence_ids,
+                    *resolution.disposition.checked_evidence_ids,
+                ]
+            )
+        ) or [request.request_id]
+        return CrossReviewFinding(
+            id=interface_owner_finding_id(closure.request_id),
+            owner_module_id=owner_module_id,
+            target_submodule_ids=[owner_submodule_id],
+            related_module_ids=related,
+            category="dependencies",
+            impact="blocking" if request.blocking else "advisory",
+            observation=(
+                f"Wave 2 request {request.request_id} remains unresolved after the "
+                "target checks; Cross requires the requester-owned interface boundary "
+                "to be written into the module subject before closure."
+            ),
+            evidence_refs=source_refs,
+            required_change=(
+                f"Write the interface question and its unresolved boundary into "
+                f"{owner_submodule_id}; preserve the target response limit and state "
+                f"the reroute reason: {closure.reason}."
+            ),
+            reviewer_checks=[
+                "the owner submodule names the exact interface request and boundary",
+                "the final text preserves the residual risk and does not invent an answer",
+            ],
+        )
+
+    if resume_from_finding_only and not pending:
+        _validate_cross_synthesis_portfolio(prior_synthesis, modules)
+        module_refs = {
+            module_id: (
+                f"Work/runs/{state['run_id']}/modules/"
+                f"{module_id}-r{modules[module_id].revision}.json"
+            )
+            for module_id in REPORT_TAXONOMY
+        }
+        completion_refs = [*module_refs.values(), *finding_refs]
+        completion = ReviewCompletionRecord(
+            lifecycle="cross",
+            run_id=state["run_id"],
+            reviewer_agent_id="cross-module-reviewer",
+            reviewer_session_key=reviewer_session_key,
+            subject_refs=list(module_refs.values()),
+            finding_refs=finding_refs,
+            verdict_refs=[],
+            resolved_finding_ids=[],
+            artifact_sha256=_artifact_sha256(runner, completion_refs),
+        )
+        completion_ref = _write_immutable_model(
+            runner,
+            f"Work/runs/{state['run_id']}/reviews/cross-completion.json",
+            completion,
+        )
+        state["cross_review_completion_ref"] = completion_ref
+        state["cross_synthesis_inputs"] = prior_synthesis
+        save_progress("completed")
+        return
+
+    if (
+        progress is not None and progress.next_action == "revise"
+    ) or resume_from_finding_only:
         await complete_revision_wave()
         phase = "recheck"
         review_round += 1
@@ -2659,6 +3482,15 @@ async def run_cross_review(
             prior_synthesis_inputs=prior_synthesis if phase == "recheck" else [],
             machine_validation_refs=machine_refs if phase == "recheck" else [],
             machine_validation_reports=machine_validation_reports,
+            interface_registry_ref=interface_registry_ref,
+            interface_registry_sha256=interface_registry_sha256,
+            pending_interface_request_ids=(
+                list(interface_registry.pending_request_ids)
+                if interface_registry is not None
+                else []
+            ),
+            interface_closure_refs=list(interface_closure_refs),
+            interface_residual_risks=dict(interface_residual_risks),
         )
         input_ref = _write_model(
             runner,
@@ -2736,6 +3568,32 @@ async def run_cross_review(
                     raise ReviewLifecycleError(
                         f"Cross coverage for {entry.module_id} omitted dimensions: {sorted(missing)}"
                     )
+            # Every unresolved Wave 2 request must be closed by Cross r0 in
+            # one exact typed batch.  Wave 2 answered requests are terminal
+            # and are intentionally absent from this set.
+            if interface_registry is not None:
+                expected_interface_ids = set(interface_registry.pending_request_ids)
+                actual_interface_ids = {
+                    closure.request_id for closure in result.interface_closures
+                }
+                if actual_interface_ids != expected_interface_ids:
+                    raise ReviewLifecycleError(
+                        "Cross r0 interface closures must cover the exact unresolved IF set; "
+                        f"missing={sorted(expected_interface_ids - actual_interface_ids)}; "
+                        f"extra={sorted(actual_interface_ids - expected_interface_ids)}"
+                    )
+                persist_interface_closures(
+                    list(result.interface_closures),
+                    review_round=0,
+                )
+                for closure in result.interface_closures:
+                    if closure.outcome == "confirmed_missing":
+                        interface_residual_risks[closure.request_id] = (
+                            closure.residual_risk or ""
+                        )
+                    elif closure.outcome == "reroute_to_owner":
+                        result.findings.append(interface_reroute_finding(closure))
+                state["interface_residual_risks"] = dict(interface_residual_risks)
             _validate_cross_findings(result.findings, modules)
             finding_ref = _write_immutable_model(
                 runner,
@@ -2750,6 +3608,30 @@ async def run_cross_review(
                 raise ReviewLifecycleError("Cross reviewer returned the wrong recheck type")
             _validate_verdicts(result.verdicts, set(pending))
             _validate_cross_findings(result.new_findings, modules)
+            if interface_registry is not None:
+                expected_interface_ids = set(interface_registry.pending_request_ids)
+                actual_interface_ids = {
+                    closure.request_id for closure in result.interface_closures
+                }
+                if actual_interface_ids != expected_interface_ids:
+                    raise ReviewLifecycleError(
+                        "Cross r1 interface closures must cover the exact pending IF/XMR set; "
+                        f"missing={sorted(expected_interface_ids - actual_interface_ids)}; "
+                        f"extra={sorted(actual_interface_ids - expected_interface_ids)}"
+                    )
+                verdict_by_id = {verdict.finding_id: verdict for verdict in result.verdicts}
+                for closure in result.interface_closures:
+                    xmr_id = interface_owner_finding_id(closure.request_id)
+                    verdict = verdict_by_id.get(xmr_id)
+                    if verdict is None or verdict.verdict != "resolved":
+                        raise ReviewLifecycleError(
+                            f"Cross r1 cannot close {closure.request_id} without a resolved {xmr_id} verdict"
+                        )
+                persist_interface_closures(
+                    list(result.interface_closures),
+                    review_round=1,
+                )
+                state["interface_residual_risks"] = dict(interface_residual_risks)
             verdict_ref = _write_immutable_model(
                 runner,
                 f"Work/runs/{state['run_id']}/reviews/cross-verdicts-r{review_round}.json",
@@ -2808,6 +3690,10 @@ async def run_cross_review(
             prior_synthesis = result.synthesis_inputs
 
         if not pending:
+            if interface_registry is not None and interface_registry.pending_request_ids:
+                raise ReviewLifecycleError(
+                    "Cross completion is forbidden while interface IF/XMR records remain pending"
+                )
             _validate_cross_synthesis_portfolio(prior_synthesis, modules)
             completion_refs = [
                 *module_refs.values(),
@@ -3134,14 +4020,9 @@ async def run_final_review(
     while True:
         required_audit_sections = tuple(
             section_id
-            for section_id in FINAL_AUDIT_SECTION_IDS
-            if section_id != "4" or current.special_topic_plan is not None
+            for section_id in FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS
         )
-        audited_chapters = (
-            "第一、三、四章"
-            if current.special_topic_plan is not None
-            else "第一、三章"
-        )
+        audited_chapters = "第一、三章"
         subject_ref = _write_model(
             runner,
             (f"Work/runs/{state['run_id']}/edited-revisions/chief-r{review_round}.json"),
@@ -3178,9 +4059,11 @@ async def run_final_review(
             if phase == "recheck"
             else set()
         )
-        review_input = FinalReviewInput(
+        review_input = _final_review_input(
+            runner=runner,
+            state=state,
+            aggregate_mode=aggregate_mode,
             phase=phase,
-            run_id=state["run_id"],
             subject_ref=subject_ref,
             subject_revision=review_round,
             subject_metadata=metadata if phase == "initial" else None,
@@ -3239,8 +4122,8 @@ async def run_final_review(
             ),
             input_refs=[input_ref],
             constraints=[
-                f"只审查{audited_chapters}当前实际存在的小节及最终交付质量，不重做模块或 Cross 专业审查",
-                "第二章由模块审查和运行时保真校验负责，不属于本阶段内容、覆盖范围或 finding target",
+                f"只审查{audited_chapters}七个摘要/结论小节及最终交付质量，不重做模块或 Cross 专业审查",
+                "第二章与第四章由其他结构/保真 gate 负责，不属于本阶段内容、覆盖范围或 finding target",
                 "residual_risks 只记录无需内容修订的透明限制",
                 "当前实际章节正文、必要表格或图片缺失属于 actionable finding，禁止塞入 residual_risks",
                 (
@@ -3268,7 +4151,11 @@ async def run_final_review(
                     else {}
                 ),
             },
-            input_contract_kind="final_review_input",
+            input_contract_kind=(
+                "aggregate_final_review_input"
+                if aggregate_mode
+                else "final_review_input"
+            ),
             input_contract_ref=input_ref,
             inline_context=runner._role_skill_context(state, "final-auditor"),
             allowed_tools=["submit_result"],

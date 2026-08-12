@@ -14,6 +14,7 @@ from manyselves.core.providers.base import (
     ProviderRequestDisposition,
     build_provider_request_metrics,
     provider_request_disposition,
+    provider_retry_after,
 )
 from manyselves.core.providers.defaults import DEFAULT_MODELS
 from manyselves.core.providers.factory import (
@@ -80,6 +81,12 @@ def test_llm_response_defaults():
     resp = LLMResponse(content="Hi")
     assert resp.tool_calls == []
     assert resp.usage is None
+
+
+def test_provider_retry_after_reads_adapter_header_hint():
+    error = RuntimeError("rate limited")
+    error.response = SimpleNamespace(headers={"retry-after": "2.5"})  # type: ignore[attr-defined]
+    assert provider_retry_after(error) == 2.5
 
 
 def test_provider_request_metrics_hash_only_canonical_payload():

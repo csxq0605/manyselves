@@ -1,13 +1,55 @@
 """Bounded artifact access and format-aware parsing."""
 
-from .gateway import ArtifactGateway, ArtifactGrant, ArtifactPage
+from .gateway import (
+    ArtifactGateway,
+    ArtifactGrant,
+    ArtifactPage,
+    ToolContractError,
+    contract_error_result,
+)
 from .parsers import ArtifactBlock, ParsedArtifactBlocks, parse_artifact
+from .types import (
+    ArtifactDescriptor,
+    ArtifactKind,
+    artifact_kind_for_media_type,
+    build_artifact_descriptor,
+    classify_artifact,
+    default_allowed_operations,
+    describe_path,
+    descriptor_for_path,
+    detect_media_type,
+    infer_logical_role,
+    kind_for_media_type,
+    MAGIC_MEDIA_TYPES,
+    MAGIC_MIME_TYPES,
+    MIME_BY_EXTENSION,
+    media_type_for_path,
+    mime_for_path,
+)
 
 __all__ = [
     "ArtifactBlock",
     "ArtifactGateway",
     "ArtifactGrant",
     "ArtifactPage",
+    "ArtifactDescriptor",
+    "ArtifactKind",
     "ParsedArtifactBlocks",
+    "ToolContractError",
+    "artifact_kind_for_media_type",
+    "build_artifact_descriptor",
+    "classify_artifact",
+    "contract_error_result",
+    "default_allowed_operations",
+    "describe_path",
+    "descriptor_for_path",
+    "detect_media_type",
+    "infer_logical_role",
+    "kind_for_media_type",
+    "MAGIC_MEDIA_TYPES",
+    "MAGIC_MIME_TYPES",
+    "MIME_BY_EXTENSION",
+    "media_type_for_path",
+    "mime_for_path",
     "parse_artifact",
 ]
