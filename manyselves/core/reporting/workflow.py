@@ -5839,13 +5839,11 @@ class ReportWorkflowRunner:
     ) -> dict[str, Any]:
         """Run one leaf cohort with stable history-informed dispatch.
 
-        ``all_ready`` is the three-wave business path.  The historical helper
-        default remains bounded for callers that explicitly use it as a small
-        cohort primitive, while Wave 1/2/3 pass ``all_ready=True`` so every
-        ready leaf is dispatched immediately.  A normal leaf failure records a
-        terminal failure and drains already-started siblings; it never freezes
-        the ready queue.  Only a workflow-level cancellation can stop the
-        dispatch loop in the all-ready path.
+        ``all_ready`` means every business-ready leaf remains eligible after a
+        sibling failure; it does not mean unbounded physical concurrency.
+        Wave 1/2/3 honor ``submodule_task_concurrency`` (default 8), drain the
+        complete queue, and retain each successful leaf for recovery.  Only a
+        workflow-level cancellation can stop dispatch in the all-ready path.
         """
 
         ordered = tuple(dict.fromkeys(submodule_ids))
@@ -5921,10 +5919,9 @@ class ReportWorkflowRunner:
                             ),
                             error=exc,
                         )
-                    # In the three-wave path all ready siblings are already
-                    # business work and must be allowed to reach a terminal
-                    # state.  Preserve the bounded helper's old fail-fast
-                    # behavior for non-business callers.
+                    # In the three-wave path, keep draining queued siblings
+                    # within the configured worker bound. Preserve the helper's
+                    # fail-fast behavior for non-business callers.
                     if not all_ready or hard_stop:
                         stop_dispatch.set()
                     history.record(
@@ -5944,6 +5941,8 @@ class ReportWorkflowRunner:
                         correlation_id=workflow_id,
                         payload={"error": str(exc)},
                     )
+                    if all_ready and not hard_stop:
+                        continue
                     return
                 duration_ms = max(
                     0, (time.perf_counter_ns() - started) // 1_000_000
@@ -5967,11 +5966,7 @@ class ReportWorkflowRunner:
                     },
                 )
 
-        worker_count = (
-            max(1, len(ordered))
-            if all_ready
-            else min(max(1, concurrency), max(1, len(ordered)))
-        )
+        worker_count = min(max(1, concurrency), max(1, len(ordered)))
         # Keep every worker terminal even when one leaf fails.  The workers
         # convert ordinary leaf failures to terminal records above, and
         # return_exceptions=True also protects the sibling drain from an

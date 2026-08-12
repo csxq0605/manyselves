@@ -49,7 +49,7 @@ Main 判断“已有模块进入审查”时，导航依据只能是后台终态
 - `target_modules`：只允许固定模块 `2.1`、`2.2`、`2.3`、`2.4`、`2.5`。`distill_template_skill` 必须传空列表；`full_report` 和 `aggregate_existing` 必须是全部五个；`module_report` 只传用户指定模块。
 - `execution_requirements`：本轮“深度思考”、重点审查等执行要求，与报告范围分开传递。
 - `operation`：必须显式选择 `distill_template_skill`、`full_report`、`module_report`、`aggregate_existing` 或 `render_existing`。
-- `authoring_granularity`：完整报告作者粒度；只允许 `leaf_37` 或 `module_5`。除非用户明确要求五模块 A/B 路径，否则使用默认 `leaf_37`。`module_5` 本身已经保证五条完整模块 lane 并行，不得再用 `execution_mode` 改写其语义。
+- `authoring_granularity`：完整报告作者粒度；只允许 `leaf_37` 或 `module_5`。除非用户明确要求五模块 A/B 路径，否则使用默认 `leaf_37`。`leaf_37` 的叶任务默认最多同时运行 8 个，不得擅自改成 37 个物理并发；`module_5` 本身保证五条完整模块 lane 并行，不得再用 `execution_mode` 改写其语义。
 - `source_module_refs`：仅用于 `aggregate_existing`；未指定时由工作流使用标准五模块路径，Main 不需要先读取确认内容。
 - `source_markdown_ref`：`render_existing` 时必须是项目内现有 Markdown 相对路径。
 

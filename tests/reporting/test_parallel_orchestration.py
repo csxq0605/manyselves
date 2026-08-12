@@ -19,7 +19,7 @@ class _Service:
 
 
 @pytest.mark.asyncio
-async def test_all_ready_leaf_scheduler_ignores_legacy_cap_and_drains_siblings(
+async def test_all_ready_leaf_scheduler_honors_cap_and_drains_entire_queue(
     tmp_path: Path,
 ) -> None:
     runner = object.__new__(ReportWorkflowRunner)
@@ -33,13 +33,14 @@ async def test_all_ready_leaf_scheduler_ignores_legacy_cap_and_drains_siblings(
     maximum_active = 0
     completed: list[str] = []
     failed = ready[0]
+    concurrency = 8
     cohort_started = asyncio.Event()
 
     async def execute(submodule_id: str) -> str:
         nonlocal active, maximum_active
         active += 1
         maximum_active = max(maximum_active, active)
-        if active == len(ready):
+        if active == concurrency:
             cohort_started.set()
         await cohort_started.wait()
         await asyncio.sleep(0)
@@ -55,12 +56,13 @@ async def test_all_ready_leaf_scheduler_ignores_legacy_cap_and_drains_siblings(
             run_id="run-all-ready",
             workflow_id="workflow-all-ready",
             task_kind="submodule_authoring",
-            concurrency=1,
+            concurrency=concurrency,
             all_ready=True,
             execute=execute,
         )
 
-    assert maximum_active == len(ready) == 37
+    assert len(ready) == 37
+    assert maximum_active == concurrency
     assert set(completed) == set(ready) - {failed}
 
 

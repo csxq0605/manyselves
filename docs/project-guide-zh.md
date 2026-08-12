@@ -282,7 +282,7 @@ Main 的 `inspect_document` 可本地读取 DOCX、XLSX/XLSM、PDF 和文本；M
 | `aggregate_existing` | 已有五份模块稿，需要汇总报告 | 总编 → 成稿审计 → 渲染 |
 | `render_existing` | 已有完整 Markdown，只要 Word | 确定性 DOCX 渲染，不调用写作 Agent |
 
-完整报告用 `authoring_granularity` 选择一个作者粒度。`leaf_37` 先运行三波叶协作/写作并归并五模块；`module_5` 不启动叶波，五个模块各自在独立 lane 内完成写作、责任审计、定向修改和原审查者复核，五条 lane 全量并行。两种模式都必须等五模块全部闭环后，才开始跨模块审查和总编。
+完整报告用 `authoring_granularity` 选择一个作者粒度。`leaf_37` 先运行三波叶协作/写作并归并五模块；37 个逻辑叶全部排队，但物理并发遵守 `submodule_task_concurrency`，默认最多 8 个。`module_5` 不启动叶波，五个模块各自在独立 lane 内完成写作、责任审计、定向修改和原审查者复核，五条 lane 全量并行。两种模式都必须等五模块全部闭环后，才开始跨模块审查和总编。
 
 ### 4.4 缺资、恢复与修订
 

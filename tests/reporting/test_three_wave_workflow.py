@@ -770,7 +770,7 @@ async def test_wave_three_dispatches_and_persists_37_independent_leaf_results(
     }
     assert len(calls) == 37
     assert set(calls) == expected_leaves
-    assert max_active == len(expected_leaves)
+    assert max_active == state["request"].submodule_task_concurrency == 8
     assert all("CORE-METHOD-SENTINEL" in item.inline_context for item in author_envelopes)
     assert all(
         "FULL-ANALYSIS-SENTINEL" not in item.inline_context

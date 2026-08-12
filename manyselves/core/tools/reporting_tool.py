@@ -451,7 +451,9 @@ class RunReportingWorkflowTool(Tool):
                 author-review-revise-recheck lanes concurrently.
             module_lane_concurrency: Legacy scheduling hint retained for
                 telemetry; all_ready does not use it as a hard cap.
-            submodule_task_concurrency: Maximum active leaf discovery, response, or authoring tasks.
+            submodule_task_concurrency: Maximum simultaneously active leaf
+                discovery, response, or authoring tasks. Defaults to 8; all 37
+                leaves remain queued and recoverable rather than launching at once.
             submodule_batch_size: Deprecated compatibility input; active Wave 1/2/3 tasks are never physically batched.
         """
 
