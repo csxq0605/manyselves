@@ -219,13 +219,15 @@ def verify_current_run_outputs(
         raw = getattr(artifact, "path", artifact)
         _reject_opaque(raw, "output")
         path = Path(raw)
-        target = path.resolve() if path.is_absolute() else (root / path).resolve()
-        if not target.is_relative_to(root):
+        target = path if path.is_absolute() else root / path
+        target = Path(os.path.abspath(os.fspath(target)))
+        resolved = target.resolve()
+        if not resolved.is_relative_to(root):
             raise OutputVerificationError(f"output is outside workspace: {raw}")
         if not target.is_file() or target.stat().st_size == 0:
             raise OutputVerificationError(f"output is missing or empty: {raw}")
         inherited_same_run_artifact = (
-            allow_existing_run_artifacts and target.is_relative_to(run_root)
+            allow_existing_run_artifacts and resolved.is_relative_to(run_root)
         )
         if (
             target.stat().st_mtime_ns < started_ns

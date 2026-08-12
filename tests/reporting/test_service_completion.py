@@ -7,7 +7,10 @@ from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.delivery import ProjectDelivery
 from manyselves.core.reporting.models import ReportRequest
-from manyselves.core.reporting.output_ownership import OutputOwnerStore
+from manyselves.core.reporting.output_ownership import (
+    OUTPUT_ARTIFACT_REFS,
+    OutputOwnerStore,
+)
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
 from manyselves.core.tools.task_board import TaskBoard
 
@@ -110,11 +113,19 @@ def test_verified_delivery_is_durable_before_output_owner_publication(
     )
 
     assert result.status == "completed"
-    assert OutputOwnerStore(tmp_path).require(expected_run_id=run_id).run_id == run_id
+    owner = OutputOwnerStore(tmp_path).require(expected_run_id=run_id)
+    assert owner.run_id == run_id
+    assert owner.schema_version == 2
+    assert set(owner.artifact_sha256) == set(OUTPUT_ARTIFACT_REFS)
+    for reference in OUTPUT_ARTIFACT_REFS.values():
+        visible = tmp_path / reference
+        assert visible.is_symlink()
+        assert visible in result.output_paths
     persisted = ReportingRunResult.model_validate_json(
         (tmp_path / f"Work/runs/{run_id}.json").read_text(encoding="utf-8")
     )
     assert persisted.status == "completed"
+    assert persisted.output_paths == result.output_paths
 
 
 def test_output_owner_failure_downgrades_persisted_run_to_failed(
@@ -130,10 +141,10 @@ def test_output_owner_failure_downgrades_persisted_run_to_failed(
         llm_provider=NeverProvider(),
     )
 
-    def reject_owner(_store, _owner):
+    def reject_owner(_store, _owner, *, sources):
         raise OSError("injected owner publication failure")
 
-    monkeypatch.setattr(OutputOwnerStore, "publish", reject_owner)
+    monkeypatch.setattr(OutputOwnerStore, "publish_output_set", reject_owner)
     result = service._finalize_verified_run(
         ReportingRunResult(run_id=run_id, status="completed"),
         publish_output_owner=True,

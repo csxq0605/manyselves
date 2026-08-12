@@ -1,9 +1,12 @@
-"""Typed ownership pointer for the workspace's currently visible final report."""
+"""Typed ownership pointer for the workspace's four visible report artifacts."""
 
 from __future__ import annotations
 
 import hashlib
 import os
+import shutil
+import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Self
@@ -13,11 +16,23 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 from ..artifacts.content_store import ContentAddressedStore
 from .delivery import DeliveryReceipt
 from .models import ReportingModel
+from .parallel_runtime import validate_bound_project_write_lease
 from .store import ReportingStore
 from .versions import ReportVersionStore
 
 OUTPUT_OWNER_REF = Path("Work/output-owner.json")
+OUTPUT_SET_ROOT = Path("Work/output-sets")
+CURRENT_OUTPUT_SET_REF = Path("Outputs/Reports/.current")
+FINAL_REPORT_MARKDOWN_REF = Path("Outputs/Reports/配电安全专家咨询报告.md")
 FINAL_REPORT_DOCX_REF = Path("Outputs/Reports/配电安全专家咨询报告.docx")
+SOURCE_INDEX_MARKDOWN_REF = Path("Outputs/Reports/证据与来源索引.md")
+SOURCE_INDEX_DOCX_REF = Path("Outputs/Reports/证据与来源索引.docx")
+OUTPUT_ARTIFACT_REFS = {
+    "final_markdown": FINAL_REPORT_MARKDOWN_REF,
+    "final_docx": FINAL_REPORT_DOCX_REF,
+    "source_index": SOURCE_INDEX_MARKDOWN_REF,
+    "source_index_docx": SOURCE_INDEX_DOCX_REF,
+}
 
 
 class OutputOwnerError(ValueError):
@@ -25,11 +40,11 @@ class OutputOwnerError(ValueError):
 
 
 class OutputOwner(ReportingModel):
-    """Identity and integrity binding for the shared final DOCX publication."""
+    """Identity and integrity binding for one shared four-artifact publication."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     run_id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9._-]+$")
     report_version_id: str = Field(
         min_length=1, pattern=r"^[A-Za-z0-9._-]+$"
@@ -37,6 +52,9 @@ class OutputOwner(ReportingModel):
     final_docx_ref: Path = FINAL_REPORT_DOCX_REF
     final_docx_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     delivery_receipt_ref: Path
+    output_set_ref: Path | None = None
+    artifact_refs: dict[str, Path] = Field(default_factory=dict)
+    artifact_sha256: dict[str, str] = Field(default_factory=dict)
     published_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
@@ -78,6 +96,25 @@ class OutputOwner(ReportingModel):
         )
         if self.delivery_receipt_ref != expected_receipt:
             raise ValueError("output owner receipt must belong to its run")
+        if self.schema_version == 1:
+            if self.output_set_ref is not None or self.artifact_refs or self.artifact_sha256:
+                raise ValueError("legacy output owner cannot carry an output set")
+            return self
+        expected_set = OUTPUT_SET_ROOT / self.run_id
+        if self.output_set_ref != expected_set:
+            raise ValueError("output owner set must belong to its run")
+        if self.artifact_refs != OUTPUT_ARTIFACT_REFS:
+            raise ValueError("output owner must bind the canonical four-output set")
+        if set(self.artifact_sha256) != set(OUTPUT_ARTIFACT_REFS):
+            raise ValueError("output owner hashes must cover the canonical four-output set")
+        if any(
+            len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+            for value in self.artifact_sha256.values()
+        ):
+            raise ValueError("output owner artifact hashes must be SHA-256 values")
+        if self.artifact_sha256["final_docx"] != self.final_docx_sha256:
+            raise ValueError("output owner final DOCX hash conflicts with its output set")
         return self
 
 
@@ -88,17 +125,28 @@ def build_output_owner(
     final_docx_sha256: str,
     delivery_receipt_ref: Path,
     final_docx_ref: Path = FINAL_REPORT_DOCX_REF,
+    artifact_sha256: dict[str, str] | None = None,
+    output_set_ref: Path | None = None,
     published_at: datetime | None = None,
 ) -> OutputOwner:
     """Build the canonical pointer after delivery completion has persisted."""
 
     values = {
+        "schema_version": 2 if artifact_sha256 is not None else 1,
         "run_id": run_id,
         "report_version_id": report_version_id,
         "final_docx_ref": final_docx_ref,
         "final_docx_sha256": final_docx_sha256,
         "delivery_receipt_ref": delivery_receipt_ref,
     }
+    if artifact_sha256 is not None:
+        values.update(
+            {
+                "output_set_ref": output_set_ref or OUTPUT_SET_ROOT / run_id,
+                "artifact_refs": OUTPUT_ARTIFACT_REFS,
+                "artifact_sha256": artifact_sha256,
+            }
+        )
     if published_at is not None:
         values["published_at"] = published_at
     return OutputOwner.model_validate(values)
@@ -139,6 +187,40 @@ class OutputOwnerStore:
         self.store.fsync_directory(path.parent)
         return path
 
+    def publish_output_set(
+        self,
+        owner: OutputOwner,
+        *,
+        sources: dict[str, Path],
+    ) -> Path:
+        """Publish four stable report views, then commit their typed owner.
+
+        Every immutable run gets one output-set directory.  The four public
+        names are stable symlinks through one ``.current`` pointer, so after
+        the one-time migration from legacy regular files, later publications
+        switch the complete set with a single atomic symlink replacement.
+        """
+
+        owner = OutputOwner.model_validate(owner)
+        if owner.schema_version != 2 or owner.output_set_ref is None:
+            raise OutputOwnerError("four-output publication requires an owner v2 set")
+        if set(sources) != set(OUTPUT_ARTIFACT_REFS):
+            raise OutputOwnerError("output publication sources are incomplete")
+        validate_bound_project_write_lease(self.workspace)
+        resolved_sources = {
+            key: self._workspace_path(path) for key, path in sources.items()
+        }
+        for key, source in resolved_sources.items():
+            if not source.is_file() or self._sha256(source) != owner.artifact_sha256[key]:
+                raise OutputOwnerError(
+                    f"output publication source does not match its owner: {key}"
+                )
+
+        output_set = self._publish_immutable_output_set(owner, resolved_sources)
+        self._publish_stable_output_links()
+        self._publish_current_output_set(output_set)
+        return self.publish(owner)
+
     def require(
         self,
         *,
@@ -170,6 +252,9 @@ class OutputOwnerStore:
         final_docx = self._workspace_path(owner.final_docx_ref)
         if not final_docx.is_file() or self._sha256(final_docx) != owner.final_docx_sha256:
             raise OutputOwnerError("visible final DOCX does not match its owner")
+
+        if owner.schema_version == 2:
+            self._validate_visible_output_set(owner)
 
         receipt_path = self._workspace_path(owner.delivery_receipt_ref)
         if receipt_path.is_symlink() or not receipt_path.is_file():
@@ -255,6 +340,129 @@ class OutputOwnerStore:
             raise OutputOwnerError(
                 "output owner is not bound to its report version"
             )
+        if owner.schema_version == 2:
+            for output_key, version_key in {
+                "final_markdown": "canonical_markdown",
+                "final_docx": "final_docx",
+                "source_index": "source_index",
+                "source_index_docx": "source_index_docx",
+            }.items():
+                expected = owner.artifact_sha256[output_key]
+                if version.artifact_sha256.get(version_key) != expected:
+                    raise OutputOwnerError(
+                        f"output owner artifact is not bound to its report version: {output_key}"
+                    )
+            for receipt_key in ("final_docx", "source_index", "source_index_docx"):
+                if receipt.artifact_sha256.get(receipt_key) != owner.artifact_sha256[receipt_key]:
+                    raise OutputOwnerError(
+                        f"output owner artifact is not bound to its delivery receipt: {receipt_key}"
+                    )
+
+    def _publish_immutable_output_set(
+        self,
+        owner: OutputOwner,
+        sources: dict[str, Path],
+    ) -> Path:
+        assert owner.output_set_ref is not None
+        destination = self.workspace / owner.output_set_ref
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists() or destination.is_symlink():
+            if destination.is_symlink() or not destination.is_dir():
+                raise OutputOwnerError("output set path is not an immutable directory")
+            self._validate_output_set_files(destination, owner.artifact_sha256)
+            return destination
+
+        staging = Path(
+            tempfile.mkdtemp(
+                prefix=f".{owner.run_id}.",
+                suffix=".output-set",
+                dir=destination.parent,
+            )
+        )
+        try:
+            for key, public_ref in OUTPUT_ARTIFACT_REFS.items():
+                target = staging / public_ref.name
+                # Build the link as it will resolve after the staging
+                # directory is renamed into its immutable final location.
+                # Report-version artifacts are immutable and hash-bound, so
+                # this avoids materializing another copy of the large DOCX.
+                target.symlink_to(
+                    Path(os.path.relpath(sources[key], start=destination))
+                )
+            os.chmod(staging, 0o555)
+            os.replace(staging, destination)
+            self.store.fsync_directory(destination.parent)
+            self._validate_output_set_files(destination, owner.artifact_sha256)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+        return destination
+
+    def _publish_stable_output_links(self) -> None:
+        reports = self.workspace / CURRENT_OUTPUT_SET_REF.parent
+        reports.mkdir(parents=True, exist_ok=True)
+        for public_ref in OUTPUT_ARTIFACT_REFS.values():
+            target = self.workspace / public_ref
+            expected_link = Path(CURRENT_OUTPUT_SET_REF.name) / public_ref.name
+            if target.is_symlink() and Path(os.readlink(target)) == expected_link:
+                continue
+            staged = target.with_name(f".{target.name}.{uuid.uuid4().hex}.output-link")
+            try:
+                staged.symlink_to(expected_link)
+                os.replace(staged, target)
+            finally:
+                staged.unlink(missing_ok=True)
+        self.store.fsync_directory(reports)
+
+    def _publish_current_output_set(self, output_set: Path) -> None:
+        current = self.workspace / CURRENT_OUTPUT_SET_REF
+        expected_link = Path(os.path.relpath(output_set, start=current.parent))
+        staged = current.with_name(f".{current.name}.{uuid.uuid4().hex}.current-link")
+        try:
+            staged.symlink_to(expected_link, target_is_directory=True)
+            if staged.resolve() != output_set.resolve():
+                raise OutputOwnerError("staged current output set resolves incorrectly")
+            os.replace(staged, current)
+            self.store.fsync_directory(current.parent)
+        finally:
+            staged.unlink(missing_ok=True)
+
+    def _validate_visible_output_set(self, owner: OutputOwner) -> None:
+        assert owner.output_set_ref is not None
+        output_set = self._workspace_path(owner.output_set_ref)
+        current = self.workspace / CURRENT_OUTPUT_SET_REF
+        if (
+            not output_set.is_dir()
+            or not current.is_symlink()
+            or current.resolve() != output_set.resolve()
+        ):
+            raise OutputOwnerError("visible output set does not match its owner")
+        self._validate_output_set_files(output_set, owner.artifact_sha256)
+        for key, public_ref in OUTPUT_ARTIFACT_REFS.items():
+            visible = self.workspace / public_ref
+            expected_link = Path(CURRENT_OUTPUT_SET_REF.name) / public_ref.name
+            if (
+                not visible.is_symlink()
+                or Path(os.readlink(visible)) != expected_link
+                or not visible.is_file()
+                or self._sha256(visible) != owner.artifact_sha256[key]
+            ):
+                raise OutputOwnerError(
+                    f"visible output artifact does not match its owner: {key}"
+                )
+
+    def _validate_output_set_files(
+        self,
+        output_set: Path,
+        expected_hashes: dict[str, str],
+    ) -> None:
+        expected_names = {path.name for path in OUTPUT_ARTIFACT_REFS.values()}
+        if {path.name for path in output_set.iterdir()} != expected_names:
+            raise OutputOwnerError("output set does not contain exactly four artifacts")
+        for key, public_ref in OUTPUT_ARTIFACT_REFS.items():
+            path = output_set / public_ref.name
+            if not path.is_file() or self._sha256(path) != expected_hashes[key]:
+                raise OutputOwnerError(f"immutable output set hash mismatch: {key}")
 
     def _workspace_path(self, relative: Path) -> Path:
         candidate = Path(relative)

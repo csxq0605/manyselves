@@ -171,9 +171,9 @@ def test_verifier_accepts_typed_v3_receipt_only_inside_current_run(
     )
 
     assert paths == [
-        receipt.final_docx.resolve(),
-        receipt.source_index.resolve(),
-        receipt.source_index_docx.resolve(),
+        receipt.final_docx,
+        receipt.source_index,
+        receipt.source_index_docx,
     ]
     receipt.source_index.write_text("tampered", encoding="utf-8")
     with pytest.raises(OutputVerificationError, match="manifest hash"):

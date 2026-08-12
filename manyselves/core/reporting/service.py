@@ -51,7 +51,11 @@ from .models import (
     UserSupplement,
 )
 from .output_verifier import OutputVerificationError, verify_current_run_outputs
-from .output_ownership import OutputOwnerStore, build_output_owner
+from .output_ownership import (
+    OUTPUT_ARTIFACT_REFS,
+    OutputOwnerStore,
+    build_output_owner,
+)
 from .parallel_runtime import (
     ProjectWriteLease,
     ProjectWriteLeaseManager,
@@ -1456,6 +1460,22 @@ class ReportingService:
             self.store.fsync_directory(result_path.parent)
             if publish_output_owner:
                 self._publish_completed_output_owner(result.run_id)
+                replacements = {
+                    reference.name: self.workspace / reference
+                    for reference in OUTPUT_ARTIFACT_REFS.values()
+                }
+                output_paths: list[Path] = []
+                for output_path in result.output_paths:
+                    replacement = replacements.get(Path(output_path).name, output_path)
+                    if replacement not in output_paths:
+                        output_paths.append(replacement)
+                for reference in OUTPUT_ARTIFACT_REFS.values():
+                    visible = self.workspace / reference
+                    if visible not in output_paths:
+                        output_paths.append(visible)
+                result = result.model_copy(update={"output_paths": output_paths})
+                result_path = self._save_run(result)
+                self.store.fsync_directory(result_path.parent)
         except Exception as exc:
             failed = result.model_copy(
                 update={
@@ -1487,7 +1507,17 @@ class ReportingService:
             (self.workspace / receipt_ref).read_text(encoding="utf-8")
         )
         version = ReportVersionStore(self.workspace).load(safe_run_id)
-        final_docx_sha256 = receipt.artifact_sha256.get("final_docx")
+        version_keys = {
+            "final_markdown": "canonical_markdown",
+            "final_docx": "final_docx",
+            "source_index": "source_index",
+            "source_index_docx": "source_index_docx",
+        }
+        artifact_sha256 = {
+            output_key: version.artifact_sha256.get(version_key, "")
+            for output_key, version_key in version_keys.items()
+        }
+        final_docx_sha256 = artifact_sha256["final_docx"]
         if (
             not receipt.success
             or receipt.storage_version not in {2, 3}
@@ -1496,17 +1526,37 @@ class ReportingService:
             or version.storage_version not in {2, 3}
             or not final_docx_sha256
             or version.artifact_sha256.get("final_docx") != final_docx_sha256
+            or any(not digest for digest in artifact_sha256.values())
+            or any(
+                version_key not in version.artifact_refs
+                for version_key in version_keys.values()
+            )
+            or any(
+                receipt.artifact_sha256.get(receipt_key)
+                != artifact_sha256[receipt_key]
+                for receipt_key in (
+                    "final_docx",
+                    "source_index",
+                    "source_index_docx",
+                )
+            )
         ):
             raise ValueError(
                 "output owner requires matching successful receipt and report version"
             )
-        return OutputOwnerStore(self.workspace).publish(
-            build_output_owner(
-                run_id=safe_run_id,
-                report_version_id=version.version_id,
-                final_docx_sha256=final_docx_sha256,
-                delivery_receipt_ref=receipt_ref,
-            )
+        owner = build_output_owner(
+            run_id=safe_run_id,
+            report_version_id=version.version_id,
+            final_docx_sha256=final_docx_sha256,
+            delivery_receipt_ref=receipt_ref,
+            artifact_sha256=artifact_sha256,
+        )
+        return OutputOwnerStore(self.workspace).publish_output_set(
+            owner,
+            sources={
+                output_key: version.artifact_refs[version_key]
+                for output_key, version_key in version_keys.items()
+            },
         )
 
     async def _build_manifest(self, state: dict) -> None:

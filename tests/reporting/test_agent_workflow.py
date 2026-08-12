@@ -2188,6 +2188,19 @@ def test_delivery_artifacts_reference_current_final_review_completion() -> None:
             "Work/runs/run-delivery/delivery/power-distribution-report-run-delivery/"
             "delivery-manifest.json"
         ),
+        final_markdown_ref=Path(
+            "Work/runs/run-delivery/report/配电安全专家咨询报告.md"
+        ),
+        final_docx_ref=Path(
+            "Work/runs/run-delivery/delivery/report-run-delivery/"
+            "配电安全专家咨询报告.docx"
+        ),
+        source_index_ref=Path(
+            "Work/runs/run-delivery/delivery/report-run-delivery/证据与来源索引.md"
+        ),
+        source_index_docx_ref=Path(
+            "Work/runs/run-delivery/delivery/report-run-delivery/证据与来源索引.docx"
+        ),
     )
 
     review_artifacts = [artifact for artifact in artifacts if artifact.kind == "review"]
@@ -2196,7 +2209,15 @@ def test_delivery_artifacts_reference_current_final_review_completion() -> None:
         artifact.path.as_posix() != "Outputs/Reviews/full-review.json" for artifact in artifacts
     )
     assert any(
-        artifact.path.as_posix() == "Outputs/Reports/证据与来源索引.docx"
+        artifact.path.as_posix()
+        == (
+            "Work/runs/run-delivery/delivery/report-run-delivery/"
+            "证据与来源索引.docx"
+        )
+        for artifact in artifacts
+    )
+    assert not any(
+        artifact.path.is_relative_to(Path("Outputs/Reports"))
         for artifact in artifacts
     )
 

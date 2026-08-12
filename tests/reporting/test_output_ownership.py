@@ -11,6 +11,8 @@ from docx import Document
 from manyselves.core.reporting.delivery import DeliveryPackage, ProjectDelivery
 from manyselves.core.reporting.models import REPORT_MODULE_IDS
 from manyselves.core.reporting.output_ownership import (
+    CURRENT_OUTPUT_SET_REF,
+    OUTPUT_ARTIFACT_REFS,
     FINAL_REPORT_DOCX_REF,
     OUTPUT_OWNER_REF,
     OutputOwner,
@@ -29,14 +31,17 @@ def _seed_completed_publication(
 ) -> tuple[OutputOwnerStore, OutputOwner]:
     output_root = workspace / "Outputs/Reports"
     module_root = workspace / "Outputs/Modules"
-    output_root.mkdir(parents=True)
-    module_root.mkdir(parents=True)
+    output_root.mkdir(parents=True, exist_ok=True)
+    module_root.mkdir(parents=True, exist_ok=True)
+    final_markdown = workspace / f"Work/runs/{run_id}/report/配电安全专家咨询报告.md"
+    final_markdown.parent.mkdir(parents=True, exist_ok=True)
+    final_markdown.write_text("# report\n", encoding="utf-8")
     final_docx = workspace / FINAL_REPORT_DOCX_REF
     source_index_docx = output_root / "证据与来源索引.docx"
     Document().save(final_docx)
     Document().save(source_index_docx)
     report_state = workspace / "Work/report-state.json"
-    report_state.parent.mkdir(parents=True)
+    report_state.parent.mkdir(parents=True, exist_ok=True)
     report_state.write_text("{}\n", encoding="utf-8")
     source_index = output_root / "证据与来源索引.md"
     source_index.write_text("# index\n", encoding="utf-8")
@@ -66,7 +71,7 @@ def _seed_completed_publication(
     version = ReportVersionStore(workspace).publish_from_delivery(
         receipt,
         receipt_path,
-        {},
+        {"canonical_markdown": final_markdown},
         [],
         [],
     )
@@ -78,6 +83,51 @@ def _seed_completed_publication(
         published_at=datetime(2026, 8, 9, tzinfo=timezone.utc),
     )
     return OutputOwnerStore(workspace), owner
+
+
+def test_four_output_set_publishes_one_atomic_current_view(tmp_path: Path) -> None:
+    store, legacy_owner = _seed_completed_publication(tmp_path)
+    version = ReportVersionStore(tmp_path).load(legacy_owner.run_id)
+    artifact_sha256 = {
+        output_key: version.artifact_sha256[version_key]
+        for output_key, version_key in {
+            "final_markdown": "canonical_markdown",
+            "final_docx": "final_docx",
+            "source_index": "source_index",
+            "source_index_docx": "source_index_docx",
+        }.items()
+    }
+    owner = build_output_owner(
+        run_id=legacy_owner.run_id,
+        report_version_id=legacy_owner.report_version_id,
+        final_docx_sha256=artifact_sha256["final_docx"],
+        delivery_receipt_ref=legacy_owner.delivery_receipt_ref,
+        artifact_sha256=artifact_sha256,
+    )
+    sources = {
+        output_key: version.artifact_refs[version_key]
+        for output_key, version_key in {
+            "final_markdown": "canonical_markdown",
+            "final_docx": "final_docx",
+            "source_index": "source_index",
+            "source_index_docx": "source_index_docx",
+        }.items()
+    }
+
+    pointer = store.publish_output_set(owner, sources=sources)
+
+    current = tmp_path / CURRENT_OUTPUT_SET_REF
+    assert current.is_symlink()
+    assert current.resolve() == (tmp_path / owner.output_set_ref).resolve()
+    assert pointer == tmp_path / OUTPUT_OWNER_REF
+    for key, public_ref in OUTPUT_ARTIFACT_REFS.items():
+        visible = tmp_path / public_ref
+        immutable = tmp_path / owner.output_set_ref / public_ref.name
+        assert visible.is_symlink()
+        assert immutable.is_symlink()
+        assert visible.read_bytes() == immutable.read_bytes()
+        assert store._sha256(visible) == artifact_sha256[key]
+    assert store.require(expected_run_id=owner.run_id) == owner
 
 
 def test_owner_publish_is_atomic_and_require_validates_all_bindings(

@@ -3605,13 +3605,17 @@ class ReportWorkflowRunner:
                 "final_review_completion_ref",
                 f"Work/runs/{run_id}/reviews/final-completion.json",
             ),
-            delivery_manifest_ref=receipt.manifest_path.resolve().relative_to(
+            delivery_manifest_ref=receipt.manifest_path.relative_to(
                 self.service.workspace
             ),
-            source_index_ref=receipt.source_index.resolve().relative_to(
+            final_markdown_ref=Path(
+                f"Work/runs/{run_id}/report/配电安全专家咨询报告.md"
+            ),
+            final_docx_ref=receipt.final_docx.relative_to(self.service.workspace),
+            source_index_ref=receipt.source_index.relative_to(
                 self.service.workspace
             ),
-            source_index_docx_ref=receipt.source_index_docx.resolve().relative_to(
+            source_index_docx_ref=receipt.source_index_docx.relative_to(
                 self.service.workspace
             ),
         )
@@ -6118,7 +6122,8 @@ class ReportWorkflowRunner:
         )
         self._validate_final_report_structure(state, delivery_markdown, "delivery-final")
         markdown_path = self.service.store.write_text(
-            "Outputs/Reports/配电安全专家咨询报告.md", delivery_markdown
+            f"Work/runs/{state['run_id']}/report/配电安全专家咨询报告.md",
+            delivery_markdown,
         )
         source_index_markdown = ledger.source_index_markdown(
             evidence_items=state.get("evidence_items", []),
@@ -6165,7 +6170,10 @@ class ReportWorkflowRunner:
                 "sha256": template_sha256,
             },
         )
-        output = self.service.workspace / "Outputs/Reports/配电安全专家咨询报告.docx"
+        output = (
+            self.service.workspace
+            / f"Work/runs/{state['run_id']}/report/配电安全专家咨询报告.docx"
+        )
         render_request = RenderRequest(
             run_id=state["run_id"],
             source_markdown_ref=markdown_path.relative_to(self.service.workspace),
@@ -6190,7 +6198,8 @@ class ReportWorkflowRunner:
             "selected_path": selected_template_ref,
             "sha256": template_sha256,
         }
-        self.service.store.write_json("Outputs/Reports/render-log.json", render_log)
+        render_log_ref = Path(f"Work/runs/{state['run_id']}/render-log.json")
+        self.service.store.write_json(render_log_ref.as_posix(), render_log)
         render_result_ref = Path(f"Work/runs/{state['run_id']}/render-result.json")
         self.service.store.write_json(
             render_result_ref.as_posix(),
@@ -6199,7 +6208,7 @@ class ReportWorkflowRunner:
                 run_id=state["run_id"],
                 source_markdown_ref=markdown_path.relative_to(self.service.workspace),
                 output_ref=output.relative_to(self.service.workspace),
-                render_log_ref=Path("Outputs/Reports/render-log.json"),
+                render_log_ref=render_log_ref,
                 template_sha256=template_sha256,
                 output_sha256=hashlib.sha256(output.read_bytes()).hexdigest(),
                 protected_prose_verified=True,
@@ -6236,6 +6245,8 @@ class ReportWorkflowRunner:
         state["output_artifacts"] = self._delivery_output_artifacts(
             final_review_ref=state["final_review_completion_ref"],
             delivery_manifest_ref=receipt.manifest_path.relative_to(self.service.workspace),
+            final_markdown_ref=markdown_path.relative_to(self.service.workspace),
+            final_docx_ref=receipt.final_docx.relative_to(self.service.workspace),
             source_index_ref=receipt.source_index.relative_to(self.service.workspace),
             source_index_docx_ref=receipt.source_index_docx.relative_to(self.service.workspace),
         )
@@ -6413,6 +6424,8 @@ class ReportWorkflowRunner:
         *,
         final_review_ref: str,
         delivery_manifest_ref: Path,
+        final_markdown_ref: Path | None = None,
+        final_docx_ref: Path | None = None,
         source_index_ref: Path | None = None,
         source_index_docx_ref: Path | None = None,
     ) -> list[OutputArtifact]:
@@ -6426,8 +6439,16 @@ class ReportWorkflowRunner:
                 for module_id in REPORT_MODULE_IDS
             ),
             OutputArtifact(kind="review", path=Path(final_review_ref)),
-            OutputArtifact(kind="report", path=Path("Outputs/Reports/配电安全专家咨询报告.md")),
-            OutputArtifact(kind="report", path=Path("Outputs/Reports/配电安全专家咨询报告.docx")),
+            OutputArtifact(
+                kind="report",
+                path=final_markdown_ref
+                or Path("Outputs/Reports/配电安全专家咨询报告.md"),
+            ),
+            OutputArtifact(
+                kind="report",
+                path=final_docx_ref
+                or Path("Outputs/Reports/配电安全专家咨询报告.docx"),
+            ),
             OutputArtifact(
                 kind="report",
                 path=source_index_ref or Path("Outputs/Reports/证据与来源索引.md"),
