@@ -81,10 +81,10 @@
    - ArtifactGateway 已成功持久化后不再额外写 legacy checkpoint/tool-result；
    - 保留旧路径读取兼容，不删除旧文件。
 6. conversation trace 改为小 manifest 加压缩内容引用；GUI conversation store 不动。
-7. retention 首版只生成 CAS 范围的 `storage-usage.json` 和 `retention-plan.json`：
-   - 计算引用、复用和宽限期候选；
-   - 不执行删除；
-   - active/pinned 排除和 quarantine 是未来执行器必须实现的安全门，本版不宣称已经执行。
+7. storage preview 仅作为显式、手动、只读诊断命令：
+   - 不接入 delivery/resume，不生成 `storage-usage.json` 或 `retention-plan.json`；
+   - 不执行删除，也不把扫描结果当成交付状态；
+   - 物理重复应在各写入点消除，后续清理器只允许处理当前已验证 run 的固定临时路径。
 
 验收：
 

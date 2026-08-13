@@ -5,7 +5,6 @@ import pytest
 
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
-from manyselves.core.reporting.delivery import ProjectDelivery
 from manyselves.core.reporting.models import ReportRequest
 from manyselves.core.reporting.output_ownership import (
     OUTPUT_ARTIFACT_REFS,
@@ -14,7 +13,6 @@ from manyselves.core.reporting.output_ownership import (
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
 from manyselves.core.tools.task_board import TaskBoard
 
-from test_delivery import _package
 from test_output_ownership import _seed_completed_publication
 
 
@@ -25,42 +23,16 @@ class NeverProvider(LLMProvider):
 
     async def chat(self, *args, **kwargs):
         self.calls += 1
-        raise AssertionError("archive-only resume must not call Provider")
-
-
-def _persist_delivery(workspace: Path, run_id: str) -> None:
-    source_root = workspace / "inputs"
-    source_root.mkdir(parents=True, exist_ok=True)
-    package = _package(source_root).model_copy(update={"version": run_id})
-    receipt = ProjectDelivery(
-        workspace / f"Work/runs/{run_id}/delivery"
-    ).deliver(package)
-    receipt_ref = workspace / f"Work/runs/{run_id}/delivery-receipt.json"
-    receipt_ref.parent.mkdir(parents=True, exist_ok=True)
-    receipt_ref.write_text(receipt.model_dump_json(indent=2) + "\n", encoding="utf-8")
-    artifacts = [
-        {"kind": "report", "path": receipt.final_docx.relative_to(workspace).as_posix()}
-    ]
-    (workspace / f"Work/runs/{run_id}/delivery-completion.json").write_text(
-        json.dumps(
-            {
-                "run_id": run_id,
-                "status": "archive_failed",
-                "delivery_status": "delivered_with_archive_warning",
-                "warning": "archive unavailable",
-                "delivery_receipt_ref": receipt_ref.relative_to(workspace).as_posix(),
-                "report_version_id": None,
-                "output_artifacts": artifacts,
-            }
-        ),
-        encoding="utf-8",
-    )
+        raise AssertionError("delivery-only resume must not call Provider")
 
 
 @pytest.mark.asyncio
-async def test_resume_archive_only_restores_receipt_without_provider(tmp_path: Path) -> None:
-    run_id = "run-archive-resume"
+async def test_resume_legacy_archive_status_normalizes_verified_delivery_without_provider(
+    tmp_path: Path,
+) -> None:
+    run_id = "report-legacy-archive-resume"
     provider = NeverProvider()
+    _owner_store, owner = _seed_completed_publication(tmp_path, run_id=run_id)
     service = ReportingService(
         tmp_path,
         bus=MessageBus(),
@@ -75,13 +47,24 @@ async def test_resume_archive_only_restores_receipt_without_provider(tmp_path: P
         f"Work/runs/{run_id}/workflow-state.json",
         {"run_id": run_id, "activity": "delivery", "status": "failed"},
     )
-    _persist_delivery(tmp_path, run_id)
+    service.store.write_json(
+        f"Work/runs/{run_id}/delivery-completion.json",
+        {
+            "run_id": run_id,
+            "status": "archive_failed",
+            "delivery_status": "delivered_with_archive_warning",
+            "warning": "legacy archive unavailable",
+            "delivery_receipt_ref": owner.delivery_receipt_ref.as_posix(),
+            "report_version_id": owner.report_version_id,
+            "output_artifacts": [],
+        },
+    )
     service.store.write_json(
         f"Work/runs/{run_id}.json",
         ReportingRunResult(
             run_id=run_id,
             status="delivered_with_archive_warning",
-            error="archive unavailable",
+            error="legacy archive unavailable",
         ).model_dump(mode="json"),
     )
 
@@ -92,7 +75,9 @@ async def test_resume_archive_only_restores_receipt_without_provider(tmp_path: P
     completion = json.loads(
         (tmp_path / f"Work/runs/{run_id}/delivery-completion.json").read_text()
     )
-    assert completion["status"] == "archived"
+    assert completion["status"] == "delivered"
+    assert completion["delivery_status"] == "delivered"
+    assert "warning" not in completion
 
 
 def test_verified_delivery_is_durable_before_output_owner_publication(

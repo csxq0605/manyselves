@@ -8,7 +8,7 @@ from manyselves.core.artifacts.content_store import ContentAddressedStore
 from manyselves.core.reporting.retention import ReportingRetentionPlanner
 
 
-def test_retention_planner_reports_reuse_and_never_deletes(tmp_path) -> None:
+def test_retention_preview_reports_reuse_and_never_writes_or_deletes(tmp_path) -> None:
     first_source = tmp_path / "Inputs/first.bin"
     second_source = tmp_path / "Inputs/second.bin"
     third_source = tmp_path / "Inputs/third.bin"
@@ -41,13 +41,10 @@ def test_retention_planner_reports_reuse_and_never_deletes(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    result = ReportingRetentionPlanner(tmp_path).generate(grace_days=0)
+    result = ReportingRetentionPlanner(tmp_path).preview(grace_days=0)
 
     assert result["plan"]["mode"] == "dry_run"
     assert result["plan"]["automatic_deletion"] is False
-    assert "completed-run storage compaction manifests" in result["plan"][
-        "mark_sources"
-    ]
     assert result["usage"]["blob_count"] == 3
     assert result["usage"]["referenced_blob_count"] == 2
     assert result["usage"]["unreferenced_blob_count"] == 1
@@ -59,8 +56,8 @@ def test_retention_planner_reports_reuse_and_never_deletes(tmp_path) -> None:
     )
     assert referenced.path.is_file()
     assert unreferenced.path.is_file()
-    assert (tmp_path / "Work/storage-usage.json").is_file()
-    assert (tmp_path / "Work/retention-plan.json").is_file()
+    assert not (tmp_path / "Work/storage-usage.json").exists()
+    assert not (tmp_path / "Work/retention-plan.json").exists()
 
 
 def test_read_only_preview_covers_mixed_manifests_and_protection_markers(

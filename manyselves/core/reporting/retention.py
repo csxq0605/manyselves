@@ -5,11 +5,9 @@ delivery may be a legacy materialized copy (v1), an all-CAS package (v2), or a
 mixed package (v3).  This module deliberately treats those formats as input
 data only.  It never removes, moves, quarantines, or rewrites an artifact.
 
-``ReportingRetentionPlanner.generate`` is kept for the existing workflow API:
-it returns the same ``{"usage": ..., "plan": ...}`` shape and writes the two
-summary files used by the workflow.  ``preview``/``scan`` are the strict
-read-only entry points used by the storage preview command and by maintenance
-audits.
+``preview``/``scan`` are explicit, operator-invoked read-only entry points used
+by the storage preview command and maintenance audits.  Storage accounting is
+not part of report delivery and never writes lifecycle summaries.
 """
 
 from __future__ import annotations
@@ -22,9 +20,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, TypeAlias
 
-from .store import ReportingStore
-
-
 _SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
 _CAS_PREFIX = "Work/content/sha256/"
 _GENERATED_SUMMARIES = {
@@ -36,7 +31,6 @@ _MANIFEST_WORDS = (
     "receipt",
     "retention-plan",
     "storage-usage",
-    "storage-compaction",
     "template-provenance",
     "conversation",
     "session",
@@ -98,33 +92,13 @@ class ReportingRetentionPlanner:
     """Account for CAS/materialized storage and produce a safe preview.
 
     The scanner only reads files.  A preview never creates a marker, alters a
-    manifest, or mutates a CAS inode.  ``generate`` additionally persists the
-    two legacy summary JSON files; those are new summaries, not rewrites of
-    lifecycle manifests.
+    manifest, writes a summary, or mutates a CAS inode.
     """
 
     def __init__(self, workspace: Path):
         self.workspace = Path(workspace).resolve()
-        self.store = ReportingStore(self.workspace)
         self.content_root = self.workspace / "Work" / "content" / "sha256"
         self._digest_cache: dict[Path, tuple[str, int]] = {}
-
-    def generate(
-        self,
-        *,
-        grace_days: int = 7,
-        now: datetime | None = None,
-    ) -> dict[str, Any]:
-        """Generate and persist the legacy usage/retention summaries.
-
-        This compatibility method retains the previous API.  Use
-        :meth:`preview` when a completely non-writing call is required.
-        """
-
-        result = self.preview(grace_days=grace_days, now=now)
-        self.store.write_json("Work/storage-usage.json", result["usage"])
-        self.store.write_json("Work/retention-plan.json", result["plan"])
-        return result
 
     def preview(
         self,
@@ -394,7 +368,6 @@ class ReportingRetentionPlanner:
                 "v1/v2/v3 report-version manifests",
                 "v1/v2/v3 delivery manifests",
                 "typed delivery receipts",
-                "completed-run storage compaction manifests",
                 "conversation, template, session, and storage manifests",
                 "active and pinned protection markers",
             ],

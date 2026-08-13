@@ -111,7 +111,6 @@ from .review_lifecycle import (
     verify_cross_owner_barrier,
 )
 from .revision_diff import build_revision_diff
-from .retention import ReportingRetentionPlanner
 from .session_summary import SessionSummaryStore
 from .scheduling import (
     AdaptiveTaskScheduler,
@@ -3546,7 +3545,7 @@ class ReportWorkflowRunner:
         self._restore_delivery_completion(state)
 
     def _restore_delivery_completion(self, state: dict) -> None:
-        """Restore a receipt and, when needed, retry only its archive boundary."""
+        """Restore one fully published delivery without replaying Provider work."""
 
         run_id = state["run_id"]
         completion_ref = f"Work/runs/{run_id}/delivery-completion.json"
@@ -3557,7 +3556,9 @@ class ReportWorkflowRunner:
         if payload.get("run_id") != run_id:
             raise AgentWorkflowError("delivery completion identity/status is invalid")
         status = str(payload.get("status", ""))
-        # ``completed`` is the pre-archive spelling and remains read-compatible.
+        # Archive/retention used to be a synchronous post-delivery phase.  Keep
+        # its terminal spellings read-compatible, but normalize them to the one
+        # real lifecycle boundary: a receipt-backed published report version.
         legacy_completed = status == "completed"
         if status not in {
             "receipt_persisted",
@@ -3636,30 +3637,18 @@ class ReportWorkflowRunner:
                 if version.run_id != run_id:
                     raise ValueError("report version belongs to another run")
             except (OSError, ValueError, FileNotFoundError):
-                # A valid receipt remains delivered even when version publication
-                # was interrupted; archive-only recovery must not invoke Provider.
+                # Version publication was interrupted.  Leave delivery unrestored
+                # so the idempotent delivery step can finish it without Provider.
                 version = None
-        if version is not None:
-            state["report_version"] = version
-
-        if status in {"receipt_persisted", "delivered", "archive_pending", "archive_failed"}:
-            try:
-                storage_plan = ReportingRetentionPlanner(self.service.workspace).generate()
-                state["storage_usage_ref"] = "Work/storage-usage.json"
-                state["retention_plan_ref"] = "Work/retention-plan.json"
-                state["storage_usage"] = storage_plan["usage"]
-                payload["status"] = "archived"
-                payload["delivery_status"] = "archived"
-                payload.pop("warning", None)
-                self.service.store.write_json(completion_ref, payload)
-            except Exception as exc:
-                payload["status"] = "archive_failed"
-                payload["delivery_status"] = "delivered_with_archive_warning"
-                payload["warning"] = str(exc)
-                self.service.store.write_json(completion_ref, payload)
-                state["delivery_status"] = "delivered_with_archive_warning"
-        else:
-            state["delivery_status"] = payload.get("delivery_status", "archived")
+        if version is None:
+            return
+        state["report_version"] = version
+        state["delivery_status"] = "delivered"
+        if status != "delivered" or payload.get("delivery_status") != "delivered":
+            payload["status"] = "delivered"
+            payload["delivery_status"] = "delivered"
+            payload.pop("warning", None)
+            self.service.store.write_json(completion_ref, payload)
         state["output_artifacts"] = artifacts
         state["delivery_completion_ref"] = completion_ref
         # Receipt/hash validation above proves these artifacts belong to this
@@ -6237,8 +6226,8 @@ class ReportWorkflowRunner:
             f"Work/runs/{state['run_id']}/delivery-receipt.json",
             receipt.model_dump(mode="json"),
         )
-        # A receipt is durable before any version/archive work begins.  A
-        # crash after this point is therefore an archive/version recovery, not
+        # A receipt is durable before version publication begins.  A crash
+        # after this point is therefore delivery recovery, not
         # a reason to invoke a Provider again.
         completion_ref = f"Work/runs/{state['run_id']}/delivery-completion.json"
         state["delivery_status"] = "receipt_persisted"
@@ -6366,51 +6355,6 @@ class ReportWorkflowRunner:
             version_store.content_store.metrics_snapshot()
         )
         state["report_version"] = version
-        state["delivery_status"] = "archive_pending"
-        self.service.store.write_json(
-            completion_ref,
-            {
-                "run_id": state["run_id"],
-                "status": "archive_pending",
-                "delivery_status": "archive_pending",
-                "delivery_receipt_ref": receipt_path.relative_to(self.service.workspace).as_posix(),
-                "report_version_id": version.version_id,
-                "final_audit_snapshot_ref": final_audit_snapshot_ref,
-                "output_artifacts": [
-                    artifact.model_dump(mode="json") for artifact in state["output_artifacts"]
-                ],
-            },
-        )
-        archive_error: str | None = None
-        try:
-            storage_plan = ReportingRetentionPlanner(self.service.workspace).generate()
-            state["storage_usage_ref"] = "Work/storage-usage.json"
-            state["retention_plan_ref"] = "Work/retention-plan.json"
-            state["storage_usage"] = storage_plan["usage"]
-            state["delivery_status"] = "archived"
-            final_status = "archived"
-        except Exception as exc:
-            # The receipt and version are already durable and hash-verified;
-            # retention is advisory and must never replay Provider work.
-            archive_error = str(exc)
-            state["delivery_status"] = "delivered_with_archive_warning"
-            state["delivery_warning"] = archive_error
-            final_status = "archive_failed"
-        self.service.store.write_json(
-            completion_ref,
-            {
-                "run_id": state["run_id"],
-                "status": final_status,
-                "delivery_status": state["delivery_status"],
-                "warning": archive_error,
-                "delivery_receipt_ref": receipt_path.relative_to(self.service.workspace).as_posix(),
-                "report_version_id": version.version_id,
-                "final_audit_snapshot_ref": final_audit_snapshot_ref,
-                "output_artifacts": [
-                    artifact.model_dump(mode="json") for artifact in state["output_artifacts"]
-                ],
-            },
-        )
         state["delivery_completion_ref"] = completion_ref
 
     @staticmethod
