@@ -705,7 +705,6 @@ def test_module_review_tool_schema_omits_runtime_owned_fields(
             run_id=run_id,
             subject_ref=f"Work/runs/{run_id}/modules/2.1-r0.json",
             subject_revision=0,
-            content_sha256="0" * 64,
             validator="test/v2",
             check_ids=["structure"],
             passed=True,

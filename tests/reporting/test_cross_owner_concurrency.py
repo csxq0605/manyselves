@@ -20,7 +20,7 @@ from manyselves.core.reporting.agentic_models import (
     ResolutionVerdict,
     RevisionResponse,
 )
-from manyselves.core.reporting.input_contracts import CrossOwnerInput, ValidationReport
+from manyselves.core.reporting.input_contracts import CrossOwnerInput
 from manyselves.core.reporting.parallel_runtime import (
     ArtifactRef,
     CrossOwnerCompletion,
@@ -97,7 +97,6 @@ def _cross_finding(finding_id: str) -> CrossReviewFinding:
             "并保留可由同一Cross owner复核的明确记录。"
         ),
         reviewer_checks=["实施顺序、接口责任和联合验收条件均已明确写入。"],
-        machine_checks=[],
     )
 
 
@@ -164,9 +163,7 @@ def _fake_noop(
         f"Work/runs/{run_id}/reviews/module/cross-r{review_round}/"
         f"{owner_module_id}/completion.json"
     )
-    machine_ref = f"Work/runs/{run_id}/validations/cross-{owner_module_id}-r0.json"
     runner.service.store.write_json(local_ref, {"status": "completed", "module_id": owner_module_id})
-    runner.service.store.write_json(machine_ref, {"status": "passed", "module_id": owner_module_id})
     completion = CrossOwnerCompletion(
         lane_id=f"cross-r{review_round}-module-{owner_module_id}",
         run_id=run_id,
@@ -177,7 +174,6 @@ def _fake_noop(
         owner_input=_artifact_ref(runner, owner_input_ref),
         subject=_artifact_ref(runner, subject_ref),
         local_review_completion=_artifact_ref(runner, local_ref),
-        machine_validation=_artifact_ref(runner, machine_ref),
         author_task_attempt_id=f"noop-{owner_module_id}",
         reviewer_session_id=f"cross-owner-{owner_module_id}",
         lease_epoch=1,
@@ -191,7 +187,6 @@ def _fake_noop(
         module=module,
         responses=[],
         local_review_ref=local_ref,
-        machine_validation_ref=machine_ref,
         completion_ref=completion_ref,
         completion=completion,
     )
@@ -227,7 +222,7 @@ async def _fake_revision_lane(
     subject_ref = (
         f"Work/runs/{run_id}/modules/{module_id}-r{revised.revision}.json"
     )
-    subject_path = runner.service.store.write_json(
+    runner.service.store.write_json(
         subject_ref, revised.model_dump(mode="json")
     )
     local_ref = (
@@ -237,22 +232,6 @@ async def _fake_revision_lane(
     runner.service.store.write_json(
         local_ref, {"status": "completed", "module_id": module_id}
     )
-    machine_ref = (
-        f"Work/runs/{run_id}/validations/cross-{module_id}-r{revised.revision}.json"
-    )
-    report = ValidationReport(
-        validation_protocol_version=2,
-        run_id=run_id,
-        subject_ref=subject_ref,
-        subject_revision=revised.revision,
-        content_sha256=hashlib.sha256(subject_path.read_bytes()).hexdigest(),
-        validator="test-cross-regression-loop-v1",
-        check_ids=[],
-        failures=[],
-        observations=[],
-        passed=True,
-    )
-    runner.service.store.write_json(machine_ref, report.model_dump(mode="json"))
     completion = CrossOwnerCompletion(
         lane_id=f"cross-r{review_round}-module-{module_id}",
         run_id=run_id,
@@ -265,7 +244,6 @@ async def _fake_revision_lane(
         owner_input=_artifact_ref(runner, owner_input_ref),
         subject=_artifact_ref(runner, subject_ref),
         local_review_completion=_artifact_ref(runner, local_ref),
-        machine_validation=_artifact_ref(runner, machine_ref),
         author_task_attempt_id=f"test-author-{module_id}-r{review_round}",
         reviewer_session_id=f"cross-owner-{module_id}",
         lease_epoch=1,
@@ -281,7 +259,6 @@ async def _fake_revision_lane(
         module=revised,
         responses=responses,
         local_review_ref=local_ref,
-        machine_validation_ref=machine_ref,
         completion_ref=completion_ref,
         completion=completion,
     )

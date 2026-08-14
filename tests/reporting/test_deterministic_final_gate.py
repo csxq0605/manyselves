@@ -98,7 +98,6 @@ def _validation(subject_revision: int = 0) -> ValidationReport:
         run_id=RUN_ID,
         subject_ref=f"Work/runs/{RUN_ID}/edited-revisions/chief-r{subject_revision}.json",
         subject_revision=subject_revision,
-        content_sha256="0" * 64,
         validator="final-report-structure/v2",
         check_ids=["final_report.fixed_sections_and_markdown"],
         passed=True,
@@ -168,8 +167,7 @@ def test_structure_gate_allows_chapter_four_descendants_and_counts_internal_labe
 
     signals = validate_final_report_markdown(markdown, plan)
 
-    assert "3.1.2 各维度风险分析" not in signals["shallow_sections"]
-    assert "4.1 动态专项问题" not in signals["shallow_sections"]
+    assert signals == {}
 
     with pytest.raises(ValueError, match="headings must exactly match"):
         validate_final_report_markdown(

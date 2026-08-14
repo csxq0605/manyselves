@@ -1256,7 +1256,7 @@ def _sanitize_provider_visible_value(value: Any) -> Any:
 
 
 def _tool_correction_payload(message: LLMMessage) -> dict[str, Any] | None:
-    """Return one rejected tool-call correction carried by a tool result."""
+    """Return one rejected structured tool result carried by a tool response."""
 
     if not message.is_tool_result or not message.content:
         return None
@@ -1266,11 +1266,13 @@ def _tool_correction_payload(message: LLMMessage) -> dict[str, Any] | None:
         return None
     if not isinstance(payload, dict):
         return None
+    status = str(payload.get("status") or "").strip().casefold()
     if (
-        str(payload.get("status") or "").strip().casefold()
-        != "correction_required"
+        status not in {"correction_required", "failed"}
         or payload.get("accepted") is not False
     ):
+        return None
+    if status == "failed" and not isinstance(payload.get("validation_errors"), list):
         return None
     return payload
 
@@ -1339,19 +1341,44 @@ def _provider_working_messages(
             for result in tool_results
             if result.tool_call_id not in rejected
         )
+        later_task_boundary = any(
+            later.role == "user"
+            and (
+                "<task_context>" in str(later.content or "")
+                or "<task_boundary>" in str(later.content or "")
+            )
+            for later in messages[result_index:]
+        )
         for call in message.tool_calls:
             if call.id not in rejected:
                 continue
             correction_result = results_by_id[call.id]
+            rejected_payload = rejected[call.id]
+            terminal_or_historical = (
+                str(rejected_payload.get("status") or "").casefold() == "failed"
+                or later_task_boundary
+            )
+            if terminal_or_historical:
+                correction_text = (
+                    "This earlier rejected call and its invalid arguments were removed "
+                    "from Provider working history. Keep any useful analysis, but rebuild "
+                    "the tool arguments only from the current task schema and current "
+                    "valid example. Do not copy the earlier argument shape or its stale "
+                    "correction example."
+                )
+            else:
+                correction_text = (
+                    "The rejected tool call was removed from working history so "
+                    "its invalid arguments are not an example to copy. Rebuild the "
+                    "call from the current tool schema and apply this feedback:\n"
+                    f"{correction_result.content}"
+                )
             working.append(
                 LLMMessage(
                     role="user",
                     content=(
                         f'<tool_input_correction tool_name="{call.name}">\n'
-                        "The rejected tool call was removed from working history so "
-                        "its invalid arguments are not an example to copy. Rebuild the "
-                        "call from the current tool schema and apply this feedback:\n"
-                        f"{correction_result.content}\n"
+                        f"{correction_text}\n"
                         "</tool_input_correction>"
                     ),
                 )

@@ -2453,6 +2453,102 @@ def test_provider_working_history_preserves_successful_peer_tool_pair() -> None:
     )
 
 
+def test_provider_working_history_drops_terminal_rejection_before_resumed_task() -> None:
+    invalid_findings = '[{"category":"traceability"}]'
+    messages = [
+        LLMMessage(
+            role="assistant",
+            content="Review complete.",
+            tool_calls=[
+                LLMToolCall(
+                    id="call-terminal-rejected",
+                    name="submit_result",
+                    arguments={"kind": "final", "findings": invalid_findings},
+                )
+            ],
+        ),
+        LLMMessage(
+            role="user",
+            content=json.dumps(
+                {
+                    "status": "failed",
+                    "accepted": False,
+                    "validation_errors": [
+                        {"field": "findings", "expected": "array"}
+                    ],
+                    "instruction": "stop_task",
+                }
+            ),
+            tool_call_id="call-terminal-rejected",
+            is_tool_result=True,
+        ),
+        LLMMessage(
+            role="user",
+            content="<task_context>resumed typed task</task_context>",
+        ),
+    ]
+
+    working = agent_loop_module._provider_working_messages(messages)
+
+    assert not any(
+        call.arguments.get("findings") == invalid_findings
+        for message in working
+        for call in (message.tool_calls or [])
+    )
+    correction = next(
+        message
+        for message in working
+        if message.role == "user" and "tool_input_correction" in message.content
+    )
+    assert "earlier rejected call" in correction.content
+    assert "current task schema" in correction.content
+    assert invalid_findings not in correction.content
+    assert "stale correction example" in correction.content
+
+
+def test_provider_working_history_drops_stale_correction_detail_before_resumed_task() -> None:
+    stale_feedback = "OLD_EMPTY_ARRAY_EXAMPLE"
+    messages = [
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                LLMToolCall(
+                    id="call-old-correction",
+                    name="submit_result",
+                    arguments={"findings": "[{...}]"},
+                )
+            ],
+        ),
+        LLMMessage(
+            role="user",
+            content=json.dumps(
+                {
+                    "status": "correction_required",
+                    "accepted": False,
+                    "repair_instruction": stale_feedback,
+                }
+            ),
+            tool_call_id="call-old-correction",
+            is_tool_result=True,
+        ),
+        LLMMessage(role="user", content="<task_boundary>resume</task_boundary>"),
+    ]
+
+    working = agent_loop_module._provider_working_messages(messages)
+
+    assert not any(
+        call.arguments.get("findings") == "[{...}]"
+        for message in working
+        for call in (message.tool_calls or [])
+    )
+    assert all(stale_feedback not in str(message.content or "") for message in working)
+    assert any(
+        "current task schema" in str(message.content or "")
+        for message in working
+    )
+
+
 @pytest.mark.asyncio
 async def test_fabricated_result_part_marker_requests_correction_without_tool_error(
     agent_loop,

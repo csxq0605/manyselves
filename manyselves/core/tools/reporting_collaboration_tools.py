@@ -1691,6 +1691,24 @@ class SubmitResultTool(_ResultTool):
                         "field with null, an empty array, or any other value. Preserve "
                         "all unrelated valid content; do not stringify the payload."
                     )
+                elif (
+                    expected_text(schema_at(loc)) == "array"
+                    and isinstance(at_path(payload, loc), str)
+                ):
+                    wrong_shape = json.dumps(
+                        {field: "[{...}]"}, ensure_ascii=False
+                    )
+                    right_shape = json.dumps(
+                        {field: [{"item": "..."}]}, ensure_ascii=False
+                    )
+                    repair_instruction = (
+                        f"{field} was submitted as a JSON-encoded string. Keep the same "
+                        "items and wording; only remove the outer quotes and JSON string "
+                        f"escaping. Wrong: {wrong_shape}. Right: {right_shape}. "
+                        "Resubmit the complete payload with this field as a native JSON "
+                        "array. Do not regenerate, expand, summarize, or stringify the "
+                        "payload."
+                    )
                 else:
                     repair_instruction = (
                         f"Correct {field} to the declared type or value and resubmit "

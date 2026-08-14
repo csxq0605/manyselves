@@ -1531,7 +1531,6 @@ class CrossOwnerCompletion(_StrictModel):
     )
     subject: ArtifactRef | str | None = None
     local_review_completion: ArtifactRef | str | None = None
-    machine_validation: ArtifactRef | str | None = None
     author_task_attempt_id: str | None = None
     reviewer_session_id: str | None = None
     lease_epoch: int = Field(default=1, ge=1)

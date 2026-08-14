@@ -35,7 +35,7 @@ FIELD_GUIDANCE: dict[str, str] = {
     "base_revision": "Exact prior module revision to which an explicit module patch applies.",
     "category": "Stable defect or review-dimension category defined by the active stage contract.",
     "causal_chain": "Evidence-bounded causal, dependency, or propagation chain connecting reviewed modules.",
-    "cluster_type": "System-level relationship class used to prove portfolio completeness.",
+    "cluster_type": "Evidence-based label for the supported cross-module relationship.",
     "root_causes": "Evidence-bounded common causes or preconditions shared across modules.",
     "propagation_steps": "Ordered mechanism or dependency steps across the related modules.",
     "module_statement_refs": "Existing module or submodule refs proving every local link is already written back.",
@@ -69,7 +69,6 @@ FIELD_GUIDANCE: dict[str, str] = {
     "evidence_refs": "Existing current-run artifact or source refs that reproduce the submitted statement or verdict.",
     "evidence_ids": "Unique current-run E-* ids supporting the exact submitted scope.",
     "evidence_ref": "Current-run registered project-evidence artifact assigned to this task.",
-    "expected_values": "Exact terms or values used by an explicitly declared machine predicate.",
     "finding_id": "Stable prior finding id copied exactly; do not restate or rename its contract.",
     "findings": "New immutable findings created from the current subject in this pass.",
     "findings_overview": "Final report section 1.2 body summarizing evidence-bounded assessment findings.",
@@ -82,7 +81,6 @@ FIELD_GUIDANCE: dict[str, str] = {
     "input_refs": "Current-run artifacts explicitly assigned as inputs; their roles come from the input contract.",
     "kind": "Required exact discriminator for the one submission type allowed by the active task.",
     "knowledge_ref": "Module Knowledge reference assigned to the exact task scope.",
-    "machine_checks": "Explicit deterministic prerequisites; passing them never resolves a semantic finding.",
     "module_id": "Fixed report module id from 2.1 through 2.5.",
     "manifest_ref": "Current-run immutable project manifest assigned to this task.",
     "module_narratives": "Map containing exactly one complete approved narrative for each fixed report module.",
@@ -187,7 +185,6 @@ FIELD_GUIDANCE: dict[str, str] = {
         "absent when Inputs has no matching Markdown or that file is empty."
     ),
     "tables": "Traceable tables selected for the final report; provide only registered E-* evidence_ids and runtime derives internal bindings.",
-    "target_paths": "Explicit structured subject paths inspected by a machine predicate.",
     "target_section_ids": "Fixed final-report sections where the chief editor must act.",
     "target_changes": "One explicit required change and reviewer-check set for every targeted final-report section.",
     "target_section_id": "One exact summary/conclusion section in 1.1, 1.2, 1.3, 3.1.1, 3.1.2, 3.1.3, or 3.2; Chapter 2 and Chapter 4 are forbidden.",
@@ -579,7 +576,31 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
         "run_id": "report-example",
         "chapter_id": "1",
         "checked_section_ids": ["1.1", "1.2", "1.3"],
-        "findings": [],
+        "findings": [
+            {
+                "id": "F-1-001",
+                "target_section_ids": ["1.1"],
+                "target_changes": [
+                    {
+                        "target_section_id": "1.1",
+                        "required_change": (
+                            "补充该结论对应的证据边界，并明确尚待确认的项目事实。"
+                        ),
+                        "reviewer_checks": [
+                            "修改后能够从结论直接追溯到当前运行的证据。"
+                        ],
+                    }
+                ],
+                "category": "traceability",
+                "impact": "blocking",
+                "observation": (
+                    "当前结论没有清楚区分已由证据支持的事实与仍待项目确认的判断。"
+                ),
+                "evidence_refs": [
+                    "Work/runs/report-example/edited-revisions/chief-r0.json"
+                ],
+            }
+        ],
         "residual_risks": [],
     },
     "final_chapter_lane_verdict_submission": {

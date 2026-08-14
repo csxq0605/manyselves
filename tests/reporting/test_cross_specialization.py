@@ -52,7 +52,6 @@ def test_cross_recheck_rejects_a_finding_owned_by_another_lane() -> None:
                     "evidence_refs": [payload["module_refs"]["2.3"]],
                     "required_change": "在保护模块目标小节补充设备能力前提、实施顺序和联合验收方法。",
                     "reviewer_checks": ["确认跨模块前提、顺序和联合验收均已写回"],
-                    "machine_checks": [],
                 }
             ],
         }

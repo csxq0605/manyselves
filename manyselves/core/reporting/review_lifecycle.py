@@ -64,7 +64,6 @@ from .input_contracts import (
     ReviewClaimStatement,
     ReviewCompletionRecord,
     ReviewEvidenceExcerpt,
-    ValidationFailure,
     ValidationReport,
     WorkflowExceptionInput,
     final_audit_metadata_view,
@@ -928,24 +927,15 @@ async def request_module_revision(
             f"Work/runs/{state['run_id']}/modules/"
             f"{subject.module_id}-r{subject.revision}.json"
         )
-        if state.get("_cross_owner_business_validation"):
-            _validate_cross_owner_validation_business(
-                runner,
-                validation_report,
-                run_id=state["run_id"],
-                subject_ref=validation_subject_ref,
-                subject_revision=subject.revision,
-            )
-        else:
-            _require_validation_binding(
-                runner,
-                validation_report,
-                subject_ref=validation_subject_ref,
-                subject_revision=subject.revision,
-            )
+        _require_validation_binding(
+            runner,
+            validation_report,
+            subject_ref=validation_subject_ref,
+            subject_revision=subject.revision,
+        )
         if not targets:
             raise ReviewLifecycleError(
-                "failed machine validation requires explicit module-local correction targets"
+                "failed structural validation requires explicit module-local correction targets"
             )
     if not targets:
         raise ReviewLifecycleError(
@@ -1290,8 +1280,8 @@ async def run_module_review(
             save_progress("review")
 
     while True:
-        machine_attempts = 0
-        machine_failure_fingerprints: dict[tuple, int] = {}
+        preflight_attempts = 0
+        preflight_failure_fingerprints: dict[tuple, int] = {}
         while True:
             subject_ref = (
                 f"Work/runs/{state['run_id']}/modules/"
@@ -1331,7 +1321,7 @@ async def run_module_review(
             validation_report = preflight.report
             if validation_report.passed:
                 break
-            machine_attempts += 1
+            preflight_attempts += 1
             fingerprint = tuple(
                 sorted(
                     (
@@ -1342,13 +1332,13 @@ async def run_module_review(
                     for failure in validation_report.failures
                 )
             )
-            repeated = machine_failure_fingerprints.get(fingerprint, 0) + 1
-            machine_failure_fingerprints[fingerprint] = repeated
-            if repeated >= 2 or machine_attempts >= 3:
+            repeated = preflight_failure_fingerprints.get(fingerprint, 0) + 1
+            preflight_failure_fingerprints[fingerprint] = repeated
+            if repeated >= 2 or preflight_attempts >= 3:
                 raise ReviewLifecycleError(
                     "module preflight failed repeatedly before semantic review; "
                     "no reviewer finding or verdict was created. "
-                    f"module={module_id}; attempts={machine_attempts}; "
+                    f"module={module_id}; attempts={preflight_attempts}; "
                     f"validation_ref={signal_ref}"
                 )
             current, _ = await request_module_revision(
@@ -1725,112 +1715,6 @@ async def run_module_review(
         save_progress("review")
 
 
-def _resolve_subject_path(subject: ModuleSubmission, path: str) -> str:
-    if path.startswith("submodule_narratives."):
-        key = path.removeprefix("submodule_narratives.")
-        try:
-            return subject.submodule_narratives[key]
-        except KeyError as exc:
-            raise ReviewLifecycleError(f"machine check target does not exist: {path}") from exc
-    if path.startswith("claims."):
-        remainder = path.removeprefix("claims.")
-        claim_id, separator, field = remainder.rpartition(".")
-        if not separator:
-            raise ReviewLifecycleError(f"machine Claim path requires a field: {path}")
-        claim = next((value for value in subject.claims if value.id == claim_id), None)
-        if claim is None or field not in claim.model_fields:
-            raise ReviewLifecycleError(f"machine check target does not exist: {path}")
-        return str(getattr(claim, field))
-    raise ReviewLifecycleError(f"unsupported explicit machine-check path: {path}")
-
-
-def _run_cross_machine_checks(
-    runner: "ReportWorkflowRunner",
-    *,
-    state: dict,
-    subject: ModuleSubmission,
-    subject_ref: str,
-    findings: list[CrossReviewFinding],
-) -> str:
-    subject_path = runner.service.workspace / subject_ref
-    try:
-        content_sha256 = hashlib.sha256(subject_path.read_bytes()).hexdigest()
-    except OSError as exc:
-        raise ReviewLifecycleError(
-            f"Cross machine-check subject is unreadable: {subject_ref}"
-        ) from exc
-    failures: list[ValidationFailure] = []
-    check_ids: list[str] = []
-    for finding in findings:
-        for index, check in enumerate(finding.machine_checks, start=1):
-            check_id = f"{finding.id}:machine:{index}"
-            check_ids.append(check_id)
-            values = [_resolve_subject_path(subject, path) for path in check.target_paths]
-            if check.kind == "forbidden_terms_absent":
-                for path, value in zip(check.target_paths, values, strict=True):
-                    present = [term for term in check.expected_values if term in value]
-                    if present:
-                        failures.append(
-                            ValidationFailure(
-                                check_id=check_id,
-                                finding_id=finding.id,
-                                target_path=path,
-                                message=f"forbidden terms still present: {present}",
-                            )
-                        )
-            elif check.kind == "required_terms_present":
-                combined = "\n".join(values)
-                missing = [term for term in check.expected_values if term not in combined]
-                if missing:
-                    failures.append(
-                        ValidationFailure(
-                            check_id=check_id,
-                            finding_id=finding.id,
-                            target_path=", ".join(check.target_paths),
-                            message=f"required terms missing: {missing}",
-                        )
-                    )
-            elif check.kind == "field_equals":
-                if len(check.target_paths) != len(check.expected_values):
-                    raise ReviewLifecycleError(
-                        f"{check_id} field_equals requires one expected value per path"
-                    )
-                for path, value, expected in zip(
-                    check.target_paths,
-                    values,
-                    check.expected_values,
-                    strict=True,
-                ):
-                    if value != expected:
-                        failures.append(
-                            ValidationFailure(
-                                check_id=check_id,
-                                finding_id=finding.id,
-                                target_path=path,
-                                message="field value does not equal the declared expected value",
-                            )
-                        )
-    report = ValidationReport(
-        validation_protocol_version=2,
-        run_id=state["run_id"],
-        subject_ref=subject_ref,
-        subject_revision=subject.revision,
-        content_sha256=content_sha256,
-        validator="explicit-cross-predicates/v2",
-        check_ids=check_ids,
-        failures=failures,
-        passed=not failures,
-    )
-    return _write_model(
-        runner,
-        (
-            f"Work/runs/{state['run_id']}/validations/cross-"
-            f"{subject.module_id}-r{subject.revision}.json"
-        ),
-        report,
-    )
-
-
 def _validate_cross_findings(
     findings: list[CrossReviewFinding],
     modules: dict[str, ModuleSubmission],
@@ -1838,30 +1722,10 @@ def _validate_cross_findings(
     _unique_ids((finding.id for finding in findings), label="cross findings")
 
 
-def _validate_cross_synthesis_portfolio(
-    synthesis_inputs: list[CrossSynthesisInput],
-    modules: dict[str, ModuleSubmission],
-) -> None:
-    """Require system synthesis rather than treating six-dimension coverage as evidence."""
-
-    if len(synthesis_inputs) < 2:
-        raise ReviewLifecycleError(
-            "Cross completion requires at least two supported system relationships"
-        )
-    kinds = {item.cluster_type for item in synthesis_inputs}
-    required_kinds = {"risk_cluster", "global_propagation"}
-    if not required_kinds.issubset(kinds):
-        raise ReviewLifecycleError(
-            "Cross synthesis portfolio requires a risk cluster and a global propagation "
-            f"chain; missing={sorted(required_kinds - kinds)}"
-        )
-
-
 class _CrossOwnerLaneResult(StrictModel):
     module: ModuleSubmission
     responses: list[RevisionResponse]
     local_review_ref: str
-    machine_validation_ref: str
     completion_ref: str
     completion: CrossOwnerCompletion
 
@@ -1926,7 +1790,6 @@ def _cross_owner_input(
     required_findings: list[CrossReviewFinding] | None = None,
     revision_responses: list[RevisionResponse] | None = None,
     local_review_ref: str | None = None,
-    machine_validation_ref: str | None = None,
     prior_synthesis_inputs: list[CrossSynthesisInput] | None = None,
 ) -> tuple[CrossOwnerInput, str]:
     """Build and persist one owner-complete/four-relation Cross input."""
@@ -1953,19 +1816,6 @@ def _cross_owner_input(
         related_revisions[module_id] = related.revision
         related_hashes[module_id] = view.subject_sha256
         related_views[module_id] = view
-    machine_report = None
-    if machine_validation_ref:
-        machine_report = ValidationReport.model_validate_json(
-            (runner.service.workspace / machine_validation_ref).read_text(
-                encoding="utf-8"
-            )
-        )
-        _require_validation_binding(
-            runner,
-            machine_report,
-            subject_ref=owner_ref,
-            subject_revision=owner.revision,
-        )
     contract = CrossOwnerInput(
         phase=phase,
         run_id=state["run_id"],
@@ -1983,8 +1833,6 @@ def _cross_owner_input(
         revision_responses=revision_responses or [],
         prior_synthesis_inputs=prior_synthesis_inputs or [],
         local_regression_review_ref=local_review_ref,
-        machine_validation_ref=machine_validation_ref,
-        machine_validation_report=machine_report,
     )
     ref = _write_model(
         runner,
@@ -2072,7 +1920,6 @@ def _cross_owner_completion_business_key(
         "verdict_result",
         "subject",
         "local_review_completion",
-        "machine_validation",
     ):
         payload[field] = _cross_owner_artifact_ref_value(getattr(completion, field))
     for field in (
@@ -2225,7 +2072,6 @@ def _validate_cross_owner_completion_business_identity(
         ("initial result", completion.initial_result),
         ("verdict result", completion.verdict_result),
         ("local review", completion.local_review_completion),
-        ("machine validation", completion.machine_validation),
     ):
         ref = _cross_owner_artifact_ref_value(artifact)
         if ref is not None:
@@ -2261,60 +2107,7 @@ def _validate_cross_owner_completion_business_identity(
                     raise ReviewLifecycleError(
                         f"Cross owner verdict ownership mismatch: {owner_module_id}"
                     )
-            elif label == "machine validation":
-                try:
-                    machine_report = ValidationReport.model_validate_json(
-                        (runner.service.workspace / ref).read_text(encoding="utf-8")
-                    )
-                except (OSError, ValueError):
-                    # Legacy test/forensic projections may carry a simple JSON
-                    # status record.  Syntax and current-run containment still
-                    # apply; typed reports get the stronger binding checks.
-                    machine_report = None
-                if machine_report is not None:
-                    _validate_cross_owner_validation_business(
-                        runner,
-                        machine_report,
-                        run_id=run_id,
-                        subject_ref=subject_ref,
-                        subject_revision=module.revision,
-                    )
     return module
-
-
-def _validate_cross_owner_validation_business(
-    runner: "ReportWorkflowRunner",
-    report: ValidationReport,
-    *,
-    run_id: str,
-    subject_ref: str,
-    subject_revision: int,
-) -> None:
-    """Validate a Cross machine report without content-digest gates."""
-
-    _cross_owner_artifact_path(
-        runner,
-        subject_ref,
-        run_id=run_id,
-        label="validated subject",
-    )
-    if (
-        report.run_id != run_id
-        or report.subject_ref != subject_ref
-        or report.subject_revision != subject_revision
-        or not report.passed
-    ):
-        raise ReviewLifecycleError(
-            "Cross owner machine validation does not bind its current subject"
-        )
-
-
-def _cross_owner_validation_business_key(report: ValidationReport) -> dict:
-    """Project validation metadata without its legacy content digest."""
-
-    payload = report.model_dump(mode="json")
-    payload.pop("content_sha256", None)
-    return payload
 
 
 def _load_cross_owner_input(
@@ -2426,36 +2219,6 @@ def _load_cross_owner_input(
                 f"Cross owner {phase} related binding mismatch: "
                 f"{owner_module_id}/{related_id}"
             )
-    if contract.machine_validation_ref is not None:
-        _cross_owner_artifact_path(
-            runner,
-            contract.machine_validation_ref,
-            run_id=run_id,
-            label="machine validation",
-        )
-        try:
-            machine_report = ValidationReport.model_validate_json(
-                (
-                    runner.service.workspace / contract.machine_validation_ref
-                ).read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError) as exc:
-            raise ReviewLifecycleError(
-                f"Cross owner {phase} machine validation is invalid: {owner_module_id}"
-            ) from exc
-        if _cross_owner_validation_business_key(machine_report) != _cross_owner_validation_business_key(
-            contract.machine_validation_report
-        ):
-            raise ReviewLifecycleError(
-                f"Cross owner {phase} machine validation changed: {owner_module_id}"
-            )
-        _validate_cross_owner_validation_business(
-            runner,
-            machine_report,
-            run_id=run_id,
-            subject_ref=contract.owner_subject_ref,
-            subject_revision=contract.owner_subject_revision,
-        )
     if contract.local_regression_review_ref is not None:
         _cross_owner_artifact_path(
             runner,
@@ -2735,9 +2498,6 @@ def _recover_cross_owner_lane(
         local_review_ref=_cross_owner_artifact_ref_value(
             completion.local_review_completion
         ) or "",
-        machine_validation_ref=_cross_owner_artifact_ref_value(
-            completion.machine_validation
-        ) or "",
         completion_ref=completion_ref,
         completion=completion,
     )
@@ -2802,14 +2562,10 @@ def _recover_cross_owner_lane_from_recovery(
     local_review_ref = _cross_owner_artifact_ref_value(
         completion.local_review_completion
     ) or ""
-    machine_validation_ref = _cross_owner_artifact_ref_value(
-        completion.machine_validation
-    ) or ""
     return _CrossOwnerLaneResult(
         module=module,
         responses=responses,
         local_review_ref=local_review_ref,
-        machine_validation_ref=machine_validation_ref,
         completion_ref=completion_ref,
         completion=completion,
     )
@@ -2882,7 +2638,6 @@ async def _run_cross_owner_review(
     required_findings: list[CrossReviewFinding] | None = None,
     revision_responses: list[RevisionResponse] | None = None,
     local_review_ref: str | None = None,
-    machine_validation_ref: str | None = None,
     prior_synthesis_inputs: list[CrossSynthesisInput] | None = None,
 ) -> tuple[CrossOwnerFindingSubmission | CrossOwnerVerdictSubmission, str]:
     """Dispatch one fixed Cross-owner reviewer and persist its typed result."""
@@ -2991,18 +2746,11 @@ def _verified_cross_owner_noop(
     owner_input_ref: str,
     review_round: int,
 ) -> _CrossOwnerLaneResult:
-    """Create a hash-bound completion for an owner with no Cross finding."""
+    """Create a durable completion for an owner with no Cross finding."""
 
     subject_ref = (
         f"Work/runs/{state['run_id']}/modules/"
         f"{owner_module_id}-r{module.revision}.json"
-    )
-    machine_ref = _run_cross_machine_checks(
-        runner,
-        state=state,
-        subject=module,
-        subject_ref=subject_ref,
-        findings=[],
     )
     local_ref = state.get("module_review_completion_refs", {}).get(owner_module_id)
     if not local_ref:
@@ -3034,7 +2782,6 @@ def _verified_cross_owner_noop(
         owner_input=_cross_owner_artifact_ref(runner, owner_input_ref),
         subject=_cross_owner_artifact_ref(runner, subject_ref),
         local_review_completion=_cross_owner_artifact_ref(runner, local_ref),
-        machine_validation=_cross_owner_artifact_ref(runner, machine_ref),
         author_task_attempt_id=f"cross-owner-noop-{owner_module_id}",
         reviewer_session_id=f"cross-owner-{owner_module_id}",
         lease_epoch=1,
@@ -3075,7 +2822,6 @@ def _verified_cross_owner_noop(
         module=module,
         responses=[],
         local_review_ref=local_ref,
-        machine_validation_ref=machine_ref,
         completion_ref=completion_ref,
         completion=completion,
     )
@@ -3208,7 +2954,6 @@ async def _run_cross_owner_lane(
 
     lane_state = deepcopy(state)
     lane_state["_defer_main_exceptions"] = defer_main_exceptions
-    lane_state["_cross_owner_business_validation"] = True
     reviewed_baseline = current
     baseline_subject_ref = (
         f"Work/runs/{state['run_id']}/modules/"
@@ -3240,9 +2985,6 @@ async def _run_cross_owner_lane(
             f"Cross local regression prior completion does not bind {module_id}"
         )
 
-    validation_ref: str | None = None
-    machine_attempts = 0
-    machine_failure_fingerprints: dict[tuple, int] = {}
     persisted_candidate: ModuleSubmission | None = None
     modules_root = runner.service.workspace / f"Work/runs/{state['run_id']}/modules"
     candidates: list[ModuleSubmission] = []
@@ -3269,7 +3011,6 @@ async def _run_cross_owner_lane(
         persisted_candidate = max(candidates, key=lambda item: item.revision)
 
     while True:
-        machine_attempts += 1
         if persisted_candidate is not None:
             revised = persisted_candidate
             revised_ref = (
@@ -3284,7 +3025,6 @@ async def _run_cross_owner_lane(
                 workflow_id=workflow_id,
                 subject=current,
                 cross_findings=findings,
-                validation_ref=validation_ref,
             )
         exceptional = [
             response
@@ -3305,41 +3045,8 @@ async def _run_cross_owner_lane(
             )
             if decision.decision == "return_to_author":
                 current = revised
-                validation_ref = None
                 continue
-        validation_ref = _run_cross_machine_checks(
-            runner,
-            state=lane_state,
-            subject=revised,
-            subject_ref=revised_ref,
-            findings=findings,
-        )
-        report = ValidationReport.model_validate_json(
-            (runner.service.workspace / validation_ref).read_text(encoding="utf-8")
-        )
-        if report.passed:
-            break
-        fingerprint = tuple(
-            sorted(
-                (
-                    failure.check_id,
-                    failure.finding_id or "",
-                    failure.target_path,
-                    failure.message,
-                )
-                for failure in report.failures
-            )
-        )
-        repeated = machine_failure_fingerprints.get(fingerprint, 0) + 1
-        machine_failure_fingerprints[fingerprint] = repeated
-        if repeated >= 2 or machine_attempts >= 3:
-            raise ReviewLifecycleError(
-                "Cross machine validation failed repeatedly; the workflow stopped "
-                "without rewriting the module or reviewer verdict. "
-                f"module={module_id}; attempts={machine_attempts}; "
-                f"validation_ref={validation_ref}"
-            )
-        current = revised
+        break
 
     lane_state.setdefault("module_submissions", {})[module_id] = revised
     lane_state.setdefault("specialist_submissions", {})[module_id] = revised
@@ -3392,30 +3099,6 @@ async def _run_cross_owner_lane(
         f"Work/runs/{state['run_id']}/modules/"
         f"{module_id}-r{local_reviewed.revision}.json"
     )
-    final_validation_ref = _run_cross_machine_checks(
-        runner,
-        state=lane_state,
-        subject=local_reviewed,
-        subject_ref=final_subject_ref,
-        findings=findings,
-    )
-    final_validation = ValidationReport.model_validate_json(
-        (runner.service.workspace / final_validation_ref).read_text(encoding="utf-8")
-    )
-    _validate_cross_owner_validation_business(
-        runner,
-        final_validation,
-        run_id=state["run_id"],
-        subject_ref=final_subject_ref,
-        subject_revision=local_reviewed.revision,
-    )
-    if not final_validation.passed:
-        raise ReviewLifecycleError(
-            "Cross machine validation failed after the module-local regression "
-            "review; the workflow stopped before Cross recheck without starting "
-            "another author revision. "
-            f"module={module_id}; validation_ref={final_validation_ref}"
-        )
     local_review_ref = lane_state["module_review_completion_refs"][module_id]
     semantic_payload = {
         "run_id": state["run_id"],
@@ -3448,9 +3131,6 @@ async def _run_cross_owner_lane(
         subject=_cross_owner_artifact_ref(runner, final_subject_ref),
         local_review_completion=_cross_owner_artifact_ref(
             runner, local_review_ref
-        ),
-        machine_validation=_cross_owner_artifact_ref(
-            runner, final_validation_ref
         ),
         author_task_attempt_id=f"cross-owner-attempt-{uuid4().hex}",
         reviewer_session_id=f"cross-owner-{module_id}",
@@ -3492,7 +3172,6 @@ async def _run_cross_owner_lane(
         module=local_reviewed,
         responses=cross_responses,
         local_review_ref=local_review_ref,
-        machine_validation_ref=final_validation_ref,
         completion_ref=completion_ref,
         completion=completion,
     )
@@ -3959,7 +3638,6 @@ async def run_cross_review(
                         required_findings=findings,
                         revision_responses=lane.responses,
                         local_review_ref=lane.local_review_ref,
-                        machine_validation_ref=lane.machine_validation_ref,
                         prior_synthesis_inputs=list(initial_result.synthesis_inputs),
                     )
                 else:
@@ -3986,7 +3664,6 @@ async def run_cross_review(
                     required_findings=findings,
                     revision_responses=lane.responses,
                     local_review_ref=lane.local_review_ref,
-                    machine_validation_ref=lane.machine_validation_ref,
                     prior_synthesis_inputs=list(initial_result.synthesis_inputs),
                 )
                 assert isinstance(verdict, CrossOwnerVerdictSubmission)
@@ -4241,10 +3918,6 @@ async def run_cross_review(
         f"Work/runs/{run_id}/reviews/cross-verdicts-r1.json",
         aggregate_verdicts,
     )
-    _validate_cross_synthesis_portfolio(
-        list(synthesis_by_id.values()), final_modules
-    )
-
     reducer = WorkflowReducer(runner.service.workspace, run_id)
     barrier = reducer.write_cross_owner_barrier(
         1, list(owner_ids), barrier_inputs
@@ -4431,16 +4104,12 @@ async def _request_chief_revision(
             f"sections={unexpected_sections}; contract_fields={unexpected_contract}"
         )
     if aggregate_mode:
-        state["editor_quality_observations"] = validate_aggregate_retention(
-            revised_report, approved_module_text
-        )
+        validate_aggregate_retention(revised_report, approved_module_text)
         if claims:
             validate_editor_protection(revised_report, claims)
     else:
         validate_editor_protection(revised_report, claims)
-        state["editor_quality_observations"] = validate_editor_quality(
-            revised_report, state["module_submissions"]
-        )
+        validate_editor_quality(revised_report, state["module_submissions"])
     revised_ref = _write_model(
         runner,
         (f"Work/runs/{state['run_id']}/edited-revisions/chief-author-r{revision_number}.json"),

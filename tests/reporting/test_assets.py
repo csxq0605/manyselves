@@ -10,13 +10,14 @@ from manyselves.core.reporting.agentic_models import (
 )
 from manyselves.core.reporting.assets import (
     ReportAssetAssembler,
-    find_shallow_submodules,
     validate_editor_protection,
     validate_editor_quality,
     validate_existing_markdown_modules,
     validate_module_markdown_consistency,
 )
+from manyselves.core.reporting.input_contracts import ValidationReport
 from manyselves.core.reporting.models import EvidenceItem, PhotoAsset, SourceLocation
+from manyselves.core.reporting.review_preflight import evaluate_module_review_preflight
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY, compose_module_markdown
 
 
@@ -269,24 +270,33 @@ def test_module_markdown_audit_rejects_export_that_drops_fixed_sections() -> Non
         validate_module_markdown_consistency(modules, exported)
 
 
-def test_module_depth_heuristic_returns_non_binding_signals() -> None:
-    modules = _approved_modules()
-    narratives = {
-        submodule_id: "检查结果为 OK。"
-        for submodule_id in REPORT_TAXONOMY["2.5"].submodules
-    }
-    modules["2.5"] = ModuleSubmission(
-        module_id="2.5",
-        submodule_narratives=narratives,
-        claims=[],
-        source_ids=[],
-        unresolved_questions=[],
-        revision=0,
+def test_module_preflight_does_not_gate_on_file_hash(tmp_path: Path) -> None:
+    module = _approved_modules()["2.1"]
+    subject_ref = "Work/runs/run-preflight/modules/2.1-r0.json"
+    subject_path = tmp_path / subject_ref
+    subject_path.parent.mkdir(parents=True)
+    subject_path.write_text(module.model_dump_json(), encoding="utf-8")
+    upstream = ValidationReport(
+        validation_protocol_version=2,
+        run_id="run-preflight",
+        subject_ref=subject_ref,
+        subject_revision=0,
+        validator="module-structure/v2",
+        check_ids=["module.canonical_markdown"],
+        failures=[],
+        passed=True,
     )
 
-    assert set(find_shallow_submodules(modules)) == set(
-        REPORT_TAXONOMY["2.5"].submodules
+    result = evaluate_module_review_preflight(
+        tmp_path,
+        run_id="run-preflight",
+        subject=module,
+        subject_ref=subject_ref,
+        upstream_report=upstream,
     )
+
+    assert result.report.passed is True
+    assert "content_sha256" not in type(result.report).model_fields
 
 
 def test_editor_must_protect_every_approved_claim() -> None:
@@ -403,7 +413,7 @@ def test_editor_quality_requires_every_fixed_submodule() -> None:
         )
 
 
-def test_editor_quality_rejects_over_compression() -> None:
+def test_editor_quality_does_not_compare_approved_prose_bytes() -> None:
     edited = _quality_edited()
     modules = _approved_modules()
     modules["2.1"] = modules["2.1"].model_copy(
@@ -415,8 +425,7 @@ def test_editor_quality_rejects_over_compression() -> None:
         }
     )
 
-    with pytest.raises(ValueError, match="deleted or rewrote approved prose from 2.1"):
-        validate_editor_quality(edited, modules)
+    assert validate_editor_quality(edited, modules) == []
 
 
 def test_editor_quality_compares_prose_after_canonical_heading_normalization() -> None:
@@ -465,11 +474,11 @@ def test_editor_quality_does_not_reaudit_approved_submodule_semantics() -> None:
     validate_editor_quality(edited, modules)
 
 
-def test_editor_quality_reports_short_risk_panorama_as_non_binding_observation() -> None:
+def test_editor_quality_does_not_score_short_risk_panorama() -> None:
     edited = _quality_edited().model_copy(update={"risk_panorama": "建议后续整改。"})
 
     observations = validate_editor_quality(edited, _approved_modules())
-    assert "risk_panorama:length_below_guideline" in observations
+    assert observations == []
 
 
 def test_editor_quality_skips_optional_special_topic_gate_when_plan_is_absent() -> None:
@@ -482,7 +491,7 @@ def test_editor_quality_skips_optional_special_topic_gate_when_plan_is_absent() 
     assert not any(item.startswith("special_topic_analysis:") for item in observations)
 
 
-def test_editor_quality_reports_pointer_only_sections_without_rejecting() -> None:
+def test_editor_quality_does_not_score_pointer_only_sections() -> None:
     edited = _quality_edited().model_copy(
         update={
             "assessment_background": "评估背景详见第二章。",
@@ -499,8 +508,7 @@ def test_editor_quality_reports_pointer_only_sections_without_rejecting() -> Non
     )
 
     observations = validate_editor_quality(edited, _approved_modules())
-    assert "assessment_background:length_below_guideline" in observations
-    assert "improvement_action_plan:length_below_guideline" in observations
+    assert observations == []
 
 
 def test_asset_assembler_builds_traceable_table_and_photo(tmp_path: Path) -> None:

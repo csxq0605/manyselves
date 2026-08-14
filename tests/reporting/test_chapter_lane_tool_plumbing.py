@@ -269,6 +269,49 @@ async def test_final_chapter_lane_initial_and_recheck_enforce_scope(tmp_path: Pa
     )
     assert accepted["status"] == "completed"
 
+    stringified = await tool(
+        **{
+            "kind": "final_chapter_lane_finding_submission",
+            "run_id": RUN,
+            "chapter_id": "3",
+            "checked_section_ids": list(CHAPTER3_SECTION_IDS),
+            "findings": json.dumps(
+                [
+                    {
+                        "category": "traceability",
+                        "impact": "advisory",
+                        "observation": (
+                            "当前结论需要补充一条可复核的当前运行证据引用。"
+                        ),
+                        "evidence_refs": [CHIEF_SUBJECT],
+                        "target_section_ids": ["3.2"],
+                        "target_changes": [
+                            {
+                                "target_section_id": "3.2",
+                                "required_change": (
+                                    "补充当前运行证据引用并说明证据所支持的边界。"
+                                ),
+                                "reviewer_checks": ["结论能够追溯到当前运行证据。"],
+                            }
+                        ],
+                    }
+                ],
+                ensure_ascii=False,
+            ),
+            "residual_risks": [],
+        }
+    )
+    assert stringified["status"] == "correction_required"
+    string_issue = next(
+        issue for issue in stringified["validation_errors"] if issue["field"] == "findings"
+    )
+    assert string_issue["expected"] == "array"
+    assert isinstance(string_issue["example"], list)
+    assert string_issue["example"]
+    assert "JSON-encoded string" in string_issue["repair_instruction"]
+    assert "only remove the outer quotes" in string_issue["repair_instruction"]
+    assert "Do not regenerate, expand, summarize" in string_issue["repair_instruction"]
+
     bad = await tool(
         **{
             "kind": "final_chapter_lane_finding_submission",
@@ -377,6 +420,15 @@ def test_chapter_lane_schemas_and_expected_result_parts_are_exact() -> None:
     )
     assert final_schema["properties"]["checked_section_ids"]["const"] == list(CHAPTER3_SECTION_IDS)
     assert "id" not in final_schema["$defs"]["ChapterScopedFinalReviewFinding"]["properties"]
+    example = final_schema["examples"][0]
+    assert isinstance(example["findings"], list)
+    assert len(example["findings"]) == 1
+    assert "id" not in example["findings"][0]
+    assert example["findings"][0]["target_section_ids"] == [CHAPTER3_SECTION_IDS[0]]
+    assert example["findings"][0]["target_changes"][0]["target_section_id"] == (
+        CHAPTER3_SECTION_IDS[0]
+    )
+    assert example["findings"][0]["evidence_refs"] == [CHIEF_SUBJECT]
 
 
 def test_task_envelope_accepts_chapter_lane_input_contract_kinds() -> None:

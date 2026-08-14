@@ -332,7 +332,6 @@ async def test_review_submit_runtime_assigns_coverage_and_finding_id(
             run_id="run-1",
             subject_ref="Work/runs/run-1/modules/2.1-r0.json",
             subject_revision=0,
-            content_sha256="0" * 64,
             validator="test/v2",
             check_ids=["structure"],
             passed=True,
@@ -402,22 +401,6 @@ def _cross_owner_contract(
         payload["local_regression_review_ref"] = (
             "Work/runs/run-1/reviews/module/cross-r1/2.1/completion.json"
         )
-        payload["machine_validation_ref"] = (
-            "Work/runs/run-1/validations/cross-2.1-r0.json"
-        )
-        payload["machine_validation_report"] = {
-            "kind": "validation_report",
-            "validation_protocol_version": 2,
-            "run_id": "run-1",
-            "subject_ref": payload["owner_subject_ref"],
-            "subject_revision": payload["owner_subject_revision"],
-            "content_sha256": "0" * 64,
-            "validator": "test-cross-owner/v2",
-            "check_ids": ["cross.owner"],
-            "failures": [],
-            "observations": [],
-            "passed": True,
-        }
     return CrossOwnerInput.model_validate(payload)
 
 
@@ -433,7 +416,6 @@ def _cross_owner_finding() -> CrossReviewFinding:
         evidence_refs=["Work/runs/run-1/modules/2.1-r0.json"],
         required_change="请在 2.1.1 补充责任接口、实施顺序和联合验收记录要求。",
         reviewer_checks=["责任接口、顺序和联合验收均已写入目标小节。"],
-        machine_checks=[],
     )
 
 
@@ -464,7 +446,6 @@ async def test_cross_owner_submit_runtime_assigns_owner_scope_and_finding_id(
                     "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
                     "required_change": "请在 2.1.1 补充责任接口、实施顺序和联合验收记录要求。",
                     "reviewer_checks": ["责任接口、顺序和联合验收均已写入目标小节。"],
-                    "machine_checks": [],
                 }
             ],
     )
@@ -593,7 +574,6 @@ async def test_cross_owner_recheck_injects_exact_ids_and_accepts_new_regressions
                         "再交由同一 Cross owner 复核关闭。"
                     ),
                     "reviewer_checks": ["下一轮修订关闭该新增回归。"],
-                    "machine_checks": [],
                 }
             ],
         }

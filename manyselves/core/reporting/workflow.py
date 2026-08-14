@@ -47,7 +47,6 @@ from .agentic_models import (
 from .assets import (
     ReportAssetAssembler,
     expand_approved_module_markers,
-    find_shallow_submodules,
     validate_aggregate_retention,
     validate_editor_protection,
     validate_editor_quality,
@@ -1495,11 +1494,9 @@ class ReportWorkflowRunner:
                 "module_refs": module_refs,
             },
         )
-        shallow_signals: list[str] = []
         try:
             if structured_modules:
                 validate_module_markdown_consistency(structured_modules)
-                shallow_signals = find_shallow_submodules(structured_modules)
             else:
                 validate_existing_markdown_modules(markdown_modules)
         except ValueError as exc:
@@ -1528,9 +1525,6 @@ class ReportWorkflowRunner:
                 subject_ref=aggregate_subject_ref,
                 validator="aggregate-module-integrity/v1",
                 check_ids=["aggregate.five_modules_and_fixed_sections"],
-                observations=[
-                    f"possible_shallow_submodule:{submodule_id}" for submodule_id in shallow_signals
-                ],
                 passed=True,
             ).model_dump(mode="json"),
         )
@@ -1745,9 +1739,7 @@ class ReportWorkflowRunner:
                     payload,
                     source_modules,
                 )
-                state["editor_quality_observations"] = (
-                    validate_aggregate_retention(payload, source_modules)
-                )
+                validate_aggregate_retention(payload, source_modules)
                 if claims:
                     validate_editor_protection(payload, claims)
                 self._write_aggregate_chief_completion(
@@ -1756,11 +1748,9 @@ class ReportWorkflowRunner:
                     payload,
                 )
             else:
-                state["editor_quality_observations"] = (
-                    validate_aggregate_retention(payload, source_modules)
-                )
+                validate_aggregate_retention(payload, source_modules)
                 await self.service._notice(
-                    "已恢复本 run 经 hash 绑定的汇总总编候选稿，未重复调用 Chief。"
+                    "已恢复本 run 的汇总总编候选稿，未重复调用 Chief。"
                 )
             if structured_modules:
                 ledger = ClaimLedger(
@@ -3282,11 +3272,7 @@ class ReportWorkflowRunner:
                 ].claims
             ]
             validate_editor_protection(candidate, claims)
-            state["editor_quality_observations"] = (
-                validate_editor_quality(
-                    candidate, state["module_submissions"]
-                )
-            )
+            validate_editor_quality(candidate, state["module_submissions"])
             validate_final_report_markdown(
                 self._canonical_markdown(candidate),
                 candidate.special_topic_plan,
@@ -3741,9 +3727,7 @@ class ReportWorkflowRunner:
                 for claim in approved_subjects[module_id].claims
             ]
             validate_editor_protection(edited, claims)
-            state["editor_quality_observations"] = validate_editor_quality(
-                edited, approved_subjects
-            )
+            validate_editor_quality(edited, approved_subjects)
             validate_final_report_markdown(
                 self._canonical_markdown(edited),
                 edited.special_topic_plan,
@@ -4010,9 +3994,7 @@ class ReportWorkflowRunner:
                 for claim in state["module_submissions"][module_id].claims
             ]
             validate_editor_protection(edited, claims)
-            state["editor_quality_observations"] = validate_editor_quality(
-                edited, state["module_submissions"]
-            )
+            validate_editor_quality(edited, state["module_submissions"])
             validate_final_report_markdown(
                 self._canonical_markdown(edited),
                 edited.special_topic_plan,
@@ -4467,7 +4449,7 @@ class ReportWorkflowRunner:
                     "module_id and fixed taxonomy match",
                     "every Claim source_id exists in SourceLedger",
                     "typed module result is persisted before advancing",
-                    "keyword/length observations are non-binding ValidationReport signals",
+                    "structural checks never substitute for the module auditor's semantic judgment",
                     "module quality, gaps, evidence validity, inference boundaries, and action closure are judged by the module auditor",
                     "every finding triggers an explicit author response and same-reviewer verdict",
                     "Main enters only for reviewer verdict=escalate",
@@ -7333,19 +7315,14 @@ class ReportWorkflowRunner:
                 target_path="submodule_narratives",
                 message="rendered module Markdown differs from canonical narratives",
             )
-        shallow_signals = find_shallow_submodules({module.module_id: module})
         report = ValidationReport(
             validation_protocol_version=2,
             run_id=state["run_id"],
             subject_ref=subject_ref,
             subject_revision=module.revision,
-            content_sha256=hashlib.sha256(subject_path.read_bytes()).hexdigest(),
             validator="module-structure/v2",
             check_ids=["module.canonical_markdown"],
             failures=[failure] if failure else [],
-            observations=[
-                f"possible_shallow_submodule:{submodule_id}" for submodule_id in shallow_signals
-            ],
             passed=failure is None,
         )
         self.service.store.write_json(
@@ -7426,9 +7403,6 @@ class ReportWorkflowRunner:
         validation_ref = f"Work/runs/{state['run_id']}/reviews/report-integrity-{phase}.json"
         subject_ref = f"Work/runs/{state['run_id']}/validation/report-{phase}.md"
         self.service.store.write_text(subject_ref, markdown)
-        content_sha256 = hashlib.sha256(
-            (self.service.workspace / subject_ref).read_bytes()
-        ).hexdigest()
         revision_text = phase.removeprefix("chief-candidate-r")
         subject_revision = (
             int(revision_text)
@@ -7443,7 +7417,7 @@ class ReportWorkflowRunner:
                 if isinstance(edited, EditedReportSubmission)
                 else state.get("special_topic_plan")
             )
-            signals = validate_final_report_markdown(markdown, plan)
+            validate_final_report_markdown(markdown, plan)
         except ValueError as exc:
             self.service.store.write_json(
                 validation_ref,
@@ -7452,7 +7426,6 @@ class ReportWorkflowRunner:
                     run_id=state["run_id"],
                     subject_ref=subject_ref,
                     subject_revision=subject_revision,
-                    content_sha256=content_sha256,
                     validator="final-report-structure/v2",
                     check_ids=check_ids,
                     failures=[
@@ -7473,17 +7446,8 @@ class ReportWorkflowRunner:
                 run_id=state["run_id"],
                 subject_ref=subject_ref,
                 subject_revision=subject_revision,
-                content_sha256=content_sha256,
                 validator="final-report-structure/v2",
                 check_ids=check_ids,
-                observations=[
-                    *state.get("editor_quality_observations", []),
-                    *(
-                        f"final_report:{name}:{value}"
-                        for name, values in signals.items()
-                        for value in values
-                    ),
-                ],
                 passed=True,
             ).model_dump(mode="json"),
         )

@@ -127,6 +127,13 @@ class ProviderRouter:
     """
 
     _EFFORT_ORDER = {"low": 0, "medium": 1, "high": 2}
+    _BUILTIN_OUTPUT_TOKEN_FLOORS = {
+        # Final review emits nested finding/tool arguments.  An 8K cap can cut
+        # the tool call before its arguments are serialized, turning a
+        # correctable type error into an argument-less call.  This is only
+        # headroom: providers still stop as soon as the typed result is done.
+        "final_review": 32_768,
+    }
 
     def __init__(
         self,
@@ -237,6 +244,7 @@ class ProviderRouter:
             max_output_tokens=max(
                 base_config.max_tokens,
                 configured.max_output_tokens if configured else 0,
+                self._BUILTIN_OUTPUT_TOKEN_FLOORS.get(task_kind, 0),
             ),
             max_tool_rounds=max(
                 base_config.max_tool_iterations,

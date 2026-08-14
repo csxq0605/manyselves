@@ -40,21 +40,6 @@ def _normalized_markdown_content(value: str) -> str:
     return _normalized_prose(re.sub(r"^#{1,6}\s+", "", value, flags=re.MULTILINE))
 
 
-def _normalized_submodule_body(value: str, submodule_id: str) -> str:
-    """Exclude the model-authored heading because taxonomy owns canonical titles."""
-
-    lines = value.splitlines()
-    first_content = next(
-        (index for index, line in enumerate(lines) if line.strip()), None
-    )
-    if first_content is not None and re.match(
-        rf"^#{{1,6}}\s+{re.escape(submodule_id)}(?:\.|\s|$)",
-        lines[first_content].strip(),
-    ):
-        del lines[first_content]
-    return _normalized_markdown_content("\n".join(lines))
-
-
 def _markdown_headings(value: str) -> list[str]:
     return [
         match.group(1).strip()
@@ -130,7 +115,7 @@ def validate_editor_quality(
     edited: EditedReportSubmission,
     modules: dict[str, ModuleSubmission],
 ) -> list[str]:
-    """Require additive synthesis: approved specialist prose may not be deleted."""
+    """Validate the fixed module structure without judging prose mechanically."""
 
     missing_modules = sorted(set(REPORT_TAXONOMY) - set(modules))
     if missing_modules:
@@ -146,19 +131,7 @@ def validate_editor_quality(
             raise ValueError(
                 f"chief editor omitted fixed submodules from {module_id}: {missing}"
             )
-        normalized_narrative = _normalized_markdown_content(narrative)
-        omitted_approved = [
-            submodule_id
-            for submodule_id, text in modules[module_id].submodule_narratives.items()
-            if _normalized_submodule_body(text, submodule_id)
-            not in normalized_narrative
-        ]
-        if omitted_approved:
-            raise ValueError(
-                f"chief editor deleted or rewrote approved prose from {module_id}: "
-                f"{omitted_approved}"
-            )
-    return editor_quality_observations(edited)
+    return []
 
 
 def validate_module_markdown_consistency(
@@ -236,7 +209,7 @@ def validate_final_report_markdown(
     markdown: str,
     special_topic_plan: SpecialTopicPlan | None = None,
 ) -> dict[str, list[str]]:
-    """Enforce structure and return non-binding semantic observations."""
+    """Enforce the fixed report heading structure."""
 
     expected: list[tuple[str, int]] = [
         ("1. 配电评估概述", 2),
@@ -245,14 +218,11 @@ def validate_final_report_markdown(
         ("1.3 各区域执行摘要", 3),
         ("2. 评估内容描述", 2),
     ]
-    leaves = {title for title, _ in expected[1:4]}
     for module_id, definition in REPORT_TAXONOMY.items():
         expected.append((f"{module_id} {definition.title}", 3))
         for section_id, section in definition.sections.items():
             title = f"{section_id} {section.title}"
             expected.append((title, section_id.count(".") + 2))
-            if section_id in definition.submodules:
-                leaves.add(title)
     if special_topic_plan is not None:
         special_topic_titles = [
             f"{section.section_id} {section.title}"
@@ -276,16 +246,6 @@ def validate_final_report_markdown(
             ]
         )
     expected.extend(tail)
-    leaves.update(
-        {
-            "3.1.1 风险全景图",
-            "3.1.2 各维度风险分析",
-            "3.1.3 数据缺口分析",
-            "3.2 改善行动速查表",
-        }
-    )
-    leaves.update(special_topic_titles)
-
     lines = markdown.splitlines()
     parsed: list[tuple[int, str, int]] = []
     for line_number, line in enumerate(lines):
@@ -349,133 +309,19 @@ def validate_final_report_markdown(
     if positions != sorted(positions):
         errors.append("fixed headings are out of order")
 
-    shallow: list[str] = []
-    pointer_only: list[str] = []
-    for title in leaves:
-        occurrences = by_title.get(title, [])
-        if len(occurrences) != 1:
-            continue
-        level, start = occurrences[0]
-        end = len(lines)
-        for candidate_level, candidate_title, candidate_line in parsed:
-            if (
-                candidate_line > start
-                and candidate_level <= level
-                and candidate_title in expected_titles
-            ):
-                end = candidate_line
-                break
-        body = "\n".join(lines[start + 1 : end]).strip()
-        compact = _normalized_prose(body)
-        if len(compact) < 60:
-            shallow.append(title)
-        if len(compact) < 180 and any(
-            marker in body
-            for marker in ("详见", "参见", "见汇总表", "见第二章", "见2.")
-        ):
-            pointer_only.append(title)
     if errors:
         raise ValueError(
             "final report Markdown integrity failed; "
-            f"heading_errors={errors}; shallow_sections={sorted(shallow)}; "
-            f"pointer_only_sections={sorted(pointer_only)}"
+            f"heading_errors={errors}"
         )
-    return {
-        "shallow_sections": sorted(shallow),
-        "pointer_only_sections": sorted(pointer_only),
-    }
-
-
-def find_shallow_submodules(modules: dict[str, ModuleSubmission]) -> list[str]:
-    """Return sections missing a usable reasoning-to-action narrative."""
-
-    reasoning_terms = ("导致", "影响", "风险", "可能", "表明", "原因", "需结合", "使得")
-    risk_terms = ("风险", "影响", "后果", "恶化", "失效")
-    action_terms = ("建议", "应", "需", "核验", "监测", "复核", "整改", "验证", "排查")
-    boundary_terms = ("证据不足", "暂无", "未评估", "待核验", "待补充")
-    shallow: list[str] = []
-    for module in modules.values():
-        for submodule_id, text in module.submodule_narratives.items():
-            compact = _normalized_prose(text)
-            has_reasoning = any(term in text for term in reasoning_terms)
-            has_risk = any(term in text for term in risk_terms)
-            has_action = any(term in text for term in action_terms)
-            bounded_unknown = any(term in text for term in boundary_terms) and has_action
-            if (
-                len(compact) < 80
-                or not has_risk
-                or not ((has_reasoning and has_action) or bounded_unknown)
-            ):
-                shallow.append(submodule_id)
-    return shallow
-
-
-def editor_quality_observations(edited: EditedReportSubmission) -> list[str]:
-    """Return heuristic reviewer signals without accepting or rejecting prose."""
-
-    observations: list[str] = []
-    sections = {
-        "assessment_background": edited.assessment_background,
-        "findings_overview": edited.findings_overview,
-        "regional_executive_summary": edited.regional_executive_summary,
-        "risk_panorama": edited.risk_panorama,
-        "dimension_risk_analysis": edited.dimension_risk_analysis,
-        "data_gap_analysis": edited.data_gap_analysis,
-        "improvement_action_plan": edited.improvement_action_plan,
-    }
-    minimum_lengths = {
-        "assessment_background": 160,
-        "findings_overview": 260,
-        "regional_executive_summary": 260,
-        "risk_panorama": 320,
-        "dimension_risk_analysis": 420,
-        "data_gap_analysis": 220,
-        "improvement_action_plan": 320,
-    }
-    if edited.special_topic_plan is not None and edited.special_topic_analysis is not None:
-        sections["special_topic_analysis"] = edited.special_topic_analysis
-        minimum_lengths["special_topic_analysis"] = (
-            260 * len(edited.special_topic_plan.sections)
-        )
-    observations.extend(
-        f"{name}:length_below_guideline"
-        for name, minimum in minimum_lengths.items()
-        if len(_normalized_prose(sections[name])) < minimum
-    )
-
-    dimensions = ("系统架构", "电能质量", "保护", "设备", "运维")
-    if sum(term in edited.dimension_risk_analysis for term in dimensions) < 4:
-        observations.append("dimension_risk_analysis:few_named_dimensions")
-    if not any(
-        term in edited.dimension_risk_analysis
-        for term in ("共同", "叠加", "放大", "依赖", "制约", "传播")
-    ):
-        observations.append("dimension_risk_analysis:no_comparison_term")
-    if not any(
-        term in edited.data_gap_analysis
-        for term in ("影响", "限制", "无法", "置信", "优先")
-    ):
-        observations.append("data_gap_analysis:no_decision_impact_term")
-
-    action_groups = {
-        "ownership": ("责任", "牵头", "负责", "接口"),
-        "sequence": ("优先", "先", "依赖", "阶段"),
-        "acceptance": ("验收", "指标", "验证", "复测"),
-    }
-    observations.extend(
-        f"improvement_action_plan:missing_{group}"
-        for group, terms in action_groups.items()
-        if not any(term in edited.improvement_action_plan for term in terms)
-    )
-
-    return observations
+    return {}
 
 
 def validate_aggregate_retention(
     edited: EditedReportSubmission,
     source_modules: dict[str, str],
 ) -> list[str]:
-    """Keep aggregation additive: source module reports remain present verbatim."""
+    """Validate aggregate module headings without comparing prose bytes."""
 
     for module_id in REPORT_TAXONOMY:
         source = source_modules[module_id]
@@ -489,11 +335,7 @@ def validate_aggregate_retention(
             raise ValueError(
                 f"aggregate editor omitted headings from {module_id}: {missing_headings}"
             )
-        if _normalized_prose(source) not in _normalized_prose(narrative):
-            raise ValueError(
-                f"aggregate editor deleted or rewrote approved module {module_id}"
-            )
-    return editor_quality_observations(edited)
+    return []
 
 
 class ReportAssetAssembler:

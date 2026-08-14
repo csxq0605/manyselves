@@ -33,11 +33,9 @@ def _validation(subject_revision: int = 0) -> ValidationReport:
         run_id=RUN,
         subject_ref=f"Work/runs/{RUN}/edited-revisions/chief-r{subject_revision}.json",
         subject_revision=subject_revision,
-        content_sha256="0" * 64,
         validator="final-report-structure/v2",
         check_ids=["final_report.fixed_sections_and_markdown"],
         failures=[],
-        observations=[],
         passed=True,
     )
 

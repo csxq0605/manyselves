@@ -421,9 +421,6 @@ class _ScriptedRunner:
                 run_id=state["run_id"],
                 subject_ref=subject_ref,
                 subject_revision=module.revision,
-                content_sha256=hashlib.sha256(
-                    (self.service.workspace / subject_ref).read_bytes()
-                ).hexdigest(),
                 validator="test-module-structure/v2",
                 check_ids=["module.canonical_markdown"],
                 passed=True,
@@ -472,9 +469,6 @@ class _ScriptedRunner:
                 run_id=state["run_id"],
                 subject_ref=subject_ref,
                 subject_revision=subject_revision,
-                content_sha256=hashlib.sha256(
-                    (self.service.workspace / subject_ref).read_bytes()
-                ).hexdigest(),
                 validator="test-final-report-structure/v2",
                 check_ids=["final_report.fixed_sections_and_markdown"],
                 passed=True,
@@ -1625,7 +1619,6 @@ async def _legacy_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
         ],
         "required_change": "在责任模块目标小节写入依赖对象、作用机制、实施顺序、责任接口和联合验收方式。",
         "reviewer_checks": ["核对责任模块已完整写入跨模块依赖与联合验收"],
-        "machine_checks": [],
     }
     patch = ModuleRevisionSubmission(
         module_id="2.3",
@@ -1881,13 +1874,7 @@ async def _legacy_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
         "2.4",
         "2.5",
     }
-    [machine_report] = recheck_input["machine_validation_reports"]
-    assert machine_report["validation_protocol_version"] == 2
-    assert machine_report["subject_ref"].endswith("/modules/2.3-r2.json")
-    assert machine_report["subject_revision"] == 2
-    assert machine_report["content_sha256"] == hashlib.sha256(
-        (tmp_path / machine_report["subject_ref"]).read_bytes()
-    ).hexdigest()
+    assert "machine_validation_reports" not in recheck_input
     assert state["cross_review_completion_ref"].endswith("reviews/cross-completion.json")
 
 
@@ -3806,7 +3793,6 @@ def test_validation_binding_uses_typed_identity_not_subject_hash(tmp_path: Path)
         run_id="run-stale",
         subject_ref=subject_ref,
         subject_revision=1,
-        content_sha256=hashlib.sha256(b"original").hexdigest(),
         validator="test/v2",
         check_ids=["content"],
         passed=True,

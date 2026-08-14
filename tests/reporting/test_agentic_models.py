@@ -7,12 +7,12 @@ from pydantic import ValidationError
 
 from manyselves.core.reporting.agentic_models import (
     SUBMISSION_INPUT_TYPES,
+    CrossReviewFinding,
     CrossReviewFindingSubmission,
     CrossSynthesisInput,
     EditedReportSubmission,
     FinalReviewFinding,
     FinalReviewFindingSubmission,
-    MachineCheckSpec,
     ModuleRevisionSubmission,
     ModuleSubmission,
     ResolutionVerdict,
@@ -23,6 +23,7 @@ from manyselves.core.reporting.agentic_models import (
 from manyselves.core.reporting.input_contracts import (
     INPUT_CONTRACT_EXAMPLES,
     INPUT_CONTRACT_TYPES,
+    ValidationReport,
     input_contract_schema,
 )
 from manyselves.core.reporting.submission_contracts import (
@@ -48,20 +49,28 @@ def _module(module_id: str = "2.1", revision: int = 0) -> ModuleSubmission:
     )
 
 
-def test_field_equals_requires_one_expected_value_per_path() -> None:
-    with pytest.raises(ValidationError, match="one expected value per target path"):
-        MachineCheckSpec(
-            kind="field_equals",
-            target_paths=["submodule_narratives.2.4.1.1"],
-            expected_values=["96.99", "3500"],
-        )
-
-    check = MachineCheckSpec(
-        kind="required_terms_present",
-        target_paths=["submodule_narratives.2.4.1.1"],
-        expected_values=["96.99", "3500"],
-    )
-    assert check.kind == "required_terms_present"
+def test_cross_finding_schema_rejects_removed_machine_content_gates() -> None:
+    finding = {
+        "id": "X-001",
+        "owner_module_id": "2.1",
+        "target_submodule_ids": ["2.1.1"],
+        "related_module_ids": ["2.2"],
+        "category": "dependencies",
+        "impact": "blocking",
+        "observation": "当前模块没有说明跨模块依赖关系及其对实施顺序的影响。",
+        "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
+        "required_change": "在责任模块中说明依赖对象、作用机制、实施顺序和联合验收方式。",
+        "reviewer_checks": ["由原 Cross reviewer 复核依赖关系是否完整表达"],
+        "machine_checks": [
+            {
+                "kind": "required_terms_present",
+                "target_paths": ["submodule_narratives.2.1.1"],
+                "expected_values": ["闭锁"],
+            }
+        ],
+    }
+    with pytest.raises(ValidationError, match="machine_checks"):
+        CrossReviewFinding.model_validate(finding)
 
 
 def test_task_envelope_requires_a_role_labelled_input_contract_ref() -> None:
@@ -162,30 +171,47 @@ def test_cross_coverage_contains_each_module_exactly_once() -> None:
         )
 
 
-def test_cross_synthesis_rejects_module_refs_missing_from_declared_scope() -> None:
-    with pytest.raises(ValidationError, match="undeclared related modules"):
-        CrossSynthesisInput(
-            id="SI-003",
-            related_module_ids=["2.2", "2.3", "2.5"],
-            cluster_type="monitoring_blind_spot",
-            root_causes=["2.2、2.3 与 2.5 的监测接口尚未形成闭环"],
-            propagation_steps=[
-                "2.2 异常信号未形成稳定输入",
-                "2.4.3.1 的处置接口因此无法及时触发",
-            ],
-            causal_chain=(
-                "2.2 的异常信号和 2.3 的保护状态未能传递到 2.4.3.1 的现场处置及 2.5 的管理闭环。"
-            ),
-            decision_implication="必须先补齐监测接口，再调整巡检和应急响应顺序。",
-            action_dependencies=["先完成信号核对，再更新现场处置和管理流程"],
-            joint_actions=["联合完成信号、处置与管理闭环验证"],
-            verification_method="通过事件注入、告警记录和处置时间联合验证。",
-            acceptance_criteria=["告警、处置和关闭记录可以完整追溯"],
-            module_statement_refs=["2.2.1", "2.3.1", "2.5.1"],
-            confidence_and_boundary="当前仅确认接口关系，具体阈值仍需现场数据复核。",
-            target_report_section_ids=["3.1.2", "3.2"],
-            evidence_refs=["Work/runs/example/modules/2.2-r0.json"],
-        )
+def test_cross_synthesis_does_not_classify_module_ids_in_prose() -> None:
+    submission = CrossSynthesisInput(
+        id="SI-003",
+        related_module_ids=["2.2", "2.3", "2.5"],
+        cluster_type="protection_signal_to_response_coupling",
+        root_causes=["2.2、2.3 与 2.5 的监测接口尚未形成闭环"],
+        propagation_steps=[
+            "2.2 异常信号未形成稳定输入",
+            "2.4.3.1 的处置接口因此无法及时触发",
+        ],
+        causal_chain=(
+            "2.2 的异常信号和 2.3 的保护状态未能传递到 2.4.3.1 的现场处置及 2.5 的管理闭环。"
+        ),
+        decision_implication="必须先补齐监测接口，再调整巡检和应急响应顺序。",
+        action_dependencies=["先完成信号核对，再更新现场处置和管理流程"],
+        joint_actions=["联合完成信号、处置与管理闭环验证"],
+        verification_method="通过事件注入、告警记录和处置时间联合验证。",
+        acceptance_criteria=["告警、处置和关闭记录可以完整追溯"],
+        module_statement_refs=["2.2.1", "2.3.1", "2.5.1"],
+        confidence_and_boundary="当前仅确认接口关系，具体阈值仍需现场数据复核。",
+        target_report_section_ids=["3.1.2", "3.2"],
+        evidence_refs=["E-0001"],
+    )
+    assert submission.related_module_ids == ["2.2", "2.3", "2.5"]
+    assert submission.cluster_type == "protection_signal_to_response_coupling"
+
+
+def test_structural_validation_report_has_no_content_hash_contract() -> None:
+    payload = {
+        "validation_protocol_version": 2,
+        "run_id": "run-1",
+        "subject_ref": "Work/runs/run-1/modules/2.1-r0.json",
+        "subject_revision": 0,
+        "validator": "module-structure/v2",
+        "check_ids": ["module.canonical_markdown"],
+        "failures": [],
+        "passed": True,
+    }
+    ValidationReport.model_validate(payload)
+    with pytest.raises(ValidationError, match="content_sha256"):
+        ValidationReport.model_validate({**payload, "content_sha256": "0" * 64})
 
 
 def test_edited_report_drops_deleted_cross_module_metadata_from_old_checkpoints() -> None:
@@ -211,13 +237,13 @@ def test_edited_report_drops_deleted_cross_module_metadata_from_old_checkpoints(
     assert "synthesis_tables" not in edited.model_dump()
 
 
-def test_final_review_rejects_actionable_report_defect_as_residual_risk() -> None:
-    with pytest.raises(ValidationError, match="must be final-review findings"):
-        FinalReviewFindingSubmission(
-            checked_section_ids=["1.1"],
-            findings=[],
-            residual_risks=["报告缺少 Cross 风险综合表格"],
-        )
+def test_final_review_does_not_classify_residual_risk_by_keywords() -> None:
+    submission = FinalReviewFindingSubmission(
+        checked_section_ids=["1.1"],
+        findings=[],
+        residual_risks=["报告缺少 Cross 风险综合表格"],
+    )
+    assert submission.residual_risks == ["报告缺少 Cross 风险综合表格"]
 
 
 def test_final_finding_rejects_chapter_two_and_requires_per_target_changes() -> None:

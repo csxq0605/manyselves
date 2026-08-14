@@ -706,14 +706,13 @@ class ModuleReviewInput(StrictModel):
     validation_report_ref: str = Field(
         min_length=1,
         description=(
-            "Independent machine validation artifact. It may reject structure "
+            "Independent structural validation artifact. It may reject structure "
             "but never decides semantic findings."
         ),
     )
     validation_report: "ValidationReport" = Field(
         description=(
-            "Exact typed machine validation result for this subject, including "
-            "non-binding observations."
+            "Exact typed structural validation result for this subject."
         )
     )
 
@@ -801,14 +800,13 @@ class ModuleReviewInput(StrictModel):
         if self.phase != "recheck" and current_claim_evidence_ids != subject_evidence_ids:
             raise ValueError("module review claims and subject evidence bindings differ")
         if not self.validation_report.passed:
-            raise ValueError("module semantic review cannot start from failed machine validation")
+            raise ValueError("module semantic review cannot start from failed structural validation")
         if (
             self.validation_report.validation_protocol_version < 2
             or self.validation_report.subject_ref != self.subject_ref
             or self.validation_report.subject_revision != self.subject_revision
-            or self.validation_report.content_sha256 is None
         ):
-            raise ValueError("module review validation is stale or not content-bound")
+            raise ValueError("module review validation is stale or belongs to another subject")
         if self.phase == "initial" and (self.required_findings or self.revision_responses):
             raise ValueError("initial module review cannot contain prior findings or responses")
         local_regression_values = (
@@ -1026,14 +1024,6 @@ class CrossReviewInput(StrictModel):
         default_factory=list,
         description="Previously supported synthesis inputs available during recheck.",
     )
-    machine_validation_refs: list[str] = Field(
-        default_factory=list,
-        description="Independent explicit-predicate validation reports for revised modules.",
-    )
-    machine_validation_reports: list["ValidationReport"] = Field(
-        default_factory=list,
-        description="Typed reports corresponding one-for-one to machine_validation_refs.",
-    )
     @model_validator(mode="after")
     def five_subjects_and_phase_fields_match(self) -> "CrossReviewInput":
         expected = {"2.1", "2.2", "2.3", "2.4", "2.5"}
@@ -1052,8 +1042,6 @@ class CrossReviewInput(StrictModel):
             self.required_findings
             or self.revision_responses_by_module
             or self.local_regression_review_refs
-            or self.machine_validation_refs
-            or self.machine_validation_reports
             or self.unchanged_module_sha256
         ):
             raise ValueError("initial cross review cannot contain recheck state")
@@ -1087,29 +1075,6 @@ class CrossReviewInput(StrictModel):
             }
             if responses != required:
                 raise ValueError("cross recheck requires one owner response per finding")
-            if len(self.machine_validation_refs) != len(self.machine_validation_reports):
-                raise ValueError("cross recheck validation refs and reports must correspond")
-            if any(not report.passed for report in self.machine_validation_reports):
-                raise ValueError("cross recheck cannot start from failed machine validation")
-            changed_refs = {
-                self.module_refs[module_id] for module_id in self.changed_module_ids
-            }
-            if {
-                report.subject_ref for report in self.machine_validation_reports
-            } != changed_refs:
-                raise ValueError("cross recheck validations do not cover final changed subjects")
-            revision_by_ref = {
-                self.module_refs[module_id]: self.module_revisions[module_id]
-                for module_id in self.changed_module_ids
-            }
-            if any(
-                report.validation_protocol_version < 2
-                or report.subject_revision
-                != revision_by_ref.get(report.subject_ref)
-                or report.content_sha256 is None
-                for report in self.machine_validation_reports
-            ):
-                raise ValueError("cross recheck validation is stale or not content-bound")
         return self
 
 
@@ -1226,14 +1191,6 @@ class CrossOwnerInput(StrictModel):
         default=None,
         description="Immutable owner-module Auditor completion used by recheck."
     )
-    machine_validation_ref: str | None = Field(
-        default=None,
-        description="Immutable machine validation artifact for the owner revision."
-    )
-    machine_validation_report: "ValidationReport | None" = Field(
-        default=None,
-        description="Hash-bound passed machine validation report for the owner revision."
-    )
     @model_validator(mode="after")
     def exact_owner_and_relation_scope(self) -> "CrossOwnerInput":
         if not self.review_focus:
@@ -1268,10 +1225,8 @@ class CrossOwnerInput(StrictModel):
                 raise ValueError("initial Cross owner review must use round zero")
             if self.required_findings or self.revision_responses:
                 raise ValueError("initial Cross owner input cannot contain recheck state")
-            if self.local_regression_review_ref or self.machine_validation_ref:
+            if self.local_regression_review_ref:
                 raise ValueError("initial Cross owner input cannot contain regression refs")
-            if self.machine_validation_report is not None:
-                raise ValueError("initial Cross owner input cannot contain validation state")
         else:
             if self.review_round <= 0:
                 raise ValueError("Cross owner recheck requires a positive review round")
@@ -1281,15 +1236,6 @@ class CrossOwnerInput(StrictModel):
                 raise ValueError("Cross owner recheck requires one response per finding")
             if not self.local_regression_review_ref:
                 raise ValueError("Cross owner recheck requires local regression completion")
-            if not self.machine_validation_ref or self.machine_validation_report is None:
-                raise ValueError("Cross owner recheck requires bound machine validation")
-            if (
-                self.machine_validation_report.subject_ref != self.owner_subject_ref
-                or self.machine_validation_report.subject_revision
-                != self.owner_subject_revision
-                or not self.machine_validation_report.passed
-            ):
-                raise ValueError("Cross owner recheck machine validation is stale or failed")
         return self
 
 
@@ -1525,10 +1471,9 @@ class AggregateFinalReviewInput(StrictModel):
         if (
             self.validation_report.validation_protocol_version < 2
             or self.validation_report.subject_revision != self.subject_revision
-            or self.validation_report.content_sha256 is None
         ):
             raise ValueError(
-                "aggregate final review validation is stale or not content-bound"
+                "aggregate final review validation is stale or belongs to another revision"
             )
         audit_sections = active_sections
         changed_sections = set(self.changed_section_bodies)
@@ -1634,12 +1579,12 @@ class ModuleRevisionInput(StrictModel):
     )
     validation_report_ref: str | None = Field(
         default=None,
-        description="Optional failed machine-validation artifact from the prior patch.",
+        description="Optional failed structural-validation artifact from the prior patch.",
     )
     validation_report: "ValidationReport | None" = Field(
         default=None,
         description=(
-            "Exact independent predicate failures to correct; these are not reviewer findings."
+            "Exact independent structural failures to correct; these are not reviewer findings."
         ),
     )
 
@@ -1669,15 +1614,14 @@ class ModuleRevisionInput(StrictModel):
         ):
             raise ValueError(
                 "module revision input requires a finding, requested change, or "
-                "failed machine validation"
+                "failed structural validation"
             )
         if self.validation_report and (
             self.validation_report.validation_protocol_version < 2
             or self.validation_report.subject_ref != self.subject_ref
             or self.validation_report.subject_revision != self.subject.revision
-            or self.validation_report.content_sha256 is None
         ):
-            raise ValueError("module revision machine validation is stale or not content-bound")
+            raise ValueError("module revision validation belongs to another subject")
         allowed = targets
         for finding in self.module_findings:
             if finding.target_submodule_id not in allowed:
@@ -1934,18 +1878,18 @@ class WorkflowExceptionInput(StrictModel):
 
 
 class ValidationFailure(StrictModel):
-    check_id: str = Field(min_length=1, description="Stable deterministic check id.")
+    check_id: str = Field(min_length=1, description="Stable structural check id.")
     finding_id: str | None = Field(
         default=None,
-        description="Finding whose explicit machine predicate produced this failure.",
+        description="Finding associated with this structural failure, when applicable.",
     )
     target_path: str = Field(
         min_length=1,
-        description="Exact structured path inspected by the deterministic check.",
+        description="Exact structured path inspected by the structural check.",
     )
     message: str = Field(
         min_length=1,
-        description="Observed predicate mismatch without semantic reviewer judgment.",
+        description="Observed structural mismatch without semantic reviewer judgment.",
     )
 
 
@@ -1963,28 +1907,16 @@ class ValidationReport(StrictModel):
         ge=0,
         description="Workflow revision of the exact validated subject when revisioned.",
     )
-    content_sha256: str | None = Field(
-        default=None,
-        pattern=r"^[0-9a-f]{64}$",
-        description="SHA-256 of the exact bytes read by the validator.",
-    )
     validator: str = Field(
         min_length=1,
         description="Deterministic validator implementation and version identifier.",
     )
     check_ids: list[str] = Field(
-        description="All explicit deterministic checks executed for this subject."
+        description="All explicit structural checks executed for this subject."
     )
     failures: list[ValidationFailure] = Field(
         default_factory=list,
-        description="Predicate failures; empty means machine validation passed.",
-    )
-    observations: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Non-binding deterministic signals for reviewer attention; they never "
-            "change passed and never act as semantic findings or verdicts."
-        ),
+        description="Structural failures; empty means structural validation passed.",
     )
     passed: bool = Field(
         description="Derived by the validator from failures; never a semantic approval."
@@ -2144,7 +2076,6 @@ def _example_cross_finding() -> dict[str, Any]:
         ],
         "required_change": "在责任小节写明依赖对象、作用机制、实施顺序和联合验收方式。",
         "reviewer_checks": ["责任模块正文明确连接对象、依赖顺序与联合验收"],
-        "machine_checks": [],
     }
 
 
@@ -2286,11 +2217,9 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
             "run_id": "report-example",
             "subject_ref": _EXAMPLE_MODULE_REFS["2.1"],
             "subject_revision": 0,
-            "content_sha256": "0" * 64,
             "validator": "module-structure/v2",
             "check_ids": ["module.canonical_markdown"],
             "failures": [],
-            "observations": [],
             "passed": True,
         },
     },
@@ -2311,8 +2240,6 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "revision_responses_by_module": {},
         "local_regression_review_refs": {},
         "prior_synthesis_inputs": [],
-        "machine_validation_refs": [],
-        "machine_validation_reports": [],
     },
     "cross_owner_input": {
         "kind": "cross_owner_input",
@@ -2376,11 +2303,9 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
             "run_id": "report-example",
             "subject_ref": "Work/runs/report-example/validation/report-r0.md",
             "subject_revision": 0,
-            "content_sha256": "0" * 64,
             "validator": "final-report-structure/v2",
             "check_ids": ["final_report.fixed_sections_and_markdown"],
             "failures": [],
-            "observations": [],
             "passed": True,
         },
     },
@@ -2405,11 +2330,9 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
             "run_id": "report-example",
             "subject_ref": "Work/runs/report-example/validation/report-r0.md",
             "subject_revision": 0,
-            "content_sha256": "0" * 64,
             "validator": "final-report-structure/v2",
             "check_ids": ["final_report.fixed_sections_and_markdown"],
             "failures": [],
-            "observations": [],
             "passed": True,
         },
     },

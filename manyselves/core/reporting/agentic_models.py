@@ -731,44 +731,6 @@ class CrossReviewCoverageEntry(StrictModel):
     )
 
 
-class MachineCheckSpec(StrictModel):
-    kind: Literal[
-        "forbidden_terms_absent",
-        "required_terms_present",
-        "field_equals",
-    ] = Field(
-        description=(
-            "Explicit deterministic predicate that can reject an author revision before "
-            "semantic recheck. It can never resolve a finding by itself."
-        )
-    )
-    target_paths: list[str] = Field(
-        min_length=1,
-        description=(
-            "Structured subject paths to inspect, for example submodule_narratives.2.3.1 "
-            "or claims.2.3.1. Paths must be declared explicitly; the workflow must not infer them."
-        ),
-    )
-    expected_values: list[str] = Field(
-        min_length=1,
-        description=(
-            "Terms or exact values used by the declared predicate. Do not encode semantic "
-            "quality judgments as machine checks."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def predicate_shape_matches_declared_semantics(self) -> "MachineCheckSpec":
-        if self.kind == "field_equals" and len(self.target_paths) != len(
-            self.expected_values
-        ):
-            raise ValueError(
-                "field_equals requires exactly one expected value per target path; "
-                "use required_terms_present when one text path must contain multiple terms"
-            )
-        return self
-
-
 class CrossReviewFinding(StrictModel):
     id: str = Field(
         min_length=1,
@@ -836,14 +798,6 @@ class CrossReviewFinding(StrictModel):
             "Semantic checks the same cross reviewer will apply after the module author revises."
         ),
     )
-    machine_checks: list[MachineCheckSpec] = Field(
-        default_factory=list,
-        description=(
-            "Optional explicit syntactic predicates. Passing them is only a prerequisite "
-            "for cross recheck and never substitutes for reviewer_checks."
-        ),
-    )
-
     @model_validator(mode="after")
     def cross_targets_belong_to_owner(self) -> "CrossReviewFinding":
         if self.owner_module_id in self.related_module_ids:
@@ -979,13 +933,13 @@ class CrossSynthesisInput(StrictModel):
         min_length=2,
         description="Modules connected by this already-supported synthesis input.",
     )
-    cluster_type: Literal[
-        "risk_cluster",
-        "global_propagation",
-        "action_dependency",
-        "monitoring_blind_spot",
-        "recovery_capability",
-    ] = Field(description="System-level relationship class used for portfolio completeness.")
+    cluster_type: str = Field(
+        min_length=1,
+        description=(
+            "Evidence-based label for this supported cross-module relationship; "
+            "the workflow does not require a fixed category portfolio."
+        ),
+    )
     root_causes: list[str] = Field(
         min_length=1,
         description="Evidence-bounded common causes or preconditions shared by the modules.",
@@ -1047,24 +1001,6 @@ class CrossSynthesisInput(StrictModel):
     def traceable_modules_and_claims(self) -> "CrossSynthesisInput":
         if len(self.related_module_ids) != len(set(self.related_module_ids)):
             raise ValueError("related_module_ids must be unique")
-        combined = "\n".join(
-            [
-                self.causal_chain,
-                self.decision_implication,
-                *self.root_causes,
-                *self.propagation_steps,
-                *self.action_dependencies,
-                *self.joint_actions,
-                *self.acceptance_criteria,
-                *self.module_statement_refs,
-            ]
-        )
-        mentioned = {
-            match.group(1) for match in re.finditer(r"(?<!\d)(2\.[1-5])(?:\.\d+)*(?!\d)", combined)
-        }
-        undeclared = sorted(mentioned - set(self.related_module_ids))
-        if undeclared:
-            raise ValueError(f"synthesis text references undeclared related modules: {undeclared}")
         statement_modules = {
             match.group(1)
             for ref in self.module_statement_refs
@@ -1317,7 +1253,6 @@ class FinalReviewFindingSubmission(StrictModel):
         ids = [finding.id for finding in self.findings]
         if len(ids) != len(set(ids)):
             raise ValueError("final review finding ids must be unique")
-        _validate_non_actionable_residual_risks(self.residual_risks)
         return self
 
 
@@ -1356,7 +1291,6 @@ class FinalReviewVerdictSubmission(StrictModel):
             raise ValueError("new final review finding ids must be unique")
         if set(verdict_ids) & set(finding_ids):
             raise ValueError("a prior final finding cannot also be submitted as new")
-        _validate_non_actionable_residual_risks(self.residual_risks)
         return self
 
 
@@ -1520,7 +1454,6 @@ class FinalChapterLaneFindingSubmission(StrictModel):
             set(finding.target_section_ids) - scope for finding in self.findings
         ):
             raise ValueError("chapter lane final findings must stay in checked sections")
-        _validate_non_actionable_residual_risks(self.residual_risks)
         return self
 
 
@@ -1552,26 +1485,7 @@ class FinalChapterLaneVerdictSubmission(StrictModel):
             set(finding.target_section_ids) - scope for finding in self.new_findings
         ):
             raise ValueError("chapter lane new findings must stay in checked sections")
-        _validate_non_actionable_residual_risks(self.residual_risks)
         return self
-
-
-def _validate_non_actionable_residual_risks(values: list[str]) -> None:
-    report_defect_terms = (
-        "报告缺少",
-        "正文缺少",
-        "未纳入报告",
-        "未生成表格",
-        "表格缺失",
-        "未选择图片",
-        "图片缺失",
-    )
-    actionable = [value for value in values if any(term in value for term in report_defect_terms)]
-    if actionable:
-        raise ValueError(
-            "actionable report omissions must be final-review findings, not residual_risks: "
-            f"{actionable}"
-        )
 
 
 FINAL_REPORT_SECTION_IDS = REPORT_FINAL_SECTION_IDS

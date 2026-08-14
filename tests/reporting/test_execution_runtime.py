@@ -88,6 +88,22 @@ def test_profile_routing_is_lossless_and_never_reduces_existing_headroom() -> No
     assert len(resolved.profile_sha256) == 64
 
 
+def test_builtin_final_review_profile_has_complete_tool_call_headroom() -> None:
+    inherited = _Provider("key", model="full-model")
+    router = ProviderRouter(inherited)
+
+    resolved, provider, config = router.resolve(
+        _definition(),
+        _envelope(),
+        task_kind="final_review",
+        base_config=AgentDefaults(max_tokens=8_192),
+    )
+
+    assert provider is inherited
+    assert resolved.profile.max_output_tokens == 32_768
+    assert config.max_tokens == 32_768
+
+
 def test_router_selects_preconfigured_provider_without_mutating_models() -> None:
     inherited = _Provider("key-a", model="full-model")
     alternate = _Provider("key-b", model="audit-model")

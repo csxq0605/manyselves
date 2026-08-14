@@ -1879,6 +1879,26 @@ class ReportingAgentRunner:
                 example["run_id"] = contract.run_id
                 example["chapter_id"] = contract.chapter_id
                 example["checked_section_ids"] = list(contract.section_ids)
+                target_section_id = contract.section_ids[0]
+                for field in ("findings", "new_findings"):
+                    for value in example.get(field, []):
+                        if not isinstance(value, dict):
+                            continue
+                        value["target_section_ids"] = [target_section_id]
+                        value["target_changes"] = [
+                            {
+                                "target_section_id": target_section_id,
+                                "required_change": (
+                                    "补充该结论对应的证据边界，"
+                                    "并明确尚待确认的项目事实。"
+                                ),
+                                "reviewer_checks": [
+                                    "修改后能够从结论直接追溯到"
+                                    "当前运行的证据。"
+                                ],
+                            }
+                        ]
+                        value["evidence_refs"] = [contract.subject_ref]
             if not isinstance(contract, CrossOwnerInput):
                 example.pop("coverage", None)
             example.pop("checked_section_ids", None)

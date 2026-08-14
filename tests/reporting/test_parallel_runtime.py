@@ -270,7 +270,6 @@ def test_module_barrier_rejects_missing_or_duplicate_completion(tmp_path: Path) 
 def _cross_owner_completion(module_id: str) -> tuple[str, CrossOwnerCompletion]:
     subject_bytes = f"cross-subject-{module_id}".encode()
     review_bytes = f"cross-review-{module_id}".encode()
-    validation_bytes = f"cross-validation-{module_id}".encode()
     completion = CrossOwnerCompletion(
         lane_id=f"cross-r1-module-{module_id}",
         run_id="run-barrier",
@@ -287,12 +286,6 @@ def _cross_owner_completion(module_id: str) -> tuple[str, CrossOwnerCompletion]:
             ref=f"Work/runs/run-barrier/reviews/{module_id}.json",
             sha256=hashlib.sha256(review_bytes).hexdigest(),
             size=len(review_bytes),
-            media_type="application/json",
-        ),
-        machine_validation=ArtifactRef(
-            ref=f"Work/runs/run-barrier/validation/{module_id}.json",
-            sha256=hashlib.sha256(validation_bytes).hexdigest(),
-            size=len(validation_bytes),
             media_type="application/json",
         ),
         author_task_attempt_id=f"attempt-{module_id}",
