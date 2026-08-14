@@ -406,6 +406,17 @@ def test_chapter_lane_schemas_and_expected_result_parts_are_exact() -> None:
     assert schema["properties"]["run_id"]["const"] == RUN
     assert schema["properties"]["chapter_id"]["const"] == "3"
     assert schema["properties"]["section_ids"]["const"] == list(CHAPTER3_SECTION_IDS)
+    writer_schema = ReportingAgentRunner._result_part_tool_schema(
+        ["improvement_action_plan"],
+        evidence_binding_required=False,
+        section_body_only=True,
+        chapter_id="3",
+    )
+    description = writer_schema["properties"]["content"]["description"]
+    assert "improvement_action_plan -> **3.2.x ...**" in description
+    assert "**3.x ...**" in description
+    assert "Never use a chapter-level shortcut" in description
+    assert "not a rejection rule" in description
 
     final_contract = FinalChapterLaneInput(
         run_id=RUN,
@@ -534,7 +545,32 @@ def test_chief_chapter_four_tool_schema_allows_nested_planned_headings(
         "content"
     ]["description"]
     assert "#### 4.1.1 are allowed" in description
+    assert "##### 4.1.1.1" in description
     assert "do not add another top-level 4.n section" in description
+    assert "must use these explicit Markdown headings" in description
+    assert "never replace it with bold numbered labels" in description
+
+
+@pytest.mark.asyncio
+async def test_chief_numbering_convention_does_not_reject_bold_body_labels(
+    tmp_path: Path,
+) -> None:
+    writer = WriteResultPartTool(
+        RUN,
+        "chief-numbering-advisory",
+        0,
+        ReportingStore(tmp_path),
+        ["improvement_action_plan"],
+        section_body_only=True,
+    )
+
+    result = await writer(
+        "improvement_action_plan",
+        "**1.1 旧式局部编号**\n\n正文仍应被接受并持久化。",
+    )
+
+    assert result["status"] == "created"
+    assert result["persisted"] is True
 
 
 @pytest.mark.asyncio

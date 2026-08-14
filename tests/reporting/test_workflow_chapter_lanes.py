@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 from types import MethodType, SimpleNamespace
@@ -14,7 +15,13 @@ from manyselves.core.reporting.agentic_models import (
     FinalChapterLaneVerdictSubmission,
     ModuleSubmission,
     ResolutionVerdict,
+    RevisionResponse,
     EditedReportSubmission,
+)
+from manyselves.core.reporting.final_specialization import final_lane_specialization
+from manyselves.core.reporting.input_contracts import (
+    ChiefChapterLaneInput,
+    FinalChapterLaneInput,
 )
 from manyselves.core.reporting.models import (
     CHIEF_SECTION_RESULT_PART_IDS,
@@ -208,7 +215,10 @@ def test_chief_resume_reuses_only_business_valid_completed_lanes(tmp_path: Path)
             part_refs=refs,
             revision=0,
         )
-        result_ref = f"Work/runs/{run_id}/reviews/recovered-chief-{chapter_id}.json"
+        result_ref = (
+            f"Work/runs/{run_id}/reviews/"
+            f"chief-chapter-lane-{chapter_id}-r0.json"
+        )
         service.store.write_json(result_ref, payload.model_dump(mode="json"))
         recovery.record_lane_attempt(
             {
@@ -222,6 +232,25 @@ def test_chief_resume_reuses_only_business_valid_completed_lanes(tmp_path: Path)
                 "result_ref": result_ref,
             }
         )
+
+    # Chapter 4 is the only business-valid recovered lane.  Its persisted
+    # input binds the same Cross baseline and lane-local source projection.
+    source_context, source_refs = runner._chief_chapter_source_projection(state, "4")
+    contract = ChiefChapterLaneInput(
+        phase="initial",
+        run_id=run_id,
+        subject_ref=state["cross_review_completion_ref"],
+        chapter_id="4",
+        section_ids=["4.1"],
+        source_context=source_context,
+        source_refs=source_refs,
+        special_topic_plan=plan,
+        revision=0,
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/context/chief-chapter-4-input.json",
+        contract.model_dump(mode="json"),
+    )
 
     calls: list[str] = []
 
@@ -336,6 +365,7 @@ def _final_state(tmp_path: Path, run_id: str) -> tuple[ReportWorkflowRunner, dic
                 f"Work/runs/{run_id}/validation/report-chief-candidate-r{revision}.md",
                 "canonical markdown",
             )
+
         return f"Work/runs/{run_id}/validation/report-chief-candidate-r0.md", "canonical markdown"
 
     def validate_final(self, _state, _canonical, _phase):
@@ -511,7 +541,15 @@ def test_final_findings_revise_only_affected_chapter_lanes(tmp_path: Path) -> No
                 revision=1,
                 section_ids=section_ids,
                 part_refs=refs,
-                revision_responses=[],
+                revision_responses=[
+                    RevisionResponse(
+                        finding_id=item["id"],
+                        action="implemented",
+                        summary="The requested chapter-local change was implemented.",
+                        changed_target_ids=list(item["target_section_ids"]),
+                    )
+                    for item in payload["assigned_findings"]
+                ],
             )
         # Final recheck only receives the two affected chapter lanes.
         finding_ids = [finding_item["id"] for finding_item in payload["required_findings"]]
@@ -636,7 +674,15 @@ def test_final_recheck_new_finding_runs_second_affected_wave(tmp_path: Path) -> 
                 revision=revision,
                 section_ids=section_ids,
                 part_refs=refs,
-                revision_responses=[],
+                revision_responses=[
+                    RevisionResponse(
+                        finding_id=item["id"],
+                        action="implemented",
+                        summary="The requested chapter-local change was implemented.",
+                        changed_target_ids=list(item["target_section_ids"]),
+                    )
+                    for item in payload["assigned_findings"]
+                ],
             )
 
         revision = int(payload["revision"])
@@ -740,7 +786,7 @@ def test_final_resume_partial_recheck_skips_initial_and_chief_provider_calls(tmp
     initial_findings = {"1": [finding("1.1", "F-1")], "3": [], "4": [finding("4.1", "F-4")]}
     section_ids = {"1": ["1.1", "1.2", "1.3"], "3": ["3.1.1", "3.1.2", "3.1.3", "3.2"], "4": ["4.1", "4.2"]}
     for chapter_id, findings in initial_findings.items():
-        ref = f"Work/runs/{run_id}/reviews/resume-final-initial-{chapter_id}.json"
+        ref = f"Work/runs/{run_id}/reviews/final-chapter-lane-{chapter_id}-r0.json"
         payload = FinalChapterLaneFindingSubmission(
             run_id=run_id,
             chapter_id=chapter_id,
@@ -748,6 +794,23 @@ def test_final_resume_partial_recheck_skips_initial_and_chief_provider_calls(tmp
             findings=findings,
         )
         runner.service.store.write_json(ref, payload.model_dump(mode="json"))
+        initial_contract = FinalChapterLaneInput(
+            phase="initial",
+            run_id=run_id,
+            subject_ref=state["chief_candidate_ref"],
+            chapter_id=chapter_id,
+            review_focus=list(final_lane_specialization(chapter_id).review_focus),
+            section_ids=section_ids[chapter_id],
+            section_bodies=runner._final_chapter_section_bodies(
+                state["edited_report"], chapter_id
+            ),
+            special_topic_plan=plan,
+            revision=0,
+        )
+        runner.service.store.write_json(
+            f"Work/runs/{run_id}/context/final-chapter-{chapter_id}-input-r0.json",
+            initial_contract.model_dump(mode="json"),
+        )
         record("final-initial", chapter_id, ref, 0)
 
     # Persist both Chief revision lanes and their aggregate.  The resumed run
@@ -778,9 +841,20 @@ def test_final_resume_partial_recheck_skips_initial_and_chief_provider_calls(tmp
             revision=1,
             section_ids=section_ids[chapter_id],
             part_refs=refs,
-            revision_responses=[],
+            revision_responses=[
+                RevisionResponse(
+                    finding_id=item.id,
+                    action="implemented",
+                    summary="The requested chapter-local change was implemented.",
+                    changed_target_ids=list(item.target_section_ids),
+                )
+                for item in initial_findings[chapter_id]
+            ],
         )
-        ref = f"Work/runs/{run_id}/reviews/resume-chief-revision-{chapter_id}.json"
+        ref = (
+            f"Work/runs/{run_id}/reviews/"
+            f"chief-chapter-lane-{chapter_id}-r1.json"
+        )
         runner.service.store.write_json(ref, payload.model_dump(mode="json"))
         record("chief-revision-r1", chapter_id, ref, 1)
     chief_projection = f"Work/runs/{run_id}/reviews/resume-chief-revision-aggregate.json"
@@ -796,8 +870,51 @@ def test_final_resume_partial_recheck_skips_initial_and_chief_provider_calls(tmp
         )
     )
 
+    # Bind the recovered Chapter 1 verdict to the exact r1 subject and Chief
+    # response that the recovered chapter lanes deterministically reduce.
+    revised = state["edited_report"].model_copy(
+        update={
+            "assessment_background": "Revised body 1.1 with verification detail.",
+            "findings_overview": "Revised body 1.2 with verification detail.",
+            "regional_executive_summary": "Revised body 1.3 with verification detail.",
+            "special_topic_analysis": (
+                "### 4.1 Topic A\nTopic A revised body with verification detail.\n\n"
+                "### 4.2 Topic B\nTopic B body with enough substantive detail."
+            ),
+        }
+    )
+    chapter_one_bodies = runner._final_chapter_section_bodies(revised, "1")
+    chapter_one_response = RevisionResponse(
+        finding_id="F-1",
+        action="implemented",
+        summary="The requested chapter-local change was implemented.",
+        changed_target_ids=["1.1"],
+    )
+    recheck_contract = FinalChapterLaneInput(
+        phase="recheck",
+        run_id=run_id,
+        subject_ref=chief_revision_ref,
+        chapter_id="1",
+        review_focus=list(final_lane_specialization("1").review_focus),
+        section_ids=section_ids["1"],
+        section_bodies={"1.1": chapter_one_bodies["1.1"]},
+        unchanged_section_sha256={
+            section_id: hashlib.sha256(body.encode("utf-8")).hexdigest()
+            for section_id, body in chapter_one_bodies.items()
+            if section_id != "1.1"
+        },
+        required_findings=initial_findings["1"],
+        revision_responses=[chapter_one_response],
+        special_topic_plan=plan,
+        revision=1,
+    )
+    runner.service.store.write_json(
+        f"Work/runs/{run_id}/context/final-chapter-1-input-r1.json",
+        recheck_contract.model_dump(mode="json"),
+    )
+
     # Only Chapter 1's Final recheck was persisted before the crash.
-    verdict_ref = f"Work/runs/{run_id}/reviews/resume-final-recheck-1.json"
+    verdict_ref = f"Work/runs/{run_id}/reviews/final-chapter-lane-1-r1.json"
     verdict = FinalChapterLaneVerdictSubmission(
         run_id=run_id,
         chapter_id="1",

@@ -44,7 +44,7 @@ def _style_east_asia_font(style) -> str | None:
 def test_packaged_v2_core_matches_normalized_handoff_source() -> None:
     core = PackagedV2DocxCore(Path("unused-template.docx"))
     assert hashlib.sha256(core.source_path.read_bytes()).hexdigest() == (
-        "7eb7b7cabe56e50ed1232b2b5711670b1e592fab4ab5ee52bc449268462bbc07"
+        "b14c98dbef7a2057117baec03e5143a1a8134cee3e563ac0cf8d569397467faa"
     )
 
 
@@ -441,7 +441,7 @@ def test_renderer_omits_chapter_four_when_special_topic_plan_is_absent(
     assert "### 4." not in markdown
 
 
-def test_renderer_verifies_bold_numbered_protected_prose_after_v2_rendering(
+def test_renderer_preserves_body_labels_that_collide_with_report_heading_numbers(
     tmp_path: Path,
 ) -> None:
     template = tmp_path / "template.docx"
@@ -452,9 +452,13 @@ def test_renderer_verifies_bold_numbered_protected_prose_after_v2_rendering(
     Image.new("RGB", (30, 20), color="red").save(photo)
     report = _approved_report(photo).model_copy(
         update={
-            "risk_panorama": (
-                "**1. 谐波环境下电容器组的并联谐振与过电流风险**\n\n"
-                "该风险标题及正文必须完整保留。"
+            "improvement_action_plan": (
+                "**1.1 负荷均衡调整**\n\n"
+                "负荷均衡措施必须完整保留。\n\n"
+                "**2.1 设备防护等级恢复**\n\n"
+                "设备防护措施必须完整保留。\n\n"
+                "**3.2 智能化平台功能完善**\n\n"
+                "平台完善措施必须完整保留。"
             )
         }
     )
@@ -466,8 +470,9 @@ def test_renderer_verifies_bold_numbered_protected_prose_after_v2_rendering(
     visible = "\n".join(
         paragraph.text for paragraph in Document(output).paragraphs
     )
-    assert "谐波环境下电容器组的并联谐振与过电流风险" in visible
-    assert "该风险标题及正文必须完整保留。" in visible
+    assert "1.1 负荷均衡调整" in visible
+    assert "2.1 设备防护等级恢复" in visible
+    assert "3.2 智能化平台功能完善" in visible
 
 
 def test_renderer_accepts_the_exact_citation_bound_delivery_markdown(

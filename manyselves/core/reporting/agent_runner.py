@@ -807,12 +807,12 @@ class ReportingAgentRunner:
     def _continuation_limits(
         resolved_profile: ResolvedTaskExecutionProfile,
     ) -> dict[str, int]:
-        """Derive finite extra-slice headroom without reducing task limits.
+        """Derive finite continuation headroom without reducing task limits.
 
-        One continuation reuses the exact execution profile.  A profile which
-        already grants a large output or tool window therefore needs fewer
-        complete extra windows than a deliberately small test/deployment
-        profile.  These limits never mutate ``max_tokens`` or omit task input.
+        Tool-boundary slices have no profile-count limit: productive tool work
+        may continue until the typed result is submitted.  The independent
+        no-progress guard below remains responsible for stopping stalled tool
+        loops.  Output and correction continuations stay finite.
         """
 
         profile = resolved_profile.profile
@@ -824,16 +824,8 @@ class ReportingAgentRunner:
                 // profile.max_output_tokens,
             ),
         )
-        tool_slices = max(
-            1,
-            min(
-                3,
-                (24 + profile.max_tool_rounds - 1) // profile.max_tool_rounds,
-            ),
-        )
         return {
             "max_tokens_continuation": max_tokens_slices,
-            "tool_slice_continuation": tool_slices,
             # A correction is already a dedicated extra model turn.  If that
             # turn reaches its tool boundary, allow exactly one lossless slice
             # to submit the typed result, but never a correction loop.
@@ -1955,8 +1947,41 @@ class ReportingAgentRunner:
         evidence_binding_required: bool,
         section_body_only: bool = False,
         chapter_four_planned_headings: bool = False,
+        chapter_id: str | None = None,
     ) -> dict:
         """Return the exact provider-visible shape for one current-task prose part."""
+
+        section_numbering_guidance = ""
+        if section_body_only:
+            section_by_part = {
+                part_id: section_id
+                for section_id, part_id in CHIEF_SECTION_RESULT_PART_IDS.items()
+                if part_id in expected_part_ids
+            }
+            assignments = ", ".join(
+                f"{part_id} -> **{section_id}.x ...**"
+                for part_id, section_id in section_by_part.items()
+            )
+            section_numbering_guidance = (
+                " This is a static Chief section body: do not include any numbered "
+                "Markdown heading, including the section's own heading; the runtime adds "
+                "report headings. Unnumbered internal labels are allowed. If you choose "
+                "bold numbered internal labels, derive them below the exact assigned "
+                f"section rather than the chapter: {assignments}. Never use a chapter-level "
+                f"shortcut such as **{chapter_id}.x ...**, and never restart at **1.1 ...** "
+                "outside section 1.1. This is a writing convention, not a rejection rule."
+            )
+        chapter_four_numbering_guidance = ""
+        if chapter_four_planned_headings:
+            chapter_four_numbering_guidance = (
+                " This is the complete dynamic Chapter 4 part: preserve every planned "
+                "### 4.n heading exactly once and in plan order. Numbered descendant "
+                "headings such as #### 4.1.1 are allowed under their matching planned "
+                "parent, with deeper structure written as ##### 4.1.1.1; do not add another "
+                "top-level 4.n section. Chapter 4 numbered structure must use these explicit "
+                "Markdown headings; never replace it with bold numbered labels such as "
+                "**4.1.1 ...** or restart it at **1.1 ...**."
+            )
 
         part_id_schema: dict = {
             "type": "string",
@@ -1978,21 +2003,8 @@ class ReportingAgentRunner:
                     "arguments. After a successful write, use list_result_parts and keep "
                     "an already-ready part without rewriting it unless correction feedback "
                     "explicitly names that part."
-                    + (
-                        " This is a static Chief section body: do not include any numbered "
-                        "Markdown heading, including the section's own heading; the runtime "
-                        "adds report headings. Unnumbered internal labels are allowed."
-                        if section_body_only
-                        else ""
-                    )
-                    + (
-                        " This is the complete dynamic Chapter 4 part: preserve every "
-                        "planned ### 4.n heading exactly once and in plan order. Numbered "
-                        "descendant headings such as #### 4.1.1 are allowed under their "
-                        "matching planned parent; do not add another top-level 4.n section."
-                        if chapter_four_planned_headings
-                        else ""
-                    )
+                    + section_numbering_guidance
+                    + chapter_four_numbering_guidance
                 ),
             },
         }
@@ -2023,6 +2035,7 @@ class ReportingAgentRunner:
         evidence_binding_required: bool,
         section_body_only: bool = False,
         chapter_four_planned_headings: bool = False,
+        chapter_id: str | None = None,
         batch_size: int | None = None,
     ) -> dict:
         """Specialize single and batch result-part tools to the active task."""
@@ -2032,6 +2045,7 @@ class ReportingAgentRunner:
             evidence_binding_required=evidence_binding_required,
             section_body_only=section_body_only,
             chapter_four_planned_headings=chapter_four_planned_headings,
+            chapter_id=chapter_id,
         )
         if batch_size is None:
             return item_schema
@@ -2540,6 +2554,11 @@ class ReportingAgentRunner:
                 evidence_binding_required=evidence_binding_required,
                 section_body_only=section_body_only,
                 chapter_four_planned_headings=special_topic_plan is not None,
+                chapter_id=(
+                    input_contract.chapter_id
+                    if isinstance(input_contract, ChiefChapterLaneInput)
+                    else None
+                ),
             )
         if "submit_result" in definition.tools:
             output_schemas = list(task_submission_schemas.values())
@@ -3871,7 +3890,10 @@ class ReportingAgentRunner:
                         observed | current_events
                     )
                     count = int(state["continuation_counts"][continuation_kind])
-                    profile_limit_reached = count >= limits[continuation_kind]
+                    profile_limit_reached = (
+                        continuation_kind in limits
+                        and count >= limits[continuation_kind]
+                    )
                     stalled = (
                         not first_observation
                         and state["no_progress_observations"]

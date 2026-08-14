@@ -1991,6 +1991,9 @@ def _validate_cross_owner_completion_business_identity(
         or completion.stage != "cross"
         or completion.module_id != owner_module_id
         or (review_round is not None and completion.review_round != review_round)
+        or completion.status != "completed"
+        or completion.lane_id
+        != f"cross-r{completion.review_round}-module-{owner_module_id}"
     ):
         raise ReviewLifecycleError(
             f"Cross owner completion business identity mismatch: {owner_module_id}"
@@ -2107,6 +2110,30 @@ def _validate_cross_owner_completion_business_identity(
                     raise ReviewLifecycleError(
                         f"Cross owner verdict ownership mismatch: {owner_module_id}"
                     )
+            elif label == "local review":
+                try:
+                    local_completion = ReviewCompletionRecord.model_validate_json(
+                        (runner.service.workspace / ref).read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError) as exc:
+                    raise ReviewLifecycleError(
+                        f"Cross owner local review completion is not typed: {owner_module_id}"
+                    ) from exc
+                if (
+                    local_completion.lifecycle != "module"
+                    or local_completion.run_id != run_id
+                    or local_completion.reviewer_agent_id != "evidence-auditor"
+                    or local_completion.reviewer_session_key
+                    != f"module-auditor-{owner_module_id}"
+                    or local_completion.subject_refs != [subject_ref]
+                ):
+                    raise ReviewLifecycleError(
+                        f"Cross owner local review completion does not bind subject: {owner_module_id}"
+                    )
+    if _cross_owner_artifact_ref_value(completion.local_review_completion) is None:
+        raise ReviewLifecycleError(
+            f"Cross owner completion has no local review completion: {owner_module_id}"
+        )
     return module
 
 
@@ -2948,6 +2975,7 @@ async def _run_cross_owner_lane(
     finding_refs: list[str],
     review_round: int,
     owner_input_ref: str | None = None,
+    prior_completion_ref: str | None = None,
     defer_main_exceptions: bool = True,
 ) -> _CrossOwnerLaneResult:
     """Run one owner-local revision and original-auditor regression in private state."""
@@ -2959,9 +2987,9 @@ async def _run_cross_owner_lane(
         f"Work/runs/{state['run_id']}/modules/"
         f"{module_id}-r{reviewed_baseline.revision}.json"
     )
-    prior_completion_ref = state.get("module_review_completion_refs", {}).get(
-        module_id
-    )
+    prior_completion_ref = prior_completion_ref or state.get(
+        "module_review_completion_refs", {}
+    ).get(module_id)
     if not prior_completion_ref:
         raise ReviewLifecycleError(
             f"Cross local regression requires prior module review: {module_id}"
@@ -3245,17 +3273,17 @@ async def run_cross_review(
         and set(recovered_owner_lanes) == set(owner_ids)
     ):
         try:
-            completion = ReviewCompletionRecord.model_validate_json(
-                completion_path.read_text(encoding="utf-8")
+            completion, _completion_artifacts = runner._load_current_review_completion(
+                run_id=run_id,
+                completion_ref=completion_ref,
+                lifecycle="cross",
+                reviewer_agent_id="cross-module-reviewer",
+                reviewer_session_key="cross-owner-wave",
             )
-        except (OSError, ValueError) as exc:
+        except (AttributeError, OSError, ValueError) as exc:
             raise ReviewLifecycleError(
                 "Cross completion is unreadable during resume"
             ) from exc
-        if completion.run_id != run_id or completion.lifecycle != "cross":
-            raise ReviewLifecycleError(
-                "Cross completion identity mismatch during resume"
-            )
         barrier_ref = f"Work/runs/{run_id}/lanes/cross-r1/owner-barrier.json"
         barrier_path = runner.service.workspace / barrier_ref
         try:
@@ -3339,6 +3367,20 @@ async def run_cross_review(
                 if lane is None or not lane.local_review_ref:
                     raise ReviewLifecycleError(
                         f"Cross owner recovery completion is incomplete: {module_id}"
+                    )
+                expected_subject_ref = completion.subject_refs[
+                    owner_ids.index(module_id)
+                ]
+                actual_subject_ref = _cross_owner_artifact_ref_value(
+                    lane.completion.subject
+                )
+                if (
+                    actual_subject_ref != expected_subject_ref
+                    or lane.module.model_dump(mode="json")
+                    != subject.model_dump(mode="json")
+                ):
+                    raise ReviewLifecycleError(
+                        f"Cross completion subject does not bind owner lane: {module_id}"
                     )
                 state.setdefault("module_review_completion_refs", {})[
                     module_id
@@ -3549,6 +3591,9 @@ async def run_cross_review(
         all_findings = list(initial_result.findings)
         terminal_verdicts: dict[str, ResolutionVerdict] = {}
         current = frozen_modules[owner_module_id]
+        current_review_completion_ref = state.get(
+            "module_review_completion_refs", {}
+        ).get(owner_module_id)
         review_round = 1
         owner_input_ref = initial_input_ref
 
@@ -3607,7 +3652,14 @@ async def run_cross_review(
                     finding_refs=finding_refs,
                     review_round=review_round,
                     owner_input_ref=owner_input_ref,
+                    prior_completion_ref=current_review_completion_ref,
                 )
+
+            # A later Cross regression round reviews the module revision that
+            # the immediately preceding owner-local audit completed.  Keep
+            # that completion binding owner-local until the exact-five barrier
+            # commits all lanes into shared workflow state.
+            current_review_completion_ref = lane.local_review_ref
 
             verdict_loaded = _load_cross_owner_verdict(
                 runner,

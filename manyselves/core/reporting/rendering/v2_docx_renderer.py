@@ -1021,6 +1021,12 @@ def is_time_group_heading_line(line: str) -> bool:
 
 
 def parse_heading(line: str) -> tuple[str, str, int] | None:
+    # Only explicit Markdown headings own the report taxonomy.  Chief-editor
+    # prose may contain local numbered labels such as ``**1.1 负荷均衡调整**``;
+    # treating those body lines as canonical headings silently replaces their
+    # approved titles when the local number collides with HEADINGS.
+    if not re.match(r"^#{1,6}\s+", line.strip()):
+        return None
     clean = clean_inline_marks(clean_markdown_heading(line))
     # Only treat real report headings as headings. Lines such as
     # "1)评估所见..." or "1、..." are body numbered lists and must not be
@@ -1031,10 +1037,7 @@ def parse_heading(line: str) -> tuple[str, str, int] | None:
         if number in HEADING_BY_NUMBER:
             title, level = HEADING_BY_NUMBER[number]
             return number, title, level
-        if (
-            number.startswith("4.")
-            and re.match(r"^#{1,6}\s*", line.strip())
-        ):
+        if number.startswith("4."):
             return number, match.group(2).strip(), 2
     top_level_match = re.match(r"^([1234])\.\s+(.+)$", clean)
     if top_level_match:
@@ -1044,9 +1047,6 @@ def parse_heading(line: str) -> tuple[str, str, int] | None:
             return number, expected[0], expected[1]
     normalized = normalize_heading_title(strip_number_prefix(clean))
     by_title = HEADING_BY_TITLE.get(normalized)
-    if by_title and by_title[0] in {"3.1.1", "3.1.2", "3.1.3"}:
-        if not re.match(r"^#{1,6}\s*", line.strip()):
-            return None
     return by_title
 
 

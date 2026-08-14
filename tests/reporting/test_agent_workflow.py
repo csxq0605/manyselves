@@ -3805,3 +3805,53 @@ def test_validation_binding_uses_typed_identity_not_subject_hash(tmp_path: Path)
         subject_ref=subject_ref,
         subject_revision=1,
     )
+
+
+def test_module_lane_recovery_rejects_completion_for_prior_revision(
+    tmp_path: Path,
+) -> None:
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = _FakeService(tmp_path)
+    run_id = "run-module-binding"
+    current_ref = f"Work/runs/{run_id}/modules/2.1-r1.json"
+    prior_ref = f"Work/runs/{run_id}/modules/2.1-r0.json"
+    module = ModuleSubmission(
+        module_id="2.1",
+        submodule_narratives={
+            submodule_id: "module body"
+            for submodule_id in REPORT_TAXONOMY["2.1"].submodules
+        },
+        claims=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision=1,
+    )
+    runner.service.store.write_json(current_ref, module.model_dump(mode="json"))
+    runner.service.store.write_json(
+        prior_ref,
+        module.model_copy(update={"revision": 0}).model_dump(mode="json"),
+    )
+    completion_ref = (
+        f"Work/runs/{run_id}/reviews/module/initial/2.1/completion-r1.json"
+    )
+    runner.service.store.write_json(
+        completion_ref,
+        ReviewCompletionRecord(
+            lifecycle="module",
+            run_id=run_id,
+            reviewer_agent_id="evidence-auditor",
+            reviewer_session_key="module-auditor-2.1",
+            subject_refs=[prior_ref],
+            finding_refs=[],
+            verdict_refs=[],
+            resolved_finding_ids=[],
+        ).model_dump(mode="json"),
+    )
+
+    with pytest.raises(AgentWorkflowError, match="does not bind current subject"):
+        runner._validate_module_review_completion_binding(
+            run_id=run_id,
+            module_id="2.1",
+            subject_ref=current_ref,
+            review_ref=completion_ref,
+        )

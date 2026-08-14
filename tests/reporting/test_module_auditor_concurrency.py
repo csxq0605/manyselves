@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from manyselves.core.reporting.agentic_models import ModuleSubmission
+from manyselves.core.reporting.input_contracts import ReviewCompletionRecord
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import AgentWorkflowError, ReportWorkflowRunner
 from manyselves.core.reporting.store import ReportingStore
@@ -64,7 +65,19 @@ def _submission(runner: ReportWorkflowRunner, lane_state: dict, module_id: str) 
         f"Work/runs/{run_id}/reviews/module/initial/{module_id}/completion-r0.json"
     )
     runner.service.store.write_json(subject_ref, submission.model_dump(mode="json"))
-    runner.service.store.write_json(review_ref, {"reviewer_session_key": f"module-auditor-{module_id}"})
+    runner.service.store.write_json(
+        review_ref,
+        ReviewCompletionRecord(
+            lifecycle="module",
+            run_id=run_id,
+            reviewer_agent_id="evidence-auditor",
+            reviewer_session_key=f"module-auditor-{module_id}",
+            subject_refs=[subject_ref],
+            finding_refs=[],
+            verdict_refs=[],
+            resolved_finding_ids=[],
+        ).model_dump(mode="json"),
+    )
     lane_state.setdefault("module_submissions", {})[module_id] = submission
     lane_state.setdefault("specialist_submissions", {})[module_id] = submission
     lane_state.setdefault("module_review_completion_refs", {})[module_id] = review_ref

@@ -20,7 +20,7 @@ from manyselves.core.reporting.agentic_models import (
     ResolutionVerdict,
     RevisionResponse,
 )
-from manyselves.core.reporting.input_contracts import CrossOwnerInput
+from manyselves.core.reporting.input_contracts import CrossOwnerInput, ReviewCompletionRecord
 from manyselves.core.reporting.parallel_runtime import (
     ArtifactRef,
     CrossOwnerCompletion,
@@ -137,6 +137,9 @@ class _Runner:
     def _role_skill_context(_state, _role, **_kwargs):
         return ""
 
+    def _load_current_review_completion(self, **kwargs):
+        return ReportWorkflowRunner._load_current_review_completion(self, **kwargs)
+
 
 def _artifact_ref(runner: _Runner, ref: str) -> ArtifactRef:
     content = (runner.service.workspace / ref).read_bytes()
@@ -163,7 +166,19 @@ def _fake_noop(
         f"Work/runs/{run_id}/reviews/module/cross-r{review_round}/"
         f"{owner_module_id}/completion.json"
     )
-    runner.service.store.write_json(local_ref, {"status": "completed", "module_id": owner_module_id})
+    runner.service.store.write_json(
+        local_ref,
+        ReviewCompletionRecord(
+            lifecycle="module",
+            run_id=run_id,
+            reviewer_agent_id="evidence-auditor",
+            reviewer_session_key=f"module-auditor-{owner_module_id}",
+            subject_refs=[subject_ref],
+            finding_refs=[],
+            verdict_refs=[],
+            resolved_finding_ids=[],
+        ).model_dump(mode="json"),
+    )
     completion = CrossOwnerCompletion(
         lane_id=f"cross-r{review_round}-module-{owner_module_id}",
         run_id=run_id,
@@ -190,6 +205,55 @@ def _fake_noop(
         completion_ref=completion_ref,
         completion=completion,
     )
+
+
+def test_cross_owner_completion_rejects_local_review_for_other_subject(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-cross-local-binding"
+    runner = _Runner(tmp_path)
+    _write_modules(runner, run_id)
+    state = _state(run_id)
+    _owner_input, owner_input_ref = lifecycle._cross_owner_input(
+        runner,
+        state=state,
+        modules=state["module_submissions"],
+        owner_module_id="2.1",
+        phase="initial",
+        review_round=0,
+    )
+    result = _fake_noop(
+        runner,
+        state=state,
+        owner_module_id="2.1",
+        module=state["module_submissions"]["2.1"],
+        owner_input_ref=owner_input_ref,
+        review_round=0,
+    )
+    local_ref = result.local_review_ref
+    runner.service.store.write_json(
+        local_ref,
+        ReviewCompletionRecord(
+            lifecycle="module",
+            run_id=run_id,
+            reviewer_agent_id="evidence-auditor",
+            reviewer_session_key="module-auditor-2.1",
+            subject_refs=[f"Work/runs/{run_id}/modules/2.2-r0.json"],
+            finding_refs=[],
+            verdict_refs=[],
+            resolved_finding_ids=[],
+        ).model_dump(mode="json"),
+    )
+
+    with pytest.raises(lifecycle.ReviewLifecycleError, match="does not bind subject"):
+        lifecycle._validate_cross_owner_completion_business_identity(
+            runner,
+            result.completion,
+            run_id=run_id,
+            owner_module_id="2.1",
+            review_round=0,
+            owner_input_ref=owner_input_ref,
+        )
 
 
 async def _fake_revision_lane(
@@ -230,7 +294,17 @@ async def _fake_revision_lane(
         f"{module_id}/completion.json"
     )
     runner.service.store.write_json(
-        local_ref, {"status": "completed", "module_id": module_id}
+        local_ref,
+        ReviewCompletionRecord(
+            lifecycle="module",
+            run_id=run_id,
+            reviewer_agent_id="evidence-auditor",
+            reviewer_session_key=f"module-auditor-{module_id}",
+            subject_refs=[subject_ref],
+            finding_refs=[],
+            verdict_refs=[],
+            resolved_finding_ids=[],
+        ).model_dump(mode="json"),
     )
     completion = CrossOwnerCompletion(
         lane_id=f"cross-r{review_round}-module-{module_id}",
@@ -645,12 +719,20 @@ async def test_cross_owner_recheck_regression_enters_next_revision_round(
 
     runner = _RegressionRunner(tmp_path)
     _write_modules(runner, run_id)
+    prior_completion_refs: list[tuple[int, str | None]] = []
+
+    async def tracked_revision_lane(*args, **kwargs):
+        prior_completion_refs.append(
+            (kwargs["review_round"], kwargs.get("prior_completion_ref"))
+        )
+        return await _fake_revision_lane(*args, **kwargs)
+
     monkeypatch.setattr(
         lifecycle,
         "_verified_cross_owner_noop",
         lambda runner, **kwargs: _fake_noop(runner, **kwargs),
     )
-    monkeypatch.setattr(lifecycle, "_run_cross_owner_lane", _fake_revision_lane)
+    monkeypatch.setattr(lifecycle, "_run_cross_owner_lane", tracked_revision_lane)
     state = _state(run_id)
 
     await lifecycle.run_cross_review(
@@ -684,6 +766,13 @@ async def test_cross_owner_recheck_regression_enters_next_revision_round(
         regression.id,
     }
     assert state["module_submissions"]["2.1"].revision == 2
+    assert prior_completion_refs == [
+        (1, None),
+        (
+            2,
+            f"Work/runs/{run_id}/reviews/module/cross-r1/2.1/completion.json",
+        ),
+    ]
     assert [
         task_id
         for task_id, session_key in runner.calls

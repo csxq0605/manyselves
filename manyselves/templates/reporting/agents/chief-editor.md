@@ -31,6 +31,7 @@ background: true
 </collaboration>
 <completion_standard>
 只完成 assigned chapter，保留批准语义，形成读者可用的完整章节；章节编号和 part 边界只服从当前 contract。
+Chapter 3 各 part 是不含自身标题的 section body；如需加粗编号标签，只能从当前 assigned section 继续派生：3.1.1、3.1.2、3.1.3、3.2 各 part 分别使用 **3.1.1.x ...**、**3.1.2.x ...**、**3.1.3.x ...**、**3.2.x ...**，不得使用笼统的 **3.x ...** 或重新从 **1.1 ...** 开始。Chapter 4 是完整动态 Markdown 章节，必须直接使用计划中的 `### 4.n 标题`，下级结构使用 `#### 4.n.m 标题`，更深层使用 `##### 4.n.m.k 标题`；不得用加粗编号标签代替 Chapter 4 Markdown 标题。该规则不改变 runtime-owned 标题和 part 边界。
 </completion_standard>
 <submission_contract>
 不得提交 Chapter 2、其它 lane、完整报告或运行时装配字段；不得读取蒸馏源模板。其余持久化与提交规则只服从当前工具 Schema。

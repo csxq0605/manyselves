@@ -1294,6 +1294,38 @@ class ToolSliceContinuationProvider(LLMProvider):
         )
 
 
+class ProductiveManyToolSlicesProvider(ToolSliceContinuationProvider):
+    """Make durable progress beyond the former profile slice ceiling."""
+
+    async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        self.calls += 1
+        submodule_ids = list(REPORT_TAXONOMY["2.1"].submodules)
+        # The response immediately following a tool result is observed before
+        # the inner loop reports its boundary, so each outer slice consumes a
+        # pair of provider calls while only the first tool call is executed.
+        slice_index = (self.calls - 1) // 2
+        if slice_index < len(submodule_ids):
+            submodule_id = submodule_ids[slice_index]
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    LLMToolCall(
+                        id=f"write-{submodule_id}",
+                        name="write_result_part",
+                        arguments={
+                            "part_id": submodule_id,
+                            "content": f"{submodule_id} 已保存正文",
+                            "evidence_ids": [],
+                        },
+                    )
+                ],
+            )
+        return LLMResponse(
+            content="",
+            tool_calls=[self.submission_call(f"submit-{self.calls}")],
+        )
+
+
 class CorrectionToolSliceContinuationProvider(LLMProvider):
     """Reach the tool boundary only after the runner asks for typed correction."""
 
@@ -2437,6 +2469,55 @@ async def test_tool_iteration_boundary_continues_same_identity_until_typed_submi
         tmp_path
         / "Work/runs/run-continuation/drafts/module-2.1/r0/2.1.1.md"
     ).is_file()
+
+
+@pytest.mark.asyncio
+async def test_productive_tool_slices_have_no_profile_count_limit(
+    tmp_path: Path,
+) -> None:
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    provider = ProductiveManyToolSlicesProvider()
+    runner = ReportingAgentRunner(
+        tmp_path, bus, provider, AgentDefaults(max_tool_iterations=1), timeout=5
+    )
+    envelope = TaskEnvelope(
+        task_id="module-2.1",
+        task_attempt_id="attempt-many-productive-slices",
+        run_id="run-many-productive-slices",
+        agent_id="module-2.1-specialist",
+        objective="逐段完成模块 2.1",
+        allowed_outputs=["module_submission"],
+        target_submodule_ids=list(REPORT_TAXONOMY["2.1"].submodules),
+    )
+
+    try:
+        definition = load_packaged_agents()["module-2.1-specialist"].model_copy(
+            update={"max_turns": 1}
+        )
+        result = await runner.run(
+            definition,
+            envelope,
+            [],
+            workflow_id="wf-many-productive-slices",
+        )
+    finally:
+        await runner.close_workflow("wf-many-productive-slices")
+        bus.shutdown()
+        await bus_task
+
+    assert result.status is AgentRunStatus.COMPLETED
+    continuation_paths = list(
+        (
+            tmp_path
+            / "Work/runs/run-many-productive-slices/continuations/module-2.1"
+        ).glob("*.json")
+    )
+    assert len(continuation_paths) == 1
+    state = json.loads(continuation_paths[0].read_text(encoding="utf-8"))
+    assert "tool_slice_continuation" not in state["limits"]
+    assert state["continuation_counts"]["tool_slice_continuation"] > 3
+    assert state["status"] == "typed_result"
 
 
 @pytest.mark.asyncio

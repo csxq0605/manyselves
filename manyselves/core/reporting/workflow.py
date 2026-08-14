@@ -4628,6 +4628,49 @@ class ReportWorkflowRunner:
                 f"lane artifact identity mismatch: {artifact.ref}"
             )
 
+    def _validate_module_review_completion_binding(
+        self,
+        *,
+        run_id: str,
+        module_id: str,
+        subject_ref: str,
+        review_ref: str,
+    ) -> ReviewCompletionRecord:
+        """Require a module completion to approve this exact persisted revision."""
+
+        revision_match = re.fullmatch(
+            rf"Work/runs/{re.escape(run_id)}/modules/"
+            rf"{re.escape(module_id)}-r([0-9]+)\.json",
+            subject_ref,
+        )
+        if revision_match is None:
+            raise AgentWorkflowError(
+                f"module lane subject ref is non-canonical: {module_id}"
+            )
+        expected_suffix = (
+            f"/{module_id}/completion-r{revision_match.group(1)}.json"
+        )
+        if not review_ref.startswith(
+            f"Work/runs/{run_id}/reviews/module/"
+        ) or not review_ref.endswith(expected_suffix):
+            raise AgentWorkflowError(
+                f"module lane review completion path does not bind subject revision: {module_id}"
+            )
+        try:
+            completion, _artifacts = self._load_current_review_completion(
+                run_id=run_id,
+                completion_ref=review_ref,
+                lifecycle="module",
+                reviewer_agent_id="evidence-auditor",
+                reviewer_session_key=f"module-auditor-{module_id}",
+                subject_refs=[subject_ref],
+            )
+        except (OSError, ValueError) as exc:
+            raise AgentWorkflowError(
+                f"module lane review completion does not bind current subject: {module_id}"
+            ) from exc
+        return completion
+
     def _recover_module_lane(
         self,
         module_id: str,
@@ -4690,6 +4733,12 @@ class ReportWorkflowRunner:
             raise AgentWorkflowError(
                 f"module lane subject ownership mismatch: {module_id}"
             )
+        self._validate_module_review_completion_binding(
+            run_id=state["run_id"],
+            module_id=module_id,
+            subject_ref=completion.subject.ref,
+            review_ref=completion.review_completion.ref,
+        )
         lane_state = deepcopy(state)
         lane_state.setdefault("module_submissions", {})[module_id] = submission
         lane_state.setdefault("specialist_submissions", {})[module_id] = submission
@@ -4724,23 +4773,26 @@ class ReportWorkflowRunner:
             return None
         if submission.module_id != module_id:
             return None
+        subject_ref = path.relative_to(self.service.workspace).as_posix()
         review_ref = state.get("module_review_completion_refs", {}).get(module_id)
         if not review_ref:
-            review_root = self.service.workspace / f"Work/runs/{state['run_id']}/reviews/module"
-            candidates = sorted(review_root.glob(f"*/{module_id}/completion-r*.json"))
-            if candidates:
-                review_ref = candidates[-1].relative_to(self.service.workspace).as_posix()
+            review_ref = (
+                f"Work/runs/{state['run_id']}/reviews/module/initial/{module_id}/"
+                f"completion-r{submission.revision}.json"
+            )
+            if not (self.service.workspace / review_ref).is_file():
+                return None
         if not review_ref:
             return None
         try:
-            review_record = ReviewCompletionRecord.model_validate_json(
-                (self.service.workspace / review_ref).read_text(encoding="utf-8")
+            review_record = self._validate_module_review_completion_binding(
+                run_id=state["run_id"],
+                module_id=module_id,
+                subject_ref=subject_ref,
+                review_ref=review_ref,
             )
-        except (OSError, ValueError):
+        except AgentWorkflowError:
             return None
-        if review_record.run_id != state["run_id"] or review_record.lifecycle != "module":
-            return None
-        subject_ref = path.relative_to(self.service.workspace).as_posix()
         completion = LaneCompletion(
             lane_id=f"module-{module_id}",
             run_id=state["run_id"],
@@ -4790,17 +4842,13 @@ class ReportWorkflowRunner:
             raise AgentWorkflowError(
                 f"module lane lacks review completion: {module_id}"
             )
-        try:
-            review_record = json.loads(
-                (self.service.workspace / review_ref).read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError) as exc:
-            raise AgentWorkflowError(
-                f"module lane review completion is invalid: {module_id}"
-            ) from exc
-        reviewer_identity_key = str(
-            review_record.get("reviewer_session_key") or f"module-auditor-{module_id}"
+        review_record = self._validate_module_review_completion_binding(
+            run_id=state["run_id"],
+            module_id=module_id,
+            subject_ref=subject_ref,
+            review_ref=review_ref,
         )
+        reviewer_identity_key = review_record.reviewer_session_key
         registry_path = (
             self.service.workspace
             / f"Work/runs/{state['run_id']}/agent-identities.json"
@@ -5970,32 +6018,6 @@ class ReportWorkflowRunner:
             list(active_chapters),
             business_gate=reusable_chief_lane,
         )
-        recovered_aggregate = recovery.load_aggregate("chief")
-        if recovered_aggregate is not None and recovered_aggregate.status == "completed":
-            aggregate_ref = recovered_aggregate.result_ref
-            if aggregate_ref:
-                aggregate_path = (self.service.workspace / aggregate_ref).resolve()
-                if aggregate_path.is_file():
-                    try:
-                        restored = EditedReportSubmission.model_validate_json(
-                            aggregate_path.read_text(encoding="utf-8")
-                        )
-                    except (OSError, ValueError):
-                        restored = None
-                    if restored is not None:
-                        state["edited_report"] = restored
-                        state["chief_candidate_ref"] = aggregate_ref
-                        state["chief_editor_completion_ref"] = aggregate_ref
-                        state["chief_editor_session_key"] = "chief-editor"
-                        state["approved_module_text"] = {
-                            module_id: self._approved_module_text(state["module_submissions"][module_id])
-                            for module_id in REPORT_MODULE_IDS
-                        }
-                        state["aggregate_refs"] = {
-                            **dict(state.get("aggregate_refs", {})),
-                            "chief": aggregate_ref,
-                        }
-                        return
         baseline_ref = str(
             state.get("cross_review_completion_ref")
             or f"Work/runs/{run_id}/reviews/cross-completion.json"
@@ -6005,6 +6027,13 @@ class ReportWorkflowRunner:
             for module_id in REPORT_MODULE_IDS
             for claim in state["module_submissions"][module_id].claims
         ]
+        approved_module_text = {
+            module_id: self._approved_module_text(state["module_submissions"][module_id])
+            for module_id in REPORT_MODULE_IDS
+        }
+        # A Chief aggregate has no independent baseline field.  Resume from
+        # exact chapter lane + input pairs and deterministically reduce them;
+        # an aggregate marker alone cannot prove which Cross subject it used.
         recovered_submissions: dict[str, tuple[ChiefChapterLaneSubmission, str]] = {}
         for chapter_id, lane_state in recovered_lanes.items():
             result_ref = getattr(lane_state, "result_ref", None)
@@ -6020,6 +6049,9 @@ class ReportWorkflowRunner:
                 recovered_payload.run_id == run_id
                 and recovered_payload.chapter_id == chapter_id
                 and set(recovered_payload.section_ids) == set(chapter_sections[chapter_id])
+                and recovered_payload.revision == 0
+                and result_ref
+                == f"Work/runs/{run_id}/reviews/chief-chapter-lane-{chapter_id}-r0.json"
             ):
                 recovered_submissions[chapter_id] = (recovered_payload, result_ref)
         lane_inputs: dict[str, tuple[ChiefChapterLaneInput, str]] = {}
@@ -6041,6 +6073,21 @@ class ReportWorkflowRunner:
             input_ref = (
                 f"Work/runs/{run_id}/context/chief-chapter-{chapter_id}-input.json"
             )
+            existing_input_matches = False
+            input_path = self.service.workspace / input_ref
+            if input_path.is_file():
+                try:
+                    existing_contract = ChiefChapterLaneInput.model_validate_json(
+                        input_path.read_text(encoding="utf-8")
+                    )
+                    existing_input_matches = (
+                        existing_contract.model_dump(mode="json")
+                        == contract.model_dump(mode="json")
+                    )
+                except (OSError, ValueError):
+                    existing_input_matches = False
+            if chapter_id in recovered_submissions and not existing_input_matches:
+                recovered_submissions.pop(chapter_id)
             self.service.store.write_json(input_ref, contract.model_dump(mode="json"))
             lane_inputs[chapter_id] = (contract, input_ref)
 
@@ -6109,7 +6156,7 @@ class ReportWorkflowRunner:
                 failures[chapter_id] = outcome
                 self._record_recovery_lane(
                     state,
-                    stage=f"chief-revision-r{revision_number}",
+                    stage="chief",
                     lane_id=chapter_id,
                     status="failed",
                     error=str(outcome),
@@ -6141,10 +6188,6 @@ class ReportWorkflowRunner:
                 )
             )
             lane_refs[chapter_id] = output_ref
-        approved_module_text = {
-            module_id: self._approved_module_text(state["module_submissions"][module_id])
-            for module_id in REPORT_MODULE_IDS
-        }
         special_topic_body = self._render_special_topic_analysis(
             {
                 section_id: section_bodies[section_id]
@@ -6319,6 +6362,16 @@ class ReportWorkflowRunner:
                         (self.service.workspace / aggregate_ref).read_text(encoding="utf-8")
                     )
                     restored_ref = completion.subject_refs[0]
+                    if len(completion.subject_refs) != 1:
+                        raise ValueError("final completion must bind exactly one subject")
+                    self._load_current_review_completion(
+                        run_id=run_id,
+                        completion_ref=aggregate_ref,
+                        lifecycle="final",
+                        reviewer_agent_id="chief-editor-auditor",
+                        reviewer_session_key="final-chapter-wave",
+                        subject_refs=[restored_ref],
+                    )
                     restored = EditedReportSubmission.model_validate_json(
                         (self.service.workspace / restored_ref).read_text(encoding="utf-8")
                     )
@@ -6329,11 +6382,14 @@ class ReportWorkflowRunner:
                     state["edited_report"] = restored
                     state["chief_candidate_ref"] = restored_ref
                     state["final_review_completion_ref"] = aggregate_ref
-                    state["final_audit_snapshot_ref"] = state.get("final_audit_snapshot_ref")
+                    state["final_audit_snapshot_ref"] = (
+                        f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
+                    )
                     state["aggregate_refs"] = {
                         **dict(state.get("aggregate_refs", {})),
                         "final": aggregate_ref,
                     }
+                    self._validated_final_audit_subject(state)
                     return
         recovered_initial: dict[str, tuple[FinalChapterLaneFindingSubmission, str]] = {}
         for chapter_id, lane_state in recovered_lanes.items():
@@ -6350,6 +6406,8 @@ class ReportWorkflowRunner:
                 recovered_payload.run_id == run_id
                 and recovered_payload.chapter_id == chapter_id
                 and set(recovered_payload.checked_section_ids) == set(chapter_sections[chapter_id])
+                and result_ref
+                == f"Work/runs/{run_id}/reviews/final-chapter-lane-{chapter_id}-r0.json"
             ):
                 recovered_initial[chapter_id] = (recovered_payload, result_ref)
         initial_inputs: dict[str, tuple[FinalChapterLaneInput, str]] = {}
@@ -6368,6 +6426,21 @@ class ReportWorkflowRunner:
                 revision=0,
             )
             input_ref = f"Work/runs/{run_id}/context/final-chapter-{chapter_id}-input-r0.json"
+            existing_input_matches = False
+            input_path = self.service.workspace / input_ref
+            if input_path.is_file():
+                try:
+                    existing_contract = FinalChapterLaneInput.model_validate_json(
+                        input_path.read_text(encoding="utf-8")
+                    )
+                    existing_input_matches = (
+                        existing_contract.model_dump(mode="json")
+                        == contract.model_dump(mode="json")
+                    )
+                except (OSError, ValueError):
+                    existing_input_matches = False
+            if chapter_id in recovered_initial and not existing_input_matches:
+                recovered_initial.pop(chapter_id)
             self.service.store.write_json(input_ref, contract.model_dump(mode="json"))
             initial_inputs[chapter_id] = (contract, input_ref)
 
@@ -6490,23 +6563,9 @@ class ReportWorkflowRunner:
             recovered_chief_lanes = recovery.load_completed_lanes(
                 f"chief-revision-r{revision_number}", list(affected_chapters)
             )
-            recovered_chief_aggregate = recovery.load_aggregate(
-                f"chief-revision-r{revision_number}"
-            )
-            if recovered_chief_aggregate is not None and recovered_chief_aggregate.status == "completed":
-                restored_ref = recovered_chief_aggregate.result_ref
-                if restored_ref:
-                    try:
-                        restored_current = EditedReportSubmission.model_validate_json(
-                            (self.service.workspace / restored_ref).read_text(encoding="utf-8")
-                        )
-                    except (OSError, ValueError):
-                        restored_current = None
-                    if restored_current is not None:
-                        current = restored_current
-                        subject_ref = restored_ref
-                        state["edited_report"] = current
-                        state["chief_candidate_ref"] = subject_ref
+            # Lane outputs, not the aggregate marker, are the authority for a
+            # resumed chapter revision.  Re-reduce the exact bound lane parts
+            # below so a stale aggregate cannot replace the active base subject.
             for chapter_id, lane_state in recovered_chief_lanes.items():
                 result_ref = getattr(lane_state, "result_ref", None)
                 if not result_ref:
@@ -6519,8 +6578,19 @@ class ReportWorkflowRunner:
                     continue
                 if (
                     recovered_payload.run_id == run_id
+                    and recovered_payload.base_subject_ref == subject_ref
                     and recovered_payload.chapter_id == chapter_id
                     and recovered_payload.revision == revision_number
+                    and {
+                        response.finding_id
+                        for response in recovered_payload.revision_responses
+                    }
+                    == {finding.id for finding in findings_by_chapter[chapter_id]}
+                    and result_ref
+                    == (
+                        f"Work/runs/{run_id}/reviews/chief-chapter-lane-"
+                        f"{chapter_id}-r{revision_number}.json"
+                    )
                 ):
                     recovered_chief_revision[chapter_id] = (recovered_payload, result_ref)
             recovered_recheck: dict[str, tuple[FinalChapterLaneVerdictSubmission, str]] = {}
@@ -6541,6 +6611,15 @@ class ReportWorkflowRunner:
                     recovered_payload.run_id == run_id
                     and recovered_payload.chapter_id == chapter_id
                     and set(recovered_payload.checked_section_ids) == set(chapter_sections[chapter_id])
+                    and {
+                        verdict.finding_id for verdict in recovered_payload.verdicts
+                    }
+                    == {finding.id for finding in findings_by_chapter[chapter_id]}
+                    and result_ref
+                    == (
+                        f"Work/runs/{run_id}/reviews/final-chapter-lane-"
+                        f"{chapter_id}-r{revision_number}.json"
+                    )
                 ):
                     recovered_recheck[chapter_id] = (recovered_payload, result_ref)
             revised_parts: dict[str, dict[str, str]] = {}
@@ -6617,6 +6696,11 @@ class ReportWorkflowRunner:
                     or payload.base_subject_ref != subject_ref
                     or payload.chapter_id != chapter_id
                     or payload.revision != revision_number
+                    or {
+                        response.finding_id
+                        for response in payload.revision_responses
+                    }
+                    != {finding.id for finding in findings}
                 ):
                     raise AgentWorkflowError(f"chief chapter {chapter_id} revision identity mismatch")
                 parts = self._read_chief_chapter_parts(
@@ -6708,9 +6792,6 @@ class ReportWorkflowRunner:
                 findings = findings_by_chapter[chapter_id]
                 if not findings:
                     return chapter_id, None, None
-                if chapter_id in recovered_recheck:
-                    recovered_payload, recovered_ref = recovered_recheck[chapter_id]
-                    return chapter_id, recovered_payload, recovered_ref
                 current_bodies = self._final_chapter_section_bodies(current, chapter_id)
                 changed_ids = {
                     section_id
@@ -6740,6 +6821,20 @@ class ReportWorkflowRunner:
                     revision=revision_number,
                 )
                 input_ref = f"Work/runs/{run_id}/context/final-chapter-{chapter_id}-input-r{revision_number}.json"
+                if chapter_id in recovered_recheck:
+                    try:
+                        persisted_contract = FinalChapterLaneInput.model_validate_json(
+                            (self.service.workspace / input_ref).read_text(encoding="utf-8")
+                        )
+                    except (OSError, ValueError):
+                        persisted_contract = None
+                    if (
+                        persisted_contract is not None
+                        and persisted_contract.model_dump(mode="json")
+                        == contract.model_dump(mode="json")
+                    ):
+                        recovered_payload, recovered_ref = recovered_recheck[chapter_id]
+                        return chapter_id, recovered_payload, recovered_ref
                 self.service.store.write_json(input_ref, contract.model_dump(mode="json"))
                 task_id = f"final-chapter-{chapter_id}-r{revision_number}"
                 envelope = TaskEnvelope(
