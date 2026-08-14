@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from .agentic_models import SUBMISSION_INPUT_TYPES
+from .agentic_models import SUBMISSION_INPUT_TYPES, TEMPLATE_ROLE_SKILL_IDS
 from .taxonomy import REPORT_TAXONOMY
 
 FIELD_GUIDANCE: dict[str, str] = {
@@ -24,12 +24,12 @@ FIELD_GUIDANCE: dict[str, str] = {
     "agent_id": "Canonical responsibility Agent id assigned by the workflow.",
     "allowed_outputs": "Submission kinds this task is permitted to return.",
     "allowed_tools": "Tool names available to the assigned Agent for this task.",
-    "analysis_language_reference": (
-        "Durable template-derived analysis-language guidance, including fact-free "
-        "positive and negative structured-writing examples."
-    ),
     "artifact_ids": "Persisted artifact identifiers produced or affected by the action.",
     "artifact_refs": "Current-task durable text-part refs to materialize in listed order.",
+    "assigned_findings": (
+        "Immutable Final findings assigned only to this Chief chapter lane; every target "
+        "must stay inside the lane section_ids."
+    ),
     "assessment_background": "Final report section 1.1 body; facts must remain traceable to approved inputs.",
     "base_subject_ref": "Exact current edited-report artifact that the compact chief patch applies to.",
     "base_revision": "Exact prior module revision to which an explicit module patch applies.",
@@ -88,14 +88,11 @@ FIELD_GUIDANCE: dict[str, str] = {
     "module_narratives": "Map containing exactly one complete approved narrative for each fixed report module.",
     "module_tasks": "Exactly one typed task envelope for each requested specialist.",
     "cross_context": "Aggregate-existing mode must keep this field null; it must never fabricate Cross decisions.",
-    "cross_decision": "Terminal, hash-bound CrossDecisionPack view with all five module ids and approved synthesis inputs.",
+    "cross_decision": "Terminal typed CrossDecisionPack view with all five module ids and approved synthesis inputs.",
     "version": "Monotonic schema version for the persisted CrossDecisionPack contract.",
     "cross_review_completion_ref": "Current-run immutable completion record proving Cross review closed all module findings.",
     "cross_decision_pack_ref": "Current-run immutable CrossDecisionPack artifact reference consumed by Chief/Final.",
-    "cross_decision_pack_sha256": "SHA-256 binding for cross_decision_pack_ref; stale or foreign hashes fail closed.",
-    "artifact_refs": "Exact current-run immutable Cross completion ref retained for runtime hash verification.",
-    "artifact_sha256": "SHA-256 map covering every artifact_ref exactly once; missing, foreign, or malformed hashes fail closed.",
-    "pack_sha256": "SHA-256 of the complete CrossDecisionPack payload.",
+    "artifact_refs": "Exact current-run Cross completion refs retained for typed business identity.",
     "module_ids": "Exactly the five fixed report modules 2.1, 2.2, 2.3, 2.4, and 2.5.",
     "name": "Exact registered name required by the active artifact contract.",
     "new_findings": "Only genuinely new regression findings; never repeat required prior findings here.",
@@ -120,10 +117,6 @@ FIELD_GUIDANCE: dict[str, str] = {
     ),
     "prior_result_ref": "Immediate prior subject or result version used as the revision baseline.",
     "protected_claim_ids": "Runtime-owned set of approved internal Claims; the chief editor never submits this field.",
-    "quality_rubric": (
-        "Durable template-derived report quality rubric with fact-free failure and revision "
-        "examples, without copied project facts."
-    ),
     "rationale": "Evidence-based explanation for the plan or exception decision.",
     "narrative": "Complete reader-visible prose for this exact fixed taxonomy subsection.",
     "reason": "Reviewer-owned explanation for a verdict or workflow-owned failure result.",
@@ -144,10 +137,21 @@ FIELD_GUIDANCE: dict[str, str] = {
     "scope": "Exact product or workflow scope declared by the active submission contract.",
     "separator": "Short separator inserted between durable text parts during materialization.",
     "skill_id": "Canonical product Skill id affected by the evolution action.",
-    "skill_markdown": "Complete template-derived SKILL.md content with required frontmatter and reference links.",
+    "skills": (
+        "Exactly fourteen complete template-derived Skills keyed by the assigned module-author, "
+        "module-auditor, Chief chapter, and final-auditor identities. Cross is intentionally absent."
+    ),
     "source_ids": (
         "Registered current-run source ids supporting the module, Claim, or table. "
         "For a project_fact Claim this list must contain at least one E-* id."
+    ),
+    "source_context": (
+        "Bounded chapter-local upstream projection supplied by the workflow; it never "
+        "contains the complete report or another chapter's prose."
+    ),
+    "source_refs": (
+        "Current-run upstream artifacts authorized for this chapter lane; they do not "
+        "expand its section scope."
     ),
     "submodule_id": "One fixed taxonomy submodule id.",
     "requester_submodule_id": "Legacy exact taxonomy subsection that owns the cross-module request; new requests are module-scoped.",
@@ -159,13 +163,24 @@ FIELD_GUIDANCE: dict[str, str] = {
         "submission tool materializes only refs from the active run, task, and revision."
     ),
     "section_bodies": "Runtime-assembled map of exactly the assigned Chapter 1, 3, or 4 section bodies.",
-    "section_part_refs": "Runtime-owned map from each changed section id to its current-task result-part ref.",
+    "section_part_refs": "Deprecated alias; use part_refs for lane-local durable result refs.",
+    "part_refs": "Runtime-owned lane-local durable result refs; Chapter 4 uses one special_topic_analysis ref for all 4.x sections.",
+    "phase": "Exact lane lifecycle phase declared by the workflow: initial, revision, or recheck as allowed by this contract.",
+    "required_findings": (
+        "Immutable prior findings assigned to this exact review lane; recheck must answer "
+        "all and only these finding ids."
+    ),
+    "section_ids": "Complete active section ids for this one chapter lane; no other chapter is in scope.",
+    "chapter_id": "One parallel Chief/Final chapter lane: 1, 3, or active dynamic Chapter 4.",
+    "base_subject_ref": "Exact current edited-report artifact that this lane patch applies to.",
+    "subject_ref": "Exact current edited-report artifact visible to this lane only.",
     "summary": "Concise stage-specific explanation of the submitted action or author response.",
     "synthesis_inputs": "Supported Cross relationships for chief synthesis that need no further module writeback.",
-    "synthesis_reference": "Durable template-derived synthesis-method guidance.",
     "special_topic_analysis": (
         "Optional dynamic Chapter 4 body. Submit it only when the active input contract "
-        "contains special_topic_plan; headings, order, and count must exactly match that plan."
+        "contains special_topic_plan. Planned ### 4.n headings, order, and count must "
+        "exactly match that plan; nested headings such as #### 4.1.1 are allowed only "
+        "inside their matching planned parent."
     ),
     "special_topic_plan": (
         "Optional runtime-owned immutable Chapter 4 titles and brief requirements. It is "
@@ -189,7 +204,6 @@ FIELD_GUIDANCE: dict[str, str] = {
     "verdict": "Original reviewer decision for one immutable finding: resolved, open, or escalate.",
     "verdicts": "Exactly one reviewer verdict for every required prior finding id.",
     "verification_method": "Joint acceptance or monitoring method for a supported Cross synthesis input.",
-    "visual_organization_reference": "Durable template-derived visual and evidence-organization guidance.",
     "finding_ids": "Escalated immutable finding ids covered by one Main exception decision.",
 }
 
@@ -240,6 +254,22 @@ KIND_SEMANTIC_RULES: dict[str, list[str]] = {
         "Do not resubmit the full report, Chapter 2, Cross dispositions, tables, photos, or editorial metadata.",
         "Runtime materializes the assigned result parts and deterministically inherits every unassigned field.",
     ],
+    "chief_chapter_lane_submission": [
+        "Return only this lane's section_ids and part_refs; the reducer assembles Chapters 1, 3, and optional 4 and inherits Chapter 2 and metadata.",
+        "Never include a full report, other chapter bodies, tables, photos, or Cross state.",
+    ],
+    "chief_chapter_lane_revision_submission": [
+        "Return only changed part_refs for this chapter lane and lane-local revision responses.",
+        "Never copy another chapter or the full edited report.",
+    ],
+    "final_chapter_lane_finding_submission": [
+        "Check only checked_section_ids in one chapter lane; findings must target those sections.",
+        "Chapter 4 is valid only when an active Inputs special-topic plan created the lane.",
+    ],
+    "final_chapter_lane_verdict_submission": [
+        "Return verdicts for required findings in this lane and only genuinely new lane-local regressions.",
+        "Do not repeat findings from another chapter lane or submit a whole-report verdict.",
+    ],
 }
 
 
@@ -251,7 +281,7 @@ KIND_SUMMARIES: dict[str, str] = {
         "A small in-scope revision commit for already saved result parts and author responses."
     ),
     "template_skill_submission": (
-        "A project-scoped writing Skill distilled from the template without copying project facts."
+        "Complete project-scoped module and role Skills distilled from the template without copied facts."
     ),
     "module_review_finding_submission": (
         "Initial module-local review coverage and new immutable findings."
@@ -285,6 +315,18 @@ KIND_SUMMARIES: dict[str, str] = {
     ),
     "chief_revision_submission": (
         "A compact chief-editor patch for assigned Chapter 1, 3, or 4 result parts and finding responses."
+    ),
+    "chief_chapter_lane_submission": (
+        "Initial Chief output for one chapter lane; reducer assembles the lane patches into the edited report."
+    ),
+    "chief_chapter_lane_revision_submission": (
+        "Compact Chief revision output for one chapter lane only."
+    ),
+    "final_chapter_lane_finding_submission": (
+        "Initial Final findings for one chapter lane only."
+    ),
+    "final_chapter_lane_verdict_submission": (
+        "Final recheck verdicts and new findings for one chapter lane only."
     ),
     "skill_evolution_submission": (
         "Typed product Skill evolution outcome with traceable artifacts."
@@ -327,47 +369,14 @@ def _template_skill_example() -> dict[str, Any]:
     )
     return {
         "kind": "template_skill_submission",
-        "name": "report-template-writing",
-        "description": description,
-        "skill_markdown": (
-            "---\nname: report-template-writing\ndescription: "
-            + description
-            + "\n---\n# 报告模板写作\n\n"
-            "按证据边界组织分析，并逐步读取 "
-            "[分析语言](references/analysis-language.md)、"
-            "[综合方法](references/synthesis.md)、"
-            "[视觉组织](references/visual-organization.md) 和 "
-            "[质量量表](references/quality-rubric.md)。\n\n"
-            "所有方法只约束表达和推理，不提供当前项目事实。"
-        ),
-        "analysis_language_reference": "分析语言应区分项目事实、技术解释、风险判断和建议，并明确不确定性。"
-        * 3,
-        "synthesis_reference": "综合应忠实归纳实际发现、判断依据、行动重点和验收方式。" * 3,
-        "visual_organization_reference": "表格和图片必须服务于具体论断，保持来源绑定并避免装饰性视觉。"
-        * 3,
-        "quality_rubric": "检查完整性、事实边界、推理深度、跨模块一致性、可执行性和可追溯性。" * 3,
-        "boundary_manifest": {
-            "policy_version": 1,
-            "transferred_categories": [
-                "analysis_method",
-                "synthesis_method",
-                "visual_method",
-                "quality_check",
-            ],
-            "excluded_categories": [
-                "domain_knowledge",
-                "domain_standard_or_threshold",
-                "project_fact_or_number",
-                "customer_identity",
-                "project_finding_or_risk",
-                "project_conclusion_or_recommendation",
-                "evidence_or_claim_identifier",
-            ],
-            "boundary_statement": (
-                "本 Skill 只保留可跨项目复用的分析、综合、图证组织和质量检查方法；"
-                "专业机理、标准阈值、客户事实、项目判断及证据标识均未迁移，"
-                "必须分别由模块 Skill、Knowledge 或当前运行 Evidence 提供。"
-            ),
+        "name": "report-template-role-skills",
+        "skills": {
+            skill_id: (
+                f"---\nname: report-template-{skill_id}\ndescription: {description}\n---\n"
+                f"# {skill_id} 模板方法\n\n"
+                + "按本职责组织证据边界、分析、行动与可观察质量检查；不提供项目事实。" * 8
+            )
+            for skill_id in TEMPLATE_ROLE_SKILL_IDS
         },
     }
 
@@ -538,6 +547,47 @@ KIND_EXAMPLES: dict[str, dict[str, Any]] = {
                 "evidence_refs": ["Work/runs/report-example/edited-revisions/chief-r1.json"],
             }
         ],
+        "new_findings": [],
+        "residual_risks": [],
+    },
+    "chief_chapter_lane_submission": {
+        "kind": "chief_chapter_lane_submission",
+        "run_id": "report-example",
+        "chapter_id": "1",
+        "section_ids": ["1.1", "1.2", "1.3"],
+        "part_refs": {
+            "assessment_background": "Work/runs/report-example/results/chief-c1-1.1.md",
+            "findings_overview": "Work/runs/report-example/results/chief-c1-1.2.md",
+            "regional_executive_summary": "Work/runs/report-example/results/chief-c1-1.3.md",
+        },
+        "revision": 0,
+    },
+    "chief_chapter_lane_revision_submission": {
+        "kind": "chief_chapter_lane_revision_submission",
+        "run_id": "report-example",
+        "base_subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
+        "chapter_id": "3",
+        "revision": 1,
+        "section_ids": ["3.2"],
+        "part_refs": {
+            "improvement_action_plan": "Work/runs/report-example/results/chief-c3-r1-3.2.md"
+        },
+        "revision_responses": [],
+    },
+    "final_chapter_lane_finding_submission": {
+        "kind": "final_chapter_lane_finding_submission",
+        "run_id": "report-example",
+        "chapter_id": "1",
+        "checked_section_ids": ["1.1", "1.2", "1.3"],
+        "findings": [],
+        "residual_risks": [],
+    },
+    "final_chapter_lane_verdict_submission": {
+        "kind": "final_chapter_lane_verdict_submission",
+        "run_id": "report-example",
+        "chapter_id": "3",
+        "checked_section_ids": ["3.1.1", "3.1.2", "3.1.3", "3.2"],
+        "verdicts": [],
         "new_findings": [],
         "residual_risks": [],
     },

@@ -86,14 +86,16 @@ def test_routing_metadata_can_be_injected_without_skill_bodies(tmp_path: Path) -
     assert "负荷率必须保留计算口径" not in prompt
 
 
-def test_packaged_main_prompt_declares_direct_specialist_dispatch() -> None:
+def test_packaged_main_prompt_is_scoped_to_workflow_exceptions() -> None:
     definition = load_agent_definition(
         Path(__file__).parents[2] / "manyselves/templates/reporting/agents/main-agent.md"
     )
 
     prompt = PromptAssembler.system_prompt(definition)
 
-    assert "直接模块分配" in prompt
+    assert "例外裁决者" in prompt
+    assert "只处理当前 workflow_exception_input" in prompt
+    assert "直接模块分配" not in prompt
 
 
 def test_packaged_template_distiller_requires_real_template_skill_submission() -> None:
@@ -104,12 +106,12 @@ def test_packaged_template_distiller_requires_real_template_skill_submission() -
 
     prompt = PromptAssembler.system_prompt(definition)
 
-    assert "只有 submit_result 工具成功返回才算完成" in prompt
-    assert "普通文字、计划、摘要、声明已完成都不是结果" in prompt
-    assert "analysis-language" in prompt
-    assert "跨章节原因、风险链、结论重组与行动包" in prompt
-    assert "这些样例属于 Skill，不得另建 Output Profile" in prompt
-    assert "不得重复 submit_result 的机器 JSON 样例" in prompt
+    assert "只迁移去事实化的方法" in prompt
+    assert "项目事实" in prompt
+    assert "required_part_ids" in prompt
+    assert "十四份" not in prompt
+    assert "禁止生成 Cross Skill" not in prompt
+    assert "不链接共享 reference" not in prompt
 
 
 def test_system_prompt_rejects_malformed_identity_xml(tmp_path: Path) -> None:
@@ -201,7 +203,9 @@ def test_task_context_inlines_input_and_keeps_only_compact_submission_semantics(
     assert submission.attrib["machine_schema"] == "submit_result.input_schema"
     assert submission.findtext("purpose")
     assert submission.findtext("semantic_rule")
-    assert "native JSON object" in (submission.findtext("payload_encoding") or "")
+    argument_encoding = submission.findtext("argument_encoding") or ""
+    assert "tool arguments are the submission object itself" in argument_encoding
+    assert "Never add a payload wrapper" in argument_encoding
     rendered = ElementTree.tostring(submission, encoding="unicode")
     assert "valid_example" not in rendered
     assert "top_level_fields" not in rendered
@@ -372,3 +376,63 @@ def test_task_context_rejects_xml_forbidden_shared_artifact() -> None:
 
     with pytest.raises(ValueError, match="task context must be valid XML"):
         PromptAssembler.task_message(envelope, ["drafts/2.4\x01.json"])
+
+
+def test_task_delta_contains_only_changed_business_fields() -> None:
+    previous = {
+        "task_id": "module-2.1-r0",
+        "revision": 0,
+        "objective": "完成初稿",
+        "constraints": ["引用证据"],
+        "allowed_outputs": ["module_submission"],
+        "allowed_tools": ["submit_result"],
+        "input_refs": ["Work/input.json"],
+        "prior_result_ref": None,
+        "context_summary_refs": [],
+        "inline_context": None,
+        "target_submodule_ids": ["2.1.1"],
+        "artifact_delivery_modes": {"Work/input.json": "inline"},
+        "input_contract_kind": "module_authoring_input",
+        "input_contract_ref": "Work/input.json",
+        "input_contract_payload": '{"kind":"module_authoring_input","revision":0}',
+        "shared_artifacts": ["Work/input.json"],
+    }
+    envelope = TaskEnvelope(
+        task_id="module-2.1-r1",
+        run_id="run-delta",
+        agent_id="module-2.1-specialist",
+        objective="完成定向修订",
+        input_refs=["Work/input.json", "Work/finding.json"],
+        artifact_delivery_modes={
+            "Work/input.json": "inline",
+            "Work/finding.json": "reference",
+        },
+        constraints=["引用证据"],
+        allowed_outputs=["module_submission"],
+        allowed_tools=["submit_result"],
+        revision=1,
+        target_submodule_ids=["2.1.1"],
+        input_contract_kind="module_authoring_input",
+        input_contract_ref="Work/input.json",
+    )
+    message = PromptAssembler.task_delta_message(
+        envelope,
+        ["Work/input.json", "Work/finding.json"],
+        previous=previous,
+        input_contract_payload='{"kind":"module_authoring_input","revision":0}',
+    )
+    root = ElementTree.fromstring(message)
+    assert root.tag == "task_boundary"
+    delta = root.find("task_delta")
+    assert delta is not None
+    assert delta.attrib["changed_fields"] == "objective,input_refs,artifact_delivery_modes"
+    assert delta.findtext("objective") == "完成定向修订"
+    assert [node.text for node in delta.findall("input_ref")] == [
+        "Work/input.json",
+        "Work/finding.json",
+    ]
+    assert delta.find("allowed_output") is None
+    assert delta.find("input_contract") is None
+    assert delta.find("input_contract_ref").attrib["unchanged"] == "true"
+    assert delta.findtext("new_shared_artifact") == "Work/finding.json"
+    assert "Historical calls are transcript history only" in message

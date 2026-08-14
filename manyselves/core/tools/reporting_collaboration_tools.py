@@ -9,6 +9,7 @@ import unicodedata
 from copy import deepcopy
 from html import escape
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -26,6 +27,8 @@ from ..reporting.agentic_models import (
     CROSS_REVIEW_DIMENSIONS,
     AgentResult,
     AgentRunStatus,
+    ChiefChapterLaneRevisionSubmission,
+    ChiefChapterLaneSubmission,
     ChiefRevisionSubmission,
     ChiefRevisionSubmissionInput,
     CrossReviewFindingSubmission,
@@ -36,6 +39,8 @@ from ..reporting.agentic_models import (
     EditedReportSubmissionInput,
     FinalReviewFindingSubmission,
     FinalReviewVerdictSubmission,
+    FinalChapterLaneFindingSubmission,
+    FinalChapterLaneVerdictSubmission,
     ModuleReviewFindingSubmission,
     ModuleReviewVerdictSubmission,
     ModuleRevisionSubmission,
@@ -43,20 +48,26 @@ from ..reporting.agentic_models import (
     ModuleSubmission,
     ModuleSubmissionInput,
     TableSubmission,
+    TEMPLATE_ROLE_SKILL_IDS,
+    TemplateSkillBoundaryManifest,
     TemplateSkillSubmission,
+    TemplateSkillSubmissionInput,
     WorkflowDecisionSubmission,
     extra_numbered_submodule_headings,
+    numbered_markdown_headings,
 )
 from ..reporting.claim_ledger import ClaimLedger
 from ..reporting.input_contracts import (
     INPUT_CONTRACT_TYPES,
     AggregateFinalReviewInput,
     AggregateEditorInput,
+    ChiefChapterLaneInput,
     ChiefEditorInput,
     ChiefRevisionInput,
     CrossOwnerInput,
     CrossReviewInput,
     FinalReviewInput,
+    FinalChapterLaneInput,
     ModuleAuthoringInput,
     ModuleReviewInput,
     ModuleRevisionInput,
@@ -68,12 +79,13 @@ from ..reporting.models import (
     CHIEF_RESULT_PART_IDS,
     CHIEF_SECTION_RESULT_PART_IDS,
     EvidenceItem,
+    SpecialTopicPlan,
 )
 from ..reporting.parallel_runtime import TaskAttemptStore, TaskCorrelation
 from ..reporting.source_ledger import SourceLedger
 from ..reporting.store import ReportingStore
 from ..reporting.submission_contracts import submission_schema
-from ..reporting.taxonomy import REPORT_TAXONOMY
+from ..reporting.taxonomy import REPORT_TAXONOMY, resolve_submodule
 from .document_tool import InspectDocumentTool
 from .registry import Tool
 
@@ -678,6 +690,211 @@ class SubmitResultTool(_ResultTool):
             revision_responses=commit.revision_responses,
         )
 
+    def _chapter_lane_part_ids(
+        self,
+        chapter_id: str,
+        section_ids: list[str],
+    ) -> list[str]:
+        """Map one Chief lane's section scope to its durable part ids.
+
+        Chapter 4 is intentionally represented by one dynamic aggregate part;
+        its individual 4.x headings are governed by the immutable special-topic
+        plan carried by the input contract.
+        """
+
+        if chapter_id == "4":
+            return ["special_topic_analysis"]
+        try:
+            return [CHIEF_SECTION_RESULT_PART_IDS[section_id] for section_id in section_ids]
+        except KeyError as exc:
+            raise SubmissionValidationError(
+                "Chief chapter lane contains an unknown static section",
+                field="section_ids",
+                expected="section ids present in CHIEF_SECTION_RESULT_PART_IDS",
+                received=section_ids,
+            ) from exc
+
+    def _assemble_chief_chapter_lane_commit(
+        self,
+        commit: ChiefChapterLaneSubmission | ChiefChapterLaneRevisionSubmission,
+    ) -> ChiefChapterLaneSubmission | ChiefChapterLaneRevisionSubmission:
+        """Resolve a chapter lane's submitted refs to current-task saved parts.
+
+        The model only returns artifact refs so the Provider never copies long
+        prose into the commit.  We still read every part through the existing
+        write_result_part boundary here and derive the canonical refs; this
+        makes the reducer safe to use without trusting model-supplied paths.
+        """
+
+        contract = self._feedback_input_contract()
+        if not isinstance(contract, ChiefChapterLaneInput):
+            raise SubmissionValidationError(
+                "Chief chapter lane commit requires its active lane input",
+                field="$contract",
+                expected="chief_chapter_lane_input",
+                received=self.input_contract_ref,
+            )
+        expected_phase = (
+            "initial"
+            if isinstance(commit, ChiefChapterLaneSubmission)
+            else "revision"
+        )
+        if contract.phase != expected_phase:
+            raise SubmissionValidationError(
+                "Chief chapter lane submission phase differs from its input contract",
+                field="kind",
+                expected=(
+                    "chief_chapter_lane_submission"
+                    if expected_phase == "initial"
+                    else "chief_chapter_lane_revision_submission"
+                ),
+                received=commit.kind,
+            )
+        if (
+            commit.run_id != self.run_id
+            or commit.run_id != contract.run_id
+            or commit.chapter_id != contract.chapter_id
+        ):
+            raise SubmissionValidationError(
+                "Chief chapter lane identity differs from its input contract",
+                field="$identity",
+                expected={
+                    "run_id": contract.run_id,
+                    "chapter_id": contract.chapter_id,
+                },
+                received={
+                    "run_id": commit.run_id,
+                    "chapter_id": commit.chapter_id,
+                },
+            )
+        if isinstance(commit, ChiefChapterLaneSubmission):
+            if commit.revision != contract.revision or commit.revision != self.revision:
+                raise SubmissionValidationError(
+                    "Chief chapter lane revision differs from its input contract",
+                    field="revision",
+                    expected=contract.revision,
+                    received=commit.revision,
+                )
+            if set(commit.section_ids) != set(contract.section_ids):
+                raise SubmissionValidationError(
+                    "Chief initial lane must cover exactly its assigned sections",
+                    field="section_ids",
+                    expected=contract.section_ids,
+                    received=commit.section_ids,
+                )
+        else:
+            if (
+                commit.base_subject_ref != contract.subject_ref
+                or commit.revision != contract.revision
+                or commit.revision != self.revision
+            ):
+                raise SubmissionValidationError(
+                    "Chief chapter lane revision identity differs from its input contract",
+                    field="$identity",
+                    expected={
+                        "base_subject_ref": contract.subject_ref,
+                        "revision": contract.revision,
+                    },
+                    received={
+                        "base_subject_ref": commit.base_subject_ref,
+                        "revision": commit.revision,
+                    },
+                )
+            if not set(commit.section_ids).issubset(set(contract.section_ids)):
+                raise SubmissionValidationError(
+                    "Chief revision lane contains an out-of-scope section",
+                    field="section_ids",
+                    expected=f"a non-empty subset of {contract.section_ids}",
+                    received=commit.section_ids,
+                )
+        expected_part_ids = self._chapter_lane_part_ids(
+            contract.chapter_id,
+            commit.section_ids,
+        )
+        expected_part_set = set(expected_part_ids)
+        if set(commit.part_refs) != expected_part_set:
+            raise SubmissionValidationError(
+                "Chief chapter lane part_refs do not match its section scope",
+                field="part_refs",
+                expected=sorted(expected_part_set),
+                received=sorted(commit.part_refs),
+            )
+        canonical_refs: dict[str, str] = {}
+        for part_id in expected_part_ids:
+            prose, relative = self._bound_text_part(part_id)
+            if contract.chapter_id == "4":
+                plan = contract.special_topic_plan
+                if plan is None:
+                    raise SubmissionValidationError(
+                        "Chapter 4 lane requires its active special-topic plan",
+                        field="$contract.special_topic_plan",
+                        expected="the runtime-owned Chapter 4 plan",
+                        received=None,
+                    )
+                try:
+                    plan.validate_analysis(prose, allow_chapter_heading=True)
+                except ValueError as exc:
+                    raise SubmissionValidationError(
+                        "Chapter 4 result part violates its planned heading structure",
+                        field=f"result_parts.{part_id}.content",
+                        expected=(
+                            "all planned ### 4.n headings exactly once and in order; "
+                            "nested #### 4.n.m headings are allowed under their matching parent"
+                        ),
+                        received=str(exc),
+                        repair_instruction=(
+                            f"Rewrite only part_id={part_id!r}. Preserve every planned "
+                            "### 4.n heading exactly; keep any numbered subheading under "
+                            "the matching parent and do not add another top-level 4.n section."
+                        ),
+                    ) from exc
+            else:
+                numbered_headings = numbered_markdown_headings(prose)
+                if numbered_headings:
+                    raise SubmissionValidationError(
+                        "Chief static section part must contain body only, without numbered Markdown headings",
+                        field=f"result_parts.{part_id}.content",
+                        expected=(
+                            "section body only; the runtime owns the numbered report heading"
+                        ),
+                        received=list(numbered_headings),
+                        repair_instruction=(
+                            f"Rewrite only part_id={part_id!r} with the complete section body. "
+                            "Remove every numbered Markdown heading, including the section's "
+                            "own heading; unnumbered internal labels are allowed."
+                        ),
+                    )
+            submitted_ref = commit.part_refs.get(part_id)
+            if submitted_ref != relative:
+                raise SubmissionValidationError(
+                    "Chief chapter lane uses a result part outside the active task",
+                    field=f"part_refs.{part_id}",
+                    expected=relative,
+                    received=submitted_ref,
+                    repair_instruction=(
+                        f"Use exactly the artifact_ref returned by write_result_part for "
+                        f"part_id={part_id!r}; do not copy or synthesize another path."
+                    ),
+                )
+            canonical_refs[part_id] = relative
+        if isinstance(commit, ChiefChapterLaneSubmission):
+            return ChiefChapterLaneSubmission(
+                run_id=commit.run_id,
+                chapter_id=commit.chapter_id,
+                section_ids=list(commit.section_ids),
+                part_refs=canonical_refs,
+                revision=commit.revision,
+            )
+        return ChiefChapterLaneRevisionSubmission(
+            run_id=commit.run_id,
+            base_subject_ref=commit.base_subject_ref,
+            chapter_id=commit.chapter_id,
+            revision=commit.revision,
+            section_ids=list(commit.section_ids),
+            part_refs=canonical_refs,
+            revision_responses=commit.revision_responses,
+        )
+
     def _assemble_edited_report(
         self,
         materialized: dict[str, object],
@@ -876,7 +1093,7 @@ class SubmitResultTool(_ResultTool):
                     repair_instruction=(
                         "Replace artifact_refs with paths returned by write_result_part "
                         "for this run, task, and revision, then resubmit the complete "
-                        "native JSON object."
+                        "flat submission object."
                     ),
                 )
             if not isinstance(separator, str) or len(separator) > 20:
@@ -954,8 +1171,22 @@ class SubmitResultTool(_ResultTool):
         for issue in issues:
             field = str(issue.get("field", ""))
             problem = str(issue.get("problem", ""))
-            if field == "skill_markdown" or "template Skill frontmatter" in problem:
-                affected.add("skill")
+            if field.startswith("skills."):
+                skill_id = next(
+                    (
+                        candidate
+                        for candidate in TEMPLATE_ROLE_SKILL_IDS
+                        if field == f"skills.{candidate}"
+                        or field.startswith(f"skills.{candidate}.")
+                    ),
+                    None,
+                )
+                if skill_id is not None:
+                    affected.add(skill_id)
+                continue
+            role_skill_match = re.search(r"template role Skill ([A-Za-z0-9.-]+)", problem)
+            if role_skill_match:
+                affected.add(role_skill_match.group(1))
                 continue
             if field in chief_part_ids:
                 affected.add(field)
@@ -1190,7 +1421,7 @@ class SubmitResultTool(_ResultTool):
                             f"Add a real current-run E-* source to Claim {claim_id}, or change "
                             "claim_type only if the wording is genuinely not a project fact. "
                             "Keep module-level source_ids consistent and resubmit the complete "
-                            "native JSON object."
+                            "flat submission object."
                         ),
                     }
                 )
@@ -1209,7 +1440,7 @@ class SubmitResultTool(_ResultTool):
                         "received": declared_sources,
                         "repair_instruction": (
                             "Add the reported registered Claim source ids to module-level "
-                            "source_ids and resubmit the complete native JSON object."
+                            "source_ids and resubmit the complete flat submission object."
                         ),
                     }
                 )
@@ -1246,7 +1477,7 @@ class SubmitResultTool(_ResultTool):
                         "repair_instruction": (
                             f"{action} {marker} exactly once beside the supported statement. "
                             "Remove duplicate or misplaced copies, preserve all unrelated prose, "
-                            "then resubmit the complete native JSON object with the returned "
+                            "then resubmit the complete flat submission object with the returned "
                             "artifact_ref."
                         ),
                     }
@@ -1261,7 +1492,7 @@ class SubmitResultTool(_ResultTool):
                         "received": {"marker_locations": locations},
                         "repair_instruction": (
                             f"Remove every {marker} marker while preserving the prose, then "
-                            "resubmit the complete native JSON object."
+                            "resubmit the complete flat submission object."
                         ),
                     }
                 )
@@ -1526,7 +1757,8 @@ class SubmitResultTool(_ResultTool):
                 received=payload,
                 repair_instruction=(
                     "Correct the reported contract violation and resubmit the complete "
-                    "payload as a native JSON object without changing unrelated content."
+                    "flat submission object without changing unrelated content or adding "
+                    "a payload wrapper."
                 ),
             )
         ]
@@ -1582,9 +1814,44 @@ class SubmitResultTool(_ResultTool):
                 repair_instruction=(
                     f"Set {field} to exactly the ids assigned by the input contract. "
                     "Do not invent, rename, omit, or retain unrelated ids; then resubmit "
-                    "the complete native JSON object."
+                    "the complete flat submission object."
                 ),
             )
+
+    def _assemble_template_skill_commit(
+        self,
+        commit: TemplateSkillSubmissionInput,
+    ) -> TemplateSkillSubmission:
+        """Attach runtime-owned boundary metadata to provider-authored Skills."""
+
+        contract = self._load_input_contract()
+        if not isinstance(contract, TemplateDistillationInput):
+            raise SubmissionValidationError(
+                "template Skill commit requires its active distillation input",
+                field="$runtime.input_contract",
+                expected="a readable template_distillation_input for this task",
+                received=self.input_contract_ref,
+                repair_instruction=(
+                    "Do not change the saved Skill files. The workflow runtime must "
+                    "restore the assigned template distillation input before retrying."
+                ),
+            )
+        materialized = self._materialize_text_artifacts(commit.model_dump(mode="python"))
+        return TemplateSkillSubmission.model_validate(
+            {
+                **materialized,
+                "boundary_manifest": TemplateSkillBoundaryManifest(
+                    policy_version=contract.boundary_policy_version,
+                    transferred_categories=list(contract.allowed_transfer_categories),
+                    excluded_categories=list(contract.required_exclusion_categories),
+                    boundary_statement=(
+                        "本 Skill 只保留可跨项目复用的分析、综合、图证组织和质量检查方法；"
+                        "专业机理、标准阈值、客户事实、项目判断、项目建议及证据标识均未迁移，"
+                        "必须分别由模块 Skill、Knowledge 或当前运行 Evidence 提供。"
+                    ),
+                ).model_dump(mode="python"),
+            }
+        )
 
     @staticmethod
     def _validate_template_skill_boundary(
@@ -1612,61 +1879,6 @@ class SubmitResultTool(_ResultTool):
             "template Skill exclusion categories",
             field="boundary_manifest.excluded_categories",
         )
-        skill_text = "\n".join(
-            (
-                payload.skill_markdown,
-                payload.analysis_language_reference,
-                payload.synthesis_reference,
-                payload.visual_organization_reference,
-                payload.quality_rubric,
-            )
-        )
-        identifier = re.search(
-            r"(?<![A-Za-z0-9])(?:E|C|SI)-[A-Za-z0-9][A-Za-z0-9_.-]*",
-            skill_text,
-        )
-        if identifier is not None:
-            raise SubmissionValidationError(
-                "template Skill contains a project evidence, Claim, or synthesis identifier",
-                field="$template_skill_content",
-                expected=(
-                    "reusable guidance or fact-free worked examples with no concrete "
-                    "E-*, C-*, or SI-* identifier"
-                ),
-                received=identifier.group(0),
-            )
-        threshold = re.search(
-            r"(?<![\w.])\d+(?:\.\d+)?\s*(?:%|kV|V|A|kW|MW|kVA|MVA|Hz|Ω|℃|°C|mm2|mm²)(?![\w])",
-            skill_text,
-            flags=re.IGNORECASE,
-        )
-        if threshold is not None:
-            raise SubmissionValidationError(
-                "template Skill contains a concrete domain number or threshold",
-                field="$template_skill_content",
-                expected=(
-                    "reusable guidance or placeholder examples; source domain thresholds "
-                    "belong to Knowledge"
-                ),
-                received=threshold.group(0),
-            )
-        standard = re.search(
-            r"(?<![\w/])(?:GB(?:/T)?|DL/T|IEC|IEEE|ISO|NFPA|EN)"
-            r"\s*[-:：]?\s*\d{2,}(?:[.-]\d+)*(?!\w)",
-            skill_text,
-            flags=re.IGNORECASE,
-        )
-        if standard is not None:
-            raise SubmissionValidationError(
-                "template Skill contains a concrete domain standard identifier",
-                field="$template_skill_content",
-                expected=(
-                    "reusable guidance or placeholder examples; standards and applicability "
-                    "belong to Knowledge"
-                ),
-                received=standard.group(0),
-            )
-
         def normalized(value: str) -> str:
             return re.sub(
                 r"\s+",
@@ -1675,22 +1887,69 @@ class SubmitResultTool(_ResultTool):
             ).casefold()
 
         normalized_source = normalized(source_text)
-        copied = next(
-            (
-                segment.strip()
-                for segment in re.split(r"[。！？.!?\n]+", skill_text)
-                if len(normalized(segment)) >= 36
-                and normalized(segment) in normalized_source
-            ),
-            None,
-        )
-        if copied is not None:
-            raise SubmissionValidationError(
-                "template Skill copies a long source sentence instead of abstracting a method",
-                field="$template_skill_content",
-                expected="new method-level wording with no long verbatim source sentence",
-                received=copied[:240],
+        for skill_id, skill_text in payload.skills.items():
+            field = f"skills.{skill_id}"
+            identifier = re.search(
+                r"(?<![A-Za-z0-9])(?:E|C|SI)-[A-Za-z0-9][A-Za-z0-9_.-]*",
+                skill_text,
             )
+            if identifier is not None:
+                raise SubmissionValidationError(
+                    "template Skill contains a project evidence, Claim, or synthesis identifier",
+                    field=field,
+                    expected=(
+                        "reusable guidance or fact-free worked examples with no concrete "
+                        "E-*, C-*, or SI-* identifier"
+                    ),
+                    received=identifier.group(0),
+                )
+            threshold = re.search(
+                r"(?<![\w.])\d+(?:\.\d+)?\s*(?:%|kV|V|A|kW|MW|kVA|MVA|Hz|Ω|℃|°C|mm2|mm²)(?![\w])",
+                skill_text,
+                flags=re.IGNORECASE,
+            )
+            if threshold is not None:
+                raise SubmissionValidationError(
+                    "template Skill contains a concrete domain number or threshold",
+                    field=field,
+                    expected=(
+                        "reusable guidance or placeholder examples; source domain thresholds "
+                        "belong to Knowledge"
+                    ),
+                    received=threshold.group(0),
+                )
+            standard = re.search(
+                r"(?<![\w/])(?:GB(?:/T)?|DL/T|IEC|IEEE|ISO|NFPA|EN)"
+                r"\s*[-:：]?\s*\d{2,}(?:[.-]\d+)*(?!\w)",
+                skill_text,
+                flags=re.IGNORECASE,
+            )
+            if standard is not None:
+                raise SubmissionValidationError(
+                    "template Skill contains a concrete domain standard identifier",
+                    field=field,
+                    expected=(
+                        "reusable guidance or placeholder examples; standards and applicability "
+                        "belong to Knowledge"
+                    ),
+                    received=standard.group(0),
+                )
+            copied = next(
+                (
+                    segment.strip()
+                    for segment in re.split(r"[。！？.!?\n]+", skill_text)
+                    if len(normalized(segment)) >= 36
+                    and normalized(segment) in normalized_source
+                ),
+                None,
+            )
+            if copied is not None:
+                raise SubmissionValidationError(
+                    "template Skill copies a long source sentence instead of abstracting a method",
+                    field=field,
+                    expected="new method-level wording with no long verbatim source sentence",
+                    received=copied[:240],
+                )
 
     def _validate_against_input_contract(self, payload) -> None:
         contract = self._load_input_contract()
@@ -1928,6 +2187,48 @@ class SubmitResultTool(_ResultTool):
                 )
             else:
                 return
+            findings = (
+                payload.findings
+                if isinstance(payload, CrossReviewFindingSubmission)
+                else payload.new_findings
+            )
+            out_of_lane = [
+                finding
+                for finding in findings
+                if finding.owner_module_id != contract.owner_module_id
+                or any(
+                    resolve_submodule(target_id).module_id
+                    != contract.owner_module_id
+                    for target_id in finding.target_submodule_ids
+                )
+            ]
+            if out_of_lane:
+                raise SubmissionValidationError(
+                    "Cross finding lies outside the specialized owner lane",
+                    field="findings",
+                    expected=(
+                        f"owner_module_id={contract.owner_module_id} and targets inside "
+                        f"{sorted(REPORT_TAXONOMY[contract.owner_module_id].submodules)}"
+                    ),
+                    received=[finding.model_dump(mode="json") for finding in out_of_lane],
+                )
+            wrong_synthesis_owner = [
+                synthesis
+                for synthesis in payload.synthesis_inputs
+                if min(synthesis.related_module_ids) != contract.owner_module_id
+            ]
+            if wrong_synthesis_owner:
+                raise SubmissionValidationError(
+                    "Cross synthesis was submitted by the wrong specialized owner lane",
+                    field="synthesis_inputs.related_module_ids",
+                    expected=(
+                        f"the smallest related module id must equal {contract.owner_module_id}"
+                    ),
+                    received=[
+                        synthesis.model_dump(mode="json")
+                        for synthesis in wrong_synthesis_owner
+                    ],
+                )
             if any(
                 set(entry.checked_dimensions) != required_dimensions for entry in payload.coverage
             ):
@@ -2086,6 +2387,71 @@ class SubmitResultTool(_ResultTool):
                     received=unknown_evidence,
                 )
             return
+        if isinstance(contract, FinalChapterLaneInput):
+            expected_sections = set(contract.section_ids)
+            if payload.run_id != contract.run_id or payload.chapter_id != contract.chapter_id:
+                raise SubmissionValidationError(
+                    "Final chapter lane identity differs from its input contract",
+                    field="$identity",
+                    expected={
+                        "run_id": contract.run_id,
+                        "chapter_id": contract.chapter_id,
+                    },
+                    received={
+                        "run_id": payload.run_id,
+                        "chapter_id": payload.chapter_id,
+                    },
+                )
+            if set(payload.checked_section_ids) != expected_sections:
+                raise SubmissionValidationError(
+                    "Final chapter lane coverage differs from its input contract",
+                    field="checked_section_ids",
+                    expected=f"exactly these section ids: {sorted(expected_sections)}",
+                    example=sorted(expected_sections),
+                    received=payload.checked_section_ids,
+                )
+            if contract.phase == "initial":
+                if not isinstance(payload, FinalChapterLaneFindingSubmission):
+                    raise SubmissionValidationError(
+                        "Final initial lane requires a finding submission",
+                        field="kind",
+                        expected="final_chapter_lane_finding_submission",
+                        received=payload.kind,
+                    )
+                findings = payload.findings
+            else:
+                if not isinstance(payload, FinalChapterLaneVerdictSubmission):
+                    raise SubmissionValidationError(
+                        "Final recheck lane requires a verdict submission",
+                        field="kind",
+                        expected="final_chapter_lane_verdict_submission",
+                        received=payload.kind,
+                    )
+                self._require_exact_ids(
+                    {verdict.finding_id for verdict in payload.verdicts},
+                    {finding.id for finding in contract.required_findings},
+                    "Final chapter lane verdicts",
+                    field="verdicts.finding_id",
+                )
+                findings = payload.new_findings
+            if any(
+                not set(finding.target_section_ids).issubset(expected_sections)
+                for finding in findings
+            ):
+                raise SubmissionValidationError(
+                    "Final chapter lane finding target lies outside its input scope",
+                    field="findings.target_section_ids",
+                    expected=f"section ids drawn from {sorted(expected_sections)}",
+                    example=sorted(expected_sections),
+                    received=[
+                        {
+                            "id": finding.id,
+                            "target_section_ids": finding.target_section_ids,
+                        }
+                        for finding in findings
+                    ],
+                )
+            return
         if isinstance(contract, (FinalReviewInput, AggregateFinalReviewInput)):
             required_sections = set(contract.required_section_ids)
             if isinstance(payload, FinalReviewFindingSubmission):
@@ -2133,6 +2499,87 @@ class SubmitResultTool(_ResultTool):
                         for finding in findings
                     ],
                 )
+            return
+        if isinstance(contract, ChiefChapterLaneInput):
+            if not isinstance(
+                payload,
+                (ChiefChapterLaneSubmission, ChiefChapterLaneRevisionSubmission),
+            ):
+                return
+            if (
+                payload.run_id != contract.run_id
+                or payload.chapter_id != contract.chapter_id
+            ):
+                raise SubmissionValidationError(
+                    "Chief chapter lane identity differs from its input contract",
+                    field="$identity",
+                    expected={
+                        "run_id": contract.run_id,
+                        "chapter_id": contract.chapter_id,
+                    },
+                    received={
+                        "run_id": payload.run_id,
+                        "chapter_id": payload.chapter_id,
+                    },
+                )
+            if isinstance(contract, ChiefChapterLaneInput) and contract.phase == "initial":
+                if not isinstance(payload, ChiefChapterLaneSubmission):
+                    raise SubmissionValidationError(
+                        "Chief initial lane requires a chapter submission",
+                        field="kind",
+                        expected="chief_chapter_lane_submission",
+                        received=payload.kind,
+                    )
+                if payload.revision != contract.revision:
+                    raise SubmissionValidationError(
+                        "Chief initial lane revision differs from its input contract",
+                        field="revision",
+                        expected=contract.revision,
+                        received=payload.revision,
+                    )
+                self._require_exact_ids(
+                    set(payload.section_ids),
+                    set(contract.section_ids),
+                    "Chief initial lane sections",
+                    field="section_ids",
+                )
+            else:
+                if not isinstance(payload, ChiefChapterLaneRevisionSubmission):
+                    raise SubmissionValidationError(
+                        "Chief revision lane requires a chapter revision submission",
+                        field="kind",
+                        expected="chief_chapter_lane_revision_submission",
+                        received=payload.kind,
+                    )
+                if (
+                    payload.base_subject_ref != contract.subject_ref
+                    or payload.revision != contract.revision
+                ):
+                    raise SubmissionValidationError(
+                        "Chief chapter lane revision identity differs from its input contract",
+                        field="$identity",
+                        expected={
+                            "base_subject_ref": contract.subject_ref,
+                            "revision": contract.revision,
+                        },
+                        received={
+                            "base_subject_ref": payload.base_subject_ref,
+                            "revision": payload.revision,
+                        },
+                    )
+                self._require_exact_ids(
+                    {response.finding_id for response in payload.revision_responses},
+                    {finding.id for finding in contract.assigned_findings},
+                    "Chief chapter lane revision responses",
+                    field="revision_responses.finding_id",
+                )
+                if not set(payload.section_ids).issubset(set(contract.section_ids)):
+                    raise SubmissionValidationError(
+                        "Chief chapter lane revision contains an out-of-scope section",
+                        field="section_ids",
+                        expected=f"a subset of {contract.section_ids}",
+                        received=payload.section_ids,
+                    )
             return
         if isinstance(contract, ChiefRevisionInput):
             if not isinstance(payload, ChiefRevisionSubmission):
@@ -2276,16 +2723,16 @@ class SubmitResultTool(_ResultTool):
                     field="finding_ids",
                 )
 
-    async def __call__(self, payload: dict | str) -> dict:
-        """Return structured correction feedback before bounded terminal failure."""
+    async def __call__(self, **submission: Any) -> dict:
+        """Validate one flat submission and return bounded correction feedback."""
+
+        payload = dict(submission)
 
         try:
             return await self._submit_once(payload)
         except (ValidationError, SubmissionValidationError) as exc:
             self._validation_failures += 1
-            feedback_payload, _transport_normalization = (
-                self._normalize_payload_transport(payload)
-            )
+            feedback_payload = payload
             issues = self._validation_issues(exc, feedback_payload)
             fingerprint = self._correction_fingerprint(exc, issues)
             count = self._validation_fingerprints.get(fingerprint, 0) + 1
@@ -2330,9 +2777,10 @@ class SubmitResultTool(_ResultTool):
                     "next_action": "resubmit_result_once_after_applying_validation_errors",
                     "instruction": (
                         "Apply each validation error exactly once and resubmit one complete "
-                        "native payload. Rewrite only rewrite_part_ids; when that list is "
+                        "submission object. Put kind and every declared field directly in "
+                        "the tool arguments. Rewrite only rewrite_part_ids; when that list is "
                         "empty, do not rewrite any durable prose part. Never repeat the "
-                        "same rejected payload."
+                        "same rejected submission."
                     ),
                 }
             if count >= 2:
@@ -2435,10 +2883,21 @@ class SubmitResultTool(_ResultTool):
                 for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5")
             ]
             existing_ids = [finding.id for finding in contract.required_findings]
+            synthesis_values = normalized.get("synthesis_inputs")
+            if isinstance(synthesis_values, list):
+                normalized["synthesis_inputs"] = [
+                    {
+                        **dict(item),
+                        "id": f"CSI-{contract.owner_module_id}-{index:03d}",
+                    }
+                    if isinstance(item, dict)
+                    else item
+                    for index, item in enumerate(synthesis_values, start=1)
+                ]
             if kind == "cross_review_finding_submission":
                 normalized["findings"] = self._runtime_finding_ids(
                     normalized.get("findings", []),
-                    prefix="XMR-",
+                    prefix=f"XMR-{contract.owner_module_id}-",
                     existing_ids=[],
                 )
             elif kind == "cross_review_verdict_submission":
@@ -2489,6 +2948,31 @@ class SubmitResultTool(_ResultTool):
                     prefix=f"XMR-{owner_module_id}-r{contract.review_round}-",
                     existing_ids=existing_ids,
                 )
+        elif isinstance(contract, FinalChapterLaneInput):
+            normalized["run_id"] = contract.run_id
+            normalized["chapter_id"] = contract.chapter_id
+            normalized["checked_section_ids"] = list(contract.section_ids)
+            existing_ids = [finding.id for finding in contract.required_findings]
+            if kind == "final_chapter_lane_finding_submission":
+                normalized["findings"] = self._runtime_finding_ids(
+                    normalized.get("findings", []),
+                    prefix=f"F-{contract.chapter_id}-",
+                    existing_ids=[],
+                )
+            elif kind == "final_chapter_lane_verdict_submission":
+                verdicts = normalized.get("verdicts")
+                if isinstance(verdicts, list) and len(verdicts) == len(existing_ids):
+                    normalized["verdicts"] = [
+                        {**dict(verdict), "finding_id": finding_id}
+                        if isinstance(verdict, dict)
+                        else verdict
+                        for verdict, finding_id in zip(verdicts, existing_ids, strict=True)
+                    ]
+                normalized["new_findings"] = self._runtime_finding_ids(
+                    normalized.get("new_findings", []),
+                    prefix=f"F-{contract.chapter_id}-r{contract.revision}-",
+                    existing_ids=existing_ids,
+                )
         elif isinstance(contract, (FinalReviewInput, AggregateFinalReviewInput)):
             normalized["checked_section_ids"] = list(contract.required_section_ids)
             existing_ids = [finding.id for finding in contract.required_findings]
@@ -2514,11 +2998,11 @@ class SubmitResultTool(_ResultTool):
                 )
         return normalized
 
-    async def _submit_once(self, payload: dict | str) -> dict:
+    async def _submit_once(self, payload: dict) -> dict:
         """Submit a typed result.
 
         Args:
-            payload: One allowed typed workflow submission for the active task.
+            payload: Flat tool arguments for one allowed workflow submission.
         """
         self._submission_attempt += 1
         self.store.write_json(
@@ -2533,24 +3017,24 @@ class SubmitResultTool(_ResultTool):
                 "raw_payload": payload,
             },
         )
-        normalized_transport_payload, transport_normalization = (
-            self._normalize_payload_transport(payload)
-        )
-        if not isinstance(normalized_transport_payload, dict):
+        transport_normalization = None
+        if "payload" in payload:
             raise SubmissionValidationError(
-                "submit_result payload must be the JSON object required by the tool schema",
+                "submit_result does not accept a payload wrapper",
                 field="payload",
-                expected="a native JSON object, not a JSON-encoded string",
-                received=payload,
+                expected=(
+                    "no payload property; put kind and every declared contract field "
+                    "directly in the tool arguments"
+                ),
+                received=payload.get("payload"),
                 repair_instruction=(
-                    "Resubmit the same complete candidate as a native object in payload. "
-                    "Do not quote or JSON-stringify the complete object. Preserve the "
-                    "candidate content and escape quotation marks only inside individual "
-                    "text fields."
+                    "Remove the outer payload property. Resubmit the same candidate with "
+                    "kind and every declared field at the top level. Do not quote or "
+                    "JSON-stringify the complete object."
                 ),
             )
         normalized_payload = self._normalize_runtime_review_fields(
-            normalized_transport_payload
+            payload
         )
         submission_kind = str(normalized_payload.get("kind", ""))
         if self.allowed_outputs and submission_kind not in self.allowed_outputs:
@@ -2566,9 +3050,9 @@ class SubmitResultTool(_ResultTool):
                 ),
                 received=submission_kind or None,
                 repair_instruction=(
-                    "Set payload.kind exactly to one allowed output kind and resubmit "
-                    "the complete native JSON object. Do not rename the contract or "
-                    "stringify the payload."
+                    "Set the top-level kind field exactly to one allowed output kind and "
+                    "resubmit the complete submission object. Do not add a payload wrapper "
+                    "or stringify the object."
                 ),
             )
         if submission_kind == "module_submission":
@@ -2584,12 +3068,36 @@ class SubmitResultTool(_ResultTool):
             normalized_payload = self._assemble_chief_revision_commit(commit).model_dump(
                 mode="python"
             )
+        elif submission_kind == "template_skill_submission":
+            commit = TemplateSkillSubmissionInput.model_validate(normalized_payload)
+            normalized_payload = self._assemble_template_skill_commit(commit).model_dump(
+                mode="python"
+            )
+        elif submission_kind in {
+            "chief_chapter_lane_submission",
+            "chief_chapter_lane_revision_submission",
+        }:
+            if submission_kind == "chief_chapter_lane_submission":
+                commit = ChiefChapterLaneSubmission.model_validate(normalized_payload)
+            else:
+                commit = ChiefChapterLaneRevisionSubmission.model_validate(normalized_payload)
+            normalized_payload = self._assemble_chief_chapter_lane_commit(commit).model_dump(
+                mode="python"
+            )
         elif submission_kind == "edited_report_submission":
             editor_input = EditedReportSubmissionInput.model_validate(normalized_payload)
             materialized = self._materialize_text_artifacts(editor_input.model_dump(mode="python"))
             normalized_payload = self._assemble_edited_report(materialized).model_dump(
                 mode="python"
             )
+        elif submission_kind in {
+            "final_chapter_lane_finding_submission",
+            "final_chapter_lane_verdict_submission",
+        }:
+            # Final lane evidence_refs are existing artifact identifiers, not prose
+            # fields.  Preserve them as typed refs; materializing every string here
+            # would turn a valid evidence path into its file contents.
+            normalized_payload = normalized_payload
         else:
             normalized_payload = self._materialize_text_artifacts(normalized_payload)
         result = AgentResult(
@@ -2623,7 +3131,7 @@ class SubmitResultTool(_ResultTool):
                     repair_instruction=(
                         "Remove invented or stale source ids. Keep only ids returned by "
                         "current-run evidence tools, update affected Claim source_ids "
-                        "consistently, and resubmit the complete payload."
+                        "consistently, and resubmit the complete flat submission object."
                     ),
                 )
             try:
@@ -2641,7 +3149,7 @@ class SubmitResultTool(_ResultTool):
                     repair_instruction=(
                         "Correct the Claim or its matching narrative marker exactly as "
                         "reported by ClaimLedger. Do not weaken, invent, or silently drop "
-                        "unrelated Claims; then resubmit the complete payload."
+                        "unrelated Claims; then resubmit the complete flat submission object."
                     ),
                 ) from exc
         if isinstance(result.payload, ModuleRevisionSubmission):
@@ -2716,31 +3224,6 @@ class SubmitResultTool(_ResultTool):
             ),
         }
 
-    @staticmethod
-    def _normalize_payload_transport(
-        payload: dict | str,
-    ) -> tuple[dict | str, str | None]:
-        """Decode one exact JSON-object wrapper without repairing its semantics.
-
-        Some providers serialize a schema-valid object into the ``payload`` string
-        slot even though the tool schema requires an object.  Accepting one complete
-        JSON document is lossless transport normalization: the decoded value still
-        passes through the same allowed-kind, Pydantic, evidence, Claim, and input
-        contract gates.  We deliberately do not strip fences, extract substrings,
-        recursively decode, or coerce non-object JSON values.
-        """
-
-        if not isinstance(payload, str):
-            return payload, None
-        try:
-            decoded = json.loads(payload)
-        except (TypeError, ValueError):
-            return payload, None
-        if not isinstance(decoded, dict):
-            return payload, None
-        return decoded, "single_json_object_decode_v1"
-
-
 class _ResultPartTool(Tool):
     def __init__(
         self,
@@ -2750,6 +3233,8 @@ class _ResultPartTool(Tool):
         store: ReportingStore,
         expected_part_ids: list[str] | None = None,
         evidence_binding_required: bool = False,
+        section_body_only: bool = False,
+        special_topic_plan: SpecialTopicPlan | None = None,
         required_synthesis_input_ids: list[str] | None = None,
     ):
         if Path(run_id).name != run_id or not run_id:
@@ -2764,6 +3249,8 @@ class _ResultPartTool(Tool):
         self.store = store
         self.expected_part_ids = tuple(dict.fromkeys(expected_part_ids or ()))
         self.evidence_binding_required = evidence_binding_required
+        self.section_body_only = section_body_only
+        self.special_topic_plan = special_topic_plan
         self.required_synthesis_input_ids = tuple(dict.fromkeys(required_synthesis_input_ids or ()))
 
     @property
@@ -2864,6 +3351,25 @@ class WriteResultPartTool(_ResultPartTool):
                 "regenerate the complete intended prose and never copy the placeholder or "
                 "its digest into report content"
             )
+        if self.section_body_only:
+            numbered_headings = numbered_markdown_headings(content)
+            if numbered_headings:
+                raise ValueError(
+                    "static Chief result part must contain section body only, without "
+                    f"numbered Markdown headings: {list(numbered_headings)}"
+                )
+        if self.special_topic_plan is not None:
+            try:
+                self.special_topic_plan.validate_analysis(
+                    content,
+                    allow_chapter_heading=True,
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    "Chapter 4 result part must preserve every planned ### 4.n heading "
+                    "exactly once and in order; nested #### 4.n.m headings are allowed "
+                    f"only under their matching parent: {exc}"
+                ) from exc
         if self.evidence_binding_required:
             unexpected_headings = extra_numbered_submodule_headings(part_id, content)
             if unexpected_headings:
@@ -3036,6 +3542,21 @@ class ListResultPartsTool(_ResultPartTool):
         if root.is_dir():
             for path in sorted(root.glob("*.md")):
                 content = path.read_text(encoding="utf-8")
+                structural_errors: list[str] = []
+                if _contains_persisted_result_part_marker(content):
+                    structural_errors.append(
+                        "contains a retired internal history token"
+                    )
+                if self.section_body_only:
+                    structural_errors.extend(numbered_markdown_headings(content))
+                if self.special_topic_plan is not None:
+                    try:
+                        self.special_topic_plan.validate_analysis(
+                            content,
+                            allow_chapter_heading=True,
+                        )
+                    except ValueError as exc:
+                        structural_errors.append(str(exc))
                 part = {
                     "part_id": path.stem,
                     "characters": len(content),
@@ -3050,13 +3571,9 @@ class ListResultPartsTool(_ResultPartTool):
                             binding = None
                         if isinstance(binding, dict):
                             evidence_ids = binding.get("evidence_ids")
-                    structural_errors = list(
+                    structural_errors.extend(
                         extra_numbered_submodule_headings(path.stem, content)
                     )
-                    if _contains_persisted_result_part_marker(content):
-                        structural_errors.append(
-                            "contains a retired internal history token"
-                        )
                     if "[[CLAIM:" in content:
                         structural_errors.append(
                             "contains retired model-authored Claim marker"
@@ -3077,21 +3594,24 @@ class ListResultPartsTool(_ResultPartTool):
                     )
                 else:
                     part["artifact_ref"] = path.relative_to(self.store.workspace).as_posix()
+                    part["ready"] = not structural_errors
+                    if structural_errors:
+                        part["structural_errors"] = structural_errors
                 parts.append(part)
         saved_ids = [part["part_id"] for part in parts]
         missing_ids = [part_id for part_id in self.expected_part_ids if part_id not in saved_ids]
-        unbound_ids = (
-            [part["part_id"] for part in parts if not part.get("ready", False)]
-            if self.evidence_binding_required
-            else []
-        )
+        unbound_ids = [
+            part["part_id"]
+            for part in parts
+            if part["part_id"] in self.expected_part_ids
+            and not part.get("ready", False)
+        ]
         ready_ids = [
             part["part_id"]
             for part in parts
             if part["part_id"] in self.expected_part_ids
             and (
-                not self.evidence_binding_required
-                or bool(part.get("ready", False))
+                bool(part.get("ready", False))
             )
         ]
         complete = bool(self.expected_part_ids) and not missing_ids and not unbound_ids
@@ -3133,8 +3653,8 @@ class SubmissionValidationError(ValueError):
         received: object | None = None,
         repair_instruction: str = (
             "Correct the reported field to match the active contract and resubmit the "
-            "complete payload as a native JSON object. Preserve unrelated valid content; "
-            "do not stringify the payload."
+            "complete flat submission object. Preserve unrelated valid content; do not "
+            "add a payload wrapper or stringify the object."
         ),
     ):
         super().__init__(problem)

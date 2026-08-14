@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import os
 import re
 import shutil
+import tempfile
 import time
 from copy import deepcopy
 from pathlib import Path
@@ -19,19 +21,28 @@ from pydantic import Field
 from ..usage_ledger import UsageLedger
 from .agent_runner import ProviderAttemptRecoveryRequired, ReportingAgentRunner
 from .agentic_models import (
+    CHIEF_SECTION_RESULT_PART_IDS,
     FINAL_REPORT_SECTION_IDS,
     AgentResult,
     AgentRunStatus,
+    ChiefChapterLaneSubmission,
+    ChiefChapterLaneRevisionSubmission,
+    CrossReviewFindingSubmission,
+    CrossReviewVerdictSubmission,
+    FinalChapterLaneFindingSubmission,
+    FinalChapterLaneVerdictSubmission,
     CrossDecisionPack,
     CrossSynthesisInput,
     EditedReportSubmission,
     ModuleDispatchPlan,
     ModuleSubmission,
     StrictModel,
+    TEMPLATE_ROLE_SKILL_IDS,
     TaskEnvelope,
     TemplateSkillBoundaryManifest,
     TemplateSkillSubmission,
     extra_numbered_submodule_headings,
+    numbered_markdown_headings,
 )
 from .assets import (
     ReportAssetAssembler,
@@ -45,12 +56,16 @@ from .assets import (
     validate_module_markdown_consistency,
 )
 from .claim_ledger import ClaimLedger
+from .chapter_parallel import CHAPTER_SECTION_IDS, active_chapters
 from .cost_control import StageCostController
-from .delivery import DeliveryPackage, DeliveryReceipt, ProjectDelivery
+from .delivery import MaterializedDeliveryReceipt
 from .distributed_runtime import LocalEventStore
 from .evidence_readiness import EvidenceReadinessPolicy, ReportingBlockedError
+from .final_specialization import final_lane_specialization
 from .input_contracts import (
     AggregateEditorInput,
+    ChiefChapterLaneInput,
+    FinalChapterLaneInput,
     ChiefEditorInput,
     CrossDecisionPackView,
     FinalAuditSnapshot,
@@ -64,6 +79,8 @@ from .input_contracts import (
 )
 from .input_snapshot import RunInputSnapshotStore
 from .models import (
+    CHAPTER1_SECTION_IDS,
+    CHAPTER3_SECTION_IDS,
     REPORT_MODULE_IDS,
     CostControlMode,
     CoverageMatrix,
@@ -74,18 +91,19 @@ from .models import (
     RevisionRequest,
     ScopeExpansionRequest,
     SpecialTopicPlan,
+    chapter_section_ids,
 )
-from .output_verifier import OutputVerificationError, verify_current_run_outputs
-from .module_skills import ModuleSkillLibrary
 from .parallel_runtime import (
     ArtifactRef,
     CohortBarrier,
     CrossOwnerBarrier,
     CrossOwnerCompletion,
+    AggregateState,
     LaneAttemptRecord,
     LaneCompletion,
     LaneExceptionCandidate,
     LaneTaskSpec,
+    RecoveryStateStore,
     TaskAttemptStore,
     WorkflowReducer,
     current_bound_project_write_lease,
@@ -120,14 +138,17 @@ from .scheduling import (
 from .source_ledger import SourceLedger
 from .special_topics import load_special_topic_plan
 from .taxonomy import REPORT_TAXONOMY, compose_module_markdown, resolve_submodule
-from .versions import ReportVersion, ReportVersionStore, SkillProvenance
+from .versions import ReportVersion
 
 if TYPE_CHECKING:
     from .service import ReportingService
 
 
-TEMPLATE_SKILL_ROOT = Path("Work/report-template-writing")
+TEMPLATE_SKILL_ROOT = Path("Work/report-template-role-skills")
 TEMPLATE_SKILL_SOURCE = TEMPLATE_SKILL_ROOT / "source.json"
+FINAL_REVIEW_COMPLETION_SESSION_KEYS = frozenset(
+    {"chief-editor-auditor", "final-chapter-wave"}
+)
 
 
 class FullReportCheckpoint(StrictModel):
@@ -154,9 +175,6 @@ class FullReportCheckpoint(StrictModel):
     module_review_completion_refs: dict[str, str] = Field(default_factory=dict)
     cross_review_completion_ref: str | None = None
     cross_decision_pack_ref: str | None = None
-    cross_decision_pack_sha256: str | None = Field(
-        default=None, pattern=r"^[0-9a-f]{64}$"
-    )
     chief_candidate_ref: str | None = None
     chief_editor_input_ref: str | None = None
     chief_editor_envelope_ref: str | None = None
@@ -173,6 +191,114 @@ class FullReportCheckpoint(StrictModel):
     pending_cost_boundary_id: str | None = None
     project_write_lease_ref: str | None = None
     project_write_lease_epoch: int | None = Field(default=None, ge=1)
+
+
+class StageRecoveryCoordinator:
+    """Thin adapter for stage/lane recovery owned by the runtime.
+
+    The workflow deliberately does not interpret ``workflow-state.json`` as a
+    checkpoint.  ``RecoveryStateStore`` is the sole source of stage/lane and
+    aggregate status; workflow-state remains a projection for UI/inspection.
+    The store records business state only and is never consulted with hashes,
+    CAS handles, or provider turn history.
+    """
+
+    def __init__(self, runner: "ReportWorkflowRunner", state: dict[str, Any]):
+        self.runner = runner
+        self.state = state
+        self.run_id = str(state["run_id"])
+        self.store = RecoveryStateStore(runner.service.workspace, self.run_id)
+
+    async def mark_lane(self, stage: str, lane_id: str, *, status: str = "completed", result_ref: str | None = None, error: str | None = None, revision: int = 0) -> Any:
+        """Project one lane terminal into the runtime recovery store."""
+
+        return self.store.record_lane_attempt(
+            {
+                "run_id": self.run_id,
+                "stage": stage,
+                "lane_id": lane_id,
+                "task_id": lane_id,
+                "attempt": 1,
+                "revision": revision,
+                "status": status,
+                "result_ref": result_ref,
+                "error": error,
+            }
+        )
+
+    async def mark_aggregate(self, stage: str, *, lane_ids: list[str], result_ref: str | None = None, revision: int = 0, status: str = "completed", error: str | None = None) -> Any:
+        return self.store.record_aggregate(
+            AggregateState(
+                run_id=self.run_id,
+                stage=stage,
+                lane_ids=list(lane_ids),
+                result_ref=result_ref,
+                revision=revision,
+                status=status,
+                error=error,
+            )
+        )
+
+    @property
+    def has_backend(self) -> bool:
+        return True
+
+    async def load_completed_lanes(
+        self,
+        stage: str,
+        lane_ids: list[str] | None = None,
+        *,
+        expected_revisions: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        loaded = self.store.load_completed_lanes(
+            stage,
+            lane_ids,
+            expected_revisions=expected_revisions,
+        )
+        return dict(loaded)
+
+    async def retry_lanes(
+        self,
+        stage: str,
+        lane_ids: list[str],
+        lane_runner: Any | None = None,
+    ) -> Any:
+        """Explicitly dispatch only the named failed lanes."""
+
+        if lane_runner is None:
+            return self.store.retry_failed_lanes(stage, lane_ids)
+        result = self.store.retry_lanes(stage, lane_ids, lane_runner)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def aggregate(self, stage: str, reducer: Any | None = None) -> Any:
+        """Freeze/drain a parallel stage and run exactly one reducer."""
+
+        reduced = reducer() if reducer is not None else None
+        if inspect.isawaitable(reduced):
+            reduced = await reduced
+        if reduced is None:
+            return None
+        if isinstance(reduced, AggregateState):
+            aggregate = reduced
+        elif isinstance(reduced, dict):
+            aggregate = AggregateState.model_validate(
+                {"run_id": self.run_id, "stage": stage, **reduced}
+            )
+        else:
+            aggregate = AggregateState(
+                run_id=self.run_id,
+                stage=stage,
+                status="completed",
+            )
+        return self.store.record_aggregate(aggregate)
+
+    async def invalidate_lanes(self, stage: str, lane_ids: list[str]) -> Any:
+        return self.store.invalidate_lanes(stage, lane_ids)
+
+    async def rollback_to_aggregate(self, stage: str) -> Any:
+        return self.store.rollback_to_aggregate(stage)
 
 
 class AgentWorkflowError(RuntimeError):
@@ -376,6 +502,124 @@ class ReportWorkflowRunner:
         if last_cancel > last_queued:
             raise asyncio.CancelledError("durable run cancellation requested")
 
+    def _recovery_store(self, state: dict) -> RecoveryStateStore:
+        """Return the run's business-state recovery store.
+
+        This is intentionally constructed from the workspace/run identity on
+        every orchestration boundary.  ``workflow-state.json`` is only a
+        status projection and is never used to decide whether paid work is
+        reusable.
+        """
+
+        return RecoveryStateStore(self.service.workspace, str(state["run_id"]))
+
+    @staticmethod
+    def _recovery_stage_name(stage: str) -> str:
+        return stage.replace("_", "-")
+
+    def _record_recovery_lane(
+        self,
+        state: dict,
+        *,
+        stage: str,
+        lane_id: str,
+        status: str,
+        result_ref: str | None = None,
+        error: str | None = None,
+        revision: int = 0,
+    ) -> None:
+        """Persist one lane terminal without content identity checks."""
+
+        store = self._recovery_store(state)
+        current = store.load_lane_state(self._recovery_stage_name(stage), lane_id)
+        self._recovery_store(state).record_lane_attempt(
+            {
+                "run_id": state["run_id"],
+                "stage": self._recovery_stage_name(stage),
+                "lane_id": lane_id,
+                "task_id": lane_id,
+                "attempt": (current.attempt + 1) if current is not None else 1,
+                "revision": revision,
+                "status": status,
+                "result_ref": result_ref,
+                "error": error,
+            }
+        )
+
+    def _record_recovery_aggregate(
+        self,
+        state: dict,
+        *,
+        stage: str,
+        lane_ids: list[str],
+        result_ref: str | None = None,
+        revision: int = 0,
+        status: str = "completed",
+        error: str | None = None,
+    ) -> None:
+        """Persist one stage aggregate after the all-ready lane drain."""
+
+        store = self._recovery_store(state)
+        current = store.load_aggregate(self._recovery_stage_name(stage))
+        if current is not None and revision <= current.revision:
+            revision = current.revision + 1
+        aggregate = AggregateState(
+            run_id=state["run_id"],
+            stage=self._recovery_stage_name(stage),
+            lane_ids=list(lane_ids),
+            result_ref=result_ref,
+            revision=revision,
+            status=status,
+            error=error,
+        )
+        try:
+            store.record_aggregate(aggregate)
+        except Exception as exc:
+            stage_name = self._recovery_stage_name(stage)
+            store.recover_aggregate_failure(
+                stage_name,
+                lane_ids,
+                previous_stage=self._previous_recovery_stage(stage_name),
+                reason=str(exc),
+            )
+            raise
+
+    @staticmethod
+    def _previous_recovery_stage(stage: str) -> str | None:
+        """Return the last successful aggregate before a parallel stage."""
+
+        if stage == "cross":
+            return "module"
+        if stage == "chief":
+            return "cross"
+        if stage == "final-initial":
+            return "chief"
+        if stage.startswith("chief-revision-r"):
+            try:
+                revision = int(stage.rsplit("r", 1)[1])
+            except ValueError:
+                return "final-initial"
+            return "final-initial" if revision <= 1 else f"final-recheck-r{revision - 1}"
+        if stage.startswith("final-recheck-r"):
+            return "chief-revision-r" + stage.rsplit("r", 1)[1]
+        if stage == "final":
+            return "chief"
+        return None
+
+    def _retry_recovery_aggregate(
+        self,
+        state: dict,
+        *,
+        stage: str,
+        reason: str,
+    ) -> None:
+        """Record an explicit reducer retry; no Provider lane is replayed."""
+
+        self._recovery_store(state).retry_aggregate(
+            self._recovery_stage_name(stage),
+            reason=reason,
+        )
+
     async def _activate_cost_resume(self, state: dict) -> None:
         if self._budget is None or not state.get("resume"):
             return
@@ -495,16 +739,24 @@ class ReportWorkflowRunner:
         self._raise_if_cancel_requested(envelope.run_id)
         if self._budget is not None:
             await self._budget.acquire(agent_id)
+        visible_agent_id = (
+            session_key
+            if session_key is not None
+            and session_key.startswith(
+                ("module-auditor-", "cross-owner-", "chief-chapter-", "final-chapter-")
+            )
+            else agent_id
+        )
         try:
             board_task = self.service.task_board.create_task(
                 source="report-workflow",
-                target=agent_id,
+                target=visible_agent_id,
                 brief=f"reporting:{workflow_id}:{agent_id}:{envelope.task_id}",
                 session_id=workflow_id,
             )
             self.service.task_board.start_task(
                 board_task.task_id,
-                target_agent=agent_id,
+                target_agent=visible_agent_id,
                 session_id=workflow_id,
             )
             try:
@@ -518,33 +770,33 @@ class ReportWorkflowRunner:
             except asyncio.CancelledError:
                 self.service.task_board.cancel_task(
                     board_task.task_id,
-                    target_agent=agent_id,
+                    target_agent=visible_agent_id,
                     session_id=workflow_id,
                 )
                 raise
             except BaseException:
                 self.service.task_board.fail_task(
                     board_task.task_id,
-                    target_agent=agent_id,
+                    target_agent=visible_agent_id,
                     session_id=workflow_id,
                 )
                 raise
             if result.status is AgentRunStatus.COMPLETED:
                 self.service.task_board.complete_task(
                     board_task.task_id,
-                    target_agent=agent_id,
+                    target_agent=visible_agent_id,
                     session_id=workflow_id,
                 )
             elif result.status is AgentRunStatus.BLOCKED:
                 self.service.task_board.block_task(
                     board_task.task_id,
-                    target_agent=agent_id,
+                    target_agent=visible_agent_id,
                     session_id=workflow_id,
                 )
             else:
                 self.service.task_board.fail_task(
                     board_task.task_id,
-                    target_agent=agent_id,
+                    target_agent=visible_agent_id,
                     session_id=workflow_id,
                 )
             if result.status is AgentRunStatus.BLOCKED:
@@ -575,11 +827,8 @@ class ReportWorkflowRunner:
     def _load_template_skill(self, state: dict) -> bool:
         root = TEMPLATE_SKILL_ROOT
         refs = {
-            "core": root / "SKILL.md",
-            "analysis": root / "references/analysis-language.md",
-            "synthesis": root / "references/synthesis.md",
-            "visual": root / "references/visual-organization.md",
-            "rubric": root / "references/quality-rubric.md",
+            skill_id: root / skill_id / "SKILL.md"
+            for skill_id in TEMPLATE_ROLE_SKILL_IDS
         }
         boundary_ref = TEMPLATE_SKILL_ROOT / "boundary.json"
         required = [*refs.values(), boundary_ref, TEMPLATE_SKILL_SOURCE]
@@ -669,11 +918,8 @@ class ReportWorkflowRunner:
     def _materialize_template_skill(self, state: dict, submission: TemplateSkillSubmission) -> None:
         root = TEMPLATE_SKILL_ROOT
         files = {
-            "SKILL.md": submission.skill_markdown,
-            "references/analysis-language.md": submission.analysis_language_reference,
-            "references/synthesis.md": submission.synthesis_reference,
-            "references/visual-organization.md": submission.visual_organization_reference,
-            "references/quality-rubric.md": submission.quality_rubric,
+            f"{skill_id}/SKILL.md": content
+            for skill_id, content in submission.skills.items()
         }
         for relative, content in files.items():
             self.service.store.write_text((root / relative).as_posix(), content.strip() + "\n")
@@ -705,7 +951,7 @@ class ReportWorkflowRunner:
                 knowledge_ref,
             )
             + "\n\n"
-            + self._role_skill_context(state, "module-author")
+            + self._template_skill_context(state, f"author-{module_id}")
         )
 
     async def _distill_template_skill(self, state: dict, workflow_id: str) -> None:
@@ -725,7 +971,7 @@ class ReportWorkflowRunner:
             run_id=state["run_id"],
             template_ref=snapshot_ref,
             inspect_max_chars=100000,
-            required_part_ids=["skill", "analysis", "synthesis", "visual", "rubric"],
+            required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
         )
         distillation_input_path = self.service.store.write_json(
             f"Work/runs/{state['run_id']}/context/template-distillation-input.json",
@@ -740,27 +986,27 @@ class ReportWorkflowRunner:
             agent_id="template-distiller",
             objective=(
                 "从完整报告模板中蒸馏可迁移的咨询报告写作与推理方法，形成供本次"
-                "报告全流程复用的 report-template-writing Skill。产物必须指导后续"
-                "角色如何分析、综合、提出行动建议并组织图证，而不是复述模板目录。"
+                "报告全流程复用的角色与模块 Skill。直接产出五个模块作者 Skill、"
+                "五个模块 Auditor Skill、三个 Chief 章节 Skill 和一个 Final Auditor Skill；"
+                "Cross 不使用模板 Skill。"
             ),
             input_refs=[distillation_input_ref, snapshot_ref],
             constraints=[
                 "第一步且只调用一次 inspect_document(path=input contract 的 template_ref, max_chars=inspect_max_chars)；工具会在本任务中完整返回正文和版式结构，之后禁止再次读取或查找模板",
                 "读取后先在内部对照至少三组正文样本，识别观察→证据限定→判断→原因→影响→建议的推进方式；不得输出思考过程",
                 "唯一成功的结束方式是调用 submit_result 提交 template_skill_submission；不得用‘现在开始分析’、摘要或计划代替工具提交",
-                "skill_markdown 必须是可直接使用的 SKILL.md：仅含 name 与 description 两项 frontmatter；正文写核心工作流、证据边界、综合方法、按需读取 reference 的明确条件",
-                "skill_markdown 必须直接链接 references/analysis-language.md、references/synthesis.md、references/visual-organization.md、references/quality-rubric.md，不能创建更深层引用",
-                "analysis_language_reference 要提炼分析语句的功能、句群推进、谨慎程度和正反例；不是词频、套话清单或原文摘抄",
-                "synthesis_reference 要说明如何跨章节合并重复发现、建立共同原因与风险链、重组结论、形成有责任人/时序/验收依据的行动包",
-                "visual_organization_reference 要说明图片和表格在论证中的功能、放置位置、正文引导、图注、交叉引用及禁止的装饰性用法",
-                "quality_rubric 要逐项定义可观察的通过标准、失败表现和修改动作，覆盖分析深度、结论组织、建议闭环、章节联动、图证叙事与事实边界",
-                "模板中用于教模型如何形成目标正文、综合段落、表格或图证叙事的结构化输出样例必须保留在对应 Skill reference 中；先用占位符去除项目事实，再写成正例、反例或输出骨架，不另建 Output Profile",
+                "skills 必须精确包含 input required_part_ids；每一项都是可直接内联使用的完整 SKILL.md，仅含 name 与 description 两项 frontmatter，不链接共享 references",
+                "author-2.1 至 author-2.5 分别面向该模块作者，将模板方法组织为证据限定、分析推进、行动建议、图证叙事和作者自检；模块差异只来自职责与报告位置，不得虚构专业知识",
+                "auditor-2.1 至 auditor-2.5 分别面向该模块 Auditor，只提炼可观察审计准则、失败表现和复核动作，不得包含作者写作指令",
+                "chief-editor-chapter-1、chief-editor-chapter-3、chief-editor-chapter-4 分别只包含对应章节的组织、综合、行动或专项分析方法；禁止生成共享 chief-editor Skill；final-auditor 只包含跨章节通用的最终验收准则和复核动作",
+                "不得产出 Cross Skill。Cross 的专业化由各 2.x 检查 prompt 完成，不写作，也不继承模板方法",
+                "模板中用于教相应身份完成任务的结构化样例必须去除项目事实后直接保留在该身份 Skill 中；不要另建共享 reference 或 Output Profile",
                 "这些 Skill 样例描述报告内容应如何组织，不得重复 submit_result 的 JSON 字段样例；机器提交形状只服从当前任务 submission schema",
-                "提交 boundary_manifest：transferred_categories 必须精确等于 input 的 allowed_transfer_categories，excluded_categories 必须精确等于 required_exclusion_categories；四类可复用方法包含其去事实化结构样例",
+                "四类可复用方法必须包含去事实化结构样例；边界 manifest 由运行时从当前 input contract 确定性生成，不得由模型提交",
                 "只迁移写作能力，不复制模板项目事实、具体数值、客户名称或原结论",
                 "专家优化版只在本任务中作为一次性 Skill 蒸馏源；不得把其中的具体问题、风险判断、分析结论、建议内容、证据编号或项目措辞写入任何 Skill 文件",
                 "不得迁移专业机理、标准名称、适用条件或带单位阈值；它们属于 Knowledge，不属于模板 Skill",
-                "禁止把五份长文本直接塞入 submit_result：只用 write_result_part 逐项保存 skill、analysis、synthesis、visual、rubric 的完整内容；先用 list_result_parts 确认状态，ready 项不得重写；最终 submit_result 的对应字段只提交 artifact_refs",
+                "禁止把十四份长文本直接塞入 submit_result：用 write_result_part 按 required_part_ids 保存完整 Skill；先用 list_result_parts 确认状态，最终 skills 映射只提交对应 artifact_refs",
             ],
             allowed_outputs=["template_skill_submission"],
             allowed_tools=[
@@ -808,11 +1054,10 @@ class ReportWorkflowRunner:
                         self.service.workspace / path
                     )
                     for path in (
-                        TEMPLATE_SKILL_ROOT / "SKILL.md",
-                        TEMPLATE_SKILL_ROOT / "references/analysis-language.md",
-                        TEMPLATE_SKILL_ROOT / "references/synthesis.md",
-                        TEMPLATE_SKILL_ROOT / "references/visual-organization.md",
-                        TEMPLATE_SKILL_ROOT / "references/quality-rubric.md",
+                        *(
+                            TEMPLATE_SKILL_ROOT / skill_id / "SKILL.md"
+                            for skill_id in TEMPLATE_ROLE_SKILL_IDS
+                        ),
                         TEMPLATE_SKILL_ROOT / "boundary.json",
                     )
                 },
@@ -841,24 +1086,20 @@ class ReportWorkflowRunner:
             recovering_cost_boundary = False
             self._checkpoint(state, activity, "in_progress")
             await self.service._notice(
-                "正在单独蒸馏报告模板；本次只更新固定模板写作 Skill，不启动报告写作。"
+                "正在单独蒸馏报告模板；本次只更新固定模板职责 Skill，不启动报告写作。"
             )
             await self._distill_template_skill(state, workflow_id)
             self._checkpoint(state, activity, "completed")
             state["output_artifacts"] = [
                 OutputArtifact(kind="skill", path=TEMPLATE_SKILL_ROOT / relative)
                 for relative in (
-                    "SKILL.md",
-                    "references/analysis-language.md",
-                    "references/synthesis.md",
-                    "references/visual-organization.md",
-                    "references/quality-rubric.md",
+                    *(f"{skill_id}/SKILL.md" for skill_id in TEMPLATE_ROLE_SKILL_IDS),
                     "boundary.json",
                     "source.json",
                 )
             ]
             await self.service._notice(
-                "模板写作 Skill 已更新至固定路径 Work/report-template-writing。"
+                "模板职责 Skill 已更新至固定路径 Work/report-template-role-skills。"
             )
         except asyncio.CancelledError:
             if not recovering_cost_boundary:
@@ -877,17 +1118,50 @@ class ReportWorkflowRunner:
             await self.agent_runner.close_workflow(workflow_id)
 
     @staticmethod
-    def _template_skill_context(state: dict, *parts: str) -> str:
+    def _template_skill_context(state: dict, skill_id: str) -> str:
         texts = state.get("template_skill_text", {})
-        return "\n\n".join(
-            (
-                f'<template_skill_part name="{part}" delivery_mode="inline">\n'
-                f"{texts[part]}\n"
-                "</template_skill_part>"
-            )
-            for part in parts
-            if texts.get(part)
+        content = texts.get(skill_id, "")
+        if not content:
+            return ""
+        return (
+            f'<template_role_skill id="{skill_id}" delivery_mode="inline">\n'
+            f"{content}\n"
+            "</template_role_skill>"
         )
+
+    @classmethod
+    def _chief_template_skill_context(
+        cls,
+        state: dict,
+        chapter_ids: tuple[str, ...] | list[str] | set[str],
+    ) -> str:
+        """Inline complete Chief Skills for exactly the requested chapters."""
+
+        requested = set(chapter_ids)
+        unsupported = requested - set(CHAPTER_SECTION_IDS)
+        if unsupported:
+            raise AgentWorkflowError(
+                f"unsupported Chief Skill chapters: {sorted(unsupported)}"
+            )
+        return "\n\n".join(
+            context
+            for chapter_id in CHAPTER_SECTION_IDS
+            if chapter_id in requested
+            for context in [
+                cls._template_skill_context(
+                    state, f"chief-editor-chapter-{chapter_id}"
+                )
+            ]
+            if context
+        )
+
+    @classmethod
+    def _final_template_skill_context(cls, state: dict, chapter_id: str) -> str:
+        """Inline only the shared Final Skill; the contract owns chapter focus."""
+
+        if chapter_id not in CHAPTER_SECTION_IDS:
+            raise AgentWorkflowError(f"unsupported Final Skill chapter: {chapter_id}")
+        return cls._template_skill_context(state, "final-auditor")
 
     @staticmethod
     def _domain_knowledge_context(text: str, provenance_ref: str) -> str:
@@ -898,49 +1172,6 @@ class ReportWorkflowRunner:
             'project_fact_authority="false">\n'
             f"{text}\n"
             "</domain_knowledge>"
-        )
-
-    @classmethod
-    def _role_skill_context(
-        cls,
-        state: dict,
-        role: str,
-        *,
-        target_section_ids: set[str] | None = None,
-    ) -> str:
-        """Project only the distilled template parts owned by one workflow role."""
-
-        role_parts = {
-            "module-author": ("core", "analysis", "visual", "rubric"),
-            "module-auditor": ("rubric",),
-            "cross-reviewer": ("synthesis", "rubric"),
-            "chief-editor": ("core", "analysis", "synthesis", "visual", "rubric"),
-            "final-auditor": ("rubric",),
-        }
-        if role == "chief-revision":
-            targets = set(target_section_ids or ())
-            if not targets:
-                raise ValueError("chief revision Skill routing requires target sections")
-            selected = {"rubric"}
-            if any(section_id.startswith("3.") for section_id in targets):
-                selected.add("synthesis")
-            if any(section_id.startswith(("1.", "4.")) for section_id in targets):
-                selected.add("analysis")
-            role_parts[role] = tuple(
-                part
-                for part in ("analysis", "synthesis", "rubric")
-                if part in selected
-            )
-        elif role not in role_parts:
-            raise ValueError(f"unknown reporting role skill: {role}")
-        content = cls._template_skill_context(state, *role_parts[role])
-        if not content:
-            return ""
-        parts = ",".join(role_parts[role])
-        return (
-            f'<role_skill role="{role}" template_parts="{parts}">\n'
-            f"{content}\n"
-            "</role_skill>"
         )
 
     @staticmethod
@@ -994,11 +1225,9 @@ class ReportWorkflowRunner:
         run_id = state["run_id"]
         workflow_id = f"full-power-distribution-report:{run_id}"
         request = state["request"]
+        # workflow-state.json is a status projection only.  Recovery decisions
+        # come from RecoveryStateStore lane/aggregate records.
         resume_checkpoint: dict | None = None
-        if state.get("resume"):
-            checkpoint_path = self.service.workspace / f"Work/runs/{run_id}/workflow-state.json"
-            if checkpoint_path.is_file():
-                resume_checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
         self._budget = ReportingRunBudget(
             self.service.workspace,
             run_id,
@@ -1017,11 +1246,9 @@ class ReportWorkflowRunner:
             await self.service._notice("正在整理项目资料并建立可追溯证据入口。")
             await self._prepare(state)
             if state.get("resume"):
-                # Restore every durable paid-work reference before any new
-                # checkpoint or cost-boundary decision can overwrite the prior
-                # checkpoint.  Preparation is restored first so resume
-                # validation has the exact current-run ledgers available.
-                self._restore_resume_state(state, resume_checkpoint)
+                await self.service._notice(
+                    "按 RecoveryStateStore 恢复已完成 lane；workflow-state.json 仅作状态投影。"
+                )
             readiness = EvidenceReadinessPolicy.evaluate(state["request"], state["coverage_matrix"])
             state["evidence_readiness"] = readiness
             if readiness.should_block:
@@ -1045,7 +1272,7 @@ class ReportWorkflowRunner:
             activity = "dispatch"
             requested_modules = tuple(state["request"].target_modules)
             await self.service._notice(
-                "正在从固定路径 Work/report-template-writing 读取模板写作 Skill。"
+                "正在从固定路径 Work/report-template-role-skills 读取模板职责 Skill。"
             )
             self._require_template_skill(state)
             if "module_dispatch" in state:
@@ -1128,7 +1355,7 @@ class ReportWorkflowRunner:
                 await self._final_review_loop(
                     state,
                     workflow_id,
-                    chief_envelope=state["chief_editor_envelope"],
+                    chief_envelope=state.get("chief_editor_envelope"),
                     chief_session_key=state["chief_editor_session_key"],
                     approved_module_text=state["approved_module_text"],
                     claims=[
@@ -1188,16 +1415,9 @@ class ReportWorkflowRunner:
         request = state["request"]
         run_id = state["run_id"]
         workflow_id = f"aggregate-existing-report:{run_id}"
+        # Status projection only; aggregate recovery is owned by
+        # RecoveryStateStore below.
         resume_checkpoint: dict | None = None
-        if state.get("resume"):
-            checkpoint_path = (
-                self.service.workspace
-                / f"Work/runs/{run_id}/workflow-state.json"
-            )
-            if checkpoint_path.is_file():
-                resume_checkpoint = json.loads(
-                    checkpoint_path.read_text(encoding="utf-8")
-                )
         configured_refs = request.source_module_refs or {
             module_id: Path(f"Outputs/Modules/{module_id}.md") for module_id in REPORT_MODULE_IDS
         }
@@ -1432,7 +1652,7 @@ class ReportWorkflowRunner:
                     "dimension_risk_analysis 必须逐一比较五个专业维度的主导风险和管理含义；data_gap_analysis 必须归并重复缺口并说明它影响哪些判断和补证优先级；improvement_action_plan 必须列出责任接口、行动、验收指标和剩余风险",
                     *(
                         [
-                            "special_topic_analysis 必须严格按 special_topic_plan 的顺序输出全部且仅输出对应的 ### 4.n 子标题；逐节满足 Inputs 中的简要要求，并形成自足分析",
+                            "special_topic_analysis 必须严格按 special_topic_plan 的顺序输出全部且仅输出对应的 ### 4.n 顶层小节；允许在所属 4.n 内使用 #### 4.n.m 等从属小标题，但不得新增顶层 4.n 小节",
                             "专项分析可使用已内联的项目 Knowledge 和模型世界知识补充机理、方案权衡与行业实践；必须区分当前项目事实、可追溯参考和通用专业判断，禁止把通用知识写成客户事实",
                         ]
                         if special_topic_plan is not None
@@ -1456,7 +1676,12 @@ class ReportWorkflowRunner:
                 inline_context="\n\n".join(
                     text
                     for text in (
-                        self._role_skill_context(state, "chief-editor"),
+                        self._chief_template_skill_context(
+                            state,
+                            active_chapters(
+                                include_chapter_four=special_topic_plan is not None
+                            ),
+                        ),
                         special_topic_inline_context,
                     )
                     if text
@@ -1679,16 +1904,8 @@ class ReportWorkflowRunner:
         baseline_edited: EditedReportSubmission,
     ) -> None:
         workflow_id = f"report-revision:{state['run_id']}"
+        # workflow-state.json is never used as a revision recovery controller.
         resume_checkpoint: dict | None = None
-        if state.get("resume"):
-            checkpoint_path = (
-                self.service.workspace
-                / f"Work/runs/{state['run_id']}/workflow-state.json"
-            )
-            if checkpoint_path.is_file():
-                resume_checkpoint = json.loads(
-                    checkpoint_path.read_text(encoding="utf-8")
-                )
         self._budget = ReportingRunBudget(
             self.service.workspace,
             state["run_id"],
@@ -1722,7 +1939,9 @@ class ReportWorkflowRunner:
                     f"Outputs/Modules/{module_id}.md", submission.markdown
                 )
             if state.get("resume"):
-                self._restore_revision_resume_state(state)
+                await self.service._notice(
+                    "修订 run 按 RecoveryStateStore 恢复 lane；不恢复任意 Provider/tool 中途 turn。"
+                )
             completed_revision_modules = set(state.get("completed_revision_modules", []))
             activity = "revision-module-work"
             pending_revision_modules = tuple(
@@ -1809,7 +2028,7 @@ class ReportWorkflowRunner:
                 await self._final_review_loop(
                     state,
                     workflow_id,
-                    chief_envelope=state["chief_editor_envelope"],
+                    chief_envelope=state.get("chief_editor_envelope"),
                     chief_session_key=state["chief_editor_session_key"],
                     approved_module_text=state["approved_module_text"],
                     claims=[
@@ -1970,56 +2189,40 @@ class ReportWorkflowRunner:
     def _checkpoint(
         self, state: dict, activity: str, status: str, error: str | None = None
     ) -> None:
-        """Persist recoverable workflow/output references without serializing sessions."""
+        """Persist a status projection (never a recovery controller)."""
         completed_modules = sorted(state.get("module_submissions", {}))
-        checkpoint = FullReportCheckpoint(
-            workflow_id=f"full-power-distribution-report:{state['run_id']}",
-            run_id=state["run_id"],
-            activity=activity,
-            status=status,
-            preparation_refs=dict(state.get("preparation_refs", {})),
-            preparation_sha256=dict(state.get("preparation_sha256", {})),
-            input_snapshot_ref=state.get("input_snapshot_ref"),
-            input_snapshot_digest=state.get("input_snapshot_digest"),
-            completed_modules=completed_modules,
-            specialist_modules=sorted(state.get("specialist_submissions", {})),
-            module_dispatch_ref=(
-                f"Work/runs/{state['run_id']}/workflow/module-dispatch.json"
-                if "module_dispatch" in state
-                else None
-            ),
-            module_knowledge_refs=dict(state.get("module_knowledge_refs", {})),
-            module_lane_barrier_ref=state.get("module_lane_barrier_ref"),
-            cross_owner_barrier_ref=state.get("cross_owner_barrier_ref"),
-            quality_context_ref=state.get("quality_context_ref"),
-            report_state_ref=("Work/report-state.json" if "edited_report" in state else None),
-            module_review_completion_refs=dict(state.get("module_review_completion_refs", {})),
-            cross_review_completed="cross_review_completion_ref" in state,
-            cross_review_completion_ref=state.get("cross_review_completion_ref"),
-            cross_decision_pack_ref=state.get("cross_decision_pack_ref"),
-            cross_decision_pack_sha256=state.get("cross_decision_pack_sha256"),
-            chief_candidate_ref=state.get("chief_candidate_ref"),
-            chief_editor_input_ref=state.get("chief_editor_input_ref"),
-            chief_editor_envelope_ref=state.get("chief_editor_envelope_ref"),
-            chief_editor_completion_ref=state.get(
-                "chief_editor_completion_ref"
-            ),
-            final_review_restart_round=state.get("final_review_restart_round"),
-            final_review_completed="final_review_completion_ref" in state,
-            final_review_completion_ref=state.get("final_review_completion_ref"),
-            final_audit_snapshot_ref=state.get("final_audit_snapshot_ref"),
-            delivery_completion_ref=state.get("delivery_completion_ref"),
-            error=error,
-            budget=self._budget.snapshot() if self._budget is not None else None,
-            pending_cost_boundary_id=state.get(
-                "pending_cost_boundary_id"
-            ),
-            project_write_lease_ref=state.get("project_write_lease_ref"),
-            project_write_lease_epoch=state.get("project_write_lease_epoch"),
-        )
+        projection = {
+            "workflow_id": f"full-power-distribution-report:{state['run_id']}",
+            "run_id": state["run_id"],
+            "activity": activity,
+            "status": status,
+            "completed_modules": completed_modules,
+            "completed_module_count": len(completed_modules),
+            "module_review_completion_refs": dict(state.get("module_review_completion_refs", {})),
+            "stage_refs": {
+                key: state.get(key)
+                for key in (
+                    "module_lane_barrier_ref",
+                    "cross_owner_barrier_ref",
+                    "cross_review_completion_ref",
+                    "chief_editor_completion_ref",
+                    "final_review_completion_ref",
+                    "delivery_completion_ref",
+                )
+                if state.get(key)
+            },
+            "aggregate_refs": dict(state.get("aggregate_refs", {})),
+            "output_refs": [
+                str(item.path)
+                for item in state.get("output_artifacts", [])
+                if getattr(item, "path", None) is not None
+            ],
+            "error": error,
+            "budget": self._budget.snapshot() if self._budget is not None else None,
+        }
         self.service.store.write_json(
             f"Work/runs/{state['run_id']}/workflow-state.json",
-            checkpoint.model_dump(mode="json"),
+            projection,
         )
 
     def _aggregate_checkpoint(
@@ -2102,26 +2305,50 @@ class ReportWorkflowRunner:
                 or completion.get("refs") != expected_refs
             ):
                 return None
-            hashes = completion.get("artifact_sha256")
-            if not isinstance(hashes, dict):
-                return None
             for name, ref in expected_refs.items():
-                path = (self.service.workspace / ref).resolve()
-                run_root = (
-                    self.service.workspace / f"Work/runs/{run_id}"
-                ).resolve()
-                if (
-                    not path.is_relative_to(run_root)
-                    or not path.is_file()
-                    or hashes.get(name) != self._sha256(path)
-                ):
-                    return None
+                self._require_current_run_artifact(
+                    run_id,
+                    ref,
+                    label=f"aggregate Chief {name}",
+                )
             persisted_envelope = TaskEnvelope.model_validate_json(
                 (
                     self.service.workspace / expected_refs["envelope"]
                 ).read_text(encoding="utf-8")
             )
-            if persisted_envelope != envelope:
+            if (
+                persisted_envelope.run_id != run_id
+                or persisted_envelope.task_id != "aggregate-existing"
+                or persisted_envelope.agent_id != "chief-editor"
+                or persisted_envelope.revision != envelope.revision
+                or persisted_envelope.input_contract_kind != "aggregate_editor_input"
+                or persisted_envelope.input_contract_ref != expected_refs["editor_input"]
+            ):
+                return None
+            for input_ref in persisted_envelope.input_refs:
+                self._require_current_run_artifact(
+                    run_id,
+                    input_ref,
+                    label="aggregate Chief input",
+                )
+            editor_input = json.loads(
+                (
+                    self.service.workspace / expected_refs["editor_input"]
+                ).read_text(encoding="utf-8")
+            )
+            if (
+                not isinstance(editor_input, dict)
+                or editor_input.get("run_id") != run_id
+                or editor_input.get("source_format")
+                not in {"structured_module", "markdown"}
+            ):
+                return None
+            source_manifest = json.loads(
+                (
+                    self.service.workspace / expected_refs["source_manifest"]
+                ).read_text(encoding="utf-8")
+            )
+            if not isinstance(source_manifest, dict):
                 return None
             candidate = EditedReportSubmission.model_validate_json(
                 (
@@ -2176,10 +2403,6 @@ class ReportWorkflowRunner:
                 "version": 1,
                 "run_id": run_id,
                 "refs": refs,
-                "artifact_sha256": {
-                    name: self._sha256(self.service.workspace / ref)
-                    for name, ref in refs.items()
-                },
             },
         )
         return completion_path.relative_to(
@@ -2204,7 +2427,7 @@ class ReportWorkflowRunner:
                 completion_ref=final_ref,
                 lifecycle="final",
                 reviewer_agent_id="chief-editor-auditor",
-                reviewer_session_key="chief-editor-auditor",
+                reviewer_session_key=FINAL_REVIEW_COMPLETION_SESSION_KEYS,
             )
             if len(completion.subject_refs) != 1:
                 raise ValueError(
@@ -2246,7 +2469,7 @@ class ReportWorkflowRunner:
         completion_ref: str,
         lifecycle: str,
         reviewer_agent_id: str,
-        reviewer_session_key: str | set[str],
+        reviewer_session_key: str | set[str] | frozenset[str],
         subject_refs: list[str] | None = None,
     ) -> tuple[ReviewCompletionRecord, list[object]]:
         """Load one exact current-protocol completion and all referenced artifacts."""
@@ -2264,6 +2487,10 @@ class ReportWorkflowRunner:
 
         raw, _ = read_ref(completion_ref)
         completion = ReviewCompletionRecord.model_validate(raw)
+        chapter_scoped_final = (
+            lifecycle == "final"
+            and completion.reviewer_session_key == "final-chapter-wave"
+        )
         reviewer_session_matches = (
             completion.reviewer_session_key == reviewer_session_key
             if isinstance(reviewer_session_key, str)
@@ -2280,12 +2507,6 @@ class ReportWorkflowRunner:
             raise ValueError("review completion subject refs do not match current subjects")
         for ref in completion.subject_refs:
             read_ref(ref)
-        for ref, expected_sha256 in completion.artifact_sha256.items():
-            _, path = read_ref(ref)
-            actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
-            if actual_sha256 != expected_sha256:
-                raise ValueError(f"review artifact hash mismatch after completion: {ref}")
-
         lifecycle_kinds = {
             "module": {
                 "finding": "module_review_finding_submission",
@@ -2325,7 +2546,11 @@ class ReportWorkflowRunner:
                 raise ValueError(f"review completion artifact has invalid {field} ids: {ref}")
             return identified
 
-        expected_finding_kind = lifecycle_kinds[lifecycle]["finding"]
+        expected_finding_kind = (
+            "final_chapter_lane_finding_submission"
+            if chapter_scoped_final
+            else lifecycle_kinds[lifecycle]["finding"]
+        )
         for index, ref in enumerate(completion.finding_refs):
             payload, _ = read_ref(ref)
             artifact_kind = str(payload.get("kind", ""))
@@ -2343,10 +2568,14 @@ class ReportWorkflowRunner:
                 if finding_id in findings_by_id:
                     raise ValueError("review completion contains duplicate immutable finding ids")
                 findings_by_id[finding_id] = finding
-                if index > 0:
+                if index > 0 and not chapter_scoped_final:
                     regression_findings_by_id[finding_id] = finding
 
-        expected_verdict_kind = lifecycle_kinds[lifecycle]["verdict"]
+        expected_verdict_kind = (
+            "final_chapter_lane_verdict_submission"
+            if chapter_scoped_final
+            else lifecycle_kinds[lifecycle]["verdict"]
+        )
         for ref in completion.verdict_refs:
             payload, _ = read_ref(ref)
             artifact_kind = str(payload.get("kind", ""))
@@ -2373,12 +2602,24 @@ class ReportWorkflowRunner:
                 if finding_id in embedded_new_findings_by_id:
                     raise ValueError("review completion verdicts repeat a new immutable finding id")
                 embedded_new_findings_by_id[finding_id] = finding
+                if chapter_scoped_final:
+                    if finding_id in findings_by_id:
+                        raise ValueError(
+                            "review completion contains duplicate immutable finding ids"
+                        )
+                    findings_by_id[finding_id] = finding
 
-        if set(regression_findings_by_id) != set(embedded_new_findings_by_id):
+        if (
+            not chapter_scoped_final
+            and set(regression_findings_by_id) != set(embedded_new_findings_by_id)
+        ):
             raise ValueError(
                 "review completion regression finding refs do not match verdict new findings"
             )
-        if regression_findings_by_id != embedded_new_findings_by_id:
+        if (
+            not chapter_scoped_final
+            and regression_findings_by_id != embedded_new_findings_by_id
+        ):
             raise ValueError(
                 "review completion regression findings differ from verdict new findings"
             )
@@ -2396,14 +2637,10 @@ class ReportWorkflowRunner:
         module_id: str,
         lifecycle_id: str,
     ) -> set[str]:
-        """Accept stable v2 identities and exact legacy v1 lifecycle identities."""
+        """Accept only the stable module-owned Auditor identity."""
 
-        stable = f"module-auditor-{module_id}"
-        return {
-            stable,
-            f"{stable}-initial",
-            f"{stable}-{lifecycle_id}",
-        }
+        del lifecycle_id
+        return {f"module-auditor-{module_id}"}
 
     @staticmethod
     def _latest_cross_synthesis(artifacts: list[object]) -> list:
@@ -2426,6 +2663,8 @@ class ReportWorkflowRunner:
             if isinstance(artifact, dict) and artifact.get("kind") in {
                 "final_review_finding_submission",
                 "final_review_verdict_submission",
+                "final_chapter_lane_finding_submission",
+                "final_chapter_lane_verdict_submission",
             }:
                 values = artifact.get("residual_risks", [])
                 if not isinstance(values, list) or not all(
@@ -2434,26 +2673,6 @@ class ReportWorkflowRunner:
                     raise ValueError("final review residual_risks must be a string list")
                 residual_risks = values
         return residual_risks
-
-    @staticmethod
-    def _canonical_payload_sha256(payload: object) -> str:
-        return hashlib.sha256(
-            json.dumps(
-                payload,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-
-    def _cross_decision_pack_semantic_sha256(
-        self, pack: CrossDecisionPack
-    ) -> str:
-        """Hash the complete pack payload without its self-referential hash."""
-
-        payload = pack.model_dump(mode="json")
-        payload.pop("pack_sha256", None)
-        return self._canonical_payload_sha256(payload)
 
     def _require_current_run_artifact(
         self,
@@ -2488,53 +2707,123 @@ class ReportWorkflowRunner:
 
         run_id = state["run_id"]
         ref = state.get("cross_decision_pack_ref")
-        expected_hash = state.get("cross_decision_pack_sha256")
-        if ref is None and expected_hash is None:
+        if ref is None:
             return None
-        if not ref or not expected_hash:
+        if not isinstance(ref, str) or not ref:
+            raise AgentWorkflowError("Chief CrossDecisionPack ref is invalid")
+        expected_ref = f"Work/runs/{run_id}/reviews/cross-decision-pack.json"
+        if ref != expected_ref:
             raise AgentWorkflowError(
-                "Chief CrossDecisionPack binding is incomplete (ref/hash required)"
+                "Chief CrossDecisionPack ref is not the canonical current-run pack"
             )
         path = self._require_current_run_artifact(
             run_id, str(ref), label="CrossDecisionPack"
         )
-        actual_file_hash = self._sha256(path)
-        if actual_file_hash != expected_hash:
-            raise AgentWorkflowError(
-                "Chief CrossDecisionPack artifact hash does not match its checkpoint"
-            )
         try:
-            pack = CrossDecisionPack.model_validate_json(
-                path.read_text(encoding="utf-8")
-            )
+            raw_pack = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(raw_pack, dict):
+                raise ValueError("CrossDecisionPack JSON must be an object")
+            pack = CrossDecisionPack.model_validate(raw_pack)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             raise AgentWorkflowError(
                 "Chief CrossDecisionPack is unreadable or invalid"
             ) from exc
+        self._validate_cross_decision_pack_business(state, pack)
+        state["cross_decision_pack"] = pack
+        return pack
+
+    def _validate_cross_decision_pack_business(
+        self,
+        state: dict,
+        pack: CrossDecisionPack,
+    ) -> None:
+        """Validate the current-run Cross pack without digest/CAS decisions."""
+
+        run_id = str(state["run_id"])
         if pack.run_id != run_id:
+            raise AgentWorkflowError("Chief CrossDecisionPack belongs to another run")
+        if set(pack.module_ids) != set(REPORT_MODULE_IDS):
             raise AgentWorkflowError(
-                "Chief CrossDecisionPack belongs to another run"
-            )
-        if pack.pack_sha256 != self._cross_decision_pack_semantic_sha256(pack):
-            raise AgentWorkflowError(
-                "Chief CrossDecisionPack semantic hash is invalid"
+                "Chief CrossDecisionPack must cover all five report modules"
             )
         completion_ref = state.get("cross_review_completion_ref")
         if completion_ref and pack.cross_review_completion_ref != completion_ref:
             raise AgentWorkflowError(
                 "Chief CrossDecisionPack is bound to another Cross completion"
             )
-        for artifact_ref, expected_artifact_hash in pack.artifact_sha256.items():
-            artifact_path = self._require_current_run_artifact(
-                run_id, artifact_ref, label="CrossDecisionPack artifact"
+        completion_path = self._require_current_run_artifact(
+            run_id,
+            pack.cross_review_completion_ref,
+            label="CrossDecisionPack completion",
+        )
+        try:
+            raw_completion = json.loads(
+                completion_path.read_text(encoding="utf-8")
             )
-            if self._sha256(artifact_path) != expected_artifact_hash:
-                raise AgentWorkflowError(
-                    "CrossDecisionPack artifact hash mismatch: "
-                    f"{artifact_ref}"
+            completion = self._load_business_review_completion(raw_completion)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise AgentWorkflowError(
+                "Chief CrossDecisionPack completion is unreadable or invalid"
+            ) from exc
+        if (
+            completion.run_id != run_id
+            or completion.lifecycle != "cross"
+            or completion.reviewer_agent_id != "cross-module-reviewer"
+            or completion.reviewer_session_key
+            not in {"cross-module-reviewer", "cross-owner-wave"}
+        ):
+            raise AgentWorkflowError(
+                "Chief CrossDecisionPack completion has the wrong Cross owner"
+            )
+        for artifact_ref in (
+            *completion.subject_refs,
+            *completion.finding_refs,
+            *completion.verdict_refs,
+        ):
+            artifact_path = self._require_current_run_artifact(
+                run_id,
+                artifact_ref,
+                label="Cross completion artifact",
+            )
+            try:
+                artifact_payload = json.loads(
+                    artifact_path.read_text(encoding="utf-8")
                 )
-        state["cross_decision_pack"] = pack
-        return pack
+                if artifact_ref in completion.subject_refs:
+                    subject = ModuleSubmission.model_validate(artifact_payload)
+                    module_id = Path(artifact_ref).stem.split("-r", 1)[0]
+                    if subject.module_id != module_id:
+                        raise ValueError(
+                            "Cross completion subject module identity does not match its ref"
+                        )
+                elif artifact_ref in completion.finding_refs:
+                    CrossReviewFindingSubmission.model_validate(artifact_payload)
+                else:
+                    CrossReviewVerdictSubmission.model_validate(artifact_payload)
+            except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                raise AgentWorkflowError(
+                    "Cross completion artifact is not a typed current-run artifact: "
+                    f"{artifact_ref}"
+                ) from exc
+        modules = state.get("module_submissions")
+        if isinstance(modules, dict) and set(modules) == set(REPORT_MODULE_IDS):
+            expected_subject_refs = [
+                f"Work/runs/{run_id}/modules/"
+                f"{module_id}-r{modules[module_id].revision}.json"
+                for module_id in REPORT_MODULE_IDS
+            ]
+            if completion.subject_refs != expected_subject_refs:
+                raise AgentWorkflowError(
+                    "Chief CrossDecisionPack completion subjects do not match current module revisions"
+                )
+
+    @staticmethod
+    def _load_business_review_completion(raw: object) -> ReviewCompletionRecord:
+        """Validate review ownership/refs while ignoring digest metadata."""
+
+        if not isinstance(raw, dict):
+            raise ValueError("review completion JSON must be an object")
+        return ReviewCompletionRecord.model_validate(raw)
 
     def _materialize_chief_cross_decision_pack(
         self, state: dict
@@ -2587,25 +2876,11 @@ class ReportWorkflowRunner:
             else CrossSynthesisInput.model_validate(item)
             for item in state.get("cross_synthesis_inputs", [])
         ]
-        artifact_refs = {completion_ref}
-        artifact_sha256: dict[str, str] = {}
-        for artifact_ref in sorted(artifact_refs):
-            artifact_path = self._require_current_run_artifact(
-                run_id, artifact_ref, label="CrossDecisionPack artifact"
-            )
-            artifact_sha256[artifact_ref] = self._sha256(artifact_path)
-        provisional = CrossDecisionPack(
+        pack = CrossDecisionPack(
             run_id=run_id,
             module_ids=list(REPORT_MODULE_IDS),
             cross_review_completion_ref=completion_ref,
             synthesis_inputs=synthesis_inputs,
-            artifact_sha256=artifact_sha256,
-            pack_sha256="0" * 64,
-        )
-        pack = provisional.model_copy(
-            update={
-                "pack_sha256": self._cross_decision_pack_semantic_sha256(provisional)
-            }
         )
         pack_ref = f"Work/runs/{run_id}/reviews/cross-decision-pack.json"
         pack_path = self.service.workspace / pack_ref
@@ -2618,26 +2893,20 @@ class ReportWorkflowRunner:
                 raise AgentWorkflowError(
                     "Chief cannot start: existing CrossDecisionPack is invalid"
                 ) from exc
-            if existing_pack != pack:
-                raise AgentWorkflowError(
-                    "Chief cannot start: immutable CrossDecisionPack differs from current Cross completion"
-                )
+            existing_state = dict(state)
+            existing_state["cross_decision_pack_ref"] = pack_ref
+            self._validate_cross_decision_pack_business(existing_state, existing_pack)
             pack = existing_pack
         else:
             self.service.store.write_json(pack_ref, pack.model_dump(mode="json"))
         state["cross_decision_pack"] = pack
         state["cross_decision_pack_ref"] = pack_ref
-        state["cross_decision_pack_sha256"] = self._sha256(
-            self.service.workspace / pack_ref
-        )
         return pack
 
     def _current_chief_editor_input(self, state: dict) -> ChiefEditorInput:
         pack = self._materialize_chief_cross_decision_pack(state)
         pack_view_payload = pack.model_dump(mode="python")
-        pack_view_payload.pop("artifact_sha256", None)
-        pack_view_payload.pop("pack_sha256", None)
-        pack_view_payload["artifact_refs"] = sorted(pack.artifact_sha256)
+        pack_view_payload["artifact_refs"] = [pack.cross_review_completion_ref]
         return ChiefEditorInput(
             run_id=state["run_id"],
             approved_module_markers={
@@ -2652,9 +2921,7 @@ class ReportWorkflowRunner:
             },
             cross_decision=CrossDecisionPackView.model_validate(pack_view_payload),
             cross_decision_pack_ref=state["cross_decision_pack_ref"],
-            cross_decision_pack_sha256=state["cross_decision_pack_sha256"],
-            # Keep the legacy completion ref in persisted inputs for old
-            # checkpoint readers; the pack/ref/hash above are authoritative.
+            # Keep the completion ref as a second typed business reference.
             cross_review_completion_ref=state["cross_review_completion_ref"],
             special_topic_plan=state.get("special_topic_plan"),
         )
@@ -2741,7 +3008,12 @@ class ReportWorkflowRunner:
             text
             for text in (
                 special_topic_context,
-                self._role_skill_context(state, "chief-editor"),
+                self._chief_template_skill_context(
+                    state,
+                    active_chapters(
+                        include_chapter_four=state.get("special_topic_plan") is not None
+                    ),
+                ),
             )
             if text
         )
@@ -2808,35 +3080,6 @@ class ReportWorkflowRunner:
             )
         )
 
-    def _chief_semantic_context_sha256(
-        self,
-        state: dict,
-        editor_input: ChiefEditorInput,
-    ) -> str:
-        special_ref, _special_text = self._chief_special_topic_context(
-            state
-        )
-        return self._canonical_payload_sha256(
-            {
-                "version": 1,
-                "request": self._chief_request_context(state),
-                "editor_input": editor_input.model_dump(mode="json"),
-                "template_role_context": self._role_skill_context(
-                    state, "chief-editor"
-                ),
-                "special_topic_context": (
-                    {
-                        "ref": special_ref,
-                        "sha256": self._sha256(
-                            self.service.workspace / special_ref
-                        ),
-                    }
-                    if special_ref is not None
-                    else None
-                ),
-            }
-        )
-
     def _write_chief_editor_completion(
         self,
         state: dict,
@@ -2849,7 +3092,6 @@ class ReportWorkflowRunner:
             state,
             envelope_input_refs=envelope.input_refs,
         )
-        artifact_refs = self._flatten_chief_completion_refs(refs)
         completion_path = self.service.store.write_json(
             f"Work/runs/{run_id}/chief-editor-completion.json",
             {
@@ -2864,19 +3106,7 @@ class ReportWorkflowRunner:
                     else "full"
                 ),
                 "cross_decision_pack_ref": state["cross_decision_pack_ref"],
-                "cross_decision_pack_sha256": state[
-                    "cross_decision_pack_sha256"
-                ],
                 "refs": refs,
-                "artifact_sha256": {
-                    ref: self._sha256(self.service.workspace / ref)
-                    for ref in artifact_refs
-                },
-                "semantic_context_sha256": (
-                    self._chief_semantic_context_sha256(
-                        state, editor_input
-                    )
-                ),
             },
         )
         return completion_path.relative_to(
@@ -2888,6 +3118,14 @@ class ReportWorkflowRunner:
         state: dict,
         completion_ref: str,
     ) -> tuple[EditedReportSubmission, TaskEnvelope, dict]:
+        """Load the legacy monolithic Chief completion contract.
+
+        Active orchestration now dispatches chapter lanes and does not call
+        this loader.  It remains available only for compatibility/inspection
+        of historical runs; its archival hash gates must not be treated as the
+        active recovery policy.
+        """
+
         run_id = state["run_id"]
         canonical_completion_ref = (
             f"Work/runs/{run_id}/chief-editor-completion.json"
@@ -2923,8 +3161,6 @@ class ReportWorkflowRunner:
             pack = self._materialize_chief_cross_decision_pack(state)
             if completion.get("cross_decision_pack_ref") != state.get(
                 "cross_decision_pack_ref"
-            ) or completion.get("cross_decision_pack_sha256") != state.get(
-                "cross_decision_pack_sha256"
             ):
                 raise ValueError(
                     "Chief completion is not bound to the current CrossDecisionPack"
@@ -3008,7 +3244,6 @@ class ReportWorkflowRunner:
             run_root = (
                 self.service.workspace / f"Work/runs/{run_id}"
             ).resolve()
-            actual_hashes: dict[str, str] = {}
             for ref in artifact_refs:
                 lexical = self.service.workspace / ref
                 path = lexical.resolve()
@@ -3021,11 +3256,6 @@ class ReportWorkflowRunner:
                         "Chief completion contains a non-current-run ref: "
                         f"{ref}"
                     )
-                actual_hashes[ref] = self._sha256(path)
-            if completion.get("artifact_sha256") != actual_hashes:
-                raise ValueError(
-                    "Chief completion artifact hash mismatch"
-                )
 
             persisted_input = ChiefEditorInput.model_validate_json(
                 (
@@ -3038,16 +3268,6 @@ class ReportWorkflowRunner:
                     "Chief editor input does not match current approved "
                     "modules and Cross completion"
                 )
-            if completion.get("semantic_context_sha256") != (
-                self._chief_semantic_context_sha256(
-                    state, expected_input
-                )
-            ):
-                raise ValueError(
-                    "Chief semantic context no longer matches the current "
-                    "request"
-                )
-
             candidate_ref = str(expected_refs["candidate"])
             candidate = EditedReportSubmission.model_validate_json(
                 (
@@ -3288,6 +3508,14 @@ class ReportWorkflowRunner:
                     )
 
     def _restore_resume_state(self, state: dict, checkpoint: dict | None = None) -> None:
+        """Legacy checkpoint replayer retained for offline compatibility tests.
+
+        The active run path never calls this method: ``workflow-state.json`` is
+        a status projection, while ``RecoveryStateStore`` owns stage/lane
+        recovery.  Keep this legacy implementation isolated from new recovery
+        decisions (including its historical content-hash checks).
+        """
+
         run_id = state["run_id"]
         self._guard_failed_cross_owner_terminal_resume(run_id=run_id)
         if checkpoint is None:
@@ -3456,16 +3684,9 @@ class ReportWorkflowRunner:
         state["cross_synthesis_inputs"] = self._latest_cross_synthesis(cross_artifacts)
 
         if typed_checkpoint.cross_decision_pack_ref is not None:
-            if typed_checkpoint.cross_decision_pack_sha256 is None:
-                raise AgentWorkflowError(
-                    "checkpoint CrossDecisionPack is missing its hash"
-                )
             state["cross_decision_pack_ref"] = require_run_ref(
                 typed_checkpoint.cross_decision_pack_ref,
                 label="CrossDecisionPack",
-            )
-            state["cross_decision_pack_sha256"] = (
-                typed_checkpoint.cross_decision_pack_sha256
             )
             self._load_current_cross_decision_pack(state)
         elif typed_checkpoint.chief_editor_completion_ref is not None:
@@ -3506,7 +3727,7 @@ class ReportWorkflowRunner:
                 completion_ref=final_ref,
                 lifecycle="final",
                 reviewer_agent_id="chief-editor-auditor",
-                reviewer_session_key="chief-editor-auditor",
+                reviewer_session_key=FINAL_REVIEW_COMPLETION_SESSION_KEYS,
             )
             if len(final_completion.subject_refs) != 1:
                 raise ValueError("final completion requires exactly one edited subject")
@@ -3545,7 +3766,7 @@ class ReportWorkflowRunner:
         self._restore_delivery_completion(state)
 
     def _restore_delivery_completion(self, state: dict) -> None:
-        """Restore one fully published delivery without replaying Provider work."""
+        """Restore a delivered business lifecycle without file identity gates."""
 
         run_id = state["run_id"]
         completion_ref = f"Work/runs/{run_id}/delivery-completion.json"
@@ -3556,12 +3777,7 @@ class ReportWorkflowRunner:
         if payload.get("run_id") != run_id:
             raise AgentWorkflowError("delivery completion identity/status is invalid")
         status = str(payload.get("status", ""))
-        # Archive/retention used to be a synchronous post-delivery phase.  Keep
-        # its terminal spellings read-compatible, but normalize them to the one
-        # real lifecycle boundary: a receipt-backed published report version.
-        legacy_completed = status == "completed"
         if status not in {
-            "receipt_persisted",
             "delivered",
             "archive_pending",
             "archived",
@@ -3570,79 +3786,15 @@ class ReportWorkflowRunner:
         }:
             raise AgentWorkflowError("delivery completion identity/status is invalid")
 
-        receipt_ref = str(payload.get("delivery_receipt_ref", ""))
-        run_prefix = f"Work/runs/{run_id}/"
-        if not receipt_ref.startswith(run_prefix):
-            raise AgentWorkflowError("delivery receipt is outside the current run")
-        receipt_path = self.service.workspace / receipt_ref
-        if not receipt_path.is_file():
-            raise AgentWorkflowError("delivery completion references a missing receipt")
         try:
-            receipt = DeliveryReceipt.model_validate_json(
-                receipt_path.read_text(encoding="utf-8")
-            )
-            verify_current_run_outputs(
-                self.service.workspace,
-                run_id,
-                [receipt.final_docx, receipt.source_index, receipt.source_index_docx],
-                0,
-                allow_existing_artifacts=True,
-            )
-        except (OSError, ValueError, json.JSONDecodeError, OutputVerificationError) as exc:
-            # Preserve the old behavior for obsolete ``completed`` records: a
-            # malformed completion is left for deterministic regeneration.
-            if legacy_completed:
-                return
+            artifacts = [
+                OutputArtifact.model_validate(item)
+                for item in payload.get("output_artifacts", [])
+            ]
+        except ValueError as exc:
             raise AgentWorkflowError(
-                f"delivery receipt failed current-run validation: {receipt_ref}: {exc}"
+                "delivery completion contains invalid typed output declarations"
             ) from exc
-
-        artifacts = [
-            OutputArtifact.model_validate(item)
-            for item in payload.get("output_artifacts", [])
-        ]
-        expected_artifacts = self._delivery_output_artifacts(
-            final_review_ref=state.get(
-                "final_review_completion_ref",
-                f"Work/runs/{run_id}/reviews/final-completion.json",
-            ),
-            delivery_manifest_ref=receipt.manifest_path.relative_to(
-                self.service.workspace
-            ),
-            final_markdown_ref=Path(
-                f"Work/runs/{run_id}/report/配电安全专家咨询报告.md"
-            ),
-            final_docx_ref=receipt.final_docx.relative_to(self.service.workspace),
-            source_index_ref=receipt.source_index.relative_to(
-                self.service.workspace
-            ),
-            source_index_docx_ref=receipt.source_index_docx.relative_to(
-                self.service.workspace
-            ),
-        )
-        if not artifacts:
-            if legacy_completed:
-                return
-            artifacts = expected_artifacts
-        elif artifacts != expected_artifacts:
-            if legacy_completed:
-                return
-            raise AgentWorkflowError("delivery completion output declaration is stale")
-
-        version = None
-        version_id = payload.get("report_version_id")
-        if version_id:
-            try:
-                version = ReportVersionStore(self.service.workspace).load(str(version_id))
-                if version.run_id != run_id:
-                    raise ValueError("report version belongs to another run")
-            except (OSError, ValueError, FileNotFoundError):
-                # Version publication was interrupted.  Leave delivery unrestored
-                # so the idempotent delivery step can finish it without Provider.
-                version = None
-        if version is None:
-            return
-        state["report_version"] = version
         state["delivery_status"] = "delivered"
         if status != "delivered" or payload.get("delivery_status") != "delivered":
             payload["status"] = "delivered"
@@ -3651,8 +3803,6 @@ class ReportWorkflowRunner:
             self.service.store.write_json(completion_ref, payload)
         state["output_artifacts"] = artifacts
         state["delivery_completion_ref"] = completion_ref
-        # Receipt/hash validation above proves these artifacts belong to this
-        # exact run. A later resume may reuse them without regenerating work.
         state["delivery_restored"] = True
 
     def _revision_checkpoint(
@@ -3676,9 +3826,6 @@ class ReportWorkflowRunner:
                 ),
                 "cross_review_completion_ref": state.get("cross_review_completion_ref"),
                 "cross_decision_pack_ref": state.get("cross_decision_pack_ref"),
-                "cross_decision_pack_sha256": state.get(
-                    "cross_decision_pack_sha256"
-                ),
                 "chief_candidate_ref": state.get("chief_candidate_ref"),
                 "chief_editor_input_ref": state.get(
                     "chief_editor_input_ref"
@@ -3700,7 +3847,13 @@ class ReportWorkflowRunner:
         )
 
     def _restore_revision_resume_state(self, state: dict) -> None:
-        """Restore only subjects closed by the new review completion contract."""
+        """Legacy revision checkpoint replayer, not an active recovery path.
+
+        Production revision orchestration uses ``RecoveryStateStore`` lane and
+        aggregate records.  This helper is retained for compatibility tests
+        and historical inspection only; its old checkpoint/hash behavior is
+        intentionally quarantined from active runs.
+        """
 
         run_id = state["run_id"]
         checkpoint_path = self.service.workspace / f"Work/runs/{run_id}/workflow-state.json"
@@ -3800,14 +3953,8 @@ class ReportWorkflowRunner:
         state["cross_review_completion_ref"] = cross_ref
         state["cross_synthesis_inputs"] = self._latest_cross_synthesis(cross_artifacts)
         checkpoint_pack_ref = checkpoint.get("cross_decision_pack_ref")
-        checkpoint_pack_hash = checkpoint.get("cross_decision_pack_sha256")
         if checkpoint_pack_ref is not None:
-            if not checkpoint_pack_hash:
-                raise AgentWorkflowError(
-                    "revision checkpoint CrossDecisionPack is missing its hash"
-                )
             state["cross_decision_pack_ref"] = str(checkpoint_pack_ref)
-            state["cross_decision_pack_sha256"] = str(checkpoint_pack_hash)
             self._load_current_cross_decision_pack(state)
         elif checkpoint.get("chief_editor_completion_ref") is not None:
             raise AgentWorkflowError(
@@ -3848,7 +3995,7 @@ class ReportWorkflowRunner:
                 completion_ref=final_ref,
                 lifecycle="final",
                 reviewer_agent_id="chief-editor-auditor",
-                reviewer_session_key="chief-editor-auditor",
+                reviewer_session_key=FINAL_REVIEW_COMPLETION_SESSION_KEYS,
             )
             if len(final_completion.subject_refs) != 1:
                 raise ValueError("final completion requires exactly one edited subject")
@@ -3893,7 +4040,7 @@ class ReportWorkflowRunner:
         )
         state["input_snapshot_digest"] = input_snapshot.inventory_digest
         if state.get("resume"):
-            self._restore_preparation_snapshot(state)
+            self._restore_preparation_snapshot_projection(state)
         else:
             # These are deterministic data transformations, deliberately not LLM personas.
             await self.service._build_manifest(state)
@@ -3929,6 +4076,50 @@ class ReportWorkflowRunner:
             self.service.store.write_json(
                 ledger.path.relative_to(self.service.workspace).as_posix(), []
             )
+
+    def _restore_preparation_snapshot_projection(self, state: dict) -> None:
+        """Load the current run's preparation records without checkpoint gates."""
+
+        run_id = state["run_id"]
+        refs = self._preparation_refs(run_id)
+        completion_ref = f"Work/runs/{run_id}/preparation/completion.json"
+        missing = [ref for ref in refs.values() if not (self.service.workspace / ref).is_file()]
+        if missing:
+            raise AgentWorkflowError(
+                f"resume requires preparation artifacts; missing={missing}"
+            )
+        manifest_path = self.service.workspace / refs["manifest"]
+        evidence_path = self.service.workspace / refs["evidence"]
+        photo_path = self.service.workspace / refs["photo_manifest"]
+        adjacency_path = self.service.workspace / refs["photo_adjacency"]
+        gaps_path = self.service.workspace / refs["mapping_gaps"]
+        coverage_path = self.service.workspace / refs["coverage"]
+        state["project_manifest"] = ProjectManifest.model_validate_json(
+            manifest_path.read_text(encoding="utf-8")
+        )
+        state["evidence_items"] = [
+            EvidenceItem.model_validate_json(line)
+            for line in evidence_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        photo_payload = json.loads(photo_path.read_text(encoding="utf-8"))
+        state["photo_assets"] = [
+            PhotoAsset.model_validate(item) for item in photo_payload.get("assets", [])
+        ]
+        state["photo_evidence_adjacency"] = json.loads(
+            adjacency_path.read_text(encoding="utf-8")
+        )
+        state["mapping_gaps"] = json.loads(gaps_path.read_text(encoding="utf-8")).get("gaps", [])
+        state["coverage_matrix"] = CoverageMatrix.model_validate_json(
+            coverage_path.read_text(encoding="utf-8")
+        )
+        special_ref = f"Work/runs/{run_id}/preparation/special-topic-plan.json"
+        if (self.service.workspace / special_ref).is_file():
+            state["special_topic_plan"] = SpecialTopicPlan.model_validate_json(
+                (self.service.workspace / special_ref).read_text(encoding="utf-8")
+            )
+        state["preparation_refs"] = refs
+        state["preparation_completion_ref"] = completion_ref
 
     @staticmethod
     def _sha256(path: Path) -> str:
@@ -4235,16 +4426,15 @@ class ReportWorkflowRunner:
                 "stage": "template-skill-read",
                 "producer": "separate template-distiller action",
                 "consumer": (
-                    "module specialists/auditors, cross-module reviewer, chief editor, "
-                    "final auditor"
+                    "module specialists/auditors, chief editor, and final auditor"
                 ),
                 "input": (
-                    "hash-verified Work/report-template-writing files projected by role "
-                    "and embedded once in task inline_context"
+                    "hash-verified Work/report-template-role-skills files selected by exact "
+                    "module/role identity and embedded whole in task inline_context"
                 ),
                 "output": (
-                    "role-scoped reusable Skill guidance, including fact-free worked examples; "
-                    "downstream references are not opened"
+                    "complete identity-scoped reusable Skill guidance with fact-free examples; "
+                    "Cross intentionally receives no template Skill"
                 ),
                 "content_checks": [
                     "only analysis, synthesis, visual, and quality-check methods",
@@ -4344,8 +4534,8 @@ class ReportWorkflowRunner:
                 "output": "RenderResult + readable DOCX",
                 "content_checks": [
                     "canonical Markdown exists and is non-empty",
-                    "template and DOCX SHA-256 recorded",
-                    "current-run delivery receipt matches",
+                    "renderer reports completed for the current run",
+                    "delivery completion reports delivered for the current run",
                 ],
             },
         ]
@@ -4525,6 +4715,82 @@ class ReportWorkflowRunner:
             completion.review_completion.ref
         )
         return submission, completion_ref, completion, lane_state
+
+    def _load_recovery_module_lane(
+        self,
+        module_id: str,
+        state: dict,
+        lane_state: Any,
+    ) -> tuple[ModuleSubmission, str, LaneCompletion, dict] | None:
+        """Load a completed module lane from RecoveryStateStore business state.
+
+        The recovery record points at the typed module subject.  Review
+        completion is discovered by lifecycle path and is validated as a
+        typed record only; no digest/CAS/trusted-handle comparison participates
+        in this decision.
+        """
+
+        result_ref = getattr(lane_state, "result_ref", None)
+        if not result_ref:
+            return None
+        path = (self.service.workspace / result_ref).resolve()
+        if not path.is_relative_to(self.service.workspace) or not path.is_file():
+            return None
+        try:
+            submission = ModuleSubmission.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if submission.module_id != module_id:
+            return None
+        review_ref = state.get("module_review_completion_refs", {}).get(module_id)
+        if not review_ref:
+            review_root = self.service.workspace / f"Work/runs/{state['run_id']}/reviews/module"
+            candidates = sorted(review_root.glob(f"*/{module_id}/completion-r*.json"))
+            if candidates:
+                review_ref = candidates[-1].relative_to(self.service.workspace).as_posix()
+        if not review_ref:
+            return None
+        try:
+            review_record = ReviewCompletionRecord.model_validate_json(
+                (self.service.workspace / review_ref).read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return None
+        if review_record.run_id != state["run_id"] or review_record.lifecycle != "module":
+            return None
+        subject_ref = path.relative_to(self.service.workspace).as_posix()
+        completion = LaneCompletion(
+            lane_id=f"module-{module_id}",
+            run_id=state["run_id"],
+            stage="module",
+            module_id=module_id,
+            revision=submission.revision,
+            status="completed",
+            result_ref=subject_ref,
+            subject=subject_ref,
+            review_completion=review_ref,
+            author_task_attempt_id=f"recovered-module-{module_id}",
+            reviewer_session_id=review_record.reviewer_session_key,
+            lease_epoch=1,
+        )
+        lane_state_copy = deepcopy(state)
+        lane_state_copy.setdefault("module_submissions", {})[module_id] = submission
+        lane_state_copy.setdefault("specialist_submissions", {})[module_id] = submission
+        lane_state_copy.setdefault("module_review_completion_refs", {})[module_id] = review_ref
+        # The reducer still needs a typed lane completion ref.  Reconstruct
+        # the deterministic business record when an older run only persisted
+        # the subject ref in RecoveryStateStore.
+        completion_ref = (
+            f"Work/runs/{state['run_id']}/lanes/module-{module_id}/"
+            f"completion-r{submission.revision}.json"
+        )
+        completion_path = self.service.workspace / completion_ref
+        if not completion_path.is_file():
+            self.service.store.write_json(
+                completion_ref,
+                completion.model_dump(mode="json"),
+            )
+        return submission, completion_ref, completion, lane_state_copy
 
     def _build_lane_completion(
         self,
@@ -4777,12 +5043,28 @@ class ReportWorkflowRunner:
         results: dict[
             str, tuple[ModuleSubmission, str, LaneCompletion, dict]
         ] = {}
-        for module_id in requested_modules:
-            if module_id in state.get("module_submissions", {}):
+        recovery = self._recovery_store(state)
+        recovered_business = recovery.load_completed_lanes(
+            self._recovery_stage_name("module"),
+            list(requested_modules),
+        )
+        for module_id, lane_state in recovered_business.items():
+            if module_id not in requested_modules:
                 continue
-            recovered = self._recover_module_lane(module_id, state)
+            recovered = self._load_recovery_module_lane(module_id, state, lane_state)
             if recovered is not None:
                 results[module_id] = recovered
+                state.setdefault("module_submissions", {})[module_id] = recovered[0]
+                state.setdefault("specialist_submissions", {})[module_id] = recovered[0]
+                state.setdefault("module_review_completion_refs", {})[module_id] = (
+                    recovered[3]["module_review_completion_refs"][module_id]
+                )
+        for module_id in requested_modules:
+            if module_id in results or module_id in state.get("module_submissions", {}):
+                continue
+            # Legacy lane artifacts are intentionally not consulted for active
+            # recovery.  They remain forensic evidence; a missing business
+            # record is an explicit new lane dispatch.
         pending = [
             module_id
             for module_id in requested_modules
@@ -4984,6 +5266,17 @@ class ReportWorkflowRunner:
                 # promotable typed completion.  Preserve successful siblings
                 # and record this terminal state in the cohort barrier below.
                 continue
+            self._record_recovery_lane(
+                state,
+                stage="module",
+                lane_id=module_id,
+                status="completed",
+                result_ref=(
+                    f"Work/runs/{state['run_id']}/modules/"
+                    f"{module_id}-r{submission.revision}.json"
+                ),
+                revision=submission.revision,
+            )
             completions.append((completion_ref, completion))
 
         if failures_by_module:
@@ -5041,6 +5334,14 @@ class ReportWorkflowRunner:
                 },
             )
             state["module_lane_barrier_ref"] = terminal_ref
+            for module_id, failure in failures_by_module.items():
+                self._record_recovery_lane(
+                    state,
+                    stage="module",
+                    lane_id=module_id,
+                    status="failed",
+                    error=str(failure),
+                )
             self._checkpoint(
                 state,
                 "module-work",
@@ -5069,6 +5370,12 @@ class ReportWorkflowRunner:
                 if barrier.scope == "full"
                 else "partial-module-barrier.json"
             )
+        )
+        self._record_recovery_aggregate(
+            state,
+            stage="module",
+            lane_ids=list(requested_modules),
+            result_ref=state["module_lane_barrier_ref"],
         )
         event_store.append(
             "StageCompleted",
@@ -5377,229 +5684,536 @@ class ReportWorkflowRunner:
         await run_cross_review(self, state, workflow_id)
 
     def _verify_module_lane_barrier(self, state: dict) -> CohortBarrier:
-        """Fail closed unless the current run has exactly five verified lanes."""
+        """Require five completed business lanes and one module aggregate.
 
-        run_id = state["run_id"]
-        expected_ref = f"Work/runs/{run_id}/lanes/module-barrier.json"
-        if state.get("module_lane_barrier_ref") != expected_ref:
-            raise AgentWorkflowError("Cross requires the canonical five-module barrier")
-        barrier_path = self.service.workspace / expected_ref
-        try:
-            barrier = CohortBarrier.model_validate_json(
-                barrier_path.read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError) as exc:
-            raise AgentWorkflowError("five-module barrier is missing or invalid") from exc
+        The recovery store is authoritative.  The historical barrier remains
+        a useful projection, but its digest/CAS fields are deliberately not
+        consulted: a valid typed module subject remains reusable when an
+        unrelated legacy barrier byte changes.
+        """
+
+        run_id = str(state["run_id"])
         expected_modules = set(REPORT_MODULE_IDS)
-        if (
-            barrier.run_id != run_id
-            or barrier.scope != "full"
-            or barrier.status != "committed"
-            or set(barrier.target_modules) != expected_modules
-            or set(barrier.completion_refs) != expected_modules
-            or set(barrier.completion_hashes) != expected_modules
-        ):
-            raise AgentWorkflowError("five-module barrier has incomplete ownership")
-        barrier_identity = {
-            "run_id": run_id,
-            "target_modules": sorted(barrier.target_modules, key=float),
-            "completion_refs": barrier.completion_refs,
-            "completion_hashes": barrier.completion_hashes,
-            "scope": "full",
-        }
-        if barrier.barrier_sha256 != hashlib.sha256(
-            json.dumps(
-                barrier_identity,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest():
-            raise AgentWorkflowError("five-module barrier identity hash is invalid")
-        for module_id in REPORT_MODULE_IDS:
-            ref = barrier.completion_refs[module_id]
-            path = self.service.workspace / ref
+        store = self._recovery_store(state)
+        completed = store.load_completed_lanes("module", list(REPORT_MODULE_IDS))
+        aggregate = store.load_aggregate("module")
+        if set(completed) != expected_modules:
+            missing = sorted(expected_modules - set(completed), key=float)
+            raise AgentWorkflowError(
+                "Cross requires all five completed module lanes; "
+                f"missing={missing}"
+            )
+        if aggregate is None or aggregate.status != "completed":
+            raise AgentWorkflowError("Cross requires the completed module aggregate")
+        if set(aggregate.lane_ids) != expected_modules:
+            raise AgentWorkflowError("module aggregate does not cover all five modules")
+
+        # Prefer the legacy projection when it is readable so callers that
+        # inspect the returned model keep the established shape.  If it is
+        # absent/corrupt, synthesize a status-only barrier from business refs.
+        expected_ref = f"Work/runs/{run_id}/lanes/module-barrier.json"
+        barrier: CohortBarrier | None = None
+        barrier_path = self.service.workspace / expected_ref
+        if barrier_path.is_file():
             try:
-                completion = LaneCompletion.model_validate_json(
-                    path.read_text(encoding="utf-8")
+                candidate = CohortBarrier.model_validate_json(
+                    barrier_path.read_text(encoding="utf-8")
                 )
-            except (OSError, ValueError) as exc:
-                raise AgentWorkflowError(
-                    f"module completion is missing or invalid: {module_id}"
-                ) from exc
-            if (
-                completion.run_id != run_id
-                or completion.module_id != module_id
-                or completion.completion_sha256()
-                != barrier.completion_hashes[module_id]
-            ):
-                raise AgentWorkflowError(
-                    f"module completion does not match barrier: {module_id}"
-                )
-            self._verify_artifact_ref(completion.subject)
-            self._verify_artifact_ref(completion.review_completion)
+                if (
+                    candidate.run_id == run_id
+                    and candidate.scope == "full"
+                    and candidate.status == "committed"
+                    and set(candidate.target_modules) == expected_modules
+                ):
+                    barrier = candidate
+            except (OSError, ValueError):
+                barrier = None
+        completion_refs = {
+            module_id: str(getattr(completed[module_id], "result_ref", ""))
+            for module_id in REPORT_MODULE_IDS
+        }
+        if barrier is None:
+            barrier = CohortBarrier(
+                run_id=run_id,
+                target_modules=list(REPORT_MODULE_IDS),
+                completion_refs=completion_refs,
+                scope="full",
+                status="committed",
+            )
+        state["module_lane_barrier_ref"] = expected_ref
         return barrier
 
-    async def _chief_edit(self, state: dict, workflow_id: str) -> None:
-        special_topic_plan: SpecialTopicPlan | None = state.get("special_topic_plan")
-        special_topic_input_refs: list[str] = []
-        special_topic_context = ""
-        if special_topic_plan is not None:
-            special_topic_knowledge = KnowledgeContextBuilder(
-                self.service.workspace, state["run_id"]
-            ).build_special_topics(special_topic_plan)
-            state["special_topic_knowledge_ref"] = (
-                special_topic_knowledge.path.as_posix()
+    @staticmethod
+    def _chapter_lane_ids(state: dict) -> tuple[str, ...]:
+        """Return the active Chief/Final chapter lanes in deterministic order."""
+
+        return ("1", "3", "4") if state.get("special_topic_plan") is not None else ("1", "3")
+
+    def _chief_chapter_source_projection(
+        self,
+        state: dict,
+        chapter_id: str,
+    ) -> tuple[dict[str, str], list[str]]:
+        """Build bounded, chapter-local Chief context without copying the report."""
+
+        run_id = str(state["run_id"])
+        cross_ref = state.get("cross_review_completion_ref")
+        source_refs = [str(cross_ref)] if cross_ref else []
+        modules = state.get("module_submissions", {})
+        if chapter_id == "1":
+            source_context = {
+                f"module-{module_id}": json.dumps(
+                    {
+                        "module_id": module_id,
+                        "revision": getattr(module, "revision", 0),
+                        "submodule_ids": sorted(getattr(module, "submodule_narratives", {})),
+                        "unresolved_questions": list(getattr(module, "unresolved_questions", [])),
+                        "claim_ids": [claim.id for claim in getattr(module, "claims", [])],
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )[:2400]
+                for module_id, module in sorted(modules.items(), key=lambda item: float(item[0]))
+            }
+            source_context["approved_markers"] = ",".join(
+                f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_MODULE_IDS
             )
-            special_topic_input_refs.append(special_topic_knowledge.path.as_posix())
-            special_topic_context = special_topic_knowledge.text
+        elif chapter_id == "3":
+            source_context = {
+                "cross_synthesis": json.dumps(
+                    [
+                        item.model_dump(mode="json")
+                        if hasattr(item, "model_dump")
+                        else item
+                        for item in state.get("cross_synthesis_inputs", [])
+                    ],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )[:6000],
+                "module_boundaries": ",".join(
+                    f"{module_id}:{','.join(sorted(getattr(module, 'submodule_narratives', {})))}"
+                    for module_id, module in sorted(modules.items(), key=lambda item: float(item[0]))
+                ),
+            }
+        else:
+            plan = state.get("special_topic_plan")
+            source_context = {
+                "special_topic_plan": json.dumps(
+                    plan.model_dump(mode="json") if hasattr(plan, "model_dump") else plan,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )[:12_000],
+            }
+            knowledge_ref = state.get("special_topic_knowledge_ref")
+            if knowledge_ref:
+                source_refs.append(str(knowledge_ref))
+        # Every lane can locate the run's immutable evidence ledger, but no
+        # lane receives the complete module bodies as inline context.
+        evidence_ref = state.get("preparation_refs", {}).get("evidence")
+        if evidence_ref:
+            source_refs.append(str(evidence_ref))
+        source_refs = list(dict.fromkeys(ref for ref in source_refs if ref))
+        if not source_context and not source_refs:
+            source_context = {"scope": f"chapter-{chapter_id}"}
+        return source_context, source_refs
+
+    def _read_chief_chapter_parts(
+        self,
+        state: dict,
+        chapter_id: str,
+        submission: ChiefChapterLaneSubmission | ChiefChapterLaneRevisionSubmission,
+        task_id: str,
+    ) -> dict[str, str]:
+        """Materialize only the active task's lane-local result parts."""
+
+        run_root = (self.service.workspace / f"Work/runs/{state['run_id']}").resolve()
+        task_root = (
+            run_root
+            / "drafts"
+            / task_id
+            / f"r{getattr(submission, 'revision', 0)}"
+        ).resolve()
+        if not task_root.is_relative_to(run_root):
+            raise AgentWorkflowError("Chief chapter task root escapes the current run")
+        section_ids = list(submission.section_ids)
+        part_to_sections: dict[str, list[str]] = {}
+        if chapter_id == "4":
+            part_to_sections["special_topic_analysis"] = section_ids
+        else:
+            for section_id in section_ids:
+                part_to_sections.setdefault(CHIEF_SECTION_RESULT_PART_IDS[section_id], []).append(section_id)
+        bodies: dict[str, str] = {}
+        for part_id, ref in submission.part_refs.items():
+            path = (self.service.workspace / ref).resolve()
+            if not path.is_relative_to(task_root) or path.suffix != ".md" or not path.is_file():
+                raise AgentWorkflowError(
+                    f"Chief chapter {chapter_id} returned a part outside its lane task: {ref}"
+                )
+            content = path.read_text(encoding="utf-8")
+            if not content.strip():
+                raise AgentWorkflowError(f"Chief chapter {chapter_id} returned a blank part: {part_id}")
+            if chapter_id == "4" and part_id == "special_topic_analysis":
+                # Chapter 4 has one durable result part, but its input/output
+                # lane scope is still one body per planned subsection.  Split
+                # the markdown headings before handing content to the reducer;
+                # never duplicate the complete chapter into every 4.x field.
+                chapter_plan = state.get("special_topic_plan")
+                bodies.update(
+                    self._split_special_topic_analysis(
+                        content,
+                        chapter_plan,
+                        allow_single_body=len(section_ids) == 1,
+                    )
+                )
+            else:
+                numbered_headings = numbered_markdown_headings(content)
+                if numbered_headings:
+                    raise AgentWorkflowError(
+                        f"Chief chapter {chapter_id} part {part_id} must contain section "
+                        "body only, without numbered Markdown headings: "
+                        f"{list(numbered_headings)}"
+                    )
+                for section_id in part_to_sections.get(part_id, []):
+                    bodies[section_id] = content
+        if set(bodies) != set(section_ids):
+            raise AgentWorkflowError(
+                f"Chief chapter {chapter_id} did not return every assigned section body"
+            )
+        return bodies
+
+    @staticmethod
+    def _split_special_topic_analysis(
+        markdown: str,
+        plan: SpecialTopicPlan | None,
+        *,
+        allow_single_body: bool = False,
+    ) -> dict[str, str]:
+        """Split one Chapter 4 result part into planned subsection bodies.
+
+        ``special_topic_analysis`` remains one typed submission part for
+        compatibility, while Chief/Final lane contracts expose each planned
+        4.x subsection independently.  Headings are runtime-owned boundaries;
+        the reducer adds them back when assembling EditedReportSubmission.
+        """
+
+        if plan is None:
+            raise AgentWorkflowError("Chapter 4 analysis requires an active special topic plan")
+        text = markdown.strip()
+        try:
+            plan.validate_analysis(text, allow_chapter_heading=True)
+        except ValueError as exc:
+            raise AgentWorkflowError(str(exc)) from exc
+        expected = [section.section_id for section in plan.sections]
+        heading_re = re.compile(r"^\s*#{1,6}\s+(4\.\d+)\s+(.+?)\s*$")
+        matches = [
+            (index, match.group(1), match.group(2).strip())
+            for index, line in enumerate(text.splitlines())
+            if (match := heading_re.match(line))
+        ]
+        if not matches:
+            if allow_single_body and len(expected) == 1:
+                return {expected[0]: text}
+            raise AgentWorkflowError(
+                "Chapter 4 result must contain one heading for every planned subsection"
+            )
+        by_id: dict[str, str] = {}
+        lines = text.splitlines()
+        for position, (start, section_id, _title) in enumerate(matches):
+            if section_id not in expected or section_id in by_id:
+                raise AgentWorkflowError(
+                    f"Chapter 4 result contains an unexpected or duplicate heading: {section_id}"
+                )
+            end = matches[position + 1][0] if position + 1 < len(matches) else len(lines)
+            body = "\n".join(lines[start + 1 : end]).strip()
+            if not body:
+                raise AgentWorkflowError(f"Chapter 4 subsection {section_id} has a blank body")
+            by_id[section_id] = body
+        if set(by_id) != set(expected):
+            raise AgentWorkflowError(
+                "Chapter 4 result headings must exactly match the active special-topic plan"
+            )
+        return by_id
+
+    @staticmethod
+    def _render_special_topic_analysis(
+        section_bodies: dict[str, str],
+        plan: SpecialTopicPlan | None,
+    ) -> str | None:
+        if plan is None:
+            return None
+        expected = [section.section_id for section in plan.sections]
+        if set(section_bodies) != set(expected):
+            raise AgentWorkflowError("Chapter 4 reducer received an incomplete subsection set")
+        return "\n\n".join(
+            f"### {section.section_id} {section.title}\n{section_bodies[section.section_id].strip()}"
+            for section in plan.sections
+        )
+
+    async def _chief_edit_chapter_lanes(self, state: dict, workflow_id: str) -> None:
+        """Run Chief Chapter 1/3/(4) lanes concurrently, then reduce once."""
+
+        run_id = str(state["run_id"])
+        active_chapters = self._chapter_lane_ids(state)
+        plan = state.get("special_topic_plan")
+        chapter_sections = {
+            "1": tuple(CHAPTER1_SECTION_IDS),
+            "3": tuple(CHAPTER3_SECTION_IDS),
+            **({"4": chapter_section_ids("4", plan)} if plan is not None else {}),
+        }
+        recovery = self._recovery_store(state)
+        def reusable_chief_lane(payload: object, lane_state: object) -> bool:
+            if not isinstance(payload, dict):
+                return False
+            try:
+                recovered = ChiefChapterLaneSubmission.model_validate(payload)
+                chapter_id = recovered.chapter_id
+                if (
+                    recovered.run_id != run_id
+                    or chapter_id not in chapter_sections
+                    or set(recovered.section_ids) != set(chapter_sections[chapter_id])
+                ):
+                    return False
+                self._read_chief_chapter_parts(
+                    state,
+                    chapter_id,
+                    recovered,
+                    f"chief-chapter-{chapter_id}",
+                )
+            except (OSError, ValueError, AgentWorkflowError):
+                return False
+            return True
+
+        recovered_lanes = recovery.load_completed_lanes(
+            "chief",
+            list(active_chapters),
+            business_gate=reusable_chief_lane,
+        )
+        recovered_aggregate = recovery.load_aggregate("chief")
+        if recovered_aggregate is not None and recovered_aggregate.status == "completed":
+            aggregate_ref = recovered_aggregate.result_ref
+            if aggregate_ref:
+                aggregate_path = (self.service.workspace / aggregate_ref).resolve()
+                if aggregate_path.is_file():
+                    try:
+                        restored = EditedReportSubmission.model_validate_json(
+                            aggregate_path.read_text(encoding="utf-8")
+                        )
+                    except (OSError, ValueError):
+                        restored = None
+                    if restored is not None:
+                        state["edited_report"] = restored
+                        state["chief_candidate_ref"] = aggregate_ref
+                        state["chief_editor_completion_ref"] = aggregate_ref
+                        state["chief_editor_session_key"] = "chief-editor"
+                        state["approved_module_text"] = {
+                            module_id: self._approved_module_text(state["module_submissions"][module_id])
+                            for module_id in REPORT_MODULE_IDS
+                        }
+                        state["aggregate_refs"] = {
+                            **dict(state.get("aggregate_refs", {})),
+                            "chief": aggregate_ref,
+                        }
+                        return
+        baseline_ref = str(
+            state.get("cross_review_completion_ref")
+            or f"Work/runs/{run_id}/reviews/cross-completion.json"
+        )
         claims = [
             claim
             for module_id in REPORT_MODULE_IDS
             for claim in state["module_submissions"][module_id].claims
         ]
-        claim_ledger = ClaimLedger(
-            claims=claims,
-            sources=SourceLedger(self.service.workspace, state["run_id"]).records,
-        )
-        claim_ledger_ref = f"Work/runs/{state['run_id']}/ledgers/claims.json"
-        self.service.store.write_json(
-            claim_ledger_ref,
-            claim_ledger.model_dump(mode="json"),
-        )
-        self._require_template_skill(state)
-        # This call is the only Chief input boundary: it materializes and
-        # validates the immutable CrossDecisionPack before exposing five
-        # approved ModuleContentView values.
-        editor_input = self._current_chief_editor_input(state)
-        editor_input_path = self.service.store.write_json(
-            f"Work/runs/{state['run_id']}/context/chief-editor-input.json",
-            editor_input.model_dump(mode="json"),
-        )
-        editor_input_ref = editor_input_path.relative_to(self.service.workspace).as_posix()
-        envelope = TaskEnvelope(
-            task_id="chief-edit",
-            run_id=state["run_id"],
-            agent_id="chief-editor",
-            objective="整合已批准五模块，形成自然、丰富、有专业差异且可溯源的完整报告。",
-            input_refs=[
-                editor_input_ref,
-                *special_topic_input_refs,
-            ],
-            constraints=[
-                "不得改变批准事实、数值、风险等级和来源语义",
-                "批准正文的引用与脚注由运行时保护和装配，总编只提交 schema 声明字段",
-                "protected_claim_ids 由 submit_result 根据运行时已批准模块确定性注入；不得自行提交、打开或重传 Claim/Source ledger",
-                "正文不得套用统一的事实-证据-风险模板",
-                "tables 只提交 CrossDecisionPack 与已批准模块声明的 E-* evidence_ids；photo_ids 提交空数组，图片由运行时按 Evidence 绑定装配",
-                "每个 module_narrative 必须逐一保留该模块全部固定 submodule_id 和标题，不得压缩为核心发现摘要",
-                "每个已批准子模块正文必须原样包含在所属 module_narrative 中；总编只能增加章节引言、过渡、交叉引用和综合判断，不能删除或缩写专家正文",
-                "为避免重复输出和截断，每个 module_narrative 使用对应 [[APPROVED_MODULE:2.x]] 标记作为正文基线，可在标记前后增加短过渡；工作流会确定性嵌回批准正文",
-                "chief-editor-input 已完整内联在 input_contract 中，是唯一模块正文入口；不得再打开 Outputs/Modules、Outputs/Reviews 或该合同路径重读",
-                "不得恢复已删除的“跨领域关联风险”模块，也不得提交旧版 synthesis_dispositions 或 synthesis_tables 元数据",
-                "始终提交 assessment_background、findings_overview、regional_executive_summary、risk_panorama、dimension_risk_analysis、data_gap_analysis、improvement_action_plan；仅当 special_topic_plan 存在时提交 special_topic_analysis",
-                "固定综合字段只写正文、禁止自带章节标题",
-                *(
-                    [
-                        "special_topic_analysis 必须严格按 special_topic_plan 输出全部且仅输出 ### 4.n 标题及其正文",
-                        "八个综合章节只用同名 part_id 的 write_result_part 逐项持久化；先用 list_result_parts 确认状态，ready 项不得重写",
-                    ]
-                    if special_topic_plan is not None
-                    else [
-                        "special_topic_plan 为空；禁止提交 special_topic_analysis，最终 Markdown 和 DOCX 必须完全省略第四章",
-                        "七个固定综合章节只用同名 part_id 的 write_result_part 逐项持久化；先用 list_result_parts 确认状态，ready 项不得重写",
-                    ]
-                ),
-                "任何综合节都必须自足地包含归纳事实、综合判断和决策含义；模块号只能用于句末追溯，禁止用‘详见第二章’‘见2.x’或模块编号清单代替分析",
-                "regional_executive_summary 必须按真实区域或责任边界归纳重点、优先行动与验证状态；没有区域划分证据时必须明确边界，禁止编造区域名称",
-                "dimension_risk_analysis 必须比较五个维度的主导风险和决策含义；data_gap_analysis 必须归并重复缺口并说明结论影响与补证优先级；improvement_action_plan 必须给出责任接口、动作、验收指标和剩余风险",
-                *(
-                    [
-                        "第四章不设固定主题；逐节执行 Inputs 专项问题计划中的简要要求，标题、顺序和数量不得自行增删",
-                        "专项问题分析可使用已内联的项目 Knowledge 和模型世界知识补充机理、备选解释、方案权衡、行业实践与验证方法；必须把通用判断与当前项目事实明确区分",
-                    ]
-                    if special_topic_plan is not None
-                    else []
-                ),
-                *self._user_supplement_constraints(
-                    state,
-                    stage="chief_edit",
-                    target_ids={
-                        *REPORT_MODULE_IDS,
-                    },
-                ),
-                "risk_panorama 必须归纳实际主要风险及其判断依据，不得重复五章摘要",
-                "原始表图片由运行时确定性全量装配为最小子模块图证汇总表；不得筛选、遗漏或自行放置",
-                "写作质量只按已内联的模板 Skill quality-rubric 检查，不得从 Knowledge 补充报告规则",
-                "已批准模块正文与当前 Evidence 是项目事实入口；可使用模型世界知识解释机制和方案权衡，但不得新增或改写客户事实",
-                *(
-                    ["这是同一 run 的恢复任务；先调用 list_result_parts 并复用已保存分段"]
-                    if state.get("resume")
-                    else []
-                ),
-                *state.get("chief_editor_constraints", []),
-            ],
-            allowed_outputs=["edited_report_submission"],
-            allowed_tools=[
-                "write_result_part",
-                "list_result_parts",
-                "submit_result",
-            ],
-            input_contract_kind="chief_editor_input",
-            input_contract_ref=editor_input_ref,
-            inline_context="\n\n".join(
-                text
-                for text in (
-                    special_topic_context,
-                    self._role_skill_context(state, "chief-editor"),
+        recovered_submissions: dict[str, tuple[ChiefChapterLaneSubmission, str]] = {}
+        for chapter_id, lane_state in recovered_lanes.items():
+            result_ref = getattr(lane_state, "result_ref", None)
+            if not result_ref:
+                continue
+            try:
+                recovered_payload = ChiefChapterLaneSubmission.model_validate_json(
+                    (self.service.workspace / result_ref).read_text(encoding="utf-8")
                 )
-                if text
-            ),
+            except (OSError, ValueError):
+                continue
+            if (
+                recovered_payload.run_id == run_id
+                and recovered_payload.chapter_id == chapter_id
+                and set(recovered_payload.section_ids) == set(chapter_sections[chapter_id])
+            ):
+                recovered_submissions[chapter_id] = (recovered_payload, result_ref)
+        lane_inputs: dict[str, tuple[ChiefChapterLaneInput, str]] = {}
+        for chapter_id in active_chapters:
+            source_context, source_refs = self._chief_chapter_source_projection(state, chapter_id)
+            contract = ChiefChapterLaneInput(
+                phase="initial",
+                run_id=run_id,
+                subject_ref=baseline_ref,
+                chapter_id=chapter_id,
+                section_ids=list(chapter_sections[chapter_id]),
+                section_bodies={},
+                source_context=source_context,
+                source_refs=source_refs,
+                assigned_findings=[],
+                special_topic_plan=plan,
+                revision=0,
+            )
+            input_ref = (
+                f"Work/runs/{run_id}/context/chief-chapter-{chapter_id}-input.json"
+            )
+            self.service.store.write_json(input_ref, contract.model_dump(mode="json"))
+            lane_inputs[chapter_id] = (contract, input_ref)
+
+        async def run_lane(chapter_id: str) -> tuple[str, ChiefChapterLaneSubmission, str]:
+            if chapter_id in recovered_submissions:
+                submission, output_ref = recovered_submissions[chapter_id]
+                return chapter_id, submission, output_ref
+            contract, input_ref = lane_inputs[chapter_id]
+            task_id = f"chief-chapter-{chapter_id}"
+            envelope = TaskEnvelope(
+                task_id=task_id,
+                run_id=run_id,
+                agent_id="chief-editor",
+                objective=f"仅完成报告第{chapter_id}章的总编正文分段；不得输出其他章节。",
+                input_refs=[input_ref],
+                constraints=[
+                    f"只处理 Chapter {chapter_id} 的 section_ids={','.join(contract.section_ids)}",
+                    "source_context/source_refs 是本 lane 唯一事实边界；不得内联或复述其他章节正文",
+                    "每个分段必须先用 write_result_part 持久化，再提交 part_refs",
+                    (
+                        "Chapter 1/3 的每个 part 只含对应 section body；禁止任何编号 Markdown 标题，运行时负责装配标题"
+                        if chapter_id != "4"
+                        else "Chapter 4 必须按计划保留全部且仅保留 ### 4.n 顶层小节；允许在匹配父节内使用 #### 4.n.m 等从属小标题"
+                    ),
+                    "submit_result 只提交 chief_chapter_lane_submission，不得提交完整 EditedReportSubmission",
+                ],
+                allowed_outputs=["chief_chapter_lane_submission"],
+                allowed_tools=["write_result_part", "list_result_parts", "submit_result"],
+                revision=0,
+                target_submodule_ids=[],
+                input_contract_kind="chief_chapter_lane_input",
+                input_contract_ref=input_ref,
+                artifact_delivery_modes={input_ref: "inline"},
+                inline_context=self._chief_template_skill_context(state, (chapter_id,)),
+            )
+            payload = await self._agent(
+                "chief-editor",
+                envelope,
+                envelope.input_refs,
+                workflow_id,
+                session_key=f"chief-chapter-{chapter_id}",
+            )
+            if not isinstance(payload, ChiefChapterLaneSubmission):
+                raise AgentWorkflowError(
+                    f"chief chapter {chapter_id} returned the wrong payload type"
+                )
+            if (
+                payload.run_id != run_id
+                or payload.chapter_id != chapter_id
+                or set(payload.section_ids) != set(contract.section_ids)
+                or payload.revision != 0
+            ):
+                raise AgentWorkflowError(f"chief chapter {chapter_id} returned an out-of-scope submission")
+            output_ref = f"Work/runs/{run_id}/reviews/chief-chapter-lane-{chapter_id}-r0.json"
+            self.service.store.write_json(output_ref, payload.model_dump(mode="json"))
+            return chapter_id, payload, output_ref
+
+        outcomes = await asyncio.gather(
+            *(run_lane(chapter_id) for chapter_id in active_chapters),
+            return_exceptions=True,
         )
-        payload = await self._agent(
-            "chief-editor",
-            envelope,
-            envelope.input_refs,
-            workflow_id,
-            session_key="chief-editor",
-        )
-        if not isinstance(payload, EditedReportSubmission):
-            raise AgentWorkflowError("chief-editor returned the wrong payload type")
+        successes: dict[str, tuple[ChiefChapterLaneSubmission, str]] = {}
+        failures: dict[str, BaseException] = {}
+        for chapter_id, outcome in zip(active_chapters, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                failures[chapter_id] = outcome
+                self._record_recovery_lane(
+                    state,
+                    stage=f"chief-revision-r{revision_number}",
+                    lane_id=chapter_id,
+                    status="failed",
+                    error=str(outcome),
+                )
+            else:
+                _chapter_id, submission, output_ref = outcome
+                successes[chapter_id] = (submission, output_ref)
+                if chapter_id not in recovered_submissions:
+                    self._record_recovery_lane(
+                        state,
+                        stage="chief",
+                        lane_id=chapter_id,
+                        status="completed",
+                        result_ref=output_ref,
+                        revision=submission.revision,
+                    )
+        if failures:
+            raise sorted(failures.items(), key=lambda item: item[0])[0][1]
+        section_bodies: dict[str, str] = {}
+        lane_refs: dict[str, str] = {}
+        for chapter_id in active_chapters:
+            submission, output_ref = successes[chapter_id]
+            section_bodies.update(
+                self._read_chief_chapter_parts(
+                    state,
+                    chapter_id,
+                    submission,
+                    f"chief-chapter-{chapter_id}",
+                )
+            )
+            lane_refs[chapter_id] = output_ref
         approved_module_text = {
             module_id: self._approved_module_text(state["module_submissions"][module_id])
             for module_id in REPORT_MODULE_IDS
         }
-        payload = expand_approved_module_markers(payload, approved_module_text)
-        payload = payload.model_copy(
-            update={
-                "photo_ids": ReportAssetAssembler.runtime_photo_ids(
-                    state.get("evidence_items", []),
-                    state.get("photo_assets", []),
-                )
-            }
+        special_topic_body = self._render_special_topic_analysis(
+            {
+                section_id: section_bodies[section_id]
+                for section_id in chapter_sections.get("4", ())
+            },
+            plan,
         )
-        validate_editor_protection(payload, claims)
-        state["editor_quality_observations"] = validate_editor_quality(
-            payload, state["module_submissions"]
+        edited = EditedReportSubmission(
+            title="配电安全专家咨询报告",
+            assessment_background=section_bodies["1.1"],
+            findings_overview=section_bodies["1.2"],
+            regional_executive_summary=section_bodies["1.3"],
+            module_narratives=approved_module_text,
+            risk_panorama=section_bodies["3.1.1"],
+            dimension_risk_analysis=section_bodies["3.1.2"],
+            data_gap_analysis=section_bodies["3.1.3"],
+            improvement_action_plan=section_bodies["3.2"],
+            special_topic_plan=plan,
+            special_topic_analysis=special_topic_body,
+            protected_claim_ids=sorted(claim.id for claim in claims),
+            tables=[],
+            photo_ids=ReportAssetAssembler.runtime_photo_ids(
+                state.get("evidence_items", []), state.get("photo_assets", [])
+            ),
+            unresolved_editorial_issues=[],
+            revision_responses=[],
         )
-        candidate_ref = f"Work/runs/{state['run_id']}/edited-revisions/chief-r0.json"
-        envelope_ref = f"Work/runs/{state['run_id']}/context/chief-editor-envelope.json"
-        self.service.store.write_json(candidate_ref, payload.model_dump(mode="json"))
-        self.service.store.write_json(envelope_ref, envelope.model_dump(mode="json"))
-        state["edited_report"] = payload
-        state["chief_editor_envelope"] = envelope
-        state["chief_editor_session_key"] = "chief-editor"
+        candidate_ref = f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
+        self.service.store.write_json(candidate_ref, edited.model_dump(mode="json"))
+        state["edited_report"] = edited
         state["approved_module_text"] = approved_module_text
         state["chief_candidate_ref"] = candidate_ref
-        state["chief_editor_input_ref"] = editor_input_ref
-        state["chief_editor_envelope_ref"] = envelope_ref
-        state["chief_editor_completion_ref"] = (
-            self._write_chief_editor_completion(
-                state,
-                editor_input=editor_input,
-                envelope=envelope,
-            )
+        state["chief_chapter_lane_refs"] = lane_refs
+        state["chief_editor_session_key"] = "chief-editor"
+        state["chief_editor_completion_ref"] = candidate_ref
+        state["aggregate_refs"] = {
+            **dict(state.get("aggregate_refs", {})),
+            "chief": candidate_ref,
+        }
+        self._record_recovery_aggregate(
+            state,
+            stage="chief",
+            lane_ids=list(active_chapters),
+            result_ref=candidate_ref,
+            revision=0,
         )
+
+    async def _chief_edit(self, state: dict, workflow_id: str) -> None:
+        # Chief is a true chapter wave: each lane receives only its chapter
+        # contract and the reducer assembles the full EditedReportSubmission.
+        await self._chief_edit_chapter_lanes(state, workflow_id)
 
     @staticmethod
     def _final_report_section_values(
@@ -5653,27 +6267,1036 @@ class ReportWorkflowRunner:
             "changed_contract_fields": changed_contract_fields,
         }
 
+    def _final_chapter_section_bodies(
+        self,
+        edited: EditedReportSubmission,
+        chapter_id: str,
+    ) -> dict[str, str]:
+        values = {
+            "1.1": edited.assessment_background,
+            "1.2": edited.findings_overview,
+            "1.3": edited.regional_executive_summary,
+            "3.1.1": edited.risk_panorama,
+            "3.1.2": edited.dimension_risk_analysis,
+            "3.1.3": edited.data_gap_analysis,
+            "3.2": edited.improvement_action_plan,
+        }
+        if chapter_id == "4":
+            plan = edited.special_topic_plan
+            if plan is None or edited.special_topic_analysis is None:
+                raise AgentWorkflowError("Final Chapter 4 lane requires an active special topic")
+            return self._split_special_topic_analysis(
+                edited.special_topic_analysis,
+                plan,
+                allow_single_body=len(plan.sections) == 1,
+            )
+        sections = CHAPTER1_SECTION_IDS if chapter_id == "1" else CHAPTER3_SECTION_IDS
+        return {section_id: values[section_id] for section_id in sections}
+
+    async def _run_final_chapter_lanes(
+        self,
+        state: dict,
+        workflow_id: str,
+    ) -> None:
+        """Run Final initial/recheck chapter lanes with one final reducer."""
+
+        run_id = str(state["run_id"])
+        active_chapters = self._chapter_lane_ids(state)
+        plan = state.get("special_topic_plan")
+        chapter_sections = {
+            "1": tuple(CHAPTER1_SECTION_IDS),
+            "3": tuple(CHAPTER3_SECTION_IDS),
+            **({"4": chapter_section_ids("4", plan)} if plan is not None else {}),
+        }
+        current = state["edited_report"]
+        claims = [
+            claim
+            for module_id in REPORT_MODULE_IDS
+            for claim in getattr(
+                state.get("module_submissions", {}).get(module_id),
+                "claims",
+                [],
+            )
+        ]
+        subject_ref = str(
+            state.get("chief_candidate_ref")
+            or f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
+        )
+        recovery = self._recovery_store(state)
+        # Initial findings and later verdicts are separate recovery stages.
+        # Never let a terminal verdict overwrite an initial finding lane.
+        recovered_lanes = recovery.load_completed_lanes(
+            "final-initial", list(active_chapters)
+        )
+        recovered_aggregate = recovery.load_aggregate("final")
+        if recovered_aggregate is not None and recovered_aggregate.status == "completed":
+            aggregate_ref = recovered_aggregate.result_ref
+            if aggregate_ref:
+                try:
+                    completion = ReviewCompletionRecord.model_validate_json(
+                        (self.service.workspace / aggregate_ref).read_text(encoding="utf-8")
+                    )
+                    restored_ref = completion.subject_refs[0]
+                    restored = EditedReportSubmission.model_validate_json(
+                        (self.service.workspace / restored_ref).read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError, IndexError):
+                    restored = None
+                    restored_ref = None
+                if restored is not None and restored_ref is not None:
+                    state["edited_report"] = restored
+                    state["chief_candidate_ref"] = restored_ref
+                    state["final_review_completion_ref"] = aggregate_ref
+                    state["final_audit_snapshot_ref"] = state.get("final_audit_snapshot_ref")
+                    state["aggregate_refs"] = {
+                        **dict(state.get("aggregate_refs", {})),
+                        "final": aggregate_ref,
+                    }
+                    return
+        recovered_initial: dict[str, tuple[FinalChapterLaneFindingSubmission, str]] = {}
+        for chapter_id, lane_state in recovered_lanes.items():
+            result_ref = getattr(lane_state, "result_ref", None)
+            if not result_ref:
+                continue
+            try:
+                recovered_payload = FinalChapterLaneFindingSubmission.model_validate_json(
+                    (self.service.workspace / result_ref).read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                continue
+            if (
+                recovered_payload.run_id == run_id
+                and recovered_payload.chapter_id == chapter_id
+                and set(recovered_payload.checked_section_ids) == set(chapter_sections[chapter_id])
+            ):
+                recovered_initial[chapter_id] = (recovered_payload, result_ref)
+        initial_inputs: dict[str, tuple[FinalChapterLaneInput, str]] = {}
+        for chapter_id in active_chapters:
+            contract = FinalChapterLaneInput(
+                phase="initial",
+                run_id=run_id,
+                subject_ref=subject_ref,
+                chapter_id=chapter_id,
+                review_focus=list(final_lane_specialization(chapter_id).review_focus),
+                section_ids=list(chapter_sections[chapter_id]),
+                section_bodies=self._final_chapter_section_bodies(current, chapter_id),
+                required_findings=[],
+                revision_responses=[],
+                special_topic_plan=plan,
+                revision=0,
+            )
+            input_ref = f"Work/runs/{run_id}/context/final-chapter-{chapter_id}-input-r0.json"
+            self.service.store.write_json(input_ref, contract.model_dump(mode="json"))
+            initial_inputs[chapter_id] = (contract, input_ref)
+
+        async def dispatch_final_initial(chapter_id: str):
+            if chapter_id in recovered_initial:
+                payload, output_ref = recovered_initial[chapter_id]
+                return chapter_id, payload, output_ref
+            contract, input_ref = initial_inputs[chapter_id]
+            task_id = f"final-chapter-{chapter_id}-r0"
+            envelope = TaskEnvelope(
+                task_id=task_id,
+                run_id=run_id,
+                agent_id="chief-editor-auditor",
+                objective=f"只审查报告第{chapter_id}章指定小节并提交 lane-local findings。",
+                input_refs=[input_ref],
+                constraints=[
+                    f"只覆盖 Chapter {chapter_id} section_ids={','.join(contract.section_ids)}",
+                    "不得复制其他章节正文、全局 EditedReport 或跨章节 finding",
+                    "提交 final_chapter_lane_finding_submission，findings target_section_ids 必须留在本 lane",
+                ],
+                allowed_outputs=["final_chapter_lane_finding_submission"],
+                allowed_tools=["submit_result"],
+                revision=0,
+                input_contract_kind="final_chapter_lane_input",
+                input_contract_ref=input_ref,
+                artifact_delivery_modes={input_ref: "inline"},
+                inline_context=self._final_template_skill_context(state, chapter_id),
+            )
+            payload = await self._agent(
+                "chief-editor-auditor",
+                envelope,
+                envelope.input_refs,
+                workflow_id,
+                session_key=f"final-chapter-{chapter_id}",
+            )
+            if not isinstance(payload, FinalChapterLaneFindingSubmission):
+                raise AgentWorkflowError(f"final chapter {chapter_id} returned the wrong finding type")
+            if (
+                payload.run_id != run_id
+                or payload.chapter_id != chapter_id
+                or set(payload.checked_section_ids) != set(contract.section_ids)
+            ):
+                raise AgentWorkflowError(f"final chapter {chapter_id} returned an out-of-scope finding lane")
+            output_ref = f"Work/runs/{run_id}/reviews/final-chapter-lane-{chapter_id}-r0.json"
+            self.service.store.write_json(output_ref, payload.model_dump(mode="json"))
+            return chapter_id, payload, output_ref
+
+        initial_results = await asyncio.gather(
+            *(dispatch_final_initial(chapter_id) for chapter_id in active_chapters),
+            return_exceptions=True,
+        )
+        initial_successes: dict[str, tuple[FinalChapterLaneFindingSubmission, str]] = {}
+        initial_failures: dict[str, BaseException] = {}
+        for chapter_id, outcome in zip(active_chapters, initial_results, strict=True):
+            if isinstance(outcome, BaseException):
+                initial_failures[chapter_id] = outcome
+                self._record_recovery_lane(
+                    state,
+                    stage="final-initial",
+                    lane_id=chapter_id,
+                    status="failed",
+                    error=str(outcome),
+                )
+            else:
+                _chapter_id, payload, output_ref = outcome
+                initial_successes[chapter_id] = (payload, output_ref)
+                if chapter_id not in recovered_initial:
+                    self._record_recovery_lane(
+                        state,
+                        stage="final-initial",
+                        lane_id=chapter_id,
+                        status="completed",
+                        result_ref=output_ref,
+                        revision=0,
+                    )
+        if initial_failures:
+            raise sorted(initial_failures.items(), key=lambda item: item[0])[0][1]
+
+        initial_projection_ref = (
+            f"Work/runs/{run_id}/reviews/final-initial-aggregate.json"
+        )
+        self.service.store.write_json(
+            initial_projection_ref,
+            {
+                "run_id": run_id,
+                "stage": "final-initial",
+                "status": "completed",
+                "lane_ids": list(active_chapters),
+                "result_refs": {
+                    chapter_id: output_ref
+                    for chapter_id, (_payload, output_ref) in initial_successes.items()
+                },
+            },
+        )
+        self._record_recovery_aggregate(
+            state,
+            stage="final-initial",
+            lane_ids=list(active_chapters),
+            result_ref=initial_projection_ref,
+            revision=0,
+        )
+
+        findings_by_chapter = {
+            chapter_id: list(payload.findings)
+            for chapter_id, (payload, _ref) in initial_successes.items()
+        }
+        revision_responses: dict[str, list[RevisionResponse]] = {
+            chapter_id: [] for chapter_id in active_chapters
+        }
+        verdict_payloads: dict[str, tuple[FinalChapterLaneVerdictSubmission, str]] = {}
+        verdict_history: list[tuple[FinalChapterLaneVerdictSubmission, str]] = []
+        pending_by_chapter: dict[str, list] = {}
+        revision_number = 0
+        if any(findings_by_chapter.values()):
+            revision_number = 1
+            affected_chapters = tuple(
+                chapter_id for chapter_id in active_chapters if findings_by_chapter.get(chapter_id)
+            )
+            recovered_chief_revision: dict[str, tuple[ChiefChapterLaneRevisionSubmission, str]] = {}
+            recovered_chief_lanes = recovery.load_completed_lanes(
+                f"chief-revision-r{revision_number}", list(affected_chapters)
+            )
+            recovered_chief_aggregate = recovery.load_aggregate(
+                f"chief-revision-r{revision_number}"
+            )
+            if recovered_chief_aggregate is not None and recovered_chief_aggregate.status == "completed":
+                restored_ref = recovered_chief_aggregate.result_ref
+                if restored_ref:
+                    try:
+                        restored_current = EditedReportSubmission.model_validate_json(
+                            (self.service.workspace / restored_ref).read_text(encoding="utf-8")
+                        )
+                    except (OSError, ValueError):
+                        restored_current = None
+                    if restored_current is not None:
+                        current = restored_current
+                        subject_ref = restored_ref
+                        state["edited_report"] = current
+                        state["chief_candidate_ref"] = subject_ref
+            for chapter_id, lane_state in recovered_chief_lanes.items():
+                result_ref = getattr(lane_state, "result_ref", None)
+                if not result_ref:
+                    continue
+                try:
+                    recovered_payload = ChiefChapterLaneRevisionSubmission.model_validate_json(
+                        (self.service.workspace / result_ref).read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError):
+                    continue
+                if (
+                    recovered_payload.run_id == run_id
+                    and recovered_payload.chapter_id == chapter_id
+                    and recovered_payload.revision == revision_number
+                ):
+                    recovered_chief_revision[chapter_id] = (recovered_payload, result_ref)
+            recovered_recheck: dict[str, tuple[FinalChapterLaneVerdictSubmission, str]] = {}
+            recovered_recheck_lanes = recovery.load_completed_lanes(
+                f"final-recheck-r{revision_number}", list(affected_chapters)
+            )
+            for chapter_id, lane_state in recovered_recheck_lanes.items():
+                result_ref = getattr(lane_state, "result_ref", None)
+                if not result_ref:
+                    continue
+                try:
+                    recovered_payload = FinalChapterLaneVerdictSubmission.model_validate_json(
+                        (self.service.workspace / result_ref).read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError):
+                    continue
+                if (
+                    recovered_payload.run_id == run_id
+                    and recovered_payload.chapter_id == chapter_id
+                    and set(recovered_payload.checked_section_ids) == set(chapter_sections[chapter_id])
+                ):
+                    recovered_recheck[chapter_id] = (recovered_payload, result_ref)
+            revised_parts: dict[str, dict[str, str]] = {}
+            chief_revision_results: dict[str, tuple[ChiefChapterLaneRevisionSubmission, str]] = {}
+
+            async def dispatch_chief_revision(chapter_id: str):
+                findings = findings_by_chapter[chapter_id]
+                if not findings:
+                    return chapter_id, None, None
+                if chapter_id in recovered_chief_revision:
+                    recovered_payload, recovered_ref = recovered_chief_revision[chapter_id]
+                    parts = self._read_chief_chapter_parts(
+                        state,
+                        chapter_id,
+                        recovered_payload,
+                        f"chief-chapter-{chapter_id}-r{revision_number}",
+                    )
+                    return chapter_id, recovered_payload, recovered_ref, parts
+                section_bodies = self._final_chapter_section_bodies(current, chapter_id)
+                source_context, source_refs = self._chief_chapter_source_projection(state, chapter_id)
+                contract = ChiefChapterLaneInput(
+                    phase="revision",
+                    run_id=run_id,
+                    subject_ref=subject_ref,
+                    chapter_id=chapter_id,
+                    section_ids=list(chapter_sections[chapter_id]),
+                    section_bodies=section_bodies,
+                    source_context=source_context,
+                    source_refs=source_refs,
+                    assigned_findings=findings,
+                    special_topic_plan=plan,
+                    revision=revision_number,
+                )
+                input_ref = f"Work/runs/{run_id}/context/chief-chapter-{chapter_id}-input-r{revision_number}.json"
+                self.service.store.write_json(input_ref, contract.model_dump(mode="json"))
+                task_id = f"chief-chapter-{chapter_id}-r{revision_number}"
+                envelope = TaskEnvelope(
+                    task_id=task_id,
+                    run_id=run_id,
+                    agent_id="chief-editor",
+                    objective=f"只修订 Chapter {chapter_id} 被 Final 指定的 finding 小节。",
+                    input_refs=[input_ref],
+                    constraints=[
+                        "只提交 chief_chapter_lane_revision_submission，禁止提交完整报告",
+                        "part_refs 只能覆盖本章；revision_responses 必须对应本章 findings",
+                        (
+                            "Chapter 1/3 的每个 part 只含对应 section body；禁止任何编号 Markdown 标题，运行时负责装配标题"
+                            if chapter_id != "4"
+                            else "Chapter 4 必须按计划保留全部且仅保留 ### 4.n 顶层小节；允许在匹配父节内使用 #### 4.n.m 等从属小标题"
+                        ),
+                    ],
+                    allowed_outputs=["chief_chapter_lane_revision_submission"],
+                    allowed_tools=["write_result_part", "list_result_parts", "submit_result"],
+                    revision=revision_number,
+                    prior_result_ref=subject_ref,
+                    input_contract_kind="chief_chapter_lane_input",
+                    input_contract_ref=input_ref,
+                    artifact_delivery_modes={input_ref: "inline"},
+                    inline_context=self._chief_template_skill_context(
+                        state, (chapter_id,)
+                    ),
+                )
+                payload = await self._agent(
+                    "chief-editor",
+                    envelope,
+                    envelope.input_refs,
+                    workflow_id,
+                    session_key=f"chief-chapter-{chapter_id}",
+                )
+                if not isinstance(payload, ChiefChapterLaneRevisionSubmission):
+                    raise AgentWorkflowError(f"chief chapter {chapter_id} returned the wrong revision type")
+                if (
+                    payload.run_id != run_id
+                    or payload.base_subject_ref != subject_ref
+                    or payload.chapter_id != chapter_id
+                    or payload.revision != revision_number
+                ):
+                    raise AgentWorkflowError(f"chief chapter {chapter_id} revision identity mismatch")
+                parts = self._read_chief_chapter_parts(
+                    state,
+                    chapter_id,
+                    payload,
+                    task_id,
+                )
+                output_ref = f"Work/runs/{run_id}/reviews/chief-chapter-lane-{chapter_id}-r{revision_number}.json"
+                self.service.store.write_json(output_ref, payload.model_dump(mode="json"))
+                return chapter_id, payload, output_ref, parts
+
+            chief_results = await asyncio.gather(
+                *(dispatch_chief_revision(chapter_id) for chapter_id in active_chapters),
+                return_exceptions=True,
+            )
+            chief_failures: dict[str, BaseException] = {}
+            for chapter_id, outcome in zip(active_chapters, chief_results, strict=True):
+                if isinstance(outcome, BaseException):
+                    chief_failures[chapter_id] = outcome
+                    continue
+                if outcome[1] is None:
+                    continue
+                _chapter_id, payload, output_ref, parts = outcome
+                chief_revision_results[chapter_id] = (payload, output_ref)
+                revised_parts[chapter_id] = parts
+                revision_responses[chapter_id] = list(payload.revision_responses)
+                if chapter_id not in recovered_chief_revision:
+                    self._record_recovery_lane(
+                        state,
+                        stage=f"chief-revision-r{revision_number}",
+                        lane_id=chapter_id,
+                        status="completed",
+                        result_ref=output_ref,
+                        revision=revision_number,
+                    )
+            if chief_failures:
+                raise sorted(chief_failures.items(), key=lambda item: item[0])[0][1]
+
+            updates: dict[str, str] = {}
+            for chapter_id, parts in revised_parts.items():
+                updates.update(parts)
+            if updates:
+                field_for_section = {
+                    "1.1": "assessment_background",
+                    "1.2": "findings_overview",
+                    "1.3": "regional_executive_summary",
+                    "3.1.1": "risk_panorama",
+                    "3.1.2": "dimension_risk_analysis",
+                    "3.1.3": "data_gap_analysis",
+                    "3.2": "improvement_action_plan",
+                }
+                current = current.model_copy(
+                    update={
+                        **{
+                            field_for_section[section_id]: body
+                            for section_id, body in updates.items()
+                            if section_id in field_for_section
+                        },
+                        **(
+                            {
+                                "special_topic_analysis": self._render_special_topic_analysis(
+                                    revised_parts["4"],
+                                    plan,
+                                )
+                            }
+                            if "4" in revised_parts
+                            else {}
+                        ),
+                    }
+                )
+                subject_ref = f"Work/runs/{run_id}/edited-revisions/chief-r{revision_number}.json"
+                self.service.store.write_json(subject_ref, current.model_dump(mode="json"))
+                state["edited_report"] = current
+                state["chief_candidate_ref"] = subject_ref
+                self._record_recovery_aggregate(
+                    state,
+                    stage=f"chief-revision-r{revision_number}",
+                    lane_ids=[
+                        chapter_id
+                        for chapter_id in active_chapters
+                        if findings_by_chapter.get(chapter_id)
+                    ],
+                    result_ref=subject_ref,
+                    revision=revision_number,
+                )
+
+            async def dispatch_final_recheck(chapter_id: str):
+                findings = findings_by_chapter[chapter_id]
+                if not findings:
+                    return chapter_id, None, None
+                if chapter_id in recovered_recheck:
+                    recovered_payload, recovered_ref = recovered_recheck[chapter_id]
+                    return chapter_id, recovered_payload, recovered_ref
+                current_bodies = self._final_chapter_section_bodies(current, chapter_id)
+                changed_ids = {
+                    section_id
+                    for finding in findings
+                    for section_id in finding.target_section_ids
+                }
+                contract = FinalChapterLaneInput(
+                    phase="recheck",
+                    run_id=run_id,
+                    subject_ref=subject_ref,
+                    chapter_id=chapter_id,
+                    review_focus=list(final_lane_specialization(chapter_id).review_focus),
+                    section_ids=list(chapter_sections[chapter_id]),
+                    section_bodies={
+                        section_id: body
+                        for section_id, body in current_bodies.items()
+                        if section_id in changed_ids
+                    },
+                    unchanged_section_sha256={
+                        section_id: hashlib.sha256(body.encode("utf-8")).hexdigest()
+                        for section_id, body in current_bodies.items()
+                        if section_id not in changed_ids
+                    },
+                    required_findings=findings,
+                    revision_responses=revision_responses[chapter_id],
+                    special_topic_plan=plan,
+                    revision=revision_number,
+                )
+                input_ref = f"Work/runs/{run_id}/context/final-chapter-{chapter_id}-input-r{revision_number}.json"
+                self.service.store.write_json(input_ref, contract.model_dump(mode="json"))
+                task_id = f"final-chapter-{chapter_id}-r{revision_number}"
+                envelope = TaskEnvelope(
+                    task_id=task_id,
+                    run_id=run_id,
+                    agent_id="chief-editor-auditor",
+                    objective=f"只复核 Chapter {chapter_id} 的 assigned findings 并提交 verdicts。",
+                    input_refs=[input_ref],
+                    constraints=[
+                        "只提交 final_chapter_lane_verdict_submission",
+                        "verdicts 必须覆盖该章全部 required_findings，new_findings 只能留在该章",
+                    ],
+                    allowed_outputs=["final_chapter_lane_verdict_submission"],
+                    allowed_tools=["submit_result"],
+                    revision=revision_number,
+                    prior_result_ref=subject_ref,
+                    input_contract_kind="final_chapter_lane_input",
+                    input_contract_ref=input_ref,
+                    artifact_delivery_modes={input_ref: "inline"},
+                    inline_context=self._final_template_skill_context(state, chapter_id),
+                )
+                payload = await self._agent(
+                    "chief-editor-auditor",
+                    envelope,
+                    envelope.input_refs,
+                    workflow_id,
+                    session_key=f"final-chapter-{chapter_id}",
+                )
+                if not isinstance(payload, FinalChapterLaneVerdictSubmission):
+                    raise AgentWorkflowError(f"final chapter {chapter_id} returned the wrong verdict type")
+                expected_ids = {finding.id for finding in findings}
+                actual_ids = {verdict.finding_id for verdict in payload.verdicts}
+                if (
+                    payload.run_id != run_id
+                    or payload.chapter_id != chapter_id
+                    or set(payload.checked_section_ids) != set(contract.section_ids)
+                    or actual_ids != expected_ids
+                ):
+                    raise AgentWorkflowError(f"final chapter {chapter_id} verdict does not close its lane findings")
+                output_ref = f"Work/runs/{run_id}/reviews/final-chapter-lane-{chapter_id}-r{revision_number}.json"
+                self.service.store.write_json(output_ref, payload.model_dump(mode="json"))
+                return chapter_id, payload, output_ref
+
+            verdict_results = await asyncio.gather(
+                *(dispatch_final_recheck(chapter_id) for chapter_id in active_chapters),
+                return_exceptions=True,
+            )
+            verdict_failures: dict[str, BaseException] = {}
+            for chapter_id, outcome in zip(active_chapters, verdict_results, strict=True):
+                if isinstance(outcome, BaseException):
+                    verdict_failures[chapter_id] = outcome
+                    continue
+                if outcome[1] is not None:
+                    _chapter_id, payload, output_ref = outcome
+                    verdict_payloads[chapter_id] = (payload, output_ref)
+                    verdict_history.append((payload, output_ref))
+                    if chapter_id not in recovered_recheck:
+                        self._record_recovery_lane(
+                            state,
+                            stage=f"final-recheck-r{revision_number}",
+                            lane_id=chapter_id,
+                            status="completed",
+                            result_ref=output_ref,
+                            revision=revision_number,
+                        )
+            if verdict_failures:
+                raise sorted(verdict_failures.items(), key=lambda item: item[0])[0][1]
+
+            # Keep open/escalated findings and genuine lane-local regressions
+            # for the next bounded revision wave.  A resolved verdict is the
+            # only terminal finding disposition.
+            for chapter_id, findings in findings_by_chapter.items():
+                payload = verdict_payloads.get(chapter_id, (None, None))[0]
+                if payload is None:
+                    continue
+                verdict_by_id = {verdict.finding_id: verdict for verdict in payload.verdicts}
+                pending = [
+                    finding
+                    for finding in findings
+                    if verdict_by_id[finding.id].verdict != "resolved"
+                ]
+                pending.extend(payload.new_findings)
+                if pending:
+                    pending_by_chapter[chapter_id] = pending
+            recheck_projection_ref = (
+                f"Work/runs/{run_id}/reviews/final-recheck-r{revision_number}-aggregate.json"
+            )
+            self.service.store.write_json(
+                recheck_projection_ref,
+                {
+                    "run_id": run_id,
+                    "stage": f"final-recheck-r{revision_number}",
+                    "status": "completed",
+                    "lane_ids": list(affected_chapters),
+                    "result_ref": subject_ref,
+                },
+            )
+            self._record_recovery_aggregate(
+                state,
+                stage=f"final-recheck-r{revision_number}",
+                lane_ids=list(affected_chapters),
+                result_ref=recheck_projection_ref,
+                revision=revision_number,
+            )
+
+        # Genuine regressions and open/escalated findings trigger another
+        # affected-only parallel wave.  The bound prevents an endless provider
+        # loop; callers can route a repeated failure through the existing Main
+        # exception path instead of replaying arbitrary provider turns.
+        max_rounds = max(1, int(state.get("max_final_review_rounds", 3)))
+        while pending_by_chapter:
+            if revision_number >= max_rounds:
+                raise AgentWorkflowError(
+                    "final chapter review exceeded the maximum revision rounds"
+                )
+            revision_number += 1
+            (
+                current,
+                subject_ref,
+                pending_by_chapter,
+                followup_verdicts,
+            ) = await self._run_final_followup_round(
+                state,
+                workflow_id,
+                current=current,
+                subject_ref=subject_ref,
+                pending_by_chapter=pending_by_chapter,
+                revision_number=revision_number,
+                chapter_sections=chapter_sections,
+                active_chapters=active_chapters,
+                plan=plan,
+            )
+            verdict_payloads.update(followup_verdicts)
+            verdict_history.extend(followup_verdicts.values())
+
+        state["edited_report"] = current
+        state["final_review_restart_round"] = revision_number or 1
+        completion = ReviewCompletionRecord(
+            lifecycle="final",
+            run_id=run_id,
+            reviewer_agent_id="chief-editor-auditor",
+            reviewer_session_key="final-chapter-wave",
+            subject_refs=[subject_ref],
+            finding_refs=[ref for _payload, ref in initial_successes.values()],
+            verdict_refs=[ref for _payload, ref in verdict_history],
+            resolved_finding_ids=sorted(
+                {
+                    finding.id
+                    for findings in findings_by_chapter.values()
+                    for finding in findings
+                }
+                | {
+                    finding.id
+                    for payload, _ref in verdict_history
+                    for finding in payload.new_findings
+                }
+            ),
+        )
+        completion_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
+        self.service.store.write_json(completion_ref, completion.model_dump(mode="json"))
+        # Keep a typed business snapshot for delivery and inspection.
+        canonical_ref = f"Work/runs/{run_id}/validation/report-chief-candidate-r{revision_number}.md"
+        try:
+            _, canonical = self._delivery_projection(state, current, claims)
+            self._validate_final_report_structure(
+                state,
+                canonical,
+                f"chief-candidate-r{revision_number}",
+            )
+        except AgentWorkflowError:
+            raise
+        validation_ref = f"Work/runs/{run_id}/reviews/report-integrity-chief-candidate-r{revision_number}.json"
+        snapshot_ref = f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
+        snapshot = FinalAuditSnapshot(
+            run_id=run_id,
+            subject_ref=subject_ref,
+            subject_revision=revision_number,
+            canonical_markdown_ref=canonical_ref,
+            validation_report_ref=validation_ref,
+            completion_ref=completion_ref,
+        )
+        self.service.store.write_json(snapshot_ref, snapshot.model_dump(mode="json"))
+        state["final_review_completion_ref"] = completion_ref
+        state["final_audit_snapshot_ref"] = snapshot_ref
+        state["final_residual_risks"] = [
+            risk
+            for payload, _ref in initial_successes.values()
+            for risk in payload.residual_risks
+        ]
+        state["final_chapter_lane_refs"] = {
+            chapter_id: ref for chapter_id, (_payload, ref) in initial_successes.items()
+        }
+        state["aggregate_refs"] = {
+            **dict(state.get("aggregate_refs", {})),
+            "final": completion_ref,
+        }
+        # Final aggregate consumes one terminal lane projection per chapter;
+        # phase-specific initial/recheck records above remain immutable history.
+        for chapter_id in active_chapters:
+            terminal_ref = (
+                verdict_payloads.get(chapter_id, (None, None))[1]
+                or initial_successes.get(chapter_id, (None, None))[1]
+            )
+            if terminal_ref:
+                self._record_recovery_lane(
+                    state,
+                    stage="final",
+                    lane_id=chapter_id,
+                    status="completed",
+                    result_ref=terminal_ref,
+                    revision=revision_number,
+                )
+        self._record_recovery_aggregate(
+            state,
+            stage="final",
+            lane_ids=list(active_chapters),
+            result_ref=completion_ref,
+            revision=revision_number,
+        )
+
+    async def _run_final_followup_round(
+        self,
+        state: dict,
+        workflow_id: str,
+        *,
+        current: EditedReportSubmission,
+        subject_ref: str,
+        pending_by_chapter: dict[str, list],
+        revision_number: int,
+        chapter_sections: dict[str, tuple[str, ...]],
+        active_chapters: tuple[str, ...],
+        plan: SpecialTopicPlan | None,
+    ) -> tuple[
+        EditedReportSubmission,
+        str,
+        dict[str, list],
+        dict[str, tuple[FinalChapterLaneVerdictSubmission, str]],
+    ]:
+        """Run one affected-only Chief revision + Final recheck wave.
+
+        This helper is deliberately phase-specific in RecoveryStateStore: a
+        retry or crash in round N never makes the initial finding lane appear
+        complete, and unaffected chapters are not dispatched again.
+        """
+
+        run_id = str(state["run_id"])
+        affected = tuple(chapter_id for chapter_id in active_chapters if pending_by_chapter.get(chapter_id))
+        revised_parts: dict[str, dict[str, str]] = {}
+        revision_responses: dict[str, list[RevisionResponse]] = {
+            chapter_id: [] for chapter_id in affected
+        }
+
+        async def dispatch_chief(chapter_id: str):
+            findings = pending_by_chapter[chapter_id]
+            section_bodies = self._final_chapter_section_bodies(current, chapter_id)
+            source_context, source_refs = self._chief_chapter_source_projection(state, chapter_id)
+            contract = ChiefChapterLaneInput(
+                phase="revision",
+                run_id=run_id,
+                subject_ref=subject_ref,
+                chapter_id=chapter_id,
+                section_ids=list(chapter_sections[chapter_id]),
+                section_bodies=section_bodies,
+                source_context=source_context,
+                source_refs=source_refs,
+                assigned_findings=findings,
+                special_topic_plan=plan,
+                revision=revision_number,
+            )
+            input_ref = (
+                f"Work/runs/{run_id}/context/chief-chapter-{chapter_id}-input-"
+                f"r{revision_number}.json"
+            )
+            self.service.store.write_json(input_ref, contract.model_dump(mode="json"))
+            task_id = f"chief-chapter-{chapter_id}-r{revision_number}"
+            envelope = TaskEnvelope(
+                task_id=task_id,
+                run_id=run_id,
+                agent_id="chief-editor",
+                objective=f"只修订 Chapter {chapter_id} 被 Final 指定的 finding 小节。",
+                input_refs=[input_ref],
+                constraints=[
+                    "只提交 chief_chapter_lane_revision_submission，禁止提交完整报告",
+                    "part_refs 只能覆盖本章；revision_responses 必须对应本章 findings",
+                    (
+                        "Chapter 1/3 的每个 part 只含对应 section body；禁止任何编号 Markdown 标题，运行时负责装配标题"
+                        if chapter_id != "4"
+                        else "Chapter 4 必须按计划保留全部且仅保留 ### 4.n 顶层小节；允许在匹配父节内使用 #### 4.n.m 等从属小标题"
+                    ),
+                ],
+                allowed_outputs=["chief_chapter_lane_revision_submission"],
+                allowed_tools=["write_result_part", "list_result_parts", "submit_result"],
+                revision=revision_number,
+                prior_result_ref=subject_ref,
+                input_contract_kind="chief_chapter_lane_input",
+                input_contract_ref=input_ref,
+                artifact_delivery_modes={input_ref: "inline"},
+                inline_context=self._chief_template_skill_context(
+                    state, (chapter_id,)
+                ),
+            )
+            payload = await self._agent(
+                "chief-editor",
+                envelope,
+                envelope.input_refs,
+                workflow_id,
+                session_key=f"chief-chapter-{chapter_id}",
+            )
+            if not isinstance(payload, ChiefChapterLaneRevisionSubmission):
+                raise AgentWorkflowError(f"chief chapter {chapter_id} returned the wrong revision type")
+            if (
+                payload.run_id != run_id
+                or payload.base_subject_ref != subject_ref
+                or payload.chapter_id != chapter_id
+                or payload.revision != revision_number
+            ):
+                raise AgentWorkflowError(f"chief chapter {chapter_id} revision identity mismatch")
+            parts = self._read_chief_chapter_parts(state, chapter_id, payload, task_id)
+            output_ref = (
+                f"Work/runs/{run_id}/reviews/chief-chapter-lane-"
+                f"{chapter_id}-r{revision_number}.json"
+            )
+            self.service.store.write_json(output_ref, payload.model_dump(mode="json"))
+            return chapter_id, payload, output_ref, parts
+
+        chief_results = await asyncio.gather(
+            *(dispatch_chief(chapter_id) for chapter_id in affected),
+            return_exceptions=True,
+        )
+        chief_failures = [result for result in chief_results if isinstance(result, BaseException)]
+        if chief_failures:
+            raise sorted(chief_failures, key=str)[0]
+        for chapter_id, payload, output_ref, parts in chief_results:
+            revised_parts[chapter_id] = parts
+            revision_responses[chapter_id] = list(payload.revision_responses)
+            self._record_recovery_lane(
+                state,
+                stage=f"chief-revision-r{revision_number}",
+                lane_id=chapter_id,
+                status="completed",
+                result_ref=output_ref,
+                revision=revision_number,
+            )
+
+        updates = {
+            section_id: body
+            for chapter_parts in revised_parts.values()
+            for section_id, body in chapter_parts.items()
+        }
+        field_for_section = {
+            "1.1": "assessment_background",
+            "1.2": "findings_overview",
+            "1.3": "regional_executive_summary",
+            "3.1.1": "risk_panorama",
+            "3.1.2": "dimension_risk_analysis",
+            "3.1.3": "data_gap_analysis",
+            "3.2": "improvement_action_plan",
+        }
+        current = current.model_copy(
+            update={
+                **{
+                    field_for_section[section_id]: body
+                    for section_id, body in updates.items()
+                    if section_id in field_for_section
+                },
+                **(
+                    {"special_topic_analysis": self._render_special_topic_analysis(revised_parts["4"], plan)}
+                    if "4" in revised_parts
+                    else {}
+                ),
+            }
+        )
+        subject_ref = f"Work/runs/{run_id}/edited-revisions/chief-r{revision_number}.json"
+        self.service.store.write_json(subject_ref, current.model_dump(mode="json"))
+        state["edited_report"] = current
+        state["chief_candidate_ref"] = subject_ref
+        chief_aggregate_ref = (
+            f"Work/runs/{run_id}/reviews/chief-revision-r{revision_number}-aggregate.json"
+        )
+        self.service.store.write_json(
+            chief_aggregate_ref,
+            {
+                "run_id": run_id,
+                "stage": f"chief-revision-r{revision_number}",
+                "status": "completed",
+                "lane_ids": list(affected),
+                "result_ref": subject_ref,
+            },
+        )
+        self._record_recovery_aggregate(
+            state,
+            stage=f"chief-revision-r{revision_number}",
+            lane_ids=list(affected),
+            result_ref=subject_ref,
+            revision=revision_number,
+        )
+
+        async def dispatch_recheck(chapter_id: str):
+            findings = pending_by_chapter[chapter_id]
+            current_bodies = self._final_chapter_section_bodies(current, chapter_id)
+            changed_ids = {
+                section_id
+                for finding in findings
+                for section_id in finding.target_section_ids
+            }
+            contract = FinalChapterLaneInput(
+                phase="recheck",
+                run_id=run_id,
+                subject_ref=subject_ref,
+                chapter_id=chapter_id,
+                review_focus=list(final_lane_specialization(chapter_id).review_focus),
+                section_ids=list(chapter_sections[chapter_id]),
+                section_bodies={
+                    section_id: body
+                    for section_id, body in current_bodies.items()
+                    if section_id in changed_ids
+                },
+                unchanged_section_sha256={
+                    section_id: hashlib.sha256(body.encode("utf-8")).hexdigest()
+                    for section_id, body in current_bodies.items()
+                    if section_id not in changed_ids
+                },
+                required_findings=findings,
+                revision_responses=revision_responses[chapter_id],
+                special_topic_plan=plan,
+                revision=revision_number,
+            )
+            input_ref = (
+                f"Work/runs/{run_id}/context/final-chapter-{chapter_id}-input-"
+                f"r{revision_number}.json"
+            )
+            self.service.store.write_json(input_ref, contract.model_dump(mode="json"))
+            task_id = f"final-chapter-{chapter_id}-r{revision_number}"
+            envelope = TaskEnvelope(
+                task_id=task_id,
+                run_id=run_id,
+                agent_id="chief-editor-auditor",
+                objective=f"只复核 Chapter {chapter_id} 的 assigned findings 并提交 verdicts。",
+                input_refs=[input_ref],
+                constraints=[
+                    "只提交 final_chapter_lane_verdict_submission",
+                    "verdicts 必须覆盖该章全部 required_findings，new_findings 只能留在该章",
+                ],
+                allowed_outputs=["final_chapter_lane_verdict_submission"],
+                allowed_tools=["submit_result"],
+                revision=revision_number,
+                prior_result_ref=subject_ref,
+                input_contract_kind="final_chapter_lane_input",
+                input_contract_ref=input_ref,
+                artifact_delivery_modes={input_ref: "inline"},
+                inline_context=self._final_template_skill_context(state, chapter_id),
+            )
+            payload = await self._agent(
+                "chief-editor-auditor",
+                envelope,
+                envelope.input_refs,
+                workflow_id,
+                session_key=f"final-chapter-{chapter_id}",
+            )
+            if not isinstance(payload, FinalChapterLaneVerdictSubmission):
+                raise AgentWorkflowError(f"final chapter {chapter_id} returned the wrong verdict type")
+            expected_ids = {finding.id for finding in findings}
+            actual_ids = {verdict.finding_id for verdict in payload.verdicts}
+            if (
+                payload.run_id != run_id
+                or payload.chapter_id != chapter_id
+                or set(payload.checked_section_ids) != set(contract.section_ids)
+                or actual_ids != expected_ids
+            ):
+                raise AgentWorkflowError(f"final chapter {chapter_id} verdict does not cover its lane findings")
+            output_ref = (
+                f"Work/runs/{run_id}/reviews/final-chapter-lane-"
+                f"{chapter_id}-r{revision_number}.json"
+            )
+            self.service.store.write_json(output_ref, payload.model_dump(mode="json"))
+            return chapter_id, payload, output_ref
+
+        verdict_results = await asyncio.gather(
+            *(dispatch_recheck(chapter_id) for chapter_id in affected),
+            return_exceptions=True,
+        )
+        failures = [result for result in verdict_results if isinstance(result, BaseException)]
+        if failures:
+            raise sorted(failures, key=str)[0]
+        next_pending: dict[str, list] = {}
+        verdict_payloads: dict[str, tuple[FinalChapterLaneVerdictSubmission, str]] = {}
+        for chapter_id, payload, output_ref in verdict_results:
+            verdict_payloads[chapter_id] = (payload, output_ref)
+            self._record_recovery_lane(
+                state,
+                stage=f"final-recheck-r{revision_number}",
+                lane_id=chapter_id,
+                status="completed",
+                result_ref=output_ref,
+                revision=revision_number,
+            )
+            verdict_by_id = {verdict.finding_id: verdict for verdict in payload.verdicts}
+            pending = [
+                finding
+                for finding in pending_by_chapter[chapter_id]
+                if verdict_by_id[finding.id].verdict != "resolved"
+            ]
+            pending.extend(payload.new_findings)
+            if pending:
+                next_pending[chapter_id] = pending
+        recheck_aggregate_ref = (
+            f"Work/runs/{run_id}/reviews/final-recheck-r{revision_number}-aggregate.json"
+        )
+        self.service.store.write_json(
+            recheck_aggregate_ref,
+            {
+                "run_id": run_id,
+                "stage": f"final-recheck-r{revision_number}",
+                "status": "completed",
+                "lane_ids": list(affected),
+                "result_ref": subject_ref,
+            },
+        )
+        self._record_recovery_aggregate(
+            state,
+            stage=f"final-recheck-r{revision_number}",
+            lane_ids=list(affected),
+            result_ref=recheck_aggregate_ref,
+            revision=revision_number,
+        )
+        return current, subject_ref, next_pending, verdict_payloads
+
     async def _final_review_loop(
         self,
         state: dict,
         workflow_id: str,
         *,
-        chief_envelope: TaskEnvelope,
+        chief_envelope: TaskEnvelope | None,
         chief_session_key: str,
         approved_module_text: dict[str, str],
         claims: list,
         aggregate_mode: bool = False,
     ) -> None:
-        await run_final_review(
-            self,
-            state,
-            workflow_id,
-            chief_envelope=chief_envelope,
-            chief_session_key=chief_session_key,
-            approved_module_text=approved_module_text,
-            claims=claims,
-            aggregate_mode=aggregate_mode,
-        )
+        await self._run_final_chapter_lanes(state, workflow_id)
 
     @staticmethod
     def _approved_module_text(module: ModuleSubmission) -> str:
@@ -5878,7 +7501,7 @@ class ReportWorkflowRunner:
             completion_ref=completion_ref,
             lifecycle="final",
             reviewer_agent_id="chief-editor-auditor",
-            reviewer_session_key="chief-editor-auditor",
+            reviewer_session_key=FINAL_REVIEW_COMPLETION_SESSION_KEYS,
         )
         if len(completion.subject_refs) != 1:
             raise AgentWorkflowError("final audit completion must bind exactly one subject")
@@ -5909,16 +7532,14 @@ class ReportWorkflowRunner:
             validation_ref = (
                 f"Work/runs/{run_id}/reviews/report-integrity-final-audit-legacy.json"
             )
-            canonical_path = self.service.store.write_text(canonical_ref, canonical)
-            canonical_sha256 = hashlib.sha256(canonical_path.read_bytes()).hexdigest()
-            validation_path = self.service.store.write_json(
+            self.service.store.write_text(canonical_ref, canonical)
+            self.service.store.write_json(
                 validation_ref,
                 ValidationReport(
                     validation_protocol_version=2,
                     run_id=run_id,
                     subject_ref=canonical_ref,
                     subject_revision=subject_revision,
-                    content_sha256=canonical_sha256,
                     validator="final-audit-legacy-snapshot/v2",
                     check_ids=["final_report.fixed_sections_and_markdown"],
                     passed=True,
@@ -5930,40 +7551,25 @@ class ReportWorkflowRunner:
                     run_id=run_id,
                     subject_ref=subject_ref,
                     subject_revision=subject_revision,
-                    subject_sha256=hashlib.sha256(
-                        subject_path.read_bytes()
-                    ).hexdigest(),
                     canonical_markdown_ref=canonical_ref,
-                    canonical_markdown_sha256=canonical_sha256,
                     validation_report_ref=validation_ref,
-                    validation_report_sha256=hashlib.sha256(
-                        validation_path.read_bytes()
-                    ).hexdigest(),
                     completion_ref=completion_ref,
-                    completion_sha256=hashlib.sha256(
-                        (self.service.workspace / completion_ref).read_bytes()
-                    ).hexdigest(),
                 ).model_dump(mode="json"),
             )
         snapshot = FinalAuditSnapshot.model_validate_json(
             snapshot_path.read_text(encoding="utf-8")
         )
-        expected_refs = {
-            snapshot.subject_ref: snapshot.subject_sha256,
-            snapshot.canonical_markdown_ref: snapshot.canonical_markdown_sha256,
-            snapshot.validation_report_ref: snapshot.validation_report_sha256,
-            snapshot.completion_ref: snapshot.completion_sha256,
-        }
         run_root = (self.service.workspace / f"Work/runs/{run_id}").resolve()
-        for ref, expected_sha256 in expected_refs.items():
+        for ref in (
+            snapshot.subject_ref,
+            snapshot.canonical_markdown_ref,
+            snapshot.validation_report_ref,
+            snapshot.completion_ref,
+        ):
             path = (self.service.workspace / ref).resolve()
-            if (
-                not path.is_relative_to(run_root)
-                or not path.is_file()
-                or hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha256
-            ):
+            if not path.is_relative_to(run_root) or not path.is_file():
                 raise AgentWorkflowError(
-                    f"final audit snapshot artifact changed before delivery: {ref}"
+                    f"final audit snapshot ref is outside the current run: {ref}"
                 )
         if (
             snapshot.run_id != run_id
@@ -5979,19 +7585,16 @@ class ReportWorkflowRunner:
         )
         if (
             not validation.passed
+            or validation.run_id != run_id
             or validation.subject_ref != snapshot.canonical_markdown_ref
             or validation.subject_revision != snapshot.subject_revision
-            or validation.content_sha256 != snapshot.canonical_markdown_sha256
         ):
-            raise AgentWorkflowError("final audit snapshot validation binding is stale")
+            raise AgentWorkflowError("final audit snapshot validation identity is stale")
         _, audited_canonical = self._delivery_projection(state, audited)
-        snapshot_canonical = (
-            self.service.workspace / snapshot.canonical_markdown_ref
-        ).read_text(encoding="utf-8")
-        if audited_canonical != snapshot_canonical:
-            raise AgentWorkflowError(
-                "delivery subject differs from the final audited canonical snapshot"
-            )
+        validate_final_report_markdown(
+            audited_canonical,
+            audited.special_topic_plan,
+        )
         current = state.get("edited_report")
         if (
             current is not None
@@ -6053,7 +7656,6 @@ class ReportWorkflowRunner:
         edited, final_audit_snapshot_ref = self._validated_final_audit_subject(
             state
         )
-        self._validate_module_exports(state, "delivery")
         self._write_handoff_contracts(state)
         state["edited_report"] = edited
         claims = [
@@ -6136,11 +7738,7 @@ class ReportWorkflowRunner:
         template_snapshot = (
             self.service.workspace / f"Work/runs/{state['run_id']}/templates/report_template.docx"
         )
-        (
-            template_snapshot,
-            template_sha256,
-            template_blob_ref,
-        ) = self.service.snapshot_content(
+        self._atomic_copy_file(
             selected_template,
             template_snapshot,
         )
@@ -6155,8 +7753,7 @@ class ReportWorkflowRunner:
                 "source": template_source,
                 "selected_path": selected_template_ref,
                 "snapshot_path": template_snapshot.relative_to(self.service.workspace).as_posix(),
-                "blob_ref": template_blob_ref.as_posix(),
-                "sha256": template_sha256,
+                "storage": "materialized",
             },
         )
         output = (
@@ -6185,7 +7782,6 @@ class ReportWorkflowRunner:
         render_log["template"] = {
             "source": template_source,
             "selected_path": selected_template_ref,
-            "sha256": template_sha256,
         }
         render_log_ref = Path(f"Work/runs/{state['run_id']}/render-log.json")
         self.service.store.write_json(render_log_ref.as_posix(), render_log)
@@ -6198,98 +7794,70 @@ class ReportWorkflowRunner:
                 source_markdown_ref=markdown_path.relative_to(self.service.workspace),
                 output_ref=output.relative_to(self.service.workspace),
                 render_log_ref=render_log_ref,
-                template_sha256=template_sha256,
-                output_sha256=hashlib.sha256(output.read_bytes()).hexdigest(),
                 protected_prose_verified=True,
             ).model_dump(mode="json"),
         )
-        receipt = ProjectDelivery(
-            self._delivery_root(self.service.workspace, state["run_id"])
-        ).deliver(
-            DeliveryPackage(
-                # One run owns one immutable report-version namespace.  The
-                # shared human-facing output path is bound separately by the
-                # output-owner contract after verified completion.
-                report_id=state["run_id"],
-                version=state["run_id"],
-                module_files={
-                    module_id: self.service.workspace / f"Outputs/Modules/{module_id}.md"
-                    for module_id in REPORT_MODULE_IDS
-                },
-                final_docx=output,
-                report_state=report_state_path,
-                source_index=source_index_path,
-                source_index_docx=source_index_docx_path,
+        public_markdown = self.service.store.write_text(
+            "Outputs/Reports/配电安全专家咨询报告.md",
+            delivery_markdown,
+        )
+        public_docx = self._atomic_copy_file(
+            output,
+            self.service.workspace
+            / "Outputs/Reports/配电安全专家咨询报告.docx",
+        )
+        public_source_index = self.service.store.write_text(
+            "Outputs/Reports/证据与来源索引.md",
+            source_index_markdown.rstrip() + "\n",
+        )
+        public_source_index_docx = self._atomic_copy_file(
+            source_index_docx_path,
+            self.service.workspace / "Outputs/Reports/证据与来源索引.docx",
+        )
+        for module_id in REPORT_MODULE_IDS:
+            self.service.store.write_text(
+                f"Outputs/Modules/{module_id}.md",
+                state["module_submissions"][module_id].markdown,
             )
+        receipt = self._materialize_delivery_package(
+            state,
+            output=output,
+            report_state_path=report_state_path,
+            source_index_path=source_index_path,
+            source_index_docx_path=source_index_docx_path,
         )
         receipt_path = self.service.store.write_json(
             f"Work/runs/{state['run_id']}/delivery-receipt.json",
             receipt.model_dump(mode="json"),
         )
-        # A receipt is durable before version publication begins.  A crash
-        # after this point is therefore delivery recovery, not
-        # a reason to invoke a Provider again.
         completion_ref = f"Work/runs/{state['run_id']}/delivery-completion.json"
-        state["delivery_status"] = "receipt_persisted"
         state["output_artifacts"] = self._delivery_output_artifacts(
             final_review_ref=state["final_review_completion_ref"],
             delivery_manifest_ref=receipt.manifest_path.relative_to(self.service.workspace),
-            final_markdown_ref=markdown_path.relative_to(self.service.workspace),
-            final_docx_ref=receipt.final_docx.relative_to(self.service.workspace),
-            source_index_ref=receipt.source_index.relative_to(self.service.workspace),
-            source_index_docx_ref=receipt.source_index_docx.relative_to(self.service.workspace),
-        )
-        self.service.store.write_json(
-            completion_ref,
-            {
-                "run_id": state["run_id"],
-                "status": "receipt_persisted",
-                "delivery_status": "receipt_persisted",
-                "delivery_receipt_ref": receipt_path.relative_to(self.service.workspace).as_posix(),
-                "report_version_id": None,
-                "final_audit_snapshot_ref": final_audit_snapshot_ref,
-                "output_artifacts": [
-                    artifact.model_dump(mode="json") for artifact in state["output_artifacts"]
-                ],
-            },
-        )
-        provenance_loader = getattr(self.agent_runner, "skill_provenance", None)
-        skill_provenance = (
-            provenance_loader()
-            if provenance_loader is not None
-            else [
-                SkillProvenance(
-                    skill_id=skill.id,
-                    version=skill.version,
-                    sha256=hashlib.sha256(skill.source_path.read_bytes()).hexdigest(),
-                    scope="packaged",
-                )
-                for skill in ModuleSkillLibrary.packaged().skills
-            ]
+            final_markdown_ref=public_markdown.relative_to(self.service.workspace),
+            final_docx_ref=public_docx.relative_to(self.service.workspace),
+            source_index_ref=public_source_index.relative_to(self.service.workspace),
+            source_index_docx_ref=public_source_index_docx.relative_to(
+                self.service.workspace
+            ),
         )
         template_skill_refs = state.get("template_skill_refs", {})
-        template_skill_core = template_skill_refs.get("core")
-        if template_skill_core:
-            skill_provenance = [
-                *skill_provenance,
-                SkillProvenance(
-                    skill_id="report-template-writing",
-                    version=state["run_id"],
-                    sha256=hashlib.sha256(
-                        (self.service.workspace / template_skill_core).read_bytes()
-                    ).hexdigest(),
-                    scope="project",
-                ),
-            ]
         summary_refs = SessionSummaryStore(self.service.workspace).relevant(run_id=state["run_id"])
         summary_refs = list(
             dict.fromkeys([*state.get("inherited_summary_refs", []), *summary_refs])
         )
-        version_store = ReportVersionStore(self.service.workspace)
-        # The typed receipt owns every package view.  In particular, source
-        # indexes are never reconstructed as hand-written Outputs artifacts
-        # while publishing a version.
         additional_artifacts: dict[str, Path] = {
+            "final_docx": receipt.final_docx.relative_to(self.service.workspace),
+            "report_state": receipt.report_state.relative_to(self.service.workspace),
+            "source_index": receipt.source_index.relative_to(self.service.workspace),
+            "source_index_docx": receipt.source_index_docx.relative_to(
+                self.service.workspace
+            ),
+            **{
+                f"module:{module_id}": path.relative_to(self.service.workspace)
+                for module_id, path in receipt.module_files.items()
+            },
+            "delivery_receipt": receipt_path.relative_to(self.service.workspace),
             "delivery_manifest": receipt.manifest_path.relative_to(self.service.workspace),
             "claim_ledger": claim_ledger_path.relative_to(self.service.workspace),
             "source_ledger": source_ledger_path.relative_to(self.service.workspace),
@@ -6329,13 +7897,41 @@ class ReportWorkflowRunner:
                 for asset in state.get("photo_assets", [])
             },
         }
-        version = version_store.publish_from_delivery(
-            receipt,
-            receipt_path.relative_to(self.service.workspace),
-            additional_artifacts=additional_artifacts,
-            session_summary_refs=summary_refs,
-            skill_provenance=skill_provenance,
-        )
+        version: ReportVersion | None = None
+        version_warning: str | None = None
+        try:
+            version = ReportVersion(
+                version_id=state["run_id"],
+                run_id=state["run_id"],
+                artifact_refs=additional_artifacts,
+                skill_provenance=[],
+                session_summary_refs=[Path(ref) for ref in summary_refs],
+            )
+            self.service.store.write_json(
+                f"Work/report-versions/{state['run_id']}/version.json",
+                version.model_dump(
+                    mode="json",
+                    exclude={
+                        "artifact_sha256",
+                        "artifact_storage",
+                        "artifact_blob_refs",
+                        "artifact_trusted_handle_refs",
+                        "session_summary_blob_refs",
+                        "session_summary_sha256",
+                        "session_summary_trusted_handle_refs",
+                        "project_lease_epoch",
+                        "storage_version",
+                    },
+                ),
+            )
+            self.service.store.write_json(
+                "Work/report-versions/latest.json",
+                {"version_id": version.version_id},
+            )
+        except (OSError, ValueError) as exc:
+            # Version history is optional follow-on metadata.  A failure here
+            # must not reverse a completed delivery or re-enter Provider work.
+            version_warning = f"{type(exc).__name__}: {exc}"
         state["delivery_status"] = "delivered"
         self.service.store.write_json(
             completion_ref,
@@ -6344,24 +7940,123 @@ class ReportWorkflowRunner:
                 "status": "delivered",
                 "delivery_status": "delivered",
                 "delivery_receipt_ref": receipt_path.relative_to(self.service.workspace).as_posix(),
-                "report_version_id": version.version_id,
+                "report_version_id": version.version_id if version is not None else None,
+                "version_warning": version_warning,
                 "final_audit_snapshot_ref": final_audit_snapshot_ref,
                 "output_artifacts": [
                     artifact.model_dump(mode="json") for artifact in state["output_artifacts"]
                 ],
             },
         )
-        state["delivery_to_version_cas_metrics"] = (
-            version_store.content_store.metrics_snapshot()
-        )
-        state["report_version"] = version
+        if version is not None:
+            state["report_version"] = version
         state["delivery_completion_ref"] = completion_ref
 
     @staticmethod
     def _delivery_root(workspace: Path, run_id: str) -> Path:
-        """Keep immutable delivery snapshots inside their owning run."""
+        """Keep materialized delivery files inside their owning run."""
 
         return Path(workspace) / "Work" / "runs" / run_id / "delivery"
+
+    def _atomic_copy_file(self, source: Path, target: Path) -> Path:
+        """Publish bytes atomically without CAS ingestion or digest comparison."""
+
+        source = Path(source)
+        target = Path(target)
+        if not source.is_file():
+            raise FileNotFoundError(f"delivery source is missing: {source}")
+        target_root = target.parent.resolve()
+        workspace_root = self.service.workspace.resolve()
+        if not target_root.is_relative_to(workspace_root):
+            raise ValueError(f"delivery target is outside the workspace: {target}")
+        validate_bound_project_write_lease(self.service.workspace)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            dir=target.parent,
+            delete=False,
+        ) as handle:
+            with source.open("rb") as source_handle:
+                shutil.copyfileobj(source_handle, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary = Path(handle.name)
+        try:
+            validate_bound_project_write_lease(self.service.workspace)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return target
+
+    def _materialize_delivery_package(
+        self,
+        state: dict,
+        *,
+        output: Path,
+        report_state_path: Path,
+        source_index_path: Path,
+        source_index_docx_path: Path,
+    ) -> MaterializedDeliveryReceipt:
+        """Write the delivery package as ordinary files with no hash/CAS identity."""
+
+        run_id = str(state["run_id"])
+        delivery_dir = self._delivery_root(self.service.workspace, run_id) / (
+            f"{run_id}-{run_id}"
+        )
+        module_files = {
+            module_id: self.service.store.write_text(
+                (
+                    delivery_dir
+                    / "modules"
+                    / f"{module_id}.md"
+                ).relative_to(self.service.workspace).as_posix(),
+                state["module_submissions"][module_id].markdown,
+            )
+            for module_id in REPORT_MODULE_IDS
+        }
+        final_docx = self._atomic_copy_file(
+            output,
+            delivery_dir / "配电安全专家咨询报告.docx",
+        )
+        report_state = self._atomic_copy_file(
+            report_state_path,
+            delivery_dir / "report-state.json",
+        )
+        source_index = self.service.store.write_text(
+            (delivery_dir / "证据与来源索引.md").relative_to(
+                self.service.workspace
+            ).as_posix(),
+            source_index_path.read_text(encoding="utf-8"),
+        )
+        source_index_docx = self._atomic_copy_file(
+            source_index_docx_path,
+            delivery_dir / "证据与来源索引.docx",
+        )
+        manifest_path = self.service.store.write_json(
+            (delivery_dir / "delivery-manifest.json").relative_to(
+                self.service.workspace
+            ).as_posix(),
+            {
+                "manifest_version": 1,
+                "report_id": run_id,
+                "version": run_id,
+                "status": "success",
+                "modules": list(REPORT_MODULE_IDS),
+                "storage": "materialized",
+            },
+        )
+        return MaterializedDeliveryReceipt(
+            success=True,
+            delivery_dir=delivery_dir,
+            final_docx=final_docx,
+            module_files=module_files,
+            report_state=report_state,
+            source_index=source_index,
+            source_index_docx=source_index_docx,
+            manifest_path=manifest_path,
+        )
 
     @staticmethod
     def _delivery_output_artifacts(
@@ -6378,7 +8073,9 @@ class ReportWorkflowRunner:
         return [
             *(
                 OutputArtifact(
-                    kind="module", path=Path(f"Outputs/Modules/{module_id}.md"), module_id=module_id
+                    kind="module",
+                    path=Path(f"Outputs/Modules/{module_id}.md"),
+                    module_id=module_id,
                 )
                 for module_id in REPORT_MODULE_IDS
             ),

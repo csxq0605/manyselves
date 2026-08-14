@@ -150,13 +150,42 @@ def test_structure_gate_binds_chapter_four_to_special_topic_plan() -> None:
         validate_final_report_markdown(missing_chapter, _plan())
 
 
+def test_structure_gate_allows_chapter_four_descendants_and_counts_internal_labels() -> None:
+    plan = _plan()
+    markdown = _markdown(plan)
+    markdown = markdown.replace(
+        _body("维度分析"),
+        "### 维度一：热应力与容量裕度\n\n" + _body("维度分析"),
+        1,
+    ).replace(
+        "### 4.1 动态专项问题\n\n" + _body("专项问题"),
+        "### 4.1 动态专项问题\n\n"
+        + _body("专项问题")
+        + "\n\n#### 4.1.1 验证步骤\n\n"
+        + _body("专项验证"),
+        1,
+    )
+
+    signals = validate_final_report_markdown(markdown, plan)
+
+    assert "3.1.2 各维度风险分析" not in signals["shallow_sections"]
+    assert "4.1 动态专项问题" not in signals["shallow_sections"]
+
+    with pytest.raises(ValueError, match="headings must exactly match"):
+        validate_final_report_markdown(
+            markdown
+            + "\n\n### 4.2 计划外顶层小节\n\n"
+            + _body("计划外专项"),
+            plan,
+        )
+
+
 def test_final_review_contract_remains_seven_sections_even_when_chapter_four_exists() -> None:
     contract = FinalReviewInput(
         phase="initial",
         run_id=RUN_ID,
         cross_decision=_cross_view(),
         cross_decision_pack_ref=f"Work/runs/{RUN_ID}/reviews/cross-decision-pack.json",
-        cross_decision_pack_sha256="0" * 64,
         subject_ref=f"Work/runs/{RUN_ID}/edited-revisions/chief-r0.json",
         subject_revision=0,
         subject_metadata=FinalAuditMetadataView(),

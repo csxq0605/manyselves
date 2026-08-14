@@ -7,7 +7,6 @@ import fcntl
 import json
 import re
 import shutil
-import time
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -27,7 +26,6 @@ from .models import (
     ReportRequest,
     RevisionRequest,
 )
-from .output_verifier import OutputVerificationError, verify_current_run_outputs
 from .session_summary import AgentSessionSummary
 from .skills.service import ProjectSkillEvolutionService
 from .versions import ReportVersion, ReportVersionStore
@@ -92,7 +90,6 @@ class RevisionCoordinator:
         from .service import ReportingRunResult
 
         self.service.store.ensure_layout()
-        execution_started_ns = time.time_ns()
         self.service.store.write_json(
             f"Work/runs/{run_id}/revision-request.json",
             request.model_dump(mode="json"),
@@ -154,6 +151,19 @@ class RevisionCoordinator:
             self.service._save_run(result)
             return result
 
+        if (
+            state.get("delivery_status") != "delivered"
+            or state.get("delivery_completion_ref")
+            != f"Work/runs/{run_id}/delivery-completion.json"
+        ):
+            result = ReportingRunResult(
+                run_id=run_id,
+                status="failed",
+                error="revision workflow finished without delivered business lifecycle",
+            )
+            self.service._save_run(result)
+            return result
+
         artifacts: list[OutputArtifact] = state.get("output_artifacts", [])
         feedback_record_id: str | None = None
         if request.promote_to_skill:
@@ -166,27 +176,13 @@ class RevisionCoordinator:
                 artifact_refs=[f"Work/runs/{run_id}/revision-request.json"],
             )
             feedback_record_id = feedback_record.id
-        try:
-            output_paths = verify_current_run_outputs(
-                self.service.workspace, run_id, artifacts, execution_started_ns
-            )
-        except OutputVerificationError as exc:
-            result = ReportingRunResult(run_id=run_id, status="failed", error=str(exc))
-            self.service._save_run(result)
-            return result
         result = ReportingRunResult(
             run_id=run_id,
             status="completed",
-            output_paths=output_paths,
+            output_paths=self.service._declared_output_paths(artifacts),
             feedback_record_id=feedback_record_id,
         )
-        return self.service._finalize_verified_run(
-            result,
-            publish_output_owner=(
-                state.get("delivery_completion_ref")
-                == f"Work/runs/{run_id}/delivery-completion.json"
-            ),
-        )
+        return self.service._finalize_completed_run(result)
 
     def _restore(
         self,

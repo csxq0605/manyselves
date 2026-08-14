@@ -6,8 +6,8 @@
 
 收到报告请求后，先根据用户说明选择 `operation`，再调用一次 `run_reporting_workflow`。`operation` 没有缺省语义，不得先自行遍历资料，也不得通过 `read`、`open_artifact` 或 `search_text` 遍历项目来代替路由决策。
 
-1. **只蒸馏或更新模板写作能力**：选择 `operation="distill_template_skill"`，`target_modules` 必须为空。该行动只读取报告模板并把完整 Skill 固定写入 `Work/report-template-writing/`；不读取项目证据，不启动模块专家、总编或 Render，也不生成报告。
-2. **从原始资料重新开始完整报告**：选择 `operation="full_report"`，`target_modules` 必须是 `2.1` 至 `2.5`。工作流只从 `Work/report-template-writing/` 读取已蒸馏 Skill。五个模块分别以“写作→Evidence Auditor→定向修订→原 Auditor 复核”的完整 lane 同时执行；五模块 barrier 通过后，五个模块级 Cross owner 各自审查本模块与其他模块的关系，统一 barrier 后才进入总编和独立成稿审计。此操作绝不读取模板或触发蒸馏。
+1. **只蒸馏或更新模板写作能力**：选择 `operation="distill_template_skill"`，`target_modules` 必须为空。该行动只读取报告模板并把五个作者、五个模块 Auditor、Chief Chapter 1/3/4 和共享 Final Auditor 共十四份完整 Skill 固定写入 `Work/report-template-role-skills/`；不读取项目证据，不启动模块专家、总编或 Render，也不生成报告。
+2. **从原始资料重新开始完整报告**：选择 `operation="full_report"`，`target_modules` 必须是 `2.1` 至 `2.5`。工作流只从 `Work/report-template-role-skills/` 读取已蒸馏 Skill，按精确身份整份注入。五个模块分别以“写作→Evidence Auditor→定向修订→原 Auditor 复核”的完整 lane 同时执行；五模块 barrier 通过后，五个模块级 Cross owner 各自使用 2.x 特化检查 prompt 审查本模块与其他模块的关系，但不接收模板 Skill；Chief Chapter 1/3/4 lane 分别接收对应完整 Skill；Final 三条 lane 共用完整 final-auditor Skill，并分别接收章节审查焦点。统一 barrier 后才进入总编和独立成稿审计。此操作绝不读取模板或触发蒸馏。
 3. **只新写或重写指定模块**：选择 `operation="module_report"`，`target_modules` 只填写用户点名的模块。每个请求模块是一个完整 lane；小节编号只用于正文结构、Claim 归属和 finding 定位，不创建小节级 Agent、Task、Session 或 Lane。该路径不创建未请求模块、Cross owner、总编或完整交付；模块定向返修继续使用原模块作者和原 Auditor 身份。此操作只读取固定 Skill；若用户还要求随后生成完整报告，等待该任务成功返回后，再选择第 4 路继续。
 4. **已有五份分块报告，需要生成汇总报告**：选择 `operation="aggregate_existing"`。默认读取 `Outputs/Modules/2.1.md` 至 `2.5.md`；只有用户明确给出其他路径时才传 `source_module_refs`。此路径只读取固定 Skill，启动总编并经过独立成稿审计后进入 Render；不启动模块专家、单模块证据审计、跨模块审查或模板蒸馏。
 5. **已有汇总 Markdown，只需要 Word**：选择 `operation="render_existing"` 并传 `source_markdown_ref`。此路径不启动任何分析或写作 Agent，直接进入确定性 Render。

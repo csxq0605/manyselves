@@ -14,6 +14,7 @@ from manyselves.core.reporting.agentic_models import (
     FINAL_AUDIT_SECTION_IDS,
     FINAL_REPORT_SECTION_IDS,
     AgentResult,
+    CrossReviewCoverageEntry,
     ChiefRevisionSubmission,
     ClaimRecord,
     CrossReviewFindingSubmission,
@@ -33,6 +34,8 @@ from manyselves.core.reporting.agentic_models import (
 )
 from manyselves.core.reporting.input_contracts import (
     ChiefEditorInput,
+    CrossReviewInput,
+    FinalReviewInput,
     RequestedModuleChange,
     ReviewCompletionRecord,
     ValidationReport,
@@ -71,10 +74,66 @@ from manyselves.core.reporting.workflow import (
     ReportWorkflowRunner,
 )
 from manyselves.core.tools.reporting_collaboration_tools import SubmitResultTool
+from manyselves.core.tools.task_board import TaskBoard
 
 
 def _artifact_hashes(root: Path, refs: list[str]) -> dict[str, str]:
     return {ref: hashlib.sha256((root / ref).read_bytes()).hexdigest() for ref in refs}
+
+
+@pytest.mark.asyncio
+async def test_workflow_task_board_uses_visible_lane_identity(tmp_path: Path) -> None:
+    board = TaskBoard()
+    service = SimpleNamespace(task_board=board)
+    runner = ReportWorkflowRunner.__new__(ReportWorkflowRunner)
+    runner.service = service
+    runner._budget = None
+    runner._raise_if_cancel_requested = lambda _run_id: None
+    runner.agents = {"cross-module-reviewer": SimpleNamespace()}
+    payload = CrossReviewFindingSubmission(
+        coverage=[
+            CrossReviewCoverageEntry(
+                module_id=module_id,
+                checked_dimensions=["terminology"],
+            )
+            for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5")
+        ],
+        findings=[],
+        synthesis_inputs=[],
+    )
+
+    class FakeAgentRunner:
+        async def run(self, *_args, **_kwargs):
+            return AgentResult(
+                task_id="cross-owner-2.3-r0-initial",
+                run_id="run-visible-lane",
+                agent_id="cross-module-reviewer",
+                session_id="session-visible-lane",
+                status="completed",
+                payload=payload,
+            )
+
+    runner.agent_runner = FakeAgentRunner()
+    envelope = TaskEnvelope(
+        task_id="cross-owner-2.3-r0-initial",
+        run_id="run-visible-lane",
+        agent_id="cross-module-reviewer",
+        objective="检查 2.3 owner 的跨模块关系",
+        allowed_outputs=["cross_review_finding_submission"],
+    )
+
+    await runner._agent(
+        "cross-module-reviewer",
+        envelope,
+        [],
+        "workflow-visible-lane",
+        session_key="cross-owner-2.3",
+    )
+
+    tasks = board.get_all()
+    assert len(tasks) == 1
+    assert tasks[0].target_agent == "cross-owner-2.3"
+    assert tasks[0].status.value == "completed"
 
 
 def _special_topic_plan() -> SpecialTopicPlan:
@@ -204,6 +263,8 @@ class _ScriptedRunner:
         self.scripted = list(scripted)
         self.calls: list[tuple[str, str, str | None]] = []
         self.envelopes: list[TaskEnvelope] = []
+        self._parallel_final_seen: set[str] = set()
+        self._parallel_cross_seen: set[str] = set()
 
     async def _agent(
         self,
@@ -214,11 +275,134 @@ class _ScriptedRunner:
         *,
         session_key=None,
     ):
-        expected_agent, expected_output, result = self.scripted.pop(0)
+        expected_agent, expected_output, result = self.scripted[0]
         assert agent_id == expected_agent
         assert envelope.allowed_outputs == [expected_output]
         self.calls.append((agent_id, expected_output, session_key))
         self.envelopes.append(envelope)
+        if (
+            envelope.input_contract_kind == "cross_review_input"
+            and "cross-review-2." in envelope.task_id
+        and isinstance(
+            result,
+            (CrossReviewFindingSubmission, CrossReviewVerdictSubmission),
+        )
+        ):
+            contract = CrossReviewInput.model_validate_json(
+                (self.service.workspace / envelope.input_contract_ref).read_text(
+                    encoding="utf-8"
+                )
+            )
+            owner = contract.owner_module_id
+            if isinstance(result, CrossReviewFindingSubmission):
+                lane_result = CrossReviewFindingSubmission(
+                    coverage=result.coverage,
+                    findings=[
+                        finding
+                        for finding in result.findings
+                        if finding.owner_module_id == owner
+                    ],
+                    synthesis_inputs=[
+                        item
+                        for item in result.synthesis_inputs
+                        if min(item.related_module_ids) == owner
+                    ],
+                )
+                expected_lanes = set(REPORT_TAXONOMY)
+            else:
+                required_ids = {finding.id for finding in contract.required_findings}
+                lane_result = CrossReviewVerdictSubmission(
+                    coverage=result.coverage,
+                    verdicts=[
+                        verdict
+                        for verdict in result.verdicts
+                        if verdict.finding_id in required_ids
+                    ],
+                    new_findings=[
+                        finding
+                        for finding in result.new_findings
+                        if finding.owner_module_id == owner
+                    ],
+                    synthesis_inputs=[
+                        item
+                        for item in result.synthesis_inputs
+                        if min(item.related_module_ids) == owner
+                    ],
+                )
+                expected_lanes = {
+                    finding.owner_module_id for finding in result.new_findings
+                } | {
+                    finding.owner_module_id
+                    for finding in contract.required_findings
+                }
+            self._parallel_cross_seen.add(owner)
+            if self._parallel_cross_seen == expected_lanes:
+                self.scripted.pop(0)
+                self._parallel_cross_seen.clear()
+            return lane_result
+        if (
+            envelope.input_contract_kind == "final_review_input"
+            and "final-review-chapter-" in envelope.task_id
+            and isinstance(
+                result,
+                (FinalReviewFindingSubmission, FinalReviewVerdictSubmission),
+            )
+        ):
+            contract = FinalReviewInput.model_validate_json(
+                (self.service.workspace / envelope.input_contract_ref).read_text(
+                    encoding="utf-8"
+                )
+            )
+            chapter_id = contract.chapter_id
+            assert chapter_id is not None
+            owned = set(contract.required_section_ids)
+            expected_chapters = {
+                section_id.split(".", 1)[0] for section_id in result.checked_section_ids
+            }
+            if isinstance(result, FinalReviewFindingSubmission):
+                selected = [
+                    finding
+                    for finding in result.findings
+                    if set(finding.target_section_ids).issubset(owned)
+                ]
+                assigned = {
+                    finding.id
+                    for candidate in expected_chapters
+                    for finding in result.findings
+                    if all(
+                        target.split(".", 1)[0] == candidate
+                        for target in finding.target_section_ids
+                    )
+                }
+                if chapter_id == "1":
+                    selected.extend(
+                        finding for finding in result.findings if finding.id not in assigned
+                    )
+                lane_result = FinalReviewFindingSubmission(
+                    checked_section_ids=contract.required_section_ids,
+                    findings=selected,
+                    residual_risks=result.residual_risks if chapter_id == "1" else [],
+                )
+            else:
+                required_ids = {finding.id for finding in contract.required_findings}
+                lane_result = FinalReviewVerdictSubmission(
+                    checked_section_ids=contract.required_section_ids,
+                    verdicts=[
+                        verdict for verdict in result.verdicts
+                        if verdict.finding_id in required_ids
+                    ],
+                    new_findings=[
+                        finding for finding in result.new_findings
+                        if set(finding.target_section_ids).issubset(owned)
+                    ],
+                    residual_risks=result.residual_risks if chapter_id == "1" else [],
+                )
+            self._parallel_final_seen.add(chapter_id)
+            if self._parallel_final_seen == expected_chapters:
+                self.scripted.pop(0)
+                self._parallel_final_seen.clear()
+            return lane_result
+        self.scripted.pop(0)
         return result
 
     def _validate_module_structure(self, state, module, phase):
@@ -260,7 +444,7 @@ class _ScriptedRunner:
         return ""
 
     @staticmethod
-    def _role_skill_context(state, role, **kwargs):
+    def _chief_template_skill_context(state, chapter_ids):
         return ""
 
     @staticmethod
@@ -366,7 +550,7 @@ class _ToolBackedModuleReviewRunner(_ScriptedRunner):
             input_contract_kind=envelope.input_contract_kind,
             input_contract_ref=envelope.input_contract_ref,
         )
-        outcome = await tool(payload=payload)
+        outcome = await tool(**payload)
         assert outcome["status"] == "completed", outcome
         result = AgentResult.model_validate_json(
             (self.service.workspace / outcome["result_path"]).read_text(encoding="utf-8")
@@ -648,6 +832,7 @@ async def test_module_five_revision_returns_one_module_patch_for_all_targets(
     assert runner.calls[0][2] == "module-2.1"
     assert runner.envelopes[0].task_id == "module-revision-r1-2.1"
     assert runner.envelopes[0].target_submodule_ids == [first, second]
+    assert runner.envelopes[0].inline_context == ""
     assert revised.revision_responses[0].changed_target_ids == [first, second]
     barrier = json.loads(
         (
@@ -1050,7 +1235,8 @@ async def test_module_recheck_sends_only_changed_claim_semantics_and_evidence(
         target: ["E-0002"]
     }
     assert recheck["knowledge_ref"] == knowledge_ref
-    assert "TARGET-RECHECK-KNOWLEDGE" in recheck["knowledge_context"]
+    assert recheck["knowledge_context"] == ""
+    assert recheck["knowledge_ref"]
     assert {item["evidence_id"] for item in recheck["evidence"]} == {
         "E-0001",
         "E-0002",
@@ -1156,7 +1342,7 @@ async def test_module_review_resume_continues_after_persisted_findings_without_r
 
 
 @pytest.mark.asyncio
-async def test_module_review_resume_reuses_legacy_lifecycle_identity(
+async def test_module_review_resume_ignores_legacy_lifecycle_identity(
     tmp_path: Path,
 ) -> None:
     module = _module("2.1")
@@ -1215,7 +1401,7 @@ async def test_module_review_resume_reuses_legacy_lifecycle_identity(
         lifecycle_id="initial",
     )
 
-    assert runner.calls[0][2] == "module-auditor-2.1-initial"
+    assert runner.calls[0][2] == "module-auditor-2.1"
     completion = ReviewCompletionRecord.model_validate_json(
         (
             tmp_path
@@ -1223,7 +1409,7 @@ async def test_module_review_resume_reuses_legacy_lifecycle_identity(
         ).read_text(encoding="utf-8")
     )
     assert completion.review_protocol_version == 2
-    assert completion.reviewer_session_key == "module-auditor-2.1-initial"
+    assert completion.reviewer_session_key == "module-auditor-2.1"
 
 
 @pytest.mark.asyncio
@@ -1598,7 +1784,7 @@ async def _legacy_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
     await run_cross_review(runner, state, "workflow")
     agents = [call[0] for call in runner.calls]
     assert agents == [
-        "cross-module-reviewer",
+        *("cross-module-reviewer" for _ in REPORT_TAXONOMY),
         "module-2.3-specialist",
         "evidence-auditor",
         "module-2.3-specialist",
@@ -1606,7 +1792,29 @@ async def _legacy_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
         "cross-module-reviewer",
     ]
     cross_sessions = [call[2] for call in runner.calls if call[0] == "cross-module-reviewer"]
-    assert cross_sessions == ["cross-module-reviewer", "cross-module-reviewer"]
+    assert cross_sessions == [
+        *(f"cross-module-reviewer-{module_id}" for module_id in REPORT_TAXONOMY),
+        "cross-module-reviewer-2.3",
+    ]
+    assert all(
+        "<module_skills>" not in envelope.inline_context
+        and "<role_skill" not in envelope.inline_context
+        and "<template_role_skill" not in envelope.inline_context
+        and "<cross_lane_specialization" in envelope.inline_context
+        for envelope in runner.envelopes
+        if envelope.agent_id == "cross-module-reviewer"
+    )
+    initial_cross_inputs = [
+        json.loads(
+            (tmp_path / envelope.input_contract_ref).read_text(encoding="utf-8")
+        )
+        for envelope in runner.envelopes
+        if envelope.agent_id == "cross-module-reviewer" and envelope.revision == 0
+    ]
+    assert {item["owner_module_id"] for item in initial_cross_inputs} == set(
+        REPORT_TAXONOMY
+    )
+    assert len({tuple(item["review_focus"]) for item in initial_cross_inputs}) == 5
     auditor_sessions = [call[2] for call in runner.calls if call[0] == "evidence-auditor"]
     assert auditor_sessions == ["module-auditor-2.3", "module-auditor-2.3"]
     cross_envelopes = [
@@ -1655,14 +1863,16 @@ async def _legacy_cross_finding_is_closed_by_cross_reviewer_not_module_auditor(
         "statement-"
     )
     assert local_input["knowledge_ref"] == knowledge_ref
-    assert "TARGET-KNOWLEDGE" in local_input["knowledge_context"]
-    assert "UNRELATED-KNOWLEDGE" not in local_input["knowledge_context"]
+    assert local_input["knowledge_context"] == ""
+    assert local_input["knowledge_ref"]
     assert local_input["revision_diff"]["changed_submodule_narratives"] == [target]
     recheck_input = json.loads(
-        (tmp_path / "Work/runs/run-x/reviews/cross-review-input-r1.json").read_text(
+        (tmp_path / "Work/runs/run-x/reviews/cross/2.3/input-r1.json").read_text(
             encoding="utf-8"
         )
     )
+    assert recheck_input["owner_module_id"] == "2.3"
+    assert recheck_input["review_focus"]
     assert recheck_input["changed_module_ids"] == ["2.3"]
     assert set(recheck_input["modules"]) == {"2.3"}
     assert set(recheck_input["unchanged_module_sha256"]) == {
@@ -1866,7 +2076,9 @@ async def test_final_review_uses_chief_response_then_original_auditor_verdict(
             encoding="utf-8"
         )
     )
-    assert final_input["required_section_ids"] == list(FINAL_AUDIT_SECTION_IDS)
+    assert final_input["required_section_ids"] == [
+        "1.1", "1.2", "1.3", "3.1.1", "3.1.2", "3.1.3", "3.2"
+    ]
     assert "subject" not in final_input
     assert set(final_input["subject_metadata"]) == {
         "photo_ids",
@@ -1884,14 +2096,17 @@ async def test_final_review_uses_chief_response_then_original_auditor_verdict(
     assert set(recheck_input["changed_section_bodies"]) == {"3.1.2"}
     assert (
         set(recheck_input["unchanged_section_sha256"])
-        == set(FINAL_AUDIT_SECTION_IDS) - {"3.1.2"}
+        == {"1.1", "1.2", "1.3", "3.1.1", "3.1.3", "3.2"}
     )
     assert len(recheck_input["subject_metadata_sha256"]) == 64
-    auditor_sessions = [call[2] for call in runner.calls if call[0] == "chief-editor-auditor"]
-    assert auditor_sessions == [
-        "chief-editor-auditor",
-        "chief-editor-auditor",
+    final_inputs = [
+        json.loads((tmp_path / envelope.input_contract_ref).read_text(encoding="utf-8"))
+        for envelope in runner.envelopes
+        if envelope.agent_id == "chief-editor-auditor" and envelope.revision == 0
     ]
+    assert len(final_inputs) == 1
+    auditor_sessions = [call[2] for call in runner.calls if call[0] == "chief-editor-auditor"]
+    assert auditor_sessions == ["chief-editor-auditor", "chief-editor-auditor"]
     final_audit_envelopes = [
         envelope
         for envelope in runner.envelopes
@@ -1903,9 +2118,11 @@ async def test_final_review_uses_chief_response_then_original_auditor_verdict(
         and envelope.allowed_tools == ["submit_result"]
         for envelope in final_audit_envelopes
     )
-    assert final_audit_envelopes[1].artifact_delivery_modes[
-        final_audit_envelopes[1].prior_result_ref
-    ] == "hash_retained"
+    assert all(
+        envelope.artifact_delivery_modes[envelope.prior_result_ref] == "hash_retained"
+        for envelope in final_audit_envelopes
+        if envelope.prior_result_ref is not None
+    )
     chief_revision_envelope = next(
         envelope
         for envelope in runner.envelopes
@@ -2000,8 +2217,14 @@ async def test_final_review_omits_chapter_four_from_contract_when_plan_is_absent
             / "Work/runs/run-no-special/reviews/final-review-input-r0.json"
         ).read_text(encoding="utf-8")
     )
-    assert input_data["required_section_ids"] == active_sections
+    assert input_data["required_section_ids"] == [
+        "1.1", "1.2", "1.3", "3.1.1", "3.1.2", "3.1.3", "3.2"
+    ]
     assert "\n## 4." not in input_data["canonical_markdown"]
+    assert not (
+        tmp_path
+        / "Work/runs/run-no-special/reviews/final-review-chapter-4-input-r0.json"
+    ).exists()
     assert state["final_review_completion_ref"].endswith("reviews/final-completion.json")
 
 
@@ -2137,7 +2360,10 @@ async def test_explicit_final_review_restart_preserves_failed_progress(
 
     assert stale_path.read_bytes() == stale_progress
     assert (tmp_path / "Work/runs/run-final-restart/reviews/final-progress-r1.json").is_file()
-    assert (tmp_path / "Work/runs/run-final-restart/reviews/final-review-input-r1.json").is_file()
+    assert (
+        tmp_path
+        / "Work/runs/run-final-restart/reviews/final-review-input-r1.json"
+    ).is_file()
     assert state["final_review_completion_ref"].endswith("reviews/final-completion.json")
 
 
@@ -2188,19 +2414,10 @@ def test_delivery_artifacts_reference_current_final_review_completion() -> None:
             "Work/runs/run-delivery/delivery/power-distribution-report-run-delivery/"
             "delivery-manifest.json"
         ),
-        final_markdown_ref=Path(
-            "Work/runs/run-delivery/report/配电安全专家咨询报告.md"
-        ),
-        final_docx_ref=Path(
-            "Work/runs/run-delivery/delivery/report-run-delivery/"
-            "配电安全专家咨询报告.docx"
-        ),
-        source_index_ref=Path(
-            "Work/runs/run-delivery/delivery/report-run-delivery/证据与来源索引.md"
-        ),
-        source_index_docx_ref=Path(
-            "Work/runs/run-delivery/delivery/report-run-delivery/证据与来源索引.docx"
-        ),
+        final_markdown_ref=Path("Outputs/Reports/配电安全专家咨询报告.md"),
+        final_docx_ref=Path("Outputs/Reports/配电安全专家咨询报告.docx"),
+        source_index_ref=Path("Outputs/Reports/证据与来源索引.md"),
+        source_index_docx_ref=Path("Outputs/Reports/证据与来源索引.docx"),
     )
 
     review_artifacts = [artifact for artifact in artifacts if artifact.kind == "review"]
@@ -2210,16 +2427,55 @@ def test_delivery_artifacts_reference_current_final_review_completion() -> None:
     )
     assert any(
         artifact.path.as_posix()
-        == (
-            "Work/runs/run-delivery/delivery/report-run-delivery/"
-            "证据与来源索引.docx"
-        )
+        == "Outputs/Reports/证据与来源索引.docx"
         for artifact in artifacts
     )
-    assert not any(
+    assert any(
         artifact.path.is_relative_to(Path("Outputs/Reports"))
         for artifact in artifacts
     )
+    module_artifacts = {
+        artifact.module_id: artifact.path
+        for artifact in artifacts
+        if artifact.kind == "module"
+    }
+    assert set(module_artifacts) == set(REPORT_TAXONOMY)
+    assert all(path.is_relative_to(Path("Outputs/Modules")) for path in module_artifacts.values())
+
+
+def test_restore_delivery_uses_business_status_without_receipt_hash_or_version(
+    tmp_path: Path,
+) -> None:
+    service = _FakeService(tmp_path)
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+    run_id = "run-business-delivery-restore"
+    final_review_ref = f"Work/runs/{run_id}/reviews/final-completion.json"
+    expected = runner._delivery_output_artifacts(
+        final_review_ref=final_review_ref,
+        delivery_manifest_ref=Path(
+            f"Work/runs/{run_id}/delivery/{run_id}-{run_id}/delivery-manifest.json"
+        ),
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/delivery-completion.json",
+        {
+            "run_id": run_id,
+            "status": "delivered",
+            "delivery_status": "delivered",
+            "delivery_receipt_ref": f"Work/runs/{run_id}/missing-receipt.json",
+            "report_version_id": "missing-version",
+            "output_artifacts": [
+                artifact.model_dump(mode="json") for artifact in expected
+            ],
+        },
+    )
+
+    state = {"run_id": run_id, "final_review_completion_ref": final_review_ref}
+    runner._restore_delivery_completion(state)
+
+    assert state["delivery_restored"] is True
+    assert state["output_artifacts"] == expected
 
 
 def test_delivery_root_is_scoped_to_the_owning_run(tmp_path: Path) -> None:
@@ -2229,7 +2485,7 @@ def test_delivery_root_is_scoped_to_the_owning_run(tmp_path: Path) -> None:
     )
 
 
-def test_restore_delivery_rejects_obsolete_review_output_declaration(
+def test_restore_delivery_does_not_gate_on_output_file_declaration(
     tmp_path: Path,
 ) -> None:
     service = _FakeService(tmp_path)
@@ -2312,8 +2568,11 @@ def test_restore_delivery_rejects_obsolete_review_output_declaration(
 
     runner._restore_delivery_completion(state)
 
-    assert "delivery_completion_ref" not in state
-    assert "output_artifacts" not in state
+    assert state["delivery_restored"] is True
+    assert state["delivery_completion_ref"].endswith("delivery-completion.json")
+    assert state["output_artifacts"][0].path == Path(
+        "Outputs/Reviews/full-review.json"
+    )
 
 
 @pytest.mark.asyncio
@@ -2546,11 +2805,7 @@ def test_resume_rejects_cross_completion_without_exact_five_owner_barrier(
                 lifecycle="module",
                 run_id=run_id,
                 reviewer_agent_id="evidence-auditor",
-                reviewer_session_key=(
-                    f"module-auditor-{module_id}"
-                    if module_id == "2.1"
-                    else f"module-auditor-{module_id}-initial"
-                ),
+                    reviewer_session_key=f"module-auditor-{module_id}",
                 subject_refs=[subject_ref],
                 finding_refs=[finding_ref],
                 verdict_refs=[],
@@ -2577,10 +2832,10 @@ def test_resume_rejects_cross_completion_without_exact_five_owner_barrier(
     service.store.write_json(
         f"Work/runs/{run_id}/reviews/cross-completion.json",
         ReviewCompletionRecord(
-            lifecycle="cross",
-            run_id=run_id,
-            reviewer_agent_id="cross-module-reviewer",
-            reviewer_session_key="cross-module-reviewer",
+                lifecycle="cross",
+                run_id=run_id,
+                reviewer_agent_id="cross-module-reviewer",
+                reviewer_session_key="cross-module-reviewer-specialized-cohort",
             subject_refs=module_refs,
             finding_refs=[cross_finding_ref],
             verdict_refs=[],
@@ -2671,7 +2926,7 @@ def test_revision_resume_uses_checkpoint_module_review_refs(
             lifecycle="module",
             run_id=run_id,
             reviewer_agent_id="evidence-auditor",
-            reviewer_session_key="module-auditor-2.1-post-delivery",
+            reviewer_session_key="module-auditor-2.1",
             subject_refs=[subject_ref],
             finding_refs=[finding_ref],
             verdict_refs=[],
@@ -2897,7 +3152,7 @@ def test_chief_envelope_is_pack_bound_and_has_no_raw_evidence_or_photo_inputs(
         ).read_text(encoding="utf-8")
     )
     assert editor_input.cross_decision_pack_ref == state["cross_decision_pack_ref"]
-    assert editor_input.cross_decision_pack_sha256 == state["cross_decision_pack_sha256"]
+    assert "cross_decision_pack_sha256" not in editor_input.model_dump()
     assert editor_input.cross_decision is not None
 
 
@@ -2983,7 +3238,8 @@ def test_chief_pack_accepts_closed_ordinary_xmr_cross_finding(
     pack = runner._materialize_chief_cross_decision_pack(state)
 
     assert pack.cross_review_completion_ref == completion_ref
-    assert set(pack.artifact_sha256) == {completion_ref}
+    assert "artifact_sha256" not in pack.model_dump()
+    assert "pack_sha256" not in pack.model_dump()
     assert "if_closures" not in pack.model_dump()
     assert "xmr_verdicts" not in pack.model_dump()
 
@@ -3030,13 +3286,6 @@ def test_chief_completion_rejects_resealed_wrong_envelope_identity(
     )
     envelope["run_id"] = "another-run"
     runner.service.store.write_json(envelope_ref, envelope)
-    completion = json.loads(
-        (tmp_path / completion_ref).read_text(encoding="utf-8")
-    )
-    completion["artifact_sha256"][envelope_ref] = hashlib.sha256(
-        (tmp_path / envelope_ref).read_bytes()
-    ).hexdigest()
-    runner.service.store.write_json(completion_ref, completion)
 
     with pytest.raises(
         AgentWorkflowError,
@@ -3084,12 +3333,12 @@ def test_chief_completion_rejects_changed_input_or_supplement(
 
     with pytest.raises(
         AgentWorkflowError,
-        match="artifact hash mismatch",
+        match="another run|does not match current approved modules",
     ):
         runner._load_chief_editor_completion(state, completion_ref)
 
 
-def test_aggregate_chief_completion_restores_only_hash_bound_candidate(
+def test_aggregate_chief_completion_restores_typed_current_run_candidate(
     tmp_path: Path,
 ) -> None:
     service = _FakeService(tmp_path)
@@ -3142,6 +3391,11 @@ def test_aggregate_chief_completion_restores_only_hash_bound_candidate(
         )
         == candidate
     )
+    completion_ref = f"Work/runs/{run_id}/aggregate-chief-completion.json"
+    completion = json.loads(
+        (tmp_path / completion_ref).read_text(encoding="utf-8")
+    )
+    assert "artifact_sha256" not in completion
     service.store.write_json(
         editor_input_ref,
         {"run_id": run_id, "source_format": "changed"},
@@ -3155,6 +3409,36 @@ def test_aggregate_chief_completion_restores_only_hash_bound_candidate(
         )
         is None
     )
+
+
+def test_cross_decision_pack_resume_ignores_projection_and_archival_hashes(
+    tmp_path: Path,
+) -> None:
+    runner, state, _completion_ref = _chief_completion_fixture(tmp_path)
+    pack_ref = state["cross_decision_pack_ref"]
+    state.pop("cross_decision_pack", None)
+    state["cross_decision_pack_sha256"] = "not-a-hash"
+    pack_payload = json.loads(
+        (tmp_path / pack_ref).read_text(encoding="utf-8")
+    )
+    pack_payload["pack_sha256"] = "not-a-hash"
+    pack_payload["artifact_sha256"] = {
+        state["cross_review_completion_ref"]: "not-a-hash"
+    }
+    runner.service.store.write_json(pack_ref, pack_payload)
+    completion_ref = state["cross_review_completion_ref"]
+    completion_payload = json.loads(
+        (tmp_path / completion_ref).read_text(encoding="utf-8")
+    )
+    completion_payload["artifact_sha256"] = {
+        state["cross_review_completion_ref"]: "not-a-hash"
+    }
+    runner.service.store.write_json(completion_ref, completion_payload)
+
+    restored = runner._load_current_cross_decision_pack(state)
+
+    assert restored is not None
+    assert restored.run_id == state["run_id"]
 
 
 @pytest.mark.parametrize(
@@ -3312,7 +3596,7 @@ def test_review_completion_rejects_regression_copy_that_differs_from_verdict(
         )
 
 
-def test_review_completion_rejects_artifact_mutation_after_closure(
+def test_review_completion_ignores_forensic_hash_metadata_after_closure(
     tmp_path: Path,
 ) -> None:
     service = _FakeService(tmp_path)
@@ -3341,23 +3625,24 @@ def test_review_completion_rejects_artifact_mutation_after_closure(
             artifact_sha256=_artifact_hashes(tmp_path, [subject_ref, finding_ref]),
         ).model_dump(mode="json"),
     )
-    service.store.write_json(
-        finding_ref,
-        {
-            "kind": "module_review_finding_submission",
-            "findings": [{"id": "M-mutated"}],
-        },
+    completion = json.loads(
+        (tmp_path / completion_ref).read_text(encoding="utf-8")
     )
+    completion["artifact_sha256"] = {subject_ref: "not-a-hash"}
+    service.store.write_json(completion_ref, completion)
 
-    with pytest.raises(ValueError, match="hash mismatch"):
-        runner._load_current_review_completion(
-            run_id=run_id,
-            completion_ref=completion_ref,
-            lifecycle="module",
-            reviewer_agent_id="evidence-auditor",
-            reviewer_session_key="module-auditor-2.4-initial",
-            subject_refs=[subject_ref],
-        )
+    record, findings = runner._load_current_review_completion(
+        run_id=run_id,
+        completion_ref=completion_ref,
+        lifecycle="module",
+        reviewer_agent_id="evidence-auditor",
+        reviewer_session_key="module-auditor-2.4-initial",
+        subject_refs=[subject_ref],
+    )
+    assert record.run_id == run_id
+    assert findings == [
+        {"kind": "module_review_finding_submission", "findings": []}
+    ]
 
 
 def test_canonical_markdown_uses_only_current_fixed_sections() -> None:
@@ -3396,29 +3681,30 @@ def test_canonical_markdown_omits_chapter_four_without_special_topic_plan() -> N
         )
 
 
-def test_role_skill_context_does_not_send_authoring_guidance_to_final_auditor() -> None:
+def test_complete_identity_skill_is_injected_without_runtime_slicing() -> None:
     state = {
         "template_skill_text": {
-            "core": "CORE-AUTHOR",
-            "analysis": "ANALYSIS-AUTHOR",
-            "synthesis": "SYNTHESIS-AUTHOR",
-            "visual": "VISUAL-AUTHOR",
-            "rubric": "AUDIT-RUBRIC",
+            "author-2.1": "AUTHOR-2.1-COMPLETE",
+            "auditor-2.1": "AUDITOR-2.1-COMPLETE",
+            "chief-editor-chapter-1": "CHIEF-CHAPTER-1-COMPLETE",
+            "chief-editor-chapter-3": "CHIEF-CHAPTER-3-COMPLETE",
+            "chief-editor-chapter-4": "CHIEF-CHAPTER-4-COMPLETE",
+            "final-auditor": "FINAL-AUDITOR-COMPLETE",
         }
     }
 
-    final_context = ReportWorkflowRunner._role_skill_context(
-        state, "final-auditor"
-    )
-    cross_context = ReportWorkflowRunner._role_skill_context(
-        state, "cross-reviewer"
-    )
+    final_context = ReportWorkflowRunner._template_skill_context(state, "final-auditor")
+    assert "FINAL-AUDITOR-COMPLETE" in final_context
+    assert "AUTHOR-2.1" not in final_context
+    assert 'id="final-auditor"' in final_context
 
-    assert "AUDIT-RUBRIC" in final_context
-    assert "AUTHOR" not in final_context
-    assert "SYNTHESIS-AUTHOR" in cross_context
-    assert "CORE-AUTHOR" not in cross_context
-    assert 'role="final-auditor"' in final_context
+    chapter_context = ReportWorkflowRunner._chief_template_skill_context(
+        state, ("3",)
+    )
+    assert "CHIEF-CHAPTER-3-COMPLETE" in chapter_context
+    assert "CHIEF-CHAPTER-1" not in chapter_context
+    assert "CHIEF-CHAPTER-4" not in chapter_context
+    assert 'id="chief-editor-chapter-3"' in chapter_context
 
 
 def test_canonical_markdown_places_structured_tables_once(
@@ -3511,7 +3797,7 @@ def test_review_protocol_rejects_verdicts_that_guess_missing_finding_ids() -> No
         )
 
 
-def test_validation_binding_rejects_stale_subject_bytes(tmp_path: Path) -> None:
+def test_validation_binding_uses_typed_identity_not_subject_hash(tmp_path: Path) -> None:
     runner = _ScriptedRunner(tmp_path, [])
     subject_ref = "Work/runs/run-stale/modules/2.1-r1.json"
     runner.service.store.write_text(subject_ref, "original")
@@ -3527,10 +3813,9 @@ def test_validation_binding_rejects_stale_subject_bytes(tmp_path: Path) -> None:
     )
     runner.service.store.write_text(subject_ref, "changed-after-validation")
 
-    with pytest.raises(ReviewLifecycleError, match="exact final subject"):
-        _require_validation_binding(
-            runner,
-            report,
-            subject_ref=subject_ref,
-            subject_revision=1,
-        )
+    _require_validation_binding(
+        runner,
+        report,
+        subject_ref=subject_ref,
+        subject_revision=1,
+    )

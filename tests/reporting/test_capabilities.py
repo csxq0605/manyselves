@@ -10,6 +10,10 @@ from manyselves.core.reporting.capabilities import (
     collect_reference_refs,
 )
 from manyselves.core.reporting.config import ConfigurationError, load_packaged_agents
+from manyselves.core.reporting.input_contracts import (
+    TEMPLATE_ROLE_SKILL_IDS,
+    TemplateDistillationInput,
+)
 
 
 def test_chief_has_executable_artifact_readers(tmp_path: Path) -> None:
@@ -167,3 +171,76 @@ def test_empty_task_does_not_receive_generic_artifact_readers(tmp_path: Path) ->
     assert "open_artifact" not in access.tool_names
     assert "search_text" not in access.tool_names
     assert access.tool_names[-1] == "open_tool_result"
+
+
+def test_isolated_template_snapshot_is_reserved_for_distiller_tool(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-template-access"
+    template_ref = (
+        f"Work/runs/{run_id}/templates/template-for-skill.docx"
+    )
+    template = tmp_path / template_ref
+    template.parent.mkdir(parents=True)
+    template.write_bytes(b"isolated template snapshot")
+    contract_ref = (
+        f"Work/runs/{run_id}/context/template-distillation-input.json"
+    )
+    contract = tmp_path / contract_ref
+    contract.parent.mkdir(parents=True)
+    contract.write_text(
+        TemplateDistillationInput(
+            run_id=run_id,
+            template_ref=template_ref,
+            inspect_max_chars=100_000,
+            required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
+    distiller = load_packaged_agents()["template-distiller"]
+    distiller_envelope = TaskEnvelope(
+        task_id="template-skill-distillation",
+        run_id=run_id,
+        agent_id="template-distiller",
+        objective="distill the isolated template",
+        input_refs=[contract_ref, template_ref],
+        input_contract_kind="template_distillation_input",
+        input_contract_ref=contract_ref,
+    )
+    distiller_gateway = ArtifactGateway(
+        tmp_path,
+        ArtifactGrant(
+            "wf",
+            "template-skill-distillation",
+            "template-distiller",
+            "session",
+        ),
+    )
+
+    access = compile_agent_access(
+        distiller,
+        distiller_envelope,
+        gateway=distiller_gateway,
+    )
+
+    assert template_ref not in access.readable_refs
+    assert access.get(template_ref) is None
+
+    other_agent = load_packaged_agents()["module-2.1-specialist"]
+    other_envelope = TaskEnvelope(
+        task_id="module-2.1",
+        run_id=run_id,
+        agent_id="module-2.1-specialist",
+        objective="must not read the isolated template",
+        input_refs=[template_ref],
+    )
+    other_gateway = ArtifactGateway(
+        tmp_path,
+        ArtifactGrant("wf", "module-2.1", "module-2.1-specialist", "session"),
+    )
+    with pytest.raises(ConfigurationError, match="EXPERT_TEMPLATE_AGENT_ACCESS_FORBIDDEN"):
+        compile_agent_access(
+            other_agent,
+            other_envelope,
+            gateway=other_gateway,
+        )

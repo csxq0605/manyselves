@@ -134,7 +134,6 @@ def test_final_recheck_contains_only_changed_bodies_and_other_section_hashes() -
         run_id=RUN,
         cross_decision=_cross_view(),
         cross_decision_pack_ref=f"Work/runs/{RUN}/reviews/cross-decision-pack.json",
-        cross_decision_pack_sha256="0" * 64,
         subject_ref=f"Work/runs/{RUN}/edited-revisions/chief-r1.json",
         subject_revision=1,
         subject_metadata_sha256="1" * 64,

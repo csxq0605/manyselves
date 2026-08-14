@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from ..access_policy import ISOLATED_DISTILLATION_SNAPSHOT_NAME
 from ..artifacts.gateway import ArtifactGateway, ArtifactGrant
 from ..artifacts.types import ArtifactDescriptor
 from .agentic_models import TaskEnvelope
@@ -58,6 +59,40 @@ _KNOWN_PUBLIC_ROOTS = {
     "Capabilities",
     "ProductCapabilities",
 }
+
+
+def _isolated_template_tool_ref(
+    definition: AgentDefinition,
+    envelope: TaskEnvelope,
+    typed_input: Any | None,
+    gateway: ArtifactGateway,
+) -> str | None:
+    """Return the one ref reserved for the distiller's specialized reader.
+
+    The snapshot must not become a generic artifact capability: only the
+    one-shot ``InspectDocumentTool`` may read it.  This narrow exemption lets
+    capability compilation accept the declared input without weakening the
+    global expert-template deny rule used by every other Agent-facing reader.
+    """
+
+    expected = (
+        f"Work/runs/{envelope.run_id}/templates/"
+        f"{ISOLATED_DISTILLATION_SNAPSHOT_NAME}"
+    )
+    if getattr(typed_input, "template_ref", None) != expected:
+        return None
+    grant = gateway.grant
+    if not (
+        envelope.task_id == "template-skill-distillation"
+        and envelope.agent_id == "template-distiller"
+        and envelope.input_contract_kind == "template_distillation_input"
+        and getattr(typed_input, "run_id", None) == envelope.run_id
+        and definition.id == "template-distiller"
+        and grant.task_id == envelope.task_id
+        and grant.agent_id == definition.id
+    ):
+        return None
+    return expected
 
 
 def _as_relative_ref(value: Any) -> str | None:
@@ -456,6 +491,12 @@ def compile_agent_access(
     workspace = gateway.workspace
     if typed_input is None and envelope.input_contract_ref:
         typed_input = _typed_input_payload(envelope, gateway)
+    isolated_template_ref = _isolated_template_tool_ref(
+        definition,
+        envelope,
+        typed_input,
+        gateway,
+    )
     envelope_refs = collect_reference_refs(
         envelope,
         typed_input=typed_input,
@@ -494,6 +535,11 @@ def compile_agent_access(
     readable: list[str] = []
     for ref in envelope_refs:
         _safe_public_ref(ref, workspace=workspace, run_id=envelope.run_id)
+        if ref == isolated_template_ref:
+            # The exact current-run snapshot is intentionally absent from
+            # generic capabilities/readable_refs.  AgentRunner validates its
+            # CAS binding and grants only one InspectDocumentTool call.
+            continue
         mode: DeliveryMode = modes.get(
             ref,
             "reference"

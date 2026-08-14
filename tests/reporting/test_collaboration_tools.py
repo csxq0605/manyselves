@@ -8,11 +8,13 @@ import pytest
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting.agentic_models import (
     SUBMISSION_INPUT_TYPES,
+    TEMPLATE_ROLE_SKILL_IDS,
     ClaimRecord,
     CrossOwnerVerdictSubmission,
     CrossReviewFinding,
     EditedReportSubmission,
     ModuleSubmission,
+    TemplateSkillSubmission,
 )
 from manyselves.core.reporting.claim_ledger import ClaimLedger
 from manyselves.core.reporting.agent_runner import ReportingAgentRunner
@@ -23,6 +25,7 @@ from manyselves.core.reporting.input_contracts import (
     INPUT_CONTRACT_EXAMPLES,
     ModuleContentView,
     ModuleReviewInput,
+    TemplateDistillationInput,
     ValidationReport,
     module_content_view,
 )
@@ -35,6 +38,7 @@ from manyselves.core.reporting.submission_contracts import (
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.tools.reporting_collaboration_tools import (
     ListResultPartsTool,
+    SubmissionValidationError,
     SubmitResultTool,
     WriteResultPartTool,
     WriteResultPartsTool,
@@ -252,7 +256,7 @@ async def test_submit_result_preserves_raw_candidate_before_validation(
 ) -> None:
     tool = _tool(tmp_path)
     bad = {"kind": "cross_review_submission", "approved": True}
-    outcome = await tool(payload=bad)
+    outcome = await tool(**bad)
     assert outcome["status"] == "correction_required"
     assert outcome["accepted"] is False
     assert outcome["submission_kind"] == "module_submission"
@@ -266,7 +270,7 @@ async def test_submit_result_preserves_raw_candidate_before_validation(
     assert issue["received"] == "cross_review_submission"
     assert issue["expected"] == "one of ['module_submission']"
     assert issue["example"] == "module_submission"
-    assert "native JSON object" in issue["repair_instruction"]
+    assert "top-level kind" in issue["repair_instruction"]
     assert outcome["remaining_attempts"] == 7
     persisted = json.loads(
         (tmp_path / "Work/runs/run-1/submissions/task/attempt-1-raw.json").read_text(
@@ -288,7 +292,7 @@ async def test_every_submission_identity_gets_common_structured_correction(
         allowed_outputs=[kind],
     )
 
-    outcome = await tool(payload={"kind": kind})
+    outcome = await tool(kind=kind)
 
     assert outcome["status"] == "correction_required"
     assert outcome["accepted"] is False
@@ -345,7 +349,7 @@ async def test_review_submit_runtime_assigns_coverage_and_finding_id(
     )
 
     outcome = await tool(
-        payload={
+        **{
             "kind": "module_review_finding_submission",
             "findings": [
                 {
@@ -448,9 +452,8 @@ async def test_cross_owner_submit_runtime_assigns_owner_scope_and_finding_id(
         input_contract_ref=contract_ref,
     )
     outcome = await tool(
-        payload={
-            "kind": "cross_owner_finding_submission",
-            "findings": [
+        kind="cross_owner_finding_submission",
+        findings=[
                 {
                     "owner_module_id": "2.1",
                     "target_submodule_ids": ["2.1.1"],
@@ -464,7 +467,6 @@ async def test_cross_owner_submit_runtime_assigns_owner_scope_and_finding_id(
                     "machine_checks": [],
                 }
             ],
-        }
     )
     assert outcome["status"] == "completed", outcome
     result = json.loads(
@@ -542,7 +544,7 @@ async def test_cross_owner_recheck_injects_exact_ids_and_accepts_new_regressions
         # the removed IF protocol must not break a valid five-module verdict.
         payload["synthesis_inputs"] = []
         payload["interface_closures"] = []
-    outcome = await tool(payload=payload)
+    outcome = await tool(**payload)
     assert outcome["status"] == "completed", outcome
     result = json.loads(
         (tmp_path / "Work/runs/run-1/results/cross-owner-2.1-r1.json").read_text(
@@ -565,7 +567,7 @@ async def test_cross_owner_recheck_injects_exact_ids_and_accepts_new_regressions
         input_contract_ref=contract_ref,
     )
     regression = await regression_tool(
-        payload={
+        **{
             "kind": "cross_owner_verdict_submission",
             "verdicts": [
                 {
@@ -621,7 +623,7 @@ async def test_submit_result_appends_attempt_after_same_run_resume(
     before = {ref: (tmp_path / ref).read_bytes() for ref in refs}
     await _write_bound_module_parts(tmp_path)
 
-    outcome = await _tool(tmp_path)(payload=_module_payload())
+    outcome = await _tool(tmp_path)(**_module_payload())
 
     assert outcome["status"] == "completed", outcome
     for ref, original_bytes in before.items():
@@ -635,28 +637,25 @@ async def test_submit_result_appends_attempt_after_same_run_resume(
 
 
 @pytest.mark.asyncio
-async def test_submit_result_losslessly_decodes_one_complete_json_object_payload(
+async def test_submit_result_rejects_legacy_payload_wrapper_without_unwrapping(
     tmp_path: Path,
 ) -> None:
     tool = _tool(tmp_path)
-    await _write_bound_module_parts(tmp_path)
     candidate = json.dumps(_module_payload())
     outcome = await tool(payload=candidate)
-    assert outcome["status"] == "completed"
-    assert outcome["transport_normalization"] == "single_json_object_decode_v1"
+    assert outcome["status"] == "correction_required"
+    issue = outcome["validation_errors"][0]
+    assert issue["field"] == "payload"
+    assert issue["received"] == candidate
+    assert "does not accept a payload wrapper" in issue["problem"]
+    assert issue["expected"].startswith("no payload property")
+    assert "Remove the outer payload property" in issue["repair_instruction"]
     persisted = json.loads(
         (tmp_path / "Work/runs/run-1/submissions/task/attempt-1-raw.json").read_text(
             encoding="utf-8"
         )
     )
-    assert persisted["raw_payload"] == candidate
-    correction = json.loads(
-        (tmp_path / "Work/runs/run-1/submissions/task/correction-state.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert correction["raw_payload"] == candidate
-    assert correction["transport_normalization"] == "single_json_object_decode_v1"
+    assert persisted["raw_payload"] == {"payload": candidate}
 
 
 @pytest.mark.asyncio
@@ -671,7 +670,7 @@ async def test_submit_result_rejects_non_object_string_without_guessing(
     assert issue["field"] == "payload"
     assert issue["received_type"] == "string"
     assert issue["received"] == candidate
-    assert issue["expected"] == "a native JSON object, not a JSON-encoded string"
+    assert issue["expected"].startswith("no payload property")
 
 
 @pytest.mark.asyncio
@@ -682,7 +681,7 @@ async def test_missing_kind_uses_the_only_allowed_contract_for_correction(
     payload = _module_payload()
     payload.pop("kind")
 
-    outcome = await tool(payload=payload)
+    outcome = await tool(**payload)
 
     assert outcome["status"] == "correction_required"
     issue = outcome["validation_errors"][0]
@@ -690,11 +689,11 @@ async def test_missing_kind_uses_the_only_allowed_contract_for_correction(
     assert issue["received_type"] == "null"
     assert issue["expected"] == "one of ['module_submission']"
     assert issue["example"] == "module_submission"
-    assert "payload.kind" in issue["repair_instruction"]
+    assert "top-level kind" in issue["repair_instruction"]
 
 
 @pytest.mark.asyncio
-async def test_string_payload_example_uses_current_module_authoring_contract(
+async def test_flat_incomplete_correction_uses_current_module_authoring_contract(
     tmp_path: Path,
 ) -> None:
     contract_ref = "Work/runs/run-1/context/module-2.2-authoring.json"
@@ -722,15 +721,14 @@ async def test_string_payload_example_uses_current_module_authoring_contract(
         input_contract_ref=contract_ref,
     )
 
-    outcome = await tool(payload="not-json")
+    outcome = await tool(kind="module_submission")
 
-    issue = outcome["validation_errors"][0]
-    example = issue["example"]
-    assert example["module_id"] == "2.2"
-    assert example["revision"] == 0
-    assert "submodule_narratives" not in example
-    assert "claims" not in example
-    assert "source_ids" not in example
+    issues = {issue["field"]: issue for issue in outcome["validation_errors"]}
+    assert issues["module_id"]["example"] == "2.2"
+    assert issues["revision"]["example"] == 0
+    assert "submodule_narratives" not in issues
+    assert "claims" not in issues
+    assert "source_ids" not in issues
 
 
 @pytest.mark.asyncio
@@ -754,7 +752,7 @@ async def test_submit_result_does_not_autofill_finding_contract(
             }
         ],
     }
-    outcome = await tool(payload=payload)
+    outcome = await tool(**payload)
     assert outcome["status"] == "correction_required"
     assert {
         "field",
@@ -783,9 +781,9 @@ async def test_repeated_same_contract_error_stops_with_failed_result(
         "coverage": {"submodule_ids": []},
         "findings": [],
     }
-    first = await tool(payload=bad)
+    first = await tool(**bad)
     assert first["status"] == "correction_required"
-    outcome = await tool(payload=bad)
+    outcome = await tool(**bad)
     assert outcome["status"] == "failed"
     result = json.loads((tmp_path / outcome["result_path"]).read_text(encoding="utf-8"))
     assert result["status"] == "failed"
@@ -831,7 +829,7 @@ async def test_module_revision_persists_explicit_patch_without_merging_baseline(
             }
         ],
     }
-    outcome = await tool(payload=payload)
+    outcome = await tool(**payload)
     result = json.loads((tmp_path / outcome["result_path"]).read_text(encoding="utf-8"))
     assert result["payload"]["kind"] == "module_revision_submission"
     assert set(result["payload"]["submodule_narratives"]) == {"2.1.1"}
@@ -881,7 +879,7 @@ async def test_module_revision_materializes_only_targets_declared_implemented(
     )
 
     outcome = await tool(
-        payload={
+        **{
             "kind": "module_revision_submission",
             "module_id": "2.1",
             "base_revision": 0,
@@ -948,9 +946,13 @@ async def test_module_revision_correction_example_uses_each_finding_target(
         input_contract_ref=contract_ref,
     )
 
-    outcome = await tool(payload="not-json")
+    outcome = await tool(
+        kind="module_revision_submission",
+        revision_responses="invalid",
+    )
 
-    responses = outcome["validation_errors"][0]["example"]["revision_responses"]
+    issues = {issue["field"]: issue for issue in outcome["validation_errors"]}
+    responses = issues["revision_responses"]["example"]
     assert {
         response["finding_id"]: response["changed_target_ids"]
         for response in responses
@@ -967,7 +969,7 @@ async def test_module_commit_materializes_bound_parts_without_model_refs(
     task_id = "module-2.1"
     await _write_bound_module_parts(tmp_path, task_id=task_id)
     tool = _tool(tmp_path, task_id=task_id)
-    outcome = await tool(payload=_module_payload())
+    outcome = await tool(**_module_payload())
     result = json.loads((tmp_path / outcome["result_path"]).read_text(encoding="utf-8"))
     assert "由项目证据支持的完整正文。" in result["payload"]["submodule_narratives"]["2.1.1"]
     assert "[[CLAIM:C-2.1-2-1-1]]" in result["payload"]["submodule_narratives"]["2.1.1"]
@@ -1026,49 +1028,46 @@ async def test_result_part_rejects_compaction_marker_without_overwriting_prose(
 
 
 @pytest.mark.asyncio
-async def test_template_skill_description_correction_targets_skill_with_exact_values(
+async def test_template_role_skill_frontmatter_correction_targets_only_that_identity(
     tmp_path: Path,
 ) -> None:
-    submitted_description = (
+    description = (
         "从模板中提炼可迁移的报告写作与推理方法，仅约束表达组织，"
         "不迁移当前客户事实、专业阈值或项目结论。"
     )
-    frontmatter_description = (
-        "从模板中提炼报告写作方法，仅约束表达，不迁移任何客户事实。"
-    )
-    body = (
-        "# 报告模板写作\n\n"
-        "按证据边界组织分析，并分别读取 "
-        "[分析语言](references/analysis-language.md)、"
-        "[综合方法](references/synthesis.md)、"
-        "[视觉组织](references/visual-organization.md) 和"
-        "[质量量表](references/quality-rubric.md)。\n\n"
-        + "所有方法仅约束表达与推理，不提供当前项目事实。" * 12
+    skills = {
+        skill_id: (
+            f"---\nname: report-template-{skill_id}\ndescription: {description}\n---\n"
+            f"# {skill_id}\n\n" + "所有方法仅约束表达与推理，不提供当前项目事实。" * 12
+        )
+        for skill_id in TEMPLATE_ROLE_SKILL_IDS
+    }
+    skills["author-2.1"] = skills["author-2.1"].replace(
+        "name: report-template-author-2.1", "name: report-template-wrong"
     )
     payload = {
         "kind": "template_skill_submission",
-        "name": "report-template-writing",
-        "description": submitted_description,
-        "skill_markdown": (
-            "---\n"
-            "name: report-template-writing\n"
-            f"description: {frontmatter_description}\n"
-            "---\n"
-            f"{body}"
-        ),
-        "analysis_language_reference": "分析语言区分事实、解释、风险和建议。" * 12,
-        "synthesis_reference": "综合方法合并发现并形成可执行行动闭环。" * 12,
-        "visual_organization_reference": "图表必须绑定具体论断并由正文解释。" * 12,
-        "quality_rubric": "质量检查覆盖完整性、边界、深度和可追溯性。" * 12,
-        "boundary_manifest": {
-            "policy_version": 1,
-            "transferred_categories": [
+        "name": "report-template-role-skills",
+        "skills": skills,
+    }
+
+    contract_ref = "Work/runs/run-1/context/template-distillation-input.json"
+    ReportingStore(tmp_path).write_json(
+        contract_ref,
+        {
+            "kind": "template_distillation_input",
+            "run_id": "run-1",
+            "template_ref": "template.docx",
+            "inspect_max_chars": 100000,
+            "required_part_ids": list(TEMPLATE_ROLE_SKILL_IDS),
+            "boundary_policy_version": 1,
+            "allowed_transfer_categories": [
                 "analysis_method",
                 "synthesis_method",
                 "visual_method",
                 "quality_check",
             ],
-            "excluded_categories": [
+            "required_exclusion_categories": [
                 "domain_knowledge",
                 "domain_standard_or_threshold",
                 "project_fact_or_number",
@@ -1077,26 +1076,83 @@ async def test_template_skill_description_correction_targets_skill_with_exact_va
                 "project_conclusion_or_recommendation",
                 "evidence_or_claim_identifier",
             ],
-            "boundary_statement": (
-                "本 Skill 只迁移跨项目复用的写作、综合、图证组织和质量检查方法；"
-                "专业机理、标准阈值、客户事实、项目判断和证据标识必须由运行时输入提供；"
-                "任何模板项目中的名称、数值、结论和建议均不得进入可复用方法文件。"
-            ),
         },
-    }
+    )
 
     outcome = await _tool(
         tmp_path,
         task_id="template-skill-distillation",
         allowed_outputs=["template_skill_submission"],
-    )(payload=payload)
+        input_contract_kind="template_distillation_input",
+        input_contract_ref=contract_ref,
+    )(**payload)
 
     assert outcome["status"] == "correction_required"
-    assert outcome["affected_part_ids"] == ["skill"]
-    assert outcome["rewrite_part_ids"] == ["skill"]
+    assert outcome["affected_part_ids"] == ["author-2.1"]
+    assert outcome["rewrite_part_ids"] == ["author-2.1"]
     problem = outcome["validation_errors"][0]["problem"]
-    assert repr(frontmatter_description) in problem
-    assert repr(submitted_description) in problem
+    assert "frontmatter name" in problem
+
+
+def test_template_skill_boundary_reports_the_exact_contaminated_identity() -> None:
+    description = (
+        "从模板中提炼可迁移的报告写作与推理方法，仅约束表达组织，"
+        "不迁移当前客户事实、专业阈值或项目结论。"
+    )
+    skills = {
+        skill_id: (
+            f"---\nname: report-template-{skill_id}\ndescription: {description}\n---\n"
+            f"# {skill_id}\n\n" + "先限定证据，再形成判断并设置可观察复核动作。" * 15
+        )
+        for skill_id in TEMPLATE_ROLE_SKILL_IDS
+    }
+    skills["author-2.2"] += "\n建议按设备额定电流的 20% 设置容量。"
+    transferred = [
+        "analysis_method",
+        "synthesis_method",
+        "visual_method",
+        "quality_check",
+    ]
+    excluded = [
+        "domain_knowledge",
+        "domain_standard_or_threshold",
+        "project_fact_or_number",
+        "customer_identity",
+        "project_finding_or_risk",
+        "project_conclusion_or_recommendation",
+        "evidence_or_claim_identifier",
+    ]
+    payload = TemplateSkillSubmission(
+        skills=skills,
+        boundary_manifest={
+            "policy_version": 1,
+            "transferred_categories": transferred,
+            "excluded_categories": excluded,
+            "boundary_statement": (
+                "本 Skill 只保留可跨项目复用的分析、综合、图证组织和质量检查方法；"
+                "专业机理、标准阈值、客户事实、项目判断、项目建议及证据标识均未迁移，"
+                "必须分别由模块 Skill、Knowledge 或当前运行 Evidence 提供。"
+            ),
+        },
+    )
+    contract = TemplateDistillationInput(
+        run_id="run-1",
+        template_ref="template.docx",
+        inspect_max_chars=100000,
+        required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
+        allowed_transfer_categories=transferred,
+        required_exclusion_categories=excluded,
+    )
+
+    with pytest.raises(SubmissionValidationError) as caught:
+        SubmitResultTool._validate_template_skill_boundary(
+            payload,
+            contract,
+            "与当前 Skill 无重复的模板源文本。",
+        )
+
+    assert caught.value.field == "skills.author-2.2"
+    assert "concrete domain number or threshold" in str(caught.value)
 
 
 @pytest.mark.asyncio
@@ -1173,7 +1229,7 @@ async def test_module_commit_rejects_preexisting_compaction_marker(
         "<persisted_result_part sha256=" + "0" * 64 + " characters=1445>",
     )
 
-    outcome = await _tool(tmp_path, task_id=task_id)(payload=_module_payload())
+    outcome = await _tool(tmp_path, task_id=task_id)(**_module_payload())
 
     assert outcome["status"] == "correction_required"
     issue = outcome["validation_errors"][0]
@@ -1193,7 +1249,7 @@ async def test_module_commit_targets_nested_heading_correction_to_exact_part(
         "## 2.1.1 固定小节\n\n### 2.1.1.1 现状描述\n\n完整正文。",
     )
 
-    outcome = await _tool(tmp_path, task_id=task_id)(payload=_module_payload())
+    outcome = await _tool(tmp_path, task_id=task_id)(**_module_payload())
 
     assert outcome["status"] == "correction_required"
     issue = outcome["validation_errors"][0]
@@ -1250,7 +1306,7 @@ async def test_runtime_claim_boundary_uses_project_evidence_metadata(
             evidence_ids=["E-0001"] if part_id == "2.1.1" else [],
         )
 
-    outcome = await _tool(tmp_path, task_id=task_id)(payload=_module_payload())
+    outcome = await _tool(tmp_path, task_id=task_id)(**_module_payload())
 
     assert outcome["status"] == "completed", outcome
     result = json.loads((tmp_path / outcome["result_path"]).read_text(encoding="utf-8"))
@@ -1304,7 +1360,7 @@ async def test_module_revision_commit_uses_bound_target_part(
         input_contract_ref=contract_ref,
     )
 
-    outcome = await tool(payload=payload)
+    outcome = await tool(**payload)
 
     assert outcome["status"] == "completed"
     result = json.loads((tmp_path / outcome["result_path"]).read_text(encoding="utf-8"))
@@ -1345,7 +1401,7 @@ async def test_module_commit_rejects_legacy_artifact_ref_fields(
         task_id="module-2.1-revision-r1",
         allowed_outputs=["module_revision_submission"],
         revision=1,
-    )(payload=payload)
+    )(**payload)
 
     assert outcome["status"] == "correction_required"
     issue = outcome["validation_errors"][0]
@@ -1412,7 +1468,7 @@ async def test_module_revision_runtime_replaces_target_claim_bindings(
         input_contract_ref=contract_ref,
     )
 
-    outcome = await tool(payload=payload)
+    outcome = await tool(**payload)
 
     assert outcome["status"] == "completed", outcome
     result = json.loads((tmp_path / outcome["result_path"]).read_text(encoding="utf-8"))
@@ -1564,7 +1620,7 @@ async def test_module_commit_rejects_model_authored_claims(
     tool = _tool(tmp_path)
     payload = _module_payload()
     payload["claims"] = {"item": []}
-    outcome = await tool(payload=payload)
+    outcome = await tool(**payload)
     assert outcome["status"] == "correction_required"
     issue = outcome["validation_errors"][0]
     assert issue["field"] == "claims"
@@ -1642,7 +1698,7 @@ async def test_module_commit_reports_unbound_part_without_claim_feedback(
         "revision_responses": [],
     }
 
-    outcome = await _tool(tmp_path, task_id=task_id)(payload=payload)
+    outcome = await _tool(tmp_path, task_id=task_id)(**payload)
 
     assert outcome["status"] == "correction_required"
     issue = outcome["validation_errors"][0]
@@ -1661,14 +1717,14 @@ async def test_distinct_submission_errors_do_not_exhaust_three_attempts(
 ) -> None:
     tool = _tool(tmp_path)
 
-    first = await tool(payload={"kind": "wrong-kind"})
-    second = await tool(payload="not-an-object")
+    first = await tool(kind="wrong-kind")
+    second = await tool()
     third_payload = _module_payload()
     third_payload["claims"] = {"item": []}
-    third = await tool(payload=third_payload)
+    third = await tool(**third_payload)
     fourth_payload = _module_payload()
     fourth_payload["module_id"] = "9.9"
-    fourth = await tool(payload=fourth_payload)
+    fourth = await tool(**fourth_payload)
 
     assert [first["status"], second["status"], third["status"], fourth["status"]] == [
         "correction_required",
@@ -1678,7 +1734,7 @@ async def test_distinct_submission_errors_do_not_exhaust_three_attempts(
     ]
     assert fourth["remaining_attempts"] == 4
 
-    repeated = await tool(payload=fourth_payload)
+    repeated = await tool(**fourth_payload)
     assert repeated["status"] == "failed"
     assert "same validation defect was repeated" in repeated["error"]
 
@@ -1709,7 +1765,7 @@ async def test_module_authoring_output_is_checked_against_visible_input_contract
         input_contract_kind="module_authoring_input",
         input_contract_ref=contract_ref,
     )
-    outcome = await tool(payload=_module_payload())
+    outcome = await tool(**_module_payload())
     assert outcome["status"] == "correction_required"
     issue = outcome["validation_errors"][0]
     assert "identity differs" in issue["problem"]
@@ -1782,8 +1838,8 @@ async def test_chief_submission_rejects_deleted_cross_fields_and_traces_regular_
         input_contract_ref=contract_ref,
     )
 
-    legacy = await tool(payload={**payload, "synthesis_dispositions": []})
-    outcome = await tool(payload=payload)
+    legacy = await tool(**{**payload, "synthesis_dispositions": []})
+    outcome = await tool(**payload)
 
     assert legacy["status"] == "correction_required"
     assert legacy["validation_errors"][0]["field"] == "synthesis_dispositions"
@@ -1876,7 +1932,7 @@ async def test_chief_revision_commit_is_compact_and_reads_only_assigned_parts(
         input_contract_ref=contract_ref,
     )
     outcome = await tool(
-        payload={
+        **{
             "kind": "chief_revision_submission",
             "base_subject_ref": subject_ref,
             "revision": 1,
@@ -1957,7 +2013,7 @@ async def test_markdown_aggregate_contract_rejects_unverified_bindings_without_c
         input_contract_kind="aggregate_editor_input",
         input_contract_ref=contract_ref,
     )
-    outcome = await tool(payload=payload)
+    outcome = await tool(**payload)
     assert outcome["status"] == "correction_required"
     assert outcome["validation_errors"][0]["field"] == "protected_claim_ids"
     assert "Extra inputs are not permitted" in outcome["validation_errors"][0]["problem"]

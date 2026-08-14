@@ -58,7 +58,12 @@ from ..tools.reporting_research_tools import (
 )
 from ..tools.result_memory import RunToolResultIndex
 from ..tools.skill_evolution_tools import ProductSkillEvolutionTool
-from .agentic_models import AgentResult, AgentRunStatus, TaskEnvelope
+from .agentic_models import (
+    TEMPLATE_ROLE_SKILL_IDS,
+    AgentResult,
+    AgentRunStatus,
+    TaskEnvelope,
+)
 from .capabilities import (
     Capability,
     collect_reference_refs,
@@ -85,10 +90,12 @@ from .input_snapshot import RunInputSnapshotStore
 from .input_contracts import (
     INPUT_CONTRACT_TYPES,
     AggregateEditorInput,
+    ChiefChapterLaneInput,
     ChiefEditorInput,
     ChiefRevisionInput,
     CrossReviewInput,
     CrossOwnerInput,
+    FinalChapterLaneInput,
     FinalReviewInput,
     ModuleAuthoringInput,
     ModuleReviewInput,
@@ -531,6 +538,10 @@ class ReportingAgentRunner:
         )
         self._sessions: dict[tuple[str, str], tuple[AgentLoop, str, str]] = {}
         self._session_route_bindings: dict[tuple[str, str], tuple[str, str]] = {}
+        # Last typed boundary delivered to each durable identity.  The loop
+        # keeps the lossless transcript; this small index only decides whether
+        # the next task needs the full contract or an explicit delta.
+        self._session_task_state: dict[tuple[str, str], dict[str, Any]] = {}
         self._artifact_root = ArtifactGateway(
             self.workspace, ArtifactGrant("root", "root", "workflow", "root")
         )
@@ -564,7 +575,7 @@ class ReportingAgentRunner:
                     else definition.max_tokens or self.defaults.max_tokens
                 ),
                 "max_tool_calls_per_round": (
-                    max(self.defaults.max_tool_calls_per_round, 5)
+                    max(self.defaults.max_tool_calls_per_round, len(TEMPLATE_ROLE_SKILL_IDS))
                     if envelope.task_id == "template-skill-distillation"
                     else max(self.defaults.max_tool_calls_per_round, 8)
                     if definition.id == "chief-editor"
@@ -744,10 +755,12 @@ class ReportingAgentRunner:
     ):
         module_id: str | None = None
         if definition.id == "evidence-auditor":
-            match = re.search(r"2\.[1-5]", envelope.task_id)
+            match = re.search(r"(2\.[1-5])", envelope.task_id)
             if match is None:
-                raise ValueError("evidence-auditor task must identify one fixed module")
-            module_id = match.group(0)
+                raise ValueError(
+                    f"{definition.id} task must identify one fixed owner module"
+                )
+            module_id = match.group(1)
         return self.module_skills.for_agent(
             definition.id,
             module_id=module_id,
@@ -1737,9 +1750,19 @@ class ReportingAgentRunner:
                 )
         elif isinstance(contract, CrossReviewInput):
             remove_property(schema, "coverage")
-            remove_property(
-                schema.get("$defs", {}).get("CrossReviewFinding", {}),
-                "id",
+            cross_finding = schema.get("$defs", {}).get("CrossReviewFinding", {})
+            remove_property(cross_finding, "id")
+            cross_finding.get("properties", {}).get("owner_module_id", {}).update(
+                {"const": contract.owner_module_id}
+            )
+            cross_finding.get("properties", {}).get(
+                "target_submodule_ids", {}
+            ).setdefault("items", {}).update(
+                {
+                    "enum": list(
+                        REPORT_TAXONOMY[contract.owner_module_id].submodules
+                    )
+                }
             )
             if kind == "cross_review_verdict_submission":
                 remove_property(
@@ -1790,6 +1813,47 @@ class ReportingAgentRunner:
                 schema.get("properties", {}).get("verdicts", {}).update(
                     {"minItems": required_count, "maxItems": required_count}
                 )
+        elif isinstance(contract, ChiefChapterLaneInput):
+            schema.get("properties", {}).get("run_id", {}).update(
+                {"const": contract.run_id}
+            )
+            schema.get("properties", {}).get("chapter_id", {}).update(
+                {"const": contract.chapter_id}
+            )
+            schema.get("properties", {}).get("revision", {}).update(
+                {"const": contract.revision}
+            )
+            section_ids = schema.get("properties", {}).get("section_ids", {})
+            if kind == "chief_chapter_lane_submission":
+                section_ids.update({"const": list(contract.section_ids)})
+            else:
+                section_ids.get("items", {}).update({"enum": list(contract.section_ids)})
+                section_ids.update({"minItems": 1})
+                schema.get("properties", {}).get("base_subject_ref", {}).update(
+                    {"const": contract.subject_ref}
+                )
+        elif isinstance(contract, FinalChapterLaneInput):
+            schema.get("properties", {}).get("run_id", {}).update(
+                {"const": contract.run_id}
+            )
+            schema.get("properties", {}).get("chapter_id", {}).update(
+                {"const": contract.chapter_id}
+            )
+            schema.get("properties", {}).get("checked_section_ids", {}).update(
+                {"const": list(contract.section_ids)}
+            )
+            finding = schema.get("$defs", {}).get("ChapterScopedFinalReviewFinding", {})
+            remove_property(finding, "id")
+            if kind == "final_chapter_lane_verdict_submission":
+                verdict_schema = schema.get("$defs", {}).get("ResolutionVerdict", {})
+                remove_property(verdict_schema, "finding_id")
+                required_ids = [finding.id for finding in contract.required_findings]
+                schema.get("properties", {}).get("verdicts", {}).update(
+                    {"minItems": len(required_ids), "maxItems": len(required_ids)}
+                )
+                verdict_schema.get("properties", {}).get("finding_id", {}).update(
+                    {"enum": required_ids}
+                )
         examples = schema.get("examples", [])
         if examples and isinstance(examples[0], dict):
             example = examples[0]
@@ -1804,9 +1868,22 @@ class ReportingAgentRunner:
                 example["owner_module_id"] = contract.owner_module_id
                 if isinstance(example.get("coverage"), dict):
                     example["coverage"]["module_id"] = contract.owner_module_id
+            elif isinstance(contract, ChiefChapterLaneInput):
+                example["run_id"] = contract.run_id
+                example["chapter_id"] = contract.chapter_id
+                example["section_ids"] = list(contract.section_ids)
+                example["revision"] = contract.revision
+                if kind == "chief_chapter_lane_revision_submission":
+                    example["base_subject_ref"] = contract.subject_ref
+            elif isinstance(contract, FinalChapterLaneInput):
+                example["run_id"] = contract.run_id
+                example["chapter_id"] = contract.chapter_id
+                example["checked_section_ids"] = list(contract.section_ids)
             if not isinstance(contract, CrossOwnerInput):
                 example.pop("coverage", None)
             example.pop("checked_section_ids", None)
+            if isinstance(contract, FinalChapterLaneInput):
+                example["checked_section_ids"] = list(contract.section_ids)
             for field in ("findings", "new_findings"):
                 values = example.get(field, [])
                 if isinstance(values, list):
@@ -1856,6 +1933,8 @@ class ReportingAgentRunner:
         expected_part_ids: list[str],
         *,
         evidence_binding_required: bool,
+        section_body_only: bool = False,
+        chapter_four_planned_headings: bool = False,
     ) -> dict:
         """Return the exact provider-visible shape for one current-task prose part."""
 
@@ -1879,6 +1958,21 @@ class ReportingAgentRunner:
                     "arguments. After a successful write, use list_result_parts and keep "
                     "an already-ready part without rewriting it unless correction feedback "
                     "explicitly names that part."
+                    + (
+                        " This is a static Chief section body: do not include any numbered "
+                        "Markdown heading, including the section's own heading; the runtime "
+                        "adds report headings. Unnumbered internal labels are allowed."
+                        if section_body_only
+                        else ""
+                    )
+                    + (
+                        " This is the complete dynamic Chapter 4 part: preserve every "
+                        "planned ### 4.n heading exactly once and in plan order. Numbered "
+                        "descendant headings such as #### 4.1.1 are allowed under their "
+                        "matching planned parent; do not add another top-level 4.n section."
+                        if chapter_four_planned_headings
+                        else ""
+                    )
                 ),
             },
         }
@@ -1907,6 +2001,8 @@ class ReportingAgentRunner:
         expected_part_ids: list[str],
         *,
         evidence_binding_required: bool,
+        section_body_only: bool = False,
+        chapter_four_planned_headings: bool = False,
         batch_size: int | None = None,
     ) -> dict:
         """Specialize single and batch result-part tools to the active task."""
@@ -1914,6 +2010,8 @@ class ReportingAgentRunner:
         item_schema = cls._result_part_item_schema(
             expected_part_ids,
             evidence_binding_required=evidence_binding_required,
+            section_body_only=section_body_only,
+            chapter_four_planned_headings=chapter_four_planned_headings,
         )
         if batch_size is None:
             return item_schema
@@ -2147,6 +2245,11 @@ class ReportingAgentRunner:
                     "template distillation template_ref is not one canonical workspace file"
                 )
         input_contract = self._input_contract(envelope)
+        if len(envelope.allowed_outputs) > 1:
+            raise ValueError(
+                "one exact allowed_output is required per typed task; "
+                "union submission schemas are not exposed to the Provider"
+            )
         task_submission_schemas = {
             kind: self._task_submission_schema(
                 kind,
@@ -2167,6 +2270,15 @@ class ReportingAgentRunner:
                 for section_id in input_contract.target_section_ids
             ]
             if isinstance(input_contract, ChiefRevisionInput)
+            else (
+                ["special_topic_analysis"]
+                if input_contract.chapter_id == "4"
+                else [
+                    CHIEF_SECTION_RESULT_PART_IDS[section_id]
+                    for section_id in input_contract.section_ids
+                ]
+            )
+            if isinstance(input_contract, ChiefChapterLaneInput)
             else [
                 part_id
                 for part_id in CHIEF_RESULT_PART_IDS
@@ -2187,6 +2299,16 @@ class ReportingAgentRunner:
                 "module_revision_submission",
             }
             & set(envelope.allowed_outputs)
+        )
+        section_body_only = bool(
+            isinstance(input_contract, ChiefChapterLaneInput)
+            and input_contract.chapter_id != "4"
+        )
+        special_topic_plan = (
+            input_contract.special_topic_plan
+            if isinstance(input_contract, ChiefChapterLaneInput)
+            and input_contract.chapter_id == "4"
+            else None
         )
         required_synthesis_input_ids: list[str] = []
         available: dict[str, Tool] = {
@@ -2318,6 +2440,8 @@ class ReportingAgentRunner:
                 self.store,
                 expected_result_part_ids,
                 evidence_binding_required=evidence_binding_required,
+                section_body_only=section_body_only,
+                special_topic_plan=special_topic_plan,
                 required_synthesis_input_ids=required_synthesis_input_ids,
             ),
             "list_result_parts": ListResultPartsTool(
@@ -2327,6 +2451,8 @@ class ReportingAgentRunner:
                 self.store,
                 expected_result_part_ids,
                 evidence_binding_required=evidence_binding_required,
+                section_body_only=section_body_only,
+                special_topic_plan=special_topic_plan,
                 required_synthesis_input_ids=required_synthesis_input_ids,
             ),
             "report_blocked": ReportBlockedTool(
@@ -2392,6 +2518,8 @@ class ReportingAgentRunner:
             registry._schema_cache["write_result_part"] = self._result_part_tool_schema(
                 expected_result_part_ids,
                 evidence_binding_required=evidence_binding_required,
+                section_body_only=section_body_only,
+                chapter_four_planned_headings=special_topic_plan is not None,
             )
         if "submit_result" in definition.tools:
             output_schemas = list(task_submission_schemas.values())
@@ -2399,33 +2527,29 @@ class ReportingAgentRunner:
                 raise ValueError(
                     f"{definition.id} has submit_result but no known allowed output contract"
                 )
-            payload_schema = (
+            submission_tool_schema = (
                 {
                     **output_schemas[0],
                     "description": (
                         f"{output_schemas[0].get('description', '').strip()} "
-                        "Pass payload as a native JSON object. Never JSON-encode, quote, "
-                        "or stringify the complete object."
+                        "The submit_result tool arguments are this submission object "
+                        "itself: put kind and every declared field at the top level. "
+                        "Never add a payload wrapper or JSON-stringify the object."
                     ).strip(),
                 }
                 if len(output_schemas) == 1
                 else {
+                    "type": "object",
                     "oneOf": output_schemas,
                     "description": (
                         "Submit exactly one of the output contracts explicitly allowed "
-                        "by this task. Pass payload as a native JSON object; never "
-                        "JSON-encode, quote, or stringify the complete object."
+                        "by this task. The tool arguments are the selected submission "
+                        "object itself; put kind and every declared field at the top "
+                        "level. Never add a payload wrapper or JSON-stringify the object."
                     ),
                 }
             )
-            registry._schema_cache["submit_result"] = {
-                "type": "object",
-                "properties": {
-                    "payload": payload_schema,
-                },
-                "required": ["payload"],
-                "additionalProperties": False,
-            }
+            registry._schema_cache["submit_result"] = submission_tool_schema
         return registry
 
     @staticmethod
@@ -2447,7 +2571,35 @@ class ReportingAgentRunner:
             # keep one durable Provider identity per owner module.  The same
             # key is intentionally reused for that owner's recheck.
             return session_key
+        if definition.id in {"chief-editor", "chief-editor-auditor"} and session_key:
+            # Chapter lanes are independent durable identities.  Revisions and
+            # rechecks keep the same chapter prefix so one chapter's lease or
+            # cached context can never block another chapter lane.
+            for prefix in ("chief-chapter-", "final-chapter-"):
+                if session_key.startswith(prefix):
+                    return session_key.split("-r", 1)[0]
         return definition.id
+
+    @staticmethod
+    def _runtime_id(
+        definition: AgentDefinition,
+        identity_key: str,
+        session_id: str,
+    ) -> str:
+        """Expose the durable reporting identity to UI/history routing.
+
+        Shared packaged roles (Auditor, Cross, Chief and Final) use one
+        definition but several independent business identities.  Prefixing the
+        runtime id with the identity key keeps the left rail from collapsing
+        those lanes under one generic role label.
+        """
+
+        runtime_role = (
+            identity_key
+            if identity_key != definition.id
+            else definition.id
+        )
+        return f"{runtime_role}--{session_id}"
 
     # ------------------------------------------------------------------
     # Typed Provider-context lifecycle (H3)
@@ -2851,6 +3003,106 @@ class ReportingAgentRunner:
             }
         return None
 
+    @staticmethod
+    def _task_context_state(
+        envelope: TaskEnvelope,
+        *,
+        input_contract_payload: str | None = None,
+        input_contract_sha256: str | None = None,
+        shared_artifacts: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Return the compact identity state used for full-vs-delta prompts."""
+
+        return {
+            "run_id": envelope.run_id,
+            "task_id": envelope.task_id,
+            "revision": envelope.revision,
+            "agent_id": envelope.agent_id,
+            "objective": envelope.objective,
+            "input_refs": list(envelope.input_refs),
+            "constraints": list(envelope.constraints),
+            "allowed_outputs": list(envelope.allowed_outputs),
+            "allowed_tools": list(envelope.allowed_tools),
+            "input_contract_kind": envelope.input_contract_kind,
+            "input_contract_ref": envelope.input_contract_ref,
+            # Keep the previous business contract body in the identity index so
+            # delta decisions do not depend on CAS/hash equality.  The body is
+            # never copied into a delta unless it actually changes.
+            "input_contract_payload": input_contract_payload,
+            "input_contract_sha256": input_contract_sha256,
+            "prior_result_ref": envelope.prior_result_ref,
+            "context_summary_refs": list(envelope.context_summary_refs),
+            "inline_context": envelope.inline_context,
+            "target_submodule_ids": list(envelope.target_submodule_ids),
+            "artifact_delivery_modes": dict(envelope.artifact_delivery_modes),
+            "shared_artifacts": list(shared_artifacts or []),
+        }
+
+    @staticmethod
+    def _load_handoff_summary(
+        workspace: Path,
+        run_id: str,
+        runtime_id: str,
+    ) -> dict[str, Any] | None:
+        safe_runtime_id = re.sub(r"[^A-Za-z0-9_.-]", "_", runtime_id)
+        path = workspace / f"Work/runs/{run_id}/agent-conversations/{safe_runtime_id}.handoff.json"
+        if not path.is_file():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return None
+        summary = payload.get("summary") if isinstance(payload, dict) else None
+        return dict(summary) if isinstance(summary, dict) else None
+
+    def _restore_persisted_session(
+        self,
+        loop: AgentLoop,
+        *,
+        envelope: TaskEnvelope,
+        runtime_id: str,
+    ) -> bool:
+        """Restore one exact identity transcript after a process restart.
+
+        The compressed trace is forensic/lossless but its messages are valid
+        Provider protocol units.  Legacy manifests are accepted by
+        ``load_conversation_trace`` for inspection; malformed or unrelated
+        traces are ignored and the new identity starts with an empty transcript.
+        """
+
+        safe_runtime_id = re.sub(r"[^A-Za-z0-9_.-]", "_", runtime_id)
+        manifest_path = (
+            self.workspace
+            / f"Work/runs/{envelope.run_id}/agent-conversations/{safe_runtime_id}.json"
+        )
+        if not manifest_path.is_file():
+            return False
+        try:
+            payload = load_conversation_trace(self.workspace, manifest_path)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return False
+        if payload.get("run_id") not in {None, envelope.run_id}:
+            return False
+        if payload.get("agent_id") not in {None, envelope.agent_id}:
+            return False
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
+            return False
+        loop.restore_conversation(
+            messages,
+            task_boundaries=payload.get("task_boundaries") or (),
+            handoff_summary=(
+                payload.get("compaction_summary")
+                if isinstance(payload.get("compaction_summary"), dict)
+                else self._load_handoff_summary(
+                    self.workspace,
+                    envelope.run_id,
+                    runtime_id,
+                )
+            ),
+        )
+        return True
+
     async def run(
         self,
         definition: AgentDefinition,
@@ -3022,7 +3274,11 @@ class ReportingAgentRunner:
                 # but an explicit later dispatch must be allowed to create a
                 # fresh attempt rather than returning that non-success forever.
                 if terminal.status == AgentRunStatus.COMPLETED.value:
-                    runtime_id = f"{definition.id}--{recovery_session_id}"
+                    runtime_id = self._runtime_id(
+                        definition,
+                        identity_key,
+                        recovery_session_id,
+                    )
                     self._record_identity(
                         workflow_id=workflow_id,
                         envelope=envelope,
@@ -3064,7 +3320,7 @@ class ReportingAgentRunner:
                 agent_id=definition.id,
                 session_id=session_id,
             )
-            runtime_id = f"{definition.id}--{session_id}"
+            runtime_id = self._runtime_id(definition, identity_key, session_id)
             config = resolved_config
             loop_kwargs = {
                 "agent_type": runtime_id,
@@ -3116,6 +3372,14 @@ class ReportingAgentRunner:
                 loop_kwargs.pop("context_rebuilder", None)
                 loop_kwargs.pop("pre_send_context_guard", None)
                 loop = AgentLoop(**loop_kwargs)
+            # A process restart loses the in-memory session map, not the
+            # durable identity.  Restore the exact transcript and latest
+            # handoff summary before the loop starts accepting task messages.
+            self._restore_persisted_session(
+                loop,
+                envelope=envelope,
+                runtime_id=runtime_id,
+            )
             self._sessions[cache_key] = (loop, session_id, runtime_id)
             self._session_route_bindings[cache_key] = route_binding
             loop.usage_stage = task_kind
@@ -3139,13 +3403,6 @@ class ReportingAgentRunner:
                 agent_id=definition.id,
                 session_id=session_id,
             )
-            # A durable role identity is not a license to replay every prior task
-            # prompt. Each reporting transition carries a complete typed input
-            # contract, so start the new task with clean provider working memory.
-            # Tool follow-ups and continuation slices inside this run() call still
-            # share the same conversation.
-            if hasattr(loop, "reset_working_memory_for_typed_task"):
-                loop.reset_working_memory_for_typed_task()
             loop.config = resolved_config
             loop.llm_provider = routed_provider
             loop.artifact_gateway = gateway
@@ -3289,6 +3546,29 @@ class ReportingAgentRunner:
             shared_artifacts,
             input_contract_payload=input_contract_payload,
         )
+        current_task_state = self._task_context_state(
+            envelope,
+            input_contract_payload=input_contract_payload,
+            input_contract_sha256=(
+                hashlib.sha256(input_contract_payload.encode("utf-8")).hexdigest()
+                if input_contract_payload is not None
+                else None
+            ),
+            shared_artifacts=shared_artifacts,
+        )
+        previous_task_state = loop.active_task_identity or self._session_task_state.get(
+            cache_key
+        )
+        if previous_task_state is not None:
+            task_message = PromptAssembler.task_delta_message(
+                envelope,
+                shared_artifacts,
+                previous=previous_task_state,
+                input_contract_payload=input_contract_payload,
+                input_contract_sha256=current_task_state.get("input_contract_sha256"),
+            )
+        loop.begin_typed_task(current_task_state)
+        self._session_task_state[cache_key] = current_task_state
         self._write_context_manifest(
             definition=definition,
             envelope=envelope,
@@ -3704,16 +3984,18 @@ class ReportingAgentRunner:
                     correction = (
                         "<submission_correction>\n"
                         "你刚才错误地用普通文字结束。现在不得解释或重读模板。立即调用 "
-                        "write_result_part，分别写入 skill、analysis、synthesis、visual、rubric；"
-                        "然后调用 submit_result 提交 template_skill_submission，五个长文本字段"
-                        "只使用 write_result_part 返回的 artifact_ref，并按 input contract "
-                        "补齐 boundary_manifest。只有 submit_result 工具成功才可结束。\n"
+                        "write_result_part，逐项写入 input contract 的十四个 required_part_ids；"
+                        "然后调用 submit_result 提交 template_skill_submission，十四份 Skill"
+                        "只使用 write_result_part 返回的 artifact_ref；边界 manifest 由"
+                        "运行时生成，不得提交。只有 submit_result 工具成功才可结束。\n"
                         "</submission_correction>"
                     )
                 elif definition.id == "chief-editor":
                     part_instruction = (
                         "只补齐 list_result_parts 列出的目标修订章节"
                         if envelope.input_contract_kind == "chief_revision_input"
+                        else "只补齐 list_result_parts 列出的本章固定小节"
+                        if envelope.input_contract_kind == "chief_chapter_input"
                         else "补齐 list_result_parts 列出的十二个固定章节"
                     )
                     submission_instruction = (
@@ -3721,13 +4003,19 @@ class ReportingAgentRunner:
                         "Cross dispositions、表格、图片或未决问题"
                         if envelope.input_contract_kind == "chief_revision_input"
                         else (
+                            "提交小型 chief_chapter_submission；只声明 chapter_id、"
+                            "Chapter 1 的 title、Chapter 3 的 tables 和未决问题"
+                        )
+                        if envelope.input_contract_kind == "chief_chapter_input"
+                        else (
                             "提交 edited_report_submission；只提交当前合同声明的实际章节字段，"
                             "不要恢复已删除的跨领域风险模块或其旧版综合元数据"
                         )
                     )
                     module_instruction = (
                         "不得提交 module_narratives 或任何第二章内容。"
-                        if envelope.input_contract_kind == "chief_revision_input"
+                        if envelope.input_contract_kind
+                        in {"chief_revision_input", "chief_chapter_input"}
                         else (
                             "module_narratives 必须只提交五个精确标记 "
                             "[[APPROVED_MODULE:2.1]] 至 [[APPROVED_MODULE:2.5]]。"
@@ -3944,8 +4232,18 @@ class ReportingAgentRunner:
                 "forensic_note": (
                     "Retained provider-history tool calls preserve every required argument, "
                     "including successful write_result_part content. Cost control removes "
-                    "only complete older messages through the general working-memory "
-                    "checkpoint path; no reusable prose marker or malformed tool call is exposed."
+                    "only complete older messages from the Provider working set while the "
+                    "lossless transcript remains available for restart; no reusable prose "
+                    "marker or malformed tool call is exposed."
+                ),
+                "task_boundaries": json_value(
+                    list(getattr(loop, "task_boundaries", ()) or ())
+                ),
+                "active_task_identity": json_value(
+                    getattr(loop, "active_task_identity", None)
+                ),
+                "compaction_summary": json_value(
+                    getattr(loop, "handoff_summary", None)
                 ),
                 "transcript_ref": blob.relative_path.as_posix(),
                 "transcript_sha256": hashlib.sha256(serialized).hexdigest(),
@@ -4014,6 +4312,7 @@ class ReportingAgentRunner:
         for key in keys:
             loop, _session_id, runtime_id = self._sessions.pop(key)
             self._session_route_bindings.pop(key, None)
+            self._session_task_state.pop(key, None)
             await loop.stop()
         router = self._routers.pop(workflow_id, None)
         if router is not None:

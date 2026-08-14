@@ -10,6 +10,7 @@ from docx import Document
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.decisions import EvidenceDecisionStore
+from manyselves.core.reporting.agentic_models import TEMPLATE_ROLE_SKILL_IDS
 from manyselves.core.reporting.mappers.common import MappingResult
 from manyselves.core.reporting.models import (
     EvidenceDecisionRequest,
@@ -255,15 +256,12 @@ async def test_service_retains_same_identity_registry_while_waiting_for_user(
         runner_ids.append(id(workflow.agent_runner))
         if len(runner_ids) == 1:
             raise ReportingNeedsDecisionError("等待用户确认命名。")
+        state["delivery_status"] = "delivered"
+        state["delivery_completion_ref"] = (
+            f"Work/runs/{state['run_id']}/delivery-completion.json"
+        )
 
-    delivered = tmp_path / "Outputs/Reports/result.docx"
-    delivered.parent.mkdir(parents=True)
-    delivered.write_bytes(b"verified")
     monkeypatch.setattr(ReportWorkflowRunner, "run", scripted_run)
-    monkeypatch.setattr(
-        "manyselves.core.reporting.service.verify_current_run_outputs",
-        lambda *_args, **_kwargs: [delivered],
-    )
 
     first = await service._execute(request, run_id)
     assert first.status == "needs_decision"
@@ -456,8 +454,8 @@ async def test_distill_template_skill_dispatches_only_the_standalone_action(
     )
 
     async def distill(_self, state: dict) -> None:
-        path = Path("Work/report-template-writing/SKILL.md")
-        service.store.write_text(path.as_posix(), "---\nname: report-template-writing\n---\n")
+        path = Path("Work/report-template-role-skills/author-2.1/SKILL.md")
+        service.store.write_text(path.as_posix(), "---\nname: report-template-author-2.1\n---\n")
         state["output_artifacts"] = [OutputArtifact(kind="skill", path=path)]
 
     async def must_not_run(_self, _state: dict) -> None:
@@ -475,10 +473,12 @@ async def test_distill_template_skill_dispatches_only_the_standalone_action(
     )
 
     assert result.status == "completed"
-    assert result.output_paths == [tmp_path / "Work/report-template-writing/SKILL.md"]
+    assert result.output_paths == [
+        tmp_path / "Work/report-template-role-skills/author-2.1/SKILL.md"
+    ]
 
 
-def test_legacy_template_skill_reports_the_missing_boundary_manifest(
+def test_template_role_skills_report_missing_identity_artifacts(
     tmp_path: Path,
 ) -> None:
     service = ReportingService(
@@ -487,32 +487,13 @@ def test_legacy_template_skill_reports_the_missing_boundary_manifest(
         task_board=TaskBoard(),
         llm_provider=TemplateResolutionProvider(),
     )
-    root = tmp_path / "Work/report-template-writing"
-    for relative in (
-        "SKILL.md",
-        "references/analysis-language.md",
-        "references/synthesis.md",
-        "references/visual-organization.md",
-        "references/quality-rubric.md",
-    ):
-        target = root / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(f"# {relative}\n", encoding="utf-8")
-    (root / "source.json").write_text(
-        json.dumps(
-            {
-                "source": "legacy-template-skill",
-                "template_ref": "Work/runs/old/templates/template.docx",
-            }
-        ),
-        encoding="utf-8",
-    )
+    root = tmp_path / "Work/report-template-role-skills"
     runner = object.__new__(ReportWorkflowRunner)
     runner.service = service
 
     with pytest.raises(
         AgentWorkflowError,
-        match=r"缺少文件：Work/report-template-writing/boundary\.json",
+        match=r"缺少文件：Work/report-template-role-skills/author-2\.1/SKILL\.md",
     ):
         runner._require_template_skill({})
 
@@ -526,15 +507,14 @@ def test_template_skill_loader_rejects_persisted_result_part_marker(
         task_board=TaskBoard(),
         llm_provider=TemplateResolutionProvider(),
     )
-    root = tmp_path / "Work/report-template-writing"
+    root = tmp_path / "Work/report-template-role-skills"
     files = {
-        "SKILL.md": "---\nname: report-template-writing\n---\n# Skill\n",
-        "references/analysis-language.md": (
+        f"{skill_id}/SKILL.md": (
             "<persisted_result_part sha256=" + "a" * 64 + " characters=100>\n"
-        ),
-        "references/synthesis.md": "# Synthesis\n",
-        "references/visual-organization.md": "# Visual\n",
-        "references/quality-rubric.md": "# Rubric\n",
+            if skill_id == "auditor-2.1"
+            else f"---\nname: report-template-{skill_id}\ndescription: 测试职责方法文件。\n---\n# {skill_id}\n"
+        )
+        for skill_id in TEMPLATE_ROLE_SKILL_IDS
     }
     for relative, content in files.items():
         target = root / relative
@@ -573,7 +553,7 @@ def test_template_skill_loader_rejects_persisted_result_part_marker(
         json.dumps(
             {
                 "boundary_policy_version": 1,
-                "boundary_ref": "Work/report-template-writing/boundary.json",
+                "boundary_ref": "Work/report-template-role-skills/boundary.json",
                 "artifact_sha256": {
                     path.relative_to(root).as_posix(): hashlib.sha256(
                         path.read_bytes()
@@ -1332,7 +1312,7 @@ async def test_resolved_draft_decision_reconciles_stale_ask_request(
 
 
 @pytest.mark.asyncio
-async def test_service_never_marks_a_run_completed_without_verified_current_outputs(
+async def test_service_never_marks_full_report_completed_without_delivered_lifecycle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service = ReportingService(
@@ -1351,7 +1331,7 @@ async def test_service_never_marks_a_run_completed_without_verified_current_outp
 
     assert result.status == "failed"
     assert result.output_paths == []
-    assert result.error == "workflow finished without verified output artifacts"
+    assert result.error == "workflow finished without delivered business lifecycle"
 
 
 @pytest.mark.asyncio

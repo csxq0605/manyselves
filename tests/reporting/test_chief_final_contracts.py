@@ -29,7 +29,7 @@ def _pack_payload() -> dict:
     }
 
 
-def test_cross_decision_pack_requires_terminal_five_module_hash_bound_state() -> None:
+def test_cross_decision_pack_requires_terminal_five_module_typed_state() -> None:
     pack = CrossDecisionPack.model_validate(_pack_payload())
     assert set(pack.module_ids) == {"2.1", "2.2", "2.3", "2.4", "2.5"}
 
@@ -37,10 +37,11 @@ def test_cross_decision_pack_requires_terminal_five_module_hash_bound_state() ->
         CrossDecisionPack.model_validate(
             {**_pack_payload(), "module_ids": ["2.1", "2.2"]}
         )
-    with pytest.raises(ValidationError, match="artifact_sha256"):
-        CrossDecisionPack.model_validate(
-            {**_pack_payload(), "artifact_sha256": {}}
-        )
+    without_hashes = CrossDecisionPack.model_validate(
+        {**_pack_payload(), "artifact_sha256": {}, "pack_sha256": None}
+    )
+    assert "artifact_sha256" not in without_hashes.model_dump()
+    assert "pack_sha256" not in without_hashes.model_dump()
     with pytest.raises(ValidationError, match="current run"):
         CrossDecisionPack.model_validate(
             {

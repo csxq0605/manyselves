@@ -65,6 +65,24 @@ class TestGetAgentName:
     def test_sub_returns_select(self):
         assert get_agent_name("sub") == "Select"
 
+    def test_reporting_lane_runtime_names_show_owned_scope(self):
+        assert (
+            get_agent_name("cross-module-reviewer--session-2.3--abcdef")
+            == "Cross-module Reviewer 2.3"
+        )
+        assert (
+            get_agent_name("evidence-auditor--session-2.4--abcdef")
+            == "Evidence Auditor 2.4"
+        )
+        assert (
+            get_agent_name("chief-editor--session-chapter-3--abcdef")
+            == "Chief Editor Chapter 3"
+        )
+        assert (
+            get_agent_name("chief-editor-auditor--session-chapter-4--abcdef")
+            == "Final Report Auditor Chapter 4"
+        )
+
 
 class TestGetAgentBadge:
     """Tests for get_agent_badge() — should be alias for get_agent_name."""

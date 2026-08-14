@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Sequence
 
 if TYPE_CHECKING:
     from .manager import LoopManager
@@ -56,6 +56,10 @@ from ...interfaces.types import (
 from ...utils.agent_labels import get_agent_badge
 from ...utils.editor_context import user_visible_content
 from ..artifacts.gateway import ArtifactGateway, ArtifactGrant
+from ..mimo_pricing import (
+    calculate_mimo_v25_pro_run_cost,
+    format_mimo_v25_pro_cost,
+)
 from ..tools.manifest_tool import ManifestManager, ManifestTool
 from ..tools.outcomes import (
     ToolOutcome,
@@ -75,6 +79,15 @@ _RESULT_PART_COMPACTION_THRESHOLD = 256
 _PERSISTED_RESULT_PART_MARKER = re.compile(
     r"^<persisted_result_part(?: [^>]*)?>$"
 )
+
+# A handoff summary is deliberately a normal model-facing message.  Older
+# compaction used a first-message snippet plus regex-extracted ids and a
+# ``checkpoint_ref``/``open_tool_result`` escape hatch.  That made compaction
+# depend on incidental prose and encouraged the model to reopen old output.  A
+# bounded structured handoff instead carries the durable decision state and
+# the current task boundary while the lossless transcript remains local.
+_HANDOFF_SUMMARY_MARKER = "<context_handoff_summary>"
+_HANDOFF_SUMMARY_END = "</context_handoff_summary>"
 
 # Reaching a bounded tool slice is not a terminal Agent state. Reporting
 # orchestration uses this signal to continue with the same durable identity.
@@ -253,6 +266,180 @@ def _canonical_failed_report_response(message: UserMessage | None) -> str | None
     return (
         f"报告任务 {run_id} 已失败：{error}\n\n"
         f"本轮没有启动新运行。若要从已保存断点继续，请明确要求恢复 {run_id}。"
+    )
+
+
+def _report_workflow_operation(workspace: Path, payload: dict[str, Any]) -> str | None:
+    """Return the persisted operation for one controller-owned report terminal."""
+
+    run_id = str(payload.get("run_id", "") or "")
+    if not run_id.startswith("report-") or Path(run_id).name != run_id:
+        return None
+    request_path = workspace / "Work" / "runs" / run_id / "request.json"
+    try:
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(request, dict):
+        return None
+    operation = str(request.get("operation", "") or "").strip()
+    return operation or None
+
+
+def _canonical_completed_report_response(
+    workspace: Path,
+    message: UserMessage | None,
+) -> str | None:
+    """Deliver a successful report terminal without another Main planning round."""
+
+    payload = _report_workflow_terminal_payload(message)
+    if payload is None or payload.get("status") not in {"completed", "delivered"}:
+        return None
+    if _report_workflow_operation(workspace, payload) == "distill_template_skill":
+        return None
+    run_id = str(payload["run_id"])
+    raw_paths = payload.get("output_paths")
+    output_paths = (
+        [str(path).strip() for path in raw_paths if str(path).strip()]
+        if isinstance(raw_paths, (list, tuple))
+        else []
+    )
+    existing_paths: list[str] = []
+    missing_paths: list[str] = []
+    for raw_path in output_paths:
+        candidate = Path(raw_path)
+        if not candidate.is_absolute():
+            candidate = workspace / candidate
+        try:
+            candidate = candidate.resolve()
+            candidate.relative_to(workspace)
+        except (OSError, ValueError):
+            missing_paths.append(raw_path)
+            continue
+        if candidate.is_file():
+            existing_paths.append(raw_path)
+        else:
+            missing_paths.append(raw_path)
+    if not output_paths or missing_paths:
+        details = (
+            f"缺失或无效输出：{', '.join(missing_paths)}。"
+            if missing_paths
+            else "终态没有提供输出文件。"
+        )
+        return (
+            f"报告任务 {run_id} 虽返回成功终态，但交付校验未通过：{details}\n\n"
+            "本轮不会启动新的报告运行；请先检查该 run 的交付状态。"
+        )
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    usage_line = ""
+    if usage:
+        metrics = []
+        if isinstance(usage.get("provider_attempts"), int):
+            metrics.append(f"Provider 调用 {usage['provider_attempts']} 次")
+        if isinstance(usage.get("total_tokens"), int):
+            metrics.append(f"总 Token {usage['total_tokens']:,}")
+        if metrics:
+            usage_line = "\n\n用量：" + "，".join(metrics) + "。"
+    mimo_cost = calculate_mimo_v25_pro_run_cost(workspace, run_id)
+    if mimo_cost is not None:
+        usage_line += "\n\n" + format_mimo_v25_pro_cost(mimo_cost)
+    outputs = "\n".join(f"- `{path}`" for path in existing_paths)
+    return (
+        f"报告任务 {run_id} 已成功完成并交付。\n\n输出：\n{outputs}"
+        f"{usage_line}\n\n本轮已结束，不会启动新的报告运行。"
+    )
+
+
+def _report_workflow_operation(workspace: Path, payload: dict[str, Any]) -> str | None:
+    """Return the persisted operation for one controller-owned report terminal."""
+
+    run_id = str(payload.get("run_id", "") or "")
+    if (
+        not run_id.startswith("report-")
+        or Path(run_id).name != run_id
+    ):
+        return None
+    request_path = workspace / "Work" / "runs" / run_id / "request.json"
+    try:
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(request, dict):
+        return None
+    operation = str(request.get("operation", "") or "").strip()
+    return operation or None
+
+
+def _canonical_completed_report_response(
+    workspace: Path,
+    message: UserMessage | None,
+) -> str | None:
+    """Deliver a successful report terminal without another Main planning round."""
+
+    payload = _report_workflow_terminal_payload(message)
+    if payload is None or payload.get("status") not in {"completed", "delivered"}:
+        return None
+    if _report_workflow_operation(workspace, payload) == "distill_template_skill":
+        # Template distillation may be the first explicitly requested step of a
+        # multi-step user request. Main may advance to the requested writing run.
+        return None
+
+    run_id = str(payload["run_id"])
+    raw_paths = payload.get("output_paths")
+    output_paths = [
+        str(path).strip()
+        for path in raw_paths
+        if str(path).strip()
+    ] if isinstance(raw_paths, (list, tuple)) else []
+    existing_paths: list[str] = []
+    missing_paths: list[str] = []
+    for raw_path in output_paths:
+        candidate = Path(raw_path)
+        if not candidate.is_absolute():
+            candidate = workspace / candidate
+        try:
+            candidate = candidate.resolve()
+            candidate.relative_to(workspace)
+        except (OSError, ValueError):
+            missing_paths.append(raw_path)
+            continue
+        if candidate.is_file():
+            existing_paths.append(raw_path)
+        else:
+            missing_paths.append(raw_path)
+
+    if not output_paths or missing_paths:
+        details = (
+            f"缺失或无效输出：{', '.join(missing_paths)}。"
+            if missing_paths
+            else "终态没有提供输出文件。"
+        )
+        return (
+            f"报告任务 {run_id} 虽返回成功终态，但交付校验未通过：{details}\n\n"
+            "本轮不会启动新的报告运行；请先检查该 run 的交付状态。"
+        )
+
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    usage_line = ""
+    if usage:
+        attempts = usage.get("provider_attempts")
+        total_tokens = usage.get("total_tokens")
+        metrics = []
+        if isinstance(attempts, int):
+            metrics.append(f"Provider 调用 {attempts} 次")
+        if isinstance(total_tokens, int):
+            metrics.append(f"总 Token {total_tokens:,}")
+        if metrics:
+            usage_line = "\n\n用量：" + "，".join(metrics) + "。"
+
+    mimo_cost = calculate_mimo_v25_pro_run_cost(workspace, run_id)
+    if mimo_cost is not None:
+        usage_line += "\n\n" + format_mimo_v25_pro_cost(mimo_cost)
+
+    outputs = "\n".join(f"- `{path}`" for path in existing_paths)
+    return (
+        f"报告任务 {run_id} 已成功完成并交付。\n\n输出：\n{outputs}"
+        f"{usage_line}\n\n本轮已结束，不会启动新的报告运行。"
     )
 
 
@@ -1068,6 +1255,112 @@ def _sanitize_provider_visible_value(value: Any) -> Any:
     return value
 
 
+def _tool_correction_payload(message: LLMMessage) -> dict[str, Any] | None:
+    """Return one rejected tool-call correction carried by a tool result."""
+
+    if not message.is_tool_result or not message.content:
+        return None
+    try:
+        payload = json.loads(message.content)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if (
+        str(payload.get("status") or "").strip().casefold()
+        != "correction_required"
+        or payload.get("accepted") is not False
+    ):
+        return None
+    return payload
+
+
+def _provider_working_messages(
+    messages: list[LLMMessage],
+) -> list[LLMMessage]:
+    """Remove rejected tool calls from the Provider-visible repair history.
+
+    The lossless internal transcript keeps the original tool call and paired
+    correction result for forensics.  Replaying that rejected call to the model,
+    however, turns its invalid arguments into an in-context example and makes a
+    repair turn likely to copy the same shape.  Provider working history therefore
+    keeps successful tool protocol pairs but converts rejected pairs into ordinary
+    user repair instructions with no malformed call arguments attached.
+    """
+
+    working: list[LLMMessage] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if message.role != "assistant" or not message.tool_calls:
+            working.append(message)
+            index += 1
+            continue
+
+        result_index = index + 1
+        tool_results: list[LLMMessage] = []
+        while result_index < len(messages) and messages[result_index].is_tool_result:
+            tool_results.append(messages[result_index])
+            result_index += 1
+        results_by_id = {
+            result.tool_call_id: result
+            for result in tool_results
+            if result.tool_call_id is not None
+        }
+        rejected: dict[str, dict[str, Any]] = {}
+        for call in message.tool_calls:
+            result = results_by_id.get(call.id)
+            correction = (
+                _tool_correction_payload(result) if result is not None else None
+            )
+            if correction is not None:
+                rejected[call.id] = correction
+        if not rejected:
+            working.append(message)
+            working.extend(tool_results)
+            index = result_index
+            continue
+
+        retained_calls = [
+            call for call in message.tool_calls if call.id not in rejected
+        ]
+        if message.content or retained_calls:
+            working.append(
+                LLMMessage(
+                    role="assistant",
+                    content=message.content,
+                    tool_calls=retained_calls or None,
+                    thinking=message.thinking,
+                    cache_control=message.cache_control,
+                )
+            )
+        working.extend(
+            result
+            for result in tool_results
+            if result.tool_call_id not in rejected
+        )
+        for call in message.tool_calls:
+            if call.id not in rejected:
+                continue
+            correction_result = results_by_id[call.id]
+            working.append(
+                LLMMessage(
+                    role="user",
+                    content=(
+                        f'<tool_input_correction tool_name="{call.name}">\n'
+                        "The rejected tool call was removed from working history so "
+                        "its invalid arguments are not an example to copy. Rebuild the "
+                        "call from the current tool schema and apply this feedback:\n"
+                        f"{correction_result.content}\n"
+                        "</tool_input_correction>"
+                    ),
+                )
+            )
+        index = result_index
+
+    return working
+
+
 def _sanitize_provider_messages(
     messages: list[LLMMessage],
 ) -> list[LLMMessage]:
@@ -1273,104 +1566,74 @@ def _compact_messages_for_working_memory(
     *,
     target_tokens: int = 36000,
 ) -> list[LLMMessage]:
-    """Keep a focused working set and replace older history with a checkpoint."""
+    """Replace old working context with one structured model handoff.
+
+    The complete in-process transcript is intentionally left untouched by this
+    helper.  Only the Provider-facing working set is compacted.  Compaction is
+    atomic around assistant tool calls/results and always retains the newest
+    task boundary and protocol unit.  The handoff contains explicit progress,
+    decisions, constraints, remaining work, and critical references extracted
+    from structured messages (tool arguments/results and task XML), rather than
+    taking a first-message slice or scraping identifiers with regular
+    expressions.
+    """
 
     if not messages or _estimate_tokens(messages) <= target_tokens:
         return messages
 
     system_msg = messages[0]
-    history = messages[1:]
-    objective = ""
-    for message in history:
-        if (
-            message.role != "user"
-            or getattr(message, "is_tool_result", False)
-            or not message.content
-        ):
-            continue
-        previous = re.search(
-            r"<original_objective>(.*?)</original_objective>",
-            message.content,
-            flags=re.DOTALL,
-        )
-        objective = (
-            previous.group(1)[:1200]
-            if previous is not None
-            and "<working_memory_checkpoint>" in message.content
-            else message.content[:1200]
-        )
-        break
-    combined = "\n".join(message.content or "" for message in history)
-
-    # Prefer references mentioned most recently.  A sorted set used to discard
-    # recency and could evict the exact finding/result-part ids needed to finish
-    # the active task while retaining older, alphabetically earlier ids.
-    reference_candidates = (
-        re.findall(
-            r"\b(?:Work|Outputs|Knowledge)/[^\s<>'\"，。；]+",
-            combined,
-        )
-        + re.findall(r"\b(?:E|R|W)-[A-Za-z0-9_.-]+", combined)
-    )
-    references = list(dict.fromkeys(reversed(reference_candidates)))[:120]
-    references.reverse()
-    identifier_candidates = re.findall(
-        r"\b(?:E|R|W|RN|SI|M|X|F)-[A-Za-z0-9_.-]+",
-        combined,
-    )
-    retained_identifiers = list(
-        dict.fromkeys(reversed(identifier_candidates))
-    )[:120]
-    retained_identifiers.reverse()
-    shared_memory_refs = [
-        ref for ref in references if ref.endswith("-evidence-memory.json")
+    history = [
+        message
+        for message in messages[1:]
+        if _HANDOFF_SUMMARY_MARKER not in str(message.content or "")
     ]
-    latest_tool_state = _latest_compaction_tool_state(history)
-    checkpoint_content = (
-        "<working_memory_checkpoint>\n"
-        f"<original_objective>{objective}</original_objective>\n"
-        f"<retained_references>{' '.join(references)}</retained_references>\n"
-        f"<retained_identifiers>{' '.join(retained_identifiers)}</retained_identifiers>\n"
-        f"<shared_memory_refs>{' '.join(shared_memory_refs)}</shared_memory_refs>\n"
-        + (
-            f"<latest_tool_state>{latest_tool_state}</latest_tool_state>\n"
-            if latest_tool_state
-            else ""
-        )
-        + "Older tool transcripts were persisted locally. Continue from the recent "
-        "messages. Reuse shared memory before searching or reopening source records. "
-        "The complete removed transcript remains available losslessly through "
-        "checkpoint_ref; call open_tool_result only when a needed detail is absent "
-        "from the retained messages. "
-        "Never recreate an older write merely because it is absent here: call "
-        "list_result_parts once and write only missing or explicitly assigned rewrite "
-        "parts. Current tool schemas, not this checkpoint, define argument shapes.\n"
-        "</working_memory_checkpoint>"
-    )
-    checkpoint = LLMMessage(role="user", content=checkpoint_content)
-    fixed_tokens = _estimate_tokens([system_msg, checkpoint])
-    recent_budget = max(0, target_tokens - fixed_tokens)
+    summary_payload = _build_handoff_summary(history)
+    summary_content = _render_handoff_summary(summary_payload)
+    handoff = LLMMessage(role="user", content=summary_content)
 
+    fixed_tokens = _estimate_tokens([system_msg, handoff])
+    recent_budget = max(0, int(target_tokens) - fixed_tokens)
+
+    units = _atomic_history_units(history)
     kept: list[LLMMessage] = []
     kept_tokens = 0
-    # Tool use is one protocol object: assistant(tool_calls) plus every matching
-    # tool result.  Retaining or removing individual messages can manufacture an
-    # invalid example and make the next model call imitate missing arguments.
-    # Compact only complete atomic units.
-    for unit in reversed(_atomic_history_units(history)):
-        if any(
-            message.role == "user"
-            and "<working_memory_checkpoint>" in (message.content or "")
-            for message in unit
-        ):
-            continue
-        unit_tokens = _estimate_tokens(unit)
-        if kept_tokens + unit_tokens > recent_budget:
-            break
-        kept[0:0] = unit
-        kept_tokens += unit_tokens
+    # Keep the newest unit no matter how large it is.  This is the active task
+    # boundary/tool exchange and is required to finish an unfinished protocol.
+    if units:
+        newest = units[-1]
+        kept = list(newest)
+        kept_tokens = _estimate_tokens(newest)
+        for unit in reversed(units[:-1]):
+            unit_tokens = _estimate_tokens(unit)
+            if kept_tokens + unit_tokens > recent_budget:
+                continue
+            kept[0:0] = unit
+            kept_tokens += unit_tokens
 
-    return [system_msg, checkpoint, *kept]
+    # A current user boundary can be a standalone unit after a very large tool
+    # exchange.  Ensure the newest user task remains visible even if the latest
+    # atomic unit is an assistant/tool pair.
+    latest_user = next(
+        (
+            message
+            for message in reversed(history)
+            if message.role == "user" and not message.is_tool_result
+        ),
+        None,
+    )
+    if latest_user is not None and latest_user not in kept:
+        user_tokens = _estimate_tokens([latest_user])
+        if user_tokens <= recent_budget:
+            kept.insert(0, latest_user)
+
+    result = [system_msg, handoff, *kept]
+    logger.info(
+        "Working memory compacted: {} -> {} messages; handoff_sequence={}",
+        len(messages),
+        len(result),
+        summary_payload.get("sequence", 1),
+    )
+    return result
 
 
 def _atomic_history_units(history: list[LLMMessage]) -> list[list[LLMMessage]]:
@@ -1431,64 +1694,204 @@ def _atomic_history_units(history: list[LLMMessage]) -> list[list[LLMMessage]]:
     return units
 
 
-def _latest_compaction_tool_state(history: list[LLMMessage]) -> str:
-    """Retain compact typed progress, not arbitrary old tool prose."""
+def _json_object(content: Any) -> Mapping[str, Any] | None:
+    """Decode one message as a JSON object without interpreting free prose."""
 
-    call_names: dict[str, str] = {}
-    for message in history:
-        for call in getattr(message, "tool_calls", None) or []:
-            call_id = str(getattr(call, "id", "") or "")
-            if call_id:
-                call_names[call_id] = str(getattr(call, "name", "") or "")
+    try:
+        payload = json.loads(str(content or ""))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, Mapping) else None
 
-    retained_keys = {
-        "status",
-        "accepted",
-        "complete",
-        "next_action",
-        "part_id",
-        "ready_part_ids",
-        "missing_part_ids",
-        "rewrite_part_ids",
-        "do_not_rewrite_part_ids",
-        "affected_part_ids",
-        "required_synthesis_input_ids",
-        "correction_state_ref",
-        "result_path",
+
+def _bounded_text(value: Any, *, limit: int = 1200) -> str:
+    """Normalize one summary field without selecting by a magic first slice."""
+
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    # Keep both ends: conclusions often land at the end while the beginning
+    # names the decision or task.  This is a bounded presentation field, not a
+    # source of truth; the lossless transcript remains local.
+    head = max(1, limit // 2)
+    tail = max(1, limit - head - 32)
+    return f"{text[:head]} … {text[-tail:]}"
+
+
+def _structured_reference_values(value: Any, *, parent_key: str = "") -> list[str]:
+    """Collect references from explicit structured fields only.
+
+    This intentionally does not scan arbitrary prose for ``E-``/``Work/`` style
+    ids.  References survive compaction when a tool/task payload identifies them
+    under a ref/evidence/artifact/result field, avoiding regex-ID heuristics.
+    """
+
+    reference_keys = {
+        "ref",
+        "refs",
+        "reference",
+        "references",
+        "artifact_ref",
+        "artifact_refs",
+        "evidence_id",
+        "evidence_ids",
+        "evidence_ref",
+        "evidence_refs",
+        "result_ref",
+        "result_refs",
+        "subject_ref",
+        "input_ref",
+        "input_refs",
+        "prior_result_ref",
+        "context_summary_ref",
+        "context_summary_refs",
+        "path",
+        "paths",
     }
-    latest: dict[str, dict[str, Any]] = {}
-    for message in history:
-        if not getattr(message, "is_tool_result", False):
-            continue
-        try:
-            payload = json.loads(message.content or "")
-        except (TypeError, json.JSONDecodeError):
-            continue
-        if not isinstance(payload, dict):
-            continue
-        compact = {key: payload[key] for key in retained_keys if key in payload}
-        if not compact:
-            continue
-        tool_name = call_names.get(str(message.tool_call_id or ""), "tool")
-        latest[tool_name] = compact
+    key = str(parent_key or "").casefold()
+    values: list[str] = []
+    if isinstance(value, Mapping):
+        for raw_key, child in value.items():
+            child_key = str(raw_key)
+            if child_key.casefold() in reference_keys:
+                values.extend(_flatten_reference_values(child))
+            elif isinstance(child, (Mapping, list, tuple)):
+                values.extend(
+                    _structured_reference_values(child, parent_key=child_key)
+                )
+    elif isinstance(value, (list, tuple)) and key in reference_keys:
+        for child in value:
+            values.extend(_flatten_reference_values(child))
+    return values
 
-    if not latest:
-        return ""
-    rendered = json.dumps(
-        latest,
+
+def _flatten_reference_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, (list, tuple)):
+        output: list[str] = []
+        for child in value:
+            output.extend(_flatten_reference_values(child))
+        return output
+    return []
+
+
+def _build_handoff_summary(history: Sequence[LLMMessage]) -> dict[str, Any]:
+    """Build a deterministic Codex-style handoff payload from typed history."""
+
+    progress: list[str] = []
+    decisions: list[str] = []
+    constraints: list[str] = []
+    remaining: list[str] = []
+    references: list[str] = []
+    tool_state: list[dict[str, Any]] = []
+    active_task: dict[str, str] = {}
+
+    def append_unique(target: list[str], value: Any, *, limit: int = 12) -> None:
+        rendered = _bounded_text(value)
+        if rendered and rendered not in target and len(target) < limit:
+            target.append(rendered)
+
+    for message in history:
+        content = str(message.content or "")
+        if _HANDOFF_SUMMARY_MARKER in content:
+            continue
+        if message.role == "user" and not message.is_tool_result:
+            # XML task boundaries are explicit structured state.  Keep the
+            # current task identity/objective and constraints without copying
+            # the entire contract into the handoff.
+            if content.lstrip().startswith(("<task_context", "<task_boundary")):
+                for field in ("task_id", "revision", "objective"):
+                    open_tag = f"<{field}>"
+                    close_tag = f"</{field}>"
+                    if open_tag in content and close_tag in content:
+                        value = content.split(open_tag, 1)[1].split(close_tag, 1)[0]
+                        active_task[field] = _bounded_text(value, limit=400)
+                for marker in ("<constraint>", "<allowed_output>", "<next_action>"):
+                    if marker in content:
+                        append_unique(
+                            constraints if marker == "<constraint>" else remaining,
+                            content.split(marker, 1)[1].split(marker.replace("<", "</", 1), 1)[0],
+                        )
+                append_unique(progress, active_task.get("objective") or content, limit=8)
+            elif content.lstrip().startswith(("<semantic_turn", "<submission_correction", "<same_identity_continuation")):
+                append_unique(remaining, content, limit=8)
+            else:
+                append_unique(progress, content, limit=8)
+        elif message.role == "assistant" and content and not message.tool_calls:
+            append_unique(progress, content, limit=12)
+        if message.tool_calls:
+            for call in message.tool_calls:
+                arguments = dict(getattr(call, "arguments", {}) or {})
+                references.extend(_structured_reference_values(arguments))
+                tool_state.append(
+                    {
+                        "tool": str(getattr(call, "name", "") or ""),
+                        "status": "requested",
+                    }
+                )
+        if message.is_tool_result:
+            payload = _json_object(message.content)
+            if payload is not None:
+                references.extend(_structured_reference_values(payload))
+                state = {
+                    key: payload[key]
+                    for key in (
+                        "status",
+                        "accepted",
+                        "complete",
+                        "next_action",
+                        "part_id",
+                        "ready_part_ids",
+                        "missing_part_ids",
+                        "rewrite_part_ids",
+                        "result_path",
+                    )
+                    if key in payload
+                }
+                if state:
+                    state["tool_call_id"] = str(message.tool_call_id or "")
+                    tool_state.append(state)
+                    status = payload.get("status")
+                    if status in {"failed", "blocked", "correction_required"}:
+                        append_unique(remaining, payload.get("next_action") or status)
+                    elif payload.get("accepted") is True or status in {"completed", "ok"}:
+                        append_unique(decisions, payload.get("next_action") or status)
+            else:
+                append_unique(progress, message.content, limit=8)
+
+    references = list(dict.fromkeys(item for item in references if item))[-64:]
+    # The active unit is the final source of truth for unfinished work.  Keep a
+    # concise tail of structured tool state rather than arbitrary old output.
+    tool_state = tool_state[-24:]
+    if not remaining:
+        remaining.append("Continue the active task from the latest retained protocol unit.")
+    return {
+        "version": 1,
+        "active_task": active_task,
+        "progress": progress[-12:],
+        "decisions": decisions[-12:],
+        "constraints": constraints[-12:],
+        "remaining_work": remaining[-12:],
+        "critical_refs": references,
+        "tool_state": tool_state,
+        "sequence": 1,
+    }
+
+
+def _render_handoff_summary(payload: Mapping[str, Any]) -> str:
+    """Render a compact XML envelope whose body is machine-readable JSON."""
+
+    normalized = dict(payload)
+    normalized["sequence"] = int(normalized.get("sequence", 1) or 1)
+    serialized = json.dumps(
+        normalized,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
         default=str,
     )
-    # The retired marker token must never become a model-visible recovery hint.
-    rendered = re.sub(
-        r"persisted_result_part",
-        "internal_history_placeholder",
-        rendered,
-        flags=re.IGNORECASE,
-    )
-    return rendered[:6000]
+    return f"{_HANDOFF_SUMMARY_MARKER}\n{serialized}\n{_HANDOFF_SUMMARY_END}"
 
 
 def _tool_required_args(tool_registry: ToolRegistry, tool_name: str, tool: Any | None = None) -> list[str]:
@@ -1607,6 +2010,13 @@ class AgentLoop:
         self._report_retries: int = 0
         self._main_block_retries: int = 0
         self._conversation_history: list[LLMMessage] = []
+        # The durable professional identity owns one lossless conversation.
+        # Reporting transitions update the active task metadata and append an
+        # explicit boundary/delta message; they never clear this transcript.
+        self._active_task_identity: dict[str, Any] | None = None
+        self._task_boundaries: list[dict[str, Any]] = []
+        self._handoff_summary: dict[str, Any] | None = None
+        self._compaction_sequence = 0
         self._persisted_result_part_contents: dict[str, str] = {}
         self._current_session_id: str | None = None
         self._manifest_dirty = False
@@ -1675,16 +2085,129 @@ class AgentLoop:
         return self._status
 
     def reset_working_memory_for_typed_task(self) -> None:
-        """Keep the durable identity while dropping prior task prompt/history replay."""
+        """Backward-compatible no-op retained for older callers.
+
+        A reporting identity is a continuous conversation.  Clearing history
+        here used to make every typed task look like a brand-new Agent and is
+        intentionally no longer supported.  Callers should use
+        :meth:`begin_typed_task` to append a task boundary/delta.
+        """
 
         if self._status not in {AgentStatus.IDLE, AgentStatus.ERROR}:
-            raise RuntimeError("cannot reset working memory while the Agent is active")
-        self._conversation_history = []
+            raise RuntimeError("cannot change task context while the Agent is active")
+
+    def begin_typed_task(self, context: Mapping[str, Any]) -> bool:
+        """Record one task transition without resetting the identity transcript.
+
+        ``context`` is persisted with the conversation trace and is used by
+        the runner to decide whether the next prompt is a full task context or
+        a delta.  The method returns ``True`` for the first task in a session.
+        """
+
+        if self._status not in {AgentStatus.IDLE, AgentStatus.ERROR}:
+            raise RuntimeError("cannot change task context while the Agent is active")
+        normalized = {
+            str(key): value
+            for key, value in dict(context or {}).items()
+            if value is not None
+        }
+        task_id = str(normalized.get("task_id") or "")
+        if not task_id:
+            raise ValueError("typed task context requires task_id")
+        first = self._active_task_identity is None
+        previous = self._active_task_identity
+        if previous is not None and previous == normalized:
+            return False
+        self._active_task_identity = normalized
+        self._task_boundaries.append(
+            {
+                "previous": dict(previous) if previous is not None else None,
+                "current": dict(normalized),
+                "sequence": len(self._task_boundaries) + 1,
+            }
+        )
+        # A new task may expose a different result-part namespace.  Keep the
+        # conversation/tool protocol, but do not carry result-part write-cache
+        # entries into the new task's local execution.
         self._persisted_result_part_contents = {}
         self._last_provider_messages = None
         self._last_provider_tools = None
         self._last_provider_attempt_disposition = None
         self._last_provider_request_fingerprint = None
+        return first
+
+    @property
+    def active_task_identity(self) -> dict[str, Any] | None:
+        return dict(self._active_task_identity) if self._active_task_identity else None
+
+    @property
+    def task_boundaries(self) -> list[dict[str, Any]]:
+        return [dict(item) for item in self._task_boundaries]
+
+    @property
+    def handoff_summary(self) -> dict[str, Any] | None:
+        return dict(self._handoff_summary) if self._handoff_summary else None
+
+    def restore_conversation(
+        self,
+        messages: Sequence[Mapping[str, Any] | LLMMessage],
+        *,
+        task_boundaries: Sequence[Mapping[str, Any]] = (),
+        handoff_summary: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Restore a persisted lossless transcript after a process restart."""
+
+        if self._status not in {AgentStatus.IDLE, AgentStatus.ERROR}:
+            raise RuntimeError("cannot restore conversation while the Agent is active")
+
+        restored: list[LLMMessage] = []
+        for value in messages:
+            if isinstance(value, LLMMessage):
+                restored.append(value)
+                continue
+            if not isinstance(value, Mapping):
+                continue
+            calls = [
+                LLMToolCall(
+                    id=str(item.get("id") or ""),
+                    name=str(item.get("name") or ""),
+                    arguments=dict(item.get("arguments") or {}),
+                )
+                for item in (value.get("tool_calls") or ())
+                if isinstance(item, Mapping)
+            ]
+            restored.append(
+                LLMMessage(
+                    role=str(value.get("role") or "user"),
+                    content=str(value.get("content") or ""),
+                    tool_calls=calls or None,
+                    tool_call_id=(
+                        str(value.get("tool_call_id"))
+                        if value.get("tool_call_id") is not None
+                        else None
+                    ),
+                    is_tool_result=bool(value.get("is_tool_result", False)),
+                    thinking=(
+                        str(value.get("thinking"))
+                        if value.get("thinking") is not None
+                        else None
+                    ),
+                    cache_control=bool(value.get("cache_control", False)),
+                )
+            )
+        self._conversation_history = restored
+        self._task_boundaries = [dict(item) for item in task_boundaries if isinstance(item, Mapping)]
+        if self._task_boundaries:
+            current = self._task_boundaries[-1].get("current")
+            self._active_task_identity = dict(current) if isinstance(current, Mapping) else None
+        self._handoff_summary = (
+            dict(handoff_summary) if isinstance(handoff_summary, Mapping) else None
+        )
+        self._compaction_sequence = int(
+            self._handoff_summary.get("sequence", 0)
+            if self._handoff_summary
+            else 0
+        )
 
     def set_context_rebuilder(self, rebuilder: Any | None) -> None:
         """Install or remove a typed Provider-context rebaser.
@@ -1917,7 +2440,7 @@ class AgentLoop:
         try:
             messages = await self._build_messages()
             if self.context_rebuilder is None:
-                messages = self._compact_working_memory(messages)
+                messages = await self._compact_working_memory_async(messages)
             tool_defs = self.tools.get_definitions()
             response = await self._chat_with_retries(
                 messages,
@@ -2363,6 +2886,28 @@ class AgentLoop:
         await self._set_status(AgentStatus.IDLE)
         return True
 
+    async def _deliver_completed_report_terminal(self, message: UserMessage) -> bool:
+        """Deterministically deliver a successful non-distillation report terminal."""
+
+        if self.agent_id != "main":
+            return False
+        response = _canonical_completed_report_response(self.workspace, message)
+        if response is None:
+            return False
+        self._conversation_history.append(LLMMessage(role="assistant", content=response))
+        await self.bus.publish(
+            AgentResponse(
+                agent_type=self.agent_type,
+                content=response,
+                message_id=message.message_id,
+                streaming=False,
+                **self._active_workflow_correlation(),
+            )
+        )
+        await self._flush_manifest_if_needed()
+        await self._set_status(AgentStatus.IDLE)
+        return True
+
     async def _enforce_main_reporting_route(self, message: UserMessage) -> bool:
         """Require a real terminal workflow-tool receipt for direct report actions."""
 
@@ -2519,6 +3064,9 @@ class AgentLoop:
             if await self._resume_simple_report_continuation(message):
                 return
 
+            if await self._deliver_completed_report_terminal(message):
+                return
+
             # Build messages — system prompt always first, conversation history follows
             context_started = time.perf_counter()
             messages = await self._build_messages()
@@ -2528,7 +3076,7 @@ class AgentLoop:
             # ``_chat_with_retries`` so the current capsule/latest tool unit
             # cannot be dropped before the gate sees them.
             if self.context_rebuilder is None:
-                messages = self._compact_working_memory(messages)
+                messages = await self._compact_working_memory_async(messages)
 
             # Get tool definitions
             tool_definitions = self.tools.get_definitions()
@@ -3317,7 +3865,9 @@ class AgentLoop:
                     tool_calls=[],
                     stop_reason=CONTEXT_BUDGET_EXHAUSTED,
                 )
-        provider_messages = _sanitize_provider_messages(messages)
+        provider_messages = _sanitize_provider_messages(
+            _provider_working_messages(messages)
+        )
         provider_tool_definitions = _sanitize_provider_visible_value(
             tool_definitions
         )
@@ -3730,6 +4280,32 @@ class AgentLoop:
                     if (
                         self.agent_id == "main"
                         and terminal_payload is not None
+                        and terminal_payload.get("status") in {"completed", "delivered"}
+                        and _report_workflow_operation(
+                            self.workspace, terminal_payload
+                        ) != "distill_template_skill"
+                    ):
+                        raise PermissionError(
+                            "A successful report-workflow terminal turn is delivery-only. "
+                            "Do not call files, status, run, resume, revise, cancel, or any "
+                            "other tool; deliver the current run outputs and end the turn."
+                        )
+                    if (
+                        self.agent_id == "main"
+                        and terminal_payload is not None
+                        and terminal_payload.get("status") in {"completed", "delivered"}
+                        and _report_workflow_operation(
+                            self.workspace, terminal_payload
+                        ) != "distill_template_skill"
+                    ):
+                        raise PermissionError(
+                            "A successful report-workflow terminal turn is delivery-only. "
+                            "Do not call files, status, run, resume, revise, cancel, or any "
+                            "other tool; deliver the current run outputs and end the turn."
+                        )
+                    if (
+                        self.agent_id == "main"
+                        and terminal_payload is not None
                         and terminal_payload.get("status") == "failed"
                     ):
                         raise PermissionError(
@@ -3740,6 +4316,11 @@ class AgentLoop:
 
                     required_args = _tool_required_args(
                         self.tools, execution_tool_call.name, tool
+                    )
+                    # submit_result exposes its complete business contract at the
+                    # tool-argument root. Its validator owns partial-input feedback.
+                    submit_result_owns_input_gate = (
+                        execution_tool_call.name == "submit_result"
                     )
 
                     # Detect truncated tool calls: output hit max_tokens before arguments were complete
@@ -3759,7 +4340,7 @@ class AgentLoop:
                                 f"and write them one at a time using apply_patch, or use a shorter response."
                                 f"{required_hint}"
                             )
-                        else:
+                        elif not submit_result_owns_input_gate:
                             raise _ToolInputCorrection(
                                 execution_tool_call,
                                 required_argument_names=required_args,
@@ -3773,7 +4354,7 @@ class AgentLoop:
                             or execution_tool_call.arguments.get(name) is None
                         )
                     ]
-                    if missing_required:
+                    if missing_required and not submit_result_owns_input_gate:
                         raise _ToolInputCorrection(
                             execution_tool_call,
                             required_argument_names=required_args,
@@ -3845,7 +4426,11 @@ class AgentLoop:
                             agent_type=self.agent_type,
                             tool_name=tool_call.name,
                             result=result,
-                            error=outcome.error if outcome.status != "ok" else None,
+                            error=(
+                                outcome.error
+                                if outcome.status in {"failed", "blocked"}
+                                else None
+                            ),
                         )
                     )
 
@@ -4033,7 +4618,9 @@ class AgentLoop:
 
             try:
                 if self.context_rebuilder is None:
-                    current_messages = self._compact_working_memory(current_messages)
+                    current_messages = await self._compact_working_memory_async(
+                        current_messages
+                    )
                 response = await self._chat_with_retries(
                     current_messages,
                     tool_definitions,
@@ -4142,7 +4729,13 @@ class AgentLoop:
     def _compact_working_memory(
         self, messages: list[LLMMessage]
     ) -> list[LLMMessage]:
-        """Compact a model working set and persist the removed transcript."""
+        """Compact a Provider working set and persist the handoff summary.
+
+        The local ``_conversation_history`` remains lossless and is persisted by
+        the reporting runner.  Only the structured summary is persisted here;
+        no checkpoint reference or ``open_tool_result`` recovery token is ever
+        placed in model-visible context.
+        """
 
         compacted = _compact_messages_for_working_memory(
             messages,
@@ -4150,56 +4743,283 @@ class AgentLoop:
         )
         if compacted is messages:
             return messages
-
-        retained_ids = {id(message) for message in compacted}
-        removed = [message for message in messages if id(message) not in retained_ids]
-        serialized = json.dumps(
-            [
-                {
-                    "role": message.role,
-                    "content": message.content or "",
-                    "tool_call_id": message.tool_call_id,
-                    "is_tool_result": message.is_tool_result,
-                    "tool_calls": [
-                        (
-                            call.model_dump(mode="json")
-                            if hasattr(call, "model_dump")
-                            else {
-                                "id": getattr(call, "id", None),
-                                "name": getattr(call, "name", None),
-                                "arguments": getattr(call, "arguments", None),
-                            }
-                        )
-                        for call in (message.tool_calls or [])
-                    ],
-                }
-                for message in removed
-            ],
-            ensure_ascii=False,
-        )
-        checkpoint_ref = self.artifact_gateway.persist_internal(
-            "context-checkpoint", hashlib.sha256(serialized.encode()).hexdigest(), serialized
-        )
-        checkpoint = compacted[1]
-        compacted[1] = LLMMessage(
-            role=checkpoint.role,
-            content=(checkpoint.content or "").replace(
-                "Older tool transcripts were persisted locally.",
-                (
-                    "Older tool transcripts were persisted locally. "
-                    f"checkpoint_ref={checkpoint_ref} "
-                    f"checkpoint_sha256={hashlib.sha256(serialized.encode()).hexdigest()}"
-                ),
+        summary_message = next(
+            (
+                item
+                for item in compacted
+                if _HANDOFF_SUMMARY_MARKER in str(item.content or "")
             ),
+            None,
         )
+        if summary_message is not None:
+            try:
+                raw = str(summary_message.content).split("\n", 1)[1]
+                raw = raw.rsplit("\n", 1)[0]
+                payload = json.loads(raw)
+            except (IndexError, TypeError, ValueError, json.JSONDecodeError):
+                payload = _build_handoff_summary(messages[1:])
+            self._compaction_sequence += 1
+            payload["sequence"] = self._compaction_sequence
+            self._handoff_summary = payload
+            # Keep the message's sequence in sync with the persisted payload.
+            compacted[compacted.index(summary_message)] = LLMMessage(
+                role="user",
+                content=_render_handoff_summary(payload),
+            )
+            self._persist_handoff_summary(payload)
         logger.info(
-            "Working memory compacted for {}: {} -> {} messages; checkpoint={}",
+            "Working memory compacted for {}: {} -> {} messages; handoff_sequence={}",
             self.agent_type,
             len(messages),
             len(compacted),
-            checkpoint_ref,
+            self._compaction_sequence,
         )
         return compacted
+
+    async def _request_model_handoff_summary(
+        self,
+        messages: Sequence[LLMMessage],
+    ) -> dict[str, Any] | None:
+        """Ask the configured Provider for a handoff summary at compaction.
+
+        This is a normal Provider round (and therefore uses the same admission,
+        retry, and usage ledger hooks as task work).  A failed/ambiguous summary
+        call is never treated as a successful model compaction; callers retain a
+        clearly marked deterministic fallback instead.
+        """
+
+        source = [
+            message
+            for message in messages
+            if _HANDOFF_SUMMARY_MARKER not in str(message.content or "")
+        ]
+        # Preserve protocol units and keep the summarizer request within the
+        # configured context window.  This is only the summarizer input; the
+        # lossless local transcript remains untouched.
+        summary_system = LLMMessage(
+            role="system",
+            content=(
+                "You are the context-compaction handoff writer. Return one JSON object "
+                "with exactly these top-level keys: progress, decisions, constraints, "
+                "remaining_work, critical_refs. Each value is a short array of strings. "
+                "Summarize only facts present in the transcript. Preserve exact refs "
+                "from structured tool arguments/results; never invent ids or claim a "
+                "tool was run when it was not. State the active task and unfinished "
+                "tool protocol in remaining_work."
+            ),
+        )
+        # Build the summarizer input from complete protocol units under the
+        # same context budget used for ordinary requests.  The deterministic
+        # state snapshot covers older evicted units; recent units remain exact.
+        units = _atomic_history_units(source)
+        selected_units: list[list[LLMMessage]] = []
+        if units:
+            selected_units = [units[-1]]
+            selected_chars = sum(
+                len(str(item.content or ""))
+                for item in selected_units[0]
+            )
+            char_budget = max(
+                4_096,
+                int(
+                    max(
+                        4_096,
+                        self._context_window_for_request()
+                        - self.config.max_tokens
+                        - _SAFETY_BUFFER,
+                    )
+                    / _TOKENS_PER_CHAR
+                    * 0.5
+                ),
+            )
+            for unit in reversed(units[:-1]):
+                unit_chars = sum(len(str(item.content or "")) for item in unit)
+                if selected_chars + unit_chars > char_budget:
+                    continue
+                selected_units.insert(0, unit)
+                selected_chars += unit_chars
+        selected_source = [
+            item for unit in selected_units for item in unit
+        ] or source[-8:]
+        older_snapshot = _build_handoff_summary(source)
+        older_snapshot_for_prompt = {
+            key: (
+                {
+                    field: _bounded_text(field_value, limit=160)
+                    for field, field_value in (
+                        value.items() if isinstance(value, Mapping) else ()
+                    )
+                }
+                if key == "active_task" and isinstance(value, Mapping)
+                else [
+                    _bounded_text(item, limit=160)
+                    for item in (value or ())
+                ]
+                if isinstance(value, (list, tuple))
+                else value
+            )
+            for key, value in older_snapshot.items()
+            if key != "tool_state"
+        }
+        older_snapshot_for_prompt["tool_state"] = list(
+            older_snapshot.get("tool_state") or ()
+        )[-4:]
+        transcript = []
+        for message in selected_source:
+            calls = [
+                {
+                    "id": str(getattr(call, "id", "") or ""),
+                    "name": str(getattr(call, "name", "") or ""),
+                    "arguments": dict(getattr(call, "arguments", {}) or {}),
+                }
+                for call in (getattr(message, "tool_calls", None) or ())
+            ]
+            transcript.append(
+                {
+                    "role": str(getattr(message, "role", "") or ""),
+                    "content": str(getattr(message, "content", "") or ""),
+                    "tool_call_id": getattr(message, "tool_call_id", None),
+                    "is_tool_result": bool(getattr(message, "is_tool_result", False)),
+                    "tool_calls": calls,
+                }
+            )
+        serialized = json.dumps(
+            transcript,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        summary_user = LLMMessage(
+            role="user",
+            content=(
+                "<older_state_snapshot>\n"
+                f"{json.dumps(older_snapshot_for_prompt, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}\n"
+                "</older_state_snapshot>\n"
+                "<compaction_transcript>\n"
+                f"{serialized}\n"
+                "</compaction_transcript>"
+            ),
+        )
+        try:
+            response = await self._chat_with_retries(
+                [summary_system, summary_user],
+                None,
+                f"compaction-{self._compaction_sequence + 1}",
+                phase="context_compaction",
+                stream_idle_timeout_seconds=None,
+            )
+        except Exception as exc:
+            logger.warning("Model handoff summary failed for {}: {}", self.agent_type, exc)
+            return None
+        content = str(getattr(response, "content", "") or "").strip()
+        if not content:
+            return None
+        try:
+            parsed = json.loads(content)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            # Providers occasionally wrap JSON in a short code fence.  Remove
+            # only that syntactic wrapper; do not regex-scan or infer fields.
+            if content.startswith("```") and content.endswith("```"):
+                body = content.split("\n", 1)[1] if "\n" in content else ""
+                body = body.rsplit("\n", 1)[0] if "\n" in body else body
+                try:
+                    parsed = json.loads(body)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    return None
+            else:
+                return None
+        if not isinstance(parsed, Mapping):
+            return None
+        required = (
+            "progress",
+            "decisions",
+            "constraints",
+            "remaining_work",
+            "critical_refs",
+        )
+        if any(key not in parsed for key in required):
+            return None
+        normalized: dict[str, Any] = {
+            key: [str(item) for item in (parsed.get(key) or ()) if str(item).strip()]
+            if isinstance(parsed.get(key), (list, tuple))
+            else [str(parsed.get(key))] if parsed.get(key) else []
+            for key in required
+        }
+        normalized["version"] = 1
+        normalized["source"] = "model"
+        normalized["sequence"] = self._compaction_sequence + 1
+        return normalized
+
+    async def _compact_working_memory_async(
+        self,
+        messages: list[LLMMessage],
+    ) -> list[LLMMessage]:
+        """Compact with a model handoff, clearly marking deterministic fallback."""
+
+        if not messages or _estimate_tokens(messages) <= self.config.working_memory_tokens:
+            return messages
+        baseline = _compact_messages_for_working_memory(
+            messages,
+            target_tokens=self.config.working_memory_tokens,
+        )
+        summary_message = next(
+            (
+                item
+                for item in baseline
+                if _HANDOFF_SUMMARY_MARKER in str(item.content or "")
+            ),
+            None,
+        )
+        if summary_message is None:
+            return baseline
+        model_summary = await self._request_model_handoff_summary(messages[1:])
+        if model_summary is None:
+            try:
+                raw = str(summary_message.content).split("\n", 1)[1]
+                raw = raw.rsplit("\n", 1)[0]
+                fallback = json.loads(raw)
+            except (IndexError, TypeError, ValueError, json.JSONDecodeError):
+                fallback = _build_handoff_summary(messages[1:])
+            fallback["source"] = "deterministic_fallback"
+            fallback["fallback_reason"] = "model_handoff_unavailable"
+            payload = fallback
+        else:
+            payload = model_summary
+        self._compaction_sequence += 1
+        payload["sequence"] = self._compaction_sequence
+        self._handoff_summary = payload
+        index = baseline.index(summary_message)
+        baseline[index] = LLMMessage(role="user", content=_render_handoff_summary(payload))
+        self._persist_handoff_summary(payload)
+        return baseline
+
+    def _persist_handoff_summary(self, payload: Mapping[str, Any]) -> None:
+        """Persist one summary for crash/restart restoration when run-scoped."""
+
+        run_id = str(self.usage_run_id or "").strip()
+        if not run_id:
+            return
+        safe_agent = "".join(
+            char if char.isalnum() or char in "-_." else "_"
+            for char in str(self.agent_type)
+        )
+        path = self.workspace / f"Work/runs/{run_id}/agent-conversations/{safe_agent}.handoff.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        serialized = json.dumps(
+            {
+                "version": 1,
+                "run_id": run_id,
+                "agent_type": str(self.agent_type),
+                "summary": dict(payload),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(serialized + "\n", encoding="utf-8")
+        temporary.replace(path)
 
     def _record_token_usage(
         self,
@@ -4700,6 +5520,17 @@ class AgentLoop:
             )
             for msg in self._conversation_history
         ]
+        if self._handoff_summary and not any(
+            _HANDOFF_SUMMARY_MARKER in str(message.content or "")
+            for message in sanitized_history
+        ):
+            sanitized_history.insert(
+                0,
+                LLMMessage(
+                    role="user",
+                    content=_render_handoff_summary(self._handoff_summary),
+                ),
+            )
         # This method only assembles the lossless local baseline.  The typed
         # Provider rebaser is invoked exactly once by ``_chat_with_retries``
         # for each logical round, after tool schemas are available and before

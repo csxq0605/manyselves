@@ -18,6 +18,7 @@ from manyselves.core.reporting.models import (
     SourceLocation,
 )
 from manyselves.core.reporting.revisions import RevisionCoordinator
+from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.core.reporting.service import ReportingService
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
@@ -218,3 +219,57 @@ def test_revision_restore_returns_current_run_chief_preparation_refs(
             encoding="utf-8"
         )
     ) == {"assets": []}
+
+
+@pytest.mark.asyncio
+async def test_revision_requires_delivered_business_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class NeverProvider(LLMProvider):
+        def __init__(self):
+            super().__init__("test", model="never-called")
+
+        async def chat(self, *args, **kwargs):
+            raise AssertionError("targeted revision lifecycle test is offline")
+
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=NeverProvider(),
+    )
+    coordinator = RevisionCoordinator(service, None)
+    request = RevisionRequest(
+        baseline_version_id="version-baseline",
+        feedback="修订模块 2.1。",
+        target_module_ids=["2.1"],
+    )
+
+    monkeypatch.setattr(
+        "manyselves.core.reporting.revisions.ReportVersionStore.load",
+        lambda _store, _version_id: object(),
+    )
+    monkeypatch.setattr(
+        coordinator,
+        "_restore",
+        lambda run_id, _request, _baseline: (
+            {"run_id": run_id},
+            object(),
+        ),
+    )
+
+    async def no_delivery(_runner, _state, _request, _baseline) -> None:
+        return None
+
+    monkeypatch.setattr(ReportWorkflowRunner, "run_revision", no_delivery)
+
+    result = await coordinator._run_locked(
+        request,
+        run_id="report-revision-no-delivery",
+    )
+
+    assert result.status == "failed"
+    assert result.error == (
+        "revision workflow finished without delivered business lifecycle"
+    )

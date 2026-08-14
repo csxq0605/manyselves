@@ -29,7 +29,6 @@ from ..usage_ledger import UsageLedger
 from .agent_runner import ReportingAgentRunner
 from .config import load_packaged_agents
 from .coverage import evaluate_coverage
-from .delivery import DeliveryReceipt
 from .decisions import EvidenceDecisionStore
 from .evidence_readiness import ReportingBlockedError
 from .execution_runtime import ProviderRouter
@@ -46,15 +45,10 @@ from .models import (
     OutputArtifact,
     PhotoAsset,
     ProjectManifest,
+    REPORT_MODULE_IDS,
     ReportRequest,
     RevisionRequest,
     UserSupplement,
-)
-from .output_verifier import OutputVerificationError, verify_current_run_outputs
-from .output_ownership import (
-    OUTPUT_ARTIFACT_REFS,
-    OutputOwnerStore,
-    build_output_owner,
 )
 from .parallel_runtime import (
     ProjectWriteLease,
@@ -69,7 +63,6 @@ from .rendering import PackagedV2DocxCore, PdsDocxRenderer, RenderRequest, Rende
 from .rendering.packaged_docx import verify_rendered_markdown
 from .store import ReportingStore
 from .workflow import AgentWorkflowBlocked, ReportingNeedsDecisionError, ReportWorkflowRunner
-from .versions import ReportVersionStore
 
 
 class ReportingRunResult(BaseModel):
@@ -661,7 +654,6 @@ class ReportingService:
                 .as_posix()
             )
             state["project_write_lease_epoch"] = project_write_lease.lease_epoch
-        execution_started_ns = time.time_ns()
         workflow_id: str | None = None
         await self._notice(f"配电报告流程 {run_id} 已启动。")
 
@@ -782,39 +774,34 @@ class ReportingService:
                 await self._notice(f"配电报告流程失败：{exc}")
             return result
 
-        artifacts: list[OutputArtifact] = state.get("output_artifacts", [])
-        try:
-            output_paths = verify_current_run_outputs(
-                self.workspace,
-                run_id,
-                artifacts,
-                execution_started_ns,
-                allow_existing_run_artifacts=resume,
-                allow_existing_artifacts=bool(state.get("delivery_restored")),
+        if (
+            request.operation == "full_report"
+            and set(request.target_modules) == set(REPORT_MODULE_IDS)
+            and (
+                state.get("delivery_status") != "delivered"
+                or state.get("delivery_completion_ref")
+                != f"Work/runs/{run_id}/delivery-completion.json"
             )
-        except OutputVerificationError as exc:
+        ):
             result = ReportingRunResult(
                 run_id=run_id,
                 status="failed",
-                error=str(exc),
+                error="workflow finished without delivered business lifecycle",
             )
             self._save_run(result)
             await self._notice(
-                f"配电报告流程失败：{run_id} 未生成可验证的本次交付产物。"
+                f"配电报告流程失败：{run_id} 未进入 delivered 业务终态。"
             )
             return result
+
+        artifacts: list[OutputArtifact] = state.get("output_artifacts", [])
+        output_paths = self._declared_output_paths(artifacts)
         result = ReportingRunResult(
             run_id=run_id,
             status="completed",
             output_paths=output_paths,
         )
-        result = self._finalize_verified_run(
-            result,
-            publish_output_owner=(
-                state.get("delivery_completion_ref")
-                == f"Work/runs/{run_id}/delivery-completion.json"
-            ),
-        )
+        result = self._finalize_completed_run(result)
         if result.status == "failed":
             await self._notice(f"配电报告流程失败：{result.error}")
             return result
@@ -1155,7 +1142,7 @@ class ReportingService:
         _result_path, request_path, revision_path, _checkpoint_path, _previous = (
             self.validate_resume_run(run_id)
         )
-        delivered = self._resume_verified_delivery_only(run_id)
+        delivered = self._resume_completed_delivery_only(run_id)
         if delivered is not None:
             return delivered
         await self._notice(f"正在从已保存检查点恢复报告流程 {run_id}。")
@@ -1253,8 +1240,8 @@ class ReportingService:
             self._forget_agent_runner(workflow_id)
         return result
 
-    def _resume_verified_delivery_only(self, run_id: str) -> ReportingRunResult | None:
-        """Finalize a persisted receipt+version without entering Provider code."""
+    def _resume_completed_delivery_only(self, run_id: str) -> ReportingRunResult | None:
+        """Finalize a persisted delivered lifecycle without entering Provider code."""
 
         completion_path = self.workspace / f"Work/runs/{run_id}/delivery-completion.json"
         if not completion_path.is_file():
@@ -1275,32 +1262,12 @@ class ReportingService:
         }:
             return None
 
-        receipt_ref = str(payload.get("delivery_receipt_ref", ""))
-        prefix = f"Work/runs/{run_id}/"
-        if not receipt_ref.startswith(prefix):
-            result = ReportingRunResult(
-                run_id=run_id,
-                status="failed_before_delivery",
-                error="delivery receipt is outside the current run",
-            )
-            self._save_run(result)
-            return result
-        receipt_path = self.workspace / receipt_ref
         try:
-            receipt = DeliveryReceipt.model_validate_json(
-                receipt_path.read_text(encoding="utf-8")
-            )
-            output_paths = verify_current_run_outputs(
-                self.workspace,
-                run_id,
-                [receipt.final_docx, receipt.source_index, receipt.source_index_docx],
-                0,
-                allow_existing_artifacts=True,
-            )
-        except Exception as exc:
-            # Only an invalid/missing receipt is a pre-delivery failure.  Do not
-            # turn a valid receipt into a Provider replay because finalization
-            # metadata is incomplete.
+            artifacts = [
+                OutputArtifact.model_validate(item)
+                for item in payload.get("output_artifacts", [])
+            ]
+        except ValueError as exc:
             result = ReportingRunResult(
                 run_id=run_id,
                 status="failed_before_delivery",
@@ -1309,15 +1276,16 @@ class ReportingService:
             self._save_run(result)
             return result
 
-        version_id = str(payload.get("report_version_id") or "")
-        if not version_id:
-            return None
         try:
-            version = ReportVersionStore(self.workspace).load(version_id)
-        except (OSError, ValueError, FileNotFoundError):
-            return None
-        if version.run_id != run_id:
-            return None
+            self._republish_materialized_delivery(run_id)
+        except (OSError, ValueError) as exc:
+            result = ReportingRunResult(
+                run_id=run_id,
+                status="failed_before_delivery",
+                error=f"materialized delivery publication failed: {exc}",
+            )
+            self._save_run(result)
+            return result
 
         payload["status"] = "delivered"
         payload["delivery_status"] = "delivered"
@@ -1325,14 +1293,90 @@ class ReportingService:
         self.store.write_json(
             f"Work/runs/{run_id}/delivery-completion.json", payload
         )
-        return self._finalize_verified_run(
+        return self._finalize_completed_run(
             ReportingRunResult(
                 run_id=run_id,
                 status="completed",
-                output_paths=output_paths,
-            ),
-            publish_output_owner=version.version_id == run_id,
+                output_paths=self._declared_output_paths(artifacts),
+            )
         )
+
+    def _republish_materialized_delivery(self, run_id: str) -> None:
+        """Copy current-run delivery bytes to Outputs without digest/file-age gates."""
+
+        run_root = (self.workspace / "Work" / "runs" / run_id).resolve()
+        receipt_path = run_root / "delivery-receipt.json"
+        if not receipt_path.is_file():
+            # Compatibility: a lifecycle restored before materialized receipts
+            # existed remains status-only.  It never re-enters Provider work.
+            return
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+        def source(field: str) -> Path:
+            raw = Path(str(receipt.get(field, "")))
+            path = raw if raw.is_absolute() else self.workspace / raw
+            lexical = Path(os.path.abspath(path))
+            if not lexical.is_relative_to(run_root) or not path.is_file():
+                raise ValueError(f"delivery receipt {field} is not a current-run file")
+            return path
+
+        def copy_file(source_path: Path, target: Path) -> None:
+            validate_bound_project_write_lease(self.workspace)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                prefix=f".{target.name}.",
+                suffix=".tmp",
+                dir=target.parent,
+                delete=False,
+            ) as handle:
+                with source_path.open("rb") as source_handle:
+                    shutil.copyfileobj(source_handle, handle)
+                handle.flush()
+                os.fsync(handle.fileno())
+                temporary = Path(handle.name)
+            try:
+                validate_bound_project_write_lease(self.workspace)
+                os.replace(temporary, target)
+            finally:
+                temporary.unlink(missing_ok=True)
+
+        copy_file(
+            source("final_docx"),
+            self.workspace / "Outputs/Reports/配电安全专家咨询报告.docx",
+        )
+        copy_file(
+            source("source_index"),
+            self.workspace / "Outputs/Reports/证据与来源索引.md",
+        )
+        copy_file(
+            source("source_index_docx"),
+            self.workspace / "Outputs/Reports/证据与来源索引.docx",
+        )
+        module_files = receipt.get("module_files")
+        if not isinstance(module_files, dict) or set(module_files) != set(REPORT_MODULE_IDS):
+            raise ValueError("delivery receipt module_files is not the fixed module set")
+        for module_id in REPORT_MODULE_IDS:
+            raw = Path(str(module_files[module_id]))
+            module_source = raw if raw.is_absolute() else self.workspace / raw
+            if (
+                not Path(os.path.abspath(module_source)).is_relative_to(run_root)
+                or not module_source.is_file()
+            ):
+                raise ValueError(
+                    f"delivery receipt module {module_id} is not a current-run file"
+                )
+            copy_file(
+                module_source,
+                self.workspace / f"Outputs/Modules/{module_id}.md",
+            )
+
+        markdown_source = run_root / "report/配电安全专家咨询报告.md"
+        if markdown_source.is_file():
+            copy_file(
+                markdown_source,
+                self.workspace / "Outputs/Reports/配电安全专家咨询报告.md",
+            )
 
     def validate_resume_run(
         self, run_id: str
@@ -1422,43 +1466,23 @@ class ReportingService:
             result.model_dump(mode="json"),
         )
 
-    def _finalize_verified_run(
+    def _finalize_completed_run(
         self,
         result: ReportingRunResult,
-        *,
-        publish_output_owner: bool,
     ) -> ReportingRunResult:
-        """Durably save verified delivery, then publish shared-output ownership."""
+        """Durably save a business-completed delivery without file identity gates."""
 
         if result.status != "completed":
-            raise ValueError("only a verified delivered run can be finalized")
+            raise ValueError("only a delivered run can be finalized")
         try:
             result_path = self._save_run(result)
             self.store.fsync_directory(result_path.parent)
-            if publish_output_owner:
-                self._publish_completed_output_owner(result.run_id)
-                replacements = {
-                    reference.name: self.workspace / reference
-                    for reference in OUTPUT_ARTIFACT_REFS.values()
-                }
-                output_paths: list[Path] = []
-                for output_path in result.output_paths:
-                    replacement = replacements.get(Path(output_path).name, output_path)
-                    if replacement not in output_paths:
-                        output_paths.append(replacement)
-                for reference in OUTPUT_ARTIFACT_REFS.values():
-                    visible = self.workspace / reference
-                    if visible not in output_paths:
-                        output_paths.append(visible)
-                result = result.model_copy(update={"output_paths": output_paths})
-                result_path = self._save_run(result)
-                self.store.fsync_directory(result_path.parent)
         except Exception as exc:
             failed = result.model_copy(
                 update={
                     "status": "failed",
                     "error": (
-                        "verified output finalization failed: "
+                        "completed run finalization failed: "
                         f"{type(exc).__name__}: {exc}"
                     ),
                 }
@@ -1468,70 +1492,19 @@ class ReportingService:
             return failed
         return result
 
-    def _publish_completed_output_owner(self, run_id: str) -> Path:
-        safe_run_id = self._safe_run_id(run_id)
-        result_path = self.workspace / f"Work/runs/{safe_run_id}.json"
-        persisted = ReportingRunResult.model_validate_json(
-            result_path.read_text(encoding="utf-8")
-        )
-        if persisted.run_id != safe_run_id or persisted.status != "completed":
-            raise ValueError("output owner requires a persisted verified delivery")
-        receipt_ref = Path(f"Work/runs/{safe_run_id}/delivery-receipt.json")
-        receipt = DeliveryReceipt.model_validate_json(
-            (self.workspace / receipt_ref).read_text(encoding="utf-8")
-        )
-        version = ReportVersionStore(self.workspace).load(safe_run_id)
-        version_keys = {
-            "final_markdown": "canonical_markdown",
-            "final_docx": "final_docx",
-            "source_index": "source_index",
-            "source_index_docx": "source_index_docx",
-        }
-        artifact_sha256 = {
-            output_key: version.artifact_sha256.get(version_key, "")
-            for output_key, version_key in version_keys.items()
-        }
-        final_docx_sha256 = artifact_sha256["final_docx"]
-        if (
-            not receipt.success
-            or receipt.storage_version not in {2, 3}
-            or version.version_id != safe_run_id
-            or version.run_id != safe_run_id
-            or version.storage_version not in {2, 3}
-            or not final_docx_sha256
-            or version.artifact_sha256.get("final_docx") != final_docx_sha256
-            or any(not digest for digest in artifact_sha256.values())
-            or any(
-                version_key not in version.artifact_refs
-                for version_key in version_keys.values()
-            )
-            or any(
-                receipt.artifact_sha256.get(receipt_key)
-                != artifact_sha256[receipt_key]
-                for receipt_key in (
-                    "final_docx",
-                    "source_index",
-                    "source_index_docx",
-                )
-            )
-        ):
-            raise ValueError(
-                "output owner requires matching successful receipt and report version"
-            )
-        owner = build_output_owner(
-            run_id=safe_run_id,
-            report_version_id=version.version_id,
-            final_docx_sha256=final_docx_sha256,
-            delivery_receipt_ref=receipt_ref,
-            artifact_sha256=artifact_sha256,
-        )
-        return OutputOwnerStore(self.workspace).publish_output_set(
-            owner,
-            sources={
-                output_key: version.artifact_refs[version_key]
-                for output_key, version_key in version_keys.items()
-            },
-        )
+    def _declared_output_paths(
+        self,
+        artifacts: list[OutputArtifact],
+    ) -> list[Path]:
+        """Project typed declarations to paths without stat, timestamp, hash, or CAS checks."""
+
+        paths: list[Path] = []
+        for artifact in artifacts:
+            path = artifact.path
+            visible = path if path.is_absolute() else self.workspace / path
+            if visible not in paths:
+                paths.append(visible)
+        return paths
 
     async def _build_manifest(self, state: dict) -> None:
         input_snapshot = RunInputSnapshotStore(self.workspace).load(

@@ -298,14 +298,37 @@ def validate_final_report_markdown(
 
     errors: list[str] = []
     expected_titles = {title for title, _ in expected}
+    planned_special_topic_ids = {
+        section.section_id for section in special_topic_plan.sections
+    } if special_topic_plan is not None else set()
+
+    def allowed_special_topic_descendant(title: str) -> bool:
+        match = re.match(r"^(4(?:\.\d+){2,})\.?\s+", title)
+        if match is None:
+            return False
+        parts = match.group(1).split(".")
+        return ".".join(parts[:2]) in planned_special_topic_ids
+
     unexpected_numbered = [
         title
         for _level, title, _line_number in parsed
         if re.match(r"^\d+(?:\.\d+)*\.?\s+", title)
         and title not in expected_titles
+        and not allowed_special_topic_descendant(title)
     ]
     if unexpected_numbered:
         errors.append(f"unexpected numbered headings={unexpected_numbered}")
+    if special_topic_plan is not None:
+        chapter_four = by_title.get("4. 专项问题分析", [])
+        if len(chapter_four) == 1:
+            _chapter_level, chapter_start = chapter_four[0]
+            try:
+                special_topic_plan.validate_analysis(
+                    "\n".join(lines[chapter_start:]),
+                    allow_chapter_heading=True,
+                )
+            except ValueError as exc:
+                errors.append(str(exc))
     if special_topic_plan is None and any(
         title == "4. 专项问题分析" or re.match(r"^4\.[1-9][0-9]*\s+", title)
         for _level, title, _line_number in parsed
@@ -334,8 +357,12 @@ def validate_final_report_markdown(
             continue
         level, start = occurrences[0]
         end = len(lines)
-        for candidate_level, _candidate_title, candidate_line in parsed:
-            if candidate_line > start and candidate_level <= level:
+        for candidate_level, candidate_title, candidate_line in parsed:
+            if (
+                candidate_line > start
+                and candidate_level <= level
+                and candidate_title in expected_titles
+            ):
                 end = candidate_line
                 break
         body = "\n".join(lines[start + 1 : end]).strip()

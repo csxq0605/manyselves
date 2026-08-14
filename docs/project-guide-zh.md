@@ -184,7 +184,7 @@ GROQ_API_KEY
 ├── Templates/                      # 项目模板和模板蒸馏来源
 ├── Work/                           # 可恢复状态、证据、运行快照和版本
 │   ├── runs/<run-id>/
-│   ├── report-template-writing/
+│   ├── report-template-role-skills/
 │   └── report-versions/<version-id>/
 ├── Outputs/
 │   ├── Modules/
@@ -399,7 +399,7 @@ uv run manyselves --help
 
 ### 5.5 首次生成完整报告
 
-完整写作只读取已经蒸馏并固定在 `Work/report-template-writing/` 的模板 Skill。因此，首次使用新模板时分两次向 Main 提出：
+完整写作只读取已经蒸馏并固定在 `Work/report-template-role-skills/` 的十四份完整 Skill：五份作者 Skill、五份模块 Auditor Skill、三份 Chief Chapter 1/3/4 Skill 和一份共享 Final Auditor Skill。Chief lane 只注入对应章节 Skill；Final lane 共用验收 Skill，并接收不同章节审查焦点。因此，首次使用新模板时分两次向 Main 提出：
 
 1. “只学习并更新 `Templates/配电安全专家咨询报告(专家优化版).docx` 的模板写作能力，不生成报告。”
 2. 蒸馏成功后：“从 `Inputs/` 重新生成 2.1–2.5 完整配电安全咨询报告，缺少证据时先询问我。”

@@ -465,8 +465,8 @@ async def test_fixed_five_owner_wave_has_full_owner_views_distinct_sessions_and_
     assert pack.module_ids == list(owner_ids)
     assert state["cross_decision_pack_ref"].endswith("cross-decision-pack.json")
 
-    # A completed owner pipeline is reused only while every hash-bound input
-    # and result still matches the exact-five barrier.
+    # Recovery is business-state based.  A byte-only formatting change that
+    # leaves the typed JSON readable and in-scope must not replay paid lanes.
     initial_result_path = (
         tmp_path
         / f"Work/runs/{run_id}/reviews/cross-owner-findings-r0-2.1.json"
@@ -477,9 +477,135 @@ async def test_fixed_five_owner_wave_has_full_owner_views_distinct_sessions_and_
     )
     calls_before_tamper_check = len(runner.calls)
     state["resume"] = True
-    with pytest.raises(lifecycle.ReviewLifecycleError, match="initial result hash mismatch"):
-        await lifecycle.run_cross_review(runner, state, "workflow-cross-tamper")
+    await lifecycle.run_cross_review(runner, state, "workflow-cross-tamper")
     assert len(runner.calls) == calls_before_tamper_check
+
+
+@pytest.mark.asyncio
+async def test_cross_owner_business_barrier_rejects_corrupt_or_wrong_identity_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-cross-business-barrier"
+    runner = _Runner(tmp_path)
+    _write_modules(runner, run_id)
+    monkeypatch.setattr(
+        lifecycle,
+        "_verified_cross_owner_noop",
+        lambda runner, **kwargs: _fake_noop(runner, **kwargs),
+    )
+    state = _state(run_id)
+    await lifecycle.run_cross_review(runner, state, "workflow-cross-business-barrier")
+
+    barrier_path = tmp_path / state["cross_owner_barrier_ref"]
+    barrier = lifecycle.CrossOwnerBarrier.model_validate_json(
+        barrier_path.read_text(encoding="utf-8")
+    )
+    owner_id = "2.1"
+    completion_ref = barrier.completion_refs[owner_id]
+    completion_path = tmp_path / completion_ref
+    original_completion = CrossOwnerCompletion.model_validate_json(
+        completion_path.read_text(encoding="utf-8")
+    )
+
+    initial_ref = original_completion.initial_result.ref
+    initial_path = tmp_path / initial_ref
+    initial_bytes = initial_path.read_bytes()
+    initial_path.write_text("{not-json", encoding="utf-8")
+    with pytest.raises(lifecycle.ReviewLifecycleError, match="invalid JSON"):
+        lifecycle.verify_cross_owner_barrier(
+            runner,
+            barrier,
+            barrier_path=barrier_path,
+            expected_run_id=run_id,
+            expected_round=1,
+            expected_modules=set(REPORT_TAXONOMY),
+        )
+    initial_path.write_bytes(initial_bytes)
+
+    # Declared ArtifactRef hash/size are legacy forensic metadata.  Changing
+    # only those fields must not invalidate an otherwise typed, in-scope lane.
+    assert original_completion.subject is not None
+    metadata_only_subject = original_completion.subject.model_copy(
+        update={"sha256": "0" * 64, "size": 0}
+    )
+    metadata_only = original_completion.model_copy(
+        update={"subject": metadata_only_subject}
+    )
+    runner.service.store.write_json(
+        completion_ref,
+        metadata_only.model_dump(mode="json"),
+    )
+    lifecycle.verify_cross_owner_barrier(
+        runner,
+        barrier,
+        barrier_path=barrier_path,
+        expected_run_id=run_id,
+        expected_round=1,
+        expected_modules=set(REPORT_TAXONOMY),
+    )
+    runner.service.store.write_json(
+        completion_ref,
+        original_completion.model_dump(mode="json"),
+    )
+
+    wrong_run = original_completion.model_copy(update={"run_id": "other-run"})
+    runner.service.store.write_json(completion_ref, wrong_run.model_dump(mode="json"))
+    with pytest.raises(lifecycle.ReviewLifecycleError, match="business identity"):
+        lifecycle.verify_cross_owner_barrier(
+            runner,
+            barrier,
+            barrier_path=barrier_path,
+            expected_run_id=run_id,
+            expected_round=1,
+            expected_modules=set(REPORT_TAXONOMY),
+        )
+    runner.service.store.write_json(
+        completion_ref,
+        original_completion.model_dump(mode="json"),
+    )
+
+    assert original_completion.subject is not None
+    wrong_owner_subject = original_completion.subject.model_copy(
+        update={"ref": f"Work/runs/{run_id}/modules/2.2-r0.json"}
+    )
+    wrong_owner = original_completion.model_copy(
+        update={"subject": wrong_owner_subject}
+    )
+    runner.service.store.write_json(completion_ref, wrong_owner.model_dump(mode="json"))
+    with pytest.raises(lifecycle.ReviewLifecycleError, match="ownership mismatch"):
+        lifecycle.verify_cross_owner_barrier(
+            runner,
+            barrier,
+            barrier_path=barrier_path,
+            expected_run_id=run_id,
+            expected_round=1,
+            expected_modules=set(REPORT_TAXONOMY),
+        )
+    runner.service.store.write_json(
+        completion_ref,
+        original_completion.model_dump(mode="json"),
+    )
+
+    wrong_revision_subject = original_completion.subject.model_copy(
+        update={"ref": f"Work/runs/{run_id}/modules/{owner_id}-r99.json"}
+    )
+    wrong_revision = original_completion.model_copy(
+        update={"subject": wrong_revision_subject}
+    )
+    runner.service.store.write_json(
+        completion_ref,
+        wrong_revision.model_dump(mode="json"),
+    )
+    with pytest.raises(lifecycle.ReviewLifecycleError, match="unreadable"):
+        lifecycle.verify_cross_owner_barrier(
+            runner,
+            barrier,
+            barrier_path=barrier_path,
+            expected_run_id=run_id,
+            expected_round=1,
+            expected_modules=set(REPORT_TAXONOMY),
+        )
 
 
 @pytest.mark.asyncio

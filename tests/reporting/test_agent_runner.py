@@ -29,6 +29,8 @@ from manyselves.core.reporting.agent_runner import (
     load_conversation_trace,
 )
 from manyselves.core.reporting.agentic_models import (
+    SUBMISSION_INPUT_TYPES,
+    TEMPLATE_ROLE_SKILL_IDS,
     AgentRunStatus,
     CrossReviewFinding,
     ModuleSubmission,
@@ -71,7 +73,7 @@ def _write_template_contract(
             run_id=run_id,
             template_ref=template_ref,
             inspect_max_chars=100_000,
-            required_part_ids=["skill", "analysis", "synthesis", "visual", "rubric"],
+            required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
         ).model_dump_json(),
         encoding="utf-8",
     )
@@ -135,9 +137,11 @@ class DirectSubmissionProvider(LLMProvider):
         super().__init__("test", model="scripted")
         self.system_prompts: list[str] = []
         self.task_messages: list[str] = []
+        self.message_snapshots: list[list[LLMMessage]] = []
         self.max_tokens_seen: list[int] = []
 
     async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        self.message_snapshots.append(list(messages))
         self.max_tokens_seen.append(max_tokens)
         self.system_prompts.append(messages[0].content)
         self.task_messages.append(messages[1].content)
@@ -166,13 +170,11 @@ class DirectSubmissionProvider(LLMProvider):
                     id="submit-1",
                     name="submit_result",
                     arguments={
-                        "payload": {
-                            "kind": "module_submission",
-                            "module_id": "2.1",
-                            "unresolved_questions": ["待补充一次系统图"],
-                            "revision": 0,
-                            "revision_responses": [],
-                        }
+                        "kind": "module_submission",
+                        "module_id": "2.1",
+                        "unresolved_questions": ["待补充一次系统图"],
+                        "revision": 0,
+                        "revision_responses": [],
                     },
                 )
             ],
@@ -258,16 +260,8 @@ class ModuleReviewSubmissionProvider(LLMProvider):
                     id=f"submit-audit-{module_id}",
                     name="submit_result",
                     arguments={
-                        "payload": {
-                            "kind": "module_review_finding_submission",
-                            "coverage": {
-                                "submodule_ids": [
-                                    next(iter(REPORT_TAXONOMY[module_id].submodules))
-                                ],
-                                "claim_ids": [],
-                            },
-                            "findings": [],
-                        }
+                        "kind": "module_review_finding_submission",
+                        "findings": [],
                     },
                 )
             ],
@@ -295,16 +289,49 @@ def test_submit_result_exposes_only_the_role_output_schema(tmp_path: Path) -> No
         "session-schema",
         "workflow-schema",
     )
-    payload = registry._schema_cache["submit_result"]["properties"]["payload"]
+    submission = registry._schema_cache["submit_result"]
 
-    assert payload["properties"]["kind"]["const"] == "module_submission"
-    assert "native JSON object" in payload["description"]
-    assert "module_id" in payload["properties"]
-    assert "$defs" in payload
-    assert "ModuleDispatchPlan" not in payload["$defs"]
-    assert (
-        registry._schema_cache["submit_result"]["additionalProperties"] is False
+    assert submission["properties"]["kind"]["const"] == "module_submission"
+    assert "tool arguments are this submission object itself" in submission["description"]
+    assert "payload" not in submission["properties"]
+    assert "module_id" in submission["properties"]
+    assert "$defs" in submission
+    assert "ModuleDispatchPlan" not in submission["$defs"]
+    assert submission["additionalProperties"] is False
+
+
+@pytest.mark.parametrize("kind", sorted(SUBMISSION_INPUT_TYPES))
+def test_every_submission_identity_uses_one_flat_provider_schema(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
     )
+    definition = load_packaged_agents()["module-2.1-specialist"]
+    envelope = TaskEnvelope(
+        task_id=f"flat-schema-{kind}",
+        run_id="run-flat-schema",
+        agent_id=definition.id,
+        objective="验证统一扁平提交接口",
+        allowed_outputs=[kind],
+    )
+
+    schema = runner._tools(
+        definition,
+        envelope,
+        "session-flat-schema",
+        "workflow-flat-schema",
+    )._schema_cache["submit_result"]
+
+    assert schema["type"] == "object"
+    assert schema["properties"]["kind"]["const"] == kind
+    assert "kind" in schema["required"]
+    assert "payload" not in schema["properties"]
+    assert schema["additionalProperties"] is False
 
 
 def test_provider_manifest_distinguishes_pre_adapter_and_provider_payload(
@@ -499,7 +526,7 @@ def test_module_authoring_schema_and_example_use_current_identity(
         "session-module-schema",
         "workflow-module-schema",
     )
-    payload = registry._schema_cache["submit_result"]["properties"]["payload"]
+    payload = registry._schema_cache["submit_result"]
     writer_schema = registry._schema_cache["write_result_part"]
 
     assert payload["properties"]["module_id"]["const"] == "2.4"
@@ -552,6 +579,62 @@ def test_cross_owner_reviewers_use_one_identity_per_owner_and_reuse_on_recheck()
     assert ReportingAgentRunner._identity_key(
         definition, initial, "cross-module-reviewer"
     ) == definition.id
+
+
+def test_reporting_lane_runtime_ids_expose_the_durable_identity() -> None:
+    agents = load_packaged_agents()
+
+    assert ReportingAgentRunner._runtime_id(
+        agents["evidence-auditor"],
+        "module-auditor-2.1",
+        "session-a1b2c3d4",
+    ) == "module-auditor-2.1--session-a1b2c3d4"
+    assert ReportingAgentRunner._runtime_id(
+        agents["cross-module-reviewer"],
+        "cross-owner-2.4",
+        "session-a1b2c3d4",
+    ) == "cross-owner-2.4--session-a1b2c3d4"
+    assert ReportingAgentRunner._runtime_id(
+        agents["chief-editor"],
+        "chief-chapter-3",
+        "session-a1b2c3d4",
+    ) == "chief-chapter-3--session-a1b2c3d4"
+    assert ReportingAgentRunner._runtime_id(
+        agents["chief-editor-auditor"],
+        "final-chapter-4",
+        "session-a1b2c3d4",
+    ) == "final-chapter-4--session-a1b2c3d4"
+    assert ReportingAgentRunner._runtime_id(
+        agents["module-2.1-specialist"],
+        "module-2.1-specialist",
+        "session-a1b2c3d4",
+    ) == "module-2.1-specialist--session-a1b2c3d4"
+
+
+def test_cross_owner_system_prompt_does_not_get_packaged_module_skills(tmp_path: Path) -> None:
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    definition = load_packaged_agents()["cross-module-reviewer"]
+    envelope = TaskEnvelope(
+        task_id="cross-owner-2.4-r0-initial",
+        run_id="run-cross-owner-skill",
+        agent_id=definition.id,
+        objective="发现模块 2.4 的跨模块关系问题",
+        allowed_outputs=["cross_owner_finding_submission"],
+        target_submodule_ids=list(REPORT_TAXONOMY["2.4"].submodules),
+    )
+
+    selected = runner._selected_module_skills(definition, envelope)
+    prompt = runner._system_prompt(definition, envelope)
+
+    assert selected == []
+    assert "配置与选型核查" not in prompt
+    assert "电力系统架构核查" not in prompt
+    assert "固定模块的 Cross owner" in prompt
 
 
 def test_cross_owner_submission_schema_binds_owner_and_required_verdict_ids() -> None:
@@ -657,7 +740,7 @@ def test_module_review_tool_schema_omits_runtime_owned_fields(
         "session-review-schema",
         "workflow-review-schema",
     )
-    payload = registry._schema_cache["submit_result"]["properties"]["payload"]
+    payload = registry._schema_cache["submit_result"]
 
     assert "coverage" not in payload["properties"]
     finding = payload["$defs"]["ModuleReviewFinding"]
@@ -695,7 +778,9 @@ def test_all_audit_roles_override_the_90_second_provider_idle_default(
 def test_template_skill_submission_schema_and_tools_are_exposed_to_distiller(
     tmp_path: Path,
 ) -> None:
-    template_ref = "Work/runs/run-skill-schema/templates/template.docx"
+    template_ref = (
+        "Work/runs/run-skill-schema/templates/template-for-skill.docx"
+    )
     template = tmp_path / template_ref
     template.parent.mkdir(parents=True)
     Document().save(template)
@@ -734,7 +819,7 @@ def test_template_skill_submission_schema_and_tools_are_exposed_to_distiller(
         "session-schema",
         "workflow-schema",
     )
-    payload = registry._schema_cache["submit_result"]["properties"]["payload"]
+    payload = registry._schema_cache["submit_result"]
 
     assert set(registry.get_all()) == {
         "inspect_document",
@@ -745,8 +830,8 @@ def test_template_skill_submission_schema_and_tools_are_exposed_to_distiller(
         "open_tool_result",
     }
     assert payload["properties"]["kind"]["const"] == "template_skill_submission"
-    assert "skill_markdown" in payload["properties"]
-    assert "quality_rubric" in payload["properties"]
+    assert "skills" in payload["properties"]
+    assert "boundary_manifest" not in payload["properties"]
     assert "TextArtifactRef" in payload["$defs"]
     inspection = registry.get("inspect_document")
     assert isinstance(inspection, InspectDocumentTool)
@@ -755,7 +840,7 @@ def test_template_skill_submission_schema_and_tools_are_exposed_to_distiller(
     assert inspection.cache_ref == (
         "Work/runs/run-skill-schema/context/template-inspection.json"
     )
-    expected_parts = ("skill", "analysis", "synthesis", "visual", "rubric")
+    expected_parts = TEMPLATE_ROLE_SKILL_IDS
     assert registry.get("write_result_part").expected_part_ids == expected_parts
     assert registry.get("write_result_parts") is None
     assert registry.get("list_result_parts").expected_part_ids == expected_parts
@@ -779,7 +864,9 @@ async def test_template_distiller_accepts_one_verified_cas_template_view(
     source = tmp_path / "Templates/report_template.docx"
     source.parent.mkdir(parents=True)
     Document().save(source)
-    template_ref = "Work/runs/run-cas-skill/templates/template.docx"
+    template_ref = (
+        "Work/runs/run-cas-skill/templates/template-for-skill.docx"
+    )
     template = tmp_path / template_ref
     content_store = ContentAddressedStore(tmp_path)
     content_store.link_view(content_store.ingest_file(source), template)
@@ -1176,13 +1263,11 @@ class ToolSliceContinuationProvider(LLMProvider):
             id=call_id,
             name="submit_result",
             arguments={
-                "payload": {
-                    "kind": "module_submission",
-                    "module_id": "2.1",
-                    "unresolved_questions": [],
-                    "revision": 0,
-                    "revision_responses": [],
-                }
+                "kind": "module_submission",
+                "module_id": "2.1",
+                "unresolved_questions": [],
+                "revision": 0,
+                "revision_responses": [],
             },
         )
 
@@ -1298,27 +1383,14 @@ class TemplateSkillCorrectionProvider(LLMProvider):
                 if isinstance(call, dict)
             )
             assert not repeated_inspection or "不要重新读取文件" in messages[-1].content
-            links = "\n".join(
-                [
-                    "- [分析语言](references/analysis-language.md)",
-                    "- [综合方法](references/synthesis.md)",
-                    "- [图证组织](references/visual-organization.md)",
-                    "- [质量量表](references/quality-rubric.md)",
-                ]
-            )
             description = "指导专业评估报告从证据限定推进到风险判断、跨章节综合、行动建议与图证叙事，并在写作和审查报告时使用。"
             parts = {
-                "skill": (
-                    "---\nname: report-template-writing\ndescription: " + description + "\n---\n\n"
-                    "# 报告写作\n\n先界定证据，再形成判断，随后解释原因和影响，最后提出可验收行动。"
-                    "跨章节综合时合并重复症状并寻找共同原因；图片和表格必须承担证据或解释功能。\n\n"
-                    "## 按需读取\n\n写分析正文时读取分析语言；形成总编结论时读取综合方法；"
-                    "安排图表时读取图证组织；审查时读取质量量表。\n\n" + links
-                ),
-                "analysis": "分析必须从可定位观察开始，说明证据时间和范围，再作有边界的判断。" * 8,
-                "synthesis": "综合时合并重复发现，识别共同原因、传播路径和业务影响，并形成有责任与验收条件的行动包。" * 7,
-                "visual": "图表用于证明关系或压缩比较，正文先说明阅读目的，图后解释其支持与不支持的判断。" * 8,
-                "rubric": "通过标准是证据、判断、原因、影响和行动闭环；失败表现是只列问题；修改动作是补齐边界和验收条件。" * 7,
+                skill_id: (
+                    f"---\nname: report-template-{skill_id}\ndescription: {description}\n---\n\n"
+                    f"# {skill_id} 模板方法\n\n"
+                    + "先界定证据，再形成判断，说明原因影响并提出可验收行动；检查失败表现并执行职责内修正。" * 8
+                )
+                for skill_id in TEMPLATE_ROLE_SKILL_IDS
             }
             return LLMResponse(
                 content="",
@@ -1341,40 +1413,12 @@ class TemplateSkillCorrectionProvider(LLMProvider):
                         id="submit-template-skill",
                         name="submit_result",
                         arguments={
-                            "payload": {
-                                "kind": "template_skill_submission",
-                                "name": "report-template-writing",
-                                "description": "指导专业评估报告从证据限定推进到风险判断、跨章节综合、行动建议与图证叙事，并在写作和审查报告时使用。",
-                                "skill_markdown": ref("skill"),
-                                "analysis_language_reference": ref("analysis"),
-                                "synthesis_reference": ref("synthesis"),
-                                "visual_organization_reference": ref("visual"),
-                                "quality_rubric": ref("rubric"),
-                                "boundary_manifest": {
-                                    "policy_version": 1,
-                                    "transferred_categories": [
-                                        "analysis_method",
-                                        "synthesis_method",
-                                        "visual_method",
-                                        "quality_check",
-                                    ],
-                                    "excluded_categories": [
-                                        "domain_knowledge",
-                                        "domain_standard_or_threshold",
-                                        "project_fact_or_number",
-                                        "customer_identity",
-                                        "project_finding_or_risk",
-                                        "project_conclusion_or_recommendation",
-                                        "evidence_or_claim_identifier",
-                                    ],
-                                    "boundary_statement": (
-                                        "本 Skill 只迁移分析、综合、图证组织和质量检查方法；"
-                                        "专业知识、标准阈值、客户与项目事实、风险结论、建议和"
-                                        "证据标识均被排除，分别由模块 Skill、Knowledge 或"
-                                        "当前运行 Evidence 提供。"
-                                    ),
-                                },
-                            }
+                            "kind": "template_skill_submission",
+                            "name": "report-template-role-skills",
+                            "skills": {
+                                skill_id: ref(skill_id)
+                                for skill_id in TEMPLATE_ROLE_SKILL_IDS
+                            },
                         },
                     )
                 ],
@@ -1452,13 +1496,11 @@ class PartSubmissionProvider(LLMProvider):
                         id="submit-parts",
                         name="submit_result",
                         arguments={
-                            "payload": {
-                                "kind": "module_submission",
-                                "module_id": "2.1",
-                                "unresolved_questions": [],
-                                "revision": 0,
-                                "revision_responses": [],
-                            }
+                            "kind": "module_submission",
+                            "module_id": "2.1",
+                            "unresolved_questions": [],
+                            "revision": 0,
+                            "revision_responses": [],
                         },
                     )
                 ],
@@ -1482,22 +1524,20 @@ class RepeatedInvalidSubmissionProvider(LLMProvider):
                     id=f"invalid-{self.calls}",
                     name="submit_result",
                     arguments={
-                        "payload": {
-                            "kind": "module_submission",
-                            "module_id": "2.1",
-                            "submodule_narratives": {"wrong": []},
-                        }
+                        "kind": "module_submission",
+                        "module_id": "2.1",
+                        "submodule_narratives": {"wrong": []},
                     },
                 )
             ],
         )
 
 
-class StringThenNativeSubmissionProvider(LLMProvider):
-    """Submit one losslessly decodable JSON-object wrapper."""
+class WrappedThenFlatSubmissionProvider(LLMProvider):
+    """Retry one forbidden wrapper using the correction's flat example."""
 
     def __init__(self):
-        super().__init__("test", model="string-then-native")
+        super().__init__("test", model="wrapped-then-flat")
         self.calls = 0
         self.correction = ""
 
@@ -1516,8 +1556,11 @@ class StringThenNativeSubmissionProvider(LLMProvider):
         submit_definition = next(
             tool for tool in (tools or []) if tool["name"] == "submit_result"
         )
-        payload_schema = submit_definition["input_schema"]["properties"]["payload"]
-        assert "native JSON object" in payload_schema["description"]
+        submission_schema = submit_definition["input_schema"]
+        assert "tool arguments are this submission object itself" in submission_schema[
+            "description"
+        ]
+        assert "payload" not in submission_schema["properties"]
         if self.calls == 1:
             return LLMResponse(
                 content="",
@@ -1539,13 +1582,27 @@ class StringThenNativeSubmissionProvider(LLMProvider):
                 content="",
                 tool_calls=[
                     LLMToolCall(
-                        id="stringified-submit",
+                        id="wrapped-submit",
                         name="submit_result",
                         arguments={"payload": json.dumps(self.candidate())},
                     )
                 ],
             )
-        return LLMResponse(content="结构化结果已提交。")
+        self.correction = messages[-1].content
+        assert '"field": "payload"' in self.correction
+        assert '"received_type": "string"' in self.correction
+        assert '"kind": "module_submission"' in self.correction
+        assert "Remove the outer payload property" in self.correction
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                LLMToolCall(
+                    id="flat-submit",
+                    name="submit_result",
+                    arguments=self.candidate(),
+                )
+            ],
+        )
 
 
 @pytest.mark.asyncio
@@ -1913,10 +1970,11 @@ async def test_reporting_identity_keeps_one_stable_session_across_workflow_turns
 ) -> None:
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
+    provider = DirectSubmissionProvider()
     runner = ReportingAgentRunner(
         tmp_path,
         bus,
-        DirectSubmissionProvider(),
+        provider,
         AgentDefaults(max_tool_iterations=5),
         timeout=None,
     )
@@ -2010,18 +2068,35 @@ async def test_reporting_identity_keeps_one_stable_session_across_workflow_turns
         initial_provider_manifests = [
             item for item in provider_manifests if item["phase"] == "initial"
         ]
-        assert [item["message_count"] for item in initial_provider_manifests] == [2, 2]
+        assert [item["message_count"] for item in initial_provider_manifests][0] == 2
+        assert [item["message_count"] for item in initial_provider_manifests][1] > 2
         assert [
             item["provider_message_count"] for item in initial_provider_manifests
-        ] == [2, 2]
+        ][0] == 2
+        assert [
+            item["provider_message_count"] for item in initial_provider_manifests
+        ][1] > 2
         assert [
             item["logical_task_message_count"] for item in initial_provider_manifests
-        ] == [2, 2]
+        ][0] == 2
+        assert [
+            item["logical_task_message_count"] for item in initial_provider_manifests
+        ][1] > 2
         assert all(
             "content" not in message
             for manifest in provider_manifests
             for message in manifest["messages"]
         )
+        second_initial = provider.message_snapshots[2]
+        boundary = next(
+            message
+            for message in second_initial
+            if message.role == "user" and "<task_boundary>" in message.content
+        )
+        assert "根据审查继续修订" in boundary.content
+        assert "<allowed_output>module_submission</allowed_output>" not in boundary.content
+        assert "<input_contract" not in boundary.content
+        assert second_initial[0].content == provider.message_snapshots[0][0].content
     finally:
         await runner.close_workflow("workflow-stable-identity")
         bus.shutdown()
@@ -2564,10 +2639,17 @@ async def test_template_distillation_gets_full_inspection_and_one_submission_cor
         await bus_task
 
     assert result.status is AgentRunStatus.COMPLETED
+    assert result.payload.boundary_manifest.policy_version == 1
+    assert set(result.payload.boundary_manifest.transferred_categories) == {
+        "analysis_method",
+        "synthesis_method",
+        "visual_method",
+        "quality_check",
+    }
     assert provider.calls == 4
     assert "TAIL-CONTENT-MUST-BE-VISIBLE" in provider.inspection_result
     assert '"full_result_ref"' not in provider.inspection_result
-    for part_id in ("skill", "analysis", "synthesis", "visual", "rubric"):
+    for part_id in TEMPLATE_ROLE_SKILL_IDS:
         assert (
             tmp_path
             / f"Work/runs/run-template-skill/drafts/template-skill-distillation/r0/{part_id}.md"
@@ -2731,12 +2813,12 @@ async def test_reporting_agent_runner_stops_after_repeated_identical_submission_
 
 
 @pytest.mark.asyncio
-async def test_reporting_agent_runner_accepts_lossless_string_payload_without_retry(
+async def test_reporting_agent_runner_rejects_wrapper_then_accepts_flat_submission(
     tmp_path: Path,
 ) -> None:
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
-    provider = StringThenNativeSubmissionProvider()
+    provider = WrappedThenFlatSubmissionProvider()
     runner = ReportingAgentRunner(
         tmp_path, bus, provider, AgentDefaults(max_tool_iterations=10), timeout=5
     )
@@ -2763,8 +2845,8 @@ async def test_reporting_agent_runner_accepts_lossless_string_payload_without_re
     assert result.status is AgentRunStatus.COMPLETED
     assert result.payload is not None
     assert result.payload.module_id == "2.1"
-    assert provider.calls == 2
-    assert not provider.correction
+    assert provider.calls == 3
+    assert provider.correction
 
 
 def test_conversation_trace_is_a_small_manifest_for_compressed_cas_content(

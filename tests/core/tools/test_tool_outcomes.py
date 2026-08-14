@@ -20,6 +20,17 @@ def test_reporting_and_submission_tools_are_terminal() -> None:
     assert "等待工作流终态回传" in canonical_terminal_message(outcome)
 
 
+def test_submission_correction_is_neither_success_nor_terminal() -> None:
+    outcome = normalize_tool_outcome(
+        {"status": "correction_required", "accepted": False},
+        "submit_result",
+    )
+
+    assert outcome.status == "correction"
+    assert not outcome.terminal
+    assert outcome.error is None
+
+
 def test_non_reporting_running_tool_remains_nonterminal() -> None:
     assert not normalize_tool_outcome({"status": "running"}, "ordinary_tool").terminal
 

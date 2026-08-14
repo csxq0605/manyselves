@@ -286,11 +286,10 @@ async def test_recovered_pause_keeps_the_last_paid_work_checkpoint(
     assert json.loads(checkpoint_path.read_text(encoding="utf-8")) == checkpoint
 
 
-def test_resume_restores_paid_work_before_new_checkpoint_or_boundary() -> None:
+def test_resume_uses_business_recovery_store_not_workflow_state_checkpoint() -> None:
     source = inspect.getsource(ReportWorkflowRunner.run)
     recover = source.index("self._recover_pending_cost_boundary")
     prepare = source.index("await self._prepare")
-    restore = source.index("self._restore_resume_state")
     readiness = source.index("readiness = EvidenceReadinessPolicy.evaluate")
     first_checkpoint_after_readiness = source.index(
         "self._checkpoint",
@@ -298,6 +297,9 @@ def test_resume_restores_paid_work_before_new_checkpoint_or_boundary() -> None:
     )
     first_boundary = source.index("self._checkpoint_then_cost_boundary")
 
-    assert recover < prepare
-    assert restore < readiness < first_checkpoint_after_readiness
-    assert restore < first_boundary
+    module_source = inspect.getsource(ReportWorkflowRunner._run_module_lanes)
+
+    assert recover < prepare < readiness < first_checkpoint_after_readiness
+    assert readiness < first_boundary
+    assert "self._restore_resume_state" not in source
+    assert "load_completed_lanes" in module_source

@@ -544,13 +544,20 @@ class TaskAttemptStore:
         task_id = record.task_id or record.lane_id
         if task_id is None:
             raise ValueError("lane attempt requires task_id or lane_id")
+        if record.run_id not in {"unknown", self.run_id}:
+            raise ValueError("lane attempt belongs to another run")
         # Make the task identity explicit in the journal even when callers
         # supplied only the legacy lane_id spelling.
-        if record.task_id != task_id or record.lane_id is None:
+        if (
+            record.task_id != task_id
+            or record.lane_id is None
+            or record.run_id != self.run_id
+        ):
             record = record.model_copy(
                 update={
                     "task_id": task_id,
                     "lane_id": record.lane_id or task_id,
+                    "run_id": self.run_id,
                 }
             )
         root = self._lane_attempt_root(task_id)
@@ -745,22 +752,25 @@ class TaskAttemptStore:
 
 
 class LaneTaskSpec(_StrictModel):
-    # The compact supervisor contract uses ``task_id/revision/payload_hash``;
-    # the legacy module-lane fields remain optional so existing checkpoints
-    # continue to deserialize without a migration.
+    """Business identity for one recoverable lane.
+
+    ``semantic_key``/``payload_hash`` and the preparation digests are retained
+    as compatibility metadata for old checkpoints.  They are deliberately
+    optional and are never needed to decide whether a result can be resumed;
+    the active recovery contract is the run/stage/lane/revision tuple below.
+    """
     lane_id: str | None = Field(default=None, min_length=1)
     run_id: str | None = Field(default=None, min_length=1)
+    stage: str = Field(default="lane", min_length=1)
     module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] | None = None
-    semantic_key: str = Field(pattern=r"^[0-9a-f]{64}$")
-    preparation_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    collaboration_bundle_sha256: str | None = Field(
-        default=None, pattern=r"^[0-9a-f]{64}$"
-    )
+    semantic_key: str | None = None
+    preparation_sha256: str | None = None
+    collaboration_bundle_sha256: str | None = None
     task_id: str | None = Field(default=None, min_length=1)
     revision: int = Field(default=0, ge=0)
     priority: int = 0
     ordinal: int = Field(default=0, ge=0)
-    payload_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    payload_hash: str | None = None
     schema_version: str = "1"
 
     @model_validator(mode="after")
@@ -771,8 +781,6 @@ class LaneTaskSpec(_StrictModel):
             self.lane_id = self.task_id
         if self.task_id is None:
             self.task_id = self.lane_id
-        if self.payload_hash is None:
-            self.payload_hash = self.preparation_sha256 or self.semantic_key
         if self.run_id is not None:
             _safe_component(self.run_id, field="run_id")
         _safe_component(self.task_id or self.lane_id or "", field="task_id")
@@ -780,15 +788,36 @@ class LaneTaskSpec(_StrictModel):
 
 
 class LaneAttemptRecord(_StrictModel):
+    """Append-only business-state record for one lane dispatch.
+
+    The first seven fields (run/stage/lane/attempt/revision/status/result/error)
+    are the active recovery contract.  The remaining fields are retained so
+    old task journals and forensic Provider evidence continue to parse; no
+    recovery decision relies on their hash values.
+    """
+    run_id: str = "unknown"
+    stage: str = "lane"
     lane_id: str | None = None
     task_id: str | None = None
-    task_attempt_id: str
+    attempt: int = Field(default=1, ge=1)
+    revision: int = Field(default=0, ge=0)
+    task_attempt_id: str | None = None
     lease_epoch: int = Field(default=1, ge=1)
     started_at_ns: int = Field(default_factory=time.time_ns, ge=1)
     finished_at_ns: int | None = Field(default=None, ge=1)
     # ``started`` is useful for a journal pre-claim; callers may omit it when
     # constructing a record for a successful one-shot lane in tests.
-    status: Literal["started", "completed", "failed", "ambiguous", "deferred"] = "started"
+    status: Literal[
+        "started",
+        "running",
+        "completed",
+        "failed",
+        "blocked",
+        "ambiguous",
+        "accepted_or_unknown",
+        "invalidated",
+        "deferred",
+    ] = "started"
     # The frozen API describes timestamps as one logical field.  Keep the
     # explicit nanosecond fields for existing checkpoints while accepting the
     # compact mapping as input.
@@ -801,11 +830,15 @@ class LaneAttemptRecord(_StrictModel):
         "needs_input",
         "disputed",
         "escalate",
+        "blocked",
+        "invalidated",
         "unknown",
     ] | None = None
     result_ref: str | None = None
-    result_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    result_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    # Hashes are compatibility/forensic metadata only.  They intentionally
+    # have no pattern constraint and are not consulted by active recovery.
+    result_sha256: str | None = None
+    result_hash: str | None = None
     error: str | None = None
 
     @model_validator(mode="after")
@@ -816,7 +849,14 @@ class LaneAttemptRecord(_StrictModel):
             self.task_id = self.lane_id
         if self.lane_id is None:
             self.lane_id = self.task_id
+        _safe_component(self.run_id, field="run_id")
+        if not self.stage:
+            raise ValueError("lane attempt stage is required")
         _safe_component(self.task_id or "", field="task_id")
+        if self.task_attempt_id is None:
+            self.task_attempt_id = (
+                f"{self.task_id}-attempt-{self.attempt}-{uuid4().hex}"
+            )
         _safe_component(self.task_attempt_id, field="task_attempt_id")
         if self.timestamps:
             started = self.timestamps.get("started_at_ns", self.timestamps.get("started"))
@@ -832,10 +872,14 @@ class LaneAttemptRecord(_StrictModel):
         if self.disposition is None:
             self.disposition = {
                 "started": "deferred" if self.status == "deferred" else "unknown",
+                "running": "unknown",
                 "completed": "completed",
                 "failed": "failed",
+                "blocked": "blocked",
+                "invalidated": "invalidated",
                 "deferred": "deferred",
                 "ambiguous": "accepted_or_unknown",
+                "accepted_or_unknown": "accepted_or_unknown",
             }[self.status]
         return self
 
@@ -844,14 +888,30 @@ class LaneCompletion(_StrictModel):
     kind: Literal["lane_completion"] = "lane_completion"
     lane_id: str
     run_id: str
-    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
-    semantic_key: str = Field(pattern=r"^[0-9a-f]{64}$")
-    subject: ArtifactRef
-    review_completion: ArtifactRef
-    author_task_attempt_id: str
-    reviewer_session_id: str
-    lease_epoch: int = Field(ge=1)
+    stage: str = "lane"
+    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] | None = None
+    attempt: int = Field(default=1, ge=1)
+    revision: int = Field(default=0, ge=0)
+    status: Literal["completed", "failed", "blocked", "invalidated"] = "completed"
+    result_ref: str | None = None
+    error: str | None = None
+    # Legacy completion metadata.  These are optional because active lane
+    # recovery only needs the business-state fields above.
+    semantic_key: str | None = None
+    subject: ArtifactRef | str | None = None
+    review_completion: ArtifactRef | str | None = None
+    author_task_attempt_id: str | None = None
+    reviewer_session_id: str | None = None
+    lease_epoch: int = Field(default=1, ge=1)
     schema_version: str = "1"
+
+    @model_validator(mode="after")
+    def validate_business_identity(self) -> "LaneCompletion":
+        _safe_component(self.run_id, field="run_id")
+        _safe_component(self.lane_id, field="lane_id")
+        if not self.stage:
+            raise ValueError("lane completion stage is required")
+        return self
 
     def completion_sha256(self) -> str:
         deterministic = self.model_dump(
@@ -905,6 +965,7 @@ class CohortRunResult:
     terminals: dict[str, LaneAttemptRecord] = field(default_factory=dict)
     barrier_candidate: dict[str, Any] | None = None
     failures: dict[str, str] = field(default_factory=dict)
+    blocked: tuple[str, ...] = ()
     deferred: tuple[str, ...] = ()
     recovered: tuple[str, ...] = ()
 
@@ -925,10 +986,14 @@ class AllReadySupervisor:
         run_id: str | None = None,
         *,
         attempt_store: TaskAttemptStore | None = None,
+        recovery_store: "RecoveryStateStore" | None = None,
+        business_gate: Callable[..., Any] | None = None,
     ) -> None:
         self.workspace = Path(workspace or Path.cwd()).resolve()
         self.run_id = run_id
         self.attempt_store = attempt_store
+        self.recovery_store = recovery_store
+        self.business_gate = business_gate
 
     @staticmethod
     def _ordered_specs(specs: Iterable[LaneTaskSpec]) -> list[LaneTaskSpec]:
@@ -1012,19 +1077,33 @@ class AllReadySupervisor:
         if isinstance(value, (LaneCompletion, CrossOwnerCompletion)):
             completion = value
             subject = getattr(value, "subject", None)
-            if subject is not None:
+            if isinstance(subject, ArtifactRef):
                 result_ref = subject.ref
                 result_hash = subject.sha256
+            elif isinstance(subject, str):
+                result_ref = subject
+            result_ref = result_ref or getattr(value, "result_ref", None)
+            result_hash = result_hash or getattr(value, "result_sha256", None)
         elif isinstance(value, Mapping):
             completion = value.get("completion") or value.get("result")
             if isinstance(completion, (LaneCompletion, CrossOwnerCompletion)):
                 subject = getattr(completion, "subject", None)
-                if subject is not None:
+                if isinstance(subject, ArtifactRef):
                     result_ref = result_ref or subject.ref
                     result_hash = result_hash or subject.sha256
+                elif isinstance(subject, str):
+                    result_ref = result_ref or subject
+                result_ref = result_ref or getattr(completion, "result_ref", None)
+                result_hash = result_hash or getattr(completion, "result_sha256", None)
             result_ref = result_ref or value.get("result_ref")
             result_hash = result_hash or value.get("result_sha256") or value.get("result_hash")
             disposition = value.get("disposition")
+            if disposition is None and value.get("status") in {
+                "accepted_or_unknown",
+                "accepted_unknown",
+                "ambiguous",
+            }:
+                disposition = value.get("status")
         return candidate, (
             completion.model_dump(mode="json")
             if isinstance(completion, (LaneCompletion, CrossOwnerCompletion))
@@ -1038,6 +1117,34 @@ class AllReadySupervisor:
             return self.attempt_store
         self.attempt_store = TaskAttemptStore(self.workspace, run_id)
         return self.attempt_store
+
+    def _recovery_store_for(self, run_id: str) -> "RecoveryStateStore":
+        if self.recovery_store is not None:
+            if self.recovery_store.run_id != run_id:
+                raise ValueError("recovery store belongs to another run")
+            return self.recovery_store
+        self.recovery_store = RecoveryStateStore(self.workspace, run_id)
+        return self.recovery_store
+
+    def _terminal_reusable(self, spec: LaneTaskSpec, record: LaneAttemptRecord) -> bool:
+        recovery = self._recovery_store_for(self.run_id or spec.run_id or "run")
+        state = LaneState(
+            run_id=self.run_id or spec.run_id or "run",
+            stage=spec.stage,
+            lane_id=spec.task_id or spec.lane_id or "",
+            attempt=record.attempt,
+            revision=record.revision if record.revision else spec.revision,
+            status="completed" if record.status == "completed" else "failed",
+            result_ref=record.result_ref,
+            error=record.error,
+        )
+        return recovery.result_is_reusable(
+            state,
+            expected_stage=spec.stage,
+            expected_lane_id=spec.task_id or spec.lane_id or "",
+            expected_revision=spec.revision,
+            business_gate=self.business_gate,
+        )
 
     async def run(
         self,
@@ -1065,25 +1172,117 @@ class AllReadySupervisor:
         self.run_id = run_id
         store = self._store_for(run_id)
 
-        # Recovery is fail-closed: only a complete result identity or an
-        # accepted/unknown Provider marker suppresses a new invocation.
+        recovery = self._recovery_store_for(run_id)
+        # Recovery is business-state based: only a completed, readable,
+        # ownership/revision-valid result suppresses a new invocation.
+        # accepted_or_unknown is reconciled only when such a result exists;
+        # otherwise the lane receives an explicit new attempt below.
         terminals: dict[str, LaneAttemptRecord] = {}
         recovered: list[str] = []
+        blocked_ids: list[str] = []
         ready: list[LaneTaskSpec] = []
         recovered_payloads: dict[str, Any] = {}
+        previous_attempts: dict[str, LaneAttemptRecord] = {}
         for spec in ordered:
-            latest = store.load_latest(spec.task_id or spec.lane_id or "", include_payload=True)
+            task_id = spec.task_id or spec.lane_id or ""
+            latest = store.load_latest(task_id, include_payload=True)
+            # RecoveryStateStore is the business-state source of truth.  The
+            # older TaskAttemptStore journal remains a compatibility/fact
+            # projection, so a worker may resume from either one.
+            if latest is None:
+                state = recovery.load_lane_state(spec.stage, task_id)
+                if state is not None:
+                    latest = (
+                        LaneAttemptRecord(
+                            run_id=state.run_id,
+                            stage=state.stage,
+                            lane_id=state.lane_id,
+                            task_id=state.lane_id,
+                            attempt=max(1, state.attempt),
+                            revision=state.revision,
+                            status=(
+                                "accepted_or_unknown"
+                                if state.status == "accepted_or_unknown"
+                                else state.status
+                            ),
+                            disposition=(
+                                "accepted_or_unknown"
+                                if state.status == "accepted_or_unknown"
+                                else (
+                                    state.status
+                                    if state.status in {"completed", "failed", "blocked", "deferred", "invalidated"}
+                                    else "unknown"
+                                )
+                            ),
+                            result_ref=state.result_ref,
+                            error=state.error,
+                        ),
+                        None,
+                    )
             if latest is not None:
                 previous, payload = latest
-                if (
-                    previous.status == "completed"
-                    and previous.result_ref
-                    and previous.result_sha256
-                ) or previous.disposition == "accepted_or_unknown":
-                    terminals[spec.task_id or spec.lane_id or ""] = previous
+                previous_attempts[task_id] = previous
+                if previous.status == "completed" and self._terminal_reusable(spec, previous):
+                    terminals[task_id] = previous
                     recovered.append(spec.task_id or spec.lane_id or "")
-                    recovered_payloads[spec.task_id or spec.lane_id or ""] = payload
+                    recovered_payloads[task_id] = payload
                     continue
+                if (
+                    previous.disposition == "accepted_or_unknown"
+                    and previous.result_ref
+                    and self._terminal_reusable(spec, previous.model_copy(update={"status": "completed"}))
+                ):
+                    reconciled = previous.model_copy(
+                        update={
+                            "status": "completed",
+                            "disposition": "completed",
+                            "error": None,
+                            "finished_at_ns": time.time_ns(),
+                            "attempt": max(previous.attempt, spec.revision),
+                        }
+                    )
+                    store.append(reconciled, payload=payload)
+                    recovery.record_lane_attempt(reconciled, payload=payload)
+                    terminals[task_id] = reconciled
+                    recovered.append(task_id)
+                    recovered_payloads[task_id] = payload
+                    continue
+                if (
+                    previous.disposition == "accepted_or_unknown"
+                    or previous.status in {"ambiguous", "accepted_or_unknown", "blocked"}
+                ):
+                    # Ambiguous Provider evidence is not a dispatch command.
+                    # Keep it blocked until a caller invokes retry_lanes (or
+                    # reconciles a completed result) explicitly.
+                    blocked_terminal = previous.model_copy(
+                        update={
+                            "status": "blocked",
+                            "error": previous.error
+                            or "accepted_or_unknown has no completed result; explicit retry required",
+                            "finished_at_ns": previous.finished_at_ns or time.time_ns(),
+                        }
+                    )
+                    terminals[task_id] = blocked_terminal
+                    recovery.record_lane_attempt(blocked_terminal, payload=payload)
+                    blocked_ids.append(task_id)
+                    continue
+                # A previous completed/failed/deferred record whose business
+                # result cannot be read is also evidence, not an implicit
+                # retry command.  Keep it blocked so the coordinator must
+                # create a new attempt through retry_lanes explicitly.
+                blocked_terminal = previous.model_copy(
+                    update={
+                        "status": "blocked",
+                        "disposition": "blocked",
+                        "error": previous.error
+                        or "lane result is missing or invalid; explicit retry required",
+                        "finished_at_ns": previous.finished_at_ns or time.time_ns(),
+                    }
+                )
+                terminals[task_id] = blocked_terminal
+                recovery.record_lane_attempt(blocked_terminal, payload=payload)
+                blocked_ids.append(task_id)
+                continue
             ready.append(spec)
 
         # Pre-claim every ready lane before creating workers.  This is a
@@ -1093,14 +1292,19 @@ class AllReadySupervisor:
         for spec in ready:
             task_id = spec.task_id or spec.lane_id or ""
             claim = LaneAttemptRecord(
+                run_id=run_id,
+                stage=spec.stage,
                 lane_id=spec.lane_id or task_id,
                 task_id=task_id,
+                attempt=(previous_attempts[task_id].attempt + 1 if task_id in previous_attempts else 1),
+                revision=spec.revision,
                 task_attempt_id=f"{task_id}-attempt-{uuid4().hex}",
                 lease_epoch=1,
                 status="started",
                 disposition="unknown",
             )
             store.append(claim)
+            recovery.record_lane_attempt(claim)
             claims[task_id] = claim
 
         failures: dict[str, str] = {}
@@ -1181,6 +1385,7 @@ class AllReadySupervisor:
                     update={"result_sha256": result_hash, "result_hash": result_hash}
                 )
             store.append(terminal, payload=payload)
+            recovery.record_lane_attempt(terminal, payload=payload)
             return task_id, terminal, completion_value, payload
 
         # ``gather(..., return_exceptions=True)`` is intentional even though
@@ -1231,9 +1436,17 @@ class AllReadySupervisor:
         ordered_ids = [spec.task_id or spec.lane_id or "" for spec in ordered]
         if (
             not failures
+            and not blocked_ids
             and not deferred
             and all(terminals.get(task_id, None) is not None for task_id in ordered_ids)
             and all(terminals[task_id].status == "completed" for task_id in ordered_ids)
+            and all(
+                self._terminal_reusable(
+                    spec,
+                    terminals[spec.task_id or spec.lane_id or ""],
+                )
+                for spec in ordered
+            )
         ):
             barrier_candidate: dict[str, Any] | None = {
                 "target_task_ids": ordered_ids,
@@ -1257,6 +1470,7 @@ class AllReadySupervisor:
             terminals=terminals,
             barrier_candidate=barrier_candidate,
             failures=failures,
+            blocked=tuple(sorted(blocked_ids)),
             deferred=tuple(sorted(deferred)),
             recovered=tuple(sorted(recovered)),
         )
@@ -1270,10 +1484,12 @@ class CohortBarrier(_StrictModel):
     # unchanged while allowing arbitrary semantic task ids.
     target_modules: list[str] = Field(default_factory=list)
     target_tasks: list[str] = Field(default_factory=list)
-    completion_refs: dict[str, str]
-    completion_hashes: dict[str, str]
+    completion_refs: dict[str, str] = Field(default_factory=dict)
+    # Legacy forensic hashes remain readable but are not required for an
+    # active barrier or recovery decision.
+    completion_hashes: dict[str, str] = Field(default_factory=dict)
     target_revisions: dict[str, int] = Field(default_factory=dict)
-    barrier_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    barrier_sha256: str | None = None
     scope: Literal["full", "partial"] = "full"
     status: Literal["committed", "failed", "deferred"] = "committed"
 
@@ -1282,9 +1498,15 @@ class CrossOwnerCompletion(_StrictModel):
     kind: Literal["cross_owner_completion"] = "cross_owner_completion"
     lane_id: str
     run_id: str
-    review_round: int = Field(ge=0)
-    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
-    semantic_key: str = Field(pattern=r"^[0-9a-f]{64}$")
+    stage: str = "cross"
+    review_round: int = Field(default=0, ge=0)
+    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] | None = None
+    attempt: int = Field(default=1, ge=1)
+    revision: int = Field(default=0, ge=0)
+    status: Literal["completed", "failed", "blocked", "invalidated"] = "completed"
+    result_ref: str | None = None
+    error: str | None = None
+    semantic_key: str | None = None
     # Keep the revision explicit in the completion rather than inferring it
     # solely from a filename.  The optional default keeps older persisted
     # completions readable; active writers always populate it.
@@ -1307,13 +1529,21 @@ class CrossOwnerCompletion(_StrictModel):
             "initial owner result contained no findings."
         ),
     )
-    subject: ArtifactRef
-    local_review_completion: ArtifactRef
-    machine_validation: ArtifactRef
-    author_task_attempt_id: str
-    reviewer_session_id: str
-    lease_epoch: int = Field(ge=1)
+    subject: ArtifactRef | str | None = None
+    local_review_completion: ArtifactRef | str | None = None
+    machine_validation: ArtifactRef | str | None = None
+    author_task_attempt_id: str | None = None
+    reviewer_session_id: str | None = None
+    lease_epoch: int = Field(default=1, ge=1)
     schema_version: str = "1"
+
+    @model_validator(mode="after")
+    def validate_business_identity(self) -> "CrossOwnerCompletion":
+        _safe_component(self.run_id, field="run_id")
+        _safe_component(self.lane_id, field="lane_id")
+        if not self.stage:
+            raise ValueError("Cross owner completion stage is required")
+        return self
 
     def completion_sha256(self) -> str:
         deterministic = self.model_dump(
@@ -1341,15 +1571,1230 @@ class CrossOwnerCompletion(_StrictModel):
 class CrossOwnerBarrier(_StrictModel):
     kind: Literal["cross_owner_barrier"] = "cross_owner_barrier"
     run_id: str
-    review_round: int = Field(ge=0)
-    target_modules: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]]
-    completion_refs: dict[str, str]
-    completion_hashes: dict[str, str]
+    review_round: int = Field(default=0, ge=0)
+    target_modules: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(default_factory=list)
+    completion_refs: dict[str, str] = Field(default_factory=dict)
+    completion_hashes: dict[str, str] = Field(default_factory=dict)
     # Exact subject revisions are part of the barrier identity.  Legacy
     # barriers may omit this map and remain parseable, but new barriers always
     # bind one revision per owner lane.
     completion_revisions: dict[str, int] = Field(default_factory=dict)
-    barrier_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    barrier_sha256: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Simple business-state recovery records
+# ---------------------------------------------------------------------------
+
+
+class StageState(_StrictModel):
+    """Durable state of one reporting stage.
+
+    This is intentionally a small business record.  Content hashes, CAS
+    handles, and provider attempt metadata belong to forensic journals and are
+    not part of the recovery decision.
+    """
+
+    run_id: str
+    stage: str
+    revision: int = Field(default=0, ge=0)
+    status: Literal[
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "blocked",
+        "invalidated",
+        "rolled_back",
+    ] = "pending"
+    result_ref: str | None = None
+    error: str | None = None
+    updated_at_ns: int = Field(default_factory=time.time_ns, ge=1)
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> "StageState":
+        _safe_component(self.run_id, field="run_id")
+        _safe_component(self.stage, field="stage")
+        return self
+
+
+class LaneState(_StrictModel):
+    """Current business state for one lane (not a content identity)."""
+
+    run_id: str
+    stage: str
+    lane_id: str
+    attempt: int = Field(default=0, ge=0)
+    revision: int = Field(default=0, ge=0)
+    status: Literal[
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "blocked",
+        "accepted_or_unknown",
+        "invalidated",
+        "deferred",
+    ] = "pending"
+    result_ref: str | None = None
+    error: str | None = None
+    updated_at_ns: int = Field(default_factory=time.time_ns, ge=1)
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> "LaneState":
+        _safe_component(self.run_id, field="run_id")
+        _safe_component(self.stage, field="stage")
+        _safe_component(self.lane_id, field="lane_id")
+        return self
+
+
+class AggregateState(_StrictModel):
+    """Current and historical state of a stage aggregate/barrier."""
+
+    run_id: str
+    stage: str
+    aggregate_id: str = "default"
+    revision: int = Field(default=0, ge=0)
+    status: Literal[
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "blocked",
+        "invalidated",
+        "rolled_back",
+    ] = "pending"
+    result_ref: str | None = None
+    error: str | None = None
+    lane_ids: list[str] = Field(default_factory=list)
+    prior_result_ref: str | None = None
+    updated_at_ns: int = Field(default_factory=time.time_ns, ge=1)
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> "AggregateState":
+        _safe_component(self.run_id, field="run_id")
+        _safe_component(self.stage, field="stage")
+        _safe_component(self.aggregate_id, field="aggregate_id")
+        for lane_id in self.lane_ids:
+            _safe_component(lane_id, field="lane_id")
+        return self
+
+
+class RecoveryPlan(_StrictModel):
+    """An explicit, auditable recovery action for a worker/coordinator."""
+
+    plan_id: str = Field(default_factory=lambda: f"recovery-{uuid4().hex}")
+    run_id: str
+    stage: str
+    action: Literal[
+        "retry_failed_lanes",
+        "retry_aggregate",
+        "invalidate_lane",
+        "rollback_aggregate",
+        "reconcile_accepted_or_unknown",
+    ]
+    lane_ids: list[str] = Field(default_factory=list)
+    aggregate_id: str | None = None
+    target_revision: int | None = Field(default=None, ge=0)
+    result_ref: str | None = None
+    reason: str = ""
+    status: Literal["planned", "applied", "cancelled"] = "planned"
+    created_at_ns: int = Field(default_factory=time.time_ns, ge=1)
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> "RecoveryPlan":
+        _safe_component(self.run_id, field="run_id")
+        _safe_component(self.stage, field="stage")
+        for lane_id in self.lane_ids:
+            _safe_component(lane_id, field="lane_id")
+        if self.aggregate_id is not None:
+            _safe_component(self.aggregate_id, field="aggregate_id")
+        return self
+
+
+class RecoveryStateStore:
+    """Persist and query simple lane/stage/aggregate business state.
+
+    The store only treats a completed lane as reusable when its referenced
+    result file exists, contains valid JSON, belongs to this run/stage/lane,
+    matches the expected revision (when supplied), and passes an optional
+    business gate.  Hashes are accepted in legacy payloads but never compared.
+    """
+
+    _TERMINAL_FAILURES = {
+        "failed",
+        "blocked",
+        "invalidated",
+        "deferred",
+    }
+    _LANE_TERMINAL = {
+        "completed",
+        "failed",
+        "blocked",
+        "accepted_or_unknown",
+        "invalidated",
+        "deferred",
+    }
+    _LANE_ACTIVE = {"pending", "running"}
+
+    def __init__(self, workspace: Path, run_id: str) -> None:
+        self.workspace = Path(workspace).resolve()
+        self.run_id = _safe_component(run_id, field="run_id")
+        self.root = self.workspace / "Work" / "runs" / self.run_id / "recovery"
+        self.stage_root = self.root / "stages"
+        self.lane_root = self.root / "lanes"
+        self.aggregate_root = self.root / "aggregates"
+        self.plan_root = self.root / "plans"
+
+    @staticmethod
+    def _stage_key(stage: str) -> str:
+        return _safe_component(stage, field="stage")
+
+    @staticmethod
+    def _lane_key(lane_id: str) -> str:
+        return _safe_component(lane_id, field="lane_id")
+
+    @staticmethod
+    def _aggregate_key(aggregate_id: str) -> str:
+        return _safe_component(aggregate_id, field="aggregate_id")
+
+    def _ensure_owned(self, run_id: str, stage: str) -> None:
+        if run_id != self.run_id:
+            raise ValueError("recovery record belongs to another run")
+        self._stage_key(stage)
+
+    def _result_path(self, result_ref: str) -> Path | None:
+        if not result_ref:
+            return None
+        candidate = Path(result_ref)
+        if candidate.is_absolute():
+            try:
+                candidate = candidate.resolve().relative_to(self.workspace)
+            except ValueError:
+                return None
+        if ".." in candidate.parts or candidate.as_posix() != result_ref:
+            return None
+        return self.workspace / candidate
+
+    def _read_result(self, result_ref: str | None) -> Any | None:
+        path = self._result_path(result_ref or "")
+        if path is None or not path.is_file():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _run_gate(
+        gate: Callable[..., Any] | None,
+        value: Any,
+        record: LaneState,
+    ) -> bool:
+        if gate is None:
+            return True
+        try:
+            signature = inspect.signature(gate)
+            positional = [
+                parameter
+                for parameter in signature.parameters.values()
+                if parameter.kind
+                in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
+            ]
+            args = (value, record)[: len(positional)]
+        except (TypeError, ValueError):
+            args = (value, record)
+        try:
+            result = gate(*args)
+        except Exception:
+            return False
+        return bool(result)
+
+    @classmethod
+    def _lane_transition_error(
+        cls,
+        current: LaneState | None,
+        incoming: LaneState,
+        *,
+        allow_invalidate: bool = False,
+    ) -> str | None:
+        """Return a deterministic business-state conflict, if any.
+
+        A lane attempt is append-only: a new dispatch must use a strictly
+        larger attempt number.  The one legal same-attempt transition is the
+        normal started/running -> terminal completion (or an explicit
+        invalidation).  This prevents a late attempt=1 record from replacing
+        a completed attempt=1 result while retaining normal lifecycle updates.
+        """
+
+        if current is None:
+            return None
+        if incoming.revision < current.revision:
+            return (
+                f"lane revision regressed from {current.revision} to {incoming.revision}"
+            )
+        if incoming.attempt < current.attempt:
+            return (
+                f"lane attempt regressed from {current.attempt} to {incoming.attempt}"
+            )
+        if incoming.attempt > current.attempt:
+            return None
+        if incoming.status == "invalidated" and allow_invalidate:
+            return None
+        if current.status == "accepted_or_unknown" and incoming.status == "completed":
+            # Reconciliation may promote an accepted Provider result observed
+            # after the original attempt without allocating a duplicate call.
+            return None
+        if current.status in cls._LANE_TERMINAL:
+            if (
+                incoming.status == current.status
+                and incoming.result_ref == current.result_ref
+                and incoming.error == current.error
+                and incoming.revision == current.revision
+            ):
+                return None
+            return (
+                f"lane attempt {incoming.attempt} is already terminal as {current.status}; "
+                "a retry must use a larger attempt"
+            )
+        # A lifecycle update may advance an active attempt, but it may not
+        # move it backwards (for example running -> started).
+        rank = {"pending": 0, "started": 1, "running": 2}
+        current_rank = rank.get(current.status, 0)
+        incoming_rank = rank.get(incoming.status, 0)
+        if incoming.status in cls._LANE_TERMINAL:
+            return None
+        if incoming_rank < current_rank:
+            return (
+                f"lane status regressed from {current.status} to {incoming.status} "
+                f"within attempt {incoming.attempt}"
+            )
+        if incoming_rank == current_rank and incoming.status == current.status:
+            return (
+                f"duplicate lane status {incoming.status} for attempt {incoming.attempt}; "
+                "use a larger attempt for a new dispatch"
+            )
+        return None
+
+    def _assert_lane_transition(
+        self,
+        current: LaneState | None,
+        incoming: LaneState,
+        *,
+        allow_invalidate: bool = False,
+    ) -> None:
+        error = self._lane_transition_error(
+            current,
+            incoming,
+            allow_invalidate=allow_invalidate,
+        )
+        if error:
+            raise ValueError(error)
+
+    @staticmethod
+    def _aggregate_business_view(state: AggregateState) -> dict[str, Any]:
+        return state.model_dump(mode="json", exclude={"updated_at_ns"})
+
+    def _assert_aggregate_transition(
+        self,
+        current: AggregateState | None,
+        incoming: AggregateState,
+    ) -> None:
+        if current is None:
+            return
+        if incoming.revision < current.revision:
+            raise ValueError(
+                f"aggregate revision regressed from {current.revision} to {incoming.revision}"
+            )
+        if incoming.revision == current.revision:
+            if self._aggregate_business_view(incoming) != self._aggregate_business_view(current):
+                raise ValueError(
+                    f"aggregate revision {incoming.revision} conflicts with the existing state"
+                )
+
+    def _validate_successful_aggregate(self, state: AggregateState) -> None:
+        """Validate aggregate result and every declared lane at the barrier."""
+
+        if state.status != "completed":
+            return
+        if not state.result_ref:
+            raise ValueError("completed aggregate requires result_ref")
+        payload = self._read_result(state.result_ref)
+        if payload is None:
+            raise ValueError("completed aggregate result is missing or unreadable")
+        if isinstance(payload, Mapping):
+            if payload.get("run_id") not in (None, self.run_id):
+                raise ValueError("completed aggregate result belongs to another run")
+            if payload.get("stage") not in (None, state.stage):
+                raise ValueError("completed aggregate result belongs to another stage")
+            if payload.get("status") in self._TERMINAL_FAILURES:
+                raise ValueError("completed aggregate result reports a failed status")
+        for lane_id in sorted(set(state.lane_ids)):
+            lane = self.load_lane_state(state.stage, lane_id)
+            if lane is None or not self.result_is_reusable(
+                lane,
+                expected_stage=state.stage,
+                expected_lane_id=lane_id,
+                expected_revision=lane.revision,
+            ):
+                raise ValueError(
+                    f"completed aggregate requires a readable completed lane result: {lane_id}"
+                )
+
+    def result_is_reusable(
+        self,
+        record: LaneState | LaneAttemptRecord | LaneCompletion,
+        *,
+        expected_stage: str | None = None,
+        expected_lane_id: str | None = None,
+        expected_revision: int | None = None,
+        business_gate: Callable[..., Any] | None = None,
+    ) -> bool:
+        """Return whether a completed lane result is safe to reuse."""
+
+        status = getattr(record, "status", None)
+        if status != "completed":
+            return False
+        run_id = getattr(record, "run_id", None)
+        stage = getattr(record, "stage", None)
+        lane_id = getattr(record, "lane_id", None)
+        revision = getattr(record, "revision", None)
+        result_ref = getattr(record, "result_ref", None)
+        if run_id != self.run_id:
+            return False
+        if expected_stage is not None and stage != expected_stage:
+            return False
+        if expected_lane_id is not None and lane_id != expected_lane_id:
+            return False
+        if expected_revision is not None and revision != expected_revision:
+            return False
+        payload = self._read_result(result_ref)
+        if payload is None:
+            return False
+        if isinstance(payload, Mapping):
+            # Embedded business identity is optional for old artifacts, but
+            # when present it must agree with the recovery record.
+            if payload.get("run_id") not in (None, self.run_id):
+                return False
+            if stage is not None and payload.get("stage") not in (None, stage):
+                return False
+            payload_lane = payload.get("lane_id", payload.get("task_id"))
+            if lane_id is not None and payload_lane not in (None, lane_id):
+                return False
+            if revision is not None and payload.get("revision") not in (None, revision):
+                return False
+            payload_status = payload.get("status")
+            if payload_status in self._TERMINAL_FAILURES:
+                return False
+        state = LaneState(
+            run_id=self.run_id,
+            stage=stage or expected_stage or "lane",
+            lane_id=lane_id or expected_lane_id or "lane",
+            attempt=max(0, int(getattr(record, "attempt", 0))),
+            revision=max(0, int(revision or 0)),
+            status="completed",
+            result_ref=result_ref,
+        )
+        return self._run_gate(business_gate, payload, state)
+
+    def _stage_path(self, stage: str) -> Path:
+        return self.stage_root / f"{self._stage_key(stage)}.json"
+
+    def _lane_state_path(self, stage: str, lane_id: str) -> Path:
+        return self.lane_root / self._stage_key(stage) / f"{self._lane_key(lane_id)}.json"
+
+    def record_stage_state(self, state: StageState | Mapping[str, Any], **updates: Any) -> StageState:
+        if not isinstance(state, StageState):
+            state = StageState.model_validate(state)
+        if updates:
+            state = state.model_copy(update={**updates, "updated_at_ns": time.time_ns()})
+        self._ensure_owned(state.run_id, state.stage)
+        path = self._stage_path(state.stage)
+        with exclusive_file_lock(path.with_suffix(".lock")):
+            atomic_write_json(path, state.model_dump(mode="json"))
+        return state
+
+    def load_stage_state(self, stage: str) -> StageState | None:
+        path = self._stage_path(stage)
+        if not path.is_file():
+            return None
+        try:
+            return StageState.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise RuntimeError(f"stage state is unreadable: {path}")
+
+    def _lane_from_any(
+        self,
+        record: LaneState | LaneAttemptRecord | LaneCompletion | Mapping[str, Any],
+        *,
+        stage: str | None = None,
+        lane_id: str | None = None,
+    ) -> LaneState:
+        if isinstance(record, LaneState):
+            state = record
+        elif isinstance(record, LaneAttemptRecord):
+            lane_status = (
+                "accepted_or_unknown"
+                if record.disposition == "accepted_or_unknown"
+                or record.status in {"ambiguous", "accepted_or_unknown"}
+                else ("running" if record.status in {"started", "running"} else record.status)
+            )
+            state = LaneState(
+                run_id=self.run_id if record.run_id == "unknown" else record.run_id,
+                stage=stage or record.stage,
+                lane_id=lane_id or record.lane_id or record.task_id or "",
+                attempt=record.attempt,
+                revision=record.revision,
+                status=lane_status,
+                result_ref=record.result_ref,
+                error=record.error,
+                updated_at_ns=record.finished_at_ns or record.started_at_ns,
+            )
+        elif isinstance(record, LaneCompletion):
+            state = LaneState(
+                run_id=record.run_id,
+                stage=stage or record.stage,
+                lane_id=lane_id or record.lane_id,
+                attempt=record.attempt,
+                revision=record.revision,
+                status=record.status,
+                result_ref=record.result_ref
+                or (
+                    record.subject.ref
+                    if isinstance(record.subject, ArtifactRef)
+                    else record.subject
+                ),
+                error=record.error,
+            )
+        else:
+            state = LaneState.model_validate(
+                {**record, **({"stage": stage} if stage is not None else {}), **({"lane_id": lane_id} if lane_id is not None else {})}
+            )
+        if state.run_id == "unknown":
+            state = state.model_copy(update={"run_id": self.run_id})
+        self._ensure_owned(state.run_id, state.stage)
+        return state
+
+    def record_lane_attempt(
+        self,
+        record: LaneState | LaneAttemptRecord | Mapping[str, Any],
+        *,
+        payload: Mapping[str, Any] | None = None,
+    ) -> LaneState:
+        """Append one lane attempt and update its current business state."""
+
+        if isinstance(record, LaneState):
+            state = record
+            attempt_record = LaneAttemptRecord(
+                run_id=state.run_id,
+                stage=state.stage,
+                lane_id=state.lane_id,
+                task_id=state.lane_id,
+                attempt=max(1, state.attempt),
+                revision=state.revision,
+                status=("accepted_or_unknown" if state.status == "accepted_or_unknown" else state.status),
+                result_ref=state.result_ref,
+                error=state.error,
+            )
+        else:
+            attempt_record = record if isinstance(record, LaneAttemptRecord) else LaneAttemptRecord.model_validate(record)
+            state = self._lane_from_any(attempt_record)
+        self._ensure_owned(state.run_id, state.stage)
+        lane_dir = self.lane_root / self._stage_key(state.stage) / self._lane_key(state.lane_id) / "attempts"
+        lane_dir.mkdir(parents=True, exist_ok=True)
+        body: dict[str, Any] = {"record": attempt_record.model_dump(mode="json")}
+        if payload is not None:
+            body["payload"] = dict(payload)
+        path = lane_dir / f"{attempt_record.attempt}-{time.time_ns()}-{uuid4().hex[:8]}.json"
+        with exclusive_file_lock(lane_dir / ".append.lock"):
+            atomic_write_json(path, body)
+        self._save_lane_state(state)
+        return state
+
+    def _save_lane_state(
+        self,
+        state: LaneState,
+        *,
+        allow_invalidate: bool = False,
+    ) -> LaneState:
+        path = self._lane_state_path(state.stage, state.lane_id)
+        with exclusive_file_lock(path.with_suffix(".lock")):
+            current: LaneState | None = None
+            if path.is_file():
+                try:
+                    current = LaneState.model_validate_json(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError) as exc:
+                    raise RuntimeError(f"lane state is unreadable: {path}") from exc
+            self._assert_lane_transition(
+                current,
+                state,
+                allow_invalidate=allow_invalidate,
+            )
+            if current is not None and self._lane_transition_error(
+                current,
+                state,
+                allow_invalidate=allow_invalidate,
+            ) is None and current.attempt == state.attempt and current.status in self._LANE_TERMINAL:
+                # Exact idempotent replay should not perturb the projection
+                # timestamp or replace an immutable terminal state.
+                if self._lane_business_view(current) == self._lane_business_view(state):
+                    return current
+            atomic_write_json(path, state.model_dump(mode="json"))
+        return state
+
+    @staticmethod
+    def _lane_business_view(state: LaneState) -> dict[str, Any]:
+        return state.model_dump(mode="json", exclude={"updated_at_ns"})
+
+    def record_lane_completion(
+        self,
+        completion: LaneCompletion | LaneState | Mapping[str, Any],
+        *,
+        payload: Mapping[str, Any] | None = None,
+    ) -> LaneState:
+        """Persist a typed completion and project its business state."""
+
+        state = self._lane_from_any(completion)
+        if state.status != "completed":
+            raise ValueError("lane completion must have status=completed")
+        lane_dir = self.lane_root / self._stage_key(state.stage) / self._lane_key(state.lane_id) / "completions"
+        lane_dir.mkdir(parents=True, exist_ok=True)
+        body: dict[str, Any]
+        if isinstance(completion, LaneCompletion):
+            body = {"completion": completion.model_dump(mode="json")}
+        else:
+            body = {"completion": state.model_dump(mode="json")}
+        if payload is not None:
+            body["payload"] = dict(payload)
+        path = lane_dir / f"r{state.revision}-a{state.attempt}-{time.time_ns()}-{uuid4().hex[:8]}.json"
+        with exclusive_file_lock(lane_dir / ".append.lock"):
+            atomic_write_json(path, body)
+        self._save_lane_state(state)
+        return state
+
+    def load_lane_state(self, stage: str, lane_id: str) -> LaneState | None:
+        path = self._lane_state_path(stage, lane_id)
+        if not path.is_file():
+            return None
+        try:
+            state = LaneState.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"lane state is unreadable: {path}") from exc
+        if state.run_id != self.run_id or state.stage != stage or state.lane_id != lane_id:
+            raise RuntimeError(f"lane state ownership mismatch: {path}")
+        return state
+
+    def load_completed_lanes(
+        self,
+        stage: str,
+        lane_ids: Iterable[str] | None = None,
+        *,
+        expected_revisions: Mapping[str, int] | None = None,
+        business_gate: Callable[..., Any] | None = None,
+    ) -> dict[str, LaneState]:
+        """Load only completed lanes whose result files pass business gates."""
+
+        stage = self._stage_key(stage)
+        candidates = list(lane_ids) if lane_ids is not None else []
+        stage_dir = self.lane_root / stage
+        if not candidates and stage_dir.is_dir():
+            candidates = [path.stem for path in stage_dir.glob("*.json")]
+        completed: dict[str, LaneState] = {}
+        for lane_id in sorted(set(candidates)):
+            state = self.load_lane_state(stage, lane_id)
+            if state is None:
+                continue
+            expected = expected_revisions.get(lane_id) if expected_revisions else None
+            if self.result_is_reusable(
+                state,
+                expected_stage=stage,
+                expected_lane_id=lane_id,
+                expected_revision=expected,
+                business_gate=business_gate,
+            ):
+                completed[lane_id] = state
+        return completed
+
+    def retry_lane_attempt(
+        self,
+        stage: str,
+        lane_id: str,
+        *,
+        revision: int = 0,
+        reason: str = "explicit retry",
+    ) -> LaneAttemptRecord:
+        """Record a new explicit dispatch attempt for a lane."""
+
+        current = self.load_lane_state(stage, lane_id)
+        attempt = (current.attempt + 1) if current is not None else 1
+        record = LaneAttemptRecord(
+            run_id=self.run_id,
+            stage=stage,
+            lane_id=lane_id,
+            task_id=lane_id,
+            attempt=attempt,
+            revision=revision if current is None else max(revision, current.revision),
+            status="started",
+            error=reason,
+        )
+        self.record_lane_attempt(record)
+        return record
+
+    def retry_failed_lanes(
+        self,
+        stage: str,
+        lane_ids: Iterable[str] | None = None,
+        *,
+        reason: str = "retry failed or missing lanes",
+        expected_revisions: Mapping[str, int] | None = None,
+    ) -> RecoveryPlan:
+        """Create an explicit plan for failed/blocked/missing lane dispatches."""
+
+        requested = list(lane_ids or [])
+        if not requested:
+            stage_dir = self.lane_root / self._stage_key(stage)
+            requested = [path.stem for path in stage_dir.glob("*.json")] if stage_dir.is_dir() else []
+        selected: list[str] = []
+        for lane_id in sorted(set(requested)):
+            state = self.load_lane_state(stage, lane_id)
+            expected = expected_revisions.get(lane_id) if expected_revisions else None
+            if state is None:
+                selected.append(lane_id)
+                continue
+            if state.status in self._TERMINAL_FAILURES or state.status == "accepted_or_unknown":
+                selected.append(lane_id)
+                continue
+            if state.status == "completed" and not self.result_is_reusable(
+                state,
+                expected_stage=stage,
+                expected_lane_id=lane_id,
+                expected_revision=expected,
+            ):
+                selected.append(lane_id)
+        plan = RecoveryPlan(
+            run_id=self.run_id,
+            stage=stage,
+            action="retry_failed_lanes",
+            lane_ids=selected,
+            reason=reason,
+        )
+        self._persist_plan(plan)
+        return plan
+
+    def retry_lanes(
+        self,
+        stage: str,
+        lane_ids: Iterable[str],
+        runner: Callable[..., Any],
+        *,
+        revision: int = 0,
+        reason: str = "explicit lane retry",
+    ) -> Any:
+        """Dispatch explicitly selected lanes and return lane results.
+
+        ``runner`` may be synchronous or asynchronous and may accept either a
+        lane id or ``(lane_id, attempt_record)``.  If called from an existing
+        event loop the returned value is an awaitable; outside a loop it is
+        executed before returning.  A completed callback result is recorded as
+        a completion, while failed/blocked outcomes remain explicit attempt
+        evidence for a subsequent plan.
+        """
+
+        ids = sorted(set(lane_ids))
+
+        async def _run() -> dict[str, Any]:
+            results: dict[str, Any] = {}
+            for lane_id in ids:
+                attempt = self.retry_lane_attempt(
+                    stage,
+                    lane_id,
+                    revision=revision,
+                    reason=reason,
+                )
+                try:
+                    value = await self._invoke_recovery_callback(runner, lane_id, attempt)
+                except BaseException as exc:
+                    failed = attempt.model_copy(
+                        update={
+                            "status": "failed",
+                            "disposition": "failed",
+                            "error": f"{exc.__class__.__name__}: {exc}",
+                            "finished_at_ns": time.time_ns(),
+                        }
+                    )
+                    self.record_lane_attempt(failed)
+                    results[lane_id] = failed
+                    continue
+                results[lane_id] = value
+                state_or_record = self._callback_lane_record(
+                    value,
+                    stage=stage,
+                    lane_id=lane_id,
+                    attempt=attempt,
+                    revision=max(revision, attempt.revision),
+                )
+                if state_or_record is not None:
+                    if isinstance(state_or_record, LaneCompletion):
+                        self.record_lane_completion(state_or_record)
+                    elif isinstance(state_or_record, LaneAttemptRecord):
+                        self.record_lane_attempt(state_or_record)
+                    else:
+                        self._save_lane_state(state_or_record)
+            return results
+
+        coroutine = _run()
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coroutine)
+        return coroutine
+
+    @staticmethod
+    async def _invoke_recovery_callback(callback: Callable[..., Any], lane_id: str, attempt: LaneAttemptRecord) -> Any:
+        try:
+            signature = inspect.signature(callback)
+            positional = [
+                parameter
+                for parameter in signature.parameters.values()
+                if parameter.kind
+                in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
+            ]
+            args = (lane_id, attempt)[: len(positional)]
+        except (TypeError, ValueError):
+            args = (lane_id, attempt)
+        value = callback(*args)
+        if inspect.isawaitable(value):
+            return await value
+        return value
+
+    @staticmethod
+    def _callback_lane_record(
+        value: Any,
+        *,
+        stage: str,
+        lane_id: str,
+        attempt: LaneAttemptRecord,
+        revision: int,
+    ) -> LaneCompletion | LaneAttemptRecord | LaneState | None:
+        if isinstance(value, LaneCompletion):
+            return value.model_copy(
+                update={
+                    "run_id": attempt.run_id,
+                    "stage": stage,
+                    "lane_id": lane_id,
+                    "attempt": max(value.attempt, attempt.attempt),
+                    "revision": max(value.revision, revision),
+                }
+            )
+        if isinstance(value, LaneAttemptRecord):
+            return value.model_copy(
+                update={
+                    "run_id": attempt.run_id,
+                    "stage": stage,
+                    "lane_id": lane_id,
+                    "task_id": lane_id,
+                    "attempt": max(value.attempt, attempt.attempt),
+                    "revision": max(value.revision, revision),
+                    "task_attempt_id": value.task_attempt_id or attempt.task_attempt_id,
+                    "finished_at_ns": value.finished_at_ns or time.time_ns(),
+                }
+            )
+        if isinstance(value, Mapping):
+            status = value.get("status")
+            result_ref = value.get("result_ref")
+            if status in {"failed", "blocked", "invalidated", "deferred", "accepted_or_unknown"}:
+                return attempt.model_copy(
+                    update={
+                        "status": "accepted_or_unknown" if status == "accepted_or_unknown" else status,
+                        "disposition": status,
+                        "result_ref": result_ref,
+                        "error": value.get("error"),
+                        "finished_at_ns": time.time_ns(),
+                    }
+                )
+            if status == "completed" or result_ref:
+                return LaneCompletion(
+                    lane_id=lane_id,
+                    run_id=attempt.run_id,
+                    stage=stage,
+                    attempt=attempt.attempt,
+                    revision=revision,
+                    status="completed",
+                    result_ref=str(result_ref) if result_ref else None,
+                )
+        return None
+
+    def record_aggregate(
+        self,
+        aggregate: AggregateState | Mapping[str, Any],
+    ) -> AggregateState:
+        state = aggregate if isinstance(aggregate, AggregateState) else AggregateState.model_validate(aggregate)
+        self._ensure_owned(state.run_id, state.stage)
+        # Validate success before touching the projection.  Reducer failures
+        # therefore leave the last successful aggregate intact and are safe to
+        # retry without replaying any lane.
+        self._validate_successful_aggregate(state)
+        aggregate_dir = self.aggregate_root / self._stage_key(state.stage) / self._aggregate_key(state.aggregate_id)
+        history = aggregate_dir / "history"
+        history.mkdir(parents=True, exist_ok=True)
+        current = aggregate_dir / "current.json"
+        with exclusive_file_lock(current.with_suffix(".lock")):
+            current_state: AggregateState | None = None
+            if current.is_file():
+                try:
+                    current_state = AggregateState.model_validate_json(
+                        current.read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError) as exc:
+                    raise RuntimeError(f"aggregate state is unreadable: {current}") from exc
+            self._assert_aggregate_transition(current_state, state)
+            if current_state is not None and current_state.revision == state.revision:
+                # Idempotent reducer replay is a no-op; never rewrite the
+                # current business state with a different timestamp.
+                return current_state
+            atomic_write_json(current, state.model_dump(mode="json"))
+            atomic_write_json(
+                history / f"r{state.revision}-{state.updated_at_ns}-{uuid4().hex[:8]}.json",
+                state.model_dump(mode="json"),
+            )
+        return state
+
+    def aggregate(self, stage: str, reducer: Callable[..., Any], *, aggregate_id: str = "default") -> Any:
+        """Reduce currently completed lanes and persist an aggregate result.
+
+        The reducer receives ``dict[lane_id, LaneState]``.  It may return an
+        ``AggregateState``/mapping, or an arbitrary result payload containing
+        ``result_ref``; asynchronous reducers are supported with the same
+        outside/inside event-loop behavior as :meth:`retry_lanes`.
+        """
+
+        async def _run() -> Any:
+            lanes = self.load_completed_lanes(stage)
+            value = await self._invoke_recovery_callback(reducer, lanes, LaneAttemptRecord(
+                run_id=self.run_id,
+                stage=stage,
+                lane_id="aggregate",
+                task_id="aggregate",
+                attempt=1,
+                revision=0,
+                status="completed",
+            ))
+            if isinstance(value, AggregateState):
+                state = value
+            elif isinstance(value, Mapping):
+                state = AggregateState.model_validate(
+                    {
+                        "run_id": self.run_id,
+                        "stage": stage,
+                        "aggregate_id": aggregate_id,
+                        **dict(value),
+                    }
+                )
+            else:
+                state = AggregateState(
+                    run_id=self.run_id,
+                    stage=stage,
+                    aggregate_id=aggregate_id,
+                    status="completed",
+                    result_ref=str(value) if isinstance(value, str) else None,
+                    lane_ids=sorted(lanes),
+                )
+            if state.run_id != self.run_id or state.stage != stage:
+                raise ValueError("aggregate reducer returned state for another run/stage")
+            if not state.lane_ids:
+                state = state.model_copy(update={"lane_ids": sorted(lanes)})
+            self.record_aggregate(state)
+            return state
+
+        coroutine = _run()
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coroutine)
+        return coroutine
+
+    def load_aggregate(self, stage: str, aggregate_id: str = "default") -> AggregateState | None:
+        path = self.aggregate_root / self._stage_key(stage) / self._aggregate_key(aggregate_id) / "current.json"
+        if not path.is_file():
+            return None
+        try:
+            return AggregateState.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"aggregate state is unreadable: {path}") from exc
+
+    def load_previous_successful_aggregate(
+        self,
+        stage: str,
+        aggregate_id: str = "default",
+        *,
+        before_revision: int | None = None,
+        business_gate: Callable[..., Any] | None = None,
+    ) -> AggregateState | None:
+        history = self.aggregate_root / self._stage_key(stage) / self._aggregate_key(aggregate_id) / "history"
+        if not history.is_dir():
+            return None
+        states: list[AggregateState] = []
+        for path in history.glob("*.json"):
+            try:
+                state = AggregateState.model_validate_json(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if state.status != "completed" or (before_revision is not None and state.revision >= before_revision):
+                continue
+            payload = self._read_result(state.result_ref)
+            if payload is None:
+                continue
+            if isinstance(payload, Mapping):
+                if payload.get("run_id") not in (None, self.run_id):
+                    continue
+                if payload.get("stage") not in (None, stage):
+                    continue
+                if payload.get("status") in self._TERMINAL_FAILURES:
+                    continue
+                if payload.get("revision") not in (None, state.revision):
+                    continue
+            states.append(state)
+        if not states:
+            return None
+        states.sort(key=lambda item: (item.revision, item.updated_at_ns))
+        candidate = states[-1]
+        if business_gate is not None and not self._run_gate(business_gate, self._read_result(candidate.result_ref), LaneState(
+            run_id=self.run_id,
+            stage=stage,
+            lane_id=aggregate_id,
+            attempt=0,
+            revision=candidate.revision,
+            status="completed",
+            result_ref=candidate.result_ref,
+        )):
+            return None
+        return candidate
+
+    def retry_aggregate(
+        self,
+        stage: str,
+        aggregate_id: str = "default",
+        *,
+        reason: str = "explicit aggregate retry",
+    ) -> RecoveryPlan:
+        plan = RecoveryPlan(
+            run_id=self.run_id,
+            stage=stage,
+            action="retry_aggregate",
+            aggregate_id=aggregate_id,
+            reason=reason,
+        )
+        self._persist_plan(plan)
+        return plan
+
+    def load_recovery_plans(
+        self,
+        *,
+        stage: str | None = None,
+        action: str | None = None,
+    ) -> list[RecoveryPlan]:
+        """Read durable recovery decisions without workflow-state projections."""
+
+        if not self.plan_root.is_dir():
+            return []
+        plans: list[RecoveryPlan] = []
+        for path in self.plan_root.glob("*.json"):
+            try:
+                plan = RecoveryPlan.model_validate_json(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if stage is not None and plan.stage != stage:
+                continue
+            if action is not None and plan.action != action:
+                continue
+            plans.append(plan)
+        return sorted(plans, key=lambda item: (item.created_at_ns, item.plan_id))
+
+    def recover_aggregate_failure(
+        self,
+        stage: str,
+        lane_ids: Iterable[str],
+        *,
+        previous_stage: str | None,
+        reason: str,
+    ) -> RecoveryPlan:
+        """Retry the reducer once, then restart from the prior stage boundary."""
+
+        current = self.load_aggregate(stage)
+        prior_retries = self.load_recovery_plans(
+            stage=stage,
+            action="retry_aggregate",
+        )
+        if current is not None and current.status == "completed":
+            # A success after an older retry closes that incident.  Only a
+            # retry recorded after the current aggregate counts as the first
+            # failure of this reducer attempt.
+            prior_retries = [
+                plan
+                for plan in prior_retries
+                if plan.created_at_ns > current.updated_at_ns
+            ]
+        if not prior_retries or previous_stage is None:
+            return self.retry_aggregate(stage, reason=reason)
+        boundary = self.load_aggregate(previous_stage)
+        if boundary is None or boundary.status != "completed":
+            raise ValueError(
+                f"no completed previous aggregate boundary for {stage}: {previous_stage}"
+            )
+        self._validate_successful_aggregate(boundary)
+        ids = sorted(set(lane_ids))
+        self.invalidate_lanes(
+            stage,
+            ids,
+            reason=f"rollback to {previous_stage} after repeated aggregate failure",
+        )
+        plan = RecoveryPlan(
+            run_id=self.run_id,
+            stage=stage,
+            action="rollback_aggregate",
+            lane_ids=ids,
+            aggregate_id=previous_stage,
+            target_revision=boundary.revision,
+            result_ref=boundary.result_ref,
+            reason=reason,
+            status="applied",
+        )
+        return self._persist_plan(plan)
+
+    def invalidate_lanes(
+        self,
+        stage: str,
+        lane_ids: Iterable[str],
+        *,
+        reason: str = "lane invalidated",
+    ) -> RecoveryPlan:
+        ids = sorted(set(lane_ids))
+        for lane_id in ids:
+            current = self.load_lane_state(stage, lane_id)
+            state = current or LaneState(run_id=self.run_id, stage=stage, lane_id=lane_id)
+            self._save_lane_state(
+                state.model_copy(
+                    update={"status": "invalidated", "error": reason, "updated_at_ns": time.time_ns()}
+                ),
+                allow_invalidate=True,
+            )
+        plan = RecoveryPlan(
+            run_id=self.run_id,
+            stage=stage,
+            action="invalidate_lane",
+            lane_ids=ids,
+            reason=reason,
+        )
+        self._persist_plan(plan)
+        return plan
+
+    # Singular spelling is convenient for workflow workers and preserves the
+    # explicit plural operation above for batch invalidation.
+    def invalidate_lane(self, stage: str, lane_id: str, *, reason: str = "lane invalidated") -> RecoveryPlan:
+        return self.invalidate_lanes(stage, [lane_id], reason=reason)
+
+    def rollback_aggregate(
+        self,
+        stage: str,
+        aggregate_id: str = "default",
+        *,
+        before_revision: int | None = None,
+        reason: str = "rollback to prior successful aggregate",
+    ) -> RecoveryPlan:
+        current = self.load_aggregate(stage, aggregate_id)
+        if before_revision is None and current is not None:
+            before_revision = current.revision
+        prior = self.load_previous_successful_aggregate(
+            stage,
+            aggregate_id,
+            before_revision=before_revision,
+        )
+        if prior is None:
+            raise ValueError("no prior successful aggregate is available")
+        plan = RecoveryPlan(
+            run_id=self.run_id,
+            stage=stage,
+            action="rollback_aggregate",
+            aggregate_id=aggregate_id,
+            target_revision=prior.revision,
+            result_ref=prior.result_ref,
+            reason=reason,
+        )
+        self._persist_plan(plan)
+        return plan
+
+    def rollback_to_aggregate(
+        self,
+        stage: str,
+        aggregate_id: str = "default",
+        *,
+        before_revision: int | None = None,
+    ) -> AggregateState:
+        """Restore the current aggregate projection to its prior success.
+
+        Historical records are never edited.  A new current record points at
+        the prior successful result, making the rollback an ordinary durable
+        state transition that can itself be audited and recovered.
+        """
+
+        current = self.load_aggregate(stage, aggregate_id)
+        if before_revision is None and current is not None:
+            before_revision = current.revision
+        prior = self.load_previous_successful_aggregate(
+            stage,
+            aggregate_id,
+            before_revision=before_revision,
+        )
+        if prior is None:
+            raise ValueError("no prior successful aggregate is available")
+        next_revision = (current.revision + 1) if current is not None else prior.revision + 1
+        rolled = prior.model_copy(
+            update={
+                "revision": next_revision,
+                "status": "completed",
+                "prior_result_ref": current.result_ref if current is not None else None,
+                "updated_at_ns": time.time_ns(),
+            }
+        )
+        self.record_aggregate(rolled)
+        return rolled
+
+    # Explicit aliases used by workers that call the operation by its intent.
+    rollback_to_previous_successful_aggregate = rollback_aggregate
+
+    def reconcile_lane(self, stage: str, lane_id: str, *, expected_revision: int | None = None) -> RecoveryPlan | LaneState:
+        state = self.load_lane_state(stage, lane_id)
+        if state is not None and state.status == "accepted_or_unknown" and self.result_is_reusable(
+            state,
+            expected_stage=stage,
+            expected_lane_id=lane_id,
+            expected_revision=expected_revision,
+        ):
+            reconciled = state.model_copy(update={"status": "completed", "error": None, "updated_at_ns": time.time_ns()})
+            self._save_lane_state(reconciled)
+            return reconciled
+        plan = RecoveryPlan(
+            run_id=self.run_id,
+            stage=stage,
+            action="retry_failed_lanes",
+            lane_ids=[lane_id],
+            reason="accepted_or_unknown has no completed result; explicit new attempt required",
+        )
+        self._persist_plan(plan)
+        return plan
+
+    def _persist_plan(self, plan: RecoveryPlan) -> RecoveryPlan:
+        self.plan_root.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(self.plan_root / f"{plan.plan_id}.json", plan.model_dump(mode="json"))
+        return plan
+
+
+# Short aliases make the state contract discoverable without coupling workers
+# to the historical ``TaskAttemptStore`` naming.
+LaneAttempt = LaneAttemptRecord
+LaneCompletionRecord = LaneCompletion
+RecoveryStore = RecoveryStateStore
+LaneRecoveryStore = RecoveryStateStore
 
 
 class WorkflowReducer:
@@ -1429,22 +2874,46 @@ class WorkflowReducer:
             terminal_revision = expected_revision
         elif terminal_revision is None:
             terminal_revision = spec_revision
-        semantic_key = (
-            spec.semantic_key
-            if isinstance(spec, LaneTaskSpec)
-            else payload.get("semantic_key")
-        )
+        # A simple business terminal must point at an existing, parseable
+        # result.  Legacy semantic-key completions remain readable for old
+        # checkpoints, but their hashes are not consulted by this active path.
+        legacy_completion = payload.get("semantic_key") is not None
+        status = payload.get("status", "completed")
+        payload_run = payload.get("run_id")
+        payload_lane = payload.get("lane_id", payload.get("task_id"))
+        if payload_run not in (None, self.run_id):
+            raise ValueError("terminal run ownership mismatch")
+        if payload_lane not in (None, task_id):
+            raise ValueError("terminal lane ownership mismatch")
+        if status != "completed":
+            raise ValueError("only completed lane terminals can be promoted")
+        if not legacy_completion:
+            if not result_ref:
+                raise ValueError("completed terminal requires result_ref")
+            result_path = RecoveryStateStore(self.workspace, self.run_id)._result_path(result_ref)
+            if result_path is None or not result_path.is_file():
+                raise ValueError("completed terminal result file is missing")
+            try:
+                result_payload = json.loads(result_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError) as exc:
+                raise ValueError("completed terminal result is not valid JSON") from exc
+            if isinstance(result_payload, Mapping):
+                if result_payload.get("run_id") not in (None, self.run_id):
+                    raise ValueError("completed result run ownership mismatch")
+                if result_payload.get("lane_id", result_payload.get("task_id")) not in (None, task_id):
+                    raise ValueError("completed result lane ownership mismatch")
+                if terminal_revision is not None and result_payload.get("revision") not in (None, terminal_revision):
+                    raise ValueError("completed result revision mismatch")
         promoted = {
+            "run_id": self.run_id,
             "task_id": task_id,
-            "semantic_key": semantic_key,
+            "lane_id": payload_lane or task_id,
+            "stage": payload.get("stage", "lane"),
             "revision": terminal_revision,
+            "status": "completed",
             "result_ref": result_ref,
-            "result_sha256": result_hash,
             "terminal": payload,
         }
-        promoted["terminal_sha256"] = _sha256_bytes(
-            _canonical_json_bytes(promoted)
-        )
         path = self.workspace / "Work" / "runs" / self.run_id / "lanes" / task_id / "terminal.json"
         with exclusive_file_lock(path.with_suffix(".lock")):
             if path.is_file():
@@ -1494,7 +2963,7 @@ class WorkflowReducer:
         # A reducer may be called after promotions with no explicit completion
         # list.  Read each immutable terminal as the source of truth.
         for task_id in targets:
-            if task_id in refs and task_id in hashes:
+            if task_id in refs:
                 continue
             path = (
                 self.workspace
@@ -1507,9 +2976,13 @@ class WorkflowReducer:
             )
             if path.is_file():
                 raw = json.loads(path.read_text(encoding="utf-8"))
-                refs.setdefault(task_id, raw.get("result_ref"))
-                hashes.setdefault(task_id, raw.get("result_sha256"))
-        if set(refs) != set(targets) or set(hashes) != set(targets):
+                raw_ref = raw.get("result_ref")
+                raw_hash = raw.get("result_sha256")
+                if raw_ref:
+                    refs.setdefault(task_id, str(raw_ref))
+                if raw_hash:
+                    hashes.setdefault(task_id, str(raw_hash))
+        if set(refs) != set(targets):
             raise ValueError("exact barrier requires one verified completion per target")
         return refs, hashes
 

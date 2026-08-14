@@ -39,6 +39,29 @@ class DeliveryPackage(StrictModel):
         return value
 
 
+class MaterializedDeliveryReceipt(StrictModel):
+    """Current delivery contract: ordinary files and no digest/CAS identity."""
+
+    success: bool
+    delivery_dir: Path
+    final_docx: Path
+    module_files: dict[str, Path]
+    report_state: Path
+    source_index: Path
+    source_index_docx: Path
+    manifest_path: Path
+
+    @model_validator(mode="after")
+    def source_indexes_are_delivery_views(self) -> "MaterializedDeliveryReceipt":
+        delivery_dir = Path(self.delivery_dir)
+        if (
+            Path(self.source_index) != delivery_dir / "证据与来源索引.md"
+            or Path(self.source_index_docx) != delivery_dir / "证据与来源索引.docx"
+        ):
+            raise ValueError("source index paths must be current delivery view paths")
+        return self
+
+
 class DeliveryReceipt(StrictModel):
     success: bool
     delivery_dir: Path
@@ -48,7 +71,10 @@ class DeliveryReceipt(StrictModel):
     source_index: Path
     source_index_docx: Path
     manifest_path: Path
-    artifact_sha256: dict[str, str]
+    artifact_sha256: dict[str, str] = Field(
+        default_factory=dict,
+        description="Legacy ignored metadata; materialized delivery writers omit it.",
+    )
     # ``storage_version`` is deliberately widened for readers while newly
     # published receipts always use version 3.  Older v1/v2 manifests are
     # read as-is and are never rewritten or migrated.
