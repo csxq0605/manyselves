@@ -347,21 +347,18 @@ async def test_review_submit_runtime_assigns_coverage_and_finding_id(
         input_contract_ref=contract_ref,
     )
 
+    finding = {
+        "target_submodule_id": "2.1.1",
+        "category": "evidence_boundary",
+        "impact": "blocking",
+        "observation": "当前正文把尚未核实的条件性信息写成了确定项目事实。",
+        "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
+        "required_change": "将该表述改为明确待核实，并说明证据缺口对结论的影响。",
+        "reviewer_checks": ["条件性表述和证据缺口均已清晰呈现"],
+    }
     outcome = await tool(
-        **{
-            "kind": "module_review_finding_submission",
-            "findings": [
-                {
-                    "target_submodule_id": "2.1.1",
-                    "category": "evidence_boundary",
-                    "impact": "blocking",
-                    "observation": "当前正文把尚未核实的条件性信息写成了确定项目事实。",
-                    "evidence_refs": ["Work/runs/run-1/modules/2.1-r0.json"],
-                    "required_change": "将该表述改为明确待核实，并说明证据缺口对结论的影响。",
-                    "reviewer_checks": ["条件性表述和证据缺口均已清晰呈现"],
-                }
-            ],
-        }
+        kind="module_review_finding_submission",
+        findings=[finding],
     )
 
     assert outcome["status"] == "completed"
@@ -374,6 +371,67 @@ async def test_review_submit_runtime_assigns_coverage_and_finding_id(
     )
     assert result["payload"]["coverage"] == {"submodule_ids": ["2.1.1"]}
     assert result["payload"]["findings"][0]["id"] == ("M-2.1-initial-r0-001")
+
+    malformed_tool = _tool(
+        tmp_path,
+        task_id="module-2.1-review-malformed-transport-r0",
+        allowed_outputs=["module_review_finding_submission"],
+        input_contract_kind="module_review_input",
+        input_contract_ref=contract_ref,
+    )
+    malformed_findings = (
+        '[{"target_submodule_id":"2.1.1","category":"evidence_boundary",'
+        '"impact":"blocking","observation":"当前正文称"完全缺失"，但现有项目证据不足以支持该确定性结论。",'
+        '"evidence_refs":["Work/runs/run-1/modules/2.1-r0.json"],'
+        '"required_change":"将"完全缺失"调整为待核实，并明确写出当前证据缺口及其影响。",'
+        '"reviewer_checks":["已修正"完全缺失"措辞"}]'
+    )
+    repaired = await malformed_tool(
+        kind="module_review_finding_submission",
+        findings=malformed_findings,
+    )
+
+    assert repaired["status"] == "completed", repaired
+    assert repaired["transport_normalization"] == {
+        "kind": "schema_json_transport_normalization_v1",
+        "fields": [{"field": "$.findings", "mode": "repaired_json_decode_v1"}],
+    }
+    repaired_result = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-1/results/module-2.1-review-malformed-transport-r0.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert repaired_result["payload"]["findings"][0]["observation"] == (
+        '当前正文称"完全缺失"，但现有项目证据不足以支持该确定性结论。'
+    )
+
+    semantic_tool = _tool(
+        tmp_path,
+        task_id="module-2.1-review-normalized-semantic-correction-r0",
+        allowed_outputs=["module_review_finding_submission"],
+        input_contract_kind="module_review_input",
+        input_contract_ref=contract_ref,
+    )
+    semantic_correction = await semantic_tool(
+        kind="module_review_finding_submission",
+        findings=malformed_findings.replace(
+            '["Work/runs/run-1/modules/2.1-r0.json"]',
+            "[]",
+        ),
+    )
+
+    assert semantic_correction["status"] == "correction_required"
+    assert semantic_correction["transport_normalization"] == {
+        "kind": "schema_json_transport_normalization_v1",
+        "fields": [{"field": "$.findings", "mode": "repaired_json_decode_v1"}],
+    }
+    evidence_issue = next(
+        issue
+        for issue in semantic_correction["validation_errors"]
+        if issue["field"] == "findings.0.evidence_refs"
+    )
+    assert evidence_issue["received"] == []
 
 
 def _cross_owner_contract(

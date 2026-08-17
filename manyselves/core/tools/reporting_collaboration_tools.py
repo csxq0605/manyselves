@@ -2750,7 +2750,9 @@ class SubmitResultTool(_ResultTool):
             return await self._submit_once(payload)
         except (ValidationError, SubmissionValidationError) as exc:
             self._validation_failures += 1
-            feedback_payload = payload
+            feedback_payload, transport_normalization = (
+                self._normalize_schema_transport_fields(payload)
+            )
             issues = self._validation_issues(exc, feedback_payload)
             fingerprint = self._correction_fingerprint(exc, issues)
             count = self._validation_fingerprints.get(fingerprint, 0) + 1
@@ -2772,6 +2774,7 @@ class SubmitResultTool(_ResultTool):
                     "accepted": False,
                     "submission_kind": submission_kind,
                     "raw_payload": payload,
+                    "transport_normalization": transport_normalization,
                     "validation_errors": issues,
                     "affected_part_ids": affected_part_ids,
                     "validation_failures": self._validation_failures,
@@ -2783,6 +2786,7 @@ class SubmitResultTool(_ResultTool):
                     "status": "correction_required",
                     "accepted": False,
                     "submission_kind": submission_kind,
+                    "transport_normalization": transport_normalization,
                     "validation_errors": issues,
                     "affected_part_ids": affected_part_ids,
                     "rewrite_part_ids": affected_part_ids,
@@ -2824,6 +2828,7 @@ class SubmitResultTool(_ResultTool):
                 "status": "failed",
                 "accepted": False,
                 "submission_kind": submission_kind,
+                "transport_normalization": transport_normalization,
                 "error": reason,
                 "validation_errors": issues,
                 "remaining_attempts": 0,
@@ -3016,6 +3021,171 @@ class SubmitResultTool(_ResultTool):
                 )
         return normalized
 
+    @staticmethod
+    def _repair_json_transport_text(value: str) -> str | None:
+        """Repair only syntactic damage inside one schema-declared JSON value.
+
+        Some Provider tool-call implementations stringify an array/object, leave
+        quotation marks inside its text fields unescaped, or omit an inner closing
+        bracket. This routine changes no words or values: it escapes quotes that
+        cannot legally terminate the current JSON string and balances containers.
+        The caller still requires normal JSON decoding and the complete typed
+        submission contract to succeed.
+        """
+
+        quoted: list[str] = []
+        in_string = False
+        for index, character in enumerate(value):
+            if character != '"':
+                quoted.append(character)
+                continue
+            backslashes = 0
+            cursor = index - 1
+            while cursor >= 0 and value[cursor] == "\\":
+                backslashes += 1
+                cursor -= 1
+            if backslashes % 2:
+                quoted.append(character)
+                continue
+            if not in_string:
+                in_string = True
+                quoted.append(character)
+                continue
+            cursor = index + 1
+            while cursor < len(value) and value[cursor].isspace():
+                cursor += 1
+            if cursor == len(value) or value[cursor] in ",:}]":
+                in_string = False
+                quoted.append(character)
+            else:
+                quoted.append('\\"')
+        if in_string:
+            return None
+
+        repaired: list[str] = []
+        stack: list[str] = []
+        in_string = False
+        escaped = False
+        matching_open = {"}": "{", "]": "["}
+        matching_close = {"{": "}", "[": "]"}
+        for character in "".join(quoted):
+            if in_string:
+                repaired.append(character)
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == '"':
+                    in_string = False
+                continue
+            if character == '"':
+                in_string = True
+                repaired.append(character)
+            elif character in matching_close:
+                stack.append(character)
+                repaired.append(character)
+            elif character in matching_open:
+                expected = matching_open[character]
+                if expected not in stack:
+                    return None
+                while stack and stack[-1] != expected:
+                    repaired.append(matching_close[stack.pop()])
+                stack.pop()
+                repaired.append(character)
+            else:
+                repaired.append(character)
+        while stack:
+            repaired.append(matching_close[stack.pop()])
+        return "".join(repaired)
+
+    def _normalize_schema_transport_fields(
+        self,
+        payload: dict,
+    ) -> tuple[dict, dict[str, object] | None]:
+        """Decode stringified array/object fields only where the active schema says so."""
+
+        kind = str(payload.get("kind") or "")
+        if not kind:
+            return deepcopy(payload), None
+        try:
+            schema = deepcopy(
+                self.submission_schemas.get(kind) or submission_schema(kind)
+            )
+        except KeyError:
+            return deepcopy(payload), None
+        definitions = schema.get("$defs", {})
+        normalized_fields: list[dict[str, str]] = []
+
+        def resolve(node: object) -> dict:
+            if not isinstance(node, dict):
+                return {}
+            reference = node.get("$ref")
+            if isinstance(reference, str) and reference.startswith("#/$defs/"):
+                return resolve(definitions.get(reference.rsplit("/", 1)[-1], {}))
+            return node
+
+        def structured_type(node: dict) -> str | None:
+            node = resolve(node)
+            if node.get("type") in {"array", "object"}:
+                return str(node["type"])
+            candidates = {
+                resolve(branch).get("type")
+                for key in ("anyOf", "oneOf")
+                for branch in node.get(key, [])
+            }
+            candidates.discard(None)
+            structured = candidates & {"array", "object"}
+            return next(iter(structured)) if len(structured) == 1 else None
+
+        def decode(value: str, expected: str) -> tuple[object, str | None]:
+            try:
+                candidate = json.loads(value)
+                mode = "exact_json_decode_v1"
+            except (TypeError, ValueError):
+                repaired = self._repair_json_transport_text(value)
+                if repaired is None:
+                    return value, None
+                try:
+                    candidate = json.loads(repaired)
+                except (TypeError, ValueError):
+                    return value, None
+                mode = "repaired_json_decode_v1"
+            if expected == "array" and not isinstance(candidate, list):
+                return value, None
+            if expected == "object" and not isinstance(candidate, dict):
+                return value, None
+            return candidate, mode
+
+        def visit(value: object, node: dict, path: str) -> object:
+            node = resolve(node)
+            expected = structured_type(node)
+            if isinstance(value, str) and expected is not None:
+                value, mode = decode(value, expected)
+                if mode is not None:
+                    normalized_fields.append({"field": path, "mode": mode})
+            if isinstance(value, list):
+                item_schema = resolve(node.get("items", {}))
+                return [
+                    visit(item, item_schema, f"{path}.{index}")
+                    for index, item in enumerate(value)
+                ]
+            if isinstance(value, dict):
+                properties = node.get("properties", {})
+                return {
+                    key: visit(item, resolve(properties.get(key, {})), f"{path}.{key}")
+                    for key, item in value.items()
+                }
+            return value
+
+        normalized = visit(deepcopy(payload), schema, "$")
+        assert isinstance(normalized, dict)
+        if not normalized_fields:
+            return normalized, None
+        return normalized, {
+            "kind": "schema_json_transport_normalization_v1",
+            "fields": normalized_fields,
+        }
+
     async def _submit_once(self, payload: dict) -> dict:
         """Submit a typed result.
 
@@ -3035,7 +3205,6 @@ class SubmitResultTool(_ResultTool):
                 "raw_payload": payload,
             },
         )
-        transport_normalization = None
         if "payload" in payload:
             raise SubmissionValidationError(
                 "submit_result does not accept a payload wrapper",
@@ -3051,8 +3220,11 @@ class SubmitResultTool(_ResultTool):
                     "JSON-stringify the complete object."
                 ),
             )
+        normalized_transport_payload, transport_normalization = (
+            self._normalize_schema_transport_fields(payload)
+        )
         normalized_payload = self._normalize_runtime_review_fields(
-            payload
+            normalized_transport_payload
         )
         submission_kind = str(normalized_payload.get("kind", ""))
         if self.allowed_outputs and submission_kind not in self.allowed_outputs:
