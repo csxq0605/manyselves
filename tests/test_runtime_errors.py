@@ -35,3 +35,13 @@ def test_unknown_error_is_visible_but_not_retried():
 
     assert policy.category == "unknown"
     assert policy.retryable is False
+
+
+def test_conflict_requires_reconciliation_instead_of_automatic_retry():
+    policy = classify_runtime_error(
+        HttpFailureError(409, "request id already exists")
+    )
+
+    assert policy.category == "conflict"
+    assert policy.retryable is False
+    assert policy.delay_seconds == 0

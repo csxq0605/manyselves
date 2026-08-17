@@ -115,6 +115,19 @@ class UserMessage(Message):
     # Internal request policy. Reporting finalization can legitimately spend a
     # long time generating one structured tool payload without emitting chunks.
     provider_stream_idle_timeout_seconds: float | None = None
+    workflow_id: str = ""
+    run_id: str = ""
+    task_id: str = ""
+    task_attempt_id: str = ""
+    session_id: str = ""
+    turn_kind: Literal[
+        "task_initial",
+        "tool_followup",
+        "submission_correction",
+        "tool_slice_continuation",
+        "max_tokens_continuation",
+        "guard",
+    ] = "task_initial"
 
 
 class AgentResponse(Message):
@@ -127,6 +140,11 @@ class AgentResponse(Message):
     streaming: bool = False  # True for stream chunks, False for final completion
     thinking: str | None = None
     internal: bool = False
+    workflow_id: str = ""
+    run_id: str = ""
+    task_id: str = ""
+    task_attempt_id: str = ""
+    session_id: str = ""
 
 
 class ToolCallMessage(Message):
@@ -227,6 +245,11 @@ class Error(Message):
     source: str  # "agent", "tool", "system"
     message: str
     details: dict[str, Any] = Field(default_factory=dict)
+    workflow_id: str = ""
+    run_id: str = ""
+    task_id: str = ""
+    task_attempt_id: str = ""
+    session_id: str = ""
 
 
 class TaskItem(BaseModel):
@@ -393,6 +416,14 @@ class AgentResultMessage(WorkflowMessage):
     run_id: str
     result_path: str
     status: Literal["completed", "blocked", "incomplete", "failed"] = "completed"
+    task_attempt_id: str = ""
+    session_id: str = ""
+    identity_key: str = ""
+    input_contract_ref: str | None = None
+    input_contract_sha256: str | None = None
+    result_sha256: str = ""
+    lease_owner_id: str = ""
+    lease_epoch: int = 0
 
     @property
     def agent_type(self) -> AgentId:

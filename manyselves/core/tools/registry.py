@@ -12,6 +12,15 @@ class Tool:
 
     name: str = "base_tool"
     description: str = "Base tool"
+    side_effect: Literal[
+        "pure_read",
+        "run_local_write",
+        "shared_write",
+        "external_network",
+        "terminal",
+        "ordered_state",
+    ] = "ordered_state"
+    parallel_safe: bool = False
 
     async def __call__(self, **kwargs) -> Any:
         """Execute the tool."""

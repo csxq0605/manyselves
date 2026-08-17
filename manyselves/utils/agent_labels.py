@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import re
+from typing import TYPE_CHECKING, Any
 
 from ..interfaces.types import AgentId, AgentType, normalize_agent_id
 
 if TYPE_CHECKING:
     from PyQt6.QtGui import QIcon
+else:
+    QIcon = Any
 
 
 def _get_qicon(agent_type: str, color: str | None = None, size: int = 16) -> QIcon:
@@ -58,9 +61,25 @@ def get_agent_name(agent_type: AgentId | AgentType) -> str:
     elif role_key.startswith("module-") and role_key.endswith("-specialist"):
         module_id = role_key.removeprefix("module-").removesuffix("-specialist")
         name = f"Module {module_id} Specialist"
+    elif role_key.startswith("module-auditor-2."):
+        name = f"Module {role_key.removeprefix('module-auditor-')} Auditor"
+    elif role_key.startswith("cross-owner-2."):
+        name = f"Cross {role_key.removeprefix('cross-owner-')} Owner"
+    elif role_key.startswith("chief-chapter-"):
+        name = f"Chief Chapter {role_key.removeprefix('chief-chapter-')}"
+    elif role_key.startswith("final-chapter-"):
+        name = f"Final Chapter {role_key.removeprefix('final-chapter-')} Auditor"
     else:
         name = role_key.replace("_", " ").replace("-", " ").title() or "Agent"
     if separator:
+        module_lane = session_id.split("--", 1)[0]
+        if role_key in {"cross-module-reviewer", "evidence-auditor"} and re.fullmatch(
+            r"2\.[1-5]", module_lane
+        ):
+            return f"{name} {module_lane}"
+        chapter_match = re.fullmatch(r"chapter-([134])", module_lane)
+        if role_key in {"chief-editor", "chief-editor-auditor"} and chapter_match:
+            return f"{name} Chapter {chapter_match.group(1)}"
         return f"{name} · {session_id[-4:]}"
     return name
 

@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
+import time
 from collections import defaultdict
+from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Iterable, Literal
+from uuid import uuid4
 
 from pydantic import Field
 
 from .agentic_models import (
     CROSS_REVIEW_DIMENSIONS,
-    FINAL_AUDIT_SECTION_IDS,
     ChiefRevisionSubmission,
     CrossReviewFinding,
+    CrossReviewCoverageEntry,
+    CrossOwnerFindingSubmission,
+    CrossOwnerVerdictSubmission,
     CrossReviewFindingSubmission,
     CrossReviewVerdictSubmission,
     CrossSynthesisInput,
@@ -23,6 +29,7 @@ from .agentic_models import (
     FinalReviewFinding,
     FinalReviewFindingSubmission,
     FinalReviewVerdictSubmission,
+    ClaimRecord,
     ModuleReviewFinding,
     ModuleReviewFindingSubmission,
     ModuleReviewVerdictSubmission,
@@ -39,11 +46,17 @@ from .assets import (
     validate_editor_protection,
     validate_editor_quality,
 )
+from .chapter_parallel import CHAPTER_SECTION_IDS
+from .cross_specialization import cross_lane_specialization
 from .input_contracts import (
+    AggregateFinalReviewInput,
     ChiefRevisionInput,
     CrossReviewInput,
+    CrossOwnerInput,
+    CrossOwnerRelatedModuleView,
     FinalAuditSnapshot,
     FinalReviewInput,
+    CrossDecisionPackView,
     ModuleReviewInput,
     ModuleRevisionDiff,
     ModuleRevisionInput,
@@ -51,15 +64,33 @@ from .input_contracts import (
     ReviewClaimStatement,
     ReviewCompletionRecord,
     ReviewEvidenceExcerpt,
-    ValidationFailure,
     ValidationReport,
     WorkflowExceptionInput,
     final_audit_metadata_view,
     module_content_view,
     strip_runtime_claim_markers,
 )
-from .models import CHIEF_SECTION_RESULT_PART_IDS
+from .models import (
+    CHIEF_SECTION_RESULT_PART_IDS,
+    FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
+)
+from .parallel_runtime import (
+    AggregateState,
+    ArtifactRef,
+    CrossOwnerBarrier,
+    CrossOwnerCompletion,
+    LaneExceptionCandidate,
+    RecoveryStateStore,
+    TaskAttemptStore,
+    WorkflowReducer,
+)
 from .revision_diff import build_revision_diff
+from .scheduling import (
+    AdaptiveTaskScheduler,
+    SchedulingCandidate,
+    TaskTimingHistory,
+)
+from .review_preflight import evaluate_module_review_preflight
 from .source_ledger import SourceLedger
 from .taxonomy import REPORT_TAXONOMY
 
@@ -71,6 +102,10 @@ class ReviewLifecycleError(RuntimeError):
     """A deterministic review-protocol failure that requires code or model correction."""
 
 
+class DeferredMainDecision(ReviewLifecycleError):
+    """A private lane reached Main work that must wait for cohort drain."""
+
+
 def _require_validation_binding(
     runner: "ReportWorkflowRunner",
     report: ValidationReport,
@@ -78,23 +113,21 @@ def _require_validation_binding(
     subject_ref: str,
     subject_revision: int,
 ) -> None:
-    """Require one v2 validation report to bind the exact persisted subject bytes."""
+    """Require the validator's typed business identity, not a file digest."""
 
-    subject_path = runner.service.workspace / subject_ref
+    parts = Path(subject_ref).parts
     try:
-        content_sha256 = hashlib.sha256(subject_path.read_bytes()).hexdigest()
-    except OSError as exc:
-        raise ReviewLifecycleError(
-            f"validated subject is unreadable: {subject_ref}"
-        ) from exc
+        subject_run_id = parts[parts.index("runs") + 1]
+    except (ValueError, IndexError):
+        subject_run_id = ""
     if (
         report.validation_protocol_version < 2
+        or report.run_id != subject_run_id
         or report.subject_ref != subject_ref
         or report.subject_revision != subject_revision
-        or report.content_sha256 != content_sha256
     ):
         raise ReviewLifecycleError(
-            "validation report does not bind the exact final subject; "
+            "validation report does not match the final subject identity; "
             f"subject_ref={subject_ref}; subject_revision={subject_revision}"
         )
 
@@ -113,6 +146,7 @@ class ModuleReviewProgress(StrictModel):
     phase: str = "initial"
     scope: list[str] = Field(default_factory=list)
     reviewer_session_key: str | None = None
+    last_reviewed_subject_ref: str | None = None
     review_protocol_version: int = 1
 
 
@@ -143,6 +177,7 @@ class CrossReviewProgress(StrictModel):
     phase: str = "initial"
     review_round: int = 0
     revised_owner_ids: list[str] = Field(default_factory=list)
+    cross_owner_barrier_ref: str | None = None
 
 
 class FinalReviewProgress(StrictModel):
@@ -197,19 +232,6 @@ def _write_immutable_model(
             )
         return _relative(runner, path)
     return _relative(runner, runner.service.store.write_json(relative, payload))
-
-
-def _artifact_sha256(
-    runner: "ReportWorkflowRunner",
-    refs: Iterable[str],
-) -> dict[str, str]:
-    hashes: dict[str, str] = {}
-    for ref in refs:
-        path = (runner.service.workspace / ref).resolve()
-        if not path.is_relative_to(runner.service.workspace) or not path.is_file():
-            raise ReviewLifecycleError(f"cannot complete review with unreadable artifact: {ref}")
-        hashes[ref] = hashlib.sha256(path.read_bytes()).hexdigest()
-    return hashes
 
 
 def _load_progress(
@@ -286,7 +308,11 @@ def _apply_chief_patch(
 
 
 def _final_audit_markdown(canonical_markdown: str) -> str:
-    """Remove the immutable Chapter 2 block from model-visible final-audit prose."""
+    """Return only Chief-owned Chapter 1/3 prose for semantic final audit.
+
+    Chapter 2 is immutable module prose and Chapter 4 is structural-only for
+    the later deterministic gate; neither is sent to the Final reviewer.
+    """
 
     chapter_two = "\n## 2. 评估内容描述"
     chapter_three = "\n## 3. 结论与建议"
@@ -294,7 +320,11 @@ def _final_audit_markdown(canonical_markdown: str) -> str:
     end = canonical_markdown.find(chapter_three)
     if start < 0 or end < 0 or end <= start:
         raise ReviewLifecycleError("canonical report is missing the fixed Chapter 2/3 boundary")
-    return canonical_markdown[:start] + canonical_markdown[end:]
+    audit_markdown = canonical_markdown[:start] + canonical_markdown[end:]
+    chapter_four = re.search(r"\n#{1,6}\s+4\.\s+", audit_markdown)
+    if chapter_four is not None:
+        audit_markdown = audit_markdown[: chapter_four.start()]
+    return audit_markdown.rstrip()
 
 
 def _final_audit_section_bodies(
@@ -306,8 +336,7 @@ def _final_audit_section_bodies(
         section_id: strip_runtime_claim_markers(
             getattr(subject, CHIEF_SECTION_RESULT_PART_IDS[section_id]) or ""
         ).rstrip()
-        for section_id in FINAL_AUDIT_SECTION_IDS
-        if section_id != "4" or subject.special_topic_plan is not None
+        for section_id in FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS
     }
 
 
@@ -323,6 +352,129 @@ def _model_sha256(model: StrictModel) -> str:
         separators=(",", ":"),
     )
     return _text_sha256(payload)
+
+
+def _review_claim_statement(claim: ClaimRecord) -> ReviewClaimStatement:
+    return ReviewClaimStatement(
+        statement_ref=(
+            "statement-" + hashlib.sha256(claim.id.encode("utf-8")).hexdigest()[:12]
+        ),
+        submodule_id=claim.submodule_id,
+        text=claim.text,
+        statement_type=claim.claim_type,
+        evidence_ids=claim.source_ids,
+        confidence=claim.confidence,
+        unresolved=claim.unresolved,
+    )
+
+
+def _module_recheck_delta(
+    baseline: ModuleSubmission,
+    current: ModuleSubmission,
+    scope: set[str],
+) -> dict[str, object]:
+    """Build a bounded delta from the last subject seen by the paid reviewer."""
+
+    raw = build_revision_diff(baseline, current)
+    changed_narratives = set(raw["changed_submodule_narratives"])
+    if not changed_narratives.issubset(scope):
+        raise ReviewLifecycleError(
+            "module recheck revision changed narratives outside reviewer finding scope: "
+            f"{sorted(changed_narratives - scope)}"
+        )
+    baseline_claims = {claim.id: claim for claim in baseline.claims}
+    current_claims = {claim.id: claim for claim in current.claims}
+    changed_claim_ids = set(raw["changed_claim_ids"])
+    changed_claim_submodules = {
+        claim.submodule_id
+        for claim_id in changed_claim_ids
+        for claim in (
+            baseline_claims.get(claim_id),
+            current_claims.get(claim_id),
+        )
+        if claim is not None
+    }
+    if not changed_claim_submodules.issubset(scope):
+        raise ReviewLifecycleError(
+            "module recheck revision changed Claims outside reviewer finding scope: "
+            f"{sorted(changed_claim_submodules - scope)}"
+        )
+    current_statements = [
+        _review_claim_statement(current_claims[claim_id])
+        for claim_id in sorted(changed_claim_ids)
+        if claim_id in current_claims
+    ]
+    prior_statements = [
+        _review_claim_statement(baseline_claims[claim_id])
+        for claim_id in sorted(changed_claim_ids)
+        if claim_id in baseline_claims
+    ]
+    changed_statement_refs = sorted(
+        {
+            statement.statement_ref
+            for statement in [*current_statements, *prior_statements]
+        }
+    )
+    delta_submodule_ids = changed_narratives | {
+        statement.submodule_id for statement in current_statements
+    }
+    subject_view = module_content_view(current, changed_narratives).model_copy(
+        update={
+            "evidence_ids_by_submodule": {
+                submodule_id: sorted(
+                    {
+                        evidence_id
+                        for statement in current_statements
+                        if statement.submodule_id == submodule_id
+                        for evidence_id in statement.evidence_ids
+                        if evidence_id.startswith("E-")
+                    }
+                )
+                for submodule_id in delta_submodule_ids
+            }
+        }
+    )
+    changed_statement_ids = set(changed_statement_refs)
+    unchanged_statement_sha256 = {
+        statement.statement_ref: _model_sha256(statement)
+        for statement in (
+            _review_claim_statement(claim)
+            for claim in current.claims
+            if claim.submodule_id in scope and claim.id not in changed_claim_ids
+        )
+        if statement.statement_ref not in changed_statement_ids
+    }
+    revision_diff = ModuleRevisionDiff(
+        module_id=current.module_id,
+        from_revision=baseline.revision,
+        to_revision=current.revision,
+        changed_submodule_narratives=sorted(changed_narratives),
+        changed_statement_refs=changed_statement_refs,
+        evidence_ids_added=raw["source_ids_added"],
+        evidence_ids_removed=raw["source_ids_removed"],
+    )
+    relevant_evidence_ids = {
+        evidence_id
+        for statement in [*current_statements, *prior_statements]
+        for evidence_id in statement.evidence_ids
+        if evidence_id.startswith("E-")
+    }
+    return {
+        "subject": subject_view,
+        "claim_statements": current_statements,
+        "prior_claim_statements": prior_statements,
+        "unchanged_submodule_sha256": {
+            submodule_id: _text_sha256(
+                strip_runtime_claim_markers(
+                    current.submodule_narratives[submodule_id]
+                ).rstrip()
+            )
+            for submodule_id in sorted(scope - changed_narratives)
+        },
+        "unchanged_statement_sha256": unchanged_statement_sha256,
+        "revision_diff": revision_diff,
+        "relevant_evidence_ids": relevant_evidence_ids,
+    }
 
 
 def _apply_module_patch(
@@ -399,13 +551,17 @@ def _module_review_evidence_packet(
     subject: ModuleSubmission,
     run_id: str,
     submodule_ids: set[str],
+    *,
+    evidence_ids: set[str] | None = None,
 ) -> list[ReviewEvidenceExcerpt]:
     """Attach cited E-* evidence once so review does not become a retrieval loop."""
 
     ledger = SourceLedger(runner.service.workspace, run_id)
     records = {record.id: record for record in ledger.records}
-    evidence_ids = sorted(
-        {
+    selected_evidence_ids = sorted(
+        evidence_ids
+        if evidence_ids is not None
+        else {
             source_id
             for claim in subject.claims
             if claim.submodule_id in submodule_ids
@@ -414,7 +570,7 @@ def _module_review_evidence_packet(
         }
     )
     packet: list[ReviewEvidenceExcerpt] = []
-    for evidence_id in evidence_ids:
+    for evidence_id in selected_evidence_ids:
         record = records.get(evidence_id)
         content_ref = ledger.content_ref(evidence_id)
         if record is None or content_ref is None:
@@ -422,8 +578,6 @@ def _module_review_evidence_packet(
                 f"review subject cites unreadable current-run evidence: {evidence_id}"
             )
         content = (runner.service.workspace / content_ref).read_text(encoding="utf-8")
-        if len(content) > 4_000:
-            content = content[:3_960].rstrip() + "\n[bounded excerpt]"
         packet.append(
             ReviewEvidenceExcerpt(
                 evidence_id=evidence_id,
@@ -462,13 +616,8 @@ def _module_review_knowledge_packet(
             current_selected = match.group(1) in submodule_ids
         if current_selected:
             selected.append(line)
-    bounded = "\n".join(selected).strip()
-    if len(bounded) > 14_000:
-        bounded = (
-            bounded[:14_000].rsplit("\n", 1)[0]
-            + "\n\n[审计知识上下文已按成本上限截断]"
-        )
-    return knowledge_ref, bounded
+    complete_selected_context = "\n".join(selected).strip()
+    return knowledge_ref, complete_selected_context
 
 
 def _module_reviewer_session_key(
@@ -480,11 +629,11 @@ def _module_reviewer_session_key(
     progress: ModuleReviewProgress | None,
     regression_context: ModuleLocalRegressionContext | None,
 ) -> str:
-    """Reuse the module's original reviewer while preserving legacy resumes."""
+    """Reuse exactly one stable reviewer identity per module."""
 
     stable = f"module-auditor-{module_id}"
     def require_module_identity(value: str) -> str:
-        if value != stable and not value.startswith(f"{stable}-"):
+        if value != stable:
             raise ReviewLifecycleError(
                 f"module review progress belongs to another reviewer: {value}"
             )
@@ -496,26 +645,6 @@ def _module_reviewer_session_key(
         )
     if progress is not None and progress.reviewer_session_key:
         return require_module_identity(progress.reviewer_session_key)
-    registry_path = (
-        runner.service.workspace
-        / f"Work/runs/{state['run_id']}/agent-identities.json"
-    )
-    if not registry_path.is_file():
-        return stable
-    try:
-        identities = json.loads(
-            registry_path.read_text(encoding="utf-8")
-        ).get("identities", {})
-    except (OSError, ValueError, AttributeError):
-        return stable
-    if stable in identities:
-        return stable
-    current_legacy = f"{stable}-{lifecycle_id}"
-    if progress is not None and current_legacy in identities:
-        return current_legacy
-    initial_legacy = f"{stable}-initial"
-    if initial_legacy in identities:
-        return initial_legacy
     return stable
 
 
@@ -546,7 +675,114 @@ def _validate_final_findings(
             )
 
 
+def _final_cross_decision_view(
+    runner: "ReportWorkflowRunner",
+    state: dict,
+) -> CrossDecisionPackView:
+    """Load the current-run CrossDecisionPack view for normal Final review."""
+
+    pack = state.get("cross_decision_pack")
+    if pack is None and hasattr(runner, "_materialize_chief_cross_decision_pack"):
+        try:
+            pack = runner._materialize_chief_cross_decision_pack(state)
+        except Exception as exc:
+            raise ReviewLifecycleError(
+                "Final review requires a materialized current-run CrossDecisionPack"
+            ) from exc
+    if pack is None or not hasattr(pack, "model_dump"):
+        raise ReviewLifecycleError(
+            "Final review requires a materialized current-run CrossDecisionPack"
+        )
+    payload = pack.model_dump(mode="python")
+    payload["artifact_refs"] = [pack.cross_review_completion_ref]
+    try:
+        return CrossDecisionPackView.model_validate(payload)
+    except ValueError as exc:
+        raise ReviewLifecycleError(
+            "Final review CrossDecisionPack view is invalid"
+        ) from exc
+
+
+def _final_review_input(
+    *,
+    runner: "ReportWorkflowRunner",
+    state: dict,
+    aggregate_mode: bool,
+    phase: str,
+    subject_ref: str,
+    subject_revision: int,
+    subject_metadata,
+    subject_metadata_sha256: str | None,
+    canonical_markdown: str | None,
+    changed_section_bodies: dict[str, str],
+    unchanged_section_sha256: dict[str, str],
+    required_section_ids: list[str],
+    required_findings: list[FinalReviewFinding],
+    revision_responses: list[RevisionResponse],
+    validation_report_ref: str,
+    validation_report: ValidationReport,
+):
+    """Construct the normal or explicit aggregate Final input adapter."""
+
+    common = {
+        "phase": phase,
+        "run_id": state["run_id"],
+        "subject_ref": subject_ref,
+        "subject_revision": subject_revision,
+        "subject_metadata": subject_metadata,
+        "subject_metadata_sha256": subject_metadata_sha256,
+        "canonical_markdown": canonical_markdown,
+        "changed_section_bodies": changed_section_bodies,
+        "unchanged_section_sha256": unchanged_section_sha256,
+        "required_section_ids": required_section_ids,
+        "required_findings": required_findings,
+        "revision_responses": revision_responses,
+        "validation_report_ref": validation_report_ref,
+        "validation_report": validation_report,
+    }
+    if aggregate_mode:
+        return AggregateFinalReviewInput(
+            mode="aggregate_existing",
+            cross_context=None,
+            residual_risks=list(state.get("final_residual_risks", [])),
+            **common,
+        )
+    cross_view = _final_cross_decision_view(runner, state)
+    residual_risks = list(
+        dict.fromkeys(
+            [
+                *getattr(cross_view, "residual_risks", []),
+                *state.get("final_residual_risks", []),
+            ]
+        )
+    )
+    return FinalReviewInput(
+        cross_decision=cross_view,
+        cross_decision_pack_ref=state.get("cross_decision_pack_ref", ""),
+        residual_risks=residual_risks,
+        **common,
+    )
+
+
 async def _main_exception_decision(
+    runner: "ReportWorkflowRunner",
+    **kwargs,
+) -> WorkflowDecisionSubmission:
+    """Run Main only outside an active private-lane cohort, always serialized."""
+
+    if kwargs.get("state", {}).get("_defer_main_exceptions"):
+        raise DeferredMainDecision(
+            "Main exception decision deferred until the active cohort drains"
+        )
+
+    lock = getattr(runner, "_main_exception_lock", None)
+    if lock is None:
+        return await _main_exception_decision_locked(runner, **kwargs)
+    async with lock:
+        return await _main_exception_decision_locked(runner, **kwargs)
+
+
+async def _main_exception_decision_locked(
     runner: "ReportWorkflowRunner",
     *,
     state: dict,
@@ -654,10 +890,20 @@ async def request_module_revision(
     cross_findings: list[CrossReviewFinding] | None = None,
     requested_changes: list[RequestedModuleChange] | None = None,
     validation_ref: str | None = None,
+    validation_target_submodule_ids: set[str] | None = None,
 ) -> tuple[ModuleSubmission, str]:
+    """Revise one complete module in one explicit author submission.
+
+    Module-level revision is the only supported revision protocol.  A single
+    specialist receives the exact assigned submodule slice, writes one typed
+    ``module_revision_submission``, and the runtime applies that patch once;
+    there is no leaf fan-out or reducer merge to reconstruct the module.
+    """
+
     module_findings = module_findings or []
     cross_findings = cross_findings or []
     requested_changes = requested_changes or []
+    validation_target_submodule_ids = validation_target_submodule_ids or set()
     validation_report = (
         ValidationReport.model_validate_json(
             (runner.service.workspace / validation_ref).read_text(encoding="utf-8")
@@ -674,7 +920,27 @@ async def request_module_revision(
         *(finding.target_submodule_id for finding in module_findings),
         *(target_id for finding in cross_findings for target_id in finding.target_submodule_ids),
         *(target_id for change in requested_changes for target_id in change.target_submodule_ids),
+        *validation_target_submodule_ids,
     }
+    if validation_report is not None:
+        validation_subject_ref = (
+            f"Work/runs/{state['run_id']}/modules/"
+            f"{subject.module_id}-r{subject.revision}.json"
+        )
+        _require_validation_binding(
+            runner,
+            validation_report,
+            subject_ref=validation_subject_ref,
+            subject_revision=subject.revision,
+        )
+        if not targets:
+            raise ReviewLifecycleError(
+                "failed structural validation requires explicit module-local correction targets"
+            )
+    if not targets:
+        raise ReviewLifecycleError(
+            f"module revision requires at least one target submodule: {subject.module_id}"
+        )
     revision_input = ModuleRevisionInput(
         run_id=state["run_id"],
         module_id=subject.module_id,
@@ -700,23 +966,26 @@ async def request_module_revision(
     subject_path = runner.service.workspace / revision_input.subject_ref
     if not subject_path.is_file():
         _write_model(runner, revision_input.subject_ref, subject)
-    input_refs = [input_ref]
     specialist_id = f"module-{subject.module_id}-specialist"
+    revision = subject.revision + 1
     envelope = TaskEnvelope(
-        task_id=f"module-{subject.module_id}-revision-r{subject.revision + 1}",
+        task_id=f"module-revision-r{revision}-{subject.module_id}",
         run_id=state["run_id"],
         agent_id=specialist_id,
-        objective="按结构化 finding 对当前模块执行显式、定向的补丁修订。",
-        input_refs=input_refs,
+        objective=(
+            f"以完整模块 {subject.module_id} 的单一作者身份，一次完成所有明确分配的"
+            "定向修订；只替换受影响小节，不重复提交未变正文。"
+        ),
+        input_refs=[input_ref],
         constraints=[
-            "只提交小型 module_revision_submission commit；不得在其中重复正文",
-            "每个 assigned target_submodule_id 必须先用 write_result_part 保存完整替换正文和 evidence_ids",
-            "最终提交只使用 schema 声明的简短字段；运行时从保存的小节自动生成补丁",
-            "revision_responses 必须逐项覆盖 assigned finding ids",
+            f"唯一写作范围是模块 {subject.module_id}",
+            f"本轮必须在一次 module_revision_submission 中覆盖目标 {sorted(targets)}",
+            "submodule_narratives 只包含实际改变的已分配小节；不得修改其他模块或未分配小节",
+            "revision_responses 必须逐项且仅覆盖全部分配的 finding ids",
             "disputed 或 needs_input 不得伪造 changed_target_ids",
             *(
                 [f"上一版显式机器检查未通过；只修复 {validation_ref} 中列出的谓词失败"]
-                if validation_ref
+                if validation_report is not None
                 else []
             ),
             *runner._user_supplement_constraints(
@@ -725,12 +994,16 @@ async def request_module_revision(
                 target_ids={
                     subject.module_id,
                     *targets,
-                    *(claim.id for claim in subject.claims),
+                    *(
+                        claim.id
+                        for claim in subject.claims
+                        if claim.submodule_id in targets
+                    ),
                 },
             ),
         ],
         allowed_outputs=["module_revision_submission"],
-        revision=subject.revision + 1,
+        revision=revision,
         prior_result_ref=revision_input.subject_ref,
         artifact_delivery_modes={
             input_ref: "inline",
@@ -739,17 +1012,22 @@ async def request_module_revision(
         target_submodule_ids=sorted(targets),
         input_contract_kind="module_revision_input",
         input_contract_ref=input_ref,
-        inline_context=runner._role_skill_context(state, "module-author"),
+        # The stable author Skill and domain Knowledge were supplied by the
+        # first task of this persistent specialist identity.  This revision
+        # carries only the changed business contract.
+        inline_context="",
     )
     patch = await runner._agent(
         specialist_id,
         envelope,
         envelope.input_refs,
         workflow_id,
-        session_key=f"specialist-{subject.module_id}",
+        session_key=f"module-{subject.module_id}",
     )
     if not isinstance(patch, ModuleRevisionSubmission):
-        raise ReviewLifecycleError("module specialist returned the wrong revision type")
+        raise ReviewLifecycleError(
+            f"module specialist returned the wrong revision type for {subject.module_id}"
+        )
     revised = _apply_module_patch(
         subject,
         patch,
@@ -758,16 +1036,34 @@ async def request_module_revision(
     )
     subject_ref = _write_model(
         runner,
-        (f"Work/runs/{state['run_id']}/modules/{subject.module_id}-r{revised.revision}.json"),
+        f"Work/runs/{state['run_id']}/modules/{subject.module_id}-r{revision}.json",
         revised,
     )
-    diff = build_revision_diff(subject, revised)
     runner.service.store.write_json(
         (
             f"Work/runs/{state['run_id']}/reviews/module-diff-"
-            f"{subject.module_id}-r{revised.revision}.json"
+            f"{subject.module_id}-r{revision}.json"
         ),
-        diff,
+        build_revision_diff(subject, revised),
+    )
+    runner.service.store.write_json(
+        (
+            f"Work/runs/{state['run_id']}/reviews/module-revisions/"
+            f"{subject.module_id}/r{revision}/module-barrier.json"
+        ),
+        {
+            "kind": "module_revision_barrier",
+            "version": 1,
+            "run_id": state["run_id"],
+            "module_id": subject.module_id,
+            "base_revision": subject.revision,
+            "revision": revision,
+            "target_submodule_ids": sorted(targets),
+            "subject_ref": subject_ref,
+            "subject_sha256": hashlib.sha256(
+                (runner.service.workspace / subject_ref).read_bytes()
+            ).hexdigest(),
+        },
     )
     return revised, subject_ref
 
@@ -784,7 +1080,6 @@ def _module_review_completion(
     resolved_ids: set[str],
     lifecycle_id: str,
 ) -> str:
-    refs = [subject_ref, *finding_refs, *verdict_refs]
     completion = ReviewCompletionRecord(
         review_protocol_version=2,
         lifecycle="module",
@@ -795,7 +1090,6 @@ def _module_review_completion(
         finding_refs=finding_refs,
         verdict_refs=verdict_refs,
         resolved_finding_ids=sorted(resolved_ids),
-        artifact_sha256=_artifact_sha256(runner, refs),
     )
     ref = _write_immutable_model(
         runner,
@@ -836,6 +1130,7 @@ async def run_module_review(
     review_round = 0
     phase = "local_regression" if regression_context is not None else "initial"
     scope = set(initial_scope)
+    last_reviewed_subject_ref: str | None = None
     review_root = f"Work/runs/{state['run_id']}/reviews/module/{lifecycle_id}/{module_id}"
     progress_ref = f"{review_root}/progress.json"
 
@@ -857,6 +1152,7 @@ async def run_module_review(
                 phase=phase,
                 scope=sorted(scope),
                 reviewer_session_key=reviewer_session_key,
+                last_reviewed_subject_ref=last_reviewed_subject_ref,
                 review_protocol_version=2,
             ),
         )
@@ -872,6 +1168,45 @@ async def run_module_review(
         progress=progress,
         regression_context=regression_context,
     )
+    if progress is not None and progress.next_action == "completed":
+        # A verified completion is terminal.  Resume must return the persisted
+        # typed subject without asking the Provider to repeat the auditor
+        # finding/recheck sequence.  If the completion record is absent or
+        # malformed, treat the progress marker as stale and continue through
+        # the normal deterministic validation path.
+        completion_ref = state.get("module_review_completion_refs", {}).get(module_id)
+        if completion_ref is None:
+            completion_ref = (
+                f"{review_root}/completion-r{progress.current.revision}.json"
+            )
+        completion_path = runner.service.workspace / completion_ref
+        if completion_path.is_file():
+            try:
+                completion = ReviewCompletionRecord.model_validate_json(
+                    completion_path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError) as exc:
+                raise ReviewLifecycleError(
+                    "completed module review marker is unreadable: "
+                    f"{completion_ref}"
+                ) from exc
+            if (
+                completion.lifecycle != "module"
+                or completion.run_id != state["run_id"]
+                or completion.reviewer_session_key != reviewer_session_key
+                or completion.subject_refs
+                != [
+                    f"Work/runs/{state['run_id']}/modules/"
+                    f"{module_id}-r{progress.current.revision}.json"
+                ]
+            ):
+                raise ReviewLifecycleError(
+                    "completed module review marker does not bind the current subject"
+                )
+            state.setdefault("module_review_completion_refs", {})[module_id] = (
+                str(completion_ref)
+            )
+            return progress.current
     if progress is not None and progress.next_action != "completed":
         if progress.run_id != state["run_id"] or progress.module_id != module_id:
             raise ReviewLifecycleError("module review progress identity mismatch")
@@ -884,6 +1219,7 @@ async def run_module_review(
         review_round = progress.review_round
         phase = progress.phase
         scope = set(progress.scope)
+        last_reviewed_subject_ref = progress.last_reviewed_subject_ref
         if progress.next_action == "revise":
             candidate_path = runner.service.workspace / (
                 f"Work/runs/{state['run_id']}/modules/{module_id}-r{current.revision + 1}.json"
@@ -944,25 +1280,160 @@ async def run_module_review(
             save_progress("review")
 
     while True:
-        subject_ref = f"Work/runs/{state['run_id']}/modules/{module_id}-r{current.revision}.json"
-        if not (runner.service.workspace / subject_ref).is_file():
-            _write_model(runner, subject_ref, current)
-        signal_ref = runner._validate_module_structure(state, current, f"review-r{review_round}")
-        validation_report = ValidationReport.model_validate_json(
-            (runner.service.workspace / signal_ref).read_text(encoding="utf-8")
-        )
-        _require_validation_binding(
-            runner,
-            validation_report,
-            subject_ref=subject_ref,
-            subject_revision=current.revision,
-        )
+        preflight_attempts = 0
+        preflight_failure_fingerprints: dict[tuple, int] = {}
+        while True:
+            subject_ref = (
+                f"Work/runs/{state['run_id']}/modules/"
+                f"{module_id}-r{current.revision}.json"
+            )
+            if not (runner.service.workspace / subject_ref).is_file():
+                _write_model(runner, subject_ref, current)
+            structure_ref = runner._validate_module_structure(
+                state,
+                current,
+                f"review-r{review_round}",
+            )
+            structure_report = ValidationReport.model_validate_json(
+                (runner.service.workspace / structure_ref).read_text(encoding="utf-8")
+            )
+            _require_validation_binding(
+                runner,
+                structure_report,
+                subject_ref=subject_ref,
+                subject_revision=current.revision,
+            )
+            preflight = evaluate_module_review_preflight(
+                runner.service.workspace,
+                run_id=state["run_id"],
+                subject=current,
+                subject_ref=subject_ref,
+                upstream_report=structure_report,
+            )
+            signal_ref = _write_model(
+                runner,
+                (
+                    f"{review_root}/preflight-subject-r{current.revision}-"
+                    f"review-r{review_round}.json"
+                ),
+                preflight.report,
+            )
+            validation_report = preflight.report
+            if validation_report.passed:
+                break
+            preflight_attempts += 1
+            fingerprint = tuple(
+                sorted(
+                    (
+                        failure.check_id,
+                        failure.target_path,
+                        failure.message,
+                    )
+                    for failure in validation_report.failures
+                )
+            )
+            repeated = preflight_failure_fingerprints.get(fingerprint, 0) + 1
+            preflight_failure_fingerprints[fingerprint] = repeated
+            if repeated >= 2 or preflight_attempts >= 3:
+                raise ReviewLifecycleError(
+                    "module preflight failed repeatedly before semantic review; "
+                    "no reviewer finding or verdict was created. "
+                    f"module={module_id}; attempts={preflight_attempts}; "
+                    f"validation_ref={signal_ref}"
+                )
+            current, _ = await request_module_revision(
+                runner,
+                state=state,
+                workflow_id=workflow_id,
+                subject=current,
+                module_findings=(
+                    list(pending.values()) if phase == "recheck" else []
+                ),
+                cross_findings=(
+                    regression_context.trigger_cross_findings
+                    if phase == "local_regression"
+                    and regression_context is not None
+                    else []
+                ),
+                validation_ref=signal_ref,
+                validation_target_submodule_ids=set(
+                    preflight.target_submodule_ids
+                ),
+            )
+            if phase == "recheck":
+                responses = current.revision_responses
+            save_progress("review")
+
+        review_subject = module_content_view(current, scope)
+        review_claim_statements = [
+            _review_claim_statement(claim)
+            for claim in current.claims
+            if claim.submodule_id in scope
+        ]
+        prior_claim_statements: list[ReviewClaimStatement] = []
+        unchanged_submodule_sha256: dict[str, str] = {}
+        unchanged_statement_sha256: dict[str, str] = {}
+        baseline_subject_ref: str | None = None
+        revision_diff_ref: str | None = None
+        revision_diff: ModuleRevisionDiff | None = None
+        relevant_evidence_ids: set[str] | None = None
+        if phase == "recheck":
+            baseline_subject_ref = last_reviewed_subject_ref
+            if baseline_subject_ref is None:
+                legacy_candidate = (
+                    f"Work/runs/{state['run_id']}/modules/"
+                    f"{module_id}-r{current.revision - 1}.json"
+                )
+                if current.revision > 0 and (
+                    runner.service.workspace / legacy_candidate
+                ).is_file():
+                    baseline_subject_ref = legacy_candidate
+                else:
+                    raise ReviewLifecycleError(
+                        "module recheck lacks the last subject seen by its reviewer"
+                    )
+            try:
+                baseline = ModuleSubmission.model_validate_json(
+                    (
+                        runner.service.workspace / baseline_subject_ref
+                    ).read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError) as exc:
+                raise ReviewLifecycleError(
+                    "module recheck last-reviewed baseline is unreadable: "
+                    f"{baseline_subject_ref}"
+                ) from exc
+            delta = _module_recheck_delta(baseline, current, scope)
+            review_subject = delta["subject"]
+            review_claim_statements = delta["claim_statements"]
+            prior_claim_statements = delta["prior_claim_statements"]
+            unchanged_submodule_sha256 = delta["unchanged_submodule_sha256"]
+            unchanged_statement_sha256 = delta["unchanged_statement_sha256"]
+            revision_diff = delta["revision_diff"]
+            relevant_evidence_ids = set(delta["relevant_evidence_ids"])
+            relevant_evidence_ids.update(
+                evidence_ref
+                for finding in pending.values()
+                for evidence_ref in finding.evidence_refs
+                if evidence_ref.startswith("E-")
+            )
+            revision_diff_ref = _write_model(
+                runner,
+                f"{review_root}/recheck-diff-r{review_round}.json",
+                revision_diff,
+            )
+        # One module owns one persistent auditor identity.  Supply the bounded
+        # Knowledge body only on that identity's first review; later rechecks
+        # retain it in the restored transcript and carry only the provenance
+        # ref plus changed business evidence.
         knowledge_ref, knowledge_context = _module_review_knowledge_packet(
             runner,
             state,
             module_id,
             scope,
         )
+        if phase != "initial":
+            knowledge_context = ""
         review_input = ModuleReviewInput(
             phase=phase,
             run_id=state["run_id"],
@@ -971,23 +1442,11 @@ async def run_module_review(
             review_round=review_round,
             subject_ref=subject_ref,
             subject_revision=current.revision,
-            subject=module_content_view(current, scope),
-            claim_statements=[
-                ReviewClaimStatement(
-                    statement_ref=(
-                        "statement-"
-                        + hashlib.sha256(claim.id.encode("utf-8")).hexdigest()[:12]
-                    ),
-                    submodule_id=claim.submodule_id,
-                    text=claim.text,
-                    statement_type=claim.claim_type,
-                    evidence_ids=claim.source_ids,
-                    confidence=claim.confidence,
-                    unresolved=claim.unresolved,
-                )
-                for claim in current.claims
-                if claim.submodule_id in scope
-            ],
+            subject=review_subject,
+            claim_statements=review_claim_statements,
+            prior_claim_statements=prior_claim_statements,
+            unchanged_submodule_sha256=unchanged_submodule_sha256,
+            unchanged_statement_sha256=unchanged_statement_sha256,
             knowledge_ref=knowledge_ref,
             knowledge_context=knowledge_context,
             evidence=_module_review_evidence_packet(
@@ -995,6 +1454,7 @@ async def run_module_review(
                 current,
                 state["run_id"],
                 scope,
+                evidence_ids=relevant_evidence_ids,
             ),
             required_submodule_ids=sorted(scope),
             required_findings=list(pending.values()) if phase == "recheck" else [],
@@ -1012,7 +1472,7 @@ async def run_module_review(
             baseline_subject_ref=(
                 regression_context.baseline_subject_ref
                 if phase == "local_regression" and regression_context is not None
-                else None
+                else baseline_subject_ref
             ),
             trigger_cross_findings=(
                 regression_context.trigger_cross_findings
@@ -1027,12 +1487,12 @@ async def run_module_review(
             revision_diff_ref=(
                 regression_context.revision_diff_ref
                 if phase == "local_regression" and regression_context is not None
-                else None
+                else revision_diff_ref
             ),
             revision_diff=(
                 regression_context.revision_diff
                 if phase == "local_regression" and regression_context is not None
-                else None
+                else revision_diff
             ),
             validation_report_ref=signal_ref,
             validation_report=validation_report,
@@ -1067,6 +1527,8 @@ async def run_module_review(
             input_refs=[input_ref],
             constraints=[
                 "coverage 记录实际检查范围，不是批准状态",
+                "一次返回整个模块检查范围的 findings/verdicts；小节 id 只用于定位问题，"
+                "不得拆成独立小节级审查任务或会话",
                 "finding 首次提出后不可改写；复审不得复述旧 finding",
                 "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
                 "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
@@ -1107,7 +1569,9 @@ async def run_module_review(
             target_submodule_ids=sorted(scope),
             input_contract_kind="module_review_input",
             input_contract_ref=input_ref,
-            inline_context=runner._role_skill_context(state, "module-auditor"),
+            inline_context=runner._template_skill_context(
+                state, f"auditor-{module_id}"
+            ),
             allowed_tools=["submit_result"],
         )
         result = await runner._agent(
@@ -1117,6 +1581,10 @@ async def run_module_review(
             workflow_id,
             session_key=reviewer_session_key,
         )
+        # This exact subject, not merely the immediately preceding revision, is
+        # the semantic baseline for the next paid reviewer turn. Machine-only
+        # corrections may introduce additional revisions between the two.
+        last_reviewed_subject_ref = subject_ref
         if phase in {"initial", "local_regression"}:
             if not isinstance(result, ModuleReviewFindingSubmission):
                 raise ReviewLifecycleError("module auditor returned the wrong initial type")
@@ -1247,112 +1715,6 @@ async def run_module_review(
         save_progress("review")
 
 
-def _resolve_subject_path(subject: ModuleSubmission, path: str) -> str:
-    if path.startswith("submodule_narratives."):
-        key = path.removeprefix("submodule_narratives.")
-        try:
-            return subject.submodule_narratives[key]
-        except KeyError as exc:
-            raise ReviewLifecycleError(f"machine check target does not exist: {path}") from exc
-    if path.startswith("claims."):
-        remainder = path.removeprefix("claims.")
-        claim_id, separator, field = remainder.rpartition(".")
-        if not separator:
-            raise ReviewLifecycleError(f"machine Claim path requires a field: {path}")
-        claim = next((value for value in subject.claims if value.id == claim_id), None)
-        if claim is None or field not in claim.model_fields:
-            raise ReviewLifecycleError(f"machine check target does not exist: {path}")
-        return str(getattr(claim, field))
-    raise ReviewLifecycleError(f"unsupported explicit machine-check path: {path}")
-
-
-def _run_cross_machine_checks(
-    runner: "ReportWorkflowRunner",
-    *,
-    state: dict,
-    subject: ModuleSubmission,
-    subject_ref: str,
-    findings: list[CrossReviewFinding],
-) -> str:
-    subject_path = runner.service.workspace / subject_ref
-    try:
-        content_sha256 = hashlib.sha256(subject_path.read_bytes()).hexdigest()
-    except OSError as exc:
-        raise ReviewLifecycleError(
-            f"Cross machine-check subject is unreadable: {subject_ref}"
-        ) from exc
-    failures: list[ValidationFailure] = []
-    check_ids: list[str] = []
-    for finding in findings:
-        for index, check in enumerate(finding.machine_checks, start=1):
-            check_id = f"{finding.id}:machine:{index}"
-            check_ids.append(check_id)
-            values = [_resolve_subject_path(subject, path) for path in check.target_paths]
-            if check.kind == "forbidden_terms_absent":
-                for path, value in zip(check.target_paths, values, strict=True):
-                    present = [term for term in check.expected_values if term in value]
-                    if present:
-                        failures.append(
-                            ValidationFailure(
-                                check_id=check_id,
-                                finding_id=finding.id,
-                                target_path=path,
-                                message=f"forbidden terms still present: {present}",
-                            )
-                        )
-            elif check.kind == "required_terms_present":
-                combined = "\n".join(values)
-                missing = [term for term in check.expected_values if term not in combined]
-                if missing:
-                    failures.append(
-                        ValidationFailure(
-                            check_id=check_id,
-                            finding_id=finding.id,
-                            target_path=", ".join(check.target_paths),
-                            message=f"required terms missing: {missing}",
-                        )
-                    )
-            elif check.kind == "field_equals":
-                if len(check.target_paths) != len(check.expected_values):
-                    raise ReviewLifecycleError(
-                        f"{check_id} field_equals requires one expected value per path"
-                    )
-                for path, value, expected in zip(
-                    check.target_paths,
-                    values,
-                    check.expected_values,
-                    strict=True,
-                ):
-                    if value != expected:
-                        failures.append(
-                            ValidationFailure(
-                                check_id=check_id,
-                                finding_id=finding.id,
-                                target_path=path,
-                                message="field value does not equal the declared expected value",
-                            )
-                        )
-    report = ValidationReport(
-        validation_protocol_version=2,
-        run_id=state["run_id"],
-        subject_ref=subject_ref,
-        subject_revision=subject.revision,
-        content_sha256=content_sha256,
-        validator="explicit-cross-predicates/v2",
-        check_ids=check_ids,
-        failures=failures,
-        passed=not failures,
-    )
-    return _write_model(
-        runner,
-        (
-            f"Work/runs/{state['run_id']}/validations/cross-"
-            f"{subject.module_id}-r{subject.revision}.json"
-        ),
-        report,
-    )
-
-
 def _validate_cross_findings(
     findings: list[CrossReviewFinding],
     modules: dict[str, ModuleSubmission],
@@ -1360,23 +1722,1568 @@ def _validate_cross_findings(
     _unique_ids((finding.id for finding in findings), label="cross findings")
 
 
-def _validate_cross_synthesis_portfolio(
-    synthesis_inputs: list[CrossSynthesisInput],
-    modules: dict[str, ModuleSubmission],
-) -> None:
-    """Require system synthesis rather than treating six-dimension coverage as evidence."""
+class _CrossOwnerLaneResult(StrictModel):
+    module: ModuleSubmission
+    responses: list[RevisionResponse]
+    local_review_ref: str
+    completion_ref: str
+    completion: CrossOwnerCompletion
 
-    if len(synthesis_inputs) < 2:
-        raise ReviewLifecycleError(
-            "Cross completion requires at least two supported system relationships"
+
+class _CrossOwnerPipelineResult(StrictModel):
+    """One fully closed owner pipeline, safe to promote at the exact-five barrier."""
+
+    owner_module_id: str
+    initial_input_ref: str
+    initial_result_ref: str
+    initial_result: CrossOwnerFindingSubmission
+    lane: _CrossOwnerLaneResult
+    verdict_ref: str | None = None
+    verdict: CrossOwnerVerdictSubmission | None = None
+    finding_refs: list[str] = Field(default_factory=list)
+    verdict_refs: list[str] = Field(default_factory=list)
+    findings: list[CrossReviewFinding] = Field(default_factory=list)
+    verdicts: list[ResolutionVerdict] = Field(default_factory=list)
+
+
+_CROSS_OWNER_MODULE_IDS = tuple(REPORT_TAXONOMY)
+
+
+def _cross_owner_related_view(
+    runner: "ReportWorkflowRunner",
+    *,
+    module: ModuleSubmission,
+    ref: str,
+) -> CrossOwnerRelatedModuleView:
+    digest = hashlib.sha256((runner.service.workspace / ref).read_bytes()).hexdigest()
+    return CrossOwnerRelatedModuleView(
+        module_id=module.module_id,
+        revision=module.revision,
+        subject_ref=ref,
+        subject_sha256=digest,
+        submodule_ids=sorted(module.submodule_narratives),
+        claims=list(module.claims),
+        evidence_ids_by_submodule={
+            submodule_id: sorted(
+                {
+                    evidence_id
+                    for claim in module.claims
+                    if claim.submodule_id == submodule_id
+                    for evidence_id in claim.source_ids
+                    if evidence_id.startswith("E-")
+                }
+            )
+            for submodule_id in sorted(module.submodule_narratives)
+        },
+        unresolved_questions=list(module.unresolved_questions),
+    )
+
+
+def _cross_owner_input(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    modules: dict[str, ModuleSubmission],
+    owner_module_id: str,
+    phase: Literal["initial", "recheck"],
+    review_round: int,
+    required_findings: list[CrossReviewFinding] | None = None,
+    revision_responses: list[RevisionResponse] | None = None,
+    local_review_ref: str | None = None,
+    prior_synthesis_inputs: list[CrossSynthesisInput] | None = None,
+) -> tuple[CrossOwnerInput, str]:
+    """Build and persist one owner-complete/four-relation Cross input."""
+
+    owner = modules[owner_module_id]
+    owner_ref = (
+        f"Work/runs/{state['run_id']}/modules/"
+        f"{owner_module_id}-r{owner.revision}.json"
+    )
+    related_refs: dict[str, str] = {}
+    related_revisions: dict[str, int] = {}
+    related_hashes: dict[str, str] = {}
+    related_views: dict[str, CrossOwnerRelatedModuleView] = {}
+    for module_id in _CROSS_OWNER_MODULE_IDS:
+        if module_id == owner_module_id:
+            continue
+        related = modules[module_id]
+        ref = (
+            f"Work/runs/{state['run_id']}/modules/"
+            f"{module_id}-r{related.revision}.json"
         )
-    kinds = {item.cluster_type for item in synthesis_inputs}
-    required_kinds = {"risk_cluster", "global_propagation"}
-    if not required_kinds.issubset(kinds):
+        view = _cross_owner_related_view(runner, module=related, ref=ref)
+        related_refs[module_id] = ref
+        related_revisions[module_id] = related.revision
+        related_hashes[module_id] = view.subject_sha256
+        related_views[module_id] = view
+    contract = CrossOwnerInput(
+        phase=phase,
+        run_id=state["run_id"],
+        review_round=review_round,
+        owner_module_id=owner_module_id,
+        review_focus=list(cross_lane_specialization(owner_module_id).review_focus),
+        owner_subject_ref=owner_ref,
+        owner_subject_revision=owner.revision,
+        owner_subject=module_content_view(owner),
+        related_module_refs=related_refs,
+        related_module_revisions=related_revisions,
+        related_module_sha256=related_hashes,
+        related_module_views=related_views,
+        required_findings=required_findings or [],
+        revision_responses=revision_responses or [],
+        prior_synthesis_inputs=prior_synthesis_inputs or [],
+        local_regression_review_ref=local_review_ref,
+    )
+    ref = _write_model(
+        runner,
+        f"Work/runs/{state['run_id']}/reviews/cross-owner-input-r{review_round}-"
+        f"{owner_module_id}.json",
+        contract,
+    )
+    return contract, ref
+
+
+def _cross_owner_artifact_ref(
+    runner: "ReportWorkflowRunner",
+    ref: str,
+) -> ArtifactRef:
+    path = (runner.service.workspace / ref).resolve()
+    if not path.is_relative_to(runner.service.workspace) or not path.is_file():
+        raise ReviewLifecycleError(f"Cross owner artifact is missing: {ref}")
+    content = path.read_bytes()
+    return ArtifactRef(
+        ref=ref,
+        sha256=hashlib.sha256(content).hexdigest(),
+        size=len(content),
+        media_type="application/json",
+    )
+
+
+def _cross_owner_artifact_path(
+    runner: "ReportWorkflowRunner",
+    ref: str,
+    *,
+    run_id: str,
+    label: str,
+    require_json: bool = True,
+) -> Path:
+    """Resolve one Cross artifact using business scope, not its digest.
+
+    ArtifactRef hashes are retained as forensic metadata, but current-run
+    recovery must decide from the typed business record and its path scope.
+    This helper therefore checks only canonical workspace/run containment,
+    readability, and (for active JSON artifacts) JSON syntax.
+    """
+
+    path = (runner.service.workspace / ref).resolve()
+    run_root = (runner.service.workspace / f"Work/runs/{run_id}").resolve()
+    if (
+        not path.is_relative_to(runner.service.workspace)
+        or not path.is_relative_to(run_root)
+        or not path.is_file()
+    ):
+        raise ReviewLifecycleError(f"Cross owner {label} is unreadable or out of scope: {ref}")
+    if require_json:
+        try:
+            json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise ReviewLifecycleError(f"Cross owner {label} is invalid JSON: {ref}") from exc
+    return path
+
+
+def _cross_owner_artifact_ref_value(value: ArtifactRef | str | None) -> str | None:
+    """Return a legacy/current artifact's logical ref without inspecting hashes."""
+
+    if value is None:
+        return None
+    if isinstance(value, ArtifactRef):
+        return value.ref
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _cross_owner_completion_business_key(
+    completion: CrossOwnerCompletion,
+) -> dict:
+    """Project a completion to stable business identity.
+
+    ``sha256``, ``size``, lease/task metadata, and schema-version migration are
+    intentionally omitted.  The logical artifact refs, stage, owner, round,
+    and subject revision remain part of semantic equality.
+    """
+
+    payload = completion.model_dump(mode="json")
+    for field in (
+        "owner_input",
+        "initial_result",
+        "verdict_result",
+        "subject",
+        "local_review_completion",
+    ):
+        payload[field] = _cross_owner_artifact_ref_value(getattr(completion, field))
+    for field in (
+        "semantic_key",
+        "author_task_attempt_id",
+        "reviewer_session_id",
+        "lease_epoch",
+        "schema_version",
+    ):
+        payload.pop(field, None)
+    return payload
+
+
+def _cross_owner_completion_business_equal(
+    left: CrossOwnerCompletion,
+    right: CrossOwnerCompletion,
+) -> bool:
+    return _cross_owner_completion_business_key(left) == _cross_owner_completion_business_key(right)
+
+
+def _require_cross_owner_artifact(
+    runner: "ReportWorkflowRunner",
+    declared: ArtifactRef,
+    *,
+    label: str,
+    run_id: str | None = None,
+) -> None:
+    # Hash/size fields are legacy metadata.  Recovery only requires a
+    # canonical, current-run, readable JSON artifact.
+    _cross_owner_artifact_path(
+        runner,
+        declared.ref,
+        run_id=run_id or declared.ref.split("/runs/", 1)[-1].split("/", 1)[0],
+        label=label,
+    )
+
+
+def _cross_owner_subject_ref(
+    run_id: str,
+    module_id: str,
+    revision: int,
+) -> str:
+    return f"Work/runs/{run_id}/modules/{module_id}-r{revision}.json"
+
+
+def _cross_owner_ref_revision(ref: str) -> int | None:
+    match = re.search(r"-r([0-9]+)\.json$", ref)
+    return int(match.group(1)) if match is not None else None
+
+
+def _validate_cross_owner_lane_trigger(
+    runner: "ReportWorkflowRunner",
+    completion: CrossOwnerCompletion,
+    *,
+    run_id: str,
+    owner_module_id: str,
+) -> None:
+    """Validate the typed artifact that triggered one owner revision lane.
+
+    The first owner revision is triggered by the immutable ``CrossOwnerInput``.
+    A later revision is triggered by the immediately preceding owner verdict
+    that left findings open or introduced regressions.  Pipeline promotion
+    keeps that final lane trigger while normalizing the outer barrier round to
+    one, so recovery must validate the actual typed union written by the lane.
+    """
+
+    trigger_ref = _cross_owner_artifact_ref_value(completion.owner_input)
+    if trigger_ref is None:
         raise ReviewLifecycleError(
-            "Cross synthesis portfolio requires a risk cluster and a global propagation "
-            f"chain; missing={sorted(required_kinds - kinds)}"
+            f"Cross owner completion has no typed lane trigger: {owner_module_id}"
         )
+    trigger_path = _cross_owner_artifact_path(
+        runner,
+        trigger_ref,
+        run_id=run_id,
+        label="lane trigger",
+    )
+    try:
+        raw = json.loads(trigger_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise ReviewLifecycleError(
+            f"Cross owner completion lane trigger is invalid: {owner_module_id}"
+        ) from exc
+    kind = raw.get("kind") if isinstance(raw, dict) else None
+    if kind == "cross_owner_input":
+        try:
+            contract = CrossOwnerInput.model_validate(raw)
+        except ValueError as exc:
+            raise ReviewLifecycleError(
+                f"Cross owner completion lane trigger is not typed: {owner_module_id}"
+            ) from exc
+        expected_ref = (
+            f"Work/runs/{run_id}/reviews/cross-owner-input-r"
+            f"{contract.review_round}-{owner_module_id}.json"
+        )
+        if (
+            trigger_ref != expected_ref
+            or contract.run_id != run_id
+            or contract.owner_module_id != owner_module_id
+            or contract.review_round != 0
+            or contract.phase != "initial"
+        ):
+            raise ReviewLifecycleError(
+                f"Cross owner completion lane trigger identity mismatch: {owner_module_id}"
+            )
+        _load_cross_owner_input(
+            runner,
+            run_id=run_id,
+            owner_module_id=owner_module_id,
+            review_round=contract.review_round,
+            phase=contract.phase,
+        )
+        return
+    if kind == "cross_owner_verdict_submission":
+        try:
+            verdict = CrossOwnerVerdictSubmission.model_validate(raw)
+        except ValueError as exc:
+            raise ReviewLifecycleError(
+                f"Cross owner completion lane trigger is not typed: {owner_module_id}"
+            ) from exc
+        match = re.fullmatch(
+            rf"Work/runs/{re.escape(run_id)}/reviews/"
+            rf"cross-owner-verdicts-r([1-9][0-9]*)-{re.escape(owner_module_id)}\.json",
+            trigger_ref,
+        )
+        if match is None or verdict.owner_module_id != owner_module_id:
+            raise ReviewLifecycleError(
+                f"Cross owner completion lane trigger identity mismatch: {owner_module_id}"
+            )
+        trigger_round = int(match.group(1))
+        if completion.schema_version == "3":
+            final_verdict_ref = _cross_owner_artifact_ref_value(
+                completion.verdict_result
+            )
+            final_match = (
+                re.fullmatch(
+                    rf"Work/runs/{re.escape(run_id)}/reviews/"
+                    rf"cross-owner-verdicts-r([1-9][0-9]*)-"
+                    rf"{re.escape(owner_module_id)}\.json",
+                    final_verdict_ref,
+                )
+                if final_verdict_ref is not None
+                else None
+            )
+            if final_match is None or int(final_match.group(1)) != trigger_round + 1:
+                raise ReviewLifecycleError(
+                    f"Cross owner promoted completion has inconsistent rounds: {owner_module_id}"
+                )
+        elif completion.review_round != trigger_round + 1:
+            raise ReviewLifecycleError(
+                f"Cross owner completion lane trigger round mismatch: {owner_module_id}"
+            )
+        return
+    raise ReviewLifecycleError(
+        f"Cross owner completion has unsupported lane trigger: {owner_module_id}"
+    )
+
+
+def _validate_cross_owner_completion_business_identity(
+    runner: "ReportWorkflowRunner",
+    completion: CrossOwnerCompletion,
+    *,
+    run_id: str,
+    owner_module_id: str,
+    review_round: int | None = None,
+    owner_input_ref: str | None = None,
+) -> ModuleSubmission:
+    """Validate one completion's current-run identity and typed subject.
+
+    This is deliberately digest-independent.  It raises for malformed or
+    wrong-owner/run/revision records so callers cannot silently replay a paid
+    Provider lane after a damaged recovery artifact.
+    """
+
+    if (
+        completion.run_id != run_id
+        or completion.stage != "cross"
+        or completion.module_id != owner_module_id
+        or (review_round is not None and completion.review_round != review_round)
+        or completion.status != "completed"
+        or completion.lane_id
+        != f"cross-r{completion.review_round}-module-{owner_module_id}"
+    ):
+        raise ReviewLifecycleError(
+            f"Cross owner completion business identity mismatch: {owner_module_id}"
+        )
+    subject_ref = _cross_owner_artifact_ref_value(completion.subject)
+    if subject_ref is None:
+        raise ReviewLifecycleError(
+            f"Cross owner completion has no subject artifact: {owner_module_id}"
+        )
+    subject_path = _cross_owner_artifact_path(
+        runner,
+        subject_ref,
+        run_id=run_id,
+        label="subject",
+    )
+    try:
+        module = ModuleSubmission.model_validate_json(
+            subject_path.read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise ReviewLifecycleError(
+            f"Cross owner completion subject is invalid: {owner_module_id}"
+        ) from exc
+    if module.module_id != owner_module_id:
+        raise ReviewLifecycleError(
+            f"Cross owner completion subject ownership mismatch: {owner_module_id}"
+        )
+    ref_revision = _cross_owner_ref_revision(subject_ref)
+    if ref_revision is None or ref_revision != module.revision:
+        raise ReviewLifecycleError(
+            f"Cross owner completion subject revision/ref mismatch: {owner_module_id}"
+        )
+    if completion.subject_revision is not None and completion.subject_revision != module.revision:
+        raise ReviewLifecycleError(
+            f"Cross owner completion subject revision mismatch: {owner_module_id}"
+        )
+    if owner_input_ref is not None:
+        actual_owner_input_ref = _cross_owner_artifact_ref_value(completion.owner_input)
+        if actual_owner_input_ref != owner_input_ref:
+            raise ReviewLifecycleError(
+                f"Cross owner completion input identity mismatch: {owner_module_id}"
+            )
+    _validate_cross_owner_lane_trigger(
+        runner,
+        completion,
+        run_id=run_id,
+        owner_module_id=owner_module_id,
+    )
+    for label, artifact in (
+        ("initial result", completion.initial_result),
+        ("verdict result", completion.verdict_result),
+        ("local review", completion.local_review_completion),
+    ):
+        ref = _cross_owner_artifact_ref_value(artifact)
+        if ref is not None:
+            _cross_owner_artifact_path(
+                runner,
+                ref,
+                run_id=run_id,
+                label=label,
+            )
+            if label == "initial result":
+                try:
+                    initial_result = CrossOwnerFindingSubmission.model_validate_json(
+                        (runner.service.workspace / ref).read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError) as exc:
+                    raise ReviewLifecycleError(
+                        f"Cross owner initial result is not typed: {owner_module_id}"
+                    ) from exc
+                if initial_result.owner_module_id != owner_module_id:
+                    raise ReviewLifecycleError(
+                        f"Cross owner initial result ownership mismatch: {owner_module_id}"
+                    )
+            elif label == "verdict result":
+                try:
+                    verdict_result = CrossOwnerVerdictSubmission.model_validate_json(
+                        (runner.service.workspace / ref).read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError) as exc:
+                    raise ReviewLifecycleError(
+                        f"Cross owner verdict result is not typed: {owner_module_id}"
+                    ) from exc
+                if verdict_result.owner_module_id != owner_module_id:
+                    raise ReviewLifecycleError(
+                        f"Cross owner verdict ownership mismatch: {owner_module_id}"
+                    )
+            elif label == "local review":
+                try:
+                    local_completion = ReviewCompletionRecord.model_validate_json(
+                        (runner.service.workspace / ref).read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError) as exc:
+                    raise ReviewLifecycleError(
+                        f"Cross owner local review completion is not typed: {owner_module_id}"
+                    ) from exc
+                if (
+                    local_completion.lifecycle != "module"
+                    or local_completion.run_id != run_id
+                    or local_completion.reviewer_agent_id != "evidence-auditor"
+                    or local_completion.reviewer_session_key
+                    != f"module-auditor-{owner_module_id}"
+                    or local_completion.subject_refs != [subject_ref]
+                ):
+                    raise ReviewLifecycleError(
+                        f"Cross owner local review completion does not bind subject: {owner_module_id}"
+                    )
+    if _cross_owner_artifact_ref_value(completion.local_review_completion) is None:
+        raise ReviewLifecycleError(
+            f"Cross owner completion has no local review completion: {owner_module_id}"
+        )
+    return module
+
+
+def _load_cross_owner_input(
+    runner: "ReportWorkflowRunner",
+    *,
+    run_id: str,
+    owner_module_id: str,
+    review_round: int,
+    phase: Literal["initial", "recheck"],
+) -> tuple[CrossOwnerInput, str] | None:
+    ref = (
+        f"Work/runs/{run_id}/reviews/cross-owner-input-r{review_round}-"
+        f"{owner_module_id}.json"
+    )
+    path = runner.service.workspace / ref
+    if not path.is_file():
+        return None
+    try:
+        contract = CrossOwnerInput.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ReviewLifecycleError(
+            f"Cross owner {phase} input is invalid: {owner_module_id}"
+        ) from exc
+    if (
+        contract.run_id != run_id
+        or contract.owner_module_id != owner_module_id
+        or contract.review_round != review_round
+        or contract.phase != phase
+    ):
+        raise ReviewLifecycleError(
+            f"Cross owner {phase} input identity mismatch: {owner_module_id}"
+        )
+    expected_owner_ref = _cross_owner_subject_ref(
+        run_id,
+        owner_module_id,
+        contract.owner_subject_revision,
+    )
+    if contract.owner_subject_ref != expected_owner_ref:
+        raise ReviewLifecycleError(
+            f"Cross owner {phase} owner subject ref mismatch: {owner_module_id}"
+        )
+    _cross_owner_artifact_path(
+        runner,
+        contract.owner_subject_ref,
+        run_id=run_id,
+        label="owner subject",
+    )
+    try:
+        owner_module = ModuleSubmission.model_validate_json(
+            (runner.service.workspace / contract.owner_subject_ref).read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, ValueError) as exc:
+        raise ReviewLifecycleError(
+            f"Cross owner {phase} subject is invalid: {owner_module_id}"
+        ) from exc
+    if (
+        contract.owner_subject_revision != owner_module.revision
+        or contract.owner_subject != module_content_view(owner_module)
+    ):
+        raise ReviewLifecycleError(
+            f"Cross owner {phase} input does not bind its subject: {owner_module_id}"
+        )
+    for related_id, related_ref in contract.related_module_refs.items():
+        expected_related_ref = _cross_owner_subject_ref(
+            run_id,
+            related_id,
+            contract.related_module_revisions[related_id],
+        )
+        if related_ref != expected_related_ref:
+            raise ReviewLifecycleError(
+                f"Cross owner {phase} related subject ref mismatch: "
+                f"{owner_module_id}/{related_id}"
+            )
+        _cross_owner_artifact_path(
+            runner,
+            related_ref,
+            run_id=run_id,
+            label=f"related subject {owner_module_id}/{related_id}",
+        )
+        try:
+            related_module = ModuleSubmission.model_validate_json(
+                (runner.service.workspace / related_ref).read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise ReviewLifecycleError(
+                f"Cross owner {phase} related subject is invalid: "
+                f"{owner_module_id}/{related_id}"
+            ) from exc
+        expected_view = _cross_owner_related_view(
+            runner,
+            module=related_module,
+            ref=related_ref,
+        )
+        expected_business_view = expected_view.model_dump(
+            mode="json",
+            exclude={"subject_sha256"},
+        )
+        actual_business_view = contract.related_module_views[related_id].model_dump(
+            mode="json",
+            exclude={"subject_sha256"},
+        )
+        if (
+            contract.related_module_revisions[related_id] != related_module.revision
+            or actual_business_view != expected_business_view
+        ):
+            raise ReviewLifecycleError(
+                f"Cross owner {phase} related binding mismatch: "
+                f"{owner_module_id}/{related_id}"
+            )
+    if contract.local_regression_review_ref is not None:
+        _cross_owner_artifact_path(
+            runner,
+            contract.local_regression_review_ref,
+            run_id=run_id,
+            label="local regression review",
+        )
+    return contract, ref
+
+
+def _cross_owner_modules_from_input(
+    runner: "ReportWorkflowRunner",
+    contract: CrossOwnerInput,
+) -> dict[str, ModuleSubmission]:
+    refs = {
+        contract.owner_module_id: contract.owner_subject_ref,
+        **contract.related_module_refs,
+    }
+    modules: dict[str, ModuleSubmission] = {}
+    for module_id, ref in refs.items():
+        _cross_owner_artifact_path(
+            runner,
+            ref,
+            run_id=contract.run_id,
+            label=f"frozen module {module_id}",
+        )
+        try:
+            module = ModuleSubmission.model_validate_json(
+                (runner.service.workspace / ref).read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise ReviewLifecycleError(
+                f"Cross owner frozen module is invalid: {module_id}"
+            ) from exc
+        if module.module_id != module_id:
+            raise ReviewLifecycleError(
+                f"Cross owner frozen module identity mismatch: {module_id}"
+            )
+        expected_revision = (
+            contract.owner_subject_revision
+            if module_id == contract.owner_module_id
+            else contract.related_module_revisions[module_id]
+        )
+        if module.revision != expected_revision or ref != _cross_owner_subject_ref(
+            contract.run_id,
+            module_id,
+            expected_revision,
+        ):
+            raise ReviewLifecycleError(
+                f"Cross owner frozen module revision/ref mismatch: {module_id}"
+            )
+        modules[module_id] = module
+    if set(modules) != set(_CROSS_OWNER_MODULE_IDS):
+        raise ReviewLifecycleError("Cross owner frozen input does not bind all five modules")
+    return modules
+
+
+def _load_cross_owner_initial_result(
+    runner: "ReportWorkflowRunner",
+    *,
+    run_id: str,
+    owner_module_id: str,
+    require_task_binding: bool = False,
+) -> tuple[CrossOwnerFindingSubmission, str] | None:
+    ref = (
+        f"Work/runs/{run_id}/reviews/cross-owner-findings-r0-"
+        f"{owner_module_id}.json"
+    )
+    path = runner.service.workspace / ref
+    if not path.is_file():
+        return None
+    try:
+        result = CrossOwnerFindingSubmission.model_validate_json(
+            path.read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise ReviewLifecycleError(
+            f"Cross owner initial result is invalid: {owner_module_id}"
+        ) from exc
+    if result.owner_module_id != owner_module_id:
+        raise ReviewLifecycleError(
+            f"Cross owner initial result ownership mismatch: {owner_module_id}"
+        )
+    if require_task_binding:
+        _require_cross_owner_task_payload(
+            runner,
+            run_id=run_id,
+            task_id=f"cross-owner-{owner_module_id}-r0-initial",
+            expected_payload=result,
+        )
+    return result, ref
+
+
+def _load_cross_owner_verdict(
+    runner: "ReportWorkflowRunner",
+    *,
+    run_id: str,
+    owner_module_id: str,
+    review_round: int,
+    required_findings: list[CrossReviewFinding],
+    require_task_binding: bool = False,
+) -> tuple[CrossOwnerVerdictSubmission, str] | None:
+    ref = (
+        f"Work/runs/{run_id}/reviews/cross-owner-verdicts-r{review_round}-"
+        f"{owner_module_id}.json"
+    )
+    path = runner.service.workspace / ref
+    if not path.is_file():
+        return None
+    try:
+        verdict = CrossOwnerVerdictSubmission.model_validate_json(
+            path.read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise ReviewLifecycleError(
+            f"Cross owner verdict is invalid: {owner_module_id}"
+        ) from exc
+    expected_ids = {finding.id for finding in required_findings}
+    actual_ids = {item.finding_id for item in verdict.verdicts}
+    if (
+        verdict.owner_module_id != owner_module_id
+        or actual_ids != expected_ids
+    ):
+        raise ReviewLifecycleError(
+            f"Cross owner verdict does not cover its exact finding set: {owner_module_id}"
+        )
+    if require_task_binding:
+        _require_cross_owner_task_payload(
+            runner,
+            run_id=run_id,
+            task_id=f"cross-owner-{owner_module_id}-r{review_round}-recheck",
+            expected_payload=verdict,
+        )
+    # Initial synthesis artifacts are runtime-owned and immutable; rechecks do
+    # not echo or rewrite them.
+    return verdict, ref
+
+
+def _require_cross_owner_task_payload(
+    runner: "ReportWorkflowRunner",
+    *,
+    run_id: str,
+    task_id: str,
+    expected_payload: StrictModel,
+) -> None:
+    """Bind a legacy owner artifact to its completed append-only task result."""
+
+    attempt_store = TaskAttemptStore(runner.service.workspace, run_id)
+    correlation = attempt_store.current(task_id)
+    if correlation is None:
+        raise ReviewLifecycleError(
+            f"Cross owner legacy artifact has no task correlation: {task_id}"
+        )
+    try:
+        recovered = attempt_store.load_verified_result(correlation)
+    except RuntimeError as exc:
+        raise ReviewLifecycleError(
+            f"Cross owner legacy task result failed hash verification: {task_id}"
+        ) from exc
+    if recovered is None:
+        raise ReviewLifecycleError(
+            f"Cross owner legacy artifact has no terminal task result: {task_id}"
+        )
+    terminal, result_payload = recovered
+    raw_payload = result_payload.get("payload")
+    if (
+        terminal.status != "completed"
+        or result_payload.get("status") != "completed"
+        or result_payload.get("task_id") != task_id
+        or result_payload.get("run_id") != run_id
+        or result_payload.get("agent_id") != "cross-module-reviewer"
+        or not isinstance(raw_payload, dict)
+        or raw_payload != expected_payload.model_dump(mode="json")
+    ):
+        raise ReviewLifecycleError(
+            f"Cross owner legacy artifact does not match its completed task result: {task_id}"
+        )
+
+
+def _recover_cross_owner_lane(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    owner_module_id: str,
+    review_round: int,
+    owner_input_ref: str,
+    required_findings: list[CrossReviewFinding],
+) -> _CrossOwnerLaneResult | None:
+    lane_root = (
+        runner.service.workspace
+        / f"Work/runs/{state['run_id']}/lanes/cross-r{review_round}/module-{owner_module_id}"
+    )
+    candidates = [
+        path
+        for path in sorted(lane_root.glob("completion-r*.json"))
+        if path.name != "pipeline-completion.json"
+    ]
+    if not candidates:
+        return None
+    matching: list[tuple[str, CrossOwnerCompletion]] = []
+    for path in candidates:
+        try:
+            completion = CrossOwnerCompletion.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise ReviewLifecycleError(
+                f"Cross owner lane completion is invalid: {owner_module_id}"
+            ) from exc
+        _cross_owner_artifact_path(
+            runner,
+            path.relative_to(runner.service.workspace).as_posix(),
+            run_id=state["run_id"],
+            label="lane completion",
+        )
+        _validate_cross_owner_completion_business_identity(
+            runner,
+            completion,
+            run_id=state["run_id"],
+            owner_module_id=owner_module_id,
+            review_round=review_round,
+            owner_input_ref=owner_input_ref,
+        )
+        matching.append(
+            (path.relative_to(runner.service.workspace).as_posix(), completion)
+        )
+    if not matching:
+        return None
+    if len(matching) != 1:
+        raise ReviewLifecycleError(
+            f"Cross owner has duplicate recoverable lane completions: {owner_module_id}"
+        )
+    completion_ref, completion = matching[0]
+    module = _validate_cross_owner_completion_business_identity(
+        runner,
+        completion,
+        run_id=state["run_id"],
+        owner_module_id=owner_module_id,
+        review_round=review_round,
+        owner_input_ref=owner_input_ref,
+    )
+    finding_ids = {finding.id for finding in required_findings}
+    responses: list[RevisionResponse] = []
+    recheck_input = _load_cross_owner_input(
+        runner,
+        run_id=state["run_id"],
+        owner_module_id=owner_module_id,
+        review_round=review_round,
+        phase="recheck",
+    )
+    if recheck_input is not None:
+        responses = list(recheck_input[0].revision_responses)
+    if {response.finding_id for response in responses} != finding_ids:
+        module_root = runner.service.workspace / f"Work/runs/{state['run_id']}/modules"
+        for path in sorted(module_root.glob(f"{owner_module_id}-r*.json")):
+            try:
+                candidate = ModuleSubmission.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                continue
+            candidate_responses = [
+                response
+                for response in candidate.revision_responses
+                if response.finding_id in finding_ids
+            ]
+            if {response.finding_id for response in candidate_responses} == finding_ids:
+                responses = candidate_responses
+                break
+    if finding_ids and {response.finding_id for response in responses} != finding_ids:
+        raise ReviewLifecycleError(
+            f"Cross owner recovered lane lacks exact revision responses: {owner_module_id}"
+        )
+    return _CrossOwnerLaneResult(
+        module=module,
+        responses=responses,
+        local_review_ref=_cross_owner_artifact_ref_value(
+            completion.local_review_completion
+        ) or "",
+        completion_ref=completion_ref,
+        completion=completion,
+    )
+
+
+def _recover_cross_owner_lane_from_recovery(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    owner_module_id: str,
+    completion_ref: str,
+    required_findings: list[CrossReviewFinding],
+    owner_input_ref: str | None = None,
+    review_round: int | None = None,
+) -> _CrossOwnerLaneResult | None:
+    """Recover a completed owner lane from business state without hash gates."""
+
+    path = _cross_owner_artifact_path(
+        runner,
+        completion_ref,
+        run_id=state["run_id"],
+        label="recovery lane completion",
+    )
+    try:
+        completion = CrossOwnerCompletion.model_validate_json(
+            path.read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise ReviewLifecycleError(
+            f"Cross owner recovery lane completion is invalid: {owner_module_id}"
+        ) from exc
+    module = _validate_cross_owner_completion_business_identity(
+        runner,
+        completion,
+        run_id=state["run_id"],
+        owner_module_id=owner_module_id,
+        review_round=review_round,
+        owner_input_ref=owner_input_ref,
+    )
+    finding_ids = {finding.id for finding in required_findings}
+    responses: list[RevisionResponse] = []
+    module_root = runner.service.workspace / f"Work/runs/{state['run_id']}/modules"
+    for candidate_path in sorted(module_root.glob(f"{owner_module_id}-r*.json")):
+        try:
+            candidate = ModuleSubmission.model_validate_json(
+                candidate_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            continue
+        candidate_responses = [
+            response
+            for response in candidate.revision_responses
+            if response.finding_id in finding_ids
+        ]
+        if {response.finding_id for response in candidate_responses} == finding_ids:
+            responses = candidate_responses
+            break
+    if finding_ids and {response.finding_id for response in responses} != finding_ids:
+        raise ReviewLifecycleError(
+            f"Cross owner recovered lane lacks exact revision responses: {owner_module_id}"
+        )
+    local_review_ref = _cross_owner_artifact_ref_value(
+        completion.local_review_completion
+    ) or ""
+    return _CrossOwnerLaneResult(
+        module=module,
+        responses=responses,
+        local_review_ref=local_review_ref,
+        completion_ref=completion_ref,
+        completion=completion,
+    )
+
+
+def _promote_cross_owner_pipeline_completion(
+    runner: "ReportWorkflowRunner",
+    *,
+    lane: _CrossOwnerLaneResult,
+    initial_result_ref: str,
+    verdict_ref: str | None,
+) -> _CrossOwnerLaneResult:
+    promoted = lane.completion.model_copy(
+        update={
+            # The exact-five barrier is the outer Cross lifecycle r1 barrier.
+            # Owner-internal regression rounds remain visible in their lane refs
+            # and verdict artifacts but do not split the outer barrier identity.
+            "lane_id": f"cross-r1-module-{lane.completion.module_id}",
+            "review_round": 1,
+            "initial_result": _cross_owner_artifact_ref(runner, initial_result_ref),
+            "verdict_result": (
+                _cross_owner_artifact_ref(runner, verdict_ref)
+                if verdict_ref is not None
+                else None
+            ),
+            "schema_version": "3",
+        }
+    )
+    ref = (
+        f"Work/runs/{promoted.run_id}/lanes/cross-r1/"
+        f"module-{promoted.module_id}/pipeline-completion.json"
+    )
+    path = runner.service.workspace / ref
+    if path.is_file():
+        try:
+            existing = CrossOwnerCompletion.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise ReviewLifecycleError(
+                f"Cross owner pipeline completion is invalid: {promoted.module_id}"
+            ) from exc
+        _validate_cross_owner_completion_business_identity(
+            runner,
+            existing,
+            run_id=promoted.run_id,
+            owner_module_id=promoted.module_id,
+            review_round=1,
+        )
+        if not _cross_owner_completion_business_equal(existing, promoted):
+            raise ReviewLifecycleError(
+                f"Cross owner pipeline completion changed: {promoted.module_id}"
+            )
+        promoted = existing
+    else:
+        runner.service.store.write_json(ref, promoted.model_dump(mode="json"))
+    return lane.model_copy(update={"completion_ref": ref, "completion": promoted})
+
+
+async def _run_cross_owner_review(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    workflow_id: str,
+    modules: dict[str, ModuleSubmission],
+    owner_module_id: str,
+    phase: Literal["initial", "recheck"],
+    review_round: int,
+    owner_input_ref: str,
+    required_findings: list[CrossReviewFinding] | None = None,
+    revision_responses: list[RevisionResponse] | None = None,
+    local_review_ref: str | None = None,
+    prior_synthesis_inputs: list[CrossSynthesisInput] | None = None,
+) -> tuple[CrossOwnerFindingSubmission | CrossOwnerVerdictSubmission, str]:
+    """Dispatch one fixed Cross-owner reviewer and persist its typed result."""
+
+    input_kind = "cross_owner_input"
+    output_kind = (
+        "cross_owner_finding_submission"
+        if phase == "initial"
+        else "cross_owner_verdict_submission"
+    )
+    envelope = TaskEnvelope(
+        task_id=f"cross-owner-{owner_module_id}-r{review_round}-{phase}",
+        run_id=state["run_id"],
+        # One packaged reviewer definition is reused with five durable session
+        # keys; agent-runner identity routing treats these keys as independent
+        # Cross-owner identities.
+        agent_id="cross-module-reviewer",
+        objective=(
+            f"以 Cross owner {owner_module_id} 身份审查本模块与其他四模块的关系；"
+            "只创建归属本模块的 finding，并且 related 模块只读。"
+            if phase == "initial"
+            else f"由 Cross owner {owner_module_id} 原会话复审本轮 owner 修订，"
+            "逐项给出原 finding verdict；related 模块仍只读。"
+        ),
+        input_refs=[owner_input_ref],
+        constraints=[
+            f"唯一 Cross owner 写作范围是模块 {owner_module_id}",
+            "related_module_views 是紧凑只读关系视图，不得修改或创建其他模块 finding",
+            (
+                "initial 只提交 cross_owner_finding_submission"
+                if phase == "initial"
+                else (
+                    "recheck 只提交 cross_owner_verdict_submission，逐项覆盖全部 "
+                    "required_findings；new_findings 只允许当前修订引入的真实回归"
+                )
+            ),
+            "coverage 仅证明当前 owner 检查过六个维度，不代表 approved",
+        ],
+        allowed_outputs=[output_kind],
+        allowed_tools=["submit_result"],
+        revision=review_round,
+        prior_result_ref=(
+            f"Work/runs/{state['run_id']}/reviews/cross-owner-findings-r0-"
+            f"{owner_module_id}.json"
+            if phase == "recheck"
+            else None
+        ),
+        artifact_delivery_modes={owner_input_ref: "inline"},
+        target_submodule_ids=list(
+            CrossOwnerInput.model_validate_json(
+                (runner.service.workspace / owner_input_ref).read_text(encoding="utf-8")
+            ).owner_scope_submodule_ids
+        ),
+        input_contract_kind=input_kind,
+        input_contract_ref=owner_input_ref,
+        # Owner-specific review questions already live in CrossOwnerInput.
+        # Keeping one source avoids duplicating the focus in task context.
+        inline_context="",
+    )
+    result = await runner._agent(
+        "cross-module-reviewer",
+        envelope,
+        envelope.input_refs,
+        workflow_id,
+        session_key=f"cross-owner-{owner_module_id}",
+    )
+    if phase == "initial":
+        if not isinstance(result, CrossOwnerFindingSubmission):
+            raise ReviewLifecycleError(
+                f"Cross owner {owner_module_id} returned the wrong initial type"
+            )
+        artifact_ref = _write_immutable_model(
+            runner,
+            (
+                f"Work/runs/{state['run_id']}/reviews/"
+                f"cross-owner-findings-r0-{owner_module_id}.json"
+            ),
+            result,
+        )
+    else:
+        if not isinstance(result, CrossOwnerVerdictSubmission):
+            raise ReviewLifecycleError(
+                f"Cross owner {owner_module_id} returned the wrong recheck type"
+            )
+        expected_ids = {finding.id for finding in (required_findings or [])}
+        actual_ids = {verdict.finding_id for verdict in result.verdicts}
+        if actual_ids != expected_ids:
+            raise ReviewLifecycleError(
+                f"Cross owner {owner_module_id} verdict coverage mismatch"
+            )
+        artifact_ref = _write_immutable_model(
+            runner,
+            (
+                f"Work/runs/{state['run_id']}/reviews/"
+                f"cross-owner-verdicts-r{review_round}-{owner_module_id}.json"
+            ),
+            result,
+        )
+    return result, artifact_ref
+
+
+def _verified_cross_owner_noop(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    owner_module_id: str,
+    module: ModuleSubmission,
+    owner_input_ref: str,
+    review_round: int,
+) -> _CrossOwnerLaneResult:
+    """Create a durable completion for an owner with no Cross finding."""
+
+    subject_ref = (
+        f"Work/runs/{state['run_id']}/modules/"
+        f"{owner_module_id}-r{module.revision}.json"
+    )
+    local_ref = state.get("module_review_completion_refs", {}).get(owner_module_id)
+    if not local_ref:
+        raise ReviewLifecycleError(
+            f"Cross owner no-op requires prior module audit: {owner_module_id}"
+        )
+    semantic_key = hashlib.sha256(
+        json.dumps(
+            {
+                "run_id": state["run_id"],
+                "review_round": review_round,
+                "module_id": owner_module_id,
+                "owner_input": owner_input_ref,
+                "subject_ref": subject_ref,
+                "finding_ids": [],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    completion = CrossOwnerCompletion(
+        lane_id=f"cross-r{review_round}-module-{owner_module_id}",
+        run_id=state["run_id"],
+        review_round=review_round,
+        module_id=owner_module_id,
+        semantic_key=semantic_key,
+        subject_revision=module.revision,
+        owner_input=_cross_owner_artifact_ref(runner, owner_input_ref),
+        subject=_cross_owner_artifact_ref(runner, subject_ref),
+        local_review_completion=_cross_owner_artifact_ref(runner, local_ref),
+        author_task_attempt_id=f"cross-owner-noop-{owner_module_id}",
+        reviewer_session_id=f"cross-owner-{owner_module_id}",
+        lease_epoch=1,
+    )
+    completion_ref = (
+        f"Work/runs/{state['run_id']}/lanes/cross-r{review_round}/"
+        f"module-{owner_module_id}/completion-r{module.revision}.json"
+    )
+    path = runner.service.workspace / completion_ref
+    if path.is_file():
+        try:
+            existing = CrossOwnerCompletion.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise ReviewLifecycleError(
+                f"Cross owner no-op completion is invalid: {owner_module_id}"
+            ) from exc
+        _validate_cross_owner_completion_business_identity(
+            runner,
+            existing,
+            run_id=state["run_id"],
+            owner_module_id=owner_module_id,
+            review_round=review_round,
+            owner_input_ref=owner_input_ref,
+        )
+        if not _cross_owner_completion_business_equal(existing, completion):
+            raise ReviewLifecycleError(
+                f"Cross owner no-op completion changed: {owner_module_id}"
+            )
+        completion = existing
+    else:
+        runner.service.store.write_json(
+            completion_ref,
+            completion.model_dump(mode="json"),
+        )
+    return _CrossOwnerLaneResult(
+        module=module,
+        responses=[],
+        local_review_ref=local_ref,
+        completion_ref=completion_ref,
+        completion=completion,
+    )
+
+
+def _load_cross_synthesis_from_refs(
+    runner: "ReportWorkflowRunner",
+    refs: list[str],
+) -> list[CrossSynthesisInput]:
+    """Recover synthesis inputs from immutable owner/aggregate artifacts."""
+
+    values: dict[str, CrossSynthesisInput] = {}
+    for ref in refs:
+        path = runner.service.workspace / ref
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise ReviewLifecycleError(
+                f"Cross synthesis artifact is unreadable during resume: {ref}"
+            ) from exc
+        for raw in payload.get("synthesis_inputs", []):
+            item = CrossSynthesisInput.model_validate(raw)
+            prior = values.get(item.id)
+            if prior is not None and prior != item:
+                raise ReviewLifecycleError(
+                    f"Cross synthesis id changed during resume: {item.id}"
+                )
+            values[item.id] = item
+    return list(values.values())
+
+
+def _verify_cross_owner_barrier(
+    runner: "ReportWorkflowRunner",
+    barrier: CrossOwnerBarrier,
+    *,
+    barrier_path: Path,
+    expected_run_id: str,
+    expected_round: int,
+    expected_modules: set[str],
+) -> None:
+    """Validate the exact Cross barrier from typed business records.
+
+    ``completion_hashes`` and ``barrier_sha256`` remain readable legacy fields,
+    but they are forensic metadata only.  Resume validity comes from current
+    run/stage/owner/revision bindings, canonical refs, and readable typed JSON.
+    """
+
+    run_id = barrier.run_id
+    run_root = (runner.service.workspace / f"Work/runs/{run_id}").resolve()
+    if (
+        barrier.run_id != expected_run_id
+        or not barrier_path.resolve().is_relative_to(run_root)
+        or barrier.review_round != expected_round
+        or len(barrier.target_modules) != len(expected_modules)
+        or set(barrier.target_modules) != expected_modules
+        or len(barrier.completion_refs) != len(expected_modules)
+        or set(barrier.completion_refs) != expected_modules
+    ):
+        raise ReviewLifecycleError("Cross owner barrier identity mismatch")
+    if barrier.completion_revisions and (
+        len(barrier.completion_revisions) != len(expected_modules)
+        or set(barrier.completion_revisions) != expected_modules
+    ):
+        raise ReviewLifecycleError("Cross owner barrier revision set mismatch")
+    revisions: dict[str, int] = {}
+    for module_id in sorted(expected_modules, key=float):
+        ref = barrier.completion_refs[module_id]
+        completion_path = _cross_owner_artifact_path(
+            runner,
+            ref,
+            run_id=run_id,
+            label=f"barrier completion {module_id}",
+        )
+        try:
+            completion = CrossOwnerCompletion.model_validate_json(
+                completion_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise ReviewLifecycleError(
+                f"Cross owner barrier completion is invalid: {ref}"
+            ) from exc
+        module = _validate_cross_owner_completion_business_identity(
+            runner,
+            completion,
+            run_id=run_id,
+            owner_module_id=module_id,
+            review_round=barrier.review_round,
+        )
+        revision = module.revision
+        revisions[module_id] = revision
+    if barrier.completion_revisions and revisions != barrier.completion_revisions:
+        raise ReviewLifecycleError("Cross owner barrier revisions do not bind subjects")
+
+
+def verify_cross_owner_barrier(
+    runner: "ReportWorkflowRunner",
+    barrier: CrossOwnerBarrier,
+    *,
+    barrier_path: Path,
+    expected_run_id: str,
+    expected_round: int,
+    expected_modules: set[str],
+) -> None:
+    """Public resume-time verifier for the exact Cross-owner completion barrier."""
+
+    _verify_cross_owner_barrier(
+        runner,
+        barrier,
+        barrier_path=barrier_path,
+        expected_run_id=expected_run_id,
+        expected_round=expected_round,
+        expected_modules=expected_modules,
+    )
+
+
+async def _run_cross_owner_lane(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    workflow_id: str,
+    module_id: str,
+    current: ModuleSubmission,
+    findings: list[CrossReviewFinding],
+    finding_refs: list[str],
+    review_round: int,
+    owner_input_ref: str | None = None,
+    prior_completion_ref: str | None = None,
+    defer_main_exceptions: bool = True,
+) -> _CrossOwnerLaneResult:
+    """Run one owner-local revision and original-auditor regression in private state."""
+
+    lane_state = deepcopy(state)
+    lane_state["_defer_main_exceptions"] = defer_main_exceptions
+    reviewed_baseline = current
+    baseline_subject_ref = (
+        f"Work/runs/{state['run_id']}/modules/"
+        f"{module_id}-r{reviewed_baseline.revision}.json"
+    )
+    prior_completion_ref = prior_completion_ref or state.get(
+        "module_review_completion_refs", {}
+    ).get(module_id)
+    if not prior_completion_ref:
+        raise ReviewLifecycleError(
+            f"Cross local regression requires prior module review: {module_id}"
+        )
+    try:
+        prior_completion = ReviewCompletionRecord.model_validate_json(
+            (runner.service.workspace / prior_completion_ref).read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, ValueError) as exc:
+        raise ReviewLifecycleError(
+            f"Cross local regression prior completion is unreadable: {module_id}"
+        ) from exc
+    if (
+        prior_completion.lifecycle != "module"
+        or prior_completion.run_id != state["run_id"]
+        or baseline_subject_ref not in prior_completion.subject_refs
+    ):
+        raise ReviewLifecycleError(
+            f"Cross local regression prior completion does not bind {module_id}"
+        )
+
+    persisted_candidate: ModuleSubmission | None = None
+    modules_root = runner.service.workspace / f"Work/runs/{state['run_id']}/modules"
+    candidates: list[ModuleSubmission] = []
+    for path in modules_root.glob(f"{module_id}-r*.json"):
+        try:
+            candidate = ModuleSubmission.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+            if candidate.revision <= current.revision:
+                continue
+            _validate_responses(
+                candidate.revision_responses,
+                {finding.id for finding in findings},
+                {
+                    target_id
+                    for finding in findings
+                    for target_id in finding.target_submodule_ids
+                },
+            )
+            candidates.append(candidate)
+        except (OSError, ValueError):
+            continue
+    if candidates:
+        persisted_candidate = max(candidates, key=lambda item: item.revision)
+
+    while True:
+        if persisted_candidate is not None:
+            revised = persisted_candidate
+            revised_ref = (
+                f"Work/runs/{state['run_id']}/modules/"
+                f"{module_id}-r{revised.revision}.json"
+            )
+            persisted_candidate = None
+        else:
+            revised, revised_ref = await request_module_revision(
+                runner,
+                state=lane_state,
+                workflow_id=workflow_id,
+                subject=current,
+                cross_findings=findings,
+            )
+        exceptional = [
+            response
+            for response in revised.revision_responses
+            if response.action in {"disputed", "needs_input"}
+        ]
+        if exceptional:
+            decision = await _main_exception_decision(
+                runner,
+                state=lane_state,
+                workflow_id=workflow_id,
+                scope="cross",
+                subject_refs=[revised_ref],
+                finding_refs=finding_refs,
+                verdicts=[],
+                responses=exceptional,
+                trigger="author_response",
+            )
+            if decision.decision == "return_to_author":
+                current = revised
+                continue
+        break
+
+    lane_state.setdefault("module_submissions", {})[module_id] = revised
+    lane_state.setdefault("specialist_submissions", {})[module_id] = revised
+    local_scope = {
+        target_id for finding in findings for target_id in finding.target_submodule_ids
+    }
+    local_diff_ref = (
+        f"Work/runs/{state['run_id']}/reviews/module/cross-r{review_round}/"
+        f"{module_id}/trigger-diff-r{revised.revision}.json"
+    )
+    raw_local_diff = build_revision_diff(reviewed_baseline, revised)
+    local_diff = ModuleRevisionDiff(
+        module_id=raw_local_diff["module_id"],
+        from_revision=raw_local_diff["from_revision"],
+        to_revision=raw_local_diff["to_revision"],
+        changed_submodule_narratives=raw_local_diff[
+            "changed_submodule_narratives"
+        ],
+        changed_statement_refs=[
+            "statement-" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+            for value in raw_local_diff["changed_claim_ids"]
+        ],
+        evidence_ids_added=raw_local_diff["source_ids_added"],
+        evidence_ids_removed=raw_local_diff["source_ids_removed"],
+    )
+    runner.service.store.write_json(
+        local_diff_ref,
+        local_diff.model_dump(mode="json"),
+    )
+    cross_responses = list(revised.revision_responses)
+    local_reviewed = await run_module_review(
+        runner,
+        module_id,
+        revised,
+        lane_state,
+        workflow_id,
+        initial_scope=local_scope,
+        lifecycle_id=f"cross-r{review_round}",
+        regression_context=ModuleLocalRegressionContext(
+            prior_review_completion_ref=prior_completion_ref,
+            prior_review_completion=prior_completion,
+            baseline_subject_ref=baseline_subject_ref,
+            trigger_cross_findings=findings,
+            trigger_revision_responses=revised.revision_responses,
+            revision_diff_ref=local_diff_ref,
+            revision_diff=local_diff,
+        ),
+    )
+    final_subject_ref = (
+        f"Work/runs/{state['run_id']}/modules/"
+        f"{module_id}-r{local_reviewed.revision}.json"
+    )
+    local_review_ref = lane_state["module_review_completion_refs"][module_id]
+    semantic_payload = {
+        "run_id": state["run_id"],
+        "review_round": review_round,
+        "module_id": module_id,
+        "owner_input_ref": owner_input_ref,
+        "findings": [finding.model_dump(mode="json") for finding in findings],
+        "schema_version": "1",
+    }
+    semantic_key = hashlib.sha256(
+        json.dumps(
+            semantic_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    completion = CrossOwnerCompletion(
+        lane_id=f"cross-r{review_round}-module-{module_id}",
+        run_id=state["run_id"],
+        review_round=review_round,
+        module_id=module_id,
+        semantic_key=semantic_key,
+        subject_revision=local_reviewed.revision,
+        owner_input=(
+            _cross_owner_artifact_ref(runner, owner_input_ref)
+            if owner_input_ref is not None
+            else None
+        ),
+        subject=_cross_owner_artifact_ref(runner, final_subject_ref),
+        local_review_completion=_cross_owner_artifact_ref(
+            runner, local_review_ref
+        ),
+        author_task_attempt_id=f"cross-owner-attempt-{uuid4().hex}",
+        reviewer_session_id=f"cross-owner-{module_id}",
+        lease_epoch=1,
+    )
+    completion_ref = (
+        f"Work/runs/{state['run_id']}/lanes/cross-r{review_round}/"
+        f"module-{module_id}/completion-r{local_reviewed.revision}.json"
+    )
+    completion_path = runner.service.workspace / completion_ref
+    if completion_path.is_file():
+        try:
+            existing = CrossOwnerCompletion.model_validate_json(
+                completion_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise ReviewLifecycleError(
+                f"Cross owner completion is invalid: {module_id}"
+            ) from exc
+        _validate_cross_owner_completion_business_identity(
+            runner,
+            existing,
+            run_id=state["run_id"],
+            owner_module_id=module_id,
+            review_round=review_round,
+            owner_input_ref=owner_input_ref,
+        )
+        if not _cross_owner_completion_business_equal(existing, completion):
+            raise ReviewLifecycleError(
+                f"Cross owner completion changed for the same input: {module_id}"
+            )
+        completion = existing
+    else:
+        runner.service.store.write_json(
+            completion_ref,
+            completion.model_dump(mode="json"),
+        )
+    return _CrossOwnerLaneResult(
+        module=local_reviewed,
+        responses=cross_responses,
+        local_review_ref=local_review_ref,
+        completion_ref=completion_ref,
+        completion=completion,
+    )
 
 
 async def run_cross_review(
@@ -1384,452 +3291,526 @@ async def run_cross_review(
     state: dict,
     workflow_id: str,
 ) -> None:
-    reviewer_session_key = "cross-module-reviewer"
-    modules: dict[str, ModuleSubmission] = dict(state["module_submissions"])
-    pending: dict[str, CrossReviewFinding] = {}
-    responses_by_module: dict[str, list[RevisionResponse]] = {}
-    local_review_refs: dict[str, str] = {}
-    machine_refs: list[str] = []
-    finding_refs: list[str] = []
-    verdict_refs: list[str] = []
-    resolved_ids: set[str] = set()
-    prior_synthesis = []
-    phase = "initial"
-    review_round = 0
-    revised_owner_ids: set[str] = set()
-    progress_ref = f"Work/runs/{state['run_id']}/reviews/cross-progress.json"
+    """Run five independently recoverable Cross-owner pipelines.
 
-    def save_progress(next_action: str) -> None:
-        _write_model(
-            runner,
-            progress_ref,
-            CrossReviewProgress(
-                run_id=state["run_id"],
-                next_action=next_action,
-                modules=modules,
-                pending=list(pending.values()),
-                responses_by_module=responses_by_module,
-                local_review_refs=local_review_refs,
-                machine_refs=machine_refs,
-                finding_refs=finding_refs,
-                verdict_refs=verdict_refs,
-                resolved_ids=sorted(resolved_ids),
-                prior_synthesis=prior_synthesis,
-                phase=phase,
-                review_round=review_round,
-                revised_owner_ids=sorted(revised_owner_ids),
-            ),
+    Every owner consumes the same frozen five-module snapshot, but proceeds
+    independently through initial review, owner-local edit, original module
+    auditor regression, and same-owner verdict.  A verified completed owner is
+    never re-dispatched on resume; only missing/failed owners run again.  Chief
+    is unlocked only after the exact-five promoted pipeline completions commit.
+    """
+
+    owner_ids = tuple(REPORT_TAXONOMY)
+    run_id = state["run_id"]
+    modules: dict[str, ModuleSubmission] = dict(state["module_submissions"])
+    if set(modules) != set(owner_ids):
+        raise ReviewLifecycleError(
+            "Cross owner wave requires exactly five completed module subjects"
+        )
+    completion_ref = f"Work/runs/{run_id}/reviews/cross-completion.json"
+    completion_path = runner.service.workspace / completion_ref
+    recovery = RecoveryStateStore(runner.service.workspace, run_id)
+
+    def record_owner_terminal(owner_module_id: str, *, status: str, result_ref: str | None = None, revision: int = 0, error: str | None = None) -> None:
+        # RecoveryStateStore validates the business lane id against the
+        # referenced JSON payload.  Keep the typed Cross completion ref inside
+        # a small owner-scoped projection so no hash/CAS field participates in
+        # reuse decisions.
+        projection_ref = f"Work/runs/{run_id}/recovery/cross-{owner_module_id}.json"
+        if result_ref is not None:
+            runner.service.store.write_json(
+                projection_ref,
+                {
+                    "run_id": run_id,
+                    "stage": "cross",
+                    "lane_id": owner_module_id,
+                    "status": status,
+                    "revision": revision,
+                    "result_ref": result_ref,
+                },
+            )
+        current = recovery.load_lane_state("cross", owner_module_id)
+        recovery.record_lane_attempt(
+            {
+                "run_id": run_id,
+                "stage": "cross",
+                "lane_id": owner_module_id,
+                "task_id": owner_module_id,
+                "attempt": (current.attempt + 1) if current is not None else 1,
+                "revision": revision,
+                "status": status,
+                "result_ref": projection_ref if result_ref is not None else None,
+                "error": error,
+            }
         )
 
-    progress = (
-        _load_progress(runner, progress_ref, CrossReviewProgress) if state.get("resume") else None
+    recovered_owner_lanes = recovery.load_completed_lanes(
+        "cross",
+        list(owner_ids),
     )
-    if progress is not None and progress.next_action != "completed":
-        if progress.run_id != state["run_id"]:
-            raise ReviewLifecycleError("Cross review progress identity mismatch")
-        modules = progress.modules
-        state["module_submissions"].update(modules)
-        pending = {finding.id: finding for finding in progress.pending}
-        responses_by_module = progress.responses_by_module
-        local_review_refs = progress.local_review_refs
-        machine_refs = progress.machine_refs
-        finding_refs = progress.finding_refs
-        verdict_refs = progress.verdict_refs
-        resolved_ids = set(progress.resolved_ids)
-        prior_synthesis = progress.prior_synthesis
-        phase = progress.phase
-        review_round = progress.review_round
-        revised_owner_ids = set(progress.revised_owner_ids)
-
-    async def complete_revision_wave() -> None:
-        nonlocal responses_by_module, local_review_refs, machine_refs
-        grouped: dict[str, list[CrossReviewFinding]] = defaultdict(list)
-        for finding in pending.values():
-            grouped[finding.owner_module_id].append(finding)
-        if not revised_owner_ids:
-            responses_by_module = {}
-            local_review_refs = {}
-            machine_refs = []
-        for module_id in sorted(grouped):
-            if module_id in revised_owner_ids:
-                continue
-            current = modules[module_id]
-            reviewed_baseline = current
-            baseline_subject_ref = (
-                f"Work/runs/{state['run_id']}/modules/"
-                f"{module_id}-r{reviewed_baseline.revision}.json"
+    if (
+        state.get("resume")
+        and completion_path.is_file()
+        and set(recovered_owner_lanes) == set(owner_ids)
+    ):
+        try:
+            completion, _completion_artifacts = runner._load_current_review_completion(
+                run_id=run_id,
+                completion_ref=completion_ref,
+                lifecycle="cross",
+                reviewer_agent_id="cross-module-reviewer",
+                reviewer_session_key="cross-owner-wave",
             )
-            prior_completion_ref = state.get(
-                "module_review_completion_refs",
-                {},
-            ).get(module_id)
-            if not prior_completion_ref:
-                raise ReviewLifecycleError(
-                    f"Cross local regression requires prior module review: {module_id}"
-                )
+        except (AttributeError, OSError, ValueError) as exc:
+            raise ReviewLifecycleError(
+                "Cross completion is unreadable during resume"
+            ) from exc
+        barrier_ref = f"Work/runs/{run_id}/lanes/cross-r1/owner-barrier.json"
+        barrier_path = runner.service.workspace / barrier_ref
+        try:
+            barrier = CrossOwnerBarrier.model_validate_json(
+                barrier_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise ReviewLifecycleError(
+                "Cross owner barrier is unreadable during resume"
+            ) from exc
+        _verify_cross_owner_barrier(
+            runner,
+            barrier,
+            barrier_path=barrier_path,
+            expected_run_id=run_id,
+            expected_round=1,
+            expected_modules=set(owner_ids),
+        )
+        if len(completion.subject_refs) != len(owner_ids) or len(
+            set(completion.subject_refs)
+        ) != len(owner_ids):
+            raise ReviewLifecycleError(
+                "Cross completion must bind exactly five owner subjects"
+            )
+        # Rehydrate the business aggregate's module subjects and synthesis
+        # portfolio before returning.  The status projection is intentionally
+        # ignored; each typed subject is loaded from the aggregate's refs.
+        for module_id, subject_ref in zip(
+            owner_ids,
+            completion.subject_refs[: len(owner_ids)],
+            strict=True,
+        ):
             try:
-                prior_completion = ReviewCompletionRecord.model_validate_json(
-                    (
-                        runner.service.workspace / prior_completion_ref
-                    ).read_text(encoding="utf-8")
+                subject = ModuleSubmission.model_validate_json(
+                    (runner.service.workspace / subject_ref).read_text(encoding="utf-8")
                 )
             except (OSError, ValueError) as exc:
                 raise ReviewLifecycleError(
-                    f"Cross local regression prior completion is unreadable: {module_id}"
+                    f"Cross aggregate subject is unreadable: {module_id}"
                 ) from exc
-            if (
-                prior_completion.lifecycle != "module"
-                or prior_completion.run_id != state["run_id"]
-                or baseline_subject_ref not in prior_completion.subject_refs
-            ):
+            if subject.module_id != module_id:
                 raise ReviewLifecycleError(
-                    f"Cross local regression prior completion does not bind {module_id}"
+                    f"Cross aggregate subject ownership mismatch: {module_id}"
                 )
-            validation_ref: str | None = None
-            machine_attempts = 0
-            machine_failure_fingerprints: dict[tuple, int] = {}
-            persisted_candidate: ModuleSubmission | None = None
-            modules_root = runner.service.workspace / f"Work/runs/{state['run_id']}/modules"
-            candidates: list[ModuleSubmission] = []
-            for path in modules_root.glob(f"{module_id}-r*.json"):
+            state.setdefault("module_submissions", {})[module_id] = subject
+            state.setdefault("specialist_submissions", {})[module_id] = subject
+            lane_state = recovered_owner_lanes.get(module_id)
+            if lane_state is not None:
+                projection_ref = getattr(lane_state, "result_ref", None)
+                if not projection_ref:
+                    raise ReviewLifecycleError(
+                        f"Cross owner recovery projection is missing: {module_id}"
+                    )
+                projection_path = _cross_owner_artifact_path(
+                    runner,
+                    projection_ref,
+                    run_id=run_id,
+                    label=f"recovery projection {module_id}",
+                )
                 try:
-                    candidate = ModuleSubmission.model_validate_json(
-                        path.read_text(encoding="utf-8")
+                    projection = json.loads(
+                        projection_path.read_text(encoding="utf-8")
                     )
-                    if candidate.revision <= current.revision:
-                        continue
-                    _validate_responses(
-                        candidate.revision_responses,
-                        {finding.id for finding in grouped[module_id]},
-                        {
-                            target_id
-                            for finding in grouped[module_id]
-                            for target_id in finding.target_submodule_ids
-                        },
+                except (OSError, ValueError, TypeError) as exc:
+                    raise ReviewLifecycleError(
+                        f"Cross owner recovery projection is invalid: {module_id}"
+                    ) from exc
+                owner_completion_ref = projection.get("result_ref")
+                if owner_completion_ref != barrier.completion_refs[module_id]:
+                    raise ReviewLifecycleError(
+                        f"Cross owner recovery projection ref mismatch: {module_id}"
                     )
-                    candidates.append(candidate)
-                except (OSError, ValueError):
-                    continue
-            if candidates:
-                persisted_candidate = max(candidates, key=lambda item: item.revision)
-            while True:
-                machine_attempts += 1
-                if persisted_candidate is not None:
-                    revised = persisted_candidate
-                    revised_ref = (
-                        f"Work/runs/{state['run_id']}/modules/{module_id}-r{revised.revision}.json"
-                    )
-                    persisted_candidate = None
-                else:
-                    revised, revised_ref = await request_module_revision(
-                        runner,
-                        state=state,
-                        workflow_id=workflow_id,
-                        subject=current,
-                        cross_findings=grouped[module_id],
-                        validation_ref=validation_ref,
-                    )
-                exceptional = [
-                    response
-                    for response in revised.revision_responses
-                    if response.action in {"disputed", "needs_input"}
-                ]
-                if exceptional:
-                    decision = await _main_exception_decision(
-                        runner,
-                        state=state,
-                        workflow_id=workflow_id,
-                        scope="cross",
-                        subject_refs=[revised_ref],
-                        finding_refs=finding_refs,
-                        verdicts=[],
-                        responses=exceptional,
-                        trigger="author_response",
-                    )
-                    if decision.decision == "return_to_author":
-                        current = revised
-                        validation_ref = None
-                        continue
-                validation_ref = _run_cross_machine_checks(
+                lane = _recover_cross_owner_lane_from_recovery(
                     runner,
                     state=state,
-                    subject=revised,
-                    subject_ref=revised_ref,
-                    findings=grouped[module_id],
+                    owner_module_id=module_id,
+                    completion_ref=owner_completion_ref,
+                    required_findings=[],
+                    review_round=1,
                 )
-                report = ValidationReport.model_validate_json(
-                    (runner.service.workspace / validation_ref).read_text(encoding="utf-8")
-                )
-                if report.passed:
-                    break
-                fingerprint = tuple(
-                    sorted(
-                        (
-                            failure.check_id,
-                            failure.finding_id or "",
-                            failure.target_path,
-                            failure.message,
-                        )
-                        for failure in report.failures
-                    )
-                )
-                repeated = machine_failure_fingerprints.get(fingerprint, 0) + 1
-                machine_failure_fingerprints[fingerprint] = repeated
-                if repeated >= 2 or machine_attempts >= 3:
+                if lane is None or not lane.local_review_ref:
                     raise ReviewLifecycleError(
-                        "Cross machine validation failed repeatedly; the workflow "
-                        "stopped without rewriting the module or reviewer verdict. "
-                        f"module={module_id}; attempts={machine_attempts}; "
-                        f"validation_ref={validation_ref}"
+                        f"Cross owner recovery completion is incomplete: {module_id}"
                     )
-                current = revised
-            modules[module_id] = revised
-            state["module_submissions"][module_id] = revised
-            state.setdefault("specialist_submissions", {})[module_id] = revised
-            responses_by_module[module_id] = revised.revision_responses
-            local_scope = {
-                target_id
-                for finding in grouped[module_id]
-                for target_id in finding.target_submodule_ids
-            }
-            local_diff_ref = (
-                f"Work/runs/{state['run_id']}/reviews/module/cross-r{review_round}/"
-                f"{module_id}/trigger-diff-r{revised.revision}.json"
-            )
-            raw_local_diff = build_revision_diff(reviewed_baseline, revised)
-            local_diff = ModuleRevisionDiff(
-                module_id=raw_local_diff["module_id"],
-                from_revision=raw_local_diff["from_revision"],
-                to_revision=raw_local_diff["to_revision"],
-                changed_submodule_narratives=raw_local_diff[
-                    "changed_submodule_narratives"
-                ],
-                changed_statement_refs=[
-                    "statement-"
-                    + hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
-                    for value in raw_local_diff["changed_claim_ids"]
-                ],
-                evidence_ids_added=raw_local_diff["source_ids_added"],
-                evidence_ids_removed=raw_local_diff["source_ids_removed"],
-            )
-            runner.service.store.write_json(
-                local_diff_ref,
-                local_diff.model_dump(mode="json"),
-            )
-            local_reviewed = await run_module_review(
-                runner,
-                module_id,
-                revised,
-                state,
-                workflow_id,
-                initial_scope=local_scope,
-                lifecycle_id=f"cross-r{review_round}",
-                regression_context=ModuleLocalRegressionContext(
-                    prior_review_completion_ref=prior_completion_ref,
-                    prior_review_completion=prior_completion,
-                    baseline_subject_ref=baseline_subject_ref,
-                    trigger_cross_findings=grouped[module_id],
-                    trigger_revision_responses=revised.revision_responses,
-                    revision_diff_ref=local_diff_ref,
-                    revision_diff=local_diff,
-                ),
-            )
-            modules[module_id] = local_reviewed
-            state["module_submissions"][module_id] = local_reviewed
-            state.setdefault("specialist_submissions", {})[module_id] = local_reviewed
-            final_subject_ref = (
-                f"Work/runs/{state['run_id']}/modules/"
-                f"{module_id}-r{local_reviewed.revision}.json"
-            )
-            validation_ref = _run_cross_machine_checks(
+                expected_subject_ref = completion.subject_refs[
+                    owner_ids.index(module_id)
+                ]
+                actual_subject_ref = _cross_owner_artifact_ref_value(
+                    lane.completion.subject
+                )
+                if (
+                    actual_subject_ref != expected_subject_ref
+                    or lane.module.model_dump(mode="json")
+                    != subject.model_dump(mode="json")
+                ):
+                    raise ReviewLifecycleError(
+                        f"Cross completion subject does not bind owner lane: {module_id}"
+                    )
+                state.setdefault("module_review_completion_refs", {})[
+                    module_id
+                ] = lane.local_review_ref
+        # RecoveryStateStore is authoritative for reusable owner lanes.  The
+        # legacy barrier remains a status artifact, but its hashes/CAS fields
+        # are not consulted for active recovery.
+        state["cross_owner_barrier_ref"] = (
+            f"Work/runs/{run_id}/lanes/cross-r1/owner-barrier.json"
+        )
+        state["cross_review_completion_ref"] = completion_ref
+        state["cross_synthesis_inputs"] = _load_cross_synthesis_from_refs(
+            runner, completion.finding_refs
+        )
+        return
+
+    # All initial inputs are written before any owner dispatch.  On resume, any
+    # one verified existing input reconstructs the common pre-Cross snapshot so
+    # already revised owner modules cannot leak into a sibling's retry context.
+    frozen_modules: dict[str, ModuleSubmission] | None = None
+    for owner_module_id in owner_ids:
+        loaded = _load_cross_owner_input(
+            runner,
+            run_id=run_id,
+            owner_module_id=owner_module_id,
+            review_round=0,
+            phase="initial",
+        )
+        if loaded is not None:
+            frozen_modules = _cross_owner_modules_from_input(runner, loaded[0])
+            break
+    if frozen_modules is None:
+        frozen_modules = modules
+
+    initial_inputs: dict[str, tuple[CrossOwnerInput, str]] = {}
+    for owner_module_id in owner_ids:
+        loaded = _load_cross_owner_input(
+            runner,
+            run_id=run_id,
+            owner_module_id=owner_module_id,
+            review_round=0,
+            phase="initial",
+        )
+        if loaded is None:
+            loaded = _cross_owner_input(
                 runner,
                 state=state,
-                subject=local_reviewed,
-                subject_ref=final_subject_ref,
-                findings=grouped[module_id],
+                modules=frozen_modules,
+                owner_module_id=owner_module_id,
+                phase="initial",
+                review_round=0,
             )
-            final_validation = ValidationReport.model_validate_json(
-                (runner.service.workspace / validation_ref).read_text(encoding="utf-8")
+        loaded_modules = _cross_owner_modules_from_input(runner, loaded[0])
+        for module_id in owner_ids:
+            expected_ref = (
+                f"Work/runs/{run_id}/modules/"
+                f"{module_id}-r{frozen_modules[module_id].revision}.json"
             )
-            _require_validation_binding(
-                runner,
-                final_validation,
-                subject_ref=final_subject_ref,
-                subject_revision=local_reviewed.revision,
+            actual_ref = (
+                loaded[0].owner_subject_ref
+                if module_id == owner_module_id
+                else loaded[0].related_module_refs[module_id]
             )
-            if not final_validation.passed:
+            if actual_ref != expected_ref or loaded_modules[module_id] != frozen_modules[module_id]:
                 raise ReviewLifecycleError(
-                    "Cross machine validation failed after the module-local regression "
-                    "review; the workflow stopped before Cross recheck without starting "
-                    "another author revision. "
-                    f"module={module_id}; validation_ref={validation_ref}"
+                    f"Cross owner initial inputs do not share one frozen snapshot: "
+                    f"{owner_module_id}/{module_id}"
                 )
-            machine_refs.append(validation_ref)
-            local_review_refs[module_id] = state["module_review_completion_refs"][module_id]
-            revised_owner_ids.add(module_id)
-            save_progress("revise")
+        initial_inputs[owner_module_id] = loaded
 
-    if progress is not None and progress.next_action == "revise":
-        await complete_revision_wave()
-        phase = "recheck"
-        review_round += 1
-        save_progress("review")
-
-    while True:
-        module_refs = {
-            module_id: (
-                f"Work/runs/{state['run_id']}/modules/"
-                f"{module_id}-r{modules[module_id].revision}.json"
-            )
-            for module_id in REPORT_TAXONOMY
-        }
-        changed_module_ids = set(REPORT_TAXONOMY) if phase == "initial" else set(revised_owner_ids)
-        if phase == "recheck" and not changed_module_ids:
-            raise ReviewLifecycleError(
-                "Cross recheck requires the current revision wave module ids"
-            )
-        unchanged_module_sha256 = (
-            {}
-            if phase == "initial"
-            else {
-                module_id: hashlib.sha256(
-                    (runner.service.workspace / module_refs[module_id]).read_bytes()
-                ).hexdigest()
-                for module_id in set(REPORT_TAXONOMY) - changed_module_ids
-            }
-        )
-        machine_validation_reports: list[ValidationReport] = []
-        if phase == "recheck":
-            for validation_ref in machine_refs:
-                report = ValidationReport.model_validate_json(
-                    (runner.service.workspace / validation_ref).read_text(encoding="utf-8")
-                )
-                _require_validation_binding(
-                    runner,
-                    report,
-                    subject_ref=report.subject_ref,
-                    subject_revision=report.subject_revision
-                    if report.subject_revision is not None
-                    else -1,
-                )
-                machine_validation_reports.append(report)
-        cross_input = CrossReviewInput(
-            phase=phase,
-            run_id=state["run_id"],
-            module_refs=module_refs,
-            module_revisions={
-                module_id: modules[module_id].revision for module_id in REPORT_TAXONOMY
-            },
-            modules={
-                module_id: module_content_view(modules[module_id])
-                for module_id in changed_module_ids
-            },
-            changed_module_ids=sorted(changed_module_ids),
-            unchanged_module_sha256=unchanged_module_sha256,
-            required_findings=list(pending.values()) if phase == "recheck" else [],
-            revision_responses_by_module=responses_by_module if phase == "recheck" else {},
-            local_regression_review_refs=local_review_refs if phase == "recheck" else {},
-            prior_synthesis_inputs=prior_synthesis if phase == "recheck" else [],
-            machine_validation_refs=machine_refs if phase == "recheck" else [],
-            machine_validation_reports=machine_validation_reports,
-        )
-        input_ref = _write_model(
-            runner,
-            f"Work/runs/{state['run_id']}/reviews/cross-review-input-r{review_round}.json",
-            cross_input,
-        )
-        output_kind = (
-            "cross_review_finding_submission"
-            if phase == "initial"
-            else "cross_review_verdict_submission"
-        )
-        envelope = TaskEnvelope(
-            task_id=f"cross-review-r{review_round}",
-            run_id=state["run_id"],
-            agent_id="cross-module-reviewer",
-            objective=(
-                "审查五个已完成模块之间的术语、事实、风险、依赖、传播和联合验证接口。"
-                if phase == "initial"
-                else "由原 Cross reviewer 逐项判断 required_findings 是否关闭并检查接口回归。"
-            ),
-            input_refs=[input_ref],
-            constraints=[
-                "coverage 只记录审查范围，不含 integrated 或 approved 状态",
-                "findings 只包含必须写回责任模块的问题",
-                "synthesis_inputs 只包含无需模块返工、可供总编综合的已支持关系",
-                (
-                    "recheck 只接收 changed_module_ids 的当前正文；未修改模块由首轮"
-                    "不可变 finding/synthesis 输入及当前 SHA-256 证明保持不变，"
-                    "不得依赖或要求进程内对话记忆"
-                ),
-                "不得审查单模块局部写作质量",
-                (
-                    "首轮 coverage 必须对五个模块逐项覆盖全部六个维度"
-                    if phase == "initial"
-                    else "verdicts 必须逐项且仅覆盖 required_findings；模块 auditor 的结果不能代替 Cross verdict"
-                ),
-                *runner._user_supplement_constraints(
-                    state,
-                    stage="cross_review",
-                    target_ids={
-                        *REPORT_TAXONOMY,
-                        *(claim.id for module in modules.values() for claim in module.claims),
-                    },
-                ),
-            ],
-            allowed_outputs=[output_kind],
-            revision=review_round,
-            prior_result_ref=finding_refs[-1] if finding_refs else None,
-            artifact_delivery_modes={
-                input_ref: "inline",
-                **(
-                    {finding_refs[-1]: "hash_retained"}
-                    if finding_refs
-                    else {}
-                ),
-            },
-            input_contract_kind="cross_review_input",
-            input_contract_ref=input_ref,
-            inline_context=runner._role_skill_context(state, "cross-reviewer"),
-            allowed_tools=["submit_result"],
-        )
-        result = await runner._agent(
-            "cross-module-reviewer",
-            envelope,
-            envelope.input_refs,
-            workflow_id,
-            session_key=reviewer_session_key,
-        )
-        if phase == "initial":
-            if not isinstance(result, CrossReviewFindingSubmission):
-                raise ReviewLifecycleError("Cross reviewer returned the wrong initial type")
-            for entry in result.coverage:
-                missing = set(CROSS_REVIEW_DIMENSIONS) - set(entry.checked_dimensions)
-                if missing:
-                    raise ReviewLifecycleError(
-                        f"Cross coverage for {entry.module_id} omitted dimensions: {sorted(missing)}"
+    async def owner_pipeline(owner_module_id: str) -> _CrossOwnerPipelineResult:
+        initial_contract, initial_input_ref = initial_inputs[owner_module_id]
+        recovered_state = recovered_owner_lanes.get(owner_module_id)
+        if recovered_state is not None:
+            projection_ref = recovered_state.result_ref
+            completion_ref_from_projection: str | None = None
+            if projection_ref:
+                try:
+                    projection = json.loads(
+                        (runner.service.workspace / projection_ref).read_text(encoding="utf-8")
                     )
-            _validate_cross_findings(result.findings, modules)
-            finding_ref = _write_immutable_model(
+                    completion_ref_from_projection = projection.get("result_ref")
+                except (OSError, ValueError, TypeError):
+                    completion_ref_from_projection = None
+            if completion_ref_from_projection:
+                try:
+                    completion_path = runner.service.workspace / completion_ref_from_projection
+                    completion = CrossOwnerCompletion.model_validate_json(
+                        completion_path.read_text(encoding="utf-8")
+                    )
+                    initial_result_ref = (
+                        completion.initial_result.ref
+                        if completion.initial_result is not None
+                        else f"Work/runs/{run_id}/reviews/cross-owner-findings-r0-{owner_module_id}.json"
+                    )
+                    initial_result = CrossOwnerFindingSubmission.model_validate_json(
+                        (runner.service.workspace / initial_result_ref).read_text(encoding="utf-8")
+                    )
+                    finding_refs = [initial_result_ref]
+                    all_findings = list(initial_result.findings)
+                    regression_root = runner.service.workspace / (
+                        f"Work/runs/{run_id}/reviews"
+                    )
+                    for regression_path in sorted(
+                        regression_root.glob(
+                            f"cross-owner-regression-findings-r*-{owner_module_id}.json"
+                        )
+                    ):
+                        try:
+                            regression = CrossOwnerFindingSubmission.model_validate_json(
+                                regression_path.read_text(encoding="utf-8")
+                            )
+                        except (OSError, ValueError):
+                            continue
+                        if regression.owner_module_id == owner_module_id:
+                            finding_refs.append(
+                                regression_path.relative_to(runner.service.workspace).as_posix()
+                            )
+                            all_findings.extend(regression.findings)
+                    verdict = None
+                    verdict_ref = (
+                        completion.verdict_result.ref
+                        if completion.verdict_result is not None
+                        else None
+                    )
+                    verdict_refs: list[str] = []
+                    verdicts: list[ResolutionVerdict] = []
+                    if verdict_ref:
+                        try:
+                            verdict = CrossOwnerVerdictSubmission.model_validate_json(
+                                (runner.service.workspace / verdict_ref).read_text(encoding="utf-8")
+                            )
+                            verdict_refs.append(verdict_ref)
+                            verdicts = list(verdict.verdicts)
+                        except (OSError, ValueError):
+                            verdict = None
+                    lane = _recover_cross_owner_lane_from_recovery(
+                        runner,
+                        state=state,
+                        owner_module_id=owner_module_id,
+                        completion_ref=completion_ref_from_projection,
+                        required_findings=[],
+                        review_round=1,
+                    )
+                    if lane is not None:
+                        return _CrossOwnerPipelineResult(
+                            owner_module_id=owner_module_id,
+                            initial_input_ref=initial_input_ref,
+                            initial_result_ref=initial_result_ref,
+                            initial_result=initial_result,
+                            lane=lane,
+                            verdict_ref=(
+                                verdict_ref
+                            ),
+                            verdict=verdict,
+                            finding_refs=finding_refs,
+                            verdict_refs=verdict_refs,
+                            findings=all_findings,
+                            verdicts=verdicts,
+                        )
+                except (OSError, ValueError, TypeError, AttributeError):
+                    # A stale/missing business result is not reusable; the
+                    # owner is explicitly retried below.
+                    pass
+        pipeline_completion_path = (
+            runner.service.workspace
+            / f"Work/runs/{run_id}/lanes/cross-r1/"
+            f"module-{owner_module_id}/pipeline-completion.json"
+        )
+        require_legacy_task_binding = (
+            bool(state.get("resume")) and not pipeline_completion_path.is_file()
+        )
+        initial_loaded = _load_cross_owner_initial_result(
+            runner,
+            run_id=run_id,
+            owner_module_id=owner_module_id,
+            require_task_binding=require_legacy_task_binding,
+        )
+        if initial_loaded is None:
+            initial_result, initial_result_ref = await _run_cross_owner_review(
                 runner,
-                f"Work/runs/{state['run_id']}/reviews/cross-findings-r{review_round}.json",
-                result,
+                state=state,
+                workflow_id=workflow_id,
+                modules=frozen_modules,
+                owner_module_id=owner_module_id,
+                phase="initial",
+                review_round=0,
+                owner_input_ref=initial_input_ref,
             )
-            finding_refs.append(finding_ref)
-            pending = {finding.id: finding for finding in result.findings}
-            prior_synthesis = result.synthesis_inputs
+            assert isinstance(initial_result, CrossOwnerFindingSubmission)
         else:
-            if not isinstance(result, CrossReviewVerdictSubmission):
-                raise ReviewLifecycleError("Cross reviewer returned the wrong recheck type")
-            _validate_verdicts(result.verdicts, set(pending))
-            _validate_cross_findings(result.new_findings, modules)
-            verdict_ref = _write_immutable_model(
-                runner,
-                f"Work/runs/{state['run_id']}/reviews/cross-verdicts-r{review_round}.json",
-                result,
+            initial_result, initial_result_ref = initial_loaded
+
+        invalid_synthesis_ids = [
+            item.id
+            for item in initial_result.synthesis_inputs
+            if not item.id.startswith(f"SI-{owner_module_id}-")
+        ]
+        if invalid_synthesis_ids:
+            raise ReviewLifecycleError(
+                f"Cross owner {owner_module_id} synthesis ids must use its owner namespace: "
+                f"{invalid_synthesis_ids}"
             )
+        pending = {finding.id: finding for finding in initial_result.findings}
+        resolved_ids: set[str] = set()
+        finding_refs = [initial_result_ref]
+        verdict_refs: list[str] = []
+        all_findings = list(initial_result.findings)
+        terminal_verdicts: dict[str, ResolutionVerdict] = {}
+        current = frozen_modules[owner_module_id]
+        current_review_completion_ref = state.get(
+            "module_review_completion_refs", {}
+        ).get(owner_module_id)
+        review_round = 1
+        owner_input_ref = initial_input_ref
+
+        if not pending:
+            lane = _recover_cross_owner_lane(
+                runner,
+                state=state,
+                owner_module_id=owner_module_id,
+                review_round=1,
+                owner_input_ref=initial_input_ref,
+                required_findings=[],
+            )
+            if lane is None:
+                lane = _verified_cross_owner_noop(
+                    runner,
+                    state=state,
+                    owner_module_id=owner_module_id,
+                    module=current,
+                    owner_input_ref=initial_input_ref,
+                    review_round=1,
+                )
+            lane = _promote_cross_owner_pipeline_completion(
+                runner,
+                lane=lane,
+                initial_result_ref=initial_result_ref,
+                verdict_ref=None,
+            )
+            return _CrossOwnerPipelineResult(
+                owner_module_id=owner_module_id,
+                initial_input_ref=initial_input_ref,
+                initial_result_ref=initial_result_ref,
+                initial_result=initial_result,
+                lane=lane,
+                finding_refs=finding_refs,
+                findings=all_findings,
+            )
+
+        while pending:
+            findings = list(pending.values())
+            lane = _recover_cross_owner_lane(
+                runner,
+                state=state,
+                owner_module_id=owner_module_id,
+                review_round=review_round,
+                owner_input_ref=owner_input_ref,
+                required_findings=findings,
+            )
+            if lane is None:
+                lane = await _run_cross_owner_lane(
+                    runner,
+                    state=state,
+                    workflow_id=workflow_id,
+                    module_id=owner_module_id,
+                    current=current,
+                    findings=findings,
+                    finding_refs=finding_refs,
+                    review_round=review_round,
+                    owner_input_ref=owner_input_ref,
+                    prior_completion_ref=current_review_completion_ref,
+                )
+
+            # A later Cross regression round reviews the module revision that
+            # the immediately preceding owner-local audit completed.  Keep
+            # that completion binding owner-local until the exact-five barrier
+            # commits all lanes into shared workflow state.
+            current_review_completion_ref = lane.local_review_ref
+
+            verdict_loaded = _load_cross_owner_verdict(
+                runner,
+                run_id=run_id,
+                owner_module_id=owner_module_id,
+                review_round=review_round,
+                required_findings=findings,
+                require_task_binding=require_legacy_task_binding,
+            )
+            modules_for_recheck = dict(frozen_modules)
+            modules_for_recheck[owner_module_id] = lane.module
+            if verdict_loaded is None:
+                recheck_loaded = _load_cross_owner_input(
+                    runner,
+                    run_id=run_id,
+                    owner_module_id=owner_module_id,
+                    review_round=review_round,
+                    phase="recheck",
+                )
+                if recheck_loaded is None:
+                    _contract, recheck_input_ref = _cross_owner_input(
+                        runner,
+                        state=state,
+                        modules=modules_for_recheck,
+                        owner_module_id=owner_module_id,
+                        phase="recheck",
+                        review_round=review_round,
+                        required_findings=findings,
+                        revision_responses=lane.responses,
+                        local_review_ref=lane.local_review_ref,
+                        prior_synthesis_inputs=list(initial_result.synthesis_inputs),
+                    )
+                else:
+                    recheck_contract, recheck_input_ref = recheck_loaded
+                    if (
+                        {finding.id for finding in recheck_contract.required_findings}
+                        != set(pending)
+                        or recheck_contract.owner_subject_ref
+                        != lane.completion.subject.ref
+                    ):
+                        raise ReviewLifecycleError(
+                            f"Cross owner recheck input does not bind recovered lane: "
+                            f"{owner_module_id}/r{review_round}"
+                        )
+                verdict, verdict_ref = await _run_cross_owner_review(
+                    runner,
+                    state=state,
+                    workflow_id=workflow_id,
+                    modules=modules_for_recheck,
+                    owner_module_id=owner_module_id,
+                    phase="recheck",
+                    review_round=review_round,
+                    owner_input_ref=recheck_input_ref,
+                    required_findings=findings,
+                    revision_responses=lane.responses,
+                    local_review_ref=lane.local_review_ref,
+                    prior_synthesis_inputs=list(initial_result.synthesis_inputs),
+                )
+                assert isinstance(verdict, CrossOwnerVerdictSubmission)
+            else:
+                verdict, verdict_ref = verdict_loaded
+
+            _validate_cross_findings(verdict.new_findings, modules_for_recheck)
             verdict_refs.append(verdict_ref)
-            escalated = [verdict for verdict in result.verdicts if verdict.verdict == "escalate"]
+            terminal_verdicts.update(
+                {item.finding_id: item for item in verdict.verdicts}
+            )
+            escalated = [
+                item for item in verdict.verdicts if item.verdict == "escalate"
+            ]
             main_accepts: set[str] = set()
             if escalated:
                 decision = await _main_exception_decision(
@@ -1837,83 +3818,296 @@ async def run_cross_review(
                     state=state,
                     workflow_id=workflow_id,
                     scope="cross",
-                    subject_refs=list(module_refs.values()),
+                    subject_refs=[lane.completion.subject.ref],
                     finding_refs=finding_refs,
                     verdicts=escalated,
-                    responses=[
-                        response for values in responses_by_module.values() for response in values
-                    ],
+                    responses=lane.responses,
                 )
                 if decision.decision == "accept_dispute":
                     main_accepts = set(decision.finding_ids)
+
             next_pending = {
-                verdict.finding_id: pending[verdict.finding_id]
-                for verdict in result.verdicts
-                if verdict.verdict == "open"
-                or (verdict.verdict == "escalate" and verdict.finding_id not in main_accepts)
+                item.finding_id: pending[item.finding_id]
+                for item in verdict.verdicts
+                if item.verdict == "open"
+                or (
+                    item.verdict == "escalate"
+                    and item.finding_id not in main_accepts
+                )
             }
             resolved_ids.update(
-                verdict.finding_id
-                for verdict in result.verdicts
-                if verdict.verdict == "resolved" or verdict.finding_id in main_accepts
+                item.finding_id
+                for item in verdict.verdicts
+                if item.verdict == "resolved" or item.finding_id in main_accepts
             )
-            for finding in result.new_findings:
+            for finding in verdict.new_findings:
                 if finding.id in pending or finding.id in resolved_ids:
                     raise ReviewLifecycleError(
-                        f"new Cross finding reuses an existing id: {finding.id}"
+                        f"new Cross owner finding reuses an existing id: {finding.id}"
                     )
                 next_pending[finding.id] = finding
-            if result.new_findings:
-                new_ref = _write_immutable_model(
+                all_findings.append(finding)
+            if verdict.new_findings:
+                regression_ref = _write_immutable_model(
                     runner,
                     (
-                        f"Work/runs/{state['run_id']}/reviews/"
-                        f"cross-regression-findings-r{review_round}.json"
+                        f"Work/runs/{run_id}/reviews/"
+                        f"cross-owner-regression-findings-r{review_round}-"
+                        f"{owner_module_id}.json"
                     ),
-                    CrossReviewFindingSubmission(
-                        coverage=result.coverage,
-                        findings=result.new_findings,
-                        synthesis_inputs=result.synthesis_inputs,
+                    CrossOwnerFindingSubmission(
+                        owner_module_id=owner_module_id,
+                        coverage=verdict.coverage,
+                        findings=verdict.new_findings,
+                        synthesis_inputs=[],
                     ),
                 )
-                finding_refs.append(new_ref)
+                finding_refs.append(regression_ref)
+
+            if not next_pending:
+                lane = _promote_cross_owner_pipeline_completion(
+                    runner,
+                    lane=lane,
+                    initial_result_ref=initial_result_ref,
+                    verdict_ref=verdict_ref,
+                )
+                return _CrossOwnerPipelineResult(
+                    owner_module_id=owner_module_id,
+                    initial_input_ref=initial_input_ref,
+                    initial_result_ref=initial_result_ref,
+                    initial_result=initial_result,
+                    lane=lane,
+                    verdict_ref=verdict_ref,
+                    verdict=verdict,
+                    finding_refs=finding_refs,
+                    verdict_refs=verdict_refs,
+                    findings=all_findings,
+                    verdicts=list(terminal_verdicts.values()),
+                )
+
             pending = next_pending
-            prior_synthesis = result.synthesis_inputs
+            current = lane.module
+            owner_input_ref = verdict_ref
+            review_round += 1
 
-        if not pending:
-            _validate_cross_synthesis_portfolio(prior_synthesis, modules)
-            completion_refs = [
-                *module_refs.values(),
-                *finding_refs,
-                *verdict_refs,
-            ]
-            completion = ReviewCompletionRecord(
-                lifecycle="cross",
-                run_id=state["run_id"],
-                reviewer_agent_id="cross-module-reviewer",
-                reviewer_session_key=reviewer_session_key,
-                subject_refs=list(module_refs.values()),
-                finding_refs=finding_refs,
-                verdict_refs=verdict_refs,
-                resolved_finding_ids=sorted(resolved_ids),
-                artifact_sha256=_artifact_sha256(runner, completion_refs),
-            )
-            completion_ref = _write_immutable_model(
-                runner,
-                f"Work/runs/{state['run_id']}/reviews/cross-completion.json",
-                completion,
-            )
-            state["cross_review_completion_ref"] = completion_ref
-            state["cross_synthesis_inputs"] = prior_synthesis
-            save_progress("completed")
-            return
+        raise ReviewLifecycleError(
+            f"Cross owner loop ended without completion: {owner_module_id}"
+        )
 
-        revised_owner_ids = set()
-        save_progress("revise")
-        await complete_revision_wave()
-        phase = "recheck"
-        review_round += 1
-        save_progress("review")
+    # Each task now owns its complete initial→edit→auditor→recheck chain.  A
+    # fast owner no longer waits for every initial reviewer before starting its
+    # local closure.  gather is only the final drain needed to record all
+    # successes/failures and decide whether the exact-five barrier may commit.
+    outcomes = dict(
+        zip(
+            owner_ids,
+            await asyncio.gather(
+                *(owner_pipeline(owner_module_id) for owner_module_id in owner_ids),
+                return_exceptions=True,
+            ),
+            strict=True,
+        )
+    )
+    errors = {
+        owner_module_id: outcome
+        for owner_module_id, outcome in outcomes.items()
+        if isinstance(outcome, BaseException)
+    }
+    if errors:
+        completion_refs = {
+            owner_module_id: outcome.lane.completion_ref
+            for owner_module_id, outcome in outcomes.items()
+            if isinstance(outcome, _CrossOwnerPipelineResult)
+        }
+        terminal_ref = f"Work/runs/{run_id}/lanes/cross-r1/owner-terminal.json"
+        runner.service.store.write_json(
+            terminal_ref,
+            {
+                "kind": "cross_owner_terminal_barrier",
+                "version": 2,
+                "run_id": run_id,
+                "review_round": 1,
+                "target_modules": list(owner_ids),
+                "status": "failed",
+                "terminal_statuses": {
+                    owner_module_id: (
+                        "failed" if owner_module_id in errors else "completed"
+                    )
+                    for owner_module_id in owner_ids
+                },
+                "completion_refs": completion_refs,
+                "completion_hashes": {
+                    owner_module_id: outcomes[
+                        owner_module_id
+                    ].lane.completion.completion_sha256()
+                    for owner_module_id in completion_refs
+                },
+                "failure_messages": {
+                    owner_module_id: str(error)
+                    for owner_module_id, error in errors.items()
+                },
+                "retry_scope": sorted(errors, key=float),
+                "retry_policy": (
+                    "explicit resume reuses verified completed owners and "
+                    "dispatches only retry_scope; failed Provider attempts do not block recovery"
+                ),
+            },
+        )
+        for owner_module_id, outcome in outcomes.items():
+            if isinstance(outcome, _CrossOwnerPipelineResult):
+                record_owner_terminal(
+                    owner_module_id,
+                    status="completed",
+                    result_ref=outcome.lane.completion_ref,
+                    revision=outcome.lane.module.revision,
+                )
+            else:
+                record_owner_terminal(
+                    owner_module_id,
+                    status="failed",
+                    error=str(outcome),
+                )
+        raise sorted(errors.items(), key=lambda item: float(item[0]))[0][1]
+
+    pipelines = {
+        owner_module_id: outcome
+        for owner_module_id, outcome in outcomes.items()
+        if isinstance(outcome, _CrossOwnerPipelineResult)
+    }
+    if set(pipelines) != set(owner_ids):
+        raise ReviewLifecycleError("Cross owner drain did not produce exactly five outcomes")
+
+    finding_ids = [
+        finding.id
+        for owner_module_id in owner_ids
+        for finding in pipelines[owner_module_id].findings
+    ]
+    if len(finding_ids) != len(set(finding_ids)):
+        raise ReviewLifecycleError("Cross owner findings reused an id")
+    synthesis_by_id: dict[str, CrossSynthesisInput] = {}
+    all_verdicts: list[ResolutionVerdict] = []
+    for owner_module_id in owner_ids:
+        pipeline = pipelines[owner_module_id]
+        for item in pipeline.initial_result.synthesis_inputs:
+            if item.id in synthesis_by_id and synthesis_by_id[item.id] != item:
+                raise ReviewLifecycleError(
+                    "Cross owner synthesis reused an id with different content"
+                )
+            synthesis_by_id[item.id] = item
+        all_verdicts.extend(pipeline.verdicts)
+
+    final_modules = dict(frozen_modules)
+    barrier_inputs: list[tuple[str, CrossOwnerCompletion]] = []
+    for owner_module_id in owner_ids:
+        pipeline = pipelines[owner_module_id]
+        final_modules[owner_module_id] = pipeline.lane.module
+        state.setdefault("module_submissions", {})[owner_module_id] = pipeline.lane.module
+        state.setdefault("specialist_submissions", {})[
+            owner_module_id
+        ] = pipeline.lane.module
+        state.setdefault("module_review_completion_refs", {})[
+            owner_module_id
+        ] = pipeline.lane.local_review_ref
+        barrier_inputs.append(
+            (pipeline.lane.completion_ref, pipeline.lane.completion)
+        )
+
+    aggregate_findings = CrossReviewFindingSubmission(
+        coverage=[
+            CrossReviewCoverageEntry(
+                module_id=owner_module_id,
+                checked_dimensions=list(CROSS_REVIEW_DIMENSIONS),
+            )
+            for owner_module_id in owner_ids
+        ],
+        findings=[
+            finding
+            for owner_module_id in owner_ids
+            for finding in pipelines[owner_module_id].findings
+        ],
+        synthesis_inputs=list(synthesis_by_id.values()),
+    )
+    aggregate_finding_ref = _write_immutable_model(
+        runner,
+        f"Work/runs/{run_id}/reviews/cross-findings-r0.json",
+        aggregate_findings,
+    )
+    aggregate_verdicts = CrossReviewVerdictSubmission(
+        coverage=[
+            CrossReviewCoverageEntry(
+                module_id=owner_module_id,
+                checked_dimensions=list(CROSS_REVIEW_DIMENSIONS),
+            )
+            for owner_module_id in owner_ids
+        ],
+        verdicts=all_verdicts,
+        new_findings=[],
+        # Recheck cannot rewrite synthesis.  The exact initial owner artifacts
+        # are the sole canonical source.
+        synthesis_inputs=list(synthesis_by_id.values()),
+    )
+    aggregate_verdict_ref = _write_immutable_model(
+        runner,
+        f"Work/runs/{run_id}/reviews/cross-verdicts-r1.json",
+        aggregate_verdicts,
+    )
+    reducer = WorkflowReducer(runner.service.workspace, run_id)
+    barrier = reducer.write_cross_owner_barrier(
+        1, list(owner_ids), barrier_inputs
+    )
+    barrier_ref = f"Work/runs/{run_id}/lanes/cross-r1/owner-barrier.json"
+    # ``CrossOwnerBarrier`` is a durable projection.  Recovery decisions use
+    # the owner lane business records below; do not gate this stage on the
+    # legacy completion/barrier hashes.
+    state["cross_owner_barrier_ref"] = barrier_ref
+
+    completion = ReviewCompletionRecord(
+        review_protocol_version=2,
+        lifecycle="cross",
+        run_id=run_id,
+        reviewer_agent_id="cross-module-reviewer",
+        reviewer_session_key="cross-owner-wave",
+        subject_refs=[
+            f"Work/runs/{run_id}/modules/"
+            f"{module_id}-r{final_modules[module_id].revision}.json"
+            for module_id in owner_ids
+        ],
+        finding_refs=[aggregate_finding_ref],
+        verdict_refs=[aggregate_verdict_ref],
+        resolved_finding_ids=sorted(
+            item.finding_id for item in all_verdicts
+        ),
+    )
+    _write_immutable_model(runner, completion_ref, completion)
+    state["cross_review_completion_ref"] = completion_ref
+    state["cross_synthesis_inputs"] = list(synthesis_by_id.values())
+    for owner_module_id in owner_ids:
+        pipeline = pipelines[owner_module_id]
+        record_owner_terminal(
+            owner_module_id,
+            status="completed",
+            result_ref=pipeline.lane.completion_ref,
+            revision=pipeline.lane.module.revision,
+        )
+    try:
+        recovery.record_aggregate(
+            AggregateState(
+                run_id=run_id,
+                stage="cross",
+                lane_ids=list(owner_ids),
+                result_ref=completion_ref,
+                revision=1,
+                status="completed",
+            )
+        )
+    except Exception as exc:
+        recovery.recover_aggregate_failure(
+            "cross",
+            owner_ids,
+            previous_stage="module",
+            reason=str(exc),
+        )
+        raise
 
 
 async def _request_chief_revision(
@@ -1964,10 +4158,13 @@ async def _request_chief_revision(
         (f"Work/runs/{state['run_id']}/reviews/chief-revision-input-r{revision_number}.json"),
         revision_input,
     )
-    revision_context = runner._role_skill_context(
-        state,
-        "chief-revision",
-        target_section_ids=target_sections,
+    revision_chapters = tuple(
+        chapter_id
+        for chapter_id in CHAPTER_SECTION_IDS
+        if chapter_id in {section_id.split(".", 1)[0] for section_id in target_sections}
+    )
+    revision_context = runner._chief_template_skill_context(
+        state, revision_chapters
     )
     revision_envelope = TaskEnvelope.model_validate(
         chief_envelope.model_copy(
@@ -1991,7 +4188,7 @@ async def _request_chief_revision(
                 "input_contract_kind": "chief_revision_input",
                 "input_contract_ref": revision_input_ref,
                 "constraints": [
-                    "只为 target_section_ids 调用 write_result_part 并提交 chief_revision_submission 小补丁",
+                    "只为 target_section_ids 调用 write_result_part 逐项保存并提交 chief_revision_submission 小补丁；先用 list_result_parts 确认状态，ready 项不得重写",
                     "不得提交全文、第二章、表格、图片或其他元数据；运行时确定性继承",
                     "revision_responses 必须逐项且仅覆盖 assigned finding ids",
                     "不得让工作流替你补写响应、章节或引用",
@@ -2040,16 +4237,12 @@ async def _request_chief_revision(
             f"sections={unexpected_sections}; contract_fields={unexpected_contract}"
         )
     if aggregate_mode:
-        state["editor_quality_observations"] = validate_aggregate_retention(
-            revised_report, approved_module_text
-        )
+        validate_aggregate_retention(revised_report, approved_module_text)
         if claims:
             validate_editor_protection(revised_report, claims)
     else:
         validate_editor_protection(revised_report, claims)
-        state["editor_quality_observations"] = validate_editor_quality(
-            revised_report, state["module_submissions"]
-        )
+        validate_editor_quality(revised_report, state["module_submissions"])
     revised_ref = _write_model(
         runner,
         (f"Work/runs/{state['run_id']}/edited-revisions/chief-author-r{revision_number}.json"),
@@ -2207,14 +4400,9 @@ async def run_final_review(
     while True:
         required_audit_sections = tuple(
             section_id
-            for section_id in FINAL_AUDIT_SECTION_IDS
-            if section_id != "4" or current.special_topic_plan is not None
+            for section_id in FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS
         )
-        audited_chapters = (
-            "第一、三、四章"
-            if current.special_topic_plan is not None
-            else "第一、三章"
-        )
+        audited_chapters = "第一、三章"
         subject_ref = _write_model(
             runner,
             (f"Work/runs/{state['run_id']}/edited-revisions/chief-r{review_round}.json"),
@@ -2251,9 +4439,11 @@ async def run_final_review(
             if phase == "recheck"
             else set()
         )
-        review_input = FinalReviewInput(
+        review_input = _final_review_input(
+            runner=runner,
+            state=state,
+            aggregate_mode=aggregate_mode,
             phase=phase,
-            run_id=state["run_id"],
             subject_ref=subject_ref,
             subject_revision=review_round,
             subject_metadata=metadata if phase == "initial" else None,
@@ -2312,8 +4502,8 @@ async def run_final_review(
             ),
             input_refs=[input_ref],
             constraints=[
-                f"只审查{audited_chapters}当前实际存在的小节及最终交付质量，不重做模块或 Cross 专业审查",
-                "第二章由模块审查和运行时保真校验负责，不属于本阶段内容、覆盖范围或 finding target",
+                f"只审查{audited_chapters}七个摘要/结论小节及最终交付质量，不重做模块或 Cross 专业审查",
+                "第二章与第四章由其他结构/保真 gate 负责，不属于本阶段内容、覆盖范围或 finding target",
                 "residual_risks 只记录无需内容修订的透明限制",
                 "当前实际章节正文、必要表格或图片缺失属于 actionable finding，禁止塞入 residual_risks",
                 (
@@ -2341,9 +4531,13 @@ async def run_final_review(
                     else {}
                 ),
             },
-            input_contract_kind="final_review_input",
+            input_contract_kind=(
+                "aggregate_final_review_input"
+                if aggregate_mode
+                else "final_review_input"
+            ),
             input_contract_ref=input_ref,
-            inline_context=runner._role_skill_context(state, "final-auditor"),
+            inline_context=runner._template_skill_context(state, "final-auditor"),
             allowed_tools=["submit_result"],
         )
         result = await runner._agent(
@@ -2434,7 +4628,6 @@ async def run_final_review(
             residual_risks = result.residual_risks
 
         if not pending:
-            completion_refs = [subject_ref, *finding_refs, *verdict_refs]
             completion = ReviewCompletionRecord(
                 lifecycle="final",
                 run_id=state["run_id"],
@@ -2444,7 +4637,6 @@ async def run_final_review(
                 finding_refs=finding_refs,
                 verdict_refs=verdict_refs,
                 resolved_finding_ids=sorted(resolved_ids),
-                artifact_sha256=_artifact_sha256(runner, completion_refs),
             )
             completion_ref = _write_immutable_model(
                 runner,
@@ -2459,21 +4651,9 @@ async def run_final_review(
                     run_id=state["run_id"],
                     subject_ref=subject_ref,
                     subject_revision=review_round,
-                    subject_sha256=hashlib.sha256(
-                        (runner.service.workspace / subject_ref).read_bytes()
-                    ).hexdigest(),
                     canonical_markdown_ref=canonical_ref,
-                    canonical_markdown_sha256=hashlib.sha256(
-                        (runner.service.workspace / canonical_ref).read_bytes()
-                    ).hexdigest(),
                     validation_report_ref=integrity_ref,
-                    validation_report_sha256=hashlib.sha256(
-                        (runner.service.workspace / integrity_ref).read_bytes()
-                    ).hexdigest(),
                     completion_ref=completion_ref,
-                    completion_sha256=hashlib.sha256(
-                        (runner.service.workspace / completion_ref).read_bytes()
-                    ).hexdigest(),
                 ),
             )
             state["edited_report"] = current

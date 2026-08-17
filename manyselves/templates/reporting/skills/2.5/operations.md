@@ -1,7 +1,7 @@
 ---
 id: pds.module25.operations
 version: "1.0.0"
-title: 运维管理与风险管控核查
+title: 运维管理与风险管控机制核查
 submodules:
   - "2.5.1"
   - "2.5.2"

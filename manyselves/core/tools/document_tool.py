@@ -47,12 +47,25 @@ class InspectDocumentTool(Tool):
 
         Args:
             path: Project-relative file path.
-            max_chars: Maximum returned text characters.
+            max_chars: Compatibility hint for the caller's preferred inline
+                display size. The tool always returns the complete parsed text;
+                AgentLoop may persist and page the exact result losslessly.
         """
-        target = (self.workspace / path).resolve()
-        if not target.is_relative_to(self.workspace) or not target.is_file():
+        path_ref = Path(path)
+        if (
+            path_ref.is_absolute()
+            or ".." in path_ref.parts
+            or path_ref.as_posix() != path
+        ):
+            raise ValueError("document must be one canonical project-relative file")
+        logical_target = self.workspace / path_ref
+        resolved_target = logical_target.resolve()
+        if (
+            not resolved_target.is_relative_to(self.workspace)
+            or not resolved_target.is_file()
+        ):
             raise ValueError("document must be a file inside the project")
-        relative = target.relative_to(self.workspace).as_posix()
+        relative = path_ref.as_posix()
         if self.required_path is not None and relative != self.required_path:
             raise RuntimeError(
                 "TEMPLATE_INSPECTION_PATH_MISMATCH: "
@@ -67,13 +80,14 @@ class InspectDocumentTool(Tool):
                 f"max_chars must equal {self.required_max_chars}; got {max_chars}"
             )
         reject_forbidden_agent_document(
-            target, allow_template_distiller=self.allow_template_distiller_source
+            logical_target,
+            allow_template_distiller=self.allow_template_distiller_source,
         )
         if self.one_shot and self._used:
             raise RuntimeError(
                 "TEMPLATE_ALREADY_INSPECTED: reuse the first inspection result and submit the Skill"
             )
-        source_sha256 = hashlib.sha256(target.read_bytes()).hexdigest()
+        source_sha256 = hashlib.sha256(logical_target.read_bytes()).hexdigest()
         cached = self._load_cache(
             relative=relative,
             source_sha256=source_sha256,
@@ -82,7 +96,7 @@ class InspectDocumentTool(Tool):
         if cached is not None:
             self._used = True
             return cached
-        parsed = parse_artifact(target)
+        parsed = parse_artifact(logical_target)
         if self.required_path is not None and parsed.error:
             raise RuntimeError(
                 "TEMPLATE_INSPECTION_FAILED: "
@@ -92,13 +106,16 @@ class InspectDocumentTool(Tool):
         result = {
             "path": relative,
             "kind": parsed.kind,
-            "text": text[:max_chars],
-            "truncated": len(text) > max_chars,
+            "text": text,
+            "truncated": False,
+            "requested_max_chars": max_chars,
+            "text_chars": len(text),
+            "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
             "visual_verified": parsed.visual_verified,
             "error": parsed.error,
         }
-        if target.suffix.casefold() == ".docx":
-            document = Document(target)
+        if logical_target.suffix.casefold() == ".docx":
+            document = Document(logical_target)
             headings = [
                 {
                     "paragraph": index + 1,
@@ -183,13 +200,24 @@ class InspectDocumentTool(Tool):
     ) -> dict[str, Any] | None:
         """Validate and return the durable result for one exact source."""
 
-        target = (self.workspace / path).resolve()
-        if not target.is_relative_to(self.workspace) or not target.is_file():
+        path_ref = Path(path)
+        if (
+            path_ref.is_absolute()
+            or ".." in path_ref.parts
+            or path_ref.as_posix() != path
+        ):
+            raise ValueError("document must be one canonical project-relative file")
+        logical_target = self.workspace / path_ref
+        resolved_target = logical_target.resolve()
+        if (
+            not resolved_target.is_relative_to(self.workspace)
+            or not resolved_target.is_file()
+        ):
             raise ValueError("document must be a file inside the project")
-        relative = target.relative_to(self.workspace).as_posix()
+        relative = path_ref.as_posix()
         return self._load_cache(
             relative=relative,
-            source_sha256=hashlib.sha256(target.read_bytes()).hexdigest(),
+            source_sha256=hashlib.sha256(logical_target.read_bytes()).hexdigest(),
             max_chars=max_chars,
         )
 

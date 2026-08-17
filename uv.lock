@@ -726,6 +726,9 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
+server = [
+    { name = "uvicorn" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -761,10 +764,11 @@ requires-dist = [
     { name = "rich", specifier = ">=13.0.0,<14.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9.0" },
     { name = "typer", specifier = ">=0.15.0,<1.0.0" },
+    { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.34.0,<1.0.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.0" },
     { name = "uvicorn-worker", specifier = ">=0.4.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "server"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -10,13 +10,14 @@ from manyselves.core.reporting.agentic_models import (
 )
 from manyselves.core.reporting.assets import (
     ReportAssetAssembler,
-    find_shallow_submodules,
     validate_editor_protection,
     validate_editor_quality,
     validate_existing_markdown_modules,
     validate_module_markdown_consistency,
 )
+from manyselves.core.reporting.input_contracts import ValidationReport
 from manyselves.core.reporting.models import EvidenceItem, PhotoAsset, SourceLocation
+from manyselves.core.reporting.review_preflight import evaluate_module_review_preflight
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY, compose_module_markdown
 
 
@@ -110,17 +111,123 @@ def _approved_modules() -> dict[str, ModuleSubmission]:
     }
 
 
+def test_report_taxonomy_matches_s4_6_columns_b_to_e() -> None:
+    expected = {
+        "2.1": (
+            "配电系统架构问题",
+            (
+                ("2.1.1", "配电系统负荷分配与过载风险"),
+                ("2.1.2", "关键负荷供电路径与应急/备用供电的问题"),
+                ("2.1.3", "配网自动化、备用电源自动切换（可能性及功能验证）"),
+                ("2.1.4", "防止2路电源并联产生环流"),
+                ("2.1.5", "系统无功补偿与电容柜问题"),
+            ),
+        ),
+        "2.2": (
+            "环境工况风险",
+            (
+                ("2.2.1", "来自电能质量的风险"),
+                ("2.2.1.1", "谐波风险情况"),
+                ("2.2.1.2", "电压扰动情况"),
+                ("2.2.1.3", "频繁启动与冲击负荷"),
+                ("2.2.2", "其他运行工况风险"),
+                ("2.2.2.1", "低压配电设备发热情况"),
+                ("2.2.2.2", "高压配电设备局放情况"),
+                ("2.2.2.3", "其他物理环境风险"),
+            ),
+        ),
+        "2.3": (
+            "针对故障的保护",
+            (
+                ("2.3.1", "配电系统保护方案与定值的论证计算"),
+                ("2.3.2", "零序/漏电的防范"),
+                ("2.3.3", "电压事件（过压）的防范"),
+            ),
+        ),
+        "2.4": (
+            "配电设备/元件内在风险",
+            (
+                ("2.4.1", "配置与选型问题"),
+                ("2.4.1.1", "额定/分断能力"),
+                ("2.4.1.2", "配电柜分隔形式"),
+                ("2.4.1.3", "配电设备安全连锁/闭锁"),
+                ("2.4.1.4", "设备分合/储能/工作位置显示"),
+                ("2.4.2", "安装规范性问题"),
+                ("2.4.2.1", "裸露导体防护"),
+                ("2.4.2.2", "等电位连接与接地问题"),
+                ("2.4.2.3", "电气连接问题"),
+                ("2.4.2.4", "标牌标识"),
+                ("2.4.2.5", "电缆、桥架、母线安装问题"),
+                ("2.4.2.6", "设备外壳IP等级与封堵问题"),
+                ("2.4.3", "带病运行问题汇总"),
+                ("2.4.3.1", "低压回路剩余电流过大"),
+                ("2.4.3.2", "部分高压柜照明功能缺失"),
+                ("2.4.3.3", "部分高压柜柜内除湿装置未开启"),
+                ("2.4.4", "末端配电抽查情况"),
+            ),
+        ),
+        "2.5": (
+            "运维管理与风险管控机制",
+            (
+                ("2.5.1", "SOP/EOP"),
+                ("2.5.2", "图纸资料"),
+                ("2.5.3", "运维（巡检、维护）的实施与组织"),
+                ("2.5.3.1", "运维组织架构与人员配备"),
+                ("2.5.3.2", "关键配电设备维护工作全面性检查"),
+                ("2.5.3.3", "配电设备维保覆盖"),
+                ("2.5.4", "运维的智能化手段"),
+                ("2.5.5", "配电室装备与LOTO流程的实施"),
+                ("2.5.6", "备件管理"),
+                ("2.5.7", "退市设备与生命周期管理"),
+            ),
+        ),
+    }
+
+    actual = {
+        module_id: (
+            module.title,
+            tuple(
+                (section_id, section.title)
+                for section_id, section in module.sections.items()
+            ),
+        )
+        for module_id, module in REPORT_TAXONOMY.items()
+    }
+    assert actual == expected
+
+
+def test_module_markdown_preserves_intermediate_s4_6_headings() -> None:
+    module = REPORT_TAXONOMY["2.4"]
+    markdown = compose_module_markdown(
+        "2.4",
+        {
+            submodule_id: _deep_text(submodule_id, submodule.title)
+            for submodule_id, submodule in module.submodules.items()
+        },
+    )
+
+    assert "### 2.4.1 配置与选型问题" in markdown
+    assert "#### 2.4.1.1 额定/分断能力" in markdown
+    assert "### 2.4.2 安装规范性问题" in markdown
+    assert "### 2.4.3 带病运行问题汇总" in markdown
+    assert markdown.index("### 2.4.1 配置与选型问题") < markdown.index(
+        "#### 2.4.1.1 额定/分断能力"
+    )
+
+
 def _complete_markdown_modules() -> dict[str, str]:
     return {
-        module_id: "\n\n".join(
-            (
-                f"### {submodule_id} {submodule.title}\n\n"
-                "**现状描述：** 已核查现场记录、运行数据及文件资料，并明确了证据适用边界。\n\n"
-                "**判断：** 当前情况表明该项可能影响系统可靠性，仍需结合持续数据复核。\n\n"
-                "**风险与影响：** 若运行条件恶化，问题可能沿上下游扩大并导致供电中断。\n\n"
-                "**建议：** 应由责任部门完成专项排查、整改和复测，并以验收记录关闭风险。"
-            )
-            for submodule_id, submodule in definition.submodules.items()
+        module_id: compose_module_markdown(
+            module_id,
+            {
+                submodule_id: (
+                    "**现状描述：** 已核查现场记录、运行数据及文件资料，并明确了证据适用边界。\n\n"
+                    "**判断：** 当前情况表明该项可能影响系统可靠性，仍需结合持续数据复核。\n\n"
+                    "**风险与影响：** 若运行条件恶化，问题可能沿上下游扩大并导致供电中断。\n\n"
+                    "**建议：** 应由责任部门完成专项排查、整改和复测，并以验收记录关闭风险。"
+                )
+                for submodule_id in definition.submodules
+            },
         )
         for module_id, definition in REPORT_TAXONOMY.items()
     }
@@ -142,7 +249,7 @@ def _quality_edited() -> EditedReportSubmission:
 def test_existing_markdown_modules_require_every_full_submodule() -> None:
     modules = _complete_markdown_modules()
     modules["2.5"] = (
-        "## 2.5 运维管理与风险管控\n\n"
+        "## 2.5 运维管理与风险管控机制\n\n"
         "九个子模块的结论概述见汇总表，仅引用 E-0001 至 E-0009。"
     )
 
@@ -157,30 +264,39 @@ def test_existing_markdown_modules_accept_detailed_fixed_sections() -> None:
 def test_module_markdown_audit_rejects_export_that_drops_fixed_sections() -> None:
     modules = _approved_modules()
     exported = {module_id: module.markdown for module_id, module in modules.items()}
-    exported["2.5"] = "## 2.5 运维管理与风险管控\n\n九个子模块概览见汇总表。"
+    exported["2.5"] = "## 2.5 运维管理与风险管控机制\n\n九个子模块概览见汇总表。"
 
     with pytest.raises(ValueError, match="missing_export_sections.*2.5.1"):
         validate_module_markdown_consistency(modules, exported)
 
 
-def test_module_depth_heuristic_returns_non_binding_signals() -> None:
-    modules = _approved_modules()
-    narratives = {
-        submodule_id: "检查结果为 OK。"
-        for submodule_id in REPORT_TAXONOMY["2.5"].submodules
-    }
-    modules["2.5"] = ModuleSubmission(
-        module_id="2.5",
-        submodule_narratives=narratives,
-        claims=[],
-        source_ids=[],
-        unresolved_questions=[],
-        revision=0,
+def test_module_preflight_does_not_gate_on_file_hash(tmp_path: Path) -> None:
+    module = _approved_modules()["2.1"]
+    subject_ref = "Work/runs/run-preflight/modules/2.1-r0.json"
+    subject_path = tmp_path / subject_ref
+    subject_path.parent.mkdir(parents=True)
+    subject_path.write_text(module.model_dump_json(), encoding="utf-8")
+    upstream = ValidationReport(
+        validation_protocol_version=2,
+        run_id="run-preflight",
+        subject_ref=subject_ref,
+        subject_revision=0,
+        validator="module-structure/v2",
+        check_ids=["module.canonical_markdown"],
+        failures=[],
+        passed=True,
     )
 
-    assert set(find_shallow_submodules(modules)) == set(
-        REPORT_TAXONOMY["2.5"].submodules
+    result = evaluate_module_review_preflight(
+        tmp_path,
+        run_id="run-preflight",
+        subject=module,
+        subject_ref=subject_ref,
+        upstream_report=upstream,
     )
+
+    assert result.report.passed is True
+    assert "content_sha256" not in type(result.report).model_fields
 
 
 def test_editor_must_protect_every_approved_claim() -> None:
@@ -202,6 +318,39 @@ def test_editor_claim_marker_must_occur_once_in_claim_module() -> None:
 
     with pytest.raises(ValueError, match="exactly once"):
         validate_editor_protection(edited, [_claim()])
+
+
+def test_editor_claim_marker_must_stay_in_its_fixed_submodule() -> None:
+    claim = _claim()
+    edited = _edited(
+        protected_claim_ids=[claim.id],
+        module_narratives={
+            **_edited().module_narratives,
+            "2.4": (
+                "#### 2.4.2.2 等电位连接与接地问题\n"
+                "错误子模块承载了引用 [[CLAIM:C-2.4-001]]。\n\n"
+                "#### 2.4.2.3 电气连接问题\n"
+                "正确子模块正文。"
+            ),
+        },
+    )
+
+    with pytest.raises(ValueError, match="must remain in submodule"):
+        validate_editor_protection(edited, [claim])
+
+
+def test_editor_protection_rejects_noncanonical_claim_source_ids() -> None:
+    claim = _claim().model_copy(update={"source_ids": ["source-table-row-1"]})
+    edited = _edited(
+        protected_claim_ids=[claim.id],
+        module_narratives={
+            **_edited().module_narratives,
+            "2.4": "正文 [[CLAIM:C-2.4-001]]",
+        },
+    )
+
+    with pytest.raises(ValueError, match="non-canonical source ids"):
+        validate_editor_protection(edited, [claim])
 
 
 def test_module_claim_marker_is_owned_by_the_claim_submodule() -> None:
@@ -264,7 +413,7 @@ def test_editor_quality_requires_every_fixed_submodule() -> None:
         )
 
 
-def test_editor_quality_rejects_over_compression() -> None:
+def test_editor_quality_does_not_compare_approved_prose_bytes() -> None:
     edited = _quality_edited()
     modules = _approved_modules()
     modules["2.1"] = modules["2.1"].model_copy(
@@ -276,8 +425,7 @@ def test_editor_quality_rejects_over_compression() -> None:
         }
     )
 
-    with pytest.raises(ValueError, match="deleted or rewrote approved prose from 2.1"):
-        validate_editor_quality(edited, modules)
+    assert validate_editor_quality(edited, modules) == []
 
 
 def test_editor_quality_compares_prose_after_canonical_heading_normalization() -> None:
@@ -326,11 +474,11 @@ def test_editor_quality_does_not_reaudit_approved_submodule_semantics() -> None:
     validate_editor_quality(edited, modules)
 
 
-def test_editor_quality_reports_short_risk_panorama_as_non_binding_observation() -> None:
+def test_editor_quality_does_not_score_short_risk_panorama() -> None:
     edited = _quality_edited().model_copy(update={"risk_panorama": "建议后续整改。"})
 
     observations = validate_editor_quality(edited, _approved_modules())
-    assert "risk_panorama:length_below_guideline" in observations
+    assert observations == []
 
 
 def test_editor_quality_skips_optional_special_topic_gate_when_plan_is_absent() -> None:
@@ -343,7 +491,7 @@ def test_editor_quality_skips_optional_special_topic_gate_when_plan_is_absent() 
     assert not any(item.startswith("special_topic_analysis:") for item in observations)
 
 
-def test_editor_quality_reports_pointer_only_sections_without_rejecting() -> None:
+def test_editor_quality_does_not_score_pointer_only_sections() -> None:
     edited = _quality_edited().model_copy(
         update={
             "assessment_background": "评估背景详见第二章。",
@@ -360,8 +508,7 @@ def test_editor_quality_reports_pointer_only_sections_without_rejecting() -> Non
     )
 
     observations = validate_editor_quality(edited, _approved_modules())
-    assert "assessment_background:length_below_guideline" in observations
-    assert "improvement_action_plan:length_below_guideline" in observations
+    assert observations == []
 
 
 def test_asset_assembler_builds_traceable_table_and_photo(tmp_path: Path) -> None:
@@ -484,6 +631,53 @@ def test_asset_assembler_requires_and_builds_every_source_table_photo(
             [claim],
             edited.model_copy(update={"photo_ids": ["IMG-1"]}),
         )
+
+
+def test_asset_assembler_rejects_source_table_photo_without_runtime_asset(
+    tmp_path: Path,
+) -> None:
+    evidence = EvidenceItem(
+        id="E-0001",
+        subject="对象",
+        fact="检查结果=NG",
+        source=SourceLocation(
+            file_id="F-1",
+            path=Path("Inputs/check.xlsx"),
+            cell="A1",
+        ),
+        module_id="2.4",
+        submodule_id="2.4.2.1",
+        photo_refs=["P-MISSING"],
+    )
+
+    with pytest.raises(ValueError, match="missing from the runtime manifest"):
+        ReportAssetAssembler.runtime_photo_ids([evidence], [])
+
+
+def test_asset_assembler_rejects_non_e_photo_evidence_binding() -> None:
+    evidence = EvidenceItem(
+        id="row-1",
+        subject="对象",
+        fact="检查结果=NG",
+        source=SourceLocation(
+            file_id="F-1",
+            path=Path("Inputs/check.xlsx"),
+            cell="A1",
+        ),
+        module_id="2.4",
+        submodule_id="2.4.2.1",
+        photo_refs=["P-0001"],
+    )
+    asset = PhotoAsset(
+        id="P-0001",
+        path=Path("Work/assets/P-0001.png"),
+        sha256="abc",
+        media_type="image/png",
+        source_member="media/image1.png",
+    )
+
+    with pytest.raises(ValueError, match=r"canonical E-\* ids"):
+        ReportAssetAssembler.runtime_photo_ids([evidence], [asset])
 
 
 def test_asset_assembler_rejects_unknown_explicit_primary_photo_evidence(

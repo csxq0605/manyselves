@@ -10,6 +10,10 @@ from typing import Any, Literal
 from pydantic import Field, TypeAdapter, model_validator
 
 from .agentic_models import (
+    ClaimRecord,
+    ChapterScopedFinalReviewFinding,
+    CrossDecisionPack,
+    ChiefChapterLaneRevisionSubmission,
     FINAL_AUDIT_SECTION_IDS,
     CrossReviewFinding,
     CrossSynthesisInput,
@@ -21,13 +25,21 @@ from .agentic_models import (
     ResolutionVerdict,
     RevisionResponse,
     StrictModel,
+    TEMPLATE_ROLE_SKILL_IDS,
     TEMPLATE_SKILL_EXCLUSION_CATEGORIES,
     TEMPLATE_SKILL_TRANSFER_CATEGORIES,
+    TemplateRoleSkillId,
     TableSubmissionInput,
 )
-from .models import SpecialTopicPlan
+from .models import (
+    CHAPTER1_SECTION_IDS,
+    CHAPTER3_SECTION_IDS,
+    CHAPTER_IDS,
+    SpecialTopicPlan,
+    chapter_section_ids,
+)
 from .submission_contracts import FIELD_GUIDANCE
-from .taxonomy import REPORT_TAXONOMY
+from .taxonomy import REPORT_TAXONOMY, resolve_submodule
 
 
 class ModuleContentView(StrictModel):
@@ -40,6 +52,42 @@ class ModuleContentView(StrictModel):
         description="Registered E-* evidence ids already bound to each visible submodule."
     )
     unresolved_questions: list[str] = Field(default_factory=list)
+
+
+class CrossDecisionPackView(StrictModel):
+    """Model-visible, lossless Cross decision boundary.
+
+    The runtime uses current-run typed references and business identity.  Hash
+    metadata is neither exposed here nor consulted by completion/recovery.
+    """
+
+    version: int = Field(default=1, ge=1)
+    run_id: str = Field(min_length=1)
+    module_ids: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(
+        min_length=5,
+        max_length=5,
+    )
+    cross_review_completion_ref: str = Field(min_length=1)
+    synthesis_inputs: list[CrossSynthesisInput] = Field(default_factory=list)
+    artifact_refs: list[str] = Field(
+        default_factory=list,
+        description="Current-run Cross completion refs retained for business identity.",
+    )
+
+    @model_validator(mode="after")
+    def view_matches_closed_pack(self) -> "CrossDecisionPackView":
+        expected_refs = {self.cross_review_completion_ref}
+        if not self.artifact_refs:
+            self.artifact_refs = sorted(expected_refs)
+        if sorted(set(self.artifact_refs)) != sorted(expected_refs):
+            raise ValueError(
+                "Cross decision view artifact_refs must exactly cover Cross completion"
+            )
+        # Reuse the complete pack's business checks without synthesizing hash fields.
+        payload = self.model_dump(mode="python")
+        payload.pop("artifact_refs", None)
+        CrossDecisionPack.model_validate(payload)
+        return self
 
 
 class ReviewEvidenceExcerpt(StrictModel):
@@ -56,8 +104,10 @@ class ReviewEvidenceExcerpt(StrictModel):
     )
     content: str = Field(
         min_length=1,
-        max_length=4_000,
-        description="Bounded normalized evidence content needed to audit the cited prose.",
+        description=(
+            "Complete normalized current-run evidence content needed to audit the cited "
+            "prose. Runtime cost optimization must not truncate this authoritative input."
+        ),
     )
 
 
@@ -263,6 +313,127 @@ def final_audit_metadata_view(
     )
 
 
+def _validate_chapter_lane_scope(
+    chapter_id: str,
+    section_ids: list[str],
+    special_topic_plan: SpecialTopicPlan | None,
+) -> None:
+    """Validate one lane's complete active scope without copying the report."""
+
+    if chapter_id not in CHAPTER_IDS:
+        raise ValueError(f"unsupported chapter lane: {chapter_id}")
+    if len(section_ids) != len(set(section_ids)) or not section_ids:
+        raise ValueError("chapter lane section_ids must be non-empty and unique")
+    if chapter_id == "1":
+        expected = set(CHAPTER1_SECTION_IDS)
+        if set(section_ids) != expected:
+            raise ValueError(f"Chapter 1 lane must cover exactly {sorted(expected)}")
+    elif chapter_id == "3":
+        expected = set(CHAPTER3_SECTION_IDS)
+        if set(section_ids) != expected:
+            raise ValueError(f"Chapter 3 lane must cover exactly {sorted(expected)}")
+    else:
+        if special_topic_plan is None:
+            raise ValueError("Chapter 4 lane requires special_topic_plan")
+        expected = set(chapter_section_ids("4", special_topic_plan))
+        if set(section_ids) != expected:
+            raise ValueError(
+                "Chapter 4 lane section_ids must exactly match special_topic_plan"
+            )
+
+
+class ChiefChapterLaneInput(StrictModel):
+    """Initial/revision Chief task carrying only one chapter's prose scope."""
+
+    kind: Literal["chief_chapter_lane_input"] = "chief_chapter_lane_input"
+    phase: Literal["initial", "revision"] = "initial"
+    run_id: str = Field(min_length=1)
+    subject_ref: str = Field(min_length=1)
+    chapter_id: Literal["1", "3", "4"]
+    section_ids: list[str] = Field(min_length=1)
+    section_bodies: dict[str, str] = Field(default_factory=dict)
+    source_context: dict[str, str] = Field(
+        default_factory=dict,
+        description="Lane-local source projections; never the complete edited report.",
+    )
+    source_refs: list[str] = Field(default_factory=list)
+    assigned_findings: list[ChapterScopedFinalReviewFinding] = Field(default_factory=list)
+    special_topic_plan: SpecialTopicPlan | None = None
+    revision: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def lane_is_complete_and_local(self) -> "ChiefChapterLaneInput":
+        _validate_chapter_lane_scope(self.chapter_id, self.section_ids, self.special_topic_plan)
+        if self.phase == "revision" and set(self.section_bodies) != set(self.section_ids):
+            raise ValueError("Chief revision lane section_bodies must exactly match section_ids")
+        if any(not body.strip() for body in self.section_bodies.values()):
+            raise ValueError("Chief lane section_bodies must not be blank")
+        for finding in self.assigned_findings:
+            if not set(finding.target_section_ids).issubset(self.section_ids):
+                raise ValueError("Chief lane findings must stay in lane section_ids")
+        if self.phase == "initial" and (self.assigned_findings or not (self.source_context or self.source_refs)):
+            raise ValueError("initial Chief lane requires lane-local source context and no findings")
+        if self.phase == "revision" and not self.assigned_findings:
+            raise ValueError("revision Chief lane requires assigned findings")
+        return self
+
+
+class FinalChapterLaneInput(StrictModel):
+    """Initial/recheck Final task carrying only one chapter's prose scope."""
+
+    kind: Literal["final_chapter_lane_input"] = "final_chapter_lane_input"
+    phase: Literal["initial", "recheck"] = "initial"
+    run_id: str = Field(min_length=1)
+    subject_ref: str = Field(min_length=1)
+    chapter_id: Literal["1", "3", "4"]
+    review_focus: list[str] = Field(
+        default_factory=list,
+        description="Chapter-specific semantic review questions for this Final lane.",
+    )
+    section_ids: list[str] = Field(min_length=1)
+    section_bodies: dict[str, str] = Field(min_length=1)
+    unchanged_section_sha256: dict[str, str] = Field(
+        default_factory=dict,
+        description="Recheck-only hashes for unchanged sections retained in identity history.",
+    )
+    required_findings: list[ChapterScopedFinalReviewFinding] = Field(default_factory=list)
+    revision_responses: list[RevisionResponse] = Field(default_factory=list)
+    special_topic_plan: SpecialTopicPlan | None = None
+    revision: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def lane_is_complete_and_local(self) -> "FinalChapterLaneInput":
+        _validate_chapter_lane_scope(self.chapter_id, self.section_ids, self.special_topic_plan)
+        if not self.review_focus:
+            raise ValueError("parallel final review lane requires a chapter review focus")
+        body_ids = set(self.section_bodies)
+        hash_ids = set(self.unchanged_section_sha256)
+        if body_ids.intersection(hash_ids):
+            raise ValueError("Final lane bodies and unchanged hashes must not overlap")
+        if self.phase == "initial" and (body_ids != set(self.section_ids) or hash_ids):
+            raise ValueError("initial Final lane requires every section body and no hashes")
+        if self.phase == "recheck" and body_ids.union(hash_ids) != set(self.section_ids):
+            raise ValueError("Final recheck bodies and hashes must cover section_ids exactly")
+        if self.phase == "recheck" and not body_ids:
+            raise ValueError("Final recheck requires at least one changed section body")
+        if any(not body.strip() for body in self.section_bodies.values()):
+            raise ValueError("Final lane section_bodies must not be blank")
+        if any(not re.fullmatch(r"[0-9a-f]{64}", digest) for digest in self.unchanged_section_sha256.values()):
+            raise ValueError("Final lane unchanged section hashes must be SHA-256")
+        finding_ids = {finding.id for finding in self.required_findings}
+        response_ids = {response.finding_id for response in self.revision_responses}
+        if not response_ids.issubset(finding_ids):
+            raise ValueError("Final lane responses must reference required lane findings")
+        for finding in self.required_findings:
+            if not set(finding.target_section_ids).issubset(self.section_ids):
+                raise ValueError("Final lane findings must stay in lane section_ids")
+        if self.phase == "initial" and (self.required_findings or self.revision_responses):
+            raise ValueError("initial Final lane cannot carry recheck findings or responses")
+        if self.phase == "recheck" and not self.required_findings:
+            raise ValueError("Final recheck lane requires required findings")
+        return self
+
+
 class TemplateDistillationInput(StrictModel):
     kind: Literal["template_distillation_input"] = "template_distillation_input"
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
@@ -274,8 +445,8 @@ class TemplateDistillationInput(StrictModel):
         ge=1,
         description="Exact maximum character budget for the one allowed document inspection.",
     )
-    required_part_ids: list[Literal["skill", "analysis", "synthesis", "visual", "rubric"]] = Field(
-        description="Exact durable result parts required before final submission."
+    required_part_ids: list[TemplateRoleSkillId] = Field(
+        description="Exact fourteen role-, module-, and Chief-chapter Skill parts required before submission."
     )
     boundary_policy_version: Literal[1] = Field(
         default=1,
@@ -315,9 +486,9 @@ class TemplateDistillationInput(StrictModel):
 
     @model_validator(mode="after")
     def exact_parts(self) -> "TemplateDistillationInput":
-        expected = {"skill", "analysis", "synthesis", "visual", "rubric"}
-        if set(self.required_part_ids) != expected or len(self.required_part_ids) != 5:
-            raise ValueError("template distillation requires exactly five named parts")
+        expected = set(TEMPLATE_ROLE_SKILL_IDS)
+        if set(self.required_part_ids) != expected or len(self.required_part_ids) != len(expected):
+            raise ValueError("template distillation requires exactly fourteen role Skill parts")
         if (
             set(self.allowed_transfer_categories)
             != TEMPLATE_SKILL_TRANSFER_CATEGORIES
@@ -368,6 +539,14 @@ class ModuleAuthoringInput(StrictModel):
             "inline_context. It is not delivered by reference and must not be reopened."
         ),
     )
+    collaboration_bundle_ref: str | None = Field(
+        default=None,
+        description=(
+            "Current-run Barrier 2 bundle for this module. New three-wave authoring "
+            "tasks must consume this compact typed artifact instead of blocking on "
+            "live peer queries; the nullable default preserves legacy/recovery fixtures."
+        ),
+    )
     saved_part_ids: list[str] = Field(
         default_factory=list,
         description="Already persisted submodule part ids; no filesystem refs are exposed.",
@@ -378,7 +557,6 @@ class ModuleAuthoringInput(StrictModel):
             "Saved parts that must be rewritten under the current evidence-binding contract."
         ),
     )
-
     @model_validator(mode="after")
     def exact_module_scope(self) -> "ModuleAuthoringInput":
         expected = set(REPORT_TAXONOMY[self.module_id].submodules)
@@ -437,19 +615,39 @@ class ModuleReviewInput(StrictModel):
             "without exposing the runtime authoring protocol."
         ),
     )
+    prior_claim_statements: list[ReviewClaimStatement] = Field(
+        default_factory=list,
+        description=(
+            "Recheck-only prior semantics for Claims added, removed, or changed since "
+            "the last paid review. Unchanged statements are retained only by hash."
+        ),
+    )
+    unchanged_submodule_sha256: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Recheck-only hashes for required submodule narratives unchanged since "
+            "the last paid review."
+        ),
+    )
+    unchanged_statement_sha256: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Recheck-only hashes for unchanged Claim statements in the required scope."
+        ),
+    )
     knowledge_ref: str | None = Field(
         default=None,
         description=(
             "Provenance path for the current-run module Knowledge artifact from which the "
-            "inline bounded slice was made; it is not a readable task reference."
+            "inline bounded slice was made. Initial review carries the body; later tasks "
+            "retain only this provenance because the auditor identity is persistent."
         ),
     )
     knowledge_context: str = Field(
         default="",
-        max_length=14_000,
         description=(
-            "Only sourced domain mechanisms, standards, thresholds, and applicability sections "
-            "aligned to required_submodule_ids; never workflow method or current-project evidence."
+            "Initial-review selected taxonomy sections from the immutable Knowledge snapshot; "
+            "later persistent-identity tasks leave this empty unless Knowledge changed."
         ),
     )
     evidence: list[ReviewEvidenceExcerpt] = Field(
@@ -483,7 +681,10 @@ class ModuleReviewInput(StrictModel):
     )
     baseline_subject_ref: str | None = Field(
         default=None,
-        description="Prior module subject from which the local_regression revision was made.",
+        description=(
+            "Prior module subject used by local_regression or the last subject actually "
+            "seen by the paid reviewer before a recheck."
+        ),
     )
     trigger_cross_findings: list[CrossReviewFinding] = Field(
         default_factory=list,
@@ -499,24 +700,26 @@ class ModuleReviewInput(StrictModel):
     )
     revision_diff: ModuleRevisionDiff | None = Field(
         default=None,
-        description="Exact typed diff for the local_regression pass.",
+        description="Exact typed diff from baseline_subject_ref to the current subject.",
     )
     validation_report_ref: str = Field(
         min_length=1,
         description=(
-            "Independent machine validation artifact. It may reject structure "
+            "Independent structural validation artifact. It may reject structure "
             "but never decides semantic findings."
         ),
     )
     validation_report: "ValidationReport" = Field(
         description=(
-            "Exact typed machine validation result for this subject, including "
-            "non-binding observations."
+            "Exact typed structural validation result for this subject."
         )
     )
 
     @model_validator(mode="after")
     def phase_fields_match(self) -> "ModuleReviewInput":
+        scope = set(self.required_submodule_ids)
+        if len(scope) != len(self.required_submodule_ids):
+            raise ValueError("module review required_submodule_ids must be unique")
         if self.phase == "initial" and self.review_round != 0:
             raise ValueError("initial module review must use review_round zero")
         if self.phase == "local_regression" and self.review_round != 0:
@@ -527,61 +730,105 @@ class ModuleReviewInput(StrictModel):
             raise ValueError("module review subject belongs to a different module")
         if self.subject.revision != self.subject_revision:
             raise ValueError("module review subject_revision does not match subject")
-        if bool(self.knowledge_ref) != bool(self.knowledge_context.strip()):
+        if (
+            set(self.subject.submodule_narratives) - scope
+            or set(self.subject.evidence_ids_by_submodule) - scope
+        ):
+            raise ValueError("module review subject lies outside required_submodule_ids")
+        if self.knowledge_context.strip() and not self.knowledge_ref:
             raise ValueError(
-                "module review knowledge_ref and knowledge_context must be provided together"
+                "module review inline Knowledge requires its provenance ref"
             )
-        required_evidence_ids = {
+        if self.phase == "initial" and bool(self.knowledge_ref) != bool(
+            self.knowledge_context.strip()
+        ):
+            raise ValueError(
+                "initial module review must provide Knowledge ref and body together"
+            )
+        subject_evidence_ids = {
             evidence_id
             for values in self.subject.evidence_ids_by_submodule.values()
             for evidence_id in values
         }
         supplied_evidence_ids = [item.evidence_id for item in self.evidence]
-        if (
-            len(supplied_evidence_ids) != len(set(supplied_evidence_ids))
-            or set(supplied_evidence_ids) != required_evidence_ids
-        ):
-            raise ValueError("module review evidence must contain every bound E-* id exactly once")
         if any(
-            statement.submodule_id not in set(self.required_submodule_ids)
-            for statement in self.claim_statements
+            statement.submodule_id not in scope
+            for statement in [*self.claim_statements, *self.prior_claim_statements]
         ):
             raise ValueError("module review statements must stay inside required_submodule_ids")
-        statement_refs = [
+        current_statement_refs = [
             statement.statement_ref for statement in self.claim_statements
         ]
-        if len(statement_refs) != len(set(statement_refs)):
-            raise ValueError("module review statement refs must be unique")
-        claim_evidence_ids = {
+        prior_statement_refs = [
+            statement.statement_ref for statement in self.prior_claim_statements
+        ]
+        if len(current_statement_refs) != len(set(current_statement_refs)):
+            raise ValueError("module review current statement refs must be unique")
+        if len(prior_statement_refs) != len(set(prior_statement_refs)):
+            raise ValueError("module review prior statement refs must be unique")
+        current_claim_evidence_ids = {
             evidence_id
             for statement in self.claim_statements
             for evidence_id in statement.evidence_ids
             if evidence_id.startswith("E-")
         }
-        if claim_evidence_ids != required_evidence_ids:
+        prior_claim_evidence_ids = {
+            evidence_id
+            for statement in self.prior_claim_statements
+            for evidence_id in statement.evidence_ids
+            if evidence_id.startswith("E-")
+        }
+        finding_evidence_ids = {
+            evidence_ref
+            for finding in self.required_findings
+            for evidence_ref in finding.evidence_refs
+            if evidence_ref.startswith("E-")
+        }
+        required_evidence_ids = (
+            current_claim_evidence_ids
+            | prior_claim_evidence_ids
+            | finding_evidence_ids
+            if self.phase == "recheck"
+            else subject_evidence_ids
+        )
+        if (
+            len(supplied_evidence_ids) != len(set(supplied_evidence_ids))
+            or set(supplied_evidence_ids) != required_evidence_ids
+        ):
+            raise ValueError("module review evidence packet does not match its active semantics")
+        if self.phase != "recheck" and current_claim_evidence_ids != subject_evidence_ids:
             raise ValueError("module review claims and subject evidence bindings differ")
         if not self.validation_report.passed:
-            raise ValueError("module semantic review cannot start from failed machine validation")
+            raise ValueError("module semantic review cannot start from failed structural validation")
         if (
             self.validation_report.validation_protocol_version < 2
             or self.validation_report.subject_ref != self.subject_ref
             or self.validation_report.subject_revision != self.subject_revision
-            or self.validation_report.content_sha256 is None
         ):
-            raise ValueError("module review validation is stale or not content-bound")
+            raise ValueError("module review validation is stale or belongs to another subject")
         if self.phase == "initial" and (self.required_findings or self.revision_responses):
             raise ValueError("initial module review cannot contain prior findings or responses")
-        regression_values = (
+        local_regression_values = (
             self.prior_review_completion_ref,
             self.prior_review_completion,
-            self.baseline_subject_ref,
             self.trigger_cross_findings,
             self.trigger_revision_responses,
+        )
+        if self.phase != "local_regression" and any(local_regression_values):
+            raise ValueError("only local_regression may contain Cross revision context")
+        delta_values = (
+            self.baseline_subject_ref,
             self.revision_diff_ref,
             self.revision_diff,
         )
-        if self.phase != "local_regression" and any(regression_values):
-            raise ValueError("only local_regression may contain Cross revision context")
+        if self.phase == "initial" and any(delta_values):
+            raise ValueError("initial module review cannot contain revision delta state")
+        if self.phase != "recheck" and (
+            self.prior_claim_statements
+            or self.unchanged_submodule_sha256
+            or self.unchanged_statement_sha256
+        ):
+            raise ValueError("only module recheck may contain compact delta state")
         if self.phase == "local_regression":
             if any(
                 value is None
@@ -644,6 +891,70 @@ class ModuleReviewInput(StrictModel):
             responses = {response.finding_id for response in self.revision_responses}
             if not required or responses != required:
                 raise ValueError("module recheck requires exactly one author response per finding")
+            if any(
+                value is None
+                for value in (
+                    self.baseline_subject_ref,
+                    self.revision_diff_ref,
+                    self.revision_diff,
+                )
+            ):
+                raise ValueError("module recheck requires its last-reviewed baseline and diff")
+            assert self.revision_diff is not None
+            if (
+                self.revision_diff.module_id != self.module_id
+                or self.revision_diff.to_revision != self.subject_revision
+                or not set(self.revision_diff.changed_submodule_narratives).issubset(scope)
+            ):
+                raise ValueError("module recheck diff does not bind its current scope")
+            changed_narratives = set(
+                self.revision_diff.changed_submodule_narratives
+            )
+            if set(self.subject.submodule_narratives) != changed_narratives:
+                raise ValueError("module recheck subject must contain only changed narratives")
+            unchanged_submodules = scope - changed_narratives
+            if set(self.unchanged_submodule_sha256) != unchanged_submodules:
+                raise ValueError("module recheck must hash every unchanged required narrative")
+            if any(
+                re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                for digest in self.unchanged_submodule_sha256.values()
+            ):
+                raise ValueError("module recheck narrative hashes must be SHA-256")
+            changed_statements = set(self.revision_diff.changed_statement_refs)
+            visible_changed_statements = set(current_statement_refs) | set(
+                prior_statement_refs
+            )
+            if visible_changed_statements != changed_statements:
+                raise ValueError(
+                    "module recheck must expose current and prior semantics for every "
+                    "changed statement"
+                )
+            if set(self.unchanged_statement_sha256) & changed_statements:
+                raise ValueError("changed statements cannot also be retained by hash")
+            if any(
+                re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                for digest in self.unchanged_statement_sha256.values()
+            ):
+                raise ValueError("module recheck statement hashes must be SHA-256")
+            expected_subject_evidence = {
+                submodule_id: sorted(
+                    {
+                        evidence_id
+                        for statement in self.claim_statements
+                        if statement.submodule_id == submodule_id
+                        for evidence_id in statement.evidence_ids
+                        if evidence_id.startswith("E-")
+                    }
+                )
+                for submodule_id in (
+                    changed_narratives
+                    | {statement.submodule_id for statement in self.claim_statements}
+                )
+            }
+            if self.subject.evidence_ids_by_submodule != expected_subject_evidence:
+                raise ValueError(
+                    "module recheck subject evidence must describe only current changed semantics"
+                )
         return self
 
     @property
@@ -653,6 +964,19 @@ class ModuleReviewInput(StrictModel):
 
 class CrossReviewInput(StrictModel):
     kind: Literal["cross_review_input"] = "cross_review_input"
+    owner_module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] = Field(
+        description=(
+            "Responsibility module for this specialized Cross lane. Every finding and "
+            "writeback target created by the lane must belong to this module."
+        )
+    )
+    review_focus: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Module-specific interface questions for this Cross lane. These specialize "
+            "discovery and do not grant module-authoring responsibility."
+        ),
+    )
     phase: Literal["initial", "recheck"] = Field(
         description="initial creates Cross findings; recheck closes required Cross findings."
     )
@@ -699,15 +1023,6 @@ class CrossReviewInput(StrictModel):
         default_factory=list,
         description="Previously supported synthesis inputs available during recheck.",
     )
-    machine_validation_refs: list[str] = Field(
-        default_factory=list,
-        description="Independent explicit-predicate validation reports for revised modules.",
-    )
-    machine_validation_reports: list["ValidationReport"] = Field(
-        default_factory=list,
-        description="Typed reports corresponding one-for-one to machine_validation_refs.",
-    )
-
     @model_validator(mode="after")
     def five_subjects_and_phase_fields_match(self) -> "CrossReviewInput":
         expected = {"2.1", "2.2", "2.3", "2.4", "2.5"}
@@ -726,14 +1041,19 @@ class CrossReviewInput(StrictModel):
             self.required_findings
             or self.revision_responses_by_module
             or self.local_regression_review_refs
-            or self.machine_validation_refs
-            or self.machine_validation_reports
             or self.unchanged_module_sha256
         ):
             raise ValueError("initial cross review cannot contain recheck state")
         if self.phase == "initial" and (set(self.modules) != expected or changed != expected):
             raise ValueError("initial cross review requires all five complete modules")
         if self.phase == "recheck":
+            if any(
+                finding.owner_module_id != self.owner_module_id
+                for finding in self.required_findings
+            ):
+                raise ValueError(
+                    "cross lane required findings must belong to owner_module_id"
+                )
             if not changed or set(self.modules) != changed:
                 raise ValueError("cross recheck full subjects must equal changed_module_ids")
             unchanged = expected - changed
@@ -752,31 +1072,182 @@ class CrossReviewInput(StrictModel):
                 for values in self.revision_responses_by_module.values()
                 for response in values
             }
-            if not required or responses != required:
+            if responses != required:
                 raise ValueError("cross recheck requires one owner response per finding")
-            if len(self.machine_validation_refs) != len(self.machine_validation_reports):
-                raise ValueError("cross recheck validation refs and reports must correspond")
-            if any(not report.passed for report in self.machine_validation_reports):
-                raise ValueError("cross recheck cannot start from failed machine validation")
-            changed_refs = {
-                self.module_refs[module_id] for module_id in self.changed_module_ids
-            }
-            if {
-                report.subject_ref for report in self.machine_validation_reports
-            } != changed_refs:
-                raise ValueError("cross recheck validations do not cover final changed subjects")
-            revision_by_ref = {
-                self.module_refs[module_id]: self.module_revisions[module_id]
-                for module_id in self.changed_module_ids
-            }
-            if any(
-                report.validation_protocol_version < 2
-                or report.subject_revision
-                != revision_by_ref.get(report.subject_ref)
-                or report.content_sha256 is None
-                for report in self.machine_validation_reports
+        return self
+
+
+class CrossOwnerRelatedModuleView(StrictModel):
+    """Compact read-only relation view supplied to one Cross owner."""
+
+    module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] = Field(
+        description="Related module represented by this read-only compact view."
+    )
+    revision: int = Field(
+        ge=0,
+        description="Persisted revision of the related module subject."
+    )
+    subject_ref: str = Field(
+        min_length=1,
+        description="Immutable artifact ref for the related module subject."
+    )
+    subject_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+        description="SHA-256 hash binding the related module subject artifact."
+    )
+    submodule_ids: list[str] = Field(
+        min_length=1,
+        description="Fixed submodule ids visible in the related compact view."
+    )
+    claims: list[ClaimRecord] = Field(
+        default_factory=list,
+        description=(
+            "Compact claim summaries carrying text, type, E-* sources, confidence, "
+            "and unresolved status for related-module reasoning."
+        ),
+    )
+    evidence_ids_by_submodule: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Registered E-* evidence ids bound to each related submodule."
+    )
+    unresolved_questions: list[str] = Field(
+        default_factory=list,
+        description="Open questions recorded by the related module author."
+    )
+
+    @model_validator(mode="after")
+    def claims_match_module(self) -> "CrossOwnerRelatedModuleView":
+        if any(claim.module_id != self.module_id for claim in self.claims):
+            raise ValueError("related compact claims must remain in their module scope")
+        if any(claim.submodule_id not in self.submodule_ids for claim in self.claims):
+            raise ValueError("related compact claims must target visible submodules")
+        return self
+
+
+class CrossOwnerInput(StrictModel):
+    """Typed input for one fixed Cross-owner reviewer.
+
+    The owner receives its complete module view.  Every other module is present
+    only as a compact, hash-bound relation view; those modules are read-only and
+    cannot become revision targets for this lane.
+    """
+
+    kind: Literal["cross_owner_input"] = "cross_owner_input"
+    phase: Literal["initial", "recheck"] = Field(
+        description="Whether this is the owner's initial review or its bound recheck."
+    )
+    run_id: str = Field(min_length=1, description="Immutable current report run id.")
+    review_round: int = Field(
+        ge=0,
+        description="Cross-owner review round represented by this input."
+    )
+    owner_module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"] = Field(
+        description="Only module this owner may review and revise."
+    )
+    review_focus: list[str] = Field(
+        min_length=1,
+        description=(
+            "Owner-module-specific Cross interface questions. They specialize discovery "
+            "without granting authoring responsibility or injecting a professional Skill."
+        ),
+    )
+    owner_subject_ref: str = Field(
+        min_length=1,
+        description="Immutable artifact ref for the owner's complete module subject."
+    )
+    owner_subject_revision: int = Field(
+        ge=0,
+        description="Revision of the owner's complete module subject."
+    )
+    owner_subject: ModuleContentView = Field(
+        description="Complete current view of the module owned by this reviewer."
+    )
+    owner_scope_submodule_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Bounded owner scope for this Cross execution lane, derived from the run taxonomy."
+        ),
+    )
+    related_module_refs: dict[
+        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
+    ] = Field(description="Immutable refs for the other four read-only module subjects.")
+    related_module_revisions: dict[
+        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], int
+    ] = Field(description="Revisions for the other four read-only module subjects.")
+    related_module_sha256: dict[
+        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
+    ] = Field(description="SHA-256 hashes for the other four read-only module subjects.")
+    related_module_views: dict[
+        Literal["2.1", "2.2", "2.3", "2.4", "2.5"], CrossOwnerRelatedModuleView
+    ] = Field(description="Compact, hash-bound views for the other four modules.")
+    required_findings: list[CrossReviewFinding] = Field(
+        default_factory=list,
+        description="Owner-scoped findings that the recheck must resolve."
+    )
+    revision_responses: list[RevisionResponse] = Field(
+        default_factory=list,
+        description="Owner responses corresponding one-for-one to required findings."
+    )
+    prior_synthesis_inputs: list[CrossSynthesisInput] = Field(
+        default_factory=list,
+        description="Cross synthesis entries carried into the owner's recheck."
+    )
+    local_regression_review_ref: str | None = Field(
+        default=None,
+        description="Immutable owner-module Auditor completion used by recheck."
+    )
+    @model_validator(mode="after")
+    def exact_owner_and_relation_scope(self) -> "CrossOwnerInput":
+        if not self.review_focus:
+            raise ValueError("Cross owner lane requires an owner-specific review focus")
+        expected_related = set(REPORT_TAXONOMY) - {self.owner_module_id}
+        if self.owner_subject.module_id != self.owner_module_id:
+            raise ValueError("Cross owner subject belongs to another module")
+        if self.owner_subject.revision != self.owner_subject_revision:
+            raise ValueError("Cross owner subject revision does not match owner metadata")
+        visible = list(self.owner_subject.submodule_narratives)
+        if not self.owner_scope_submodule_ids:
+            self.owner_scope_submodule_ids = visible
+        if visible != self.owner_scope_submodule_ids:
+            raise ValueError("Cross owner subject must contain exactly its bounded lane scope")
+        if not set(visible).issubset(REPORT_TAXONOMY[self.owner_module_id].submodules):
+            raise ValueError("Cross owner lane scope lies outside the run taxonomy")
+        if set(self.related_module_refs) != expected_related:
+            raise ValueError("Cross owner input must include exactly the other four modules")
+        if set(self.related_module_revisions) != expected_related:
+            raise ValueError("Cross owner relation revisions must cover the other four modules")
+        if set(self.related_module_sha256) != expected_related:
+            raise ValueError("Cross owner relation hashes must cover the other four modules")
+        if set(self.related_module_views) != expected_related:
+            raise ValueError("Cross owner compact relation views must cover the other four modules")
+        for module_id in expected_related:
+            view = self.related_module_views[module_id]
+            if (
+                view.module_id != module_id
+                or view.revision != self.related_module_revisions[module_id]
+                or view.subject_ref != self.related_module_refs[module_id]
+                or view.subject_sha256 != self.related_module_sha256[module_id]
             ):
-                raise ValueError("cross recheck validation is stale or not content-bound")
+                raise ValueError("Cross owner relation view/hash binding is inconsistent")
+        for finding in self.required_findings:
+            if finding.owner_module_id != self.owner_module_id:
+                raise ValueError("Cross owner required finding lies outside owner scope")
+        if self.phase == "initial":
+            if self.review_round != 0:
+                raise ValueError("initial Cross owner review must use round zero")
+            if self.required_findings or self.revision_responses:
+                raise ValueError("initial Cross owner input cannot contain recheck state")
+            if self.local_regression_review_ref:
+                raise ValueError("initial Cross owner input cannot contain regression refs")
+        else:
+            if self.review_round <= 0:
+                raise ValueError("Cross owner recheck requires a positive review round")
+            required = {finding.id for finding in self.required_findings}
+            responses = {response.finding_id for response in self.revision_responses}
+            if not required or responses != required:
+                raise ValueError("Cross owner recheck requires one response per finding")
+            if not self.local_regression_review_ref:
+                raise ValueError("Cross owner recheck requires local regression completion")
         return self
 
 
@@ -786,6 +1257,20 @@ class FinalReviewInput(StrictModel):
         description="initial creates final findings; recheck closes required final findings."
     )
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
+    cross_decision: CrossDecisionPackView = Field(
+        description=(
+            "Complete terminal Cross decision view. It is the only semantic source for "
+            "cross-module synthesis, IF closures, and XMR verdicts in final review."
+        )
+    )
+    cross_decision_pack_ref: str = Field(
+        min_length=1,
+        description="Current-run immutable CrossDecisionPack artifact reference.",
+    )
+    residual_risks: list[str] = Field(
+        default_factory=list,
+        description="Transparent non-corrective Cross/final limitations retained for the reader.",
+    )
     subject_ref: str = Field(
         min_length=1,
         description="Exact current edited-report artifact reviewed in this pass.",
@@ -847,24 +1332,28 @@ class FinalReviewInput(StrictModel):
 
     @model_validator(mode="after")
     def phase_fields_match(self) -> "FinalReviewInput":
-        base_sections = set(FINAL_AUDIT_SECTION_IDS) - {"4"}
+        base_sections = set(FINAL_AUDIT_SECTION_IDS)
         active_sections = set(self.required_section_ids)
         if (
             len(self.required_section_ids) != len(set(self.required_section_ids))
-            or active_sections not in (base_sections, base_sections | {"4"})
+            or active_sections != base_sections
         ):
             raise ValueError(
-                "final review must cover exactly the active chief-owned sections; "
-                "Chapter 4 is required only when a special-topic plan is present"
+                "final review must cover exactly the seven summary/conclusion sections; "
+                "Chapter 2 and Chapter 4 are not semantic final-review targets"
             )
+        if self.cross_decision.run_id != self.run_id:
+            raise ValueError("final review CrossDecisionPack belongs to another run")
+        expected_pack_ref = f"Work/runs/{self.run_id}/"
+        if not self.cross_decision_pack_ref.startswith(expected_pack_ref):
+            raise ValueError("final review CrossDecisionPack ref belongs to another run")
         if not self.validation_report.passed:
             raise ValueError("final review requires a passed structural validation report")
         if (
             self.validation_report.validation_protocol_version < 2
             or self.validation_report.subject_revision != self.subject_revision
-            or self.validation_report.content_sha256 is None
         ):
-            raise ValueError("final review validation is stale or not content-bound")
+            raise ValueError("final review validation identity is stale")
         audit_sections = active_sections
         changed_sections = set(self.changed_section_bodies)
         unchanged_sections = set(self.unchanged_section_sha256)
@@ -873,6 +1362,10 @@ class FinalReviewInput(StrictModel):
                 raise ValueError("initial final review cannot contain prior findings or responses")
             if self.canonical_markdown is None or self.subject_metadata is None:
                 raise ValueError("initial final review requires full prose and metadata")
+            if re.search(r"(?m)^#{1,6}\s+2(?:\.|\s)|^#{1,6}\s+4(?:\.|\s)", self.canonical_markdown):
+                raise ValueError(
+                    "final review canonical Markdown cannot contain Chapter 2 or Chapter 4"
+                )
             if (
                 self.subject_metadata_sha256 is not None
                 or changed_sections
@@ -902,6 +1395,153 @@ class FinalReviewInput(StrictModel):
                 for digest in self.unchanged_section_sha256.values()
             ):
                 raise ValueError("final recheck unchanged section hashes must be SHA-256")
+        return self
+
+
+class AggregateFinalReviewInput(StrictModel):
+    """Independent final-review adapter for ``aggregate_existing``.
+
+    Aggregate reports intentionally have no Cross lifecycle.  This contract
+    carries the same seven-section audit delta as :class:`FinalReviewInput`
+    while making the independent mode and null ``cross_context`` explicit.
+    It must never be populated with a fabricated CrossDecisionPack.
+    """
+
+    kind: Literal["aggregate_final_review_input"] = "aggregate_final_review_input"
+    mode: Literal["aggregate_existing"] = Field(
+        default="aggregate_existing",
+        description="Explicit independent aggregate_existing route with no Cross lifecycle.",
+    )
+    cross_context: None = Field(
+        default=None,
+        description="Aggregate final review has no CrossDecisionPack.",
+    )
+    phase: Literal["initial", "recheck"] = Field(
+        description="Initial creates findings; recheck closes assigned findings."
+    )
+    run_id: str = Field(min_length=1, description="Immutable current report run id.")
+    residual_risks: list[str] = Field(
+        default_factory=list,
+        description="Transparent aggregate limitations retained for the reader.",
+    )
+    subject_ref: str = Field(
+        min_length=1, description="Exact current edited-report artifact under review."
+    )
+    subject_revision: int = Field(
+        ge=0, description="Workflow-owned chief-editor revision number."
+    )
+    subject_metadata: FinalAuditMetadataView | None = Field(
+        default=None,
+        description="Initial-pass non-prose metadata retained outside canonical Markdown.",
+    )
+    subject_metadata_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Recheck hash retaining unchanged initial-pass metadata.",
+    )
+    canonical_markdown: str | None = Field(
+        default=None, min_length=1, description="Initial-pass seven-section audit Markdown."
+    )
+    changed_section_bodies: dict[str, str] = Field(
+        default_factory=dict,
+        description="Recheck bodies for exactly the assigned finding targets.",
+    )
+    unchanged_section_sha256: dict[str, str] = Field(
+        default_factory=dict,
+        description="Recheck SHA-256 values for every unchanged audit section.",
+    )
+    required_section_ids: list[str] = Field(
+        min_length=1, description="Exactly the seven 1.x and 3.x audit section ids."
+    )
+    required_findings: list[FinalReviewFinding] = Field(
+        default_factory=list, description="Immutable prior findings requiring verdicts."
+    )
+    revision_responses: list[RevisionResponse] = Field(
+        default_factory=list, description="Chief responses to required findings."
+    )
+    validation_report_ref: str = Field(
+        min_length=1, description="Current-run deterministic structural validation artifact."
+    )
+    validation_report: "ValidationReport" = Field(
+        description="Passed validation report bound to the exact subject revision."
+    )
+
+    @model_validator(mode="after")
+    def phase_fields_match(self) -> "AggregateFinalReviewInput":
+        base_sections = set(FINAL_AUDIT_SECTION_IDS)
+        active_sections = set(self.required_section_ids)
+        if (
+            len(self.required_section_ids) != len(set(self.required_section_ids))
+            or active_sections != base_sections
+        ):
+            raise ValueError(
+                "aggregate final review must cover exactly the seven summary/conclusion sections; "
+                "Chapter 2 and Chapter 4 are not semantic final-review targets"
+            )
+        if not self.validation_report.passed:
+            raise ValueError("aggregate final review requires a passed structural validation report")
+        if (
+            self.validation_report.validation_protocol_version < 2
+            or self.validation_report.subject_revision != self.subject_revision
+        ):
+            raise ValueError(
+                "aggregate final review validation is stale or belongs to another revision"
+            )
+        audit_sections = active_sections
+        changed_sections = set(self.changed_section_bodies)
+        unchanged_sections = set(self.unchanged_section_sha256)
+        if self.phase == "initial":
+            if self.required_findings or self.revision_responses:
+                raise ValueError(
+                    "initial aggregate final review cannot contain prior findings or responses"
+                )
+            if self.canonical_markdown is None or self.subject_metadata is None:
+                raise ValueError(
+                    "initial aggregate final review requires full prose and metadata"
+                )
+            if re.search(r"(?m)^#{1,6}\s+2(?:\.|\s)|^#{1,6}\s+4(?:\.|\s)", self.canonical_markdown):
+                raise ValueError(
+                    "aggregate final review canonical Markdown cannot contain Chapter 2 or Chapter 4"
+                )
+            if self.subject_metadata_sha256 is not None or changed_sections or unchanged_sections:
+                raise ValueError(
+                    "initial aggregate final review cannot contain recheck delta fields"
+                )
+        else:
+            required = {finding.id for finding in self.required_findings}
+            responses = {response.finding_id for response in self.revision_responses}
+            if not required or responses != required:
+                raise ValueError(
+                    "aggregate final recheck requires one chief response per finding"
+                )
+            targets = {
+                section_id
+                for finding in self.required_findings
+                for section_id in finding.target_section_ids
+            }
+            if self.canonical_markdown is not None or self.subject_metadata is not None:
+                raise ValueError(
+                    "aggregate final recheck must not resend full prose or metadata"
+                )
+            if self.subject_metadata_sha256 is None:
+                raise ValueError(
+                    "aggregate final recheck requires the retained metadata hash"
+                )
+            if changed_sections != targets:
+                raise ValueError(
+                    "aggregate final recheck delta must contain exactly finding targets"
+                )
+            if unchanged_sections != audit_sections - targets:
+                raise ValueError(
+                    "aggregate final recheck must hash every unchanged audit section"
+                )
+            if any(
+                re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                for digest in self.unchanged_section_sha256.values()
+            ):
+                raise ValueError(
+                    "aggregate final recheck unchanged section hashes must be SHA-256"
+                )
         return self
 
 
@@ -951,12 +1591,12 @@ class ModuleRevisionInput(StrictModel):
     )
     validation_report_ref: str | None = Field(
         default=None,
-        description="Optional failed machine-validation artifact from the prior patch.",
+        description="Optional failed structural-validation artifact from the prior patch.",
     )
     validation_report: "ValidationReport | None" = Field(
         default=None,
         description=(
-            "Exact independent predicate failures to correct; these are not reviewer findings."
+            "Exact independent structural failures to correct; these are not reviewer findings."
         ),
     )
 
@@ -972,14 +1612,28 @@ class ModuleRevisionInput(StrictModel):
             raise ValueError(
                 "module revision subject must contain exactly the assigned target submodules"
             )
-        if not self.module_findings and not self.cross_findings and not self.requested_changes:
-            raise ValueError("module revision input requires a finding or requested change")
         if bool(self.validation_report_ref) != bool(self.validation_report):
             raise ValueError(
                 "validation_report_ref and validation_report must be provided together"
             )
         if self.validation_report and self.validation_report.passed:
             raise ValueError("a passed validation report cannot trigger another revision")
+        if (
+            not self.module_findings
+            and not self.cross_findings
+            and not self.requested_changes
+            and self.validation_report is None
+        ):
+            raise ValueError(
+                "module revision input requires a finding, requested change, or "
+                "failed structural validation"
+            )
+        if self.validation_report and (
+            self.validation_report.validation_protocol_version < 2
+            or self.validation_report.subject_ref != self.subject_ref
+            or self.validation_report.subject_revision != self.subject.revision
+        ):
+            raise ValueError("module revision validation belongs to another subject")
         allowed = targets
         for finding in self.module_findings:
             if finding.target_submodule_id not in allowed:
@@ -987,10 +1641,10 @@ class ModuleRevisionInput(StrictModel):
         for finding in self.cross_findings:
             if finding.owner_module_id != self.module_id:
                 raise ValueError("cross finding belongs to another owner module")
-            if not set(finding.target_submodule_ids).issubset(allowed):
+            if not set(finding.target_submodule_ids).intersection(allowed):
                 raise ValueError("cross finding lies outside revision targets")
         for change in self.requested_changes:
-            if not set(change.target_submodule_ids).issubset(allowed):
+            if not set(change.target_submodule_ids).intersection(allowed):
                 raise ValueError("requested change lies outside revision targets")
         return self
 
@@ -1056,15 +1710,29 @@ class ChiefRevisionInput(StrictModel):
 class ChiefEditorInput(StrictModel):
     kind: Literal["chief_editor_input"] = "chief_editor_input"
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
+    cross_decision: CrossDecisionPackView | None = Field(
+        default=None,
+        description=(
+            "Terminal Cross decision view. Required for a normal full-report Chief edit; "
+            "legacy aggregate callers may omit it and use cross_review_completion_ref."
+        ),
+    )
+    cross_decision_pack_ref: str | None = Field(
+        default=None,
+        description="Current-run immutable CrossDecisionPack artifact reference.",
+    )
     approved_module_markers: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str] = Field(
+        default_factory=dict,
         description="Exact marker tokens the chief submits for deterministic prose insertion."
     )
     modules: dict[Literal["2.1", "2.2", "2.3", "2.4", "2.5"], ModuleContentView] = Field(
         description="Five module subjects closed by module review."
     )
-    cross_review_completion_ref: str = Field(
-        min_length=1,
-        description="Current-run record proving the Cross lifecycle completed.",
+    # Compatibility-only alias for pre-pack checkpoints.  New full-report
+    # callers must provide cross_decision + pack ref together.
+    cross_review_completion_ref: str | None = Field(
+        default=None,
+        description="Legacy Cross completion ref retained only for old checkpoints.",
     )
     special_topic_plan: SpecialTopicPlan | None = Field(
         default=None,
@@ -1077,19 +1745,52 @@ class ChiefEditorInput(StrictModel):
     @model_validator(mode="after")
     def five_modules_and_markers_match(self) -> "ChiefEditorInput":
         expected = {"2.1", "2.2", "2.3", "2.4", "2.5"}
-        if set(self.modules) != expected or set(self.approved_module_markers) != expected:
-            raise ValueError("chief editor input requires exactly five modules and markers")
+        if set(self.modules) != expected:
+            raise ValueError("chief editor input requires exactly five modules")
+        if self.approved_module_markers and set(self.approved_module_markers) != expected:
+            raise ValueError("chief editor markers must cover exactly five modules when supplied")
         for module_id, subject in self.modules.items():
             if subject.module_id != module_id:
                 raise ValueError("chief editor module binding is inconsistent")
-            if self.approved_module_markers[module_id] != (f"[[APPROVED_MODULE:{module_id}]]"):
+            if self.approved_module_markers and self.approved_module_markers[module_id] != (
+                f"[[APPROVED_MODULE:{module_id}]]"
+            ):
                 raise ValueError("chief editor marker does not match its module")
+        supplied_pack_fields = (
+            self.cross_decision,
+            self.cross_decision_pack_ref,
+        )
+        if any(value is not None for value in supplied_pack_fields):
+            if not all(value is not None for value in supplied_pack_fields):
+                raise ValueError(
+                    "cross_decision and cross_decision_pack_ref must be supplied together"
+                )
+            assert self.cross_decision is not None
+            assert self.cross_decision_pack_ref is not None
+            if self.cross_decision.run_id != self.run_id:
+                raise ValueError("chief CrossDecisionPack belongs to another run")
+            if not self.cross_decision_pack_ref.startswith(f"Work/runs/{self.run_id}/"):
+                raise ValueError("chief CrossDecisionPack ref belongs to another run")
+            if set(self.cross_decision.module_ids) != expected:
+                raise ValueError("chief CrossDecisionPack must bind exactly five modules")
+        elif not self.cross_review_completion_ref:
+            raise ValueError(
+                "chief editor input requires a terminal CrossDecisionPack (or a legacy completion ref)"
+            )
         return self
 
 
 class AggregateEditorInput(StrictModel):
     kind: Literal["aggregate_editor_input"] = "aggregate_editor_input"
+    mode: Literal["aggregate_existing"] = Field(
+        default="aggregate_existing",
+        description="Explicit independent aggregate route; it does not run Cross review.",
+    )
     run_id: str = Field(min_length=1, description="Immutable current report run id.")
+    cross_context: None = Field(
+        default=None,
+        description="Aggregate route has no CrossDecisionPack and must remain null.",
+    )
     source_format: Literal["structured_module", "markdown"] = Field(
         description="Whether modules are typed subjects or validated standalone Markdown."
     )
@@ -1189,18 +1890,18 @@ class WorkflowExceptionInput(StrictModel):
 
 
 class ValidationFailure(StrictModel):
-    check_id: str = Field(min_length=1, description="Stable deterministic check id.")
+    check_id: str = Field(min_length=1, description="Stable structural check id.")
     finding_id: str | None = Field(
         default=None,
-        description="Finding whose explicit machine predicate produced this failure.",
+        description="Finding associated with this structural failure, when applicable.",
     )
     target_path: str = Field(
         min_length=1,
-        description="Exact structured path inspected by the deterministic check.",
+        description="Exact structured path inspected by the structural check.",
     )
     message: str = Field(
         min_length=1,
-        description="Observed predicate mismatch without semantic reviewer judgment.",
+        description="Observed structural mismatch without semantic reviewer judgment.",
     )
 
 
@@ -1218,28 +1919,16 @@ class ValidationReport(StrictModel):
         ge=0,
         description="Workflow revision of the exact validated subject when revisioned.",
     )
-    content_sha256: str | None = Field(
-        default=None,
-        pattern=r"^[0-9a-f]{64}$",
-        description="SHA-256 of the exact bytes read by the validator.",
-    )
     validator: str = Field(
         min_length=1,
         description="Deterministic validator implementation and version identifier.",
     )
     check_ids: list[str] = Field(
-        description="All explicit deterministic checks executed for this subject."
+        description="All explicit structural checks executed for this subject."
     )
     failures: list[ValidationFailure] = Field(
         default_factory=list,
-        description="Predicate failures; empty means machine validation passed.",
-    )
-    observations: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Non-binding deterministic signals for reviewer attention; they never "
-            "change passed and never act as semantic findings or verdicts."
-        ),
+        description="Structural failures; empty means structural validation passed.",
     )
     passed: bool = Field(
         description="Derived by the validator from failures; never a semantic approval."
@@ -1249,8 +1938,6 @@ class ValidationReport(StrictModel):
     def passed_matches_failures(self) -> "ValidationReport":
         if self.passed != (not self.failures):
             raise ValueError("validation report passed must equal not failures")
-        if self.validation_protocol_version >= 2 and self.content_sha256 is None:
-            raise ValueError("validation protocol v2 requires content_sha256")
         return self
 
 
@@ -1284,38 +1971,40 @@ class ReviewCompletionRecord(StrictModel):
     resolved_finding_ids: list[str] = Field(
         description="Every finding id closed by reviewer verdict or empty initial findings."
     )
-    artifact_sha256: dict[str, str] = Field(
-        min_length=1,
-        description=(
-            "SHA-256 for every subject, finding, and verdict ref so completion cannot "
-            "silently survive later artifact mutation."
-        ),
-    )
 
-    @model_validator(mode="after")
-    def hashes_cover_every_reference(self) -> "ReviewCompletionRecord":
-        expected = set(self.subject_refs) | set(self.finding_refs) | set(self.verdict_refs)
-        if set(self.artifact_sha256) != expected:
-            raise ValueError("review completion hashes must cover every referenced artifact")
-        if any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in self.artifact_sha256.values()):
-            raise ValueError("review completion hashes must be SHA-256 hex")
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_digest_metadata(cls, value):
+        if isinstance(value, dict):
+            value = dict(value)
+            value.pop("artifact_sha256", None)
+        return value
 
 
 class FinalAuditSnapshot(StrictModel):
-    """Immutable bridge proving audit and delivery use one edited-report snapshot."""
+    """Typed bridge proving audit and delivery use one current-run subject."""
 
     kind: Literal["final_audit_snapshot"] = "final_audit_snapshot"
     run_id: str = Field(min_length=1)
     subject_ref: str = Field(min_length=1)
     subject_revision: int = Field(ge=0)
-    subject_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     canonical_markdown_ref: str = Field(min_length=1)
-    canonical_markdown_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     validation_report_ref: str = Field(min_length=1)
-    validation_report_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     completion_ref: str = Field(min_length=1)
-    completion_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_digest_metadata(cls, value):
+        if isinstance(value, dict):
+            value = dict(value)
+            for field in (
+                "subject_sha256",
+                "canonical_markdown_sha256",
+                "validation_report_sha256",
+                "completion_sha256",
+            ):
+                value.pop(field, None)
+        return value
 
 
 INPUT_CONTRACT_TYPES = {
@@ -1323,9 +2012,13 @@ INPUT_CONTRACT_TYPES = {
     "module_authoring_input": ModuleAuthoringInput,
     "module_review_input": ModuleReviewInput,
     "cross_review_input": CrossReviewInput,
+    "cross_owner_input": CrossOwnerInput,
     "final_review_input": FinalReviewInput,
+    "aggregate_final_review_input": AggregateFinalReviewInput,
     "module_revision_input": ModuleRevisionInput,
     "chief_revision_input": ChiefRevisionInput,
+    "chief_chapter_lane_input": ChiefChapterLaneInput,
+    "final_chapter_lane_input": FinalChapterLaneInput,
     "chief_editor_input": ChiefEditorInput,
     "aggregate_editor_input": AggregateEditorInput,
     "workflow_exception_input": WorkflowExceptionInput,
@@ -1336,11 +2029,15 @@ INPUT_CONTRACT_SUMMARIES = {
     "module_authoring_input": "One fixed module scope with role-labelled current-run evidence inputs.",
     "module_review_input": "One exact module subject plus phase-specific immutable review state.",
     "cross_review_input": "Five exact module subjects plus phase-specific Cross closure state.",
-    "final_review_input": "One exact edited report plus phase-specific final-review state.",
+    "cross_owner_input": "One complete owner module plus four compact read-only relation views.",
+    "final_review_input": "One exact edited report plus a typed terminal CrossDecisionPack and seven-section final-review state.",
+    "aggregate_final_review_input": "Independent aggregate_existing final review with null cross_context and seven-section audit state; no CrossDecisionPack.",
     "module_revision_input": "One exact module baseline and only the findings assigned to its author.",
     "chief_revision_input": "One exact edited-report baseline and immutable final findings.",
-    "chief_editor_input": "Five module-review-complete subjects and Cross-supported synthesis inputs.",
-    "aggregate_editor_input": "Five validated existing module bodies with an explicit source format.",
+    "chief_chapter_lane_input": "One Chief chapter lane with only its assigned section bodies and findings.",
+    "final_chapter_lane_input": "One Final chapter lane with only its assigned section bodies and findings.",
+    "chief_editor_input": "Five module-review-complete subjects and a typed terminal CrossDecisionPack view.",
+    "aggregate_editor_input": "Independent aggregate_existing mode: five validated module bodies and null cross_context, with no fabricated CrossDecisionPack.",
     "workflow_exception_input": "Only explicit author or reviewer exception findings and their immutable artifacts for Main.",
 }
 
@@ -1391,24 +2088,23 @@ def _example_cross_finding() -> dict[str, Any]:
         ],
         "required_change": "在责任小节写明依赖对象、作用机制、实施顺序和联合验收方式。",
         "reviewer_checks": ["责任模块正文明确连接对象、依赖顺序与联合验收"],
-        "machine_checks": [],
     }
 
 
 def _example_final_finding() -> dict[str, Any]:
     return {
         "id": "F-001",
-        "target_section_ids": ["4"],
+        "target_section_ids": ["3.2"],
         "target_changes": [
             {
-                "target_section_id": "4",
-                "required_change": ("按 Inputs 专项计划补齐目标小节的分析、建议与验证边界。"),
-                "reviewer_checks": ["第四章标题与要求匹配且通用知识未冒充项目事实"],
+                "target_section_id": "3.2",
+                "required_change": ("在行动计划中补充跨模块责任接口、依赖顺序、验收指标和剩余风险边界。"),
+                "reviewer_checks": ["行动责任、依赖顺序、验收指标和剩余风险均可核对"],
             }
         ],
         "category": "special_topic",
         "impact": "blocking",
-        "observation": "第四章虽保留了动态标题，但没有落实 Inputs 对专项分析的简要要求。",
+        "observation": "当前行动计划没有清楚说明跨模块责任接口、依赖顺序和联合验收边界。",
         "evidence_refs": ["Work/runs/report-example/edited-revisions/chief-r0.json"],
     }
 
@@ -1481,6 +2177,15 @@ _EXAMPLE_MODULE_REFS = {
     for module_id in REPORT_TAXONOMY
 }
 _EXAMPLE_MARKERS = {module_id: f"[[APPROVED_MODULE:{module_id}]]" for module_id in REPORT_TAXONOMY}
+_EXAMPLE_CROSS_COMPLETION_REF = "Work/runs/report-example/reviews/cross-completion.json"
+_EXAMPLE_CROSS_DECISION = {
+    "version": 1,
+    "run_id": "report-example",
+    "module_ids": list(REPORT_TAXONOMY),
+    "cross_review_completion_ref": _EXAMPLE_CROSS_COMPLETION_REF,
+    "synthesis_inputs": [],
+    "artifact_refs": [_EXAMPLE_CROSS_COMPLETION_REF],
+}
 
 INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
     "template_distillation_input": {
@@ -1488,7 +2193,7 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "run_id": "report-example",
         "template_ref": "Work/runs/report-example/templates/template-for-skill.docx",
         "inspect_max_chars": 100000,
-        "required_part_ids": ["skill", "analysis", "synthesis", "visual", "rubric"],
+        "required_part_ids": list(TEMPLATE_ROLE_SKILL_IDS),
     },
     "module_authoring_input": {
         "kind": "module_authoring_input",
@@ -1524,16 +2229,18 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
             "run_id": "report-example",
             "subject_ref": _EXAMPLE_MODULE_REFS["2.1"],
             "subject_revision": 0,
-            "content_sha256": "0" * 64,
             "validator": "module-structure/v2",
             "check_ids": ["module.canonical_markdown"],
             "failures": [],
-            "observations": [],
             "passed": True,
         },
     },
     "cross_review_input": {
         "kind": "cross_review_input",
+        "owner_module_id": "2.1",
+        "review_focus": [
+            "核对其他模块是否改变 2.1 的风险判断、行动前提或联合验收。"
+        ],
         "phase": "initial",
         "run_id": "report-example",
         "module_refs": _EXAMPLE_MODULE_REFS,
@@ -1545,13 +2252,55 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "revision_responses_by_module": {},
         "local_regression_review_refs": {},
         "prior_synthesis_inputs": [],
-        "machine_validation_refs": [],
-        "machine_validation_reports": [],
+    },
+    "cross_owner_input": {
+        "kind": "cross_owner_input",
+        "phase": "initial",
+        "run_id": "report-example",
+        "review_round": 0,
+        "owner_module_id": "2.1",
+        "review_focus": ["检查 2.1 与其他模块的供电架构接口。"],
+        "owner_subject_ref": _EXAMPLE_MODULE_REFS["2.1"],
+        "owner_subject_revision": 0,
+        "owner_subject": _EXAMPLE_MODULES["2.1"],
+        "related_module_refs": {
+            module_id: _EXAMPLE_MODULE_REFS[module_id]
+            for module_id in REPORT_TAXONOMY
+            if module_id != "2.1"
+        },
+        "related_module_revisions": {
+            module_id: 0 for module_id in REPORT_TAXONOMY if module_id != "2.1"
+        },
+        "related_module_sha256": {
+            module_id: "0" * 64
+            for module_id in REPORT_TAXONOMY
+            if module_id != "2.1"
+        },
+        "related_module_views": {
+            module_id: {
+                "module_id": module_id,
+                "revision": 0,
+                "subject_ref": _EXAMPLE_MODULE_REFS[module_id],
+                "subject_sha256": "0" * 64,
+                "submodule_ids": list(REPORT_TAXONOMY[module_id].submodules),
+                "claims": [],
+                "evidence_ids_by_submodule": {},
+                "unresolved_questions": [],
+            }
+            for module_id in REPORT_TAXONOMY
+            if module_id != "2.1"
+        },
+        "required_findings": [],
+        "revision_responses": [],
+        "prior_synthesis_inputs": [],
     },
     "final_review_input": {
         "kind": "final_review_input",
         "phase": "initial",
         "run_id": "report-example",
+        "cross_decision": _EXAMPLE_CROSS_DECISION,
+        "cross_decision_pack_ref": "Work/runs/report-example/reviews/cross-decision-pack.json",
+        "residual_risks": [],
         "subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
         "subject_revision": 0,
         "subject_metadata": _example_final_audit_metadata(),
@@ -1566,11 +2315,36 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
             "run_id": "report-example",
             "subject_ref": "Work/runs/report-example/validation/report-r0.md",
             "subject_revision": 0,
-            "content_sha256": "0" * 64,
             "validator": "final-report-structure/v2",
             "check_ids": ["final_report.fixed_sections_and_markdown"],
             "failures": [],
-            "observations": [],
+            "passed": True,
+        },
+    },
+    "aggregate_final_review_input": {
+        "kind": "aggregate_final_review_input",
+        "mode": "aggregate_existing",
+        "cross_context": None,
+        "phase": "initial",
+        "run_id": "report-example",
+        "residual_risks": [],
+        "subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
+        "subject_revision": 0,
+        "subject_metadata": _example_final_audit_metadata(),
+        "canonical_markdown": "# 示例报告\n\n完整成稿正文。",
+        "required_section_ids": list(FINAL_AUDIT_SECTION_IDS),
+        "required_findings": [],
+        "revision_responses": [],
+        "validation_report_ref": ("Work/runs/report-example/reviews/report-integrity-r0.json"),
+        "validation_report": {
+            "kind": "validation_report",
+            "validation_protocol_version": 2,
+            "run_id": "report-example",
+            "subject_ref": "Work/runs/report-example/validation/report-r0.md",
+            "subject_revision": 0,
+            "validator": "final-report-structure/v2",
+            "check_ids": ["final_report.fixed_sections_and_markdown"],
+            "failures": [],
             "passed": True,
         },
     },
@@ -1608,20 +2382,54 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
         "run_id": "report-example",
         "subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
         "target_section_bodies": {
-            "4": _example_final_audit_subject()["special_topic_analysis"],
+            "3.2": _example_final_audit_subject()["improvement_action_plan"],
         },
         "consistency_context": {
             "1.2": _example_final_audit_subject()["findings_overview"],
             "3.1.1": _example_final_audit_subject()["risk_panorama"],
-            "3.2": _example_final_audit_subject()["improvement_action_plan"],
+            "3.1.3": _example_final_audit_subject()["data_gap_analysis"],
         },
         "revision": 1,
-        "target_section_ids": ["4"],
+        "target_section_ids": ["3.2"],
         "findings": [_example_final_finding()],
+    },
+    "chief_chapter_lane_input": {
+        "kind": "chief_chapter_lane_input",
+        "phase": "initial",
+        "run_id": "report-example",
+        "subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
+        "chapter_id": "1",
+        "section_ids": list(CHAPTER1_SECTION_IDS),
+        "section_bodies": {
+            section_id: f"章节 {section_id} 的当前正文。"
+            for section_id in CHAPTER1_SECTION_IDS
+        },
+        "source_context": {"cross_summary": "仅供 Chapter 1 lane 使用的证据边界摘要。"},
+        "source_refs": ["Work/runs/report-example/preparation/evidence.jsonl"],
+        "assigned_findings": [],
+        "revision": 0,
+    },
+    "final_chapter_lane_input": {
+        "kind": "final_chapter_lane_input",
+        "phase": "initial",
+        "run_id": "report-example",
+        "subject_ref": "Work/runs/report-example/edited-revisions/chief-r0.json",
+        "chapter_id": "3",
+        "review_focus": ["检查风险全景、数据缺口与行动依赖是否闭合。"],
+        "section_ids": list(CHAPTER3_SECTION_IDS),
+        "section_bodies": {
+            section_id: f"章节 {section_id} 的当前正文。"
+            for section_id in CHAPTER3_SECTION_IDS
+        },
+        "required_findings": [],
+        "revision_responses": [],
+        "revision": 0,
     },
     "chief_editor_input": {
         "kind": "chief_editor_input",
         "run_id": "report-example",
+        "cross_decision": _EXAMPLE_CROSS_DECISION,
+        "cross_decision_pack_ref": "Work/runs/report-example/reviews/cross-decision-pack.json",
         "approved_module_markers": _EXAMPLE_MARKERS,
         "modules": _EXAMPLE_MODULES,
         "cross_review_completion_ref": ("Work/runs/report-example/reviews/cross-completion.json"),
@@ -1629,7 +2437,9 @@ INPUT_CONTRACT_EXAMPLES: dict[str, dict[str, Any]] = {
     },
     "aggregate_editor_input": {
         "kind": "aggregate_editor_input",
+        "mode": "aggregate_existing",
         "run_id": "report-example",
+        "cross_context": None,
         "source_format": "structured_module",
         "approved_module_markers": _EXAMPLE_MARKERS,
         "special_topic_plan": _example_special_topic_plan(),

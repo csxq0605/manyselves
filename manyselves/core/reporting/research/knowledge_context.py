@@ -9,6 +9,7 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..input_snapshot import RunInputSnapshotStore
 from ..models import SpecialTopicPlan
 from ..source_ledger import SourceLedger
 from ..store import ReportingStore
@@ -21,6 +22,7 @@ class KnowledgeContext:
     path: Path
     text: str
     source_ids: tuple[str, ...]
+    snapshot_ref: Path | None = None
 
 
 class KnowledgeContextBuilder:
@@ -73,7 +75,22 @@ class KnowledgeContextBuilder:
     ):
         self.workspace = Path(workspace).resolve()
         self.run_id = run_id
-        self.library = ReferenceLibrary(self.workspace, global_root=global_root)
+        snapshot_path = self.workspace / f"Work/runs/{run_id}/input-snapshot.json"
+        if snapshot_path.is_file():
+            snapshot = RunInputSnapshotStore(self.workspace).load(run_id)
+            self.library = ReferenceLibrary(
+                self.workspace,
+                knowledge_root=snapshot.scope_root(self.workspace, "Knowledge"),
+                index_root=(
+                    self.workspace / f"Work/runs/{run_id}/indexes/knowledge"
+                ),
+                global_root=global_root,
+            )
+        else:
+            self.library = ReferenceLibrary(
+                self.workspace,
+                global_root=global_root,
+            )
         self.ledger = SourceLedger(self.workspace, run_id)
         self.store = ReportingStore(self.workspace)
         self._documents: tuple[ReferenceDocument, ...] | None = None
@@ -279,6 +296,7 @@ class KnowledgeContextBuilder:
             path=path.relative_to(self.workspace),
             text=text,
             source_ids=tuple(dict.fromkeys(source_ids)),
+            snapshot_ref=self.library.snapshot_manifest_ref(),
         )
 
     def build_quality(self) -> KnowledgeContext:
@@ -308,6 +326,7 @@ class KnowledgeContextBuilder:
             path=path.relative_to(self.workspace),
             text=text,
             source_ids=tuple(dict.fromkeys(source_ids)),
+            snapshot_ref=self.library.snapshot_manifest_ref(),
         )
 
     @staticmethod
@@ -382,4 +401,5 @@ class KnowledgeContextBuilder:
             path=path.relative_to(self.workspace),
             text=text,
             source_ids=tuple(dict.fromkeys(source_ids)),
+            snapshot_ref=self.library.snapshot_manifest_ref(),
         )

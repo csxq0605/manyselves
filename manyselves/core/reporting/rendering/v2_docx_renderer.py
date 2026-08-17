@@ -17,6 +17,8 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 
+from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
+
 try:
     from PIL import Image, ImageOps
 except Exception:
@@ -87,60 +89,29 @@ CHAPTERS = [
     ("4", "专项问题分析"),
 ]
 
-HEADINGS: list[tuple[str, str, int]] = [
+_HEADINGS_BEFORE_MODULES: list[tuple[str, str, int]] = [
     ("1", "配电评估概述", 1),
     ("1.1", "评估背景", 2),
     ("1.2", "健康度总览", 2),
     ("1.3", "各区域执行摘要", 2),
     ("2", "评估内容描述", 1),
-    ("2.1", "电力系统架构问题", 2),
-    ("2.1.1", "电力系统负荷分配与过载风险", 3),
-    ("2.1.2", "关键负荷供电路径与应急/备用供电的问题", 3),
-    ("2.1.3", "配网自动化、备用电源自动切换", 3),
-    ("2.1.4", "防止2路电源并联环流返送", 3),
-    ("2.1.5", "系统无功补偿与电容柜问题", 3),
-    ("2.2", "环境工况风险", 2),
-    ("2.2.1", "来自电能质量的风险", 3),
-    ("2.2.1.1", "谐波风险情况", 4),
-    ("2.2.1.2", "电压扰动情况", 4),
-    ("2.2.1.3", "频繁启动与冲击负荷", 4),
-    ("2.2.2", "其他运行工况风险", 3),
-    ("2.2.2.1", "低压配电设备发热情况", 4),
-    ("2.2.2.2", "高压配电设备局放情况", 4),
-    ("2.2.2.3", "其他物理环境风险", 4),
-    ("2.3", "针对故障的保护", 2),
-    ("2.3.1", "配电系统保护方案与定值的论证计算", 3),
-    ("2.3.2", "零序/漏电的防范", 3),
-    ("2.3.3", "电压事件（过压、欠压）的防范", 3),
-    ("2.4", "配电设备/元件风险", 2),
-    ("2.4.1", "配置与选型问题", 3),
-    ("2.4.1.1", "额定/极限容量", 4),
-    ("2.4.1.2", "配电柜分隔形式", 4),
-    ("2.4.1.3", "配电设备安全连锁/闭锁", 4),
-    ("2.4.1.4", "设备分合/工作位置显示", 4),
-    ("2.4.2", "安装规范性问题", 3),
-    ("2.4.2.1", "裸露导体防护", 4),
-    ("2.4.2.2", "等电位连接与接地问题", 4),
-    ("2.4.2.3", "电气连接问题", 4),
-    ("2.4.2.4", "标牌标识", 4),
-    ("2.4.2.5", "电缆、桥架、母线安装问题", 4),
-    ("2.4.2.6", "设备外壳IP等级与封堵问题", 4),
-    ("2.4.3", "带病运行问题汇总", 3),
-    ("2.4.3.1", "低压回路剩余电流过大", 4),
-    ("2.4.3.2", "部分高压柜照明功能缺失", 4),
-    ("2.4.3.3", "部分高压柜柜内除湿装置未开启", 4),
-    ("2.4.4", "末端配电抽查情况", 3),
-    ("2.5", "运维管理与风险管控", 2),
-    ("2.5.1", "SOP/EOP", 3),
-    ("2.5.2", "图纸资料", 3),
-    ("2.5.3", "运维（巡检、维护）的实施与组织", 3),
-    ("2.5.3.1", "运维组织架构与人员配备", 4),
-    ("2.5.3.2", "关键配电设备维护工作全面性检查", 4),
-    ("2.5.3.3", "配电设备维保覆盖", 4),
-    ("2.5.4", "运维的智能化手段", 3),
-    ("2.5.5", "配电室装备与LOTO流程的实施", 3),
-    ("2.5.6", "退市设备与生命周期管理", 3),
-    ("2.5.7", "备件管理", 3),
+]
+_MODULE_HEADINGS = [
+    heading
+    for module in REPORT_TAXONOMY.values()
+    for heading in (
+        (module.id, module.title, 2),
+        *(
+            (
+                section.id,
+                section.title,
+                section.id.count(".") + 1,
+            )
+            for section in module.sections.values()
+        ),
+    )
+]
+_HEADINGS_AFTER_MODULES: list[tuple[str, str, int]] = [
     ("3", "结论与建议", 1),
     ("3.1", "风险/问题汇总与概览", 2),
     ("3.1.1", "风险全景图", 3),
@@ -148,6 +119,11 @@ HEADINGS: list[tuple[str, str, int]] = [
     ("3.1.3", "数据缺口分析", 3),
     ("3.2", "改善行动速查表", 2),
     ("4", "专项问题分析", 1),
+]
+HEADINGS: list[tuple[str, str, int]] = [
+    *_HEADINGS_BEFORE_MODULES,
+    *_MODULE_HEADINGS,
+    *_HEADINGS_AFTER_MODULES,
 ]
 
 
@@ -1045,6 +1021,12 @@ def is_time_group_heading_line(line: str) -> bool:
 
 
 def parse_heading(line: str) -> tuple[str, str, int] | None:
+    # Only explicit Markdown headings own the report taxonomy.  Chief-editor
+    # prose may contain local numbered labels such as ``**1.1 负荷均衡调整**``;
+    # treating those body lines as canonical headings silently replaces their
+    # approved titles when the local number collides with HEADINGS.
+    if not re.match(r"^#{1,6}\s+", line.strip()):
+        return None
     clean = clean_inline_marks(clean_markdown_heading(line))
     # Only treat real report headings as headings. Lines such as
     # "1)评估所见..." or "1、..." are body numbered lists and must not be
@@ -1055,10 +1037,7 @@ def parse_heading(line: str) -> tuple[str, str, int] | None:
         if number in HEADING_BY_NUMBER:
             title, level = HEADING_BY_NUMBER[number]
             return number, title, level
-        if (
-            number.startswith("4.")
-            and re.match(r"^#{1,6}\s*", line.strip())
-        ):
+        if number.startswith("4."):
             return number, match.group(2).strip(), 2
     top_level_match = re.match(r"^([1234])\.\s+(.+)$", clean)
     if top_level_match:
@@ -1068,9 +1047,6 @@ def parse_heading(line: str) -> tuple[str, str, int] | None:
             return number, expected[0], expected[1]
     normalized = normalize_heading_title(strip_number_prefix(clean))
     by_title = HEADING_BY_TITLE.get(normalized)
-    if by_title and by_title[0] in {"3.1.1", "3.1.2", "3.1.3"}:
-        if not re.match(r"^#{1,6}\s*", line.strip()):
-            return None
     return by_title
 
 
@@ -2857,11 +2833,11 @@ def chapter1_overview_text(model: dict[str, Any]) -> str:
     kpi_count = model_text_value(model, ["KPI数量", "kpi_count", "ku_count"]) or "X"
     return (
         f"评估期间，我方评估人员与贵方运维人员共同合作，对厂房内的，从{highest_voltage}至{lowest_voltage}的整个电力系统进行了全面审视，包含了以下五个维度，共{kpi_count}个KPI细项。\n"
-        "• 电力系统架构问题\n"
+        "• 配电系统架构问题\n"
         "• 环境工况风险\n"
         "• 针对故障的保护\n"
-        "• 配电设备/元件风险\n"
-        "• 运维管理与风险管控\n\n"
+        "• 配电设备/元件内在风险\n"
+        "• 运维管理与风险管控机制\n\n"
         "全面细致地进行了风险排查评估，评估细节请参见如下第2章内容。\n"
         "建议纵览可参见第3章。"
     )
@@ -2954,8 +2930,8 @@ def section_intro(section_number: str) -> str:
         "2.1": "系统架构问题是关乎系统可靠性和稳定性，即是否有备用供电方案；是否能正确应对上下游的故障或扰动，如切除/保护/替代，而不会影响大局。这方面的问题会带来隐性风险。",
         "2.2": "环境工况是配电系统/设备老化、故障、失效的主要外在因素，评估中我们将其分为电气环境工况和物理环境工况，现逐一审视如下。",
         "2.3": "可靠完善的保护是电力系统的主要功能和关键任务，我们应关注和审视以下几点：过流/速断保护方案；零序/接地故障的保护；过电压（欠电压）的保护。现将保护方面的评估结果陈述如下。",
-        "2.4": "对范围内高低压配电设备进行审视后发现，配电设备/元件风险主要集中在设备品质、安装规范性、选型正确性和带病运行问题，现结合配置与选型、安装规范性、带病运行和末端配电抽查逐项核实。",
-        "2.5": "运维管理与风险管控用于评价配电系统运行维护体系、图纸资料、巡检维护、智能化手段、配电室装备与LOTO流程、设备生命周期和备件管理的完整性，现结合资料逐项核实。",
+        "2.4": "对范围内高低压配电设备进行审视后发现，配电设备/元件内在风险主要集中在设备品质、安装规范性、选型正确性和带病运行问题，现结合配置与选型、安装规范性、带病运行和末端配电抽查逐项核实。",
+        "2.5": "运维管理与风险管控机制用于评价配电系统运行维护体系、图纸资料、巡检维护、智能化手段、配电室装备与LOTO流程、设备生命周期和备件管理的完整性，现结合资料逐项核实。",
     }
     return intros.get(section_number, "")
 

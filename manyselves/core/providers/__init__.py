@@ -4,8 +4,11 @@ from .anthropic_provider import AnthropicProvider
 from .base import (
     LLMProvider,
     LLMResponse,
-    Message,
     LLMToolCall,
+    Message,
+    ProviderRequestDisposition,
+    ProviderRequestError,
+    provider_retry_after,
     ToolResult,
 )
 from .factory import ALL_PROVIDER_TYPES, ProviderFactory, ProviderManager
@@ -17,6 +20,9 @@ __all__ = [
     "LLMToolCall",
     "ToolResult",
     "LLMResponse",
+    "ProviderRequestDisposition",
+    "ProviderRequestError",
+    "provider_retry_after",
     "AnthropicProvider",
     "OpenAICompatProvider",
     "ProviderFactory",

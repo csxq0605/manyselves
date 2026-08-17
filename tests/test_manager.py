@@ -1,5 +1,6 @@
 """Tests for loop manager (agent lifecycle coordination)."""
 
+import inspect
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -105,6 +106,18 @@ def test_create_tools_for_main(manager):
         "aggregate_existing",
         "render_existing",
     }
+    assert {
+        "execution_mode",
+        "authoring_granularity",
+        "module_lane_concurrency",
+        "submodule_task_concurrency",
+        "submodule_batch_size",
+    }.isdisjoint(reporting_schema["properties"])
+    reporting_tool = tools.get("run_reporting_workflow")
+    assert reporting_tool is not None
+    assert "authoring_granularity" not in inspect.signature(
+        reporting_tool.__call__
+    ).parameters
 
 
 def test_main_does_not_advertise_mineru_when_cli_is_unavailable(manager):
@@ -142,6 +155,20 @@ async def test_start_creates_loops(mock_factory, manager):
     await manager.start()
     assert manager.is_running
     assert set(manager._loops) == {"main"}
+    system_prompt = manager._loops["main"]._system_prompt_override
+    assert system_prompt is not None
+    assert '<agent_identity name="main-agent">' in system_prompt
+    assert "五路决策" in system_prompt
+    for operation in (
+        "distill_template_skill",
+        "full_report",
+        "module_report",
+        "aggregate_existing",
+        "render_existing",
+    ):
+        assert operation in system_prompt
+    assert "五个模块分别以" in system_prompt
+    assert "小节级 Agent、Task、Session 或 Lane" in system_prompt
     assert all(
         legacy not in manager._loops
         for legacy in ("data_analysis", "plotting", "theory", "report")

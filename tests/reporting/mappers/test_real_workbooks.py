@@ -108,6 +108,43 @@ def test_real_s4_6_marks_prior_assessment_as_confirmation_required() -> None:
     assert all(item.confidence < 1 for item in result.evidence_items)
 
 
+def test_success_s4_6_extracts_every_evidence_photo_but_not_decorations(
+    tmp_path: Path,
+) -> None:
+    path = WORKSPACE_ROOT / "success" / "Inputs/S4-6评估总表.xlsx"
+    if not path.is_file():
+        pytest.skip("success/Inputs is not available")
+
+    mapped = map_s4_6(path, file_id="success-s46-photo-bindings")
+    referenced = {
+        photo_id
+        for item in mapped.evidence_items
+        for photo_id in item.photo_refs
+    }
+    extracted = extract_wps_images(
+        path,
+        output_dir=tmp_path / "success-s46",
+        required_image_ids=referenced,
+    )
+    evidence, photos = canonicalize_photo_bindings(
+        mapped.evidence_items,
+        extracted,
+        start_index=19,
+    )
+
+    assert len(referenced) == 45
+    assert set(extracted) == referenced
+    assert len(photos) == 45
+    assert [photo.id for photo in photos] == [
+        f"P-{index:04d}" for index in range(19, 64)
+    ]
+    assert all(
+        photo_ref.startswith("P-")
+        for item in evidence
+        for photo_ref in item.photo_refs
+    )
+
+
 @pytest.mark.parametrize(
     ("scenario", "expected_evidence", "expected_gaps"),
     (("success", 316, 7), ("test", 240, 6)),

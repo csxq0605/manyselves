@@ -104,6 +104,28 @@ def test_report_request_rejects_invalid_run_budget() -> None:
         ReportRequest(instruction="生成 2.4", max_total_tokens=999)
 
 
+def test_report_request_exposes_no_runtime_granularity_or_lane_switches() -> None:
+    request = ReportRequest(
+        operation="full_report",
+        instruction="生成完整报告",
+    )
+    forbidden = {
+        "execution_mode",
+        "authoring_granularity",
+        "module_lane_concurrency",
+        "submodule_task_concurrency",
+        "submodule_batch_size",
+    }
+    assert forbidden.isdisjoint(ReportRequest.model_json_schema()["properties"])
+    with pytest.raises(ValidationError):
+        ReportRequest(
+            operation="module_report",
+            instruction="拒绝已删除的粒度切换参数",
+            target_modules=["2.1"],
+            authoring_granularity="removed",
+        )
+
+
 def test_typed_supplements_filter_by_stage_scope_and_supersession() -> None:
     request = ReportRequest(
         operation="module_report",

@@ -27,8 +27,14 @@ def extract_wps_images(
     workbook_path: Path,
     *,
     output_dir: Path,
+    required_image_ids: set[str] | None = None,
 ) -> dict[str, PhotoAsset]:
-    """Extract images keyed by the identifier used by ``DISPIMG`` formulas."""
+    """Extract referenced images keyed by the identifier used by ``DISPIMG``.
+
+    ``cellimages.xml`` may also contain decorative/template images.  Callers
+    that already mapped workbook evidence should pass its exact photo refs so
+    only report evidence assets are materialized.
+    """
 
     workbook_path = Path(workbook_path)
     output_dir = Path(output_dir)
@@ -58,6 +64,8 @@ def extract_wps_images(
             if properties is None or blip is None:
                 continue
             image_id = properties.attrib.get("name", "").strip()
+            if required_image_ids is not None and image_id not in required_image_ids:
+                continue
             relationship_id = blip.attrib.get(f"{{{_OFFICE_REL_NS}}}embed", "")
             member = targets.get(relationship_id)
             if not image_id or not member or member not in names:

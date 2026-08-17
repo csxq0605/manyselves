@@ -31,7 +31,10 @@ class HandoffDocxCore:
         if self._module is not None:
             return self._module
         digest = hashlib.sha256(str(self.source_path).encode()).hexdigest()[:12]
-        spec = importlib.util.spec_from_file_location(f"manyselves_handoff_docx_{digest}", self.source_path)
+        spec = importlib.util.spec_from_file_location(
+            f"{__package__}._handoff_docx_{digest}",
+            self.source_path,
+        )
         if spec is None or spec.loader is None:
             raise ImportError(f"cannot load handoff DOCX core: {self.source_path}")
         module = importlib.util.module_from_spec(spec)

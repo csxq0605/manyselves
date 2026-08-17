@@ -90,10 +90,19 @@ def test_special_topic_plan_validates_chief_headings_against_inputs(
 
     plan.validate_analysis(
         "### 4.1 目标专项\n\n"
-        "结合项目事实边界形成判断、建议和可以复核的验证方法。"
+        "结合项目事实边界形成判断、建议和可以复核的验证方法。\n\n"
+        "#### 4.1.1 验证步骤\n\n"
+        "逐项记录责任接口、验证输入、验收结果和剩余风险。"
     )
     with pytest.raises(ValueError, match="exactly match"):
         plan.validate_analysis(
             "### 4.1 擅自改名\n\n"
             "结合项目事实边界形成判断、建议和可以复核的验证方法。"
+        )
+    with pytest.raises(ValueError, match="outside its planned parent"):
+        plan.validate_analysis(
+            "### 4.1 目标专项\n\n"
+            "结合项目事实边界形成判断、建议和可以复核的验证方法。\n\n"
+            "#### 4.2.1 越界小标题\n\n"
+            "该小标题不属于计划中的 4.1。"
         )

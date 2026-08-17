@@ -37,6 +37,18 @@ REPORT_FINAL_AUDIT_SECTION_IDS = (
     "3.2",
     "4",
 )
+# Semantic summary/conclusion audit scope.  Chapter 2 is owned by the five
+# module reviews and Chapter 4 is an optional Inputs topic, so neither is a
+# final summary/conclusion finding target.
+FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS = (
+    "1.1",
+    "1.2",
+    "1.3",
+    "3.1.1",
+    "3.1.2",
+    "3.1.3",
+    "3.2",
+)
 CHIEF_SECTION_RESULT_PART_IDS = {
     "1.1": "assessment_background",
     "1.2": "findings_overview",
@@ -48,6 +60,37 @@ CHIEF_SECTION_RESULT_PART_IDS = {
     "4": "special_topic_analysis",
 }
 CHIEF_RESULT_PART_IDS = tuple(CHIEF_SECTION_RESULT_PART_IDS.values())
+
+# Chief/Final are intentionally partitioned by report chapter.  These are
+# lane-local scopes, not a new report-wide schema: a lane receives only the
+# section bodies belonging to its chapter and the reducer owns assembly.
+CHAPTER1_SECTION_IDS = ("1.1", "1.2", "1.3")
+CHAPTER3_SECTION_IDS = ("3.1.1", "3.1.2", "3.1.3", "3.2")
+CHAPTER_STATIC_SECTION_IDS = {
+    "1": CHAPTER1_SECTION_IDS,
+    "3": CHAPTER3_SECTION_IDS,
+}
+CHAPTER_IDS = ("1", "3", "4")
+
+
+def chapter_section_ids(
+    chapter_id: str,
+    special_topic_plan: "SpecialTopicPlan | None" = None,
+) -> tuple[str, ...]:
+    """Return the exact active section ids for one Chief/Final lane.
+
+    Chapter 4 is dynamic and exists only when the Inputs-derived special-topic
+    plan is present.  Keeping this check in the shared model layer prevents a
+    workflow reducer from accidentally creating a phantom Chapter 4 lane.
+    """
+
+    if chapter_id in CHAPTER_STATIC_SECTION_IDS:
+        return tuple(CHAPTER_STATIC_SECTION_IDS[chapter_id])
+    if chapter_id == "4":
+        if special_topic_plan is None:
+            raise ValueError("Chapter 4 lane requires an active special_topic_plan")
+        return tuple(section.section_id for section in special_topic_plan.sections)
+    raise ValueError(f"unsupported Chief/Final chapter lane: {chapter_id}")
 ReportOperation = Literal[
     "distill_template_skill",
     "full_report",
@@ -55,12 +98,27 @@ ReportOperation = Literal[
     "aggregate_existing",
     "render_existing",
 ]
+CostControlMode = Literal["observe", "warn", "pause_at_boundary"]
 
 
 class ReportingModel(BaseModel):
     """Strict base model for persisted workflow state."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+def __getattr__(name: str):
+    """Lazily expose the Cross decision carrier without an import cycle."""
+
+    if name == "CrossDecisionPack":
+        from . import agentic_models
+
+        return getattr(agentic_models, name)
+    if name == "CrossDecisionPackView":
+        from . import input_contracts
+
+        return input_contracts.CrossDecisionPackView
+    raise AttributeError(name)
 
 
 class SpecialTopicSectionRequirement(ReportingModel):
@@ -126,8 +184,19 @@ class SpecialTopicPlan(ReportingModel):
             raise ValueError("special-topic section titles must be unique")
         return self
 
-    def validate_analysis(self, markdown: str) -> None:
-        """Require the Chief to write every requested subsection exactly once."""
+    def validate_analysis(
+        self,
+        markdown: str,
+        *,
+        allow_chapter_heading: bool = False,
+    ) -> None:
+        """Validate planned Chapter 4 headings while allowing nested structure.
+
+        The Inputs plan owns the ordered ``### 4.n`` section boundaries.  A
+        Chief may add numbered descendants such as ``#### 4.1.1`` inside the
+        matching planned section, but may not create another top-level 4.x
+        section or place a descendant under a different parent.
+        """
 
         parsed = [
             (len(match.group(1)), match.group(2).strip(), line_number)
@@ -138,22 +207,78 @@ class SpecialTopicPlan(ReportingModel):
             (3, f"{section.section_id} {section.title}")
             for section in self.sections
         ]
-        actual_numbered = [
+        numbered: list[tuple[int, str, str, int]] = []
+        chapter_headings: list[tuple[int, str, int]] = []
+        for level, title, line_number in parsed:
+            match = re.match(r"^(4(?:\.\d+)+)\.?\s+(.+?)\s*$", title)
+            if match:
+                numbered.append((level, match.group(1), title, line_number))
+                continue
+            if re.match(r"^4\.?\s+", title):
+                chapter_headings.append((level, title, line_number))
+                continue
+            if re.match(r"^\d+(?:\.\d+)*\.?\s+", title):
+                raise ValueError(
+                    "special_topic_analysis contains a numbered heading outside Chapter 4: "
+                    f"{title}"
+                )
+
+        if chapter_headings and not allow_chapter_heading:
+            raise ValueError(
+                "special_topic_analysis must not contain its runtime-owned Chapter 4 heading"
+            )
+        if len(chapter_headings) > 1:
+            raise ValueError("special_topic_analysis contains duplicate Chapter 4 headings")
+
+        top_level = [
             (level, title, line_number)
-            for level, title, line_number in parsed
-            if re.match(r"^4(?:\.\d+)*\.?\s+", title)
+            for level, section_id, title, line_number in numbered
+            if section_id.count(".") == 1
         ]
-        if [(level, title) for level, title, _ in actual_numbered] != expected:
+        if [(level, title) for level, title, _ in top_level] != expected:
             raise ValueError(
                 "special_topic_analysis headings must exactly match the Inputs plan: "
                 f"expected={expected}, actual="
-                f"{[(level, title) for level, title, _ in actual_numbered]}"
+                f"{[(level, title) for level, title, _ in top_level]}"
             )
+
+        expected_ids = {section.section_id for section in self.sections}
+        seen_heading_ids: set[str] = set()
+        active_parent: str | None = None
+        for level, section_id, title, _line_number in numbered:
+            parts = section_id.split(".")
+            if len(parts) == 2:
+                active_parent = section_id
+                seen_heading_ids.add(section_id)
+                continue
+            parent = ".".join(parts[:2])
+            immediate_parent = ".".join(parts[:-1])
+            expected_level = len(parts) + 1
+            if (
+                parent not in expected_ids
+                or active_parent != parent
+                or immediate_parent not in seen_heading_ids
+            ):
+                raise ValueError(
+                    "special_topic_analysis nested heading is outside its planned parent: "
+                    f"{title}"
+                )
+            if level != expected_level:
+                raise ValueError(
+                    "special_topic_analysis nested heading has the wrong Markdown level: "
+                    f"expected={expected_level}, actual={level}, heading={title}"
+                )
+            if section_id in seen_heading_ids:
+                raise ValueError(
+                    f"special_topic_analysis contains duplicate nested heading id: {section_id}"
+                )
+            seen_heading_ids.add(section_id)
+
         lines = markdown.splitlines()
-        for index, (_level, title, start) in enumerate(actual_numbered):
+        for index, (_level, title, start) in enumerate(top_level):
             end = (
-                actual_numbered[index + 1][2]
-                if index + 1 < len(actual_numbered)
+                top_level[index + 1][2]
+                if index + 1 < len(top_level)
                 else len(lines)
             )
             body = "\n".join(lines[start + 1 : end]).strip()
@@ -277,8 +402,13 @@ class ReportRequest(ReportingModel):
         description="Scoped, stage-bound, superseding current-run user inputs.",
     )
     missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "draft"
+    cost_control_mode: CostControlMode = "observe"
     max_provider_attempts: int = Field(default=80, ge=1, le=1000)
     max_total_tokens: int = Field(default=800_000, ge=1_000)
+    preparation_mode: Literal[
+        "serial", "deterministic_workers"
+    ] = "deterministic_workers"
+    preparation_concurrency: int = Field(default=4, ge=1, le=16)
 
     @field_validator("target_modules")
     @classmethod
@@ -391,6 +521,7 @@ class RevisionRequest(ReportingModel):
     )
     promote_to_skill: bool = False
     promote_skill_id: str | None = None
+    cost_control_mode: CostControlMode = "observe"
     max_provider_attempts: int = Field(default=40, ge=1, le=1000)
     max_total_tokens: int = Field(default=400_000, ge=1_000)
 
@@ -428,6 +559,10 @@ class ManifestFile(ReportingModel):
     sha256: str = Field(min_length=1)
     media_type: str = Field(min_length=1)
     purpose: str | None = None
+    snapshot_ref: Path | None = Field(
+        default=None,
+        description="Run-frozen source bytes used for parsing; path remains logical provenance.",
+    )
     parse_status: Literal["pending", "parsed", "failed"] = "pending"
     error: str | None = None
 

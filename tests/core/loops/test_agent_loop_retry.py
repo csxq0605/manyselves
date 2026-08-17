@@ -8,8 +8,17 @@ import pytest
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.agent_loop import AgentLoop
 from manyselves.core.loops.bus import MessageBus
-from manyselves.core.providers.base import LLMProvider, LLMResponse, LLMStreamChunk, LLMToolCall
+from manyselves.core.providers.base import (
+    LLMProvider,
+    LLMResponse,
+    LLMStreamChunk,
+    LLMToolCall,
+    ProviderRequestDisposition,
+    annotate_provider_request_failure,
+)
+from manyselves.core.reporting.provider_admission import ProviderAdmissionController
 from manyselves.core.tools.registry import Tool, ToolRegistry
+from manyselves.core.usage_ledger import UsageLedger
 from manyselves.interfaces.types import SystemNotice
 
 
@@ -28,7 +37,11 @@ class EventuallySuccessfulProvider(LLMProvider):
     async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
         self.calls += 1
         if self.calls <= self.failures:
-            raise HttpFailureError(503, "temporary outage")
+            failure = HttpFailureError(429, "request limit")
+            raise annotate_provider_request_failure(
+                failure,
+                ProviderRequestDisposition.DEFINITELY_REJECTED,
+            )
         return LLMResponse(content="recovered")
 
 
@@ -64,6 +77,25 @@ class IdleTimeoutAwareProvider(LLMProvider):
     ):
         self.idle_timeouts.append(stream_idle_timeout_seconds)
         yield LLMStreamChunk(delta=None, done=True)
+
+
+class PreTokenAmbiguousFailureProvider(LLMProvider):
+    def __init__(self, error: BaseException):
+        super().__init__("key", model="ambiguous-model")
+        self.error = error
+        self.calls = 0
+
+    async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        raise AssertionError("streaming path should be used")
+
+    async def chat_stream(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+        self.calls += 1
+        if False:  # pragma: no cover - makes this an async generator
+            yield LLMStreamChunk()
+        raise annotate_provider_request_failure(
+            self.error,
+            ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN,
+        )
 
 
 class BlockingTool(Tool):
@@ -148,6 +180,16 @@ async def test_provider_retry_is_bounded_and_announced(tmp_path: Path, monkeypat
     ]
     assert [row["attempt"] for row in rows] == [1, 2, 3]
     assert [row["status"] for row in rows] == ["error", "error", "success"]
+    assert [row["attempt_disposition"] for row in rows] == [
+        "definitely_rejected",
+        "definitely_rejected",
+        "completed",
+    ]
+    assert [row["retry_decision"] for row in rows] == [
+        "automatic_retry",
+        "automatic_retry",
+        "completed",
+    ]
     notices = [item for item in list(loop.bus._queue._queue) if isinstance(item, SystemNotice)]
     assert len(notices) == 2
     assert "自动重试（1/2）" in notices[0].content
@@ -171,19 +213,88 @@ async def test_provider_retry_stops_after_two_retries(tmp_path: Path, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_partial_stream_failure_is_not_retried(tmp_path: Path, monkeypatch):
+async def test_partial_stream_failure_is_retried_with_fresh_physical_attempt(tmp_path: Path, monkeypatch):
     provider = PartialStreamFailureProvider()
     loop = _loop(tmp_path, provider)
 
+    async def no_wait(_delay: float) -> bool:
+        return False
+
+    monkeypatch.setattr(loop, "_wait_before_retry", no_wait)
+
+    with pytest.raises(RuntimeError, match="已自动重试2次仍失败"):
+        await loop._chat_with_retries([], None, "message-1")
+
+    assert provider.calls == 3
+    rows = UsageLedger(tmp_path, "main").rows()
+    assert [row["retry_decision"] for row in rows] == [
+        "automatic_retry",
+        "automatic_retry",
+        "stop_retry_limit",
+    ]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ConnectionError("connection reset before first token"),
+        asyncio.TimeoutError("timeout before first token"),
+    ],
+    ids=["connection", "timeout"],
+)
+@pytest.mark.asyncio
+async def test_pre_token_unknown_acceptance_is_physically_retried(
+    tmp_path: Path,
+    error: BaseException,
+    monkeypatch,
+):
+    provider = PreTokenAmbiguousFailureProvider(error)
+    loop = _loop(tmp_path, provider)
+
+    async def no_wait(_delay: float) -> bool:
+        return False
+
+    monkeypatch.setattr(loop, "_wait_before_retry", no_wait)
+
+    with pytest.raises(RuntimeError, match="已自动重试2次仍失败") as exc_info:
+        await loop._chat_with_retries([], None, "message-1")
+
+    assert provider.calls == 3
+    assert exc_info.value.ambiguous is True
+    assert exc_info.value.partial_output is False
+    rows = UsageLedger(tmp_path, "main").rows()
+    assert len(rows) == 3
+    assert all(row["attempt_disposition"] == "accepted_or_unknown" for row in rows)
+    assert [row["retry_decision"] for row in rows] == [
+        "automatic_retry",
+        "automatic_retry",
+        "stop_retry_limit",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_conflict_409_is_not_retried_without_reconciliation(
+    tmp_path: Path,
+    monkeypatch,
+):
+    provider = PreTokenAmbiguousFailureProvider(
+        HttpFailureError(409, "request id already exists")
+    )
+    loop = _loop(tmp_path, provider)
+
     async def should_not_wait(_delay: float) -> bool:
-        raise AssertionError("partial output must not be retried")
+        raise AssertionError("409 requires reconciliation, not retry")
 
     monkeypatch.setattr(loop, "_wait_before_retry", should_not_wait)
 
-    with pytest.raises(RuntimeError, match="部分内容"):
+    with pytest.raises(RuntimeError, match="409"):
         await loop._chat_with_retries([], None, "message-1")
 
     assert provider.calls == 1
+    row = UsageLedger(tmp_path, "main").rows()[0]
+    assert row["attempt_disposition"] == "accepted_or_unknown"
+    assert row["retry_decision"] == "stop_non_retryable"
+    assert row["retry"] is False
 
 
 @pytest.mark.asyncio
@@ -199,6 +310,40 @@ async def test_provider_round_propagates_request_idle_timeout(tmp_path: Path):
     )
 
     assert provider.idle_timeouts == [600.0]
+
+
+@pytest.mark.asyncio
+async def test_provider_admission_lease_wraps_one_real_request(tmp_path: Path):
+    class SlowProvider(LLMProvider):
+        def __init__(self):
+            super().__init__("key", model="admission-model")
+            self.active = 0
+            self.max_active = 0
+            self.calls = 0
+
+        async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
+            self.calls += 1
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0.01)
+            self.active -= 1
+            return LLMResponse(content="ok")
+
+    provider = SlowProvider()
+    controller = ProviderAdmissionController(global_concurrency=1)
+    first = _loop(tmp_path / "one", provider)
+    second = _loop(tmp_path / "two", provider)
+    for loop in (first, second):
+        loop.provider_admission = controller
+        loop.provider_admission_provider = "fake"
+        loop.provider_admission_model = "admission-model"
+
+    await asyncio.gather(
+        first._chat_with_retries([], None, "message-1"),
+        second._chat_with_retries([], None, "message-2"),
+    )
+    assert provider.calls == 2
+    assert provider.max_active == 1
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from manyselves.core.providers.base import LLMProvider, LLMResponse, LLMToolCall, Message
+from manyselves.core.providers.base import (
+    LLMProvider,
+    LLMResponse,
+    LLMToolCall,
+    Message,
+    ProviderRequestDisposition,
+    build_provider_request_metrics,
+    provider_request_disposition,
+    provider_retry_after,
+)
 from manyselves.core.providers.defaults import DEFAULT_MODELS
 from manyselves.core.providers.factory import (
     ProviderFactory,
@@ -72,6 +81,83 @@ def test_llm_response_defaults():
     resp = LLMResponse(content="Hi")
     assert resp.tool_calls == []
     assert resp.usage is None
+
+
+def test_provider_retry_after_reads_adapter_header_hint():
+    error = RuntimeError("rate limited")
+    error.response = SimpleNamespace(headers={"retry-after": "2.5"})  # type: ignore[attr-defined]
+    assert provider_retry_after(error) == 2.5
+
+
+def test_provider_request_metrics_hash_only_canonical_payload():
+    payload = {
+        "model": "test-model",
+        "messages": [{"role": "user", "content": "hello"}],
+        "tools": [{"name": "submit_result", "input_schema": {"type": "object"}}],
+    }
+
+    first = build_provider_request_metrics(
+        payload,
+        representation="test_payload_v1",
+    )
+    second = build_provider_request_metrics(
+        dict(reversed(list(payload.items()))),
+        representation="test_payload_v1",
+    )
+
+    assert first == second
+    assert first["representation"] == "test_payload_v1"
+    assert len(first["request_fingerprint"]) == 64
+    assert first["request_chars"] > first["message_chars"]
+    assert first["tool_schema_chars"] > 0
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_exposes_definitive_429_rejection():
+    class HttpFailureError(RuntimeError):
+        status_code = 429
+
+    class Completions:
+        async def create(self, **kwargs):
+            raise HttpFailureError("request limit")
+
+    provider = OpenAICompatProvider.__new__(OpenAICompatProvider)
+    provider.model = "gpt-test"
+    provider.provider_type = "openai"
+    provider.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=Completions())
+    )
+
+    with pytest.raises(HttpFailureError) as exc_info:
+        await provider.chat([Message(role="user", content="audit")])
+
+    assert provider_request_disposition(exc_info.value) == (
+        ProviderRequestDisposition.DEFINITELY_REJECTED
+    )
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_treats_409_as_accepted_or_unknown():
+    class HttpFailureError(RuntimeError):
+        status_code = 409
+
+    class Completions:
+        async def create(self, **kwargs):
+            raise HttpFailureError("request id already exists")
+
+    provider = OpenAICompatProvider.__new__(OpenAICompatProvider)
+    provider.model = "gpt-test"
+    provider.provider_type = "openai"
+    provider.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=Completions())
+    )
+
+    with pytest.raises(HttpFailureError) as exc_info:
+        await provider.chat([Message(role="user", content="audit")])
+
+    assert provider_request_disposition(exc_info.value) == (
+        ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN
+    )
 
 
 # ── Anthropic provider conversion tests ─────────────────────────────────
@@ -354,9 +440,145 @@ async def test_openai_stream_has_application_level_idle_timeout(monkeypatch):
         0.01,
     )
 
-    with pytest.raises(TimeoutError, match="provider stream idle timeout"):
+    with pytest.raises(TimeoutError, match="provider stream idle timeout") as exc_info:
         async for _ in provider.chat_stream([Message(role="user", content="audit")]):
             pass
+
+    assert provider_request_disposition(exc_info.value) == (
+        ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN
+    )
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_preserves_cached_usage_and_provider_payload_metrics():
+    captured = {}
+
+    class Completions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="done", tool_calls=None),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=SimpleNamespace(
+                    prompt_tokens=120,
+                    completion_tokens=8,
+                    total_tokens=128,
+                    prompt_tokens_details=SimpleNamespace(cached_tokens=45),
+                ),
+            )
+
+    provider = OpenAICompatProvider.__new__(OpenAICompatProvider)
+    provider.model = "gpt-test"
+    provider.provider_type = "openai"
+    provider.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=Completions())
+    )
+
+    response = await provider.chat(
+        [Message(role="user", content="audit")],
+        tools=[
+            {
+                "name": "submit_result",
+                "description": "submit",
+                "input_schema": {"type": "object"},
+            }
+        ],
+    )
+
+    assert response.usage == {
+        "input_tokens": 120,
+        "cached_input_tokens": 45,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 8,
+        "total_tokens": 128,
+    }
+    assert response.request_metrics["representation"] == (
+        "openai_chat_completions_payload_v1"
+    )
+    assert response.request_metrics["tool_schema_chars"] > 2
+    assert captured["messages"][0]["content"] == "audit"
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_waits_for_usage_only_chunk_and_normalizes_cache():
+    captured = {}
+    chunks = [
+        SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(content="done", tool_calls=None),
+                    finish_reason=None,
+                )
+            ],
+            usage=None,
+        ),
+        SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(content=None, tool_calls=None),
+                    finish_reason="stop",
+                )
+            ],
+            usage=None,
+        ),
+        SimpleNamespace(
+            choices=[],
+            usage=SimpleNamespace(
+                prompt_tokens=200,
+                completion_tokens=12,
+                total_tokens=212,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=80),
+            ),
+        ),
+    ]
+
+    class Stream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not chunks:
+                raise StopAsyncIteration
+            return chunks.pop(0)
+
+    class Completions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return Stream()
+
+    provider = OpenAICompatProvider.__new__(OpenAICompatProvider)
+    provider.model = "gpt-test"
+    provider.provider_type = "openai"
+    provider.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=Completions())
+    )
+
+    streamed = [
+        chunk
+        async for chunk in provider.chat_stream(
+            [Message(role="user", content="audit")]
+        )
+    ]
+
+    assert captured["stream_options"] == {"include_usage": True}
+    assert streamed[0].delta == "done"
+    terminal = streamed[-1]
+    assert terminal.done is True
+    assert terminal.stop_reason == "stop"
+    assert terminal.usage == {
+        "input_tokens": 200,
+        "cached_input_tokens": 80,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 12,
+        "total_tokens": 212,
+    }
+    assert terminal.request_metrics["representation"] == (
+        "openai_chat_completions_stream_payload_v1"
+    )
 
 
 @pytest.mark.asyncio
@@ -385,7 +607,12 @@ async def test_anthropic_stream_surfaces_final_stop_reason_and_usage():
                     )
                 ],
                 stop_reason="max_tokens",
-                usage=SimpleNamespace(input_tokens=100, output_tokens=8192),
+                usage=SimpleNamespace(
+                    input_tokens=100,
+                    cache_creation_input_tokens=20,
+                    cache_read_input_tokens=30,
+                    output_tokens=8192,
+                ),
             )
 
     class Messages:
@@ -408,10 +635,15 @@ async def test_anthropic_stream_surfaces_final_stop_reason_and_usage():
     assert chunks[0].done is True
     assert chunks[0].stop_reason == "max_tokens"
     assert chunks[0].usage == {
-        "input_tokens": 100,
+        "input_tokens": 150,
+        "cached_input_tokens": 30,
+        "cache_write_input_tokens": 20,
         "output_tokens": 8192,
-        "total_tokens": 8292,
+        "total_tokens": 8342,
     }
+    assert chunks[0].request_metrics["representation"] == (
+        "anthropic_messages_stream_payload_v1"
+    )
 
 
 @pytest.mark.asyncio
@@ -445,12 +677,16 @@ async def test_anthropic_stream_uses_per_request_idle_timeout(monkeypatch):
         0.01,
     )
 
-    with pytest.raises(TimeoutError, match="idle timeout after 0.02s"):
+    with pytest.raises(TimeoutError, match="idle timeout after 0.02s") as exc_info:
         async for _ in provider.chat_stream(
             [Message(role="user", content="audit")],
             stream_idle_timeout_seconds=0.02,
         ):
             pass
+
+    assert provider_request_disposition(exc_info.value) == (
+        ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN
+    )
 
 
 # ── ProviderFactory tests ───────────────────────────────────────────────

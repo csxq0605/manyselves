@@ -2,7 +2,13 @@
 
 > 文档状态：供产品、研发、运维和家威共同评审
 >
-> 核对起始基线：2026-07-29，`main` 分支，提交 `25b5350`
+> 原始评审核对基线：2026-07-29，`main@25b5350`
+>
+> 当前实验架构：2026-08-12，`cost-control-experiments` 已单向包含 `main`；旧三波、
+> 37 叶协作只保留为历史审计证据。当前运行路径固定为五个模块 Editor/Auditor lane
+> 与五个模块级 Cross owner，经双 barrier 后串行进入 Chief、Final 和 Delivery。
+> 交接和实施边界见
+> [`experimental-cost-control-handoff.md`](experimental-cost-control-handoff.md)。
 >
 > 目标方向：把当前桌面运行时改造成产品化服务；最终业务界面只保留文件、进度、对话三块。
 >
@@ -178,7 +184,7 @@ GROQ_API_KEY
 ├── Templates/                      # 项目模板和模板蒸馏来源
 ├── Work/                           # 可恢复状态、证据、运行快照和版本
 │   ├── runs/<run-id>/
-│   ├── report-template-writing/
+│   ├── report-template-role-skills/
 │   └── report-versions/<version-id>/
 ├── Outputs/
 │   ├── Modules/
@@ -272,16 +278,16 @@ Main 的 `inspect_document` 可本地读取 DOCX、XLSX/XLSM、PDF 和文本；M
 | 操作 | 适用场景 | 会启动的主要环节 |
 | --- | --- | --- |
 | `distill_template_skill` | 只学习/更新模板写作 Skill | Template Distiller；不生成报告 |
-| `full_report` | 从 `Inputs/` 重新生成完整报告 | 资料准备 → 2.1–2.5 顺序闭环 → 跨模块审查 → 总编 → 成稿审计 → 渲染 |
+| `full_report` | 从 `Inputs/` 重新生成完整报告 | 五个固定模块各自进入“写作→审计→修订→复核”完整 lane 并行；每个模块内部保留 taxonomy 小节作为文档结果 parts；之后统一进入 Cross → 总编 → 成稿审计 → 渲染 |
 | `module_report` | 只新写或重写指定模块 | 指定模块专家 + 各自独立审计 |
 | `aggregate_existing` | 已有五份模块稿，需要汇总报告 | 总编 → 成稿审计 → 渲染 |
 | `render_existing` | 已有完整 Markdown，只要 Word | 确定性 DOCX 渲染，不调用写作 Agent |
 
-完整报告目前按固定顺序处理 2.1、2.2、2.3、2.4、2.5。每个模块必须完成“专业写作 → 独立责任审计 → 定向修改 → 原审查者复核”，才进入下一个模块。五个模块都完成后，才开始跨模块审查和总编。
+完整报告固定使用五模块作者粒度。每个模块在独立 lane 内一次完成写作、责任审计、定向修改和原审查者复核；taxonomy 小节（`submodule_narratives`）只是模块正文的结构化 parts，不会被拆成独立 task、session 或恢复单元。五个模块全部闭环后，才开始跨模块审查和总编。
 
 ### 4.4 缺资、恢复与修订
 
-默认缺资策略是 `ask`。发生缺资时，run 会保存 `decision_id`，允许：
+默认缺资策略是 `draft`：保留固定模块和子模块，并以明确的不完整、待核实或低置信度边界继续生成。只有用户显式选择 `ask` 时，缺资才进入等待并保存 `decision_id`，允许：
 
 - `supplement`：补充事实后在同一 run 重新评估；
 - `draft`：带明确不确定性继续；
@@ -393,7 +399,7 @@ uv run manyselves --help
 
 ### 5.5 首次生成完整报告
 
-完整写作只读取已经蒸馏并固定在 `Work/report-template-writing/` 的模板 Skill。因此，首次使用新模板时分两次向 Main 提出：
+完整写作只读取已经蒸馏并固定在 `Work/report-template-role-skills/` 的十四份完整 Skill：五份作者 Skill、五份模块 Auditor Skill、三份 Chief Chapter 1/3/4 Skill 和一份共享 Final Auditor Skill。Chief lane 只注入对应章节 Skill；Final lane 共用验收 Skill，并接收不同章节审查焦点。因此，首次使用新模板时分两次向 Main 提出：
 
 1. “只学习并更新 `Templates/配电安全专家咨询报告(专家优化版).docx` 的模板写作能力，不生成报告。”
 2. 蒸馏成功后：“从 `Inputs/` 重新生成 2.1–2.5 完整配电安全咨询报告，缺少证据时先询问我。”
@@ -652,7 +658,7 @@ MVP 并发规则应明确为：
 - [ ] 业务用户看不到 Provider、Agent、Prompt、Skill、队列和运维配置；
 - [ ] 文件上传、预览、引用和结果下载受项目权限限制；
 - [ ] Main 能从对话选择五种 operation，并立即返回稳定 `run_id`；
-- [ ] 进度区能显示五模块顺序闭环、审查、等待决定、错误和交付；
+- [ ] 进度区能显示五模块协作、并行写作、独立审查闭环、等待决定、错误和交付；
 - [ ] 浏览器断线重连不会中断 Worker，事件可从游标恢复；
 - [ ] 服务重启后队列任务和原 run 可以恢复；
 - [ ] 同一项目不会有两个任务同时写共享 `Outputs/`；

@@ -1,14 +1,17 @@
 import asyncio
 import fcntl
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 from docx import Document
+from openpyxl import Workbook
 
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.decisions import EvidenceDecisionStore
+from manyselves.core.reporting.agentic_models import TEMPLATE_ROLE_SKILL_IDS
 from manyselves.core.reporting.mappers.common import MappingResult
 from manyselves.core.reporting.models import (
     EvidenceDecisionRequest,
@@ -25,7 +28,9 @@ from manyselves.core.reporting.models import (
 from manyselves.core.reporting.revisions import RevisionCoordinator
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
 from manyselves.core.reporting.store import ReportingStore
+from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import (
+    AgentWorkflowError,
     AgentWorkflowBlocked,
     ReportingNeedsDecisionError,
     ReportWorkflowRunner,
@@ -44,6 +49,25 @@ class TemplateResolutionProvider(LLMProvider):
 
     async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
         raise AssertionError("template resolution must not call the provider")
+
+
+def _write_current_s4_taxonomy(workspace: Path) -> None:
+    path = workspace / "Inputs/S4-6评估总表.xlsx"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "评估信息汇总表"
+    row = 1
+    for module in REPORT_TAXONOMY.values():
+        sheet.cell(row, 2, module.id)
+        sheet.cell(row, 3, module.title)
+        row += 1
+        for section in module.sections.values():
+            sheet.cell(row, 2, section.id)
+            sheet.cell(row, 3, section.title)
+            row += 1
+    workbook.save(path)
+    workbook.close()
 
 
 @pytest.mark.asyncio
@@ -96,7 +120,13 @@ async def test_evidence_normalization_scopes_canonical_photos_to_run_and_remaps_
     ]
     observed_output_dirs: list[Path] = []
 
-    def fake_extract(_path: Path, *, output_dir: Path) -> dict[str, PhotoAsset]:
+    def fake_extract(
+        _path: Path,
+        *,
+        output_dir: Path,
+        required_image_ids: set[str] | None = None,
+    ) -> dict[str, PhotoAsset]:
+        assert required_image_ids == {"ID_SHARED"}
         observed_output_dirs.append(output_dir)
         output_dir.mkdir(parents=True)
         source_path = output_dir / "source-0001.jpeg"
@@ -141,6 +171,98 @@ async def test_evidence_normalization_scopes_canonical_photos_to_run_and_remaps_
     )
     assert photo.source_image_id == "ID_SHARED"
     assert photo.primary_evidence_id == "E-0001"
+    photo_view = tmp_path / photo.path
+    assert photo_view.is_symlink()
+    blobs = list((tmp_path / "Work/content/sha256").glob("*/*/*"))
+    assert len(blobs) == 1
+    assert photo_view.resolve() == blobs[0]
+
+
+def test_service_template_snapshots_share_one_content_blob(tmp_path: Path) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    source = tmp_path / "Templates/report_template.docx"
+    source.parent.mkdir(parents=True)
+    Document().save(source)
+    first = tmp_path / "Work/runs/run-a/templates/report_template.docx"
+    second = tmp_path / "Work/runs/run-b/templates/report_template.docx"
+
+    first_path, first_sha, first_blob = service.snapshot_content(source, first)
+    second_path, second_sha, second_blob = service.snapshot_content(source, second)
+
+    assert first_path.is_symlink()
+    assert second_path.is_symlink()
+    assert first_path.resolve() == second_path.resolve()
+    assert first_sha == second_sha
+    assert first_blob == second_blob
+    assert len(list((tmp_path / "Work/content/sha256").glob("*/*/*"))) == 1
+
+
+def test_snapshot_content_atomically_replaces_matching_file_with_cas_view(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    source = tmp_path / "Inputs/photo.jpeg"
+    target = tmp_path / "Work/runs/run-photo/assets/P-0001.jpeg"
+    source.parent.mkdir(parents=True)
+    target.parent.mkdir(parents=True)
+    source.write_bytes(b"same-photo-bytes")
+    target.write_bytes(source.read_bytes())
+
+    path, digest, blob_ref = service.snapshot_content(
+        source,
+        target,
+        replace_existing_with_view=True,
+    )
+
+    assert path == target
+    assert path.is_symlink()
+    assert path.read_bytes() == b"same-photo-bytes"
+    assert path.resolve() == (tmp_path / blob_ref).resolve()
+    assert path.resolve().name == digest
+    assert list(target.parent.glob(".*.cas-view")) == []
+
+
+def test_snapshot_content_keeps_existing_file_if_view_staging_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    source = tmp_path / "Inputs/photo.jpeg"
+    target = tmp_path / "Work/runs/run-photo/assets/P-0001.jpeg"
+    source.parent.mkdir(parents=True)
+    target.parent.mkdir(parents=True)
+    source.write_bytes(b"same-photo-bytes")
+    target.write_bytes(source.read_bytes())
+
+    def fail_staging(*_args, **_kwargs):
+        raise OSError("staging failed")
+
+    monkeypatch.setattr(service.content_store, "link_trusted_view", fail_staging)
+    with pytest.raises(OSError, match="staging failed"):
+        service.snapshot_content(
+            source,
+            target,
+            replace_existing_with_view=True,
+        )
+
+    assert not target.is_symlink()
+    assert target.read_bytes() == b"same-photo-bytes"
+    assert list(target.parent.glob(".*.cas-view")) == []
 
 
 @pytest.mark.asyncio
@@ -161,15 +283,19 @@ async def test_service_retains_same_identity_registry_while_waiting_for_user(
         runner_ids.append(id(workflow.agent_runner))
         if len(runner_ids) == 1:
             raise ReportingNeedsDecisionError("等待用户确认命名。")
+        state["delivery_status"] = "delivered"
+        state["delivery_completion_ref"] = (
+            f"Work/runs/{state['run_id']}/delivery-completion.json"
+        )
+        output = service.store.write_text(
+            f"Work/runs/{state['run_id']}/report/completed.md",
+            "# completed\n",
+        )
+        state["output_artifacts"] = [
+            OutputArtifact(kind="report", path=output)
+        ]
 
-    delivered = tmp_path / "Outputs/Reports/result.docx"
-    delivered.parent.mkdir(parents=True)
-    delivered.write_bytes(b"verified")
     monkeypatch.setattr(ReportWorkflowRunner, "run", scripted_run)
-    monkeypatch.setattr(
-        "manyselves.core.reporting.service.verify_current_run_outputs",
-        lambda *_args, **_kwargs: [delivered],
-    )
 
     first = await service._execute(request, run_id)
     assert first.status == "needs_decision"
@@ -178,6 +304,52 @@ async def test_service_retains_same_identity_registry_while_waiting_for_user(
     ]
 
     second = await service._execute(request, run_id, resume=True)
+    assert second.status == "completed"
+    assert runner_ids[0] == runner_ids[1]
+    assert service._active_agent_runners == {}
+
+
+@pytest.mark.asyncio
+async def test_revision_wait_resume_reuses_one_runner_and_releases_on_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    run_id = "report-revision-retained-identities"
+    request = RevisionRequest(
+        baseline_version_id="baseline-version",
+        feedback="等待用户确认后继续局部修订",
+        target_module_ids=["2.4"],
+    )
+    runner_ids: list[int] = []
+
+    async def scripted_run(coordinator, _request, *, run_id=None, resume=False):
+        runner_ids.append(id(coordinator.agent_runner))
+        return ReportingRunResult(
+            run_id=run_id,
+            status="needs_decision" if len(runner_ids) == 1 else "completed",
+        )
+
+    monkeypatch.setattr(RevisionCoordinator, "_run_locked", scripted_run)
+    first = await service.revise(request, run_id=run_id)
+    assert first.status == "needs_decision"
+    assert list(service._active_agent_runners) == [f"report-revision:{run_id}"]
+
+    service.store.write_json(
+        f"Work/runs/{run_id}/revision-request.json",
+        request.model_dump(mode="json"),
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/workflow-state.json",
+        {"run_id": run_id, "activity": "module-work", "status": "failed"},
+    )
+    service._save_run(first)
+    second = await service.resume_run(run_id)
+
     assert second.status == "completed"
     assert runner_ids[0] == runner_ids[1]
     assert service._active_agent_runners == {}
@@ -242,6 +414,9 @@ async def test_render_existing_bypasses_all_analysis_agents(tmp_path: Path, monk
         )
     )
     assert render_request["source_markdown_ref"] == "Work/drafts/approved.md"
+    assert render_request["source_snapshot_ref"].startswith(
+        f"Work/runs/{result.run_id}/frozen-project/Work/drafts/approved.md"
+    )
     assert render_request["output_ref"] == "Outputs/Reports/approved.docx"
 
 
@@ -313,8 +488,8 @@ async def test_distill_template_skill_dispatches_only_the_standalone_action(
     )
 
     async def distill(_self, state: dict) -> None:
-        path = Path("Work/report-template-writing/SKILL.md")
-        service.store.write_text(path.as_posix(), "---\nname: report-template-writing\n---\n")
+        path = Path("Work/report-template-role-skills/author-2.1/SKILL.md")
+        service.store.write_text(path.as_posix(), "---\nname: report-template-author-2.1\n---\n")
         state["output_artifacts"] = [OutputArtifact(kind="skill", path=path)]
 
     async def must_not_run(_self, _state: dict) -> None:
@@ -332,7 +507,186 @@ async def test_distill_template_skill_dispatches_only_the_standalone_action(
     )
 
     assert result.status == "completed"
-    assert result.output_paths == [tmp_path / "Work/report-template-writing/SKILL.md"]
+    assert result.output_paths == [
+        tmp_path / "Work/report-template-role-skills/author-2.1/SKILL.md"
+    ]
+
+
+def test_template_role_skills_report_missing_identity_artifacts(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    root = tmp_path / "Work/report-template-role-skills"
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+
+    with pytest.raises(
+        AgentWorkflowError,
+        match=r"缺少文件：Work/report-template-role-skills/author-2\.1/SKILL\.md",
+    ):
+        runner._require_template_skill({})
+
+
+def test_template_skill_loader_rejects_persisted_result_part_marker(
+    tmp_path: Path,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    root = tmp_path / "Work/report-template-role-skills"
+    files = {
+        f"{skill_id}/SKILL.md": (
+            "<persisted_result_part sha256=" + "a" * 64 + " characters=100>\n"
+            if skill_id == "auditor-2.1"
+            else f"---\nname: report-template-{skill_id}\ndescription: 测试职责方法文件。\n---\n# {skill_id}\n"
+        )
+        for skill_id in TEMPLATE_ROLE_SKILL_IDS
+    }
+    for relative, content in files.items():
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    boundary = {
+        "policy_version": 1,
+        "transferred_categories": [
+            "analysis_method",
+            "synthesis_method",
+            "visual_method",
+            "quality_check",
+        ],
+        "excluded_categories": [
+            "domain_knowledge",
+            "domain_standard_or_threshold",
+            "project_fact_or_number",
+            "customer_identity",
+            "project_finding_or_risk",
+            "project_conclusion_or_recommendation",
+            "evidence_or_claim_identifier",
+        ],
+        "boundary_statement": (
+            "本固定 Skill 仅迁移可跨项目复用的分析、综合、视觉组织与质量检查方法，"
+            "不迁移任何客户身份、项目事实、具体数值、风险结论、行动建议、专业机理、"
+            "标准阈值或证据标识；这些内容必须在当前运行中分别由 Evidence 和 Knowledge 提供。"
+        ),
+    }
+    (root / "boundary.json").write_text(
+        json.dumps(boundary, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    artifact_paths = [root / relative for relative in files]
+    artifact_paths.append(root / "boundary.json")
+    (root / "source.json").write_text(
+        json.dumps(
+            {
+                "boundary_policy_version": 1,
+                "boundary_ref": "Work/report-template-role-skills/boundary.json",
+                "artifact_sha256": {
+                    path.relative_to(root).as_posix(): hashlib.sha256(
+                        path.read_bytes()
+                    ).hexdigest()
+                    for path in artifact_paths
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = service
+
+    with pytest.raises(
+        AgentWorkflowError,
+        match="含有退休的内部历史令牌",
+    ):
+        runner._require_template_skill({})
+
+
+@pytest.mark.asyncio
+async def test_distill_template_skill_preserves_the_original_failure_in_checkpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+
+    async def fail_distillation(_self, _state: dict, _workflow_id: str) -> None:
+        raise ValueError("template snapshot validation failed")
+
+    monkeypatch.setattr(
+        ReportWorkflowRunner,
+        "_distill_template_skill",
+        fail_distillation,
+    )
+
+    result = await service.run(
+        ReportRequest(
+            operation="distill_template_skill",
+            instruction="只更新模板写作 Skill",
+            target_modules=[],
+        )
+    )
+    checkpoint = json.loads(
+        (
+            tmp_path
+            / f"Work/runs/{result.run_id}/workflow-state.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert result.status == "failed"
+    assert result.error == "template snapshot validation failed"
+    assert result.usage["provider_attempts"] == 0
+    assert checkpoint["activity"] == "template-skill-distillation"
+    assert checkpoint["status"] == "failed"
+    assert checkpoint["error"] == "template snapshot validation failed"
+
+
+@pytest.mark.asyncio
+async def test_provider_partial_failure_is_failed_and_remains_resumable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+
+    class InterruptedProviderResponse(RuntimeError):
+        partial_output = True
+        attempt_disposition = "accepted_or_unknown"
+
+    async def fail_distillation(_self, _state: dict, _workflow_id: str) -> None:
+        raise InterruptedProviderResponse("stream disconnected")
+
+    monkeypatch.setattr(
+        ReportWorkflowRunner,
+        "_distill_template_skill",
+        fail_distillation,
+    )
+
+    result = await service.run(
+        ReportRequest(
+            operation="distill_template_skill",
+            instruction="只更新模板写作 Skill",
+            target_modules=[],
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.error == "stream disconnected"
+    assert service.validate_resume_run(result.run_id)[-1].status == "failed"
 
 
 @pytest.mark.asyncio
@@ -483,6 +837,7 @@ async def test_reporting_tool_defaults_new_report_to_draft_policy(
 async def test_service_returns_resumable_decision_before_calling_provider_when_evidence_requires_confirmation(
     tmp_path: Path,
 ) -> None:
+    _write_current_s4_taxonomy(tmp_path)
     class NeverCalledProvider(LLMProvider):
         def __init__(self):
             super().__init__("test", model="never-called")
@@ -524,6 +879,7 @@ async def test_service_returns_resumable_decision_before_calling_provider_when_e
 
 @pytest.mark.asyncio
 async def test_supplement_rescans_the_same_run_after_process_restart(tmp_path: Path) -> None:
+    _write_current_s4_taxonomy(tmp_path)
     class NeverCalledProvider(LLMProvider):
         def __init__(self):
             super().__init__("test", model="never-called")
@@ -598,13 +954,15 @@ async def test_user_decision_resume_syncs_new_facts_into_same_run(
     )
     seen = {}
 
-    async def resumed_execute(request, resumed_run_id, *, resume=False):
+    async def resumed_execute(
+        request, resumed_run_id, *, resume=False, project_write_lease=None
+    ):
         seen["request"] = request
         seen["run_id"] = resumed_run_id
         seen["resume"] = resume
         return ReportingRunResult(run_id=resumed_run_id, status="needs_decision")
 
-    monkeypatch.setattr(service, "_execute", resumed_execute)
+    monkeypatch.setattr(service, "_execute_locked", resumed_execute)
 
     result = await service.resume_run(
         run_id,
@@ -672,13 +1030,15 @@ async def test_checkpointed_terminal_run_can_resume_same_run(
     )
     seen = {}
 
-    async def resumed_execute(request, resumed_run_id, *, resume=False):
+    async def resumed_execute(
+        request, resumed_run_id, *, resume=False, project_write_lease=None
+    ):
         seen["request"] = request
         seen["run_id"] = resumed_run_id
         seen["resume"] = resume
         return ReportingRunResult(run_id=resumed_run_id, status="needs_decision")
 
-    monkeypatch.setattr(service, "_execute", resumed_execute)
+    monkeypatch.setattr(service, "_execute_locked", resumed_execute)
 
     result = await service.resume_run(
         run_id, max_provider_attempts=6, max_total_tokens=20_000
@@ -717,12 +1077,14 @@ async def test_crashed_in_progress_checkpoint_without_terminal_result_can_resume
     )
     seen = {}
 
-    async def resumed_execute(request, resumed_run_id, *, resume=False):
+    async def resumed_execute(
+        request, resumed_run_id, *, resume=False, project_write_lease=None
+    ):
         seen["run_id"] = resumed_run_id
         seen["resume"] = resume
         return ReportingRunResult(run_id=resumed_run_id, status="needs_decision")
 
-    monkeypatch.setattr(service, "_execute", resumed_execute)
+    monkeypatch.setattr(service, "_execute_locked", resumed_execute)
 
     result = await service.resume_run(
         run_id, max_provider_attempts=6, max_total_tokens=20_000
@@ -806,9 +1168,10 @@ async def test_budget_resume_reuses_same_revision_run(
         seen["resume"] = resume
         return ReportingRunResult(run_id=run_id, status="needs_decision")
 
-    monkeypatch.setattr(RevisionCoordinator, "run", resumed_revision)
+    monkeypatch.setattr(RevisionCoordinator, "_run_locked", resumed_revision)
     result = await service.resume_run(
         run_id,
+        cost_control_mode="warn",
         max_provider_attempts=4,
         max_total_tokens=20_000,
     )
@@ -816,8 +1179,46 @@ async def test_budget_resume_reuses_same_revision_run(
     assert result.run_id == run_id
     assert seen["run_id"] == run_id
     assert seen["resume"] is True
+    assert seen["request"].cost_control_mode == "warn"
     assert seen["request"].max_provider_attempts == 4
     assert seen["request"].max_total_tokens == 20_000
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "failed",
+        "failed_before_delivery",
+        "cancelled",
+        "stopped_incomplete",
+        "needs_decision",
+        "needs_user_decision",
+        "needs_scope_expansion",
+        "blocked",
+    ],
+)
+def test_every_noncompleted_checkpoint_status_is_resumable(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    run_id = f"report-resume-{status.replace('_', '-')}"
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/request.json",
+        ReportRequest(instruction="恢复同一报告").model_dump(mode="json"),
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/workflow-state.json",
+        {"run_id": run_id, "activity": "module-work", "status": status},
+    )
+    service._save_run(ReportingRunResult(run_id=run_id, status=status))
+
+    assert service.validate_resume_run(run_id)[-1].status == status
 
 
 @pytest.mark.asyncio
@@ -856,7 +1257,7 @@ async def test_revision_resume_keeps_new_supplements_structured(
         seen["request"] = revision
         return ReportingRunResult(run_id=run_id, status="needs_decision")
 
-    monkeypatch.setattr(RevisionCoordinator, "run", resumed_revision)
+    monkeypatch.setattr(RevisionCoordinator, "_run_locked", resumed_revision)
     supplement = UserSupplement(
         id="US-revision-device-name",
         content="设备名称确认为 1A2 进线柜。",
@@ -882,6 +1283,7 @@ async def test_revision_resume_keeps_new_supplements_structured(
 async def test_draft_and_skip_resume_same_run_with_explicit_policy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
 ) -> None:
+    _write_current_s4_taxonomy(tmp_path)
     class NeverCalledProvider(LLMProvider):
         def __init__(self):
             super().__init__("test", model="never-called")
@@ -936,6 +1338,7 @@ async def test_draft_and_skip_resume_same_run_with_explicit_policy(
 async def test_invalid_draft_supplement_does_not_consume_evidence_decision(
     tmp_path: Path,
 ) -> None:
+    _write_current_s4_taxonomy(tmp_path)
     service = ReportingService(
         tmp_path,
         bus=MessageBus(),
@@ -980,6 +1383,7 @@ async def test_resolved_draft_decision_reconciles_stale_ask_request(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _write_current_s4_taxonomy(tmp_path)
     service = ReportingService(
         tmp_path,
         bus=MessageBus(),
@@ -1022,7 +1426,7 @@ async def test_resolved_draft_decision_reconciles_stale_ask_request(
 
 
 @pytest.mark.asyncio
-async def test_service_never_marks_a_run_completed_without_verified_current_outputs(
+async def test_service_never_marks_full_report_completed_without_delivered_lifecycle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service = ReportingService(
@@ -1041,11 +1445,12 @@ async def test_service_never_marks_a_run_completed_without_verified_current_outp
 
     assert result.status == "failed"
     assert result.output_paths == []
-    assert result.error == "workflow finished without verified output artifacts"
+    assert result.error == "workflow finished without delivered business lifecycle"
 
 
 @pytest.mark.asyncio
 async def test_stop_marks_run_incomplete_without_success_artifact(tmp_path: Path) -> None:
+    _write_current_s4_taxonomy(tmp_path)
     class NeverCalledProvider(LLMProvider):
         def __init__(self):
             super().__init__("test", model="never-called")

@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import io
 import json
 from pathlib import Path
@@ -43,32 +44,47 @@ def _style_east_asia_font(style) -> str | None:
 def test_packaged_v2_core_matches_normalized_handoff_source() -> None:
     core = PackagedV2DocxCore(Path("unused-template.docx"))
     assert hashlib.sha256(core.source_path.read_bytes()).hexdigest() == (
-        "7452a2f263c7dc1e23b694877d094c32acad902c1d723c6911b8ae0aab2fbb61"
+        "b14c98dbef7a2057117baec03e5143a1a8134cee3e563ac0cf8d569397467faa"
     )
+
+
+def test_packaged_v2_core_supports_legacy_top_level_dynamic_loading() -> None:
+    core = PackagedV2DocxCore(Path("unused-template.docx"))
+    spec = importlib.util.spec_from_file_location(
+        "_legacy_v2_docx_renderer",
+        core.source_path,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+
+    spec.loader.exec_module(module)
+
+    assert callable(module.render_report_docx)
 
 
 def test_report_embedding_removes_only_duplicate_module_heading() -> None:
     narrative = (
-        "## 2.5 运维管理与风险管控\n\n"
+        "## 2.5 运维管理与风险管控机制\n\n"
         "### 2.5.1 SOP/EOP\n\n完整分析正文。"
     )
 
     embedded = PdsDocxRenderer._strip_leading_module_heading(narrative, "2.5")
 
-    assert "## 2.5 运维管理与风险管控" not in embedded
+    assert "## 2.5 运维管理与风险管控机制" not in embedded
     assert embedded.startswith("#### 2.5.1 SOP/EOP")
 
 
 def test_report_embedding_removes_module_heading_after_editor_transition() -> None:
     narrative = (
         "以下为运维模块的批准正文。\n\n"
-        "## 2.5 运维管理与风险管控\n\n"
+        "## 2.5 运维管理与风险管控机制\n\n"
         "### 2.5.1 SOP/EOP\n\n完整分析正文。"
     )
 
     embedded = PdsDocxRenderer._strip_leading_module_heading(narrative, "2.5")
 
-    assert "## 2.5 运维管理与风险管控" not in embedded
+    assert "## 2.5 运维管理与风险管控机制" not in embedded
     assert "以下为运维模块的批准正文。" in embedded
     assert "#### 2.5.1 SOP/EOP" in embedded
 
@@ -97,7 +113,7 @@ def test_packaged_v2_core_removes_markdown_markers_and_uses_one_label_style(
 
 ## 2. 评估内容描述
 
-### 2.1 电力系统架构问题
+### 2.1 配电系统架构问题
 
 ### 现状描述
 
@@ -148,9 +164,9 @@ def test_packaged_v2_core_preserves_template_fonts_and_uses_consistent_type_scal
 
 ## 2. 评估内容描述
 
-### 2.1 电力系统架构问题
+### 2.1 配电系统架构问题
 
-#### 2.1.1 电力系统负荷分配与过载风险
+#### 2.1.1 配电系统负荷分配与过载风险
 
 正文段落用于验证统一排版节奏。
 """
@@ -425,7 +441,7 @@ def test_renderer_omits_chapter_four_when_special_topic_plan_is_absent(
     assert "### 4." not in markdown
 
 
-def test_renderer_verifies_bold_numbered_protected_prose_after_v2_rendering(
+def test_renderer_preserves_body_labels_that_collide_with_report_heading_numbers(
     tmp_path: Path,
 ) -> None:
     template = tmp_path / "template.docx"
@@ -436,9 +452,13 @@ def test_renderer_verifies_bold_numbered_protected_prose_after_v2_rendering(
     Image.new("RGB", (30, 20), color="red").save(photo)
     report = _approved_report(photo).model_copy(
         update={
-            "risk_panorama": (
-                "**1. 谐波环境下电容器组的并联谐振与过电流风险**\n\n"
-                "该风险标题及正文必须完整保留。"
+            "improvement_action_plan": (
+                "**1.1 负荷均衡调整**\n\n"
+                "负荷均衡措施必须完整保留。\n\n"
+                "**2.1 设备防护等级恢复**\n\n"
+                "设备防护措施必须完整保留。\n\n"
+                "**3.2 智能化平台功能完善**\n\n"
+                "平台完善措施必须完整保留。"
             )
         }
     )
@@ -450,8 +470,9 @@ def test_renderer_verifies_bold_numbered_protected_prose_after_v2_rendering(
     visible = "\n".join(
         paragraph.text for paragraph in Document(output).paragraphs
     )
-    assert "谐波环境下电容器组的并联谐振与过电流风险" in visible
-    assert "该风险标题及正文必须完整保留。" in visible
+    assert "1.1 负荷均衡调整" in visible
+    assert "2.1 设备防护等级恢复" in visible
+    assert "3.2 智能化平台功能完善" in visible
 
 
 def test_renderer_accepts_the_exact_citation_bound_delivery_markdown(
@@ -691,6 +712,30 @@ def test_failed_post_render_validation_does_not_publish_output(tmp_path: Path) -
 
     with pytest.raises(ValueError, match="changed or omitted protected"):
         PdsDocxRenderer(CorruptCore()).render(_approved_report(photo), output)
+    assert not output.exists()
+
+
+def test_stale_fence_before_publish_never_exposes_rendered_output(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.docx"
+    Document().save(template)
+    photo = tmp_path / "photo.png"
+    from PIL import Image
+
+    Image.new("RGB", (20, 20), color="green").save(photo)
+    output = tmp_path / "stale-worker-must-not-publish.docx"
+
+    def reject_stale_worker() -> None:
+        raise RuntimeError("stale project write lease")
+
+    with pytest.raises(RuntimeError, match="stale project write lease"):
+        PdsDocxRenderer(PackagedDocxCore(template)).render(
+            _approved_report(photo),
+            output,
+            before_publish=reject_stale_worker,
+        )
+
     assert not output.exists()
 
 

@@ -92,12 +92,17 @@ class TestTrimMessagesToBudget:
         assert result[0] == system
 
 
-def test_working_memory_compaction_keeps_a_checkpoint_and_recent_context():
+def test_working_memory_compaction_keeps_a_handoff_and_recent_context():
     system = LLMMessage(role="system", content="system")
-    objective = LLMMessage(role="user", content="生成五模块报告，必须引用 E-0001。")
+    objective = LLMMessage(role="user", content="生成五模块报告。")
     old_result = LLMMessage(
         role="user",
-        content=("Work/evidence.jsonl E-0001 " + ("x" * 20000)),
+        content=(
+            '{"status":"completed","evidence_refs":["E-0001"],'
+            '"artifact_refs":["Work/evidence.jsonl"],"body":"'
+            + ("x" * 20000)
+            + '"}'
+        ),
     )
     recent = LLMMessage(role="user", content="继续处理当前未决问题。")
 
@@ -108,7 +113,7 @@ def test_working_memory_compaction_keeps_a_checkpoint_and_recent_context():
 
     assert _estimate_tokens(compacted) <= 1200
     assert compacted[0] is system
-    assert "working_memory_checkpoint" in compacted[1].content
+    assert "context_handoff_summary" in compacted[1].content
     assert "E-0001" in compacted[1].content
     assert "Work/evidence.jsonl" in compacted[1].content
     assert recent in compacted

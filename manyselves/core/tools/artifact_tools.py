@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from collections.abc import Iterable
 
-from ..artifacts.gateway import ArtifactGateway
+from ..artifacts.gateway import ArtifactGateway, ToolContractError, contract_error_result
 from .registry import Tool
 
 
@@ -49,7 +49,10 @@ class OpenArtifactTool(Tool):
                 "content": "",
                 "instruction": "该页已在本任务读取；使用已有工作记忆或读取 next_offset，不要重复读取。",
             }
-        page = self.gateway.open(ref, offset=offset, limit=bounded_limit).as_dict()
+        try:
+            page = self.gateway.open(ref, offset=offset, limit=bounded_limit).as_dict()
+        except ToolContractError as error:
+            return contract_error_result(error, ref=ref, offset=offset, limit=bounded_limit)
         self._opened_pages.add(page_key)
         return page
 
@@ -89,9 +92,12 @@ class OpenToolResultTool(Tool):
                     "不要重新读取预览或已读分页。"
                 ),
             }
-        page = self.gateway.open_internal(
-            ref, offset=offset, limit=bounded_limit
-        ).as_dict()
+        try:
+            page = self.gateway.open_internal(
+                ref, offset=offset, limit=bounded_limit
+            ).as_dict()
+        except ToolContractError as error:
+            return contract_error_result(error, ref=ref, offset=offset, limit=bounded_limit)
         self._opened_pages.add(page_key)
         return page
 
@@ -119,12 +125,15 @@ class SearchTextTool(Tool):
         requested = {"max_matches": max_matches, "context_lines": context_lines}
         max_matches = min(max(max_matches, 1), 50)
         context_lines = min(max(context_lines, 0), 10)
-        result = self.gateway.search(
-            ref,
-            query,
-            max_matches=max_matches,
-            context_lines=context_lines,
-        )
+        try:
+            result = self.gateway.search(
+                ref,
+                query,
+                max_matches=max_matches,
+                context_lines=context_lines,
+            )
+        except ToolContractError as error:
+            return contract_error_result(error, ref=ref, query=query)
         result["requested_bounds"] = requested
         result["applied_bounds"] = {
             "max_matches": max_matches,

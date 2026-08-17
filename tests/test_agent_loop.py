@@ -1,6 +1,7 @@
 """Tests for agent loop processing engine."""
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,16 +14,19 @@ from manyselves.core.loops import agent_loop as agent_loop_module
 from manyselves.core.loops.agent_loop import (
     AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
     AgentLoop,
+    _canonical_completed_report_response,
     _canonical_failed_report_response,
     _explicit_report_continuation_run_id,
     _is_explicit_evidence_decision,
     _is_explicit_report_cancel_request,
     _is_simple_report_continuation,
+    _LoopLLMResponse,
     _requires_reporting_workflow_route,
 )
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMResponse, LLMStreamChunk, LLMToolCall
 from manyselves.core.providers.base import Message as LLMMessage
+from manyselves.core.tools.registry import Tool, ToolRegistry
 from manyselves.core.usage_ledger import UsageLedger
 from manyselves.interfaces.types import (
     AgentResponse,
@@ -38,6 +42,27 @@ from manyselves.interfaces.types import (
 from manyselves.interfaces.types import (
     ToolResult as ToolResultMsg,
 )
+
+
+class _ParallelProbeTool(Tool):
+    side_effect = "pure_read"
+    parallel_safe = True
+
+    def __init__(self, name: str, state: dict[str, int], delay: float) -> None:
+        self.name = name
+        self.state = state
+        self.delay = delay
+
+    async def __call__(self, value: int) -> dict:
+        self.state["active"] += 1
+        self.state["maximum"] = max(
+            self.state["maximum"], self.state["active"]
+        )
+        try:
+            await asyncio.sleep(self.delay)
+            return {"value": value}
+        finally:
+            self.state["active"] -= 1
 
 
 @pytest.fixture
@@ -128,6 +153,51 @@ def test_failed_report_terminal_has_deterministic_non_restart_response() -> None
     assert "report-real123" in response
     assert "chief audit failed" in response
     assert "本轮没有启动新运行" in response
+
+
+def test_completed_report_terminal_includes_delivery_and_mimo_cost(workspace) -> None:
+    run_id = "report-mimo-cost"
+    run_root = workspace / "Work" / "runs" / run_id
+    output = workspace / "Outputs" / "Reports" / "报告.docx"
+    ledger = workspace / ".manyselves" / "usage" / f"{run_id}.jsonl"
+    run_root.mkdir(parents=True)
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"docx")
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text(
+        json.dumps({
+            "timestamp": "2026-08-13T11:00:00+08:00",
+            "model": "mimo-v2.5-pro",
+            "cached_input_tokens": 1_000_000,
+            "uncached_input_tokens": 2_000_000,
+            "output_tokens": 500_000,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    (run_root / "request.json").write_text(
+        json.dumps({"operation": "full_report"}), encoding="utf-8"
+    )
+    message = UserMessage(
+        content=json.dumps({
+            "status": "completed",
+            "run_id": run_id,
+            "output_paths": ["Outputs/Reports/报告.docx"],
+            "usage": {"provider_attempts": 3, "total_tokens": 1234},
+        }),
+        agent_type="main",
+        source="report-workflow",
+    )
+
+    response = _canonical_completed_report_response(workspace, message)
+
+    assert response is not None
+    assert "已成功完成并交付" in response
+    assert "Provider 调用 3 次" in response
+    assert "Token Plan Lite" in response
+    assert "Token Plan Standard" in response
+    assert "Token Plan Pro" in response
+    assert "API 按量计费" in response
+    assert "不会启动新的报告运行" in response
 
 
 @pytest.mark.asyncio
@@ -725,6 +795,47 @@ def agent_loop(workspace, config, mock_gui, mock_provider, mock_prompt_loader):
     return loop
 
 
+@pytest.mark.asyncio
+async def test_parallel_safe_pure_read_batch_overlaps_and_preserves_result_order(
+    agent_loop,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {"active": 0, "maximum": 0}
+    registry = ToolRegistry()
+    registry.register(_ParallelProbeTool("pure_a", state, 0.05))
+    registry.register(_ParallelProbeTool("pure_b", state, 0.05))
+    agent_loop.tools = registry
+    agent_loop._current_message = UserMessage(
+        content="run pure tools",
+        agent_type="main",
+    )
+    monkeypatch.setattr(
+        agent_loop,
+        "_chat_with_retries",
+        AsyncMock(return_value=_LoopLLMResponse(content="done", tool_calls=[])),
+    )
+    response = _LoopLLMResponse(
+        content="",
+        tool_calls=[
+            LLMToolCall(id="a", name="pure_a", arguments={"value": 1}),
+            LLMToolCall(id="b", name="pure_b", arguments={"value": 2}),
+        ],
+    )
+    started = asyncio.get_running_loop().time()
+
+    await agent_loop._handle_tool_calls(response, "message")
+
+    elapsed = asyncio.get_running_loop().time() - started
+    assert state["maximum"] == 2
+    assert elapsed < 0.09
+    tool_results = [
+        json.loads(message.content)
+        for message in agent_loop._conversation_history
+        if message.is_tool_result
+    ]
+    assert [result["value"] for result in tool_results] == [1, 2]
+
+
 def test_agent_loop_keeps_dynamic_agent_id(
     workspace, config, mock_provider, mock_prompt_loader
 ):
@@ -842,7 +953,10 @@ async def test_stream_final_thinking_snapshot_is_not_published_as_second_thought
 
     published = [
         message
-        for message in list(agent_loop.bus._queue._queue)
+        for message in [
+            *list(agent_loop.bus._queue._queue),
+            *list(agent_loop.bus._stream_pending.values()),
+        ]
         if isinstance(message, AgentResponse)
     ]
     thinking_messages = [m for m in published if m.thinking]
@@ -1130,6 +1244,126 @@ def test_format_tool_result_string(agent_loop):
     assert result == "plain text"
 
 
+@pytest.mark.asyncio
+async def test_successful_batch_result_parts_preserve_required_content_in_provider_history(
+    agent_loop,
+):
+    first_content = "第一部分正文。" * 80
+    second_content = "第二部分正文。" * 80
+    batch_tool = AsyncMock(
+        return_value={
+            "status": "completed",
+            "parts": [
+                {
+                    "part_id": "part-a",
+                    "artifact_ref": "Work/runs/run/result-parts/part-a.md",
+                },
+                {
+                    "part_id": "part-b",
+                    "artifact_ref": "Work/runs/run/result-parts/part-b.md",
+                },
+            ],
+        }
+    )
+    agent_loop.tools.get = (
+        lambda name: batch_tool if name == "write_result_parts" else None
+    )
+    agent_loop._chat_with_retries = AsyncMock(
+        return_value=SimpleNamespace(
+            content="批量正文已持久化。",
+            tool_calls=[],
+            thinking=None,
+        )
+    )
+    response = SimpleNamespace(
+        content="",
+        thinking=None,
+        tool_calls=[
+            LLMToolCall(
+                id="call-batch-result-parts",
+                name="write_result_parts",
+                arguments={
+                    "parts": [
+                        {"part_id": "part-a", "content": first_content},
+                        {"part_id": "part-b", "content": second_content},
+                    ]
+                },
+            )
+        ],
+        usage=None,
+    )
+
+    await agent_loop._handle_tool_calls(response, "msg-batch-result-parts")
+
+    assistant_call = next(
+        message
+        for message in agent_loop._conversation_history
+        if message.role == "assistant" and message.tool_calls
+    ).tool_calls[0]
+    retained_parts = assistant_call.arguments["parts"]
+    assert "persisted_result_part" not in str(retained_parts)
+    assert retained_parts == [
+        {"part_id": "part-a", "content": first_content},
+        {"part_id": "part-b", "content": second_content},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_failed_batch_result_parts_keep_original_content_for_provider_repair(
+    agent_loop,
+):
+    first_content = "需要保留的第一部分错误上下文。" * 60
+    second_content = "需要保留的第二部分错误上下文。" * 60
+    batch_tool = AsyncMock(
+        return_value={
+            "status": "error",
+            "error": "part-b violates the current result-part contract",
+        }
+    )
+    agent_loop.tools.get = (
+        lambda name: batch_tool if name == "write_result_parts" else None
+    )
+    agent_loop._chat_with_retries = AsyncMock(
+        return_value=SimpleNamespace(
+            content="我会根据错误修复批量参数。",
+            tool_calls=[],
+            thinking=None,
+        )
+    )
+    response = SimpleNamespace(
+        content="",
+        thinking=None,
+        tool_calls=[
+            LLMToolCall(
+                id="call-failed-batch-result-parts",
+                name="write_result_parts",
+                arguments={
+                    "parts": [
+                        {"part_id": "part-a", "content": first_content},
+                        {"part_id": "part-b", "content": second_content},
+                    ]
+                },
+            )
+        ],
+        usage=None,
+    )
+
+    await agent_loop._handle_tool_calls(response, "msg-failed-batch-result-parts")
+
+    assistant_call = next(
+        message
+        for message in agent_loop._conversation_history
+        if message.role == "assistant" and message.tool_calls
+    ).tool_calls[0]
+    assert assistant_call.arguments["parts"][0]["content"] == first_content
+    assert assistant_call.arguments["parts"][1]["content"] == second_content
+    assert any(
+        "part-b violates the current result-part contract" in message.content
+        for message in agent_loop._conversation_history
+        if message.is_tool_result
+    )
+
+
 def test_large_tool_result_is_persisted_and_replaced_with_a_compact_reference(
     agent_loop, workspace
 ):
@@ -1149,12 +1383,13 @@ def test_large_tool_result_is_persisted_and_replaced_with_a_compact_reference(
     assert compact["next_offset"] == compact["preview_end_offset"]
     assert compact["recommended_limit"] == 8000
     assert "省略 limit 即按 8000 字符读取" in compact["instruction"]
-    stored = workspace / ".manyselves/tool-results/main/call-large.json"
-    assert stored.is_file()
-    assert "evidence-" + ("x" * 20000) in stored.read_text(encoding="utf-8")
+    stored = list((workspace / ".manyselves/artifacts/tool-result").glob("*.txt"))
+    assert len(stored) == 1
+    assert "evidence-" + ("x" * 20000) in stored[0].read_text(encoding="utf-8")
+    assert not (workspace / ".manyselves/tool-results").exists()
 
 
-def test_working_memory_compaction_persists_removed_transcript(agent_loop, workspace):
+def test_working_memory_compaction_persists_handoff_summary(agent_loop, workspace):
     messages = [
         LLMMessage(role="system", content="system"),
         LLMMessage(role="user", content="original task" + ("x" * 160000)),
@@ -1165,21 +1400,188 @@ def test_working_memory_compaction_persists_removed_transcript(agent_loop, works
     agent_loop._compact_working_memory(messages)
 
     assert len(compacted) < len(messages) + 1
-    checkpoints = list(
-        (workspace / ".manyselves/context-checkpoints/main").glob("*.json")
+    assert "<context_handoff_summary>" in compacted[1].content
+    assert '"progress"' in compacted[1].content
+    assert not (workspace / ".manyselves/artifacts/context-checkpoint").exists()
+    assert not (workspace / ".manyselves/context-checkpoints").exists()
+
+
+@pytest.mark.asyncio
+async def test_working_memory_compaction_uses_model_handoff_when_available(agent_loop):
+    agent_loop.config = AgentDefaults(max_tool_iterations=5, working_memory_tokens=5120)
+    model_summary = {
+        "progress": ["完成证据核验"],
+        "decisions": ["保留当前提交"],
+        "constraints": ["不得重写已完成分段"],
+        "remaining_work": ["提交当前任务的 typed result"],
+        "critical_refs": ["E-0001"],
+    }
+    agent_loop._chat_with_retries = AsyncMock(
+        return_value=_LoopLLMResponse(
+            content=json.dumps(model_summary, ensure_ascii=False),
+            tool_calls=[],
+        )
     )
-    assert len(checkpoints) == 1
-    assert "original task" in checkpoints[0].read_text(encoding="utf-8")
-    assert "checkpoint_ref=artifact:v1:" in compacted[1].content
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="task" + ("x" * 30000)),
+        LLMMessage(role="user", content="continue"),
+    ]
+
+    compacted = await agent_loop._compact_working_memory_async(messages)
+
+    assert agent_loop._chat_with_retries.await_args.kwargs["phase"] == "context_compaction"
+    assert '"source":"model"' in compacted[1].content
+    assert "不得重写已完成分段" in compacted[1].content
+    assert "checkpoint_ref" not in compacted[1].content
+
+
+@pytest.mark.asyncio
+async def test_working_memory_compaction_marks_deterministic_fallback(agent_loop):
+    agent_loop.config = AgentDefaults(max_tool_iterations=5, working_memory_tokens=5120)
+    agent_loop._chat_with_retries = AsyncMock(side_effect=RuntimeError("provider unavailable"))
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="task" + ("x" * 30000)),
+        LLMMessage(role="user", content="continue"),
+    ]
+
+    compacted = await agent_loop._compact_working_memory_async(messages)
+
+    assert '"source":"deterministic_fallback"' in compacted[1].content
+    assert "model_handoff_unavailable" in compacted[1].content
+
+
+@pytest.mark.asyncio
+async def test_model_handoff_input_is_bounded_for_long_history(agent_loop):
+    agent_loop.config = AgentDefaults(
+        max_tool_iterations=5,
+        max_tokens=512,
+        working_memory_tokens=4096,
+    )
+    agent_loop.llm_provider.context_window = 4096
+    agent_loop._chat_with_retries = AsyncMock(
+        return_value=_LoopLLMResponse(
+            content=json.dumps(
+                {
+                    "progress": ["bounded"],
+                    "decisions": [],
+                    "constraints": [],
+                    "remaining_work": ["continue"],
+                    "critical_refs": [],
+                }
+            ),
+            tool_calls=[],
+        )
+    )
+    messages = [LLMMessage(role="system", content="system")]
+    for index in range(20):
+        messages.extend(
+            [
+                LLMMessage(role="user", content=f"old-{index}" + ("x" * 4000)),
+                LLMMessage(
+                    role="assistant",
+                    content="",
+                    tool_calls=[
+                        LLMToolCall(
+                            id=f"call-{index}",
+                            name="read",
+                            arguments={"ref": f"Work/{index}.json"},
+                        )
+                    ],
+                ),
+                LLMMessage(
+                    role="tool",
+                    content='{"status":"completed"}',
+                    tool_call_id=f"call-{index}",
+                    is_tool_result=True,
+                ),
+            ]
+        )
+    messages.append(LLMMessage(role="user", content="current task"))
+
+    await agent_loop._compact_working_memory_async(messages)
+
+    summary_request = agent_loop._chat_with_retries.await_args.args[0]
+    assert len(summary_request[-1].content) < 20_000
+    assert "<older_state_snapshot>" in summary_request[-1].content
+    assert "<compaction_transcript>" in summary_request[-1].content
+
+
+def test_identity_task_boundary_and_restart_restore_keep_lossless_history(agent_loop):
+    assert agent_loop.begin_typed_task({"task_id": "task-1", "revision": 0}) is True
+    agent_loop._conversation_history = [
+        LLMMessage(role="user", content="task 1"),
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                LLMToolCall(id="call-old", name="submit_result", arguments={"payload": {"kind": "old"}})
+            ],
+        ),
+    ]
+    assert agent_loop.begin_typed_task({"task_id": "task-2", "revision": 1}) is False
+    assert [message.content for message in agent_loop._conversation_history] == [
+        "task 1",
+        "",
+    ]
+    restored = AgentLoop(
+        agent_type=AgentType.MAIN,
+        workspace=agent_loop.workspace,
+        tools=agent_loop.tools,
+        bus=MessageBus(),
+        config=agent_loop.config,
+        llm_provider=agent_loop.llm_provider,
+        loop_manager=None,
+    )
+    restored.restore_conversation(
+        [
+            {
+                "role": "user",
+                "content": "task 1",
+            },
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "call-old", "name": "submit_result", "arguments": {"payload": {"kind": "old"}}}
+                ],
+            },
+        ],
+        task_boundaries=agent_loop.task_boundaries,
+        handoff_summary={"sequence": 2, "progress": ["saved"]},
+    )
+    assert restored.active_task_identity == {"task_id": "task-2", "revision": 1}
+    assert restored._conversation_history[1].tool_calls[0].id == "call-old"
+    assert restored.handoff_summary["progress"] == ["saved"]
 
 
 def test_token_usage_ledger_prefers_provider_usage(agent_loop, workspace):
     agent_loop.usage_run_id = "run-usage"
     agent_loop.usage_task_id = "task-usage"
+    agent_loop.usage_context_manifest_ref = (
+        "Work/runs/run-usage/context-manifests/provider-calls/"
+        "task-usage-r0-session-c0001-initial-a1.json"
+    )
     messages = [LLMMessage(role="user", content="x" * 10000)]
     response = SimpleNamespace(
         content="done",
-        usage={"input_tokens": 123, "output_tokens": 17},
+        tool_calls=[],
+        request_metrics={
+            "representation": "test_provider_payload_v1",
+            "request_fingerprint": "a" * 64,
+            "message_fingerprint": "b" * 64,
+            "tool_schema_fingerprint": "c" * 64,
+            "request_chars": 777,
+            "message_chars": 555,
+            "tool_schema_chars": 111,
+        },
+        usage={
+            "input_tokens": 123,
+            "output_tokens": 17,
+            "prompt_tokens_details": {"cached_tokens": 40},
+            "cache_creation_input_tokens": 3,
+        },
     )
 
     record = agent_loop._record_token_usage(
@@ -1188,11 +1590,36 @@ def test_token_usage_ledger_prefers_provider_usage(agent_loop, workspace):
         phase="initial",
         status="success",
         error=None,
+        tool_definitions=[
+            {
+                "name": "submit_result",
+                "input_schema": {"type": "object", "properties": {}},
+            }
+        ],
+        duration_ms=25,
     )
 
     assert record["usage_source"] == "provider"
     assert record["input_tokens"] == 123
     assert record["output_tokens"] == 17
+    assert record["cached_input_tokens"] == 40
+    assert record["cache_write_input_tokens"] == 3
+    assert record["uncached_input_tokens"] == 80
+    assert (
+        record["provider_call_id"]
+        == "task-usage-r0-session-c0001-initial-a1"
+    )
+    assert record["duration_ms"] == 25
+    assert record["request_metric_source"] == "provider_adapter_payload"
+    assert record["provider_request_representation"] == "test_provider_payload_v1"
+    assert record["request_fingerprint"] == "a" * 64
+    assert record["message_fingerprint"] == "b" * 64
+    assert record["tool_schema_fingerprint"] == "c" * 64
+    assert record["request_chars"] == 777
+    assert record["message_chars"] == 555
+    assert record["tool_schema_chars"] == 111
+    assert len(record["pre_adapter_request_fingerprint"]) == 64
+    assert record["provider"] == agent_loop.llm_provider.__class__.__name__
     ledger = workspace / ".manyselves/usage/run-usage.jsonl"
     assert ledger.is_file()
     assert '"task_id": "task-usage"' in ledger.read_text(encoding="utf-8")
@@ -1211,6 +1638,39 @@ def test_token_usage_ledger_marks_length_fallback_as_estimated(agent_loop):
 
     assert record["usage_source"] == "estimated"
     assert record["input_tokens"] > 0
+
+
+def test_estimated_output_usage_counts_long_tool_call_arguments(agent_loop):
+    long_content = "完整报告正文。" * 1000
+    response = SimpleNamespace(
+        content="",
+        thinking=None,
+        tool_calls=[
+            LLMToolCall(
+                id="write-long-batch",
+                name="write_result_parts",
+                arguments={
+                    "parts": [
+                        {"part_id": "part-a", "content": long_content}
+                    ]
+                },
+            )
+        ],
+        usage=None,
+        request_metrics=None,
+    )
+
+    record = agent_loop._record_token_usage(
+        [LLMMessage(role="user", content="write the report")],
+        response,
+        phase="initial",
+        status="success",
+        error=None,
+    )
+
+    assert record["usage_source"] == "estimated"
+    assert record["output_tokens"] >= int(len(long_content) * 0.25)
+    assert record["total_tokens"] > record["input_tokens"]
 
 
 def test_progress_monitor_requests_replan_after_repeated_identical_results():
@@ -1342,12 +1802,902 @@ async def test_tool_followup_streams_thinking_chunks(
 
     await loop._handle_tool_calls(response, "msg-1")
 
-    published = list(bus._queue._queue)
+    published = [
+        *list(bus._queue._queue),
+        *list(bus._stream_pending.values()),
+    ]
     assert [
         msg.thinking
         for msg in published
         if isinstance(msg, AgentResponse) and msg.thinking
     ] == ["checking result"]
+
+
+@pytest.mark.asyncio
+async def test_successful_result_part_preserves_protocol_valid_followup_history(
+    workspace, config, mock_provider, mock_prompt_loader
+):
+    full_content = "完整模块正文。" * 400
+    observed_messages: list[list[LLMMessage]] = []
+
+    async def write_part(**kwargs):
+        assert kwargs["content"] == full_content
+        return {
+            "status": "created",
+            "part_id": kwargs["part_id"],
+            "characters": len(kwargs["content"]),
+            "artifact_ref": "Work/runs/run-1/drafts/module-2.1/r0/2.1.1.md",
+        }
+
+    async def unsupported_stream(*args, **kwargs):
+        raise NotImplementedError
+
+    async def followup_chat(messages, **kwargs):
+        observed_messages.append(messages)
+        return LLMResponse(
+            content="done",
+            tool_calls=[],
+            usage={"input_tokens": 20, "output_tokens": 2},
+        )
+
+    mock_provider.chat_stream = unsupported_stream
+    mock_provider.chat = AsyncMock(side_effect=followup_chat)
+    tools = MagicMock()
+    tools.get.return_value = write_part
+    tools.get_definitions.return_value = []
+    loop = AgentLoop(
+        agent_type=AgentType.THEORY,
+        workspace=workspace,
+        tools=tools,
+        bus=MessageBus(),
+        config=config,
+        llm_provider=mock_provider,
+        prompt_loader=mock_prompt_loader,
+        loop_manager=None,
+    )
+    original_call = LLMToolCall(
+        id="call-write-part",
+        name="write_result_part",
+        arguments={
+            "part_id": "2.1.1",
+            "content": full_content,
+            "evidence_ids": [],
+        },
+    )
+
+    await loop._handle_tool_calls(
+        SimpleNamespace(
+            content="",
+            thinking=None,
+            tool_calls=[original_call],
+            usage=None,
+        ),
+        "msg-1",
+    )
+
+    assert observed_messages
+    persisted_call = next(
+        message.tool_calls[0]
+        for message in observed_messages[0]
+        if message.tool_calls
+    )
+    assert persisted_call.arguments["content"] == full_content
+    assert "persisted_result_part" not in str(persisted_call.arguments)
+    assert persisted_call.arguments["evidence_ids"] == []
+    assert original_call.arguments["content"] == full_content
+
+
+def test_working_memory_compaction_removes_complete_old_tool_exchange() -> None:
+    old_content = "已经持久化的长正文。" * 4000
+    old_call = LLMToolCall(
+        id="call-old-write",
+        name="write_result_part",
+        arguments={"part_id": "part-a", "content": old_content},
+    )
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="original task"),
+        LLMMessage(role="assistant", content="", tool_calls=[old_call]),
+        LLMMessage(
+            role="user",
+            content="{\"status\":\"created\"}",
+            tool_call_id="call-old-write",
+            is_tool_result=True,
+        ),
+        LLMMessage(role="assistant", content="old exchange complete"),
+        LLMMessage(role="user", content="continue from current durable state"),
+    ]
+
+    compacted = agent_loop_module._compact_messages_for_working_memory(
+        messages,
+        target_tokens=300,
+    )
+
+    assert compacted[0].role == "system"
+    assert "context_handoff_summary" in compacted[1].content
+    assert all(
+        call.id != "call-old-write"
+        for message in compacted
+        for call in (message.tool_calls or [])
+    )
+    assert all(message.tool_call_id != "call-old-write" for message in compacted)
+    assert compacted[-1].content == "continue from current durable state"
+    assert '"tool_state"' in compacted[1].content
+    assert '"status":"created"' in compacted[1].content
+    assert "persisted_result_part" not in compacted[1].content
+
+
+def test_working_memory_compaction_keeps_complete_recent_tool_exchange() -> None:
+    recent_call = LLMToolCall(
+        id="call-recent-search",
+        name="search_project_evidence",
+        arguments={"query": "保护配合"},
+    )
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="old context" + ("x" * 20_000)),
+        LLMMessage(role="assistant", content="", tool_calls=[recent_call]),
+        LLMMessage(
+            role="user",
+            content=json.dumps(
+                {
+                    "status": "ok",
+                    "next_action": "write_result_part",
+                    "evidence_refs": ["E-0001"],
+                }
+            ),
+            tool_call_id="call-recent-search",
+            is_tool_result=True,
+        ),
+        LLMMessage(role="assistant", content="已获得所需证据。"),
+    ]
+
+    compacted = agent_loop_module._compact_messages_for_working_memory(
+        messages,
+        target_tokens=1500,
+    )
+
+    retained_call_ids = {
+        call.id for message in compacted for call in (message.tool_calls or [])
+    }
+    retained_result_ids = {
+        message.tool_call_id for message in compacted if message.is_tool_result
+    }
+    assert retained_call_ids == {"call-recent-search"}
+    assert retained_result_ids == {"call-recent-search"}
+    assert '"critical_refs":["E-0001"]' in compacted[1].content
+
+
+def test_working_memory_compaction_drops_adjacent_orphan_tool_result() -> None:
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="old context" + ("x" * 20_000)),
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                LLMToolCall(
+                    id="call-valid",
+                    name="search_project_evidence",
+                    arguments={"query": "保护配合"},
+                )
+            ],
+        ),
+        LLMMessage(
+            role="user",
+            content='{"status":"ok"}',
+            tool_call_id="call-valid",
+            is_tool_result=True,
+        ),
+        LLMMessage(
+            role="user",
+            content='{"status":"orphan"}',
+            tool_call_id="call-orphan",
+            is_tool_result=True,
+        ),
+    ]
+
+    compacted = agent_loop_module._compact_messages_for_working_memory(
+        messages,
+        target_tokens=1500,
+    )
+
+    retained_result_ids = {
+        message.tool_call_id for message in compacted if message.is_tool_result
+    }
+    assert retained_result_ids == {"call-valid"}
+
+
+@pytest.mark.parametrize(
+    "call_ids",
+    [
+        ["", "call-valid"],
+        ["call-duplicate", "call-duplicate"],
+    ],
+)
+def test_atomic_history_rejects_empty_or_duplicate_assistant_call_ids(
+    call_ids: list[str],
+) -> None:
+    history = [
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                LLMToolCall(id=call_id, name="calculate", arguments={"expression": "1"})
+                for call_id in call_ids
+            ],
+        ),
+        LLMMessage(
+            role="user",
+            content='{"status":"ok"}',
+            tool_call_id=call_ids[-1],
+            is_tool_result=True,
+        ),
+    ]
+
+    assert agent_loop_module._atomic_history_units(history) == []
+
+
+def test_repeated_working_memory_compaction_preserves_one_original_objective() -> None:
+    objective = "分析五模块并保留 Cross、Chief 与 Final 的语义门禁。"
+    first = agent_loop_module._compact_messages_for_working_memory(
+        [
+            LLMMessage(role="system", content="system"),
+            LLMMessage(role="user", content=objective),
+            LLMMessage(role="assistant", content="旧分析" + ("x" * 20_000)),
+        ],
+        target_tokens=700,
+    )
+    second = agent_loop_module._compact_messages_for_working_memory(
+        [
+            *first,
+            LLMMessage(role="user", content="新增证据" + ("y" * 20_000)),
+            LLMMessage(role="assistant", content="继续综合"),
+        ],
+        target_tokens=700,
+    )
+
+    provider_text = "\n".join(message.content or "" for message in second)
+    assert provider_text.count("<context_handoff_summary>") == 1
+    assert objective in provider_text
+    assert "checkpoint_ref" not in provider_text
+
+
+@pytest.mark.asyncio
+async def test_provider_payload_never_exposes_retired_history_token(
+    agent_loop,
+) -> None:
+    marker = (
+        "<persisted_result_part part_id=part-a "
+        f"sha256={'a' * 64} characters=100>"
+    )
+    retired_name = "persisted_result_part"
+    messages = [
+        LLMMessage(role="system", content=f"system {marker}"),
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                LLMToolCall(
+                    id=f"old-call-{retired_name}",
+                    name=f"write_{retired_name}",
+                    arguments={retired_name: marker, "part_id": "part-a"},
+                )
+            ],
+        ),
+        LLMMessage(
+            role="user",
+            content=f"tool result mentioned {marker}",
+            tool_call_id=f"old-call-{retired_name}",
+            is_tool_result=True,
+        ),
+    ]
+    tools = [
+        {
+            "name": "write_result_part",
+            "description": f"legacy description {marker}",
+            "input_schema": {
+                "type": "object",
+                "properties": {retired_name: {"type": "string"}},
+            },
+        }
+    ]
+    agent_loop._chat_followup = AsyncMock(
+        return_value=_LoopLLMResponse(content="ok", tool_calls=[])
+    )
+
+    await agent_loop._chat_with_retries(messages, tools, "message-1")
+
+    provider_messages = agent_loop._chat_followup.await_args.args[0]
+    provider_tools = agent_loop._chat_followup.await_args.args[1]
+    canonical_payload = json.dumps(
+        {
+            "messages": [
+                {
+                    "content": message.content,
+                    "thinking": message.thinking,
+                    "tool_calls": [
+                        {
+                            "name": call.name,
+                            "arguments": call.arguments,
+                        }
+                        for call in (message.tool_calls or [])
+                    ],
+                }
+                for message in provider_messages
+            ],
+            "tools": provider_tools,
+        },
+        ensure_ascii=False,
+    )
+    assert "persisted_result_part" not in canonical_payload.casefold()
+    assert "persisted_result_part" in messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_provider_followup_receives_repair_without_rejected_submit_call(
+    agent_loop,
+) -> None:
+    malformed_payload = '{"kind":"cross_owner_finding_submission"'
+    messages = [
+        LLMMessage(role="system", content="system"),
+        LLMMessage(role="user", content="review owner 2.3"),
+        LLMMessage(
+            role="assistant",
+            content="analysis complete",
+            tool_calls=[
+                LLMToolCall(
+                    id="call-rejected-submit",
+                    name="submit_result",
+                    arguments={"payload": malformed_payload},
+                )
+            ],
+        ),
+        LLMMessage(
+            role="user",
+            content=json.dumps(
+                {
+                    "status": "correction_required",
+                    "accepted": False,
+                    "repair_instruction": "Pass payload as a native object.",
+                }
+            ),
+            tool_call_id="call-rejected-submit",
+            is_tool_result=True,
+        ),
+    ]
+    agent_loop._chat_followup = AsyncMock(
+        return_value=_LoopLLMResponse(content="ok", tool_calls=[])
+    )
+
+    await agent_loop._chat_with_retries(messages, [], "message-1")
+
+    provider_messages = agent_loop._chat_followup.await_args.args[0]
+    assert not any(
+        call.id == "call-rejected-submit"
+        for message in provider_messages
+        for call in (message.tool_calls or [])
+    )
+    assert not any(
+        message.tool_call_id == "call-rejected-submit"
+        for message in provider_messages
+    )
+    assert any(
+        message.role == "user"
+        and "Pass payload as a native object" in message.content
+        for message in provider_messages
+    )
+    assert messages[2].tool_calls[0].arguments["payload"] == malformed_payload
+
+
+def test_legacy_result_part_marker_restores_exact_same_task_disk_prose(
+    workspace,
+):
+    content = "历史运行中已经持久化的完整正文。" * 80
+    artifact = workspace / "Work/runs/run/drafts/module/r0/part-a.md"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(content, encoding="utf-8")
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    marker = (
+        "<persisted_result_part part_id=part-a "
+        f"sha256={digest} characters={len(content)} "
+        "history_only=true copy=forbidden "
+        "artifact_ref=Work/runs/run/drafts/module/r0/part-a.md>"
+    )
+    call = LLMToolCall(
+        id="legacy-marker",
+        name="write_result_part",
+        arguments={"part_id": "part-a", "content": marker},
+    )
+
+    restored = agent_loop_module._rehydrate_persisted_result_part_call(
+        call,
+        {},
+        workspace,
+        "run",
+        "module",
+    )
+
+    assert restored.arguments["content"] == content
+
+
+@pytest.mark.asyncio
+async def test_verified_legacy_marker_closes_as_already_ready_without_replaying_write(
+    agent_loop,
+    workspace,
+) -> None:
+    content = "历史运行中已经持久化的完整正文。" * 80
+    artifact = workspace / "Work/runs/run/drafts/module/r0/part-a.md"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(content, encoding="utf-8")
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    marker = (
+        "<persisted_result_part part_id=part-a "
+        f"sha256={digest} characters={len(content)} "
+        "history_only=true copy=forbidden "
+        "artifact_ref=Work/runs/run/drafts/module/r0/part-a.md>"
+    )
+    write_part = AsyncMock()
+    agent_loop.tools.get = (
+        lambda name: write_part if name == "write_result_part" else None
+    )
+    agent_loop.tools.get_definitions.return_value = []
+    agent_loop.usage_run_id = "run"
+    agent_loop.usage_task_id = "module"
+    agent_loop._chat_with_retries = AsyncMock(
+        return_value=SimpleNamespace(
+            content="The durable part is ready.",
+            tool_calls=[],
+            thinking=None,
+        )
+    )
+
+    await agent_loop._handle_tool_calls(
+        SimpleNamespace(
+            content="",
+            thinking=None,
+            tool_calls=[
+                LLMToolCall(
+                    id="call-legacy-ready",
+                    name="write_result_part",
+                    arguments={"part_id": "part-a", "content": marker},
+                )
+            ],
+            usage=None,
+        ),
+        "msg-legacy-ready",
+    )
+
+    write_part.assert_not_awaited()
+    assert artifact.read_text(encoding="utf-8") == content
+    followup_messages = agent_loop._chat_with_retries.await_args.args[0]
+    retained_call = next(
+        message.tool_calls[0]
+        for message in followup_messages
+        if message.role == "assistant" and message.tool_calls
+    )
+    assert "persisted_result_part" not in retained_call.arguments["content"]
+    result = next(
+        json.loads(message.content)
+        for message in followup_messages
+        if message.is_tool_result
+    )
+    assert result["status"] == "already_ready"
+    assert result["ready_part_ids"] == ["part-a"]
+
+
+def test_persisted_result_part_disk_fallback_rejects_cross_part_artifact(
+    workspace,
+):
+    artifact = workspace / "Work/runs/run/drafts/module/r0/part-a.md"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("A小节的完整正文。" * 40, encoding="utf-8")
+    marker = (
+        "<persisted_result_part part_id=part-b "
+        f"sha256={'a' * 64} characters=999 history_only=true copy=forbidden "
+        "artifact_ref=Work/runs/run/drafts/module/r0/part-a.md>"
+    )
+    call = LLMToolCall(
+        id="cross-part-marker",
+        name="write_result_part",
+        arguments={"part_id": "part-b", "content": marker},
+    )
+
+    restored = agent_loop_module._rehydrate_persisted_result_part_call(
+        call,
+        {},
+        workspace,
+        "run",
+        "module",
+    )
+
+    assert restored.arguments["content"] == marker
+
+
+def test_persisted_result_part_disk_fallback_rejects_other_run_artifact(
+    workspace,
+):
+    content = "另一运行的正文。" * 80
+    artifact = workspace / "Work/runs/other-run/drafts/module/r0/part-a.md"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(content, encoding="utf-8")
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    marker = (
+        "<persisted_result_part part_id=part-a "
+        f"sha256={digest} characters={len(content)} "
+        "history_only=true copy=forbidden "
+        "artifact_ref=Work/runs/other-run/drafts/module/r0/part-a.md>"
+    )
+    call = LLMToolCall(
+        id="other-run-marker",
+        name="write_result_part",
+        arguments={"part_id": "part-a", "content": marker},
+    )
+
+    restored = agent_loop_module._rehydrate_persisted_result_part_call(
+        call,
+        {},
+        workspace,
+        "current-run",
+        "module",
+    )
+
+    assert restored.arguments["content"] == marker
+
+
+def test_batch_marker_redaction_preserves_valid_peer_content() -> None:
+    marker = (
+        "<persisted_result_part part_id=part-b "
+        f"sha256={'c' * 64} characters=900 "
+        "history_only=true copy=forbidden>"
+    )
+    call = LLMToolCall(
+        id="batch-marker",
+        name="write_result_parts",
+        arguments={
+            "parts": [
+                {"part_id": "part-a", "content": "完整的A部分。"},
+                {"part_id": "part-b", "content": marker},
+            ]
+        },
+    )
+
+    assert agent_loop_module._unresolved_persisted_result_part_ids(call) == [
+        "part-b"
+    ]
+    redacted = agent_loop_module._redact_unresolved_persisted_result_part_call(
+        call
+    )
+    assert redacted.arguments["parts"][0]["content"] == "完整的A部分。"
+    assert "content" in redacted.arguments["parts"][1]
+    assert "persisted_result_part" not in redacted.arguments["parts"][1]["content"]
+    assert "Regenerate complete reader-visible prose" in (
+        redacted.arguments["parts"][1]["content"]
+    )
+
+
+def test_provider_working_history_does_not_replay_rejected_tool_arguments() -> None:
+    malformed_payload = '{"kind":"cross_owner_finding_submission"'
+    original = [
+        LLMMessage(role="user", content="Review the current owner module."),
+        LLMMessage(
+            role="assistant",
+            content="Review complete.",
+            tool_calls=[
+                LLMToolCall(
+                    id="call-rejected-submit",
+                    name="submit_result",
+                    arguments={"payload": malformed_payload},
+                )
+            ],
+        ),
+        LLMMessage(
+            role="user",
+            content=json.dumps(
+                {
+                    "status": "correction_required",
+                    "accepted": False,
+                    "repair_instruction": "Pass payload as a native object.",
+                }
+            ),
+            tool_call_id="call-rejected-submit",
+            is_tool_result=True,
+        ),
+    ]
+
+    working = agent_loop_module._provider_working_messages(original)
+
+    assert original[1].tool_calls[0].arguments["payload"] == malformed_payload
+    assert not any(
+        call.arguments.get("payload") == malformed_payload
+        for message in working
+        for call in (message.tool_calls or [])
+    )
+    assert not any(message.is_tool_result for message in working)
+    assert any(
+        message.role == "user"
+        and "Pass payload as a native object" in message.content
+        and "invalid arguments are not an example to copy" in message.content
+        for message in working
+    )
+
+
+def test_provider_working_history_preserves_successful_peer_tool_pair() -> None:
+    messages = [
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                LLMToolCall(id="call-ok", name="read", arguments={"ref": "E-1"}),
+                LLMToolCall(
+                    id="call-bad",
+                    name="submit_result",
+                    arguments={"payload": "serialized"},
+                ),
+            ],
+        ),
+        LLMMessage(
+            role="tool",
+            content=json.dumps({"status": "completed", "accepted": True}),
+            tool_call_id="call-ok",
+            is_tool_result=True,
+        ),
+        LLMMessage(
+            role="tool",
+            content=json.dumps(
+                {"status": "correction_required", "accepted": False}
+            ),
+            tool_call_id="call-bad",
+            is_tool_result=True,
+        ),
+    ]
+
+    working = agent_loop_module._provider_working_messages(messages)
+
+    retained_assistant = next(message for message in working if message.tool_calls)
+    assert [call.id for call in retained_assistant.tool_calls] == ["call-ok"]
+    retained_results = [message for message in working if message.is_tool_result]
+    assert [message.tool_call_id for message in retained_results] == ["call-ok"]
+    assert any(
+        message.role == "user" and "tool_name=\"submit_result\"" in message.content
+        for message in working
+    )
+
+
+def test_provider_working_history_drops_terminal_rejection_before_resumed_task() -> None:
+    invalid_findings = '[{"category":"traceability"}]'
+    messages = [
+        LLMMessage(
+            role="assistant",
+            content="Review complete.",
+            tool_calls=[
+                LLMToolCall(
+                    id="call-terminal-rejected",
+                    name="submit_result",
+                    arguments={"kind": "final", "findings": invalid_findings},
+                )
+            ],
+        ),
+        LLMMessage(
+            role="user",
+            content=json.dumps(
+                {
+                    "status": "failed",
+                    "accepted": False,
+                    "validation_errors": [
+                        {"field": "findings", "expected": "array"}
+                    ],
+                    "instruction": "stop_task",
+                }
+            ),
+            tool_call_id="call-terminal-rejected",
+            is_tool_result=True,
+        ),
+        LLMMessage(
+            role="user",
+            content="<task_context>resumed typed task</task_context>",
+        ),
+    ]
+
+    working = agent_loop_module._provider_working_messages(messages)
+
+    assert not any(
+        call.arguments.get("findings") == invalid_findings
+        for message in working
+        for call in (message.tool_calls or [])
+    )
+    correction = next(
+        message
+        for message in working
+        if message.role == "user" and "tool_input_correction" in message.content
+    )
+    assert "earlier rejected call" in correction.content
+    assert "current task schema" in correction.content
+    assert invalid_findings not in correction.content
+    assert "stale correction example" in correction.content
+
+
+def test_provider_working_history_drops_stale_correction_detail_before_resumed_task() -> None:
+    stale_feedback = "OLD_EMPTY_ARRAY_EXAMPLE"
+    messages = [
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                LLMToolCall(
+                    id="call-old-correction",
+                    name="submit_result",
+                    arguments={"findings": "[{...}]"},
+                )
+            ],
+        ),
+        LLMMessage(
+            role="user",
+            content=json.dumps(
+                {
+                    "status": "correction_required",
+                    "accepted": False,
+                    "repair_instruction": stale_feedback,
+                }
+            ),
+            tool_call_id="call-old-correction",
+            is_tool_result=True,
+        ),
+        LLMMessage(role="user", content="<task_boundary>resume</task_boundary>"),
+    ]
+
+    working = agent_loop_module._provider_working_messages(messages)
+
+    assert not any(
+        call.arguments.get("findings") == "[{...}]"
+        for message in working
+        for call in (message.tool_calls or [])
+    )
+    assert all(stale_feedback not in str(message.content or "") for message in working)
+    assert any(
+        "current task schema" in str(message.content or "")
+        for message in working
+    )
+
+
+@pytest.mark.asyncio
+async def test_fabricated_result_part_marker_requests_correction_without_tool_error(
+    agent_loop,
+    workspace,
+):
+    write_part = AsyncMock()
+    agent_loop.tools.get = (
+        lambda name: write_part if name == "write_result_part" else None
+    )
+    agent_loop.tools.get_definitions.return_value = []
+    agent_loop.usage_run_id = "run"
+    agent_loop.usage_task_id = "module"
+    agent_loop._chat_with_retries = AsyncMock(
+        return_value=SimpleNamespace(
+            content="I will regenerate the missing prose.",
+            tool_calls=[],
+            thinking=None,
+        )
+    )
+    marker = (
+        "<persisted_result_part part_id=part-new "
+        f"sha256={'b' * 64} characters=4993 history_only=true copy=forbidden "
+        "artifact_ref=Work/runs/run/drafts/module/r0/part-new.md>"
+    )
+
+    await agent_loop._handle_tool_calls(
+        SimpleNamespace(
+            content="",
+            thinking=None,
+            tool_calls=[
+                LLMToolCall(
+                    id="call-fabricated-marker",
+                    name="write_result_part",
+                    arguments={
+                        "part_id": "part-new",
+                        "content": marker,
+                        "evidence_ids": [],
+                    },
+                )
+            ],
+            usage=None,
+        ),
+        "msg-fabricated-marker",
+    )
+
+    write_part.assert_not_awaited()
+    assert not (
+        workspace / "Work/runs/run/drafts/module/r0/part-new.md"
+    ).exists()
+    correction_messages = agent_loop._chat_with_retries.await_args.args[0]
+    rejected_call = next(
+        message.tool_calls[0]
+        for message in correction_messages
+        if message.role == "assistant" and message.tool_calls
+    )
+    assert "content" in rejected_call.arguments
+    assert "persisted_result_part" not in rejected_call.arguments["content"]
+    assert "Regenerate complete reader-visible prose" in rejected_call.arguments["content"]
+    correction_result = next(
+        json.loads(message.content)
+        for message in correction_messages
+        if message.is_tool_result
+    )
+    assert correction_result["status"] == "correction_required"
+    assert correction_result["affected_part_ids"] == ["part-new"]
+    published_results = [
+        message
+        for message in agent_loop.bus._queue._queue
+        if isinstance(message, ToolResultMsg)
+        and message.tool_name == "write_result_part"
+    ]
+    assert published_results[-1].error is None
+    assert published_results[-1].result["status"] == "correction_required"
+
+
+@pytest.mark.asyncio
+async def test_failed_result_part_keeps_original_arguments_for_correction(
+    workspace, config, mock_provider, mock_prompt_loader
+):
+    full_content = "待修正正文。" * 400
+    observed_messages: list[list[LLMMessage]] = []
+
+    async def write_part(**kwargs):
+        raise ValueError("unknown evidence id")
+
+    async def unsupported_stream(*args, **kwargs):
+        raise NotImplementedError
+
+    async def followup_chat(messages, **kwargs):
+        observed_messages.append(messages)
+        return LLMResponse(
+            content="done",
+            tool_calls=[],
+            usage={"input_tokens": 20, "output_tokens": 2},
+        )
+
+    mock_provider.chat_stream = unsupported_stream
+    mock_provider.chat = AsyncMock(side_effect=followup_chat)
+    tools = MagicMock()
+    tools.get.return_value = write_part
+    tools.get_definitions.return_value = []
+    loop = AgentLoop(
+        agent_type=AgentType.THEORY,
+        workspace=workspace,
+        tools=tools,
+        bus=MessageBus(),
+        config=config,
+        llm_provider=mock_provider,
+        prompt_loader=mock_prompt_loader,
+        loop_manager=None,
+    )
+
+    await loop._handle_tool_calls(
+        SimpleNamespace(
+            content="",
+            thinking=None,
+            tool_calls=[
+                LLMToolCall(
+                    id="call-write-part",
+                    name="write_result_part",
+                    arguments={
+                        "part_id": "2.1.1",
+                        "content": full_content,
+                        "evidence_ids": ["E-missing"],
+                    },
+                )
+            ],
+            usage=None,
+        ),
+        "msg-1",
+    )
+
+    persisted_call = next(
+        message.tool_calls[0]
+        for message in observed_messages[0]
+        if message.tool_calls
+    )
+    assert persisted_call.arguments["content"] == full_content
 
 
 @pytest.mark.asyncio
@@ -1400,7 +2750,7 @@ async def test_apply_patch_error_payload_publishes_tool_error(
 
 
 @pytest.mark.asyncio
-async def test_missing_apply_patch_argument_reports_required_schema(
+async def test_missing_tool_argument_returns_structured_correction_without_error(
     workspace, config, mock_provider, mock_prompt_loader
 ):
     bus = MessageBus()
@@ -1451,8 +2801,86 @@ async def test_missing_apply_patch_argument_reports_required_schema(
     published = list(bus._queue._queue)
     tool_results = [msg for msg in published if isinstance(msg, ToolResultMsg)]
     assert len(tool_results) == 1
-    assert "requires arguments: path, patch" in (tool_results[0].error or "")
-    assert "missing required arguments: patch" in (tool_results[0].error or "")
+    assert tool_results[0].error is None
+    correction = tool_results[0].result
+    assert correction["status"] == "correction_required"
+    assert correction["accepted"] is False
+    assert correction["tool_name"] == "apply_patch"
+    assert correction["required_argument_names"] == ["path", "patch"]
+    assert correction["missing_argument_names"] == ["patch"]
+    assert correction["received_argument_names"] == ["path"]
+    assert correction["do_not_repeat_same_shape"] is True
+    assert correction["next_action"] == (
+        "call_apply_patch_once_with_complete_arguments"
+    )
+
+
+@pytest.mark.asyncio
+async def test_submit_result_partial_arguments_reach_the_submission_gate(
+    workspace, config, mock_provider, mock_prompt_loader
+):
+    bus = MessageBus()
+    received: list[dict] = []
+
+    async def submit_result(**kwargs):
+        received.append(kwargs)
+        return {
+            "status": "correction_required",
+            "accepted": False,
+            "validation_errors": [{"field": "module_id", "problem": "Field required"}],
+        }
+
+    tools = MagicMock()
+    tools.get.return_value = submit_result
+    tools.get_definitions.return_value = [
+        {
+            "name": "submit_result",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "kind": {"const": "module_submission"},
+                    "module_id": {"type": "string"},
+                },
+                "required": ["kind", "module_id"],
+                "additionalProperties": False,
+            },
+        }
+    ]
+    loop = AgentLoop(
+        agent_type=AgentType.THEORY,
+        workspace=workspace,
+        tools=tools,
+        bus=bus,
+        config=config,
+        llm_provider=mock_provider,
+        prompt_loader=mock_prompt_loader,
+        loop_manager=None,
+    )
+
+    await loop._handle_tool_calls(
+        SimpleNamespace(
+            content="",
+            thinking=None,
+            tool_calls=[
+                LLMToolCall(
+                    id="partial-submit",
+                    name="submit_result",
+                    arguments={"kind": "module_submission"},
+                )
+            ],
+            usage=None,
+        ),
+        "msg-partial-submit",
+    )
+
+    assert received == [{"kind": "module_submission"}]
+    tool_results = [
+        message for message in bus._queue._queue if isinstance(message, ToolResultMsg)
+    ]
+    correction = tool_results[0].result
+    assert correction["status"] == "correction_required"
+    assert correction["validation_errors"][0]["field"] == "module_id"
+    assert "tool_name" not in correction
 
 
 @pytest.mark.asyncio

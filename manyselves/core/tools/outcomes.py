@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class ToolOutcome(BaseModel):
     """The semantic result of a tool call, independent of transport success."""
 
-    status: Literal["ok", "failed", "blocked"] = "ok"
+    status: Literal["ok", "correction", "failed", "blocked"] = "ok"
     terminal: bool = False
     result: Any = None
     error: str | None = None
@@ -50,7 +50,8 @@ def normalize_tool_outcome(value: Any, tool_name: str = "tool") -> ToolOutcome:
         return ToolOutcome(result=value, terminal=terminal)
 
     raw_status = str(value.get("status", "ok")).strip().casefold()
-    if tool_name == "submit_result" and raw_status == "correction_required":
+    correction_required = raw_status == "correction_required"
+    if tool_name == "submit_result" and correction_required:
         terminal = False
     # A successfully accepted background report is terminal for the *current
     # Main turn*, not for the report workflow.  Ending the turn here is what
@@ -63,7 +64,9 @@ def normalize_tool_outcome(value: Any, tool_name: str = "tool") -> ToolOutcome:
     if tool_name in _BACKGROUND_REPORT_STATUS_TOOLS:
         terminal = True
     explicit_error = str(value.get("error") or "").strip() or None
-    if raw_status in _BLOCKED_STATUSES:
+    if correction_required:
+        status = "correction"
+    elif raw_status in _BLOCKED_STATUSES:
         status = "blocked"
     elif raw_status in _FAILURE_STATUSES or explicit_error:
         status = "failed"
@@ -81,7 +84,7 @@ def normalize_tool_outcome(value: Any, tool_name: str = "tool") -> ToolOutcome:
             refs.append(str(ref))
 
     error = explicit_error
-    if status != "ok" and error is None:
+    if status in {"failed", "blocked"} and error is None:
         error = str(value.get("reason") or value.get("message") or raw_status)
     return ToolOutcome(
         status=status,

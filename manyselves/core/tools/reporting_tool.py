@@ -11,6 +11,7 @@ from ...interfaces.types import AgentStatus, ReportMessage, StatusChange, TaskSt
 from ..loops.bus import MessageBus
 from ..providers.base import LLMProvider
 from ..reporting.models import (
+    CostControlMode,
     EvidenceDecisionAction,
     ReportOperation,
     ReportRequest,
@@ -208,6 +209,7 @@ class ReportingRunController:
         self,
         run_id: str,
         *,
+        cost_control_mode: CostControlMode | None = None,
         max_provider_attempts: int | None = None,
         max_total_tokens: int | None = None,
         supplements: list[UserSupplement] | None = None,
@@ -220,6 +222,7 @@ class ReportingRunController:
             f"从检查点恢复 {run_id}",
             lambda: self.service.resume_run(
                 run_id,
+                cost_control_mode=cost_control_mode,
                 max_provider_attempts=max_provider_attempts,
                 max_total_tokens=max_total_tokens,
                 supplements=supplements,
@@ -409,6 +412,7 @@ class RunReportingWorkflowTool(Tool):
         output_filename: str | None = None,
         execution_requirements: list[str] | None = None,
         missing_evidence_policy: Literal["ask", "block", "skip", "draft"] = "draft",
+        cost_control_mode: CostControlMode = "observe",
         max_provider_attempts: int = 80,
         max_total_tokens: int = 800000,
     ) -> dict[str, Any]:
@@ -428,8 +432,11 @@ class RunReportingWorkflowTool(Tool):
                 Defaults to draft so generation continues with explicit
                 incomplete/uncertain markers. Use ask only when the user explicitly
                 requests an evidence-confirmation pause.
-            max_provider_attempts: Deprecated telemetry reference; never stops the run.
-            max_total_tokens: Deprecated telemetry reference; never stops the run.
+            cost_control_mode: Observe, warn, or pause only after a completed stage/checkpoint.
+            max_provider_attempts: Provider-attempt window for cost observation or boundary pause.
+            max_total_tokens: Token window for cost observation or boundary pause.
+            Full reports always run exactly five isolated module-level
+                author-review-revise-recheck lanes before Cross review.
         """
 
         request = ReportRequest(
@@ -451,6 +458,7 @@ class RunReportingWorkflowTool(Tool):
             output_filename=output_filename,
             execution_requirements=execution_requirements or [],
             missing_evidence_policy=missing_evidence_policy,
+            cost_control_mode=cost_control_mode,
             max_provider_attempts=max_provider_attempts,
             max_total_tokens=max_total_tokens,
         )
@@ -529,6 +537,7 @@ class ResumeReportingWorkflowTool(Tool):
         action: EvidenceDecisionAction | None = None,
         supplements: list[UserSupplement] | None = None,
         run_id: str | None = None,
+        cost_control_mode: CostControlMode | None = None,
         max_provider_attempts: int | None = None,
         max_total_tokens: int | None = None,
     ) -> dict[str, Any]:
@@ -539,8 +548,9 @@ class ResumeReportingWorkflowTool(Tool):
             action: Evidence action used with decision_id.
             supplements: Scoped current-run facts or instructions with explicit stages and supersession.
             run_id: Blocked, decision-stopped, failed, or cancelled report run identifier.
-            max_provider_attempts: Deprecated compatibility field; no hard limit is enforced.
-            max_total_tokens: Deprecated compatibility field; no hard limit is enforced.
+            cost_control_mode: Optional policy for the resumed cost window.
+            max_provider_attempts: Optional provider-attempt window for the resumed run.
+            max_total_tokens: Optional Token window for the resumed run.
         """
 
         if run_id is not None:
@@ -548,6 +558,7 @@ class ResumeReportingWorkflowTool(Tool):
                 raise ValueError("run resume and evidence-decision resume cannot be mixed")
             return self.controller.resume_run(
                 run_id,
+                cost_control_mode=cost_control_mode,
                 max_provider_attempts=max_provider_attempts,
                 max_total_tokens=max_total_tokens,
                 supplements=supplements,
@@ -596,6 +607,7 @@ class ReviseReportingWorkflowTool(Tool):
         target_claim_ids: list[str] | None = None,
         promote_to_skill: bool = False,
         promote_skill_id: str | None = None,
+        cost_control_mode: CostControlMode = "observe",
         max_provider_attempts: int = 40,
         max_total_tokens: int = 400000,
     ) -> dict[str, Any]:
@@ -609,8 +621,9 @@ class ReviseReportingWorkflowTool(Tool):
             target_claim_ids: Optional narrower claim scope.
             promote_to_skill: Explicitly request separate Skill feedback recording.
             promote_skill_id: Skill receiving explicit feedback when promotion is requested.
-            max_provider_attempts: Deprecated telemetry reference; never stops the revision.
-            max_total_tokens: Deprecated telemetry reference; never stops the revision.
+            cost_control_mode: Observe, warn, or pause only after a completed stage/checkpoint.
+            max_provider_attempts: Provider-attempt window for cost observation or boundary pause.
+            max_total_tokens: Token window for cost observation or boundary pause.
         """
 
         return self.controller.revise(
@@ -622,6 +635,7 @@ class ReviseReportingWorkflowTool(Tool):
                 target_claim_ids=target_claim_ids or [],
                 promote_to_skill=promote_to_skill,
                 promote_skill_id=promote_skill_id,
+                cost_control_mode=cost_control_mode,
                 max_provider_attempts=max_provider_attempts,
                 max_total_tokens=max_total_tokens,
             )

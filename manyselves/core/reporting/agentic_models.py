@@ -1,17 +1,24 @@
 import re
 from enum import StrEnum
 from typing import Annotated, Literal
+from uuid import uuid4
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .models import (
+    CHAPTER1_SECTION_IDS,
+    CHAPTER3_SECTION_IDS,
+    CHAPTER_IDS,
+    CHIEF_SECTION_RESULT_PART_IDS,
+    FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS,
     REPORT_FINAL_AUDIT_SECTION_IDS,
     REPORT_FINAL_SECTION_IDS,
     CoverageMatrix,
     EvidenceItem,
     PhotoAsset,
     SpecialTopicPlan,
+    chapter_section_ids,
 )
 from .taxonomy import REPORT_TAXONOMY, compose_module_markdown, resolve_submodule
 
@@ -39,8 +46,53 @@ SynthesisTableType = Literal[
 ]
 
 
+_NUMBERED_MARKDOWN_HEADING = re.compile(r"^#{1,6}\s+\d+(?:\.\d+)*\.?\s+")
+
+
+def numbered_markdown_headings(narrative: str) -> tuple[str, ...]:
+    """Return every numbered Markdown heading in a report section body."""
+
+    return tuple(
+        line.strip()
+        for line in narrative.splitlines()
+        if _NUMBERED_MARKDOWN_HEADING.match(line.strip())
+    )
+
+
+def extra_numbered_submodule_headings(
+    submodule_id: str,
+    narrative: str,
+) -> tuple[str, ...]:
+    """Return numbered Markdown headings outside one fixed taxonomy section."""
+
+    lines = narrative.splitlines()
+    first_content = next(
+        (index for index, line in enumerate(lines) if line.strip()),
+        None,
+    )
+    unexpected: list[str] = []
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if index == first_content and re.match(
+            rf"^#{{1,6}}\s+{re.escape(submodule_id)}(?:\.|\s|$)",
+            stripped,
+        ):
+            continue
+        if _NUMBERED_MARKDOWN_HEADING.match(stripped):
+            unexpected.append(stripped)
+    return tuple(unexpected)
+
+
 class TaskEnvelope(StrictModel):
     task_id: str = Field(min_length=1)
+    task_attempt_id: str = Field(
+        default_factory=lambda: f"attempt-{uuid4().hex}",
+        min_length=1,
+        description=(
+            "Identity of one workflow dispatch/requeue. Provider retries, tool follow-ups, "
+            "and submission corrections retain this value."
+        ),
+    )
     run_id: str = Field(min_length=1)
     agent_id: str = Field(min_length=1)
     objective: str = Field(min_length=1)
@@ -71,11 +123,16 @@ class TaskEnvelope(StrictModel):
             "module_authoring_input",
             "module_review_input",
             "cross_review_input",
+            "cross_owner_input",
             "final_review_input",
+            "aggregate_final_review_input",
             "module_revision_input",
             "chief_revision_input",
             "chief_editor_input",
+            "chief_chapter_input",
             "aggregate_editor_input",
+            "chief_chapter_lane_input",
+            "final_chapter_lane_input",
             "workflow_exception_input",
         ]
         | None
@@ -258,21 +315,12 @@ class ModuleSubmission(StrictModel):
         if any(not narrative.strip() for narrative in self.submodule_narratives.values()):
             raise ValueError("submodule narratives cannot be empty")
         for submodule_id, narrative in self.submodule_narratives.items():
-            lines = narrative.splitlines()
-            first_content = next(
-                (index for index, line in enumerate(lines) if line.strip()),
-                None,
-            )
-            for index, line in enumerate(lines):
-                if index == first_content and re.match(
-                    rf"^#{{1,6}}\s+{re.escape(submodule_id)}(?:\.|\s|$)",
-                    line.strip(),
-                ):
-                    continue
-                if re.match(r"^#{1,6}\s+\d+(?:\.\d+)*\.?\s+", line.strip()):
-                    raise ValueError(
-                        f"submodule {submodule_id} body contains an extra numbered heading"
-                    )
+            unexpected = extra_numbered_submodule_headings(submodule_id, narrative)
+            if unexpected:
+                raise ValueError(
+                    f"submodule {submodule_id} body contains an extra numbered heading: "
+                    f"{unexpected[0]}"
+                )
         wrong_claims = [claim.id for claim in self.claims if claim.module_id != self.module_id]
         if wrong_claims:
             raise ValueError(f"claims do not belong to module {self.module_id}: {wrong_claims}")
@@ -355,8 +403,11 @@ class ModuleRevisionSubmission(StrictModel):
         description="Complete unresolved-question set for the resulting module.",
     )
     revision_responses: list[RevisionResponse] = Field(
-        min_length=1,
-        description="Exactly one author response for every assigned finding id.",
+        default_factory=list,
+        description=(
+            "Exactly one author response for every assigned finding id. Empty only "
+            "when a failed deterministic preflight is the sole revision trigger."
+        ),
     )
 
     @model_validator(mode="after")
@@ -384,10 +435,16 @@ class ModuleRevisionSubmission(StrictModel):
             if response.action == "implemented"
             for target_id in response.changed_target_ids
         }
-        if implemented_targets != set(self.submodule_narratives):
+        if self.revision_responses and implemented_targets != set(
+            self.submodule_narratives
+        ):
             raise ValueError(
                 "module revision narratives must equal the targets declared by "
                 "implemented revision responses"
+            )
+        if not self.revision_responses and not self.submodule_narratives:
+            raise ValueError(
+                "machine-only module revision must replace at least one target narrative"
             )
         return self
 
@@ -489,17 +546,53 @@ class TemplateSkillBoundaryManifest(StrictModel):
         return self
 
 
+TemplateRoleSkillId = Literal[
+    "author-2.1",
+    "author-2.2",
+    "author-2.3",
+    "author-2.4",
+    "author-2.5",
+    "auditor-2.1",
+    "auditor-2.2",
+    "auditor-2.3",
+    "auditor-2.4",
+    "auditor-2.5",
+    "chief-editor-chapter-1",
+    "chief-editor-chapter-3",
+    "chief-editor-chapter-4",
+    "final-auditor",
+]
+
+TEMPLATE_ROLE_SKILL_IDS: tuple[str, ...] = (
+    "author-2.1",
+    "author-2.2",
+    "author-2.3",
+    "author-2.4",
+    "author-2.5",
+    "auditor-2.1",
+    "auditor-2.2",
+    "auditor-2.3",
+    "auditor-2.4",
+    "auditor-2.5",
+    "chief-editor-chapter-1",
+    "chief-editor-chapter-3",
+    "chief-editor-chapter-4",
+    "final-auditor",
+)
+
+
 class TemplateSkillSubmission(StrictModel):
-    """A run-scoped writing Skill distilled semantically by Main from a template."""
+    """Complete role- and module-specific Skills distilled from one template."""
 
     kind: Literal["template_skill_submission"] = "template_skill_submission"
-    name: Literal["report-template-writing"] = "report-template-writing"
-    description: str = Field(min_length=40, max_length=1024)
-    skill_markdown: str = Field(min_length=300, max_length=20_000)
-    analysis_language_reference: str = Field(min_length=120, max_length=16_000)
-    synthesis_reference: str = Field(min_length=120, max_length=16_000)
-    visual_organization_reference: str = Field(min_length=120, max_length=12_000)
-    quality_rubric: str = Field(min_length=120, max_length=12_000)
+    name: Literal["report-template-role-skills"] = "report-template-role-skills"
+    skills: dict[TemplateRoleSkillId, str] = Field(
+        description=(
+            "Exactly fourteen complete Skills: five module-author Skills, five module-auditor "
+            "Skills, three chapter-specific Chief Skills, and one final-auditor Skill. "
+            "Cross receives none."
+        )
+    )
     boundary_manifest: TemplateSkillBoundaryManifest = Field(
         description=(
             "Typed reusable-guidance transfer declaration; allowed methods retain their "
@@ -508,39 +601,42 @@ class TemplateSkillSubmission(StrictModel):
     )
 
     @model_validator(mode="after")
-    def skill_links_its_progressive_references(self) -> "TemplateSkillSubmission":
-        lines = self.skill_markdown.splitlines()
-        if not lines or lines[0].strip() != "---":
-            raise ValueError("template Skill must start with YAML frontmatter")
-        try:
-            closing = next(
-                index for index, line in enumerate(lines[1:], start=1) if line.strip() == "---"
-            )
-        except StopIteration as exc:
-            raise ValueError("template Skill frontmatter is not closed") from exc
-        try:
-            metadata = yaml.safe_load("\n".join(lines[1:closing])) or {}
-        except yaml.YAMLError as exc:
-            raise ValueError("template Skill frontmatter is invalid YAML") from exc
-        if not isinstance(metadata, dict) or set(metadata) != {"name", "description"}:
-            raise ValueError("template Skill frontmatter must contain exactly name and description")
-        if metadata["name"] != self.name:
-            raise ValueError("template Skill frontmatter name must match submission name")
-        if str(metadata["description"]).strip() != self.description.strip():
+    def complete_role_skills(self) -> "TemplateSkillSubmission":
+        expected = set(TEMPLATE_ROLE_SKILL_IDS)
+        if set(self.skills) != expected or len(self.skills) != len(expected):
             raise ValueError(
-                "template Skill frontmatter description must match submission description"
+                "template role Skills must contain exactly the fourteen assigned identities"
             )
-        if not any(line.lstrip().startswith("# ") for line in lines[closing + 1 :]):
-            raise ValueError("template Skill body must contain a top-level heading")
-        required = {
-            "references/analysis-language.md",
-            "references/synthesis.md",
-            "references/visual-organization.md",
-            "references/quality-rubric.md",
-        }
-        missing = sorted(ref for ref in required if ref not in self.skill_markdown)
-        if missing:
-            raise ValueError(f"template Skill must link progressive references: {missing}")
+        for skill_id, content in self.skills.items():
+            if len(content.strip()) < 300:
+                raise ValueError(f"template role Skill {skill_id} is too short")
+            if len(content) > 20_000:
+                raise ValueError(f"template role Skill {skill_id} exceeds 20000 characters")
+            lines = content.splitlines()
+            if not lines or lines[0].strip() != "---":
+                raise ValueError(f"template role Skill {skill_id} must start with YAML frontmatter")
+            try:
+                closing = next(
+                    index
+                    for index, line in enumerate(lines[1:], start=1)
+                    if line.strip() == "---"
+                )
+                metadata = yaml.safe_load("\n".join(lines[1:closing])) or {}
+            except (StopIteration, yaml.YAMLError) as exc:
+                raise ValueError(
+                    f"template role Skill {skill_id} has invalid YAML frontmatter"
+                ) from exc
+            if not isinstance(metadata, dict) or set(metadata) != {"name", "description"}:
+                raise ValueError(
+                    f"template role Skill {skill_id} frontmatter must contain exactly name and description"
+                )
+            if metadata["name"] != f"report-template-{skill_id}":
+                raise ValueError(
+                    f"template role Skill {skill_id} frontmatter name must be "
+                    f"report-template-{skill_id}"
+                )
+            if not any(line.lstrip().startswith("# ") for line in lines[closing + 1 :]):
+                raise ValueError(f"template role Skill {skill_id} must contain a top-level heading")
         return self
 
 
@@ -635,33 +731,6 @@ class CrossReviewCoverageEntry(StrictModel):
     )
 
 
-class MachineCheckSpec(StrictModel):
-    kind: Literal[
-        "forbidden_terms_absent",
-        "required_terms_present",
-        "field_equals",
-    ] = Field(
-        description=(
-            "Explicit deterministic predicate that can reject an author revision before "
-            "semantic recheck. It can never resolve a finding by itself."
-        )
-    )
-    target_paths: list[str] = Field(
-        min_length=1,
-        description=(
-            "Structured subject paths to inspect, for example submodule_narratives.2.3.1 "
-            "or claims.2.3.1. Paths must be declared explicitly; the workflow must not infer them."
-        ),
-    )
-    expected_values: list[str] = Field(
-        min_length=1,
-        description=(
-            "Terms or exact values used by the declared predicate. Do not encode semantic "
-            "quality judgments as machine checks."
-        ),
-    )
-
-
 class CrossReviewFinding(StrictModel):
     id: str = Field(
         min_length=1,
@@ -729,14 +798,6 @@ class CrossReviewFinding(StrictModel):
             "Semantic checks the same cross reviewer will apply after the module author revises."
         ),
     )
-    machine_checks: list[MachineCheckSpec] = Field(
-        default_factory=list,
-        description=(
-            "Optional explicit syntactic predicates. Passing them is only a prerequisite "
-            "for cross recheck and never substitutes for reviewer_checks."
-        ),
-    )
-
     @model_validator(mode="after")
     def cross_targets_belong_to_owner(self) -> "CrossReviewFinding":
         if self.owner_module_id in self.related_module_ids:
@@ -872,13 +933,13 @@ class CrossSynthesisInput(StrictModel):
         min_length=2,
         description="Modules connected by this already-supported synthesis input.",
     )
-    cluster_type: Literal[
-        "risk_cluster",
-        "global_propagation",
-        "action_dependency",
-        "monitoring_blind_spot",
-        "recovery_capability",
-    ] = Field(description="System-level relationship class used for portfolio completeness.")
+    cluster_type: str = Field(
+        min_length=1,
+        description=(
+            "Evidence-based label for this supported cross-module relationship; "
+            "the workflow does not require a fixed category portfolio."
+        ),
+    )
     root_causes: list[str] = Field(
         min_length=1,
         description="Evidence-bounded common causes or preconditions shared by the modules.",
@@ -940,24 +1001,6 @@ class CrossSynthesisInput(StrictModel):
     def traceable_modules_and_claims(self) -> "CrossSynthesisInput":
         if len(self.related_module_ids) != len(set(self.related_module_ids)):
             raise ValueError("related_module_ids must be unique")
-        combined = "\n".join(
-            [
-                self.causal_chain,
-                self.decision_implication,
-                *self.root_causes,
-                *self.propagation_steps,
-                *self.action_dependencies,
-                *self.joint_actions,
-                *self.acceptance_criteria,
-                *self.module_statement_refs,
-            ]
-        )
-        mentioned = {
-            match.group(1) for match in re.finditer(r"(?<!\d)(2\.[1-5])(?:\.\d+)*(?!\d)", combined)
-        }
-        undeclared = sorted(mentioned - set(self.related_module_ids))
-        if undeclared:
-            raise ValueError(f"synthesis text references undeclared related modules: {undeclared}")
         statement_modules = {
             match.group(1)
             for ref in self.module_statement_refs
@@ -970,6 +1013,41 @@ class CrossSynthesisInput(StrictModel):
             )
         if not any(ref.startswith("E-") for ref in self.evidence_refs):
             raise ValueError("Cross synthesis input requires at least one E-* evidence ref")
+        return self
+
+
+_CROSS_DECISION_MODULE_IDS = ("2.1", "2.2", "2.3", "2.4", "2.5")
+
+
+class CrossDecisionPack(StrictModel):
+    """Typed Cross output admitted to Chief/Final semantic inputs."""
+
+    version: int = Field(default=1, ge=1)
+    run_id: str = Field(min_length=1)
+    module_ids: list[Literal["2.1", "2.2", "2.3", "2.4", "2.5"]] = Field(
+        min_length=5,
+        max_length=5,
+    )
+    cross_review_completion_ref: str = Field(min_length=1)
+    synthesis_inputs: list[CrossSynthesisInput] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_digest_metadata(cls, value):
+        if isinstance(value, dict):
+            value = dict(value)
+            value.pop("artifact_sha256", None)
+            value.pop("pack_sha256", None)
+        return value
+
+    @model_validator(mode="after")
+    def pack_is_closed(self) -> "CrossDecisionPack":
+        if set(self.module_ids) != set(_CROSS_DECISION_MODULE_IDS):
+            raise ValueError("Cross decision pack requires exactly modules 2.1 through 2.5")
+        if len(self.module_ids) != len(set(self.module_ids)):
+            raise ValueError("Cross decision module_ids must be unique")
+        if not self.cross_review_completion_ref.startswith(f"Work/runs/{self.run_id}/"):
+            raise ValueError("Cross decision artifacts must belong to the current run")
         return self
 
 
@@ -1039,7 +1117,7 @@ class CrossReviewFindingSubmission(StrictModel):
         default_factory=list,
         description=(
             "Supported cross-module relationships for chief synthesis that do not require "
-            "additional module-local writeback."
+        "additional module-local writeback."
         ),
     )
 
@@ -1091,6 +1169,60 @@ class CrossReviewVerdictSubmission(StrictModel):
         return self
 
 
+class CrossOwnerFindingSubmission(StrictModel):
+    """Initial typed result from one fixed module Cross-owner reviewer."""
+
+    kind: Literal["cross_owner_finding_submission"] = "cross_owner_finding_submission"
+    owner_module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
+    coverage: CrossReviewCoverageEntry
+    findings: list[CrossReviewFinding] = Field(default_factory=list)
+    synthesis_inputs: list[CrossSynthesisInput] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def findings_stay_in_owner_scope(self) -> "CrossOwnerFindingSubmission":
+        if self.coverage.module_id != self.owner_module_id:
+            raise ValueError("Cross owner coverage must identify its owner module")
+        if any(
+            finding.owner_module_id != self.owner_module_id for finding in self.findings
+        ):
+            raise ValueError("Cross owner findings must stay in owner scope")
+        return self
+
+
+class CrossOwnerVerdictSubmission(StrictModel):
+    """Recheck result from the same fixed module Cross-owner reviewer."""
+
+    kind: Literal["cross_owner_verdict_submission"] = "cross_owner_verdict_submission"
+    owner_module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
+    coverage: CrossReviewCoverageEntry
+    verdicts: list[ResolutionVerdict] = Field(default_factory=list)
+    new_findings: list[CrossReviewFinding] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_empty_legacy_recheck_fields(cls, value: object) -> object:
+        """Read old verdict artifacts without re-exposing removed output fields."""
+
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        for field in ("synthesis_inputs", "interface_closures"):
+            if normalized.get(field) in (None, []):
+                normalized.pop(field, None)
+        return normalized
+
+    @model_validator(mode="after")
+    def findings_stay_in_owner_scope(self) -> "CrossOwnerVerdictSubmission":
+        if self.coverage.module_id != self.owner_module_id:
+            raise ValueError("Cross owner coverage must identify its owner module")
+        if any(
+            finding.owner_module_id != self.owner_module_id
+            for finding in self.new_findings
+        ):
+            raise ValueError("Cross owner new findings must stay in owner scope")
+        return self
+
+
 class FinalReviewFindingSubmission(StrictModel):
     kind: Literal["final_review_finding_submission"] = "final_review_finding_submission"
     checked_section_ids: list[str] = Field(
@@ -1111,10 +1243,16 @@ class FinalReviewFindingSubmission(StrictModel):
 
     @model_validator(mode="after")
     def finding_ids_are_unique(self) -> "FinalReviewFindingSubmission":
+        invalid_sections = sorted(
+            set(self.checked_section_ids) - set(FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS)
+        )
+        if invalid_sections:
+            raise ValueError(
+                f"final review checked_section_ids contain invalid sections: {invalid_sections}"
+            )
         ids = [finding.id for finding in self.findings]
         if len(ids) != len(set(ids)):
             raise ValueError("final review finding ids must be unique")
-        _validate_non_actionable_residual_risks(self.residual_risks)
         return self
 
 
@@ -1138,6 +1276,13 @@ class FinalReviewVerdictSubmission(StrictModel):
 
     @model_validator(mode="after")
     def verdict_and_new_finding_ids_are_unique(self) -> "FinalReviewVerdictSubmission":
+        invalid_sections = sorted(
+            set(self.checked_section_ids) - set(FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS)
+        )
+        if invalid_sections:
+            raise ValueError(
+                f"final review checked_section_ids contain invalid sections: {invalid_sections}"
+            )
         verdict_ids = [verdict.finding_id for verdict in self.verdicts]
         finding_ids = [finding.id for finding in self.new_findings]
         if len(verdict_ids) != len(set(verdict_ids)):
@@ -1146,30 +1291,205 @@ class FinalReviewVerdictSubmission(StrictModel):
             raise ValueError("new final review finding ids must be unique")
         if set(verdict_ids) & set(finding_ids):
             raise ValueError("a prior final finding cannot also be submitted as new")
-        _validate_non_actionable_residual_risks(self.residual_risks)
         return self
 
 
-def _validate_non_actionable_residual_risks(values: list[str]) -> None:
-    report_defect_terms = (
-        "报告缺少",
-        "正文缺少",
-        "未纳入报告",
-        "未生成表格",
-        "表格缺失",
-        "未选择图片",
-        "图片缺失",
-    )
-    actionable = [value for value in values if any(term in value for term in report_defect_terms)]
-    if actionable:
+class ChapterScopedFinalReviewTargetChange(StrictModel):
+    """One Chief/Final lane-local change request.
+
+    The legacy :class:`FinalReviewTargetChange` deliberately keeps the old
+    seven-section aggregate contract.  This sibling is the chapter-lane
+    contract and additionally admits dynamic ``4.x`` sections without making
+    the legacy aggregate schema a union of all possible task shapes.
+    """
+
+    target_section_id: str = Field(min_length=1)
+    required_change: str = Field(min_length=20)
+    reviewer_checks: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def target_is_chapter_scoped(self) -> "ChapterScopedFinalReviewTargetChange":
+        if not re.fullmatch(r"(?:1\.[1-3]|3\.(?:1\.[1-3]|2)|4\.[1-9][0-9]*)", self.target_section_id):
+            raise ValueError(
+                "chapter lane target must be one of 1.1-1.3, 3.1.1-3.2, or dynamic 4.x"
+            )
+        return self
+
+
+class ChapterScopedFinalReviewFinding(StrictModel):
+    """Final finding constrained to one Chief/Final chapter lane."""
+
+    id: str = Field(min_length=1)
+    target_section_ids: list[str] = Field(min_length=1)
+    target_changes: list[ChapterScopedFinalReviewTargetChange] = Field(min_length=1)
+    category: str = Field(min_length=1)
+    impact: Literal["blocking", "advisory"]
+    observation: str = Field(min_length=20)
+    evidence_refs: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def target_changes_match(self) -> "ChapterScopedFinalReviewFinding":
+        if len(self.target_section_ids) != len(set(self.target_section_ids)):
+            raise ValueError("chapter lane finding target_section_ids must be unique")
+        change_ids = [change.target_section_id for change in self.target_changes]
+        if len(change_ids) != len(set(change_ids)):
+            raise ValueError("chapter lane finding target changes must be unique")
+        if set(change_ids) != set(self.target_section_ids):
+            raise ValueError("chapter lane finding target_section_ids must exactly match target_changes")
+        return self
+
+
+def _chapter_lane_target_ids(
+    chapter_id: str,
+    section_ids: list[str],
+    *,
+    complete: bool = False,
+) -> set[str]:
+    """Validate the static chapter scope without requiring a dynamic plan."""
+
+    if chapter_id not in CHAPTER_IDS:
+        raise ValueError(f"unsupported chapter lane: {chapter_id}")
+    if not section_ids or len(section_ids) != len(set(section_ids)):
+        raise ValueError("chapter lane section_ids must be non-empty and unique")
+    expected = set(CHAPTER1_SECTION_IDS if chapter_id == "1" else CHAPTER3_SECTION_IDS)
+    if complete and chapter_id in {"1", "3"} and set(section_ids) != expected:
         raise ValueError(
-            "actionable report omissions must be final-review findings, not residual_risks: "
-            f"{actionable}"
+            f"chapter {chapter_id} lane must cover exactly {sorted(expected)}"
         )
+    if chapter_id == "4" and any(
+        re.fullmatch(r"4\.[1-9][0-9]*", section_id) is None
+        for section_id in section_ids
+    ):
+        raise ValueError("Chapter 4 lane section ids must be dynamic 4.x ids")
+    return set(section_ids)
+
+
+class ChiefChapterLaneSubmission(StrictModel):
+    """Initial Chief result for one chapter; reducer assembles the report."""
+
+    kind: Literal["chief_chapter_lane_submission"] = "chief_chapter_lane_submission"
+    run_id: str = Field(min_length=1)
+    chapter_id: Literal["1", "3", "4"]
+    section_ids: list[str] = Field(min_length=1)
+    part_refs: dict[str, str] = Field(min_length=1)
+    revision: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def section_maps_match(self) -> "ChiefChapterLaneSubmission":
+        if len(self.section_ids) != len(set(self.section_ids)):
+            raise ValueError("Chief lane section_ids must be unique")
+        expected_parts = (
+            {"special_topic_analysis"}
+            if self.chapter_id == "4"
+            else {CHIEF_SECTION_RESULT_PART_IDS[section_id] for section_id in self.section_ids}
+        )
+        if set(self.part_refs) != expected_parts:
+            raise ValueError(
+                "Chief lane part_refs must map each static section, or special_topic_analysis for Chapter 4"
+            )
+        if any(not ref.strip() for ref in self.part_refs.values()):
+            raise ValueError("Chief lane part_refs must not contain blank refs")
+        _chapter_lane_target_ids(self.chapter_id, self.section_ids, complete=True)
+        return self
+
+
+class ChiefChapterLaneRevisionSubmission(StrictModel):
+    """Compact Chief patch emitted by exactly one chapter lane."""
+
+    kind: Literal["chief_chapter_lane_revision_submission"] = (
+        "chief_chapter_lane_revision_submission"
+    )
+    run_id: str = Field(min_length=1)
+    base_subject_ref: str = Field(min_length=1)
+    chapter_id: Literal["1", "3", "4"]
+    revision: int = Field(ge=1)
+    section_ids: list[str] = Field(min_length=1)
+    part_refs: dict[str, str] = Field(min_length=1)
+    revision_responses: list[RevisionResponse] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def patch_stays_in_one_chapter(self) -> "ChiefChapterLaneRevisionSubmission":
+        scope = _chapter_lane_target_ids(self.chapter_id, self.section_ids)
+        expected_parts = (
+            {"special_topic_analysis"}
+            if self.chapter_id == "4"
+            else {CHIEF_SECTION_RESULT_PART_IDS[section_id] for section_id in self.section_ids}
+        )
+        if self.chapter_id == "4":
+            if set(self.part_refs) != {"special_topic_analysis"}:
+                raise ValueError("Chapter 4 lane revisions use special_topic_analysis only")
+        elif not set(self.part_refs).issubset(expected_parts):
+            raise ValueError("Chief lane revision part_refs must stay in section scope")
+        if any(not ref.strip() for ref in self.part_refs.values()):
+            raise ValueError("Chief lane part_refs must not contain blank refs")
+        response_targets = {
+            target
+            for response in self.revision_responses
+            for target in response.changed_target_ids
+        }
+        if not response_targets.issubset(scope):
+            raise ValueError("Chief lane revision responses must stay in lane section scope")
+        return self
+
+
+class FinalChapterLaneFindingSubmission(StrictModel):
+    """Initial Final finding result from one chapter lane."""
+
+    kind: Literal["final_chapter_lane_finding_submission"] = (
+        "final_chapter_lane_finding_submission"
+    )
+    run_id: str = Field(min_length=1)
+    chapter_id: Literal["1", "3", "4"]
+    checked_section_ids: list[str] = Field(min_length=1)
+    findings: list[ChapterScopedFinalReviewFinding] = Field(default_factory=list)
+    residual_risks: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def findings_stay_in_lane(self) -> "FinalChapterLaneFindingSubmission":
+        scope = _chapter_lane_target_ids(self.chapter_id, self.checked_section_ids)
+        ids = [finding.id for finding in self.findings]
+        if len(ids) != len(set(ids)):
+            raise ValueError("chapter lane final finding ids must be unique")
+        if any(
+            set(finding.target_section_ids) - scope for finding in self.findings
+        ):
+            raise ValueError("chapter lane final findings must stay in checked sections")
+        return self
+
+
+class FinalChapterLaneVerdictSubmission(StrictModel):
+    """Recheck result from one Final chapter lane."""
+
+    kind: Literal["final_chapter_lane_verdict_submission"] = (
+        "final_chapter_lane_verdict_submission"
+    )
+    run_id: str = Field(min_length=1)
+    chapter_id: Literal["1", "3", "4"]
+    checked_section_ids: list[str] = Field(min_length=1)
+    verdicts: list[ResolutionVerdict] = Field(default_factory=list)
+    new_findings: list[ChapterScopedFinalReviewFinding] = Field(default_factory=list)
+    residual_risks: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def verdicts_stay_in_lane(self) -> "FinalChapterLaneVerdictSubmission":
+        scope = _chapter_lane_target_ids(self.chapter_id, self.checked_section_ids)
+        verdict_ids = [verdict.finding_id for verdict in self.verdicts]
+        finding_ids = [finding.id for finding in self.new_findings]
+        if len(verdict_ids) != len(set(verdict_ids)):
+            raise ValueError("chapter lane verdict ids must be unique")
+        if len(finding_ids) != len(set(finding_ids)):
+            raise ValueError("chapter lane new finding ids must be unique")
+        if set(verdict_ids) & set(finding_ids):
+            raise ValueError("a prior chapter finding cannot also be submitted as new")
+        if any(
+            set(finding.target_section_ids) - scope for finding in self.new_findings
+        ):
+            raise ValueError("chapter lane new findings must stay in checked sections")
+        return self
 
 
 FINAL_REPORT_SECTION_IDS = REPORT_FINAL_SECTION_IDS
-FINAL_AUDIT_SECTION_IDS = REPORT_FINAL_AUDIT_SECTION_IDS
+FINAL_AUDIT_SECTION_IDS = FINAL_SUMMARY_CONCLUSION_AUDIT_SECTION_IDS
 
 CROSS_REVIEW_DIMENSIONS = (
     "terminology",
@@ -1282,7 +1602,7 @@ class EditedReportSubmission(StrictModel):
         )
         for field in body_fields:
             value = getattr(self, field)
-            if re.search(r"^#{1,6}\s+\d+(?:\.\d+)*\.?\s+", value, flags=re.MULTILINE):
+            if numbered_markdown_headings(value):
                 raise ValueError(
                     f"{field} must contain section body only, without numbered headings"
                 )
@@ -1321,7 +1641,7 @@ class ModuleRevisionSubmissionInput(StrictModel):
     base_revision: int = Field(ge=0)
     revision: int = Field(ge=1)
     unresolved_questions: list[str] = Field(default_factory=list)
-    revision_responses: list[RevisionResponse] = Field(min_length=1)
+    revision_responses: list[RevisionResponse] = Field(default_factory=list)
 
 
 class ChiefRevisionSubmission(StrictModel):
@@ -1354,22 +1674,15 @@ class ChiefRevisionSubmissionInput(StrictModel):
 
 
 class TemplateSkillSubmissionInput(StrictModel):
-    """Function-call input permitting durable references for five long Skill files."""
+    """Function-call input permitting durable references for fourteen complete Skills.
+
+    The boundary manifest is deterministic runtime metadata derived from the
+    active TemplateDistillationInput, so providers never restate it here.
+    """
 
     kind: Literal["template_skill_submission"] = "template_skill_submission"
-    name: Literal["report-template-writing"] = "report-template-writing"
-    description: str = Field(min_length=40, max_length=1024)
-    skill_markdown: str | TextArtifactRef
-    analysis_language_reference: str | TextArtifactRef
-    synthesis_reference: str | TextArtifactRef
-    visual_organization_reference: str | TextArtifactRef
-    quality_rubric: str | TextArtifactRef
-    boundary_manifest: TemplateSkillBoundaryManifest = Field(
-        description=(
-            "Typed reusable-guidance transfer declaration; allowed methods retain their "
-            "fact-free worked examples inside this Skill."
-        )
-    )
+    name: Literal["report-template-role-skills"] = "report-template-role-skills"
+    skills: dict[TemplateRoleSkillId, str | TextArtifactRef]
 
 
 class EditedReportSubmissionInput(StrictModel):
@@ -1411,8 +1724,14 @@ Submission = Annotated[
     | ModuleReviewVerdictSubmission
     | CrossReviewFindingSubmission
     | CrossReviewVerdictSubmission
+    | CrossOwnerFindingSubmission
+    | CrossOwnerVerdictSubmission
     | FinalReviewFindingSubmission
     | FinalReviewVerdictSubmission
+    | ChiefChapterLaneSubmission
+    | ChiefChapterLaneRevisionSubmission
+    | FinalChapterLaneFindingSubmission
+    | FinalChapterLaneVerdictSubmission
     | WorkflowDecisionSubmission
     | ChiefRevisionSubmission
     | EditedReportSubmission
@@ -1430,8 +1749,14 @@ SubmissionInput = Annotated[
     | ModuleReviewVerdictSubmission
     | CrossReviewFindingSubmission
     | CrossReviewVerdictSubmission
+    | CrossOwnerFindingSubmission
+    | CrossOwnerVerdictSubmission
     | FinalReviewFindingSubmission
     | FinalReviewVerdictSubmission
+    | ChiefChapterLaneSubmission
+    | ChiefChapterLaneRevisionSubmission
+    | FinalChapterLaneFindingSubmission
+    | FinalChapterLaneVerdictSubmission
     | WorkflowDecisionSubmission
     | EditedReportSubmissionInput
     | SkillEvolutionSubmission,
@@ -1448,8 +1773,17 @@ SUBMISSION_INPUT_TYPES: dict[str, type[BaseModel]] = {
     "module_review_verdict_submission": ModuleReviewVerdictSubmission,
     "cross_review_finding_submission": CrossReviewFindingSubmission,
     "cross_review_verdict_submission": CrossReviewVerdictSubmission,
+    "cross_owner_finding_submission": CrossOwnerFindingSubmission,
+    "cross_owner_verdict_submission": CrossOwnerVerdictSubmission,
     "final_review_finding_submission": FinalReviewFindingSubmission,
     "final_review_verdict_submission": FinalReviewVerdictSubmission,
+    # Chapter-lane submissions are separate discriminator values rather than
+    # a union-shaped all-stage payload.  Each Provider task receives exactly
+    # one of these schemas.
+    "chief_chapter_lane_submission": ChiefChapterLaneSubmission,
+    "chief_chapter_lane_revision_submission": ChiefChapterLaneRevisionSubmission,
+    "final_chapter_lane_finding_submission": FinalChapterLaneFindingSubmission,
+    "final_chapter_lane_verdict_submission": FinalChapterLaneVerdictSubmission,
     "workflow_decision_submission": WorkflowDecisionSubmission,
     "edited_report_submission": EditedReportSubmissionInput,
     "skill_evolution_submission": SkillEvolutionSubmission,

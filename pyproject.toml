@@ -56,6 +56,9 @@ dev = [
     "pytest-cov>=6.0.0,<7.0.0",
     "ruff>=0.9.0",
 ]
+server = [
+    "uvicorn>=0.34.0,<1.0.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -101,3 +104,4 @@ dev = [
 
 [project.scripts]
 manyselves = "manyselves.__main__:main"
+manyselves-headless = "manyselves.headless_service:main"

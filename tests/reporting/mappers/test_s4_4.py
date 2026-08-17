@@ -248,7 +248,7 @@ def test_s4_4_routes_environment_and_operations_observations(tmp_path: Path) -> 
         for item in result.evidence_items
     )
     assert any(
-        item.submodule_id == "2.5.7" and "整机备件=NG" in item.fact
+        item.submodule_id == "2.5.6" and "整机备件=NG" in item.fact
         for item in result.evidence_items
     )
     assert any(
