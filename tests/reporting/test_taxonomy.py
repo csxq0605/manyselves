@@ -1,13 +1,17 @@
+from copy import deepcopy
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 from openpyxl import Workbook
 
+from manyselves.core.reporting.models import ManifestFile, ProjectManifest
 from manyselves.core.reporting.taxonomy import (
     REPORT_TAXONOMY,
-    activate_report_taxonomy,
-    parse_report_taxonomy_workbook,
     reset_report_taxonomy,
     resolve_submodule,
 )
+from manyselves.core.reporting.workflow import ReportWorkflowRunner
 
 
 def test_taxonomy_contains_fixed_module_24_submodules() -> None:
@@ -59,10 +63,30 @@ def test_xlsx_taxonomy_drives_all_five_complete_modules(tmp_path) -> None:
     workbook.save(path)
     workbook.close()
 
-    payload = parse_report_taxonomy_workbook(path, source_ref="Inputs/S4-6动态目录.xlsx")
-    token = activate_report_taxonomy(payload)
+    runner = object.__new__(ReportWorkflowRunner)
+    runner.service = SimpleNamespace(workspace=tmp_path)
+    state = {
+        "project_manifest": ProjectManifest(
+            files=[
+                ManifestFile(
+                    id="file-s4-6",
+                    path=Path("Inputs/S4-6动态目录.xlsx"),
+                    snapshot_ref=path.relative_to(tmp_path),
+                    sha256="0" * 64,
+                    media_type=(
+                        "application/vnd.openxmlformats-officedocument."
+                        "spreadsheetml.sheet"
+                    ),
+                    purpose="s4-6",
+                )
+            ]
+        )
+    }
+    token = runner._prepare_report_taxonomy(state)
     try:
         assert {key: value.title for key, value in REPORT_TAXONOMY.items()} == expected_titles
         assert REPORT_TAXONOMY["2.4"].submodules["2.4.14"].title == "动态标题 2.4.14"
+        assert "_report_taxonomy_token" not in state
+        assert deepcopy(state)["report_taxonomy"] == state["report_taxonomy"]
     finally:
         reset_report_taxonomy(token)

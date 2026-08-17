@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -61,7 +62,10 @@ from manyselves.core.reporting.review_lifecycle import (
     run_module_review,
 )
 from manyselves.core.reporting.source_ledger import SourceLedger
-from manyselves.core.reporting.taxonomy import report_taxonomy_snapshot
+from manyselves.core.reporting.taxonomy import (
+    report_taxonomy_snapshot,
+    reset_report_taxonomy,
+)
 from manyselves.core.reporting.parallel_runtime import (
     ArtifactRef,
     CrossOwnerCompletion,
@@ -587,8 +591,13 @@ def test_preparation_resume_uses_hash_verified_run_snapshot(tmp_path: Path) -> N
     )
 
     restored = {"run_id": "run-preparation", "resume": True}
-    runner._restore_preparation_snapshot(restored)
-    assert restored["project_manifest"].files == []
+    taxonomy_token = runner._restore_preparation_snapshot(restored)
+    try:
+        assert restored["project_manifest"].files == []
+        assert "_report_taxonomy_token" not in restored
+        assert deepcopy(restored)["report_taxonomy"] == restored["report_taxonomy"]
+    finally:
+        reset_report_taxonomy(taxonomy_token)
 
     (tmp_path / state["preparation_refs"]["coverage"]).write_text(
         '{"entries": {"tampered": {}}}', encoding="utf-8"

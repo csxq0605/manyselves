@@ -11,6 +11,7 @@ import re
 import shutil
 import tempfile
 import time
+from contextvars import Token
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1245,12 +1246,13 @@ class ReportWorkflowRunner:
         activity = "preparation"
         suspended_for_user = False
         recovering_cost_boundary = True
+        taxonomy_token: Token | None = None
         try:
             await self._activate_cost_resume(state)
             await self._recover_pending_cost_boundary(resume_checkpoint)
             recovering_cost_boundary = False
             await self.service._notice("正在整理项目资料并建立可追溯证据入口。")
-            await self._prepare(state)
+            taxonomy_token = await self._prepare(state)
             if state.get("resume"):
                 await self.service._notice(
                     "按 RecoveryStateStore 恢复已完成 lane；workflow-state.json 仅作状态投影。"
@@ -1414,7 +1416,6 @@ class ReportWorkflowRunner:
         finally:
             if not suspended_for_user:
                 await self.agent_runner.close_workflow(workflow_id)
-            taxonomy_token = state.pop("_report_taxonomy_token", None)
             if taxonomy_token is not None:
                 reset_report_taxonomy(taxonomy_token)
 
@@ -4025,56 +4026,64 @@ class ReportWorkflowRunner:
             state["final_audit_snapshot_ref"] = snapshot_ref
         state["final_residual_risks"] = self._latest_final_residual_risks(final_artifacts)
 
-    async def _prepare(self, state: dict) -> None:
+    async def _prepare(self, state: dict) -> Token:
         # Preparation is immutable inside one run. A resumed run must never
         # silently ingest a newer version of Inputs.
-        input_snapshot = RunInputSnapshotStore(self.service.workspace).load(
-            state["run_id"]
-        )
-        state["input_snapshot_ref"] = (
-            f"Work/runs/{state['run_id']}/input-snapshot.json"
-        )
-        state["input_snapshot_digest"] = input_snapshot.inventory_digest
-        if state.get("resume"):
-            self._restore_preparation_snapshot_projection(state)
-        else:
-            # These are deterministic data transformations, deliberately not LLM personas.
-            await self.service._build_manifest(state)
-            self._prepare_report_taxonomy(state)
-            await self.service._parse_artifacts(state)
-            await self.service._normalize_evidence(state)
-            await self.service._evaluate_coverage(state)
-            if state["request"].operation == "full_report":
-                special_topic_plan = load_special_topic_plan(self.service.workspace)
-                if special_topic_plan is not None:
-                    state["special_topic_plan"] = special_topic_plan
-            self._persist_preparation_snapshot(state)
-        evidence_index = ProjectEvidenceIndex(
-            self.service.workspace, state["run_id"]
-        )
-        evidence_index.items()
-        evidence_index_ref = evidence_index.snapshot_manifest_ref()
-        if evidence_index_ref is not None:
-            state["evidence_index_ref"] = evidence_index_ref.as_posix()
-        ledger = SourceLedger(self.service.workspace, state["run_id"])
-        ledger.register_many(
-            [
-                {
-                    "kind": "project_evidence",
-                    "evidence_id": item.id,
-                    "title": item.subject,
-                    "locator": project_evidence_locator(item),
-                    "content": item.model_dump_json(),
-                }
-                for item in state.get("evidence_items", [])
-            ]
-        )
-        if not ledger.path.is_file():
-            self.service.store.write_json(
-                ledger.path.relative_to(self.service.workspace).as_posix(), []
+        taxonomy_token: Token | None = None
+        try:
+            input_snapshot = RunInputSnapshotStore(self.service.workspace).load(
+                state["run_id"]
             )
+            state["input_snapshot_ref"] = (
+                f"Work/runs/{state['run_id']}/input-snapshot.json"
+            )
+            state["input_snapshot_digest"] = input_snapshot.inventory_digest
+            if state.get("resume"):
+                taxonomy_token = self._restore_preparation_snapshot_projection(state)
+            else:
+                # These are deterministic data transformations, deliberately not LLM personas.
+                await self.service._build_manifest(state)
+                taxonomy_token = self._prepare_report_taxonomy(state)
+                await self.service._parse_artifacts(state)
+                await self.service._normalize_evidence(state)
+                await self.service._evaluate_coverage(state)
+                if state["request"].operation == "full_report":
+                    special_topic_plan = load_special_topic_plan(self.service.workspace)
+                    if special_topic_plan is not None:
+                        state["special_topic_plan"] = special_topic_plan
+                self._persist_preparation_snapshot(state)
+            evidence_index = ProjectEvidenceIndex(
+                self.service.workspace, state["run_id"]
+            )
+            evidence_index.items()
+            evidence_index_ref = evidence_index.snapshot_manifest_ref()
+            if evidence_index_ref is not None:
+                state["evidence_index_ref"] = evidence_index_ref.as_posix()
+            ledger = SourceLedger(self.service.workspace, state["run_id"])
+            ledger.register_many(
+                [
+                    {
+                        "kind": "project_evidence",
+                        "evidence_id": item.id,
+                        "title": item.subject,
+                        "locator": project_evidence_locator(item),
+                        "content": item.model_dump_json(),
+                    }
+                    for item in state.get("evidence_items", [])
+                ]
+            )
+            if not ledger.path.is_file():
+                self.service.store.write_json(
+                    ledger.path.relative_to(self.service.workspace).as_posix(), []
+                )
+            assert taxonomy_token is not None
+            return taxonomy_token
+        except BaseException:
+            if taxonomy_token is not None:
+                reset_report_taxonomy(taxonomy_token)
+            raise
 
-    def _prepare_report_taxonomy(self, state: dict) -> None:
+    def _prepare_report_taxonomy(self, state: dict) -> Token:
         """Bind the run taxonomy parsed from its frozen S4-6 workbook."""
 
         manifest: ProjectManifest = state["project_manifest"]
@@ -4098,10 +4107,10 @@ class ReportWorkflowRunner:
             raise AgentWorkflowError(
                 "report taxonomy requires the current run's S4-6 workbook snapshot"
             )
-        state["_report_taxonomy_token"] = activate_report_taxonomy(payload)
         state["report_taxonomy"] = payload
+        return activate_report_taxonomy(payload)
 
-    def _restore_preparation_snapshot_projection(self, state: dict) -> None:
+    def _restore_preparation_snapshot_projection(self, state: dict) -> Token:
         """Load the current run's preparation records without checkpoint gates."""
 
         run_id = state["run_id"]
@@ -4148,9 +4157,7 @@ class ReportWorkflowRunner:
                 encoding="utf-8"
             )
         )
-        state["_report_taxonomy_token"] = activate_report_taxonomy(
-            state["report_taxonomy"]
-        )
+        taxonomy_token = activate_report_taxonomy(state["report_taxonomy"])
         special_ref = f"Work/runs/{run_id}/preparation/special-topic-plan.json"
         if (self.service.workspace / special_ref).is_file():
             state["special_topic_plan"] = SpecialTopicPlan.model_validate_json(
@@ -4158,6 +4165,7 @@ class ReportWorkflowRunner:
             )
         state["preparation_refs"] = refs
         state["preparation_completion_ref"] = completion_ref
+        return taxonomy_token
 
     @staticmethod
     def _sha256(path: Path) -> str:
@@ -4291,7 +4299,7 @@ class ReportWorkflowRunner:
         state["preparation_sha256"] = hashes
         state["preparation_completion_ref"] = completion_ref
 
-    def _restore_preparation_snapshot(self, state: dict) -> None:
+    def _restore_preparation_snapshot(self, state: dict) -> Token:
         checkpoint_path = (
             self.service.workspace / f"Work/runs/{state['run_id']}/workflow-state.json"
         )
@@ -4377,9 +4385,7 @@ class ReportWorkflowRunner:
                 encoding="utf-8"
             )
         )
-        state["_report_taxonomy_token"] = activate_report_taxonomy(
-            state["report_taxonomy"]
-        )
+        taxonomy_token = activate_report_taxonomy(state["report_taxonomy"])
         if "special_topic_plan" in refs:
             special_topic_path = self.service.workspace / refs["special_topic_plan"]
             state["special_topic_plan"] = SpecialTopicPlan.model_validate_json(
@@ -4388,6 +4394,7 @@ class ReportWorkflowRunner:
         state["preparation_refs"] = refs
         state["preparation_sha256"] = actual_hashes
         state["preparation_completion_ref"] = completion_ref
+        return taxonomy_token
 
     def _build_module_dispatch(
         self, state: dict, module_ids: tuple[str, ...]
