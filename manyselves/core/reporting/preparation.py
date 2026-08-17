@@ -71,8 +71,14 @@ def prepare_manifest_file(
                 parsed_artifacts=parsed,
             )
 
+        mapped = mapper(input_path, file_id=manifest_file.id)
+        referenced_photo_ids = {
+            photo_id
+            for item in mapped.evidence_items
+            for photo_id in item.photo_refs
+        }
         raw_photo_assets: dict[str, PhotoAsset] = {}
-        if manifest_file.purpose == "s4-4":
+        if referenced_photo_ids:
             raw_photo_assets = extract_wps_images(
                 input_path,
                 output_dir=(
@@ -84,8 +90,8 @@ def prepare_manifest_file(
                     / f"{manifest_order:04d}-{manifest_file.id}"
                     / "assets"
                 ),
+                required_image_ids=referenced_photo_ids,
             )
-        mapped = mapper(input_path, file_id=manifest_file.id)
         evidence = [
             item.model_copy(
                 update={

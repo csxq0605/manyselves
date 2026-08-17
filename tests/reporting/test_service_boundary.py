@@ -120,7 +120,13 @@ async def test_evidence_normalization_scopes_canonical_photos_to_run_and_remaps_
     ]
     observed_output_dirs: list[Path] = []
 
-    def fake_extract(_path: Path, *, output_dir: Path) -> dict[str, PhotoAsset]:
+    def fake_extract(
+        _path: Path,
+        *,
+        output_dir: Path,
+        required_image_ids: set[str] | None = None,
+    ) -> dict[str, PhotoAsset]:
+        assert required_image_ids == {"ID_SHARED"}
         observed_output_dirs.append(output_dir)
         output_dir.mkdir(parents=True)
         source_path = output_dir / "source-0001.jpeg"

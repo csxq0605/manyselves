@@ -60,6 +60,44 @@ def test_extract_wps_images_follows_cell_image_relationships(tmp_path: Path) -> 
     assert normalized_assets[0].primary_evidence_id == "E-0001"
 
 
+def test_extract_wps_images_can_ignore_unreferenced_workbook_images(
+    tmp_path: Path,
+) -> None:
+    workbook_path = tmp_path / "wps.xlsx"
+    cell_images = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <etc:cellImages
+      xmlns:etc="http://www.wps.cn/officeDocument/2017/etCustomData"
+      xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+      xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+      xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+      <etc:cellImage><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="1" name="ID_USED"/></xdr:nvPicPr>
+      <xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill></xdr:pic></etc:cellImage>
+      <etc:cellImage><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="2" name="ID_DECORATION"/></xdr:nvPicPr>
+      <xdr:blipFill><a:blip r:embed="rId2"/></xdr:blipFill></xdr:pic></etc:cellImage>
+    </etc:cellImages>"""
+    relationships = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+      <Relationship Id="rId1" Type="image" Target="media/image1.jpeg"/>
+      <Relationship Id="rId2" Type="image" Target="media/image2.jpeg"/>
+    </Relationships>"""
+    with ZipFile(workbook_path, "w") as archive:
+        archive.writestr("xl/cellimages.xml", cell_images)
+        archive.writestr("xl/_rels/cellimages.xml.rels", relationships)
+        archive.writestr("xl/media/image1.jpeg", b"used")
+        archive.writestr("xl/media/image2.jpeg", b"decoration")
+
+    assets = extract_wps_images(
+        workbook_path,
+        output_dir=tmp_path / "assets",
+        required_image_ids={"ID_USED"},
+    )
+
+    assert set(assets) == {"ID_USED"}
+    assert [path.name for path in (tmp_path / "assets").iterdir()] == [
+        "source-0001.jpeg"
+    ]
+
+
 def test_extract_wps_images_returns_empty_mapping_when_extension_is_absent(
     tmp_path: Path,
 ) -> None:

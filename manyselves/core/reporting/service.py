@@ -27,6 +27,7 @@ from ..providers.base import LLMProvider
 from ..tools.task_board import TaskBoard
 from ..usage_ledger import UsageLedger
 from .agent_runner import ReportingAgentRunner
+from .assets import ReportAssetAssembler
 from .config import load_packaged_agents
 from .coverage import evaluate_coverage
 from .decisions import EvidenceDecisionStore
@@ -1645,7 +1646,7 @@ class ReportingService:
                 if result.status != "parsed":
                     continue
                 mapped_evidence = result.provisional_evidence
-                if result.purpose == "s4-4":
+                if any(item.photo_refs for item in mapped_evidence):
                     mapped_evidence, normalized_assets = canonicalize_photo_bindings(
                         mapped_evidence,
                         result.raw_photo_assets,
@@ -1690,8 +1691,24 @@ class ReportingService:
                     continue
                 input_path = self.workspace / manifest_file.path
                 try:
+                    mapped = mapper(input_path, file_id=manifest_file.id)
+                    mapped_evidence = [
+                        item.model_copy(
+                            update={
+                                "source": item.source.model_copy(
+                                    update={"path": manifest_file.path}
+                                )
+                            }
+                        )
+                        for item in mapped.evidence_items
+                    ]
+                    referenced_photo_ids = {
+                        photo_id
+                        for item in mapped_evidence
+                        for photo_id in item.photo_refs
+                    }
                     extracted: dict[str, PhotoAsset] = {}
-                    if manifest_file.purpose == "s4-4":
+                    if referenced_photo_ids:
                         extracted = extract_wps_images(
                             input_path,
                             output_dir=(
@@ -1702,6 +1719,7 @@ class ReportingService:
                                 / "assets"
                                 / manifest_file.id
                             ),
+                            required_image_ids=referenced_photo_ids,
                         )
                         extracted = {
                             asset_key: asset.model_copy(
@@ -1715,18 +1733,7 @@ class ReportingService:
                             )
                             for asset_key, asset in extracted.items()
                         }
-                    mapped = mapper(input_path, file_id=manifest_file.id)
-                    mapped_evidence = [
-                        item.model_copy(
-                            update={
-                                "source": item.source.model_copy(
-                                    update={"path": manifest_file.path}
-                                )
-                            }
-                        )
-                        for item in mapped.evidence_items
-                    ]
-                    if manifest_file.purpose == "s4-4":
+                    if referenced_photo_ids:
                         mapped_evidence, normalized_assets = canonicalize_photo_bindings(
                             mapped_evidence,
                             extracted,
@@ -1826,6 +1833,7 @@ class ReportingService:
                 )
             )
         photo_assets = normalized_photo_assets
+        ReportAssetAssembler.runtime_photo_ids(evidence, photo_assets)
         photo_to_evidence: dict[str, list[str]] = {
             asset.id: [] for asset in photo_assets
         }

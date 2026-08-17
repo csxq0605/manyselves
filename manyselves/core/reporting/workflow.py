@@ -78,6 +78,7 @@ from .input_contracts import (
     module_content_view,
 )
 from .input_snapshot import RunInputSnapshotStore
+from .intake.wps_images import extract_wps_images
 from .models import (
     CHAPTER1_SECTION_IDS,
     CHAPTER3_SECTION_IDS,
@@ -4157,7 +4158,6 @@ class ReportWorkflowRunner:
                 encoding="utf-8"
             )
         )
-        taxonomy_token = activate_report_taxonomy(state["report_taxonomy"])
         special_ref = f"Work/runs/{run_id}/preparation/special-topic-plan.json"
         if (self.service.workspace / special_ref).is_file():
             state["special_topic_plan"] = SpecialTopicPlan.model_validate_json(
@@ -4165,7 +4165,136 @@ class ReportWorkflowRunner:
             )
         state["preparation_refs"] = refs
         state["preparation_completion_ref"] = completion_ref
-        return taxonomy_token
+        self._repair_runtime_photo_projection(state)
+        return activate_report_taxonomy(state["report_taxonomy"])
+
+    def _repair_runtime_photo_projection(self, state: dict) -> None:
+        """Complete a same-run photo projection from its frozen XLSX inputs.
+
+        This does not rewrite the immutable preparation files or evidence, so
+        already-completed recovery lanes keep the exact inputs they paid for.
+        It only supplies assets that an older preparation pass omitted even
+        though its evidence already retained the workbook ``DISPIMG`` keys.
+        """
+
+        evidence: list[EvidenceItem] = state.get("evidence_items", [])
+        photos: list[PhotoAsset] = state.get("photo_assets", [])
+        referenced = {
+            photo_id for item in evidence for photo_id in item.photo_refs
+        }
+        missing = referenced - {photo.id for photo in photos}
+        if not missing:
+            ReportAssetAssembler.runtime_photo_ids(evidence, photos)
+            return
+
+        manifest: ProjectManifest = state["project_manifest"]
+        manifest_by_id = {item.id: item for item in manifest.files}
+        refs_by_file: dict[str, set[str]] = {}
+        for item in evidence:
+            unresolved = set(item.photo_refs) & missing
+            if unresolved:
+                refs_by_file.setdefault(item.source.file_id, set()).update(unresolved)
+
+        recovered: list[PhotoAsset] = []
+        run_id = str(state["run_id"])
+        for file_id, required_ids in refs_by_file.items():
+            manifest_file = manifest_by_id.get(file_id)
+            if manifest_file is None:
+                continue
+            source_ref = manifest_file.snapshot_ref or manifest_file.path
+            source_path = self.service.workspace / source_ref
+            if source_path.suffix.casefold() not in {".xlsx", ".xlsm"}:
+                continue
+            extracted = extract_wps_images(
+                source_path,
+                output_dir=(
+                    self.service.workspace
+                    / "Work"
+                    / "runs"
+                    / run_id
+                    / "recovery"
+                    / "photo-extraction"
+                    / file_id
+                ),
+                required_image_ids=required_ids,
+            )
+            for raw_id, asset in extracted.items():
+                owner = next(
+                    (
+                        item.id
+                        for item in evidence
+                        if raw_id in item.photo_refs and item.submodule_id is not None
+                    ),
+                    None,
+                )
+                if owner is None:
+                    continue
+                safe_name = hashlib.sha256(raw_id.encode("utf-8")).hexdigest()[:16]
+                final_path = (
+                    self.service.workspace
+                    / "Work"
+                    / "runs"
+                    / run_id
+                    / "assets"
+                    / file_id
+                    / f"recovered-{safe_name}{asset.path.suffix.casefold()}"
+                )
+                final_path, sha256, _blob_ref = self.service.snapshot_content(
+                    asset.path,
+                    final_path,
+                )
+                recovered.append(
+                    asset.model_copy(
+                        update={
+                            "id": raw_id,
+                            "path": final_path.relative_to(self.service.workspace),
+                            "sha256": sha256,
+                            "source_image_id": raw_id,
+                            "primary_evidence_id": owner,
+                        }
+                    )
+                )
+
+        state["photo_assets"] = [*photos, *recovered]
+        try:
+            ReportAssetAssembler.runtime_photo_ids(
+                evidence,
+                state["photo_assets"],
+            )
+        except ValueError as exc:
+            raise AgentWorkflowError(
+                "same-run recovery could not reconstruct every source-table photo "
+                "from the frozen XLSX inputs"
+            ) from exc
+        state["photo_evidence_adjacency"] = {
+            "schema_version": 1,
+            "photo_to_evidence": {
+                photo.id: [
+                    item.id for item in evidence if photo.id in item.photo_refs
+                ]
+                for photo in state["photo_assets"]
+            },
+            "evidence_to_photo": {
+                item.id: list(item.photo_refs) for item in evidence
+            },
+            "primary_evidence": {
+                photo.id: photo.primary_evidence_id
+                for photo in state["photo_assets"]
+            },
+        }
+        repair_ref = f"Work/runs/{run_id}/recovery/photo-projection.json"
+        self.service.store.write_json(
+            repair_ref,
+            {
+                "schema_version": 1,
+                "run_id": run_id,
+                "source": "frozen-xlsx-photo-refs",
+                "recovered_assets": [
+                    asset.model_dump(mode="json") for asset in recovered
+                ],
+            },
+        )
+        state["recovery_photo_projection_ref"] = repair_ref
 
     @staticmethod
     def _sha256(path: Path) -> str:
@@ -4196,6 +4325,10 @@ class ReportWorkflowRunner:
     def _persist_preparation_snapshot(self, state: dict) -> None:
         if "report_taxonomy" not in state:
             raise AgentWorkflowError("cannot persist preparation without report taxonomy")
+        ReportAssetAssembler.runtime_photo_ids(
+            state.get("evidence_items", []),
+            state.get("photo_assets", []),
+        )
         refs = self._preparation_refs(
             state["run_id"],
             include_special_topics="special_topic_plan" in state,
