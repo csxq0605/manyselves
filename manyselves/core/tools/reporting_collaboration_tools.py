@@ -2775,6 +2775,11 @@ class SubmitResultTool(_ResultTool):
                     "submission_kind": submission_kind,
                     "raw_payload": payload,
                     "transport_normalization": transport_normalization,
+                    "correction_mode": (
+                        "terminal_contract_failure"
+                        if terminal
+                        else "model_guided_contract_resubmission"
+                    ),
                     "validation_errors": issues,
                     "affected_part_ids": affected_part_ids,
                     "validation_failures": self._validation_failures,
@@ -2787,6 +2792,7 @@ class SubmitResultTool(_ResultTool):
                     "accepted": False,
                     "submission_kind": submission_kind,
                     "transport_normalization": transport_normalization,
+                    "correction_mode": "model_guided_contract_resubmission",
                     "validation_errors": issues,
                     "affected_part_ids": affected_part_ids,
                     "rewrite_part_ids": affected_part_ids,
@@ -2798,11 +2804,14 @@ class SubmitResultTool(_ResultTool):
                     "correction_state_ref": correction_ref,
                     "next_action": "resubmit_result_once_after_applying_validation_errors",
                     "instruction": (
-                        "Apply each validation error exactly once and resubmit one complete "
-                        "submission object. Put kind and every declared field directly in "
-                        "the tool arguments. Rewrite only rewrite_part_ids; when that list is "
-                        "empty, do not rewrite any durable prose part. Never repeat the "
-                        "same rejected submission."
+                        "Deterministic JSON transport normalization has already been "
+                        "applied. The remaining contract or semantic errors require a "
+                        "model-guided resubmission; the runtime will not invent business "
+                        "content. Apply each validation error exactly once and resubmit one "
+                        "complete submission object. Put kind and every declared field "
+                        "directly in the tool arguments. Rewrite only rewrite_part_ids; "
+                        "when that list is empty, do not rewrite any durable prose part. "
+                        "Never repeat the same rejected submission."
                     ),
                 }
             if count >= 2:
@@ -2811,7 +2820,9 @@ class SubmitResultTool(_ResultTool):
                 stop_cause = "the distinct validation-correction budget was exhausted"
             reason = (
                 f"structured submission contract failed: {stop_cause}; the workflow "
-                "stopped instead of guessing or repairing model output. "
+                "stopped instead of guessing or inventing business content. "
+                "Deterministic JSON transport normalization had already been applied "
+                "where possible. "
                 f"attempts={self._validation_failures}; fingerprint_occurrences={count}; "
                 f"error={exc}"
             )
@@ -2829,6 +2840,7 @@ class SubmitResultTool(_ResultTool):
                 "accepted": False,
                 "submission_kind": submission_kind,
                 "transport_normalization": transport_normalization,
+                "correction_mode": "terminal_contract_failure",
                 "error": reason,
                 "validation_errors": issues,
                 "remaining_attempts": 0,
@@ -3098,6 +3110,32 @@ class SubmitResultTool(_ResultTool):
             repaired.append(matching_close[stack.pop()])
         return "".join(repaired)
 
+    @classmethod
+    def _decode_json_transport_value(
+        cls,
+        value: str,
+        expected: str,
+    ) -> tuple[object, str | None]:
+        """Decode one exact or syntactically damaged structured transport value."""
+
+        try:
+            candidate = json.loads(value)
+            mode = "exact_json_decode_v1"
+        except (TypeError, ValueError):
+            repaired = cls._repair_json_transport_text(value)
+            if repaired is None:
+                return value, None
+            try:
+                candidate = json.loads(repaired)
+            except (TypeError, ValueError):
+                return value, None
+            mode = "repaired_json_decode_v1"
+        if expected == "array" and not isinstance(candidate, list):
+            return value, None
+        if expected == "object" and not isinstance(candidate, dict):
+            return value, None
+        return candidate, mode
+
     def _normalize_schema_transport_fields(
         self,
         payload: dict,
@@ -3137,30 +3175,11 @@ class SubmitResultTool(_ResultTool):
             structured = candidates & {"array", "object"}
             return next(iter(structured)) if len(structured) == 1 else None
 
-        def decode(value: str, expected: str) -> tuple[object, str | None]:
-            try:
-                candidate = json.loads(value)
-                mode = "exact_json_decode_v1"
-            except (TypeError, ValueError):
-                repaired = self._repair_json_transport_text(value)
-                if repaired is None:
-                    return value, None
-                try:
-                    candidate = json.loads(repaired)
-                except (TypeError, ValueError):
-                    return value, None
-                mode = "repaired_json_decode_v1"
-            if expected == "array" and not isinstance(candidate, list):
-                return value, None
-            if expected == "object" and not isinstance(candidate, dict):
-                return value, None
-            return candidate, mode
-
         def visit(value: object, node: dict, path: str) -> object:
             node = resolve(node)
             expected = structured_type(node)
             if isinstance(value, str) and expected is not None:
-                value, mode = decode(value, expected)
+                value, mode = self._decode_json_transport_value(value, expected)
                 if mode is not None:
                     normalized_fields.append({"field": path, "mode": mode})
             if isinstance(value, list):
@@ -3395,6 +3414,11 @@ class SubmitResultTool(_ResultTool):
                 "submission_kind": getattr(result.payload, "kind", None),
                 "raw_payload": payload,
                 "transport_normalization": transport_normalization,
+                "correction_mode": (
+                    "runtime_transport_normalization"
+                    if transport_normalization is not None
+                    else "none"
+                ),
                 "validation_errors": [],
                 "affected_part_ids": [],
                 "validation_failures": self._validation_failures,
@@ -3406,6 +3430,11 @@ class SubmitResultTool(_ResultTool):
             "accepted": True,
             "submission_kind": getattr(result.payload, "kind", None),
             "transport_normalization": transport_normalization,
+            "correction_mode": (
+                "runtime_transport_normalization"
+                if transport_normalization is not None
+                else "none"
+            ),
             "result_path": relative,
             "next_action": "finish_task",
             "instruction": (

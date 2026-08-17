@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from manyselves.core.reporting.input_contracts import (
 from manyselves.core.reporting.source_ledger import SourceLedger
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.submission_contracts import (
+    KIND_EXAMPLES,
     render_submission_contract,
     submission_schema,
 )
@@ -108,6 +110,129 @@ def _module_subject_payload() -> dict:
         "unresolved_questions": [],
         "revision": 0,
         "revision_responses": [],
+    }
+
+
+IDENTITY_SUBMISSION_KINDS = (
+    pytest.param("editor", "module_submission", id="editor-module-initial"),
+    pytest.param("editor", "module_revision_submission", id="editor-module-revision"),
+    pytest.param("editor", "edited_report_submission", id="editor-report"),
+    pytest.param(
+        "auditor",
+        "module_review_finding_submission",
+        id="auditor-module-initial",
+    ),
+    pytest.param(
+        "auditor",
+        "module_review_verdict_submission",
+        id="auditor-module-recheck",
+    ),
+    pytest.param("cross", "cross_review_finding_submission", id="cross-initial"),
+    pytest.param("cross", "cross_review_verdict_submission", id="cross-recheck"),
+    pytest.param("cross", "cross_owner_finding_submission", id="cross-owner-initial"),
+    pytest.param("cross", "cross_owner_verdict_submission", id="cross-owner-recheck"),
+    pytest.param("chief", "chief_revision_submission", id="chief-revision"),
+    pytest.param("chief", "chief_chapter_lane_submission", id="chief-lane-initial"),
+    pytest.param(
+        "chief",
+        "chief_chapter_lane_revision_submission",
+        id="chief-lane-revision",
+    ),
+    pytest.param("final", "final_review_finding_submission", id="final-initial"),
+    pytest.param("final", "final_review_verdict_submission", id="final-recheck"),
+    pytest.param(
+        "final",
+        "final_chapter_lane_finding_submission",
+        id="final-lane-initial",
+    ),
+    pytest.param(
+        "final",
+        "final_chapter_lane_verdict_submission",
+        id="final-lane-recheck",
+    ),
+)
+
+
+@pytest.mark.parametrize(("identity", "kind"), IDENTITY_SUBMISSION_KINDS)
+def test_all_reporting_identities_normalize_schema_declared_structured_fields(
+    tmp_path: Path,
+    identity: str,
+    kind: str,
+) -> None:
+    del identity  # The id makes identity coverage visible in pytest output.
+    original = deepcopy(KIND_EXAMPLES[kind])
+    transported = deepcopy(original)
+    structured_fields = {
+        name
+        for name, value in original.items()
+        if isinstance(value, (list, dict))
+    }
+    assert structured_fields
+    for name in structured_fields:
+        transported[name] = json.dumps(original[name], ensure_ascii=False)
+
+    normalized, metadata = _tool(
+        tmp_path,
+        allowed_outputs=[kind],
+    )._normalize_schema_transport_fields(transported)
+
+    assert normalized == original
+    assert metadata == {
+        "kind": "schema_json_transport_normalization_v1",
+        "fields": [
+            {"field": f"$.{name}", "mode": "exact_json_decode_v1"}
+            for name in original
+            if name in structured_fields
+        ],
+    }
+
+
+@pytest.mark.parametrize(("identity", "kind"), IDENTITY_SUBMISSION_KINDS)
+def test_all_reporting_identity_schemas_warn_against_stringified_structures(
+    identity: str,
+    kind: str,
+) -> None:
+    del identity
+    schema = submission_schema(kind)
+    example = KIND_EXAMPLES[kind]
+    structured_fields = {
+        name
+        for name, value in example.items()
+        if isinstance(value, (list, dict))
+    }
+    assert structured_fields
+    for name in structured_fields:
+        description = str(schema["properties"][name].get("description") or "")
+        assert "Use a native JSON" in description
+        assert "never submit this field as a JSON-encoded string" in description
+
+
+def test_transport_normalization_recurses_into_nested_structured_fields(
+    tmp_path: Path,
+) -> None:
+    kind = "final_chapter_lane_finding_submission"
+    original = deepcopy(KIND_EXAMPLES[kind])
+    transported = deepcopy(original)
+    target_changes = transported["findings"][0]["target_changes"]
+    transported["findings"][0]["target_changes"] = json.dumps(
+        target_changes,
+        ensure_ascii=False,
+    )
+
+    normalized, metadata = _tool(
+        tmp_path,
+        allowed_outputs=[kind],
+    )._normalize_schema_transport_fields(transported)
+
+    assert normalized == original
+    assert metadata == {
+        "kind": "schema_json_transport_normalization_v1",
+        "fields": [
+            {
+                "field": "$.findings.0.target_changes",
+                "mode": "exact_json_decode_v1",
+            }
+        ],
     }
 
 
@@ -392,6 +517,7 @@ async def test_review_submit_runtime_assigns_coverage_and_finding_id(
     )
 
     assert repaired["status"] == "completed", repaired
+    assert repaired["correction_mode"] == "runtime_transport_normalization"
     assert repaired["transport_normalization"] == {
         "kind": "schema_json_transport_normalization_v1",
         "fields": [{"field": "$.findings", "mode": "repaired_json_decode_v1"}],
@@ -422,6 +548,9 @@ async def test_review_submit_runtime_assigns_coverage_and_finding_id(
     )
 
     assert semantic_correction["status"] == "correction_required"
+    assert semantic_correction["correction_mode"] == (
+        "model_guided_contract_resubmission"
+    )
     assert semantic_correction["transport_normalization"] == {
         "kind": "schema_json_transport_normalization_v1",
         "fields": [{"field": "$.findings", "mode": "repaired_json_decode_v1"}],
@@ -682,6 +811,7 @@ async def test_submit_result_rejects_legacy_payload_wrapper_without_unwrapping(
     candidate = json.dumps(_module_payload())
     outcome = await tool(payload=candidate)
     assert outcome["status"] == "correction_required"
+    assert outcome["correction_mode"] == "model_guided_contract_resubmission"
     issue = outcome["validation_errors"][0]
     assert issue["field"] == "payload"
     assert issue["received"] == candidate

@@ -636,16 +636,60 @@ def submission_model(kind: str) -> type:
         raise KeyError(f"unknown submission contract kind: {kind}") from exc
 
 
-def _enrich_properties(node: Any) -> None:
+def _enrich_properties(
+    node: Any,
+    *,
+    definitions: dict[str, Any] | None = None,
+) -> None:
     if not isinstance(node, dict):
         return
+    definitions = definitions or node.get("$defs", {})
+
+    def resolve(prop: dict[str, Any]) -> dict[str, Any]:
+        reference = prop.get("$ref")
+        if isinstance(reference, str) and reference.startswith("#/$defs/"):
+            target = definitions.get(reference.rsplit("/", 1)[-1])
+            return target if isinstance(target, dict) else prop
+        return prop
+
+    def structured_shape(prop: dict[str, Any]) -> str | None:
+        resolved = resolve(prop)
+        if resolved.get("type") in {"array", "object"}:
+            return str(resolved["type"])
+        candidates = {
+            resolve(branch).get("type")
+            for key in ("anyOf", "oneOf")
+            for branch in resolved.get(key, [])
+            if isinstance(branch, dict)
+        }
+        structured = candidates & {"array", "object"}
+        return next(iter(structured)) if len(structured) == 1 else None
+
     for name, prop in node.get("properties", {}).items():
-        if isinstance(prop, dict) and not prop.get("description"):
+        if not isinstance(prop, dict):
+            continue
+        if not prop.get("description"):
             guidance = FIELD_GUIDANCE.get(name)
             if guidance:
                 prop["description"] = guidance
+        shape = structured_shape(prop)
+        if shape is not None:
+            native_guidance = (
+                f"Use a native JSON {shape}; never submit this field as a "
+                "JSON-encoded string."
+            )
+            current = str(prop.get("description") or "").strip()
+            if native_guidance not in current:
+                prop["description"] = f"{current} {native_guidance}".strip()
+        _enrich_properties(prop, definitions=definitions)
+    items = node.get("items")
+    if isinstance(items, dict):
+        _enrich_properties(items, definitions=definitions)
+    for key in ("anyOf", "oneOf", "allOf"):
+        for branch in node.get(key, []):
+            _enrich_properties(branch, definitions=definitions)
     for value in node.get("$defs", {}).values():
-        _enrich_properties(value)
+        _enrich_properties(value, definitions=definitions)
 
 
 def submission_schema(kind: str) -> dict[str, Any]:

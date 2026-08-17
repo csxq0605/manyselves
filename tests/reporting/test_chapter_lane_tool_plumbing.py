@@ -269,7 +269,15 @@ async def test_final_chapter_lane_initial_and_recheck_enforce_scope(tmp_path: Pa
     )
     assert accepted["status"] == "completed"
 
-    stringified = await tool(
+    stringified_tool = _submit_tool(
+        tmp_path,
+        task_id="final-ch3-initial-stringified-transport",
+        revision=0,
+        kind="final_chapter_lane_finding_submission",
+        contract_kind=initial_contract.kind,
+        contract_ref=initial_ref,
+    )
+    stringified = await stringified_tool(
         **{
             "kind": "final_chapter_lane_finding_submission",
             "run_id": RUN,
@@ -301,16 +309,12 @@ async def test_final_chapter_lane_initial_and_recheck_enforce_scope(tmp_path: Pa
             "residual_risks": [],
         }
     )
-    assert stringified["status"] == "correction_required"
-    string_issue = next(
-        issue for issue in stringified["validation_errors"] if issue["field"] == "findings"
-    )
-    assert string_issue["expected"] == "array"
-    assert isinstance(string_issue["example"], list)
-    assert string_issue["example"]
-    assert "JSON-encoded string" in string_issue["repair_instruction"]
-    assert "only remove the outer quotes" in string_issue["repair_instruction"]
-    assert "Do not regenerate, expand, summarize" in string_issue["repair_instruction"]
+    assert stringified["status"] == "completed"
+    assert stringified["correction_mode"] == "runtime_transport_normalization"
+    assert stringified["transport_normalization"] == {
+        "kind": "schema_json_transport_normalization_v1",
+        "fields": [{"field": "$.findings", "mode": "exact_json_decode_v1"}],
+    }
 
     bad = await tool(
         **{
