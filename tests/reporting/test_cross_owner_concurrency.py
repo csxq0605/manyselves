@@ -783,6 +783,47 @@ async def test_cross_owner_recheck_regression_enters_next_revision_round(
         "cross-owner-2.1-r2-recheck",
     ]
 
+    # The Cross breakpoint is terminal only after every internal owner round
+    # has closed.  Re-entering from that breakpoint must validate and reuse the
+    # promoted r2 owner completion even though its lane trigger is the prior
+    # r1 verdict, not the original r0 CrossOwnerInput.
+    calls_before_resume = len(runner.calls)
+    resumed_state = _state(run_id)
+    resumed_state["resume"] = True
+    await lifecycle.run_cross_review(
+        runner, resumed_state, "workflow-cross-regression-resume"
+    )
+
+    assert len(runner.calls) == calls_before_resume
+    assert resumed_state["module_submissions"]["2.1"].revision == 2
+    assert resumed_state["cross_review_completion_ref"] == (
+        f"Work/runs/{run_id}/reviews/cross-completion.json"
+    )
+
+    pipeline_ref = (
+        f"Work/runs/{run_id}/lanes/cross-r1/module-2.1/pipeline-completion.json"
+    )
+    pipeline = CrossOwnerCompletion.model_validate_json(
+        (tmp_path / pipeline_ref).read_text(encoding="utf-8")
+    )
+    final_verdict_ref = (
+        f"Work/runs/{run_id}/reviews/cross-owner-verdicts-r2-2.1.json"
+    )
+    mismatched_trigger = pipeline.model_copy(
+        update={"owner_input": _artifact_ref(runner, final_verdict_ref)}
+    )
+    with pytest.raises(
+        lifecycle.ReviewLifecycleError,
+        match="promoted completion has inconsistent rounds",
+    ):
+        lifecycle._validate_cross_owner_completion_business_identity(
+            runner,
+            mismatched_trigger,
+            run_id=run_id,
+            owner_module_id="2.1",
+            review_round=1,
+        )
+
 
 @pytest.mark.asyncio
 async def test_cross_owner_initial_failure_drains_all_five_and_writes_no_barrier(

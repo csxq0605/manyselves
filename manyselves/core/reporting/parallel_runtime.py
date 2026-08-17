@@ -1418,7 +1418,11 @@ class CrossOwnerCompletion(_StrictModel):
     subject_revision: int | None = Field(default=None, ge=0)
     owner_input: ArtifactRef | None = Field(
         default=None,
-        description="Hash-bound CrossOwnerInput consumed by this owner reviewer.",
+        description=(
+            "Typed trigger for this owner revision lane: the initial CrossOwnerInput "
+            "for round one, or the immediately preceding CrossOwnerVerdictSubmission "
+            "for a later regression round. Hash fields are forensic metadata only."
+        ),
     )
     initial_result: ArtifactRef | None = Field(
         default=None,

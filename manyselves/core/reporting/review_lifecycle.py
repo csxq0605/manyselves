@@ -1970,6 +1970,114 @@ def _cross_owner_ref_revision(ref: str) -> int | None:
     return int(match.group(1)) if match is not None else None
 
 
+def _validate_cross_owner_lane_trigger(
+    runner: "ReportWorkflowRunner",
+    completion: CrossOwnerCompletion,
+    *,
+    run_id: str,
+    owner_module_id: str,
+) -> None:
+    """Validate the typed artifact that triggered one owner revision lane.
+
+    The first owner revision is triggered by the immutable ``CrossOwnerInput``.
+    A later revision is triggered by the immediately preceding owner verdict
+    that left findings open or introduced regressions.  Pipeline promotion
+    keeps that final lane trigger while normalizing the outer barrier round to
+    one, so recovery must validate the actual typed union written by the lane.
+    """
+
+    trigger_ref = _cross_owner_artifact_ref_value(completion.owner_input)
+    if trigger_ref is None:
+        raise ReviewLifecycleError(
+            f"Cross owner completion has no typed lane trigger: {owner_module_id}"
+        )
+    trigger_path = _cross_owner_artifact_path(
+        runner,
+        trigger_ref,
+        run_id=run_id,
+        label="lane trigger",
+    )
+    try:
+        raw = json.loads(trigger_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise ReviewLifecycleError(
+            f"Cross owner completion lane trigger is invalid: {owner_module_id}"
+        ) from exc
+    kind = raw.get("kind") if isinstance(raw, dict) else None
+    if kind == "cross_owner_input":
+        try:
+            contract = CrossOwnerInput.model_validate(raw)
+        except ValueError as exc:
+            raise ReviewLifecycleError(
+                f"Cross owner completion lane trigger is not typed: {owner_module_id}"
+            ) from exc
+        expected_ref = (
+            f"Work/runs/{run_id}/reviews/cross-owner-input-r"
+            f"{contract.review_round}-{owner_module_id}.json"
+        )
+        if (
+            trigger_ref != expected_ref
+            or contract.run_id != run_id
+            or contract.owner_module_id != owner_module_id
+            or contract.review_round != 0
+            or contract.phase != "initial"
+        ):
+            raise ReviewLifecycleError(
+                f"Cross owner completion lane trigger identity mismatch: {owner_module_id}"
+            )
+        _load_cross_owner_input(
+            runner,
+            run_id=run_id,
+            owner_module_id=owner_module_id,
+            review_round=contract.review_round,
+            phase=contract.phase,
+        )
+        return
+    if kind == "cross_owner_verdict_submission":
+        try:
+            verdict = CrossOwnerVerdictSubmission.model_validate(raw)
+        except ValueError as exc:
+            raise ReviewLifecycleError(
+                f"Cross owner completion lane trigger is not typed: {owner_module_id}"
+            ) from exc
+        match = re.fullmatch(
+            rf"Work/runs/{re.escape(run_id)}/reviews/"
+            rf"cross-owner-verdicts-r([1-9][0-9]*)-{re.escape(owner_module_id)}\.json",
+            trigger_ref,
+        )
+        if match is None or verdict.owner_module_id != owner_module_id:
+            raise ReviewLifecycleError(
+                f"Cross owner completion lane trigger identity mismatch: {owner_module_id}"
+            )
+        trigger_round = int(match.group(1))
+        if completion.schema_version == "3":
+            final_verdict_ref = _cross_owner_artifact_ref_value(
+                completion.verdict_result
+            )
+            final_match = (
+                re.fullmatch(
+                    rf"Work/runs/{re.escape(run_id)}/reviews/"
+                    rf"cross-owner-verdicts-r([1-9][0-9]*)-"
+                    rf"{re.escape(owner_module_id)}\.json",
+                    final_verdict_ref,
+                )
+                if final_verdict_ref is not None
+                else None
+            )
+            if final_match is None or int(final_match.group(1)) != trigger_round + 1:
+                raise ReviewLifecycleError(
+                    f"Cross owner promoted completion has inconsistent rounds: {owner_module_id}"
+                )
+        elif completion.review_round != trigger_round + 1:
+            raise ReviewLifecycleError(
+                f"Cross owner completion lane trigger round mismatch: {owner_module_id}"
+            )
+        return
+    raise ReviewLifecycleError(
+        f"Cross owner completion has unsupported lane trigger: {owner_module_id}"
+    )
+
+
 def _validate_cross_owner_completion_business_identity(
     runner: "ReportWorkflowRunner",
     completion: CrossOwnerCompletion,
@@ -2036,41 +2144,12 @@ def _validate_cross_owner_completion_business_identity(
             raise ReviewLifecycleError(
                 f"Cross owner completion input identity mismatch: {owner_module_id}"
             )
-    owner_input = _cross_owner_artifact_ref_value(completion.owner_input)
-    if owner_input is not None:
-        _cross_owner_artifact_path(
-            runner,
-            owner_input,
-            run_id=run_id,
-            label="owner input",
-        )
-        try:
-            owner_input_contract = CrossOwnerInput.model_validate_json(
-                (runner.service.workspace / owner_input).read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError) as exc:
-            raise ReviewLifecycleError(
-                f"Cross owner completion input is not typed CrossOwnerInput: {owner_module_id}"
-            ) from exc
-        expected_input_ref = (
-            f"Work/runs/{run_id}/reviews/cross-owner-input-r"
-            f"{owner_input_contract.review_round}-{owner_module_id}.json"
-        )
-        if (
-            owner_input != expected_input_ref
-            or owner_input_contract.run_id != run_id
-            or owner_input_contract.owner_module_id != owner_module_id
-        ):
-            raise ReviewLifecycleError(
-                f"Cross owner completion input identity mismatch: {owner_module_id}"
-            )
-        _load_cross_owner_input(
-            runner,
-            run_id=run_id,
-            owner_module_id=owner_module_id,
-            review_round=owner_input_contract.review_round,
-            phase=owner_input_contract.phase,
-        )
+    _validate_cross_owner_lane_trigger(
+        runner,
+        completion,
+        run_id=run_id,
+        owner_module_id=owner_module_id,
+    )
     for label, artifact in (
         ("initial result", completion.initial_result),
         ("verdict result", completion.verdict_result),
