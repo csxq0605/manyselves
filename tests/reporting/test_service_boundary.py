@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from openpyxl import Workbook
 
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
@@ -27,6 +28,7 @@ from manyselves.core.reporting.models import (
 from manyselves.core.reporting.revisions import RevisionCoordinator
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
 from manyselves.core.reporting.store import ReportingStore
+from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import (
     AgentWorkflowError,
     AgentWorkflowBlocked,
@@ -47,6 +49,25 @@ class TemplateResolutionProvider(LLMProvider):
 
     async def chat(self, messages, tools=None, temperature=0.1, max_tokens=8192):
         raise AssertionError("template resolution must not call the provider")
+
+
+def _write_current_s4_taxonomy(workspace: Path) -> None:
+    path = workspace / "Inputs/S4-6评估总表.xlsx"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "评估信息汇总表"
+    row = 1
+    for module in REPORT_TAXONOMY.values():
+        sheet.cell(row, 2, module.id)
+        sheet.cell(row, 3, module.title)
+        row += 1
+        for section in module.sections.values():
+            sheet.cell(row, 2, section.id)
+            sheet.cell(row, 3, section.title)
+            row += 1
+    workbook.save(path)
+    workbook.close()
 
 
 @pytest.mark.asyncio
@@ -260,6 +281,13 @@ async def test_service_retains_same_identity_registry_while_waiting_for_user(
         state["delivery_completion_ref"] = (
             f"Work/runs/{state['run_id']}/delivery-completion.json"
         )
+        output = service.store.write_text(
+            f"Work/runs/{state['run_id']}/report/completed.md",
+            "# completed\n",
+        )
+        state["output_artifacts"] = [
+            OutputArtifact(kind="report", path=output)
+        ]
 
     monkeypatch.setattr(ReportWorkflowRunner, "run", scripted_run)
 
@@ -618,6 +646,44 @@ async def test_distill_template_skill_preserves_the_original_failure_in_checkpoi
 
 
 @pytest.mark.asyncio
+async def test_provider_partial_failure_is_failed_and_remains_resumable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+
+    class InterruptedProviderResponse(RuntimeError):
+        partial_output = True
+        attempt_disposition = "accepted_or_unknown"
+
+    async def fail_distillation(_self, _state: dict, _workflow_id: str) -> None:
+        raise InterruptedProviderResponse("stream disconnected")
+
+    monkeypatch.setattr(
+        ReportWorkflowRunner,
+        "_distill_template_skill",
+        fail_distillation,
+    )
+
+    result = await service.run(
+        ReportRequest(
+            operation="distill_template_skill",
+            instruction="只更新模板写作 Skill",
+            target_modules=[],
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.error == "stream disconnected"
+    assert service.validate_resume_run(result.run_id)[-1].status == "failed"
+
+
+@pytest.mark.asyncio
 async def test_aggregate_existing_uses_aggregation_route_then_render(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -765,6 +831,7 @@ async def test_reporting_tool_defaults_new_report_to_draft_policy(
 async def test_service_returns_resumable_decision_before_calling_provider_when_evidence_requires_confirmation(
     tmp_path: Path,
 ) -> None:
+    _write_current_s4_taxonomy(tmp_path)
     class NeverCalledProvider(LLMProvider):
         def __init__(self):
             super().__init__("test", model="never-called")
@@ -806,6 +873,7 @@ async def test_service_returns_resumable_decision_before_calling_provider_when_e
 
 @pytest.mark.asyncio
 async def test_supplement_rescans_the_same_run_after_process_restart(tmp_path: Path) -> None:
+    _write_current_s4_taxonomy(tmp_path)
     class NeverCalledProvider(LLMProvider):
         def __init__(self):
             super().__init__("test", model="never-called")
@@ -1110,6 +1178,43 @@ async def test_budget_resume_reuses_same_revision_run(
     assert seen["request"].max_total_tokens == 20_000
 
 
+@pytest.mark.parametrize(
+    "status",
+    [
+        "failed",
+        "failed_before_delivery",
+        "cancelled",
+        "stopped_incomplete",
+        "needs_decision",
+        "needs_user_decision",
+        "needs_scope_expansion",
+        "blocked",
+    ],
+)
+def test_every_noncompleted_checkpoint_status_is_resumable(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    run_id = f"report-resume-{status.replace('_', '-')}"
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=TemplateResolutionProvider(),
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/request.json",
+        ReportRequest(instruction="恢复同一报告").model_dump(mode="json"),
+    )
+    service.store.write_json(
+        f"Work/runs/{run_id}/workflow-state.json",
+        {"run_id": run_id, "activity": "module-work", "status": status},
+    )
+    service._save_run(ReportingRunResult(run_id=run_id, status=status))
+
+    assert service.validate_resume_run(run_id)[-1].status == status
+
+
 @pytest.mark.asyncio
 async def test_revision_resume_keeps_new_supplements_structured(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1172,6 +1277,7 @@ async def test_revision_resume_keeps_new_supplements_structured(
 async def test_draft_and_skip_resume_same_run_with_explicit_policy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
 ) -> None:
+    _write_current_s4_taxonomy(tmp_path)
     class NeverCalledProvider(LLMProvider):
         def __init__(self):
             super().__init__("test", model="never-called")
@@ -1226,6 +1332,7 @@ async def test_draft_and_skip_resume_same_run_with_explicit_policy(
 async def test_invalid_draft_supplement_does_not_consume_evidence_decision(
     tmp_path: Path,
 ) -> None:
+    _write_current_s4_taxonomy(tmp_path)
     service = ReportingService(
         tmp_path,
         bus=MessageBus(),
@@ -1270,6 +1377,7 @@ async def test_resolved_draft_decision_reconciles_stale_ask_request(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _write_current_s4_taxonomy(tmp_path)
     service = ReportingService(
         tmp_path,
         bus=MessageBus(),
@@ -1336,6 +1444,7 @@ async def test_service_never_marks_full_report_completed_without_delivered_lifec
 
 @pytest.mark.asyncio
 async def test_stop_marks_run_incomplete_without_success_artifact(tmp_path: Path) -> None:
+    _write_current_s4_taxonomy(tmp_path)
     class NeverCalledProvider(LLMProvider):
         def __init__(self):
             super().__init__("test", model="never-called")

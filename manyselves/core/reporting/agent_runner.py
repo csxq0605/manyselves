@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import gzip
 import hashlib
 import json
 import operator
@@ -137,21 +136,6 @@ REPORTING_AUDIT_AGENT_IDS = frozenset(
 )
 
 
-class ProviderAttemptRecoveryRequired(RuntimeError):
-    """A same-task Provider request may have been accepted without a result."""
-
-    partial_output = True
-    ambiguous = True
-
-    def __init__(self, manifest_refs: list[str]) -> None:
-        self.manifest_refs = tuple(manifest_refs)
-        super().__init__(
-            "Provider attempt status is ambiguous; reconcile the existing same-task "
-            "journal before dispatching another physical request: "
-            + ", ".join(manifest_refs)
-        )
-
-
 class _RunnerContextRebuilder(ReportingContextRebuilder):
     """Reporting rebaser with Provider-safe ordering for legacy one-call tails.
 
@@ -206,7 +190,7 @@ def load_conversation_trace(
     workspace: Path,
     manifest_ref: str | Path,
 ) -> dict:
-    """Read legacy inline or v2 compressed conversation traces uniformly."""
+    """Read the current identity/reference state."""
 
     workspace = Path(workspace).resolve()
     manifest_path = (
@@ -222,40 +206,13 @@ def load_conversation_trace(
             f"conversation manifest is not a readable workspace file: {manifest_ref}"
         )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if isinstance(manifest.get("messages"), list):
-        # v1 compatibility: the transcript was the manifest itself.
-        return manifest
-    if (
-        manifest.get("manifest_version") != 2
-        or manifest.get("encoding") != "gzip+json"
-    ):
-        raise ValueError("unsupported conversation trace manifest")
-    transcript_ref = str(manifest.get("transcript_ref") or "")
-    transcript_path = (workspace / transcript_ref).resolve()
-    content_root = (workspace / "Work/content/sha256").resolve()
-    if (
-        not transcript_path.is_relative_to(content_root)
-        or not transcript_path.is_file()
-    ):
-        raise ValueError("conversation transcript CAS blob is unreadable")
-    compressed = transcript_path.read_bytes()
-    compressed_sha256 = hashlib.sha256(compressed).hexdigest()
-    if compressed_sha256 != manifest.get("compressed_sha256"):
-        raise ValueError("conversation transcript compressed hash mismatch")
-    try:
-        serialized = gzip.decompress(compressed)
-    except OSError as exc:
-        raise ValueError("conversation transcript gzip payload is invalid") from exc
-    if hashlib.sha256(serialized).hexdigest() != manifest.get(
-        "transcript_sha256"
-    ):
-        raise ValueError("conversation transcript content hash mismatch")
-    payload = json.loads(serialized)
-    if not isinstance(payload, dict) or not isinstance(
-        payload.get("messages"), list
-    ):
-        raise ValueError("conversation transcript payload is invalid")
-    return payload
+    if manifest.get("manifest_version") != 4 or manifest.get("encoding") != "identity+refs":
+        raise ValueError("unsupported conversation identity state")
+    identity_state = manifest.get("identity_state")
+    business_refs = manifest.get("business_refs")
+    if not isinstance(identity_state, dict) or not isinstance(business_refs, dict):
+        raise ValueError("conversation identity/reference state is invalid")
+    return {**manifest, "messages": []}
 
 
 class InspectImageTool(Tool):
@@ -1570,7 +1527,7 @@ class ReportingAgentRunner:
         phase = str(record.get("phase") or manifest.get("phase") or "initial")
         if record.get("round_reason"):
             round_reason = str(record["round_reason"])
-        elif attempt > 1 and disposition != "accepted_or_unknown":
+        elif attempt > 1:
             round_reason = "provider_retry"
         elif phase == "tool_followup":
             round_reason = "evidence_lookup"
@@ -1612,50 +1569,6 @@ class ReportingAgentRunner:
             )
         )
         return self.store.write_json(relative, manifest)
-
-    def _ambiguous_provider_call_refs(
-        self,
-        envelope: TaskEnvelope,
-        *,
-        session_id: str,
-        task_attempt_id: str | None = None,
-    ) -> list[str]:
-        """Find same-task requests that cannot safely be replayed."""
-
-        root = (
-            self.workspace
-            / f"Work/runs/{envelope.run_id}/context-manifests/provider-calls"
-        )
-        if not root.is_dir():
-            return []
-        ambiguous: list[str] = []
-        for path in sorted(root.glob("*.json")):
-            try:
-                manifest = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError, TypeError):
-                continue
-            expected = {
-                "run_id": envelope.run_id,
-                "task_id": envelope.task_id,
-                "revision": envelope.revision,
-                "session_id": session_id,
-            }
-            if task_attempt_id is not None:
-                expected["task_attempt_id"] = task_attempt_id
-            if any(
-                manifest.get(key) != value
-                for key, value in expected.items()
-            ):
-                continue
-            pending = manifest.get("provider_payload_status") == "pending"
-            accepted_unknown = (
-                manifest.get("usage_status") == "error"
-                and manifest.get("attempt_disposition")
-                == "accepted_or_unknown"
-            )
-            if pending or accepted_unknown:
-                ambiguous.append(path.relative_to(self.workspace).as_posix())
-        return ambiguous
 
     def _input_contract(self, envelope: TaskEnvelope):
         if not envelope.input_contract_kind or not envelope.input_contract_ref:
@@ -3046,8 +2959,6 @@ class ReportingAgentRunner:
     def _task_context_state(
         envelope: TaskEnvelope,
         *,
-        input_contract_payload: str | None = None,
-        input_contract_sha256: str | None = None,
         shared_artifacts: list[str] | None = None,
     ) -> dict[str, Any]:
         """Return the compact identity state used for full-vs-delta prompts."""
@@ -3064,11 +2975,6 @@ class ReportingAgentRunner:
             "allowed_tools": list(envelope.allowed_tools),
             "input_contract_kind": envelope.input_contract_kind,
             "input_contract_ref": envelope.input_contract_ref,
-            # Keep the previous business contract body in the identity index so
-            # delta decisions do not depend on CAS/hash equality.  The body is
-            # never copied into a delta unless it actually changes.
-            "input_contract_payload": input_contract_payload,
-            "input_contract_sha256": input_contract_sha256,
             "prior_result_ref": envelope.prior_result_ref,
             "context_summary_refs": list(envelope.context_summary_refs),
             "inline_context": envelope.inline_context,
@@ -3077,23 +2983,6 @@ class ReportingAgentRunner:
             "shared_artifacts": list(shared_artifacts or []),
         }
 
-    @staticmethod
-    def _load_handoff_summary(
-        workspace: Path,
-        run_id: str,
-        runtime_id: str,
-    ) -> dict[str, Any] | None:
-        safe_runtime_id = re.sub(r"[^A-Za-z0-9_.-]", "_", runtime_id)
-        path = workspace / f"Work/runs/{run_id}/agent-conversations/{safe_runtime_id}.handoff.json"
-        if not path.is_file():
-            return None
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError):
-            return None
-        summary = payload.get("summary") if isinstance(payload, dict) else None
-        return dict(summary) if isinstance(summary, dict) else None
-
     def _restore_persisted_session(
         self,
         loop: AgentLoop,
@@ -3101,12 +2990,10 @@ class ReportingAgentRunner:
         envelope: TaskEnvelope,
         runtime_id: str,
     ) -> bool:
-        """Restore one exact identity transcript after a process restart.
+        """Restore one identity from bounded business restart state.
 
-        The compressed trace is forensic/lossless but its messages are valid
-        Provider protocol units.  Legacy manifests are accepted by
-        ``load_conversation_trace`` for inspection; malformed or unrelated
-        traces are ignored and the new identity starts with an empty transcript.
+        The new turn receives current typed input plus canonical references.
+        Malformed or unrelated state starts the identity with empty history.
         """
 
         safe_runtime_id = re.sub(r"[^A-Za-z0-9_.-]", "_", runtime_id)
@@ -3129,16 +3016,8 @@ class ReportingAgentRunner:
             return False
         loop.restore_conversation(
             messages,
-            task_boundaries=payload.get("task_boundaries") or (),
-            handoff_summary=(
-                payload.get("compaction_summary")
-                if isinstance(payload.get("compaction_summary"), dict)
-                else self._load_handoff_summary(
-                    self.workspace,
-                    envelope.run_id,
-                    runtime_id,
-                )
-            ),
+            task_boundaries=[{"current": payload["identity_state"], "sequence": 1}],
+            handoff_summary=None,
         )
         return True
 
@@ -3327,12 +3206,9 @@ class ReportingAgentRunner:
                         status="completed",
                     )
                     return recovered_result
-        ambiguous_provider_refs = self._ambiguous_provider_call_refs(
-            envelope,
-            session_id=recovery_session_id,
-        )
-        if ambiguous_provider_refs:
-            raise ProviderAttemptRecoveryRequired(ambiguous_provider_refs)
+        # Provider call manifests are immutable audit evidence, not execution
+        # locks. A failed request did not create a validated local result, so
+        # an explicit same-run resume may create a fresh physical attempt.
         # Reporting uses the AgentLoop's lossless conversation history.  The
         # experimental typed context rebaser was removed from the runtime path
         # after a real run showed that consumed tool results were reduced to
@@ -3411,9 +3287,13 @@ class ReportingAgentRunner:
                 loop_kwargs.pop("context_rebuilder", None)
                 loop_kwargs.pop("pre_send_context_guard", None)
                 loop = AgentLoop(**loop_kwargs)
+            # Reporting persists identity and canonical refs in its v4 state.
+            # In-memory compaction is still allowed, but its process summary is
+            # not another durable conversation artifact.
+            loop.persist_handoff_summary = False
             # A process restart loses the in-memory session map, not the
-            # durable identity.  Restore the exact transcript and latest
-            # handoff summary before the loop starts accepting task messages.
+            # durable identity. Restore only identity/reference state before
+            # the loop starts accepting task messages.
             self._restore_persisted_session(
                 loop,
                 envelope=envelope,
@@ -3587,12 +3467,6 @@ class ReportingAgentRunner:
         )
         current_task_state = self._task_context_state(
             envelope,
-            input_contract_payload=input_contract_payload,
-            input_contract_sha256=(
-                hashlib.sha256(input_contract_payload.encode("utf-8")).hexdigest()
-                if input_contract_payload is not None
-                else None
-            ),
             shared_artifacts=shared_artifacts,
         )
         previous_task_state = loop.active_task_identity or self._session_task_state.get(
@@ -3604,7 +3478,6 @@ class ReportingAgentRunner:
                 shared_artifacts,
                 previous=previous_task_state,
                 input_contract_payload=input_contract_payload,
-                input_contract_sha256=current_task_state.get("input_contract_sha256"),
             )
         loop.begin_typed_task(current_task_state)
         self._session_task_state[cache_key] = current_task_state
@@ -4144,7 +4017,9 @@ class ReportingAgentRunner:
                 status="cancelled",
             )
             self._save_conversation_trace(
-                loop, envelope, runtime_id, session_id, status="cancelled"
+                loop, envelope, runtime_id, session_id,
+                shared_artifacts=shared_artifacts,
+                status="cancelled",
             )
             raise
         except Exception as exc:
@@ -4157,8 +4032,8 @@ class ReportingAgentRunner:
                 envelope,
                 runtime_id,
                 session_id,
+                shared_artifacts=shared_artifacts,
                 status="failed",
-                error=str(exc),
             )
             raise
         await loop.wait_until_turn_complete()
@@ -4168,7 +4043,9 @@ class ReportingAgentRunner:
             result=result,
         )
         self._save_conversation_trace(
-            loop, envelope, runtime_id, session_id, status=result.status.value
+            loop, envelope, runtime_id, session_id,
+            shared_artifacts=shared_artifacts,
+            status=result.status.value,
         )
         self._save_session_summary(
             loop,
@@ -4194,10 +4071,10 @@ class ReportingAgentRunner:
         runtime_id: str,
         session_id: str,
         *,
+        shared_artifacts: list[str] | None = None,
         status: str,
-        error: str | None = None,
     ) -> Path:
-        """Persist the Agent transcript even when the provider fails or is cancelled."""
+        """Persist only durable identity and canonical business references."""
 
         def json_value(value):
             if hasattr(value, "model_dump"):
@@ -4213,86 +4090,59 @@ class ReportingAgentRunner:
             return str(value)
 
         safe_runtime_id = re.sub(r"[^A-Za-z0-9_.-]", "_", runtime_id)
-        trace = {
-            "run_id": envelope.run_id,
-            "task_id": envelope.task_id,
-            "agent_id": envelope.agent_id,
-            "runtime_id": runtime_id,
-            "session_id": session_id,
-            "status": status,
-            "error": error,
-            "messages": json_value(list(loop._conversation_history)),
-        }
-        serialized = (
-            json.dumps(
-                trace,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n"
-        ).encode("utf-8")
-        compressed = gzip.compress(serialized, compresslevel=9, mtime=0)
-        trace_root = (
-            self.workspace
-            / f"Work/runs/{envelope.run_id}/agent-conversations"
+        raw_identity = getattr(loop, "active_task_identity", None) or self._task_context_state(
+            envelope,
+            shared_artifacts=shared_artifacts,
         )
-        trace_root.mkdir(parents=True, exist_ok=True)
-        temporary_path: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="wb",
-                prefix=f".{safe_runtime_id}-",
-                suffix=".json.gz.tmp",
-                dir=trace_root,
-                delete=False,
-            ) as handle:
-                handle.write(compressed)
-                handle.flush()
-                os.fsync(handle.fileno())
-                temporary_path = Path(handle.name)
-            blob = ContentAddressedStore(self.workspace).ingest_file(temporary_path)
-        finally:
-            if temporary_path is not None:
-                temporary_path.unlink(missing_ok=True)
+        identity_fields = (
+            "run_id", "task_id", "revision", "agent_id", "objective",
+            "input_refs", "constraints", "allowed_outputs", "allowed_tools",
+            "input_contract_kind", "input_contract_ref", "prior_result_ref",
+            "context_summary_refs", "artifact_delivery_modes", "shared_artifacts",
+        )
+        identity_state = {
+            field: json_value(raw_identity.get(field))
+            for field in identity_fields
+            if raw_identity.get(field) not in (None, "", [], {})
+        }
+        result_ref = f"Work/runs/{envelope.run_id}/results/{envelope.task_id}.json"
+        completed_result_ref = (
+            result_ref if status == AgentRunStatus.COMPLETED.value
+            and (self.workspace / result_ref).is_file() else None
+        )
+        knowledge_refs = list(dict.fromkeys([
+            *envelope.input_refs,
+            *envelope.context_summary_refs,
+            *(shared_artifacts or []),
+        ]))
+        attention_scope_ref = (
+            envelope.input_contract_ref
+            if envelope.input_contract_ref
+            and ("auditor" in envelope.agent_id or "cross" in envelope.agent_id)
+            else None
+        )
+        if attention_scope_ref:
+            identity_state["attention_scope_ref"] = attention_scope_ref
         return self.store.write_json(
             f"Work/runs/{envelope.run_id}/agent-conversations/{safe_runtime_id}.json",
             {
-                "manifest_version": 2,
+                "manifest_version": 4,
                 "run_id": envelope.run_id,
                 "task_id": envelope.task_id,
                 "agent_id": envelope.agent_id,
                 "runtime_id": runtime_id,
                 "session_id": session_id,
                 "status": status,
-                "error": error,
-                "encoding": "gzip+json",
-                "transcript_semantics": (
-                    "provider_working_history_protocol_valid_v3"
-                ),
-                "forensic_exact_tool_arguments": True,
-                "forensic_note": (
-                    "Retained provider-history tool calls preserve every required argument, "
-                    "including successful write_result_part content. Cost control removes "
-                    "only complete older messages from the Provider working set while the "
-                    "lossless transcript remains available for restart; no reusable prose "
-                    "marker or malformed tool call is exposed."
-                ),
-                "task_boundaries": json_value(
-                    list(getattr(loop, "task_boundaries", ()) or ())
-                ),
-                "active_task_identity": json_value(
-                    getattr(loop, "active_task_identity", None)
-                ),
-                "compaction_summary": json_value(
-                    getattr(loop, "handoff_summary", None)
-                ),
-                "transcript_ref": blob.relative_path.as_posix(),
-                "transcript_sha256": hashlib.sha256(serialized).hexdigest(),
-                "compressed_sha256": blob.sha256,
-                "uncompressed_bytes": len(serialized),
-                "compressed_bytes": blob.size,
-                "message_count": len(loop._conversation_history),
+                "encoding": "identity+refs",
+                "transcript_semantics": "durable_identity_reference_state_v1",
+                "identity_state": identity_state,
+                "business_refs": {
+                    "input_contract_ref": envelope.input_contract_ref,
+                    "input_knowledge_refs": knowledge_refs,
+                    "prior_completed_result_ref": envelope.prior_result_ref,
+                    "completed_result_ref": completed_result_ref,
+                    "attention_scope_ref": attention_scope_ref,
+                },
             },
         )
 

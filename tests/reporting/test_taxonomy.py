@@ -1,6 +1,13 @@
 import pytest
+from openpyxl import Workbook
 
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY, resolve_submodule
+from manyselves.core.reporting.taxonomy import (
+    REPORT_TAXONOMY,
+    activate_report_taxonomy,
+    parse_report_taxonomy_workbook,
+    reset_report_taxonomy,
+    resolve_submodule,
+)
 
 
 def test_taxonomy_contains_fixed_module_24_submodules() -> None:
@@ -29,3 +36,33 @@ def test_taxonomy_matches_v2_handoff_for_all_five_modules() -> None:
 def test_resolve_submodule_rejects_unknown_identifier() -> None:
     with pytest.raises(ValueError, match="unknown report submodule"):
         resolve_submodule("2.4.99")
+
+
+def test_xlsx_taxonomy_drives_all_five_complete_modules(tmp_path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "评估信息汇总表"
+    row = 1
+    expected_titles = {}
+    for module_number in range(1, 6):
+        module_id = f"2.{module_number}"
+        sheet.cell(row, 2, float(module_id))
+        sheet.cell(row, 3, f"动态模块 {module_id}")
+        expected_titles[module_id] = f"动态模块 {module_id}"
+        row += 1
+        leaf_count = 14 if module_id == "2.4" else 2
+        for leaf in range(1, leaf_count + 1):
+            sheet.cell(row, 2, f"{module_id}.{leaf}")
+            sheet.cell(row, 4, f"动态标题 {module_id}.{leaf}")
+            row += 1
+    path = tmp_path / "S4-6动态目录.xlsx"
+    workbook.save(path)
+    workbook.close()
+
+    payload = parse_report_taxonomy_workbook(path, source_ref="Inputs/S4-6动态目录.xlsx")
+    token = activate_report_taxonomy(payload)
+    try:
+        assert {key: value.title for key, value in REPORT_TAXONOMY.items()} == expected_titles
+        assert REPORT_TAXONOMY["2.4"].submodules["2.4.14"].title == "动态标题 2.4.14"
+    finally:
+        reset_report_taxonomy(token)

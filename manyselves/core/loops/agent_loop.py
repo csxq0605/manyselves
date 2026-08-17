@@ -653,10 +653,10 @@ def pre_send_context_gate(
 
     current = list(messages)
     previous = list(previous_messages or ())
-    safe_retry = (
+    retryable_attempt = (
         int(attempt or 1) > 1
         and str(previous_attempt_disposition or "").casefold()
-        in {"not_sent", "definitely_rejected"}
+        in {"not_sent", "definitely_rejected", "accepted_or_unknown"}
     )
     current_results = _context_result_signatures(current)
     previous_results = _context_result_signatures(previous)
@@ -752,7 +752,7 @@ def pre_send_context_gate(
             duplicate_evidence_chars=duplicate_evidence_chars,
             rebuild_count=max(0, int(rebuild_count or 0)),
         )
-    if replayed_result_chars and not (safe_retry or explicit_followup):
+    if replayed_result_chars and not (retryable_attempt or explicit_followup):
         return ContextGateDecision(
             "blocked",
             "duplicate_complete_tool_result",
@@ -761,7 +761,7 @@ def pre_send_context_gate(
             duplicate_evidence_chars=duplicate_evidence_chars,
             rebuild_count=max(0, int(rebuild_count or 0)),
         )
-    if duplicate_completed_chars and not (safe_retry or explicit_followup or reference_only):
+    if duplicate_completed_chars and not (retryable_attempt or explicit_followup or reference_only):
         return ContextGateDecision(
             "blocked",
             "duplicate_completed_result",
@@ -769,14 +769,14 @@ def pre_send_context_gate(
             duplicate_evidence_chars=duplicate_evidence_chars,
             rebuild_count=max(0, int(rebuild_count or 0)),
         )
-    if duplicate_evidence_chars and not (safe_retry or explicit_followup or reference_only):
+    if duplicate_evidence_chars and not (retryable_attempt or explicit_followup or reference_only):
         return ContextGateDecision(
             "blocked",
             "duplicate_consumed_evidence",
             duplicate_evidence_chars=duplicate_evidence_chars,
             rebuild_count=max(0, int(rebuild_count or 0)),
         )
-    if exact_replay and not (safe_retry or explicit_followup or reference_only):
+    if exact_replay and not (retryable_attempt or explicit_followup or reference_only):
         return ContextGateDecision(
             "blocked",
             "duplicate_provider_context",
@@ -791,10 +791,10 @@ def pre_send_context_gate(
             duplicate_evidence_chars=duplicate_evidence_chars,
             rebuild_count=max(1, int(rebuild_count or 0)),
         )
-    if safe_retry:
+    if retryable_attempt:
         return ContextGateDecision(
             "allow",
-            "safe_no_output_retry",
+            "provider_retry",
             duplicate_tool_result_chars=duplicate_result_chars,
             duplicate_completed_result_chars=duplicate_completed_chars,
             duplicate_evidence_chars=duplicate_evidence_chars,
@@ -1180,22 +1180,14 @@ class _ProviderRequestError(RuntimeError):
         self.attempts = attempts
         self.had_partial_output = partial_output
         self.ambiguous = ambiguous
-        # ReportingService historically uses partial_output as its durable
-        # ambiguity signal. Preserve that contract for accepted-or-unknown
-        # requests even when no token was observed locally.
-        self.partial_output = partial_output or ambiguous
+        # Partial output is forensic telemetry only. Provider text has no
+        # business effect until a typed result is validated and persisted, so
+        # a failed attempt must not make the reporting run unrecoverable.
+        self.partial_output = partial_output
         self.attempt_disposition = attempt_disposition.value
         retry_text = f"，已自动重试{attempts - 1}次仍失败" if attempts > 1 else ""
-        partial_text = (
-            "；响应已产生部分内容，为避免重复输出未自动重试"
-            if partial_output
-            else ""
-        )
-        ambiguous_text = (
-            "；请求可能已被服务端接受，状态不确定，未自动重试"
-            if ambiguous and not partial_output
-            else ""
-        )
+        partial_text = "；已丢弃未完成的流式响应" if partial_output else ""
+        ambiguous_text = "；服务端接收状态未确认" if ambiguous and not partial_output else ""
         super().__init__(
             f"{policy.title}{retry_text}{partial_text}{ambiguous_text}：{original}"
         )
@@ -2043,6 +2035,7 @@ class AgentLoop:
         self._active_task_identity: dict[str, Any] | None = None
         self._task_boundaries: list[dict[str, Any]] = []
         self._handoff_summary: dict[str, Any] | None = None
+        self.persist_handoff_summary = True
         self._compaction_sequence = 0
         self._persisted_result_part_contents: dict[str, str] = {}
         self._current_session_id: str | None = None
@@ -2175,6 +2168,23 @@ class AgentLoop:
     def handoff_summary(self) -> dict[str, Any] | None:
         return dict(self._handoff_summary) if self._handoff_summary else None
 
+    def durable_handoff_summary(self) -> dict[str, Any]:
+        """Return bounded business state for restart persistence.
+
+        Full report prose and tool payloads already live in typed result/evidence
+        artifacts. Persisting them again as a conversation transcript grows
+        restart context without adding business state.
+        """
+
+        summary = self.handoff_summary or _build_handoff_summary(
+            self._conversation_history
+        )
+        summary["sequence"] = max(
+            int(summary.get("sequence", 0) or 0),
+            self._compaction_sequence,
+        )
+        return summary
+
     def restore_conversation(
         self,
         messages: Sequence[Mapping[str, Any] | LLMMessage],
@@ -2182,7 +2192,7 @@ class AgentLoop:
         task_boundaries: Sequence[Mapping[str, Any]] = (),
         handoff_summary: Mapping[str, Any] | None = None,
     ) -> None:
-        """Restore a persisted lossless transcript after a process restart."""
+        """Restore bounded restart state after a process restart."""
 
         if self._status not in {AgentStatus.IDLE, AgentStatus.ERROR}:
             raise RuntimeError("cannot restore conversation while the Agent is active")
@@ -3960,8 +3970,8 @@ class AgentLoop:
                 )
                 # Only a successful physical request advances the typed context
                 # delivery state.  Definite rejects keep the full payload for a
-                # legal retry; accepted-or-unknown attempts never reach here and
-                # remain fail-closed.
+                # legal retry. Accepted-or-unknown remains forensic telemetry;
+                # it does not create a run-level recovery lock.
                 await self._mark_provider_context_delivered(
                     provider_messages,
                     response,
@@ -3992,23 +4002,13 @@ class AgentLoop:
                     == ProviderRequestDisposition.ACCEPTED_OR_UNKNOWN
                 )
                 within_retry_boundary = attempts <= _MAX_PROVIDER_RETRIES
-                safe_to_repeat = attempt_disposition in {
-                    ProviderRequestDisposition.NOT_SENT,
-                    ProviderRequestDisposition.DEFINITELY_REJECTED,
-                }
                 can_retry = (
                     policy.retryable
-                    and safe_to_repeat
-                    and not failure.partial_output
                     and within_retry_boundary
                     and not self._cancel_event.is_set()
                 )
                 if can_retry:
                     retry_decision = "automatic_retry"
-                elif failure.partial_output:
-                    retry_decision = "stop_partial_output"
-                elif ambiguous:
-                    retry_decision = "stop_ambiguous"
                 elif not policy.retryable:
                     retry_decision = "stop_non_retryable"
                 elif not within_retry_boundary:
@@ -5024,6 +5024,8 @@ class AgentLoop:
     def _persist_handoff_summary(self, payload: Mapping[str, Any]) -> None:
         """Persist one summary for crash/restart restoration when run-scoped."""
 
+        if not self.persist_handoff_summary:
+            return
         run_id = str(self.usage_run_id or "").strip()
         if not run_id:
             return

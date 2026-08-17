@@ -42,7 +42,6 @@ RunEventType: TypeAlias = Literal[
     "RunQueued",
     "RunClaimed",
     "CancelRequested",
-    "RunAmbiguous",
     "RunCancelled",
     "StageReady",
     "TaskDispatched",
@@ -540,8 +539,6 @@ class RunProjection(_StrictModel):
                 projection.run_status = "cancel_requested"
             elif event.event_type == "RunWaitingUser":
                 projection.run_status = "needs_input"
-            elif event.event_type == "RunAmbiguous":
-                projection.run_status = "ambiguous"
             elif event.event_type == "RunCompleted":
                 projection.run_status = "completed"
             elif event.event_type == "RunFailed":

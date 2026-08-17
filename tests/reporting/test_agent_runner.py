@@ -24,7 +24,6 @@ from manyselves.core.providers.base import (
 from manyselves.core.reporting.agent_runner import (
     InspectDocumentTool,
     InspectImageTool,
-    ProviderAttemptRecoveryRequired,
     ReportingAgentRunner,
     load_conversation_trace,
 )
@@ -377,18 +376,6 @@ def test_provider_manifest_distinguishes_pre_adapter_and_provider_payload(
     assert before["provider_payload"] is None
 
     relative = manifest_path.relative_to(tmp_path).as_posix()
-    assert runner._ambiguous_provider_call_refs(
-        envelope,
-        session_id="session-manifest",
-        task_attempt_id=envelope.task_attempt_id,
-    ) == [relative]
-    assert runner._ambiguous_provider_call_refs(
-        envelope.model_copy(
-            update={"task_attempt_id": "attempt-explicit-requeue"}
-        ),
-        session_id="session-manifest",
-        task_attempt_id="attempt-explicit-requeue",
-    ) == []
     runner._finalize_provider_call_manifest(
         {
             "context_manifest_ref": relative,
@@ -423,31 +410,29 @@ def test_provider_manifest_distinguishes_pre_adapter_and_provider_payload(
         "request_sha256"
     ]
     assert after["attempt_disposition"] == "completed"
-    assert runner._ambiguous_provider_call_refs(
-        envelope,
-        session_id="session-manifest",
-        task_attempt_id=envelope.task_attempt_id,
-    ) == []
 
 
 @pytest.mark.asyncio
-async def test_new_dispatch_refuses_unreconciled_provider_attempt(
+async def test_new_dispatch_preserves_old_journal_and_starts_fresh_attempt(
     tmp_path: Path,
 ) -> None:
     provider = DirectSubmissionProvider()
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
     runner = ReportingAgentRunner(
         tmp_path,
-        MessageBus(),
+        bus,
         provider,
-        AgentDefaults(),
+        AgentDefaults(max_tool_iterations=5),
+        timeout=5,
     )
     definition = load_packaged_agents()["module-2.1-specialist"]
-    workflow_id = "workflow-ambiguous-recovery"
+    workflow_id = "workflow-fresh-attempt-recovery"
     envelope = TaskEnvelope(
-        task_id="module-2.1-ambiguous",
-        run_id="run-ambiguous-recovery",
+        task_id="module-2.1-fresh-attempt",
+        run_id="run-fresh-attempt-recovery",
         agent_id=definition.id,
-        objective="不得重复已经可能送达的请求",
+        objective="显式恢复后创建新的物理请求尝试",
         allowed_outputs=["module_submission"],
     )
     session_id = "session-" + hashlib.sha256(
@@ -465,22 +450,21 @@ async def test_new_dispatch_refuses_unreconciled_provider_attempt(
         call_index=1,
     )
 
-    with pytest.raises(
-        ProviderAttemptRecoveryRequired,
-        match="reconcile the existing same-task journal",
-    ) as exc_info:
-        await runner.run(
+    try:
+        result = await runner.run(
             definition,
             envelope,
             [],
             workflow_id=workflow_id,
         )
+    finally:
+        await runner.close_workflow(workflow_id)
+        bus.shutdown()
+        await bus_task
 
-    assert provider.max_tokens_seen == []
-    assert exc_info.value.partial_output is True
-    assert exc_info.value.manifest_refs == (
-        manifest_path.relative_to(tmp_path).as_posix(),
-    )
+    assert result.status == AgentRunStatus.COMPLETED
+    assert provider.max_tokens_seen
+    assert manifest_path.is_file()
 
 
 def test_module_authoring_schema_and_example_use_current_identity(
@@ -1692,7 +1676,20 @@ async def test_reporting_agent_runner_uses_real_isolated_loop_and_can_finish_wit
         for path in (tmp_path / "Work/content/sha256").glob("*/*/*")
         if path.is_file()
     ]
-    assert len(conversation_blobs) == 1
+    assert conversation_blobs == []
+    conversation_manifests = list(
+        (tmp_path / "Work/runs/run-test/agent-conversations").glob("*.json")
+    )
+    assert conversation_manifests
+    restart_state = json.loads(conversation_manifests[0].read_text(encoding="utf-8"))
+    assert restart_state["manifest_version"] == 4
+    assert restart_state["encoding"] == "identity+refs"
+    assert "compaction_summary" not in restart_state
+    assert "restart_state_sha256" not in restart_state
+    assert "task_boundaries" not in restart_state
+    assert restart_state["business_refs"]["completed_result_ref"] == (
+        "Work/runs/run-test/results/module-2.1.json"
+    )
     summaries = list((tmp_path / "Work/runs/run-test/session-summaries").glob("*.json"))
     assert len(summaries) == 1
     summary = json.loads(summaries[0].read_text(encoding="utf-8"))
@@ -2929,7 +2926,7 @@ async def test_reporting_agent_runner_rejects_wrapper_then_accepts_flat_submissi
     assert provider.correction
 
 
-def test_conversation_trace_is_a_small_manifest_for_compressed_cas_content(
+def test_conversation_trace_persists_only_bounded_restart_state(
     tmp_path: Path,
 ) -> None:
     runner = ReportingAgentRunner(
@@ -2939,11 +2936,15 @@ def test_conversation_trace_is_a_small_manifest_for_compressed_cas_content(
         AgentDefaults(),
     )
     envelope = TaskEnvelope(
-        task_id="module-2.1",
+        task_id="audit-2.1",
         run_id="run-compressed-trace",
-        agent_id="module-2.1-specialist",
+        agent_id="evidence-auditor",
         objective="测试对话压缩",
         allowed_outputs=["module_submission"],
+        input_contract_kind="module_review_input",
+        input_contract_ref="Work/runs/run-compressed-trace/reviews/audit-2.1.json",
+        input_refs=["Work/runs/run-compressed-trace/reviews/audit-2.1.json"],
+        target_submodule_ids=["2.1.1"],
     )
     long_content = "重复的长对话正文。" * 2000
     loop = SimpleNamespace(
@@ -2962,28 +2963,95 @@ def test_conversation_trace_is_a_small_manifest_for_compressed_cas_content(
     )
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["manifest_version"] == 2
-    assert manifest["encoding"] == "gzip+json"
+    assert manifest["manifest_version"] == 4
+    assert manifest["encoding"] == "identity+refs"
     assert (
         manifest["transcript_semantics"]
-        == "provider_working_history_protocol_valid_v3"
+        == "durable_identity_reference_state_v1"
     )
-    assert "preserve every required argument" in manifest["forensic_note"]
-    assert "no reusable prose marker or malformed tool call" in manifest["forensic_note"]
-    assert manifest["forensic_exact_tool_arguments"] is True
     assert "messages" not in manifest
-    assert manifest["compressed_bytes"] < manifest["uncompressed_bytes"]
-    transcript = tmp_path / manifest["transcript_ref"]
-    decoded = json.loads(gzip.decompress(transcript.read_bytes()))
-    assert decoded["messages"][0]["content"] == long_content
+    assert "transcript_ref" not in manifest
+    assert "compaction_summary" not in manifest
+    assert "restart_state_sha256" not in manifest
+    assert "task_boundaries" not in manifest
+    assert "active_task_identity" not in manifest
+    assert "input_contract_payload" not in manifest_path.read_text(encoding="utf-8")
+    assert manifest["business_refs"]["attention_scope_ref"] == (
+        "Work/runs/run-compressed-trace/reviews/audit-2.1.json"
+    )
+    assert manifest["identity_state"]["attention_scope_ref"] == (
+        "Work/runs/run-compressed-trace/reviews/audit-2.1.json"
+    )
+    assert "target_submodule_ids" not in manifest["identity_state"]
+    decoded = load_conversation_trace(tmp_path, manifest_path)
+    assert decoded["messages"] == []
     assert decoded["status"] == "waiting"
-    assert load_conversation_trace(tmp_path, manifest_path) == decoded
+    assert long_content not in manifest_path.read_text(encoding="utf-8")
 
-    legacy = tmp_path / "Work/runs/run-compressed-trace/legacy.json"
-    legacy.write_text(
+    unsupported = tmp_path / "Work/runs/run-compressed-trace/unsupported.json"
+    unsupported.write_text(
         json.dumps({"status": "completed", "messages": [{"role": "user"}]}),
         encoding="utf-8",
     )
-    assert load_conversation_trace(tmp_path, legacy)["messages"] == [
-        {"role": "user"}
-    ]
+    with pytest.raises(ValueError, match="unsupported conversation identity state"):
+        load_conversation_trace(tmp_path, unsupported)
+
+
+@pytest.mark.parametrize(
+    ("agent_id", "task_id", "contract_kind", "expects_attention_scope"),
+    [
+        ("chief-editor", "chief-chapter-1", "chief_chapter_input", False),
+        ("chief-editor", "aggregate-existing", "aggregate_editor_input", False),
+        (
+            "chief-editor-auditor",
+            "final-chapter-1-r0",
+            "final_chapter_lane_input",
+            True,
+        ),
+        (
+            "cross-module-reviewer",
+            "cross-owner-2.4-r0-initial",
+            "cross_owner_input",
+            True,
+        ),
+    ],
+)
+def test_editor_chief_final_and_cross_use_identity_reference_persistence(
+    tmp_path: Path,
+    agent_id: str,
+    task_id: str,
+    contract_kind: str,
+    expects_attention_scope: bool,
+) -> None:
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    contract_ref = f"Work/runs/run-role-context/context/{task_id}.json"
+    envelope = TaskEnvelope(
+        task_id=task_id,
+        run_id="run-role-context",
+        agent_id=agent_id,
+        objective="验证角色持久状态",
+        input_refs=[contract_ref],
+        input_contract_kind=contract_kind,
+        input_contract_ref=contract_ref,
+    )
+    manifest_path = runner._save_conversation_trace(
+        SimpleNamespace(_conversation_history=[]),
+        envelope,
+        f"{agent_id}--session-test",
+        "session-test",
+        status="waiting",
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["manifest_version"] == 4
+    assert manifest["encoding"] == "identity+refs"
+    assert manifest["business_refs"]["input_contract_ref"] == contract_ref
+    assert manifest["business_refs"]["attention_scope_ref"] == (
+        contract_ref if expects_attention_scope else None
+    )
+    assert "compaction_summary" not in manifest
+    assert "restart_state_sha256" not in manifest

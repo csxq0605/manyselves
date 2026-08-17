@@ -81,7 +81,7 @@ def test_hard_stop_marks_claimed_lanes_deferred_without_running_provider(
     assert all(record.status == "deferred" for record in result.terminals.values())
 
 
-def test_resume_reuses_only_verified_result_and_blocks_ambiguous_or_missing_attempts(tmp_path: Path) -> None:
+def test_resume_retries_unknown_and_missing_completed_results(tmp_path: Path) -> None:
     store = TaskAttemptStore(tmp_path, "run-ready")
     verified = LaneAttemptRecord(
         task_id="task-verified",
@@ -94,8 +94,8 @@ def test_resume_reuses_only_verified_result_and_blocks_ambiguous_or_missing_atte
     unknown = LaneAttemptRecord(
         task_id="task-unknown",
         task_attempt_id="attempt-unknown",
-        status="ambiguous",
-        disposition="accepted_or_unknown",
+        status="failed",
+        disposition="failed",
         error="Provider response may have been accepted",
     )
     store.append(verified)
@@ -112,12 +112,13 @@ def test_resume_reuses_only_verified_result_and_blocks_ambiguous_or_missing_atte
             run_lane,
         )
     )
-    assert calls == []
-    # Neither record has a readable result file.  Recovery must not infer
-    # success from the old hash/CAS metadata or silently dispatch a new call;
-    # both remain blocked until an explicit retry_lanes action.
+    assert calls == ["task-verified", "task-unknown"]
+    # Historical terminals remain audit evidence, while explicit same-run
+    # resume creates fresh attempts for both unknown and corrupt completions.
     assert result.recovered == ()
-    assert set(result.blocked) == {"task-verified", "task-unknown"}
+    assert result.blocked == ()
+    assert result.terminals["task-verified"].status == "completed"
+    assert result.terminals["task-unknown"].status == "completed"
     assert result.barrier_candidate is None
 
 

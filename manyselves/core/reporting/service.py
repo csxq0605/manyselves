@@ -758,20 +758,13 @@ class ReportingService:
             return result
         except Exception as exc:
             self._forget_agent_runner(workflow_id)
-            ambiguous = bool(getattr(exc, "partial_output", False))
             result = ReportingRunResult(
                 run_id=run_id,
-                status="ambiguous" if ambiguous else "failed",
+                status="failed",
                 error=str(exc),
             )
             self._save_run(result)
-            if ambiguous:
-                await self._notice(
-                    "Provider 响应在持久化前中断，结果状态不确定；"
-                    "已停止自动重试并等待人工确认或显式恢复。"
-                )
-            else:
-                await self._notice(f"配电报告流程失败：{exc}")
+            await self._notice(f"配电报告流程失败，可从检查点恢复：{exc}")
             return result
 
         if (
@@ -1267,25 +1260,19 @@ class ReportingService:
                 OutputArtifact.model_validate(item)
                 for item in payload.get("output_artifacts", [])
             ]
-        except ValueError as exc:
-            result = ReportingRunResult(
-                run_id=run_id,
-                status="failed_before_delivery",
-                error=str(exc),
-            )
-            self._save_run(result)
-            return result
+        except ValueError:
+            # A stale/corrupt completion projection is not a terminal lock.
+            # Ignore it and let the normal same-run workflow rebuild delivery
+            # from the last valid review boundary.
+            return None
 
         try:
             self._republish_materialized_delivery(run_id)
-        except (OSError, ValueError) as exc:
-            result = ReportingRunResult(
-                run_id=run_id,
-                status="failed_before_delivery",
-                error=f"materialized delivery publication failed: {exc}",
-            )
-            self._save_run(result)
-            return result
+        except (OSError, ValueError, json.JSONDecodeError):
+            # Delivery metadata is audit evidence, not an irreversible
+            # completed state. Continue the same run so delivery can be
+            # regenerated without re-entering completed Provider stages.
+            return None
 
         payload["status"] = "delivered"
         payload["delivery_status"] = "delivered"
@@ -1302,23 +1289,37 @@ class ReportingService:
         )
 
     def _republish_materialized_delivery(self, run_id: str) -> None:
-        """Copy current-run delivery bytes to Outputs without digest/file-age gates."""
+        """Validate and republish a complete current-run delivery package."""
 
         run_root = (self.workspace / "Work" / "runs" / run_id).resolve()
         receipt_path = run_root / "delivery-receipt.json"
         if not receipt_path.is_file():
-            # Compatibility: a lifecycle restored before materialized receipts
-            # existed remains status-only.  It never re-enters Provider work.
-            return
+            raise ValueError("delivery completion has no current-run receipt")
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        if receipt.get("success") is not True:
+            raise ValueError("delivery receipt is not successful")
 
-        def source(field: str) -> Path:
+        def current_run_path(field: str) -> Path:
             raw = Path(str(receipt.get(field, "")))
             path = raw if raw.is_absolute() else self.workspace / raw
             lexical = Path(os.path.abspath(path))
-            if not lexical.is_relative_to(run_root) or not path.is_file():
-                raise ValueError(f"delivery receipt {field} is not a current-run file")
+            if not lexical.is_relative_to(run_root):
+                raise ValueError(f"delivery receipt {field} is outside the current run")
             return path
+
+        delivery_dir = current_run_path("delivery_dir")
+        if not delivery_dir.is_dir():
+            raise ValueError("delivery receipt directory is not readable")
+        report_state = current_run_path("report_state")
+        manifest = current_run_path("manifest_path")
+        if not report_state.is_file() or not manifest.is_file():
+            raise ValueError("delivery package metadata is incomplete")
+        manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+        if (
+            manifest_payload.get("status") != "success"
+            or manifest_payload.get("modules") != list(REPORT_MODULE_IDS)
+        ):
+            raise ValueError("delivery manifest identity/status is invalid")
 
         def copy_file(source_path: Path, target: Path) -> None:
             validate_bound_project_write_lease(self.workspace)
@@ -1342,15 +1343,15 @@ class ReportingService:
                 temporary.unlink(missing_ok=True)
 
         copy_file(
-            source("final_docx"),
+            current_run_path("final_docx"),
             self.workspace / "Outputs/Reports/配电安全专家咨询报告.docx",
         )
         copy_file(
-            source("source_index"),
+            current_run_path("source_index"),
             self.workspace / "Outputs/Reports/证据与来源索引.md",
         )
         copy_file(
-            source("source_index_docx"),
+            current_run_path("source_index_docx"),
             self.workspace / "Outputs/Reports/证据与来源索引.docx",
         )
         module_files = receipt.get("module_files")
@@ -1378,6 +1379,10 @@ class ReportingService:
                 self.workspace / "Outputs/Reports/配电安全专家咨询报告.md",
             )
 
+        published_docx = self.workspace / "Outputs/Reports/配电安全专家咨询报告.docx"
+        if not self._output_is_readable(published_docx):
+            raise ValueError("republished delivery DOCX is not readable")
+
     def validate_resume_run(
         self, run_id: str
     ) -> tuple[Path, Path, Path, Path, ReportingRunResult | None]:
@@ -1396,32 +1401,25 @@ class ReportingService:
             if result_path.is_file()
             else None
         )
-        budget_stopped = (
+        completed_but_incomplete = (
             previous is not None
-            and previous.status == "needs_decision"
-            and "预算" in str(previous.error or "")
-        )
-        checkpoint_resumable = (
-            checkpoint_path.is_file()
+            and previous.status == "completed"
             and (
-                previous is None
-                or previous.status
-                in {
-                    "failed",
-                    "failed_before_delivery",
-                    "cancelled",
-                    "ambiguous",
-                    "delivered_with_archive_warning",
-                    "in_progress",
-                    "needs_decision",
-                    "blocked",
-                }
+                not previous.output_paths
+                or any(
+                    not self._output_is_readable(path)
+                    for path in previous.output_paths
+                )
             )
         )
-        if not (budget_stopped or checkpoint_resumable):
+        run_resumable = (
+            previous is None
+            or previous.status != "completed"
+            or completed_but_incomplete
+        )
+        if not run_resumable:
             raise ValueError(
-                "only a blocked, decision-stopped, crashed, failed, or cancelled run with a persisted checkpoint "
-                "can use run resume"
+                "a genuinely completed run with readable outputs must be revised instead"
             )
         return (
             result_path,
@@ -1470,10 +1468,28 @@ class ReportingService:
         self,
         result: ReportingRunResult,
     ) -> ReportingRunResult:
-        """Durably save a business-completed delivery without file identity gates."""
+        """Durably save completion only after declared outputs are readable."""
 
         if result.status != "completed":
             raise ValueError("only a delivered run can be finalized")
+        missing = [
+            str(path)
+            for path in result.output_paths
+            if not self._output_is_readable(path)
+        ]
+        if not result.output_paths or missing:
+            failed = result.model_copy(
+                update={
+                    "status": "failed_before_delivery",
+                    "error": (
+                        "completed run has no readable declared outputs"
+                        + (f": {missing}" if missing else "")
+                    ),
+                }
+            )
+            failed_path = self._save_run(failed)
+            self.store.fsync_directory(failed_path.parent)
+            return failed
         try:
             result_path = self._save_run(result)
             self.store.fsync_directory(result_path.parent)
@@ -1491,6 +1507,23 @@ class ReportingService:
             self.store.fsync_directory(failed_path.parent)
             return failed
         return result
+
+    def _output_is_readable(self, value: Path | str) -> bool:
+        """Return whether a declared output is a nonempty readable file."""
+
+        path = Path(value)
+        path = path if path.is_absolute() else self.workspace / path
+        try:
+            if not path.is_file() or path.stat().st_size <= 0:
+                return False
+            if path.suffix.casefold() == ".docx":
+                Document(path)
+        # A malformed OPC package can raise python-docx-specific exceptions in
+        # addition to OSError/ValueError.  Output validation must classify all
+        # parser failures as unreadable so the same run remains recoverable.
+        except Exception:
+            return False
+        return True
 
     def _declared_output_paths(
         self,

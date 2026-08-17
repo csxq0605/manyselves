@@ -119,7 +119,9 @@ async def test_api_debug_message_published_on_success(message_bus, mock_llm_prov
 
 
 @pytest.mark.asyncio
-async def test_api_debug_message_published_on_error(message_bus, tool_registry, agent_config):
+async def test_api_debug_message_published_on_error(
+    message_bus, tool_registry, agent_config, monkeypatch
+):
     """AgentLoop should publish ApiDebugMessage with error status on API failure."""
     workspace = Path("/tmp/test_workspace")
 
@@ -144,6 +146,11 @@ async def test_api_debug_message_published_on_error(message_bus, tool_registry, 
         config=agent_config,
         llm_provider=error_provider,
     )
+
+    async def no_wait(_delay: float) -> bool:
+        return False
+
+    monkeypatch.setattr(agent_loop, "_wait_before_retry", no_wait)
 
     # Track published messages
     debug_messages = []
@@ -183,7 +190,7 @@ async def test_api_debug_message_published_on_error(message_bus, tool_registry, 
     # Check that ApiDebugMessage was published with error status
     assert len(debug_messages) > 0, "Should publish ApiDebugMessage even on error"
 
-    debug_msg = debug_messages[0]
+    debug_msg = next(message for message in debug_messages if message.status == "error")
     assert debug_msg.model == "error-model"
     assert debug_msg.status == "error"
     assert "rate limit" in debug_msg.error.lower() or "API rate limit exceeded" in debug_msg.error

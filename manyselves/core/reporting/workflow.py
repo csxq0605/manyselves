@@ -19,7 +19,7 @@ from uuid import uuid4
 from pydantic import Field
 
 from ..usage_ledger import UsageLedger
-from .agent_runner import ProviderAttemptRecoveryRequired, ReportingAgentRunner
+from .agent_runner import ReportingAgentRunner
 from .agentic_models import (
     CHIEF_SECTION_RESULT_PART_IDS,
     FINAL_REPORT_SECTION_IDS,
@@ -136,7 +136,14 @@ from .scheduling import (
 )
 from .source_ledger import SourceLedger
 from .special_topics import load_special_topic_plan
-from .taxonomy import REPORT_TAXONOMY, compose_module_markdown, resolve_submodule
+from .taxonomy import (
+    REPORT_TAXONOMY,
+    activate_report_taxonomy,
+    compose_module_markdown,
+    parse_report_taxonomy_workbook,
+    reset_report_taxonomy,
+    resolve_submodule,
+)
 from .versions import ReportVersion
 
 if TYPE_CHECKING:
@@ -1407,6 +1414,9 @@ class ReportWorkflowRunner:
         finally:
             if not suspended_for_user:
                 await self.agent_runner.close_workflow(workflow_id)
+            taxonomy_token = state.pop("_report_taxonomy_token", None)
+            if taxonomy_token is not None:
+                reset_report_taxonomy(taxonomy_token)
 
     async def aggregate_existing(self, state: dict) -> None:
         """Create only the chief editor for five already-written module reports."""
@@ -3750,16 +3760,19 @@ class ReportWorkflowRunner:
         self._restore_delivery_completion(state)
 
     def _restore_delivery_completion(self, state: dict) -> None:
-        """Restore a delivered business lifecycle without file identity gates."""
+        """Restore only a complete, readable current-run delivery package."""
 
         run_id = state["run_id"]
         completion_ref = f"Work/runs/{run_id}/delivery-completion.json"
         completion_path = self.service.workspace / completion_ref
         if not completion_path.is_file():
             return
-        payload = json.loads(completion_path.read_text(encoding="utf-8"))
+        try:
+            payload = json.loads(completion_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
         if payload.get("run_id") != run_id:
-            raise AgentWorkflowError("delivery completion identity/status is invalid")
+            return
         status = str(payload.get("status", ""))
         if status not in {
             "delivered",
@@ -3768,17 +3781,18 @@ class ReportWorkflowRunner:
             "archive_failed",
             "completed",
         }:
-            raise AgentWorkflowError("delivery completion identity/status is invalid")
+            return
 
         try:
             artifacts = [
                 OutputArtifact.model_validate(item)
                 for item in payload.get("output_artifacts", [])
             ]
-        except ValueError as exc:
-            raise AgentWorkflowError(
-                "delivery completion contains invalid typed output declarations"
-            ) from exc
+            self.service._republish_materialized_delivery(run_id)
+        except (OSError, ValueError, json.JSONDecodeError):
+            # Keep the completion file as audit evidence, but do not let it
+            # suppress deterministic regeneration of the delivery stage.
+            return
         state["delivery_status"] = "delivered"
         if status != "delivered" or payload.get("delivery_status") != "delivered":
             payload["status"] = "delivered"
@@ -4026,6 +4040,7 @@ class ReportWorkflowRunner:
         else:
             # These are deterministic data transformations, deliberately not LLM personas.
             await self.service._build_manifest(state)
+            self._prepare_report_taxonomy(state)
             await self.service._parse_artifacts(state)
             await self.service._normalize_evidence(state)
             await self.service._evaluate_coverage(state)
@@ -4059,11 +4074,42 @@ class ReportWorkflowRunner:
                 ledger.path.relative_to(self.service.workspace).as_posix(), []
             )
 
+    def _prepare_report_taxonomy(self, state: dict) -> None:
+        """Bind the run taxonomy parsed from its frozen S4-6 workbook."""
+
+        manifest: ProjectManifest = state["project_manifest"]
+        sources = [item for item in manifest.files if item.purpose == "s4-6"]
+        if len(sources) > 1:
+            raise AgentWorkflowError(
+                "report taxonomy requires exactly one S4-6 workbook; "
+                f"found={[item.path.as_posix() for item in sources]}"
+            )
+        if sources:
+            source = sources[0]
+            source_path = self.service.workspace / (
+                source.snapshot_ref or source.path
+            )
+            payload = parse_report_taxonomy_workbook(
+                source_path,
+                source_ref=(source.snapshot_ref or source.path).as_posix(),
+                source_sha256=source.sha256,
+            )
+        else:
+            raise AgentWorkflowError(
+                "report taxonomy requires the current run's S4-6 workbook snapshot"
+            )
+        state["_report_taxonomy_token"] = activate_report_taxonomy(payload)
+        state["report_taxonomy"] = payload
+
     def _restore_preparation_snapshot_projection(self, state: dict) -> None:
         """Load the current run's preparation records without checkpoint gates."""
 
         run_id = state["run_id"]
-        refs = self._preparation_refs(run_id)
+        taxonomy_ref = f"Work/runs/{run_id}/preparation/report-taxonomy.json"
+        refs = self._preparation_refs(
+            run_id,
+            include_taxonomy=(self.service.workspace / taxonomy_ref).is_file(),
+        )
         completion_ref = f"Work/runs/{run_id}/preparation/completion.json"
         missing = [ref for ref in refs.values() if not (self.service.workspace / ref).is_file()]
         if missing:
@@ -4095,6 +4141,16 @@ class ReportWorkflowRunner:
         state["coverage_matrix"] = CoverageMatrix.model_validate_json(
             coverage_path.read_text(encoding="utf-8")
         )
+        if "report_taxonomy" not in refs:
+            raise AgentWorkflowError("preparation snapshot is missing report taxonomy")
+        state["report_taxonomy"] = json.loads(
+            (self.service.workspace / refs["report_taxonomy"]).read_text(
+                encoding="utf-8"
+            )
+        )
+        state["_report_taxonomy_token"] = activate_report_taxonomy(
+            state["report_taxonomy"]
+        )
         special_ref = f"Work/runs/{run_id}/preparation/special-topic-plan.json"
         if (self.service.workspace / special_ref).is_file():
             state["special_topic_plan"] = SpecialTopicPlan.model_validate_json(
@@ -4112,6 +4168,7 @@ class ReportWorkflowRunner:
         run_id: str,
         *,
         include_special_topics: bool = False,
+        include_taxonomy: bool = True,
     ) -> dict[str, str]:
         root = f"Work/runs/{run_id}/preparation"
         refs = {
@@ -4122,14 +4179,19 @@ class ReportWorkflowRunner:
             "mapping_gaps": f"{root}/mapping-gaps.json",
             "coverage": f"{root}/coverage.json",
         }
+        if include_taxonomy:
+            refs["report_taxonomy"] = f"{root}/report-taxonomy.json"
         if include_special_topics:
             refs["special_topic_plan"] = f"{root}/special-topic-plan.json"
         return refs
 
     def _persist_preparation_snapshot(self, state: dict) -> None:
+        if "report_taxonomy" not in state:
+            raise AgentWorkflowError("cannot persist preparation without report taxonomy")
         refs = self._preparation_refs(
             state["run_id"],
             include_special_topics="special_topic_plan" in state,
+            include_taxonomy=True,
         )
         run_root = self.service.workspace / "Work" / "runs" / state["run_id"]
         final_root = run_root / "preparation"
@@ -4186,6 +4248,10 @@ class ReportWorkflowRunner:
                 stage_ref("coverage"),
                 state["coverage_matrix"].model_dump(mode="json"),
             )
+            self.service.store.write_json(
+                stage_ref("report_taxonomy"),
+                state["report_taxonomy"],
+            )
             if "special_topic_plan" in refs:
                 self.service.store.write_json(
                     stage_ref("special_topic_plan"),
@@ -4235,6 +4301,7 @@ class ReportWorkflowRunner:
         refs = self._preparation_refs(
             state["run_id"],
             include_special_topics="special_topic_plan" in checkpoint.preparation_refs,
+            include_taxonomy="report_taxonomy" in checkpoint.preparation_refs,
         )
         missing = [ref for ref in refs.values() if not (self.service.workspace / ref).is_file()]
         if missing:
@@ -4302,6 +4369,16 @@ class ReportWorkflowRunner:
         state["mapping_gaps"] = json.loads(gaps_path.read_text(encoding="utf-8")).get("gaps", [])
         state["coverage_matrix"] = CoverageMatrix.model_validate_json(
             coverage_path.read_text(encoding="utf-8")
+        )
+        if "report_taxonomy" not in refs:
+            raise AgentWorkflowError("preparation completion is missing report taxonomy")
+        state["report_taxonomy"] = json.loads(
+            (self.service.workspace / refs["report_taxonomy"]).read_text(
+                encoding="utf-8"
+            )
+        )
+        state["_report_taxonomy_token"] = activate_report_taxonomy(
+            state["report_taxonomy"]
         )
         if "special_topic_plan" in refs:
             special_topic_path = self.service.workspace / refs["special_topic_plan"]
@@ -5292,8 +5369,7 @@ class ReportWorkflowRunner:
                     state, module_id, submission, spec
                 )
             else:
-                # The lane failed (or was left ambiguous) and has no
-                # promotable typed completion.  Preserve successful siblings
+                # The lane has no promotable typed completion. Preserve successful siblings
                 # and record this terminal state in the cohort barrier below.
                 continue
             self._record_recovery_lane(
@@ -7942,6 +8018,7 @@ class ReportWorkflowRunner:
                 else {}
             ),
             "report_request": request_snapshot_path.relative_to(self.service.workspace),
+            "report_taxonomy": Path(state["preparation_refs"]["report_taxonomy"]),
             "photo_manifest": photo_manifest_path.relative_to(self.service.workspace),
             "report_template": template_snapshot.relative_to(self.service.workspace),
             "template_provenance": template_provenance_path.relative_to(

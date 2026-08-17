@@ -2713,8 +2713,10 @@ async def _run_cross_owner_review(
             else None
         ),
         artifact_delivery_modes={owner_input_ref: "inline"},
-        target_submodule_ids=sorted(
-            REPORT_TAXONOMY[owner_module_id].submodules
+        target_submodule_ids=list(
+            CrossOwnerInput.model_validate_json(
+                (runner.service.workspace / owner_input_ref).read_text(encoding="utf-8")
+            ).owner_scope_submodule_ids
         ),
         input_contract_kind=input_kind,
         input_contract_ref=owner_input_ref,
@@ -3868,7 +3870,7 @@ async def run_cross_review(
                 "retry_scope": sorted(errors, key=float),
                 "retry_policy": (
                     "explicit resume reuses verified completed owners and "
-                    "dispatches only retry_scope; accepted_or_unknown remains blocked"
+                    "dispatches only retry_scope; failed Provider attempts do not block recovery"
                 ),
             },
         )

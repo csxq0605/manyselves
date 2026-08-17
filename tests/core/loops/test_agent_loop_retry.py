@@ -213,19 +213,25 @@ async def test_provider_retry_stops_after_two_retries(tmp_path: Path, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_partial_stream_failure_is_not_retried(tmp_path: Path, monkeypatch):
+async def test_partial_stream_failure_is_retried_with_fresh_physical_attempt(tmp_path: Path, monkeypatch):
     provider = PartialStreamFailureProvider()
     loop = _loop(tmp_path, provider)
 
-    async def should_not_wait(_delay: float) -> bool:
-        raise AssertionError("partial output must not be retried")
+    async def no_wait(_delay: float) -> bool:
+        return False
 
-    monkeypatch.setattr(loop, "_wait_before_retry", should_not_wait)
+    monkeypatch.setattr(loop, "_wait_before_retry", no_wait)
 
-    with pytest.raises(RuntimeError, match="部分内容"):
+    with pytest.raises(RuntimeError, match="已自动重试2次仍失败"):
         await loop._chat_with_retries([], None, "message-1")
 
-    assert provider.calls == 1
+    assert provider.calls == 3
+    rows = UsageLedger(tmp_path, "main").rows()
+    assert [row["retry_decision"] for row in rows] == [
+        "automatic_retry",
+        "automatic_retry",
+        "stop_retry_limit",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -237,7 +243,7 @@ async def test_partial_stream_failure_is_not_retried(tmp_path: Path, monkeypatch
     ids=["connection", "timeout"],
 )
 @pytest.mark.asyncio
-async def test_pre_token_ambiguous_failure_is_not_physically_retried(
+async def test_pre_token_unknown_acceptance_is_physically_retried(
     tmp_path: Path,
     error: BaseException,
     monkeypatch,
@@ -245,22 +251,25 @@ async def test_pre_token_ambiguous_failure_is_not_physically_retried(
     provider = PreTokenAmbiguousFailureProvider(error)
     loop = _loop(tmp_path, provider)
 
-    async def should_not_wait(_delay: float) -> bool:
-        raise AssertionError("ambiguous request must not be retried")
+    async def no_wait(_delay: float) -> bool:
+        return False
 
-    monkeypatch.setattr(loop, "_wait_before_retry", should_not_wait)
+    monkeypatch.setattr(loop, "_wait_before_retry", no_wait)
 
-    with pytest.raises(RuntimeError, match="状态不确定") as exc_info:
+    with pytest.raises(RuntimeError, match="已自动重试2次仍失败") as exc_info:
         await loop._chat_with_retries([], None, "message-1")
 
-    assert provider.calls == 1
+    assert provider.calls == 3
     assert exc_info.value.ambiguous is True
-    assert exc_info.value.partial_output is True
+    assert exc_info.value.partial_output is False
     rows = UsageLedger(tmp_path, "main").rows()
-    assert len(rows) == 1
-    assert rows[0]["attempt_disposition"] == "accepted_or_unknown"
-    assert rows[0]["retry_decision"] == "stop_ambiguous"
-    assert rows[0]["retry"] is False
+    assert len(rows) == 3
+    assert all(row["attempt_disposition"] == "accepted_or_unknown" for row in rows)
+    assert [row["retry_decision"] for row in rows] == [
+        "automatic_retry",
+        "automatic_retry",
+        "stop_retry_limit",
+    ]
 
 
 @pytest.mark.asyncio
@@ -284,7 +293,7 @@ async def test_conflict_409_is_not_retried_without_reconciliation(
     assert provider.calls == 1
     row = UsageLedger(tmp_path, "main").rows()[0]
     assert row["attempt_disposition"] == "accepted_or_unknown"
-    assert row["retry_decision"] == "stop_ambiguous"
+    assert row["retry_decision"] == "stop_non_retryable"
     assert row["retry"] is False
 
 

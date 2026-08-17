@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
+import zipfile
 from pathlib import Path
 from typing import Literal
 
@@ -28,7 +30,6 @@ JobStatus = Literal[
     "completed",
     "failed",
     "cancelled",
-    "ambiguous",
 ]
 
 
@@ -88,9 +89,7 @@ class ReportingJobClaim:
 class LocalReportingJobStore:
     """Process-safe queue and transaction record for one project volume."""
 
-    TERMINAL = frozenset(
-        {"needs_input", "completed", "failed", "cancelled", "ambiguous"}
-    )
+    TERMINAL = frozenset({"needs_input", "completed", "failed", "cancelled"})
 
     def __init__(self, workspace: Path, *, state_root: Path | None = None) -> None:
         self.workspace = Path(workspace).resolve()
@@ -219,7 +218,29 @@ class LocalReportingJobStore:
     def requeue(self, run_id: str) -> ReportingJob:
         job = self.get_run(run_id)
         if job.status == "completed":
-            raise ValueError("completed run must be revised, not resumed")
+            result_path = self.workspace / f"Work/runs/{run_id}.json"
+            try:
+                payload = json.loads(result_path.read_text(encoding="utf-8"))
+                outputs = payload.get("output_paths")
+                resolved = [
+                    Path(path)
+                    if Path(path).is_absolute()
+                    else self.workspace / path
+                    for path in outputs or []
+                ]
+                complete = bool(resolved) and all(
+                    path.is_file()
+                    and path.stat().st_size > 0
+                    and (
+                        path.suffix.casefold() != ".docx"
+                        or zipfile.is_zipfile(path)
+                    )
+                    for path in resolved
+                )
+            except (OSError, ValueError, TypeError):
+                complete = False
+            if complete:
+                raise ValueError("completed run with readable outputs must be revised, not resumed")
         with exclusive_file_lock(self.lock_path):
             current = self.get(job.job_id)
             if current.status in {"queued", "running"}:
@@ -280,7 +301,7 @@ class LocalReportingJobStore:
         with exclusive_file_lock(self.lock_path):
             matches = [job for job in self._load_all_unlocked() if job.run_id == run_id]
         if len(matches) != 1:
-            raise FileNotFoundError(f"unknown or ambiguous reporting run: {run_id}")
+            raise FileNotFoundError(f"reporting run is missing or non-unique: {run_id}")
         return matches[0]
 
     def list(self) -> list[ReportingJob]:
@@ -380,8 +401,8 @@ class LocalReportingJobStore:
     ) -> ReportingJob:
         if claim.store is not self:
             raise ValueError("reporting job claim belongs to another store")
-        if status not in self.TERMINAL and status != "ambiguous":
-            raise ValueError("reporting job can only finish at a terminal/ambiguous state")
+        if status not in self.TERMINAL:
+            raise ValueError("reporting job can only finish at a terminal state")
         claim.lease_handle.validate()
         with exclusive_file_lock(self.lock_path):
             current = self.get(claim.job.job_id)
@@ -405,7 +426,6 @@ class LocalReportingJobStore:
         event_type = {
             "completed": "RunCompleted",
             "needs_input": "RunWaitingUser",
-            "ambiguous": "RunAmbiguous",
             "cancelled": "RunCancelled",
         }.get(status, "RunFailed")
         LocalEventStore(self.workspace, current.run_id).append(
@@ -467,8 +487,6 @@ class ReportingJobWorker:
                     )
             if result.status == "completed":
                 normalized: JobStatus = "completed"
-            elif result.status == "ambiguous":
-                normalized = "ambiguous"
             elif result.status in {"cancelled", "stopped_incomplete"}:
                 normalized = "cancelled"
             elif result.status in {

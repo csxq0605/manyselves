@@ -557,7 +557,6 @@ class ModuleAuthoringInput(StrictModel):
             "Saved parts that must be rewritten under the current evidence-binding contract."
         ),
     )
-
     @model_validator(mode="after")
     def exact_module_scope(self) -> "ModuleAuthoringInput":
         expected = set(REPORT_TAXONOMY[self.module_id].submodules)
@@ -1163,6 +1162,12 @@ class CrossOwnerInput(StrictModel):
     owner_subject: ModuleContentView = Field(
         description="Complete current view of the module owned by this reviewer."
     )
+    owner_scope_submodule_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Bounded owner scope for this Cross execution lane, derived from the run taxonomy."
+        ),
+    )
     related_module_refs: dict[
         Literal["2.1", "2.2", "2.3", "2.4", "2.5"], str
     ] = Field(description="Immutable refs for the other four read-only module subjects.")
@@ -1200,6 +1205,13 @@ class CrossOwnerInput(StrictModel):
             raise ValueError("Cross owner subject belongs to another module")
         if self.owner_subject.revision != self.owner_subject_revision:
             raise ValueError("Cross owner subject revision does not match owner metadata")
+        visible = list(self.owner_subject.submodule_narratives)
+        if not self.owner_scope_submodule_ids:
+            self.owner_scope_submodule_ids = visible
+        if visible != self.owner_scope_submodule_ids:
+            raise ValueError("Cross owner subject must contain exactly its bounded lane scope")
+        if not set(visible).issubset(REPORT_TAXONOMY[self.owner_module_id].submodules):
+            raise ValueError("Cross owner lane scope lies outside the run taxonomy")
         if set(self.related_module_refs) != expected_related:
             raise ValueError("Cross owner input must include exactly the other four modules")
         if set(self.related_module_revisions) != expected_related:

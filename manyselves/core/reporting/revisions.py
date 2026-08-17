@@ -28,6 +28,10 @@ from .models import (
 )
 from .session_summary import AgentSessionSummary
 from .skills.service import ProjectSkillEvolutionService
+from .taxonomy import (
+    activate_report_taxonomy,
+    reset_report_taxonomy,
+)
 from .versions import ReportVersion, ReportVersionStore
 from .workflow import (
     ReportingNeedsDecisionError,
@@ -89,6 +93,8 @@ class RevisionCoordinator:
 
         from .service import ReportingRunResult
 
+        taxonomy_token = None
+        taxonomy_payload: dict | None = None
         self.service.store.ensure_layout()
         self.service.store.write_json(
             f"Work/runs/{run_id}/revision-request.json",
@@ -107,7 +113,16 @@ class RevisionCoordinator:
             )
         try:
             baseline = ReportVersionStore(self.service.workspace).load(request.baseline_version_id)
+            baseline_refs = getattr(baseline, "artifact_refs", {})
+            if "report_taxonomy" not in baseline_refs:
+                raise ValueError("baseline version is missing report taxonomy")
+            taxonomy_payload = json.loads(self._read(baseline_refs["report_taxonomy"]))
+            taxonomy_token = activate_report_taxonomy(taxonomy_payload)
             state, baseline_edited = self._restore(run_id, request, baseline)
+            state["report_taxonomy"] = taxonomy_payload
+            taxonomy_ref = f"Work/runs/{run_id}/preparation/report-taxonomy.json"
+            self.service.store.write_json(taxonomy_ref, taxonomy_payload)
+            state.setdefault("preparation_refs", {})["report_taxonomy"] = taxonomy_ref
             state["resume"] = resume
             await ReportWorkflowRunner(self.service, self.agent_runner).run_revision(
                 state, request, baseline_edited
@@ -150,6 +165,9 @@ class RevisionCoordinator:
             result = ReportingRunResult(run_id=run_id, status="failed", error=str(exc))
             self.service._save_run(result)
             return result
+        finally:
+            if taxonomy_token is not None:
+                reset_report_taxonomy(taxonomy_token)
 
         if (
             state.get("delivery_status") != "delivered"

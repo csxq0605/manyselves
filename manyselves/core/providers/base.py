@@ -9,12 +9,12 @@ from typing import Any
 
 
 class ProviderRequestDisposition(StrEnum):
-    """What the adapter knows about a failed physical provider request.
+    """Forensic status of a failed physical provider request.
 
-    Automatic retry is only safe when the adapter can prove that the request
-    was not accepted.  Transport failures default to ``accepted_or_unknown``:
-    the absence of a first token does not prove that the provider did not
-    receive or start processing the request.
+    Transport failures default to ``accepted_or_unknown`` because the absence
+    of a first token does not prove that the provider did not receive the
+    request. This value is telemetry, not a recovery lock: retry policy is
+    determined separately from whether a response was received locally.
     """
 
     NOT_SENT = "not_sent"

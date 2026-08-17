@@ -8,7 +8,7 @@ named module.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .taxonomy import REPORT_TAXONOMY
 
@@ -85,6 +85,12 @@ CROSS_LANE_SPECIALIZATIONS: dict[str, CrossLaneSpecialization] = {
 
 def cross_lane_specialization(module_id: str) -> CrossLaneSpecialization:
     try:
-        return CROSS_LANE_SPECIALIZATIONS[module_id]
+        specialization = CROSS_LANE_SPECIALIZATIONS[module_id]
     except KeyError as exc:
         raise ValueError(f"unsupported Cross owner module: {module_id}") from exc
+    # The review focus is stable, but the display title belongs to the current
+    # run's immutable XLSX taxonomy snapshot and must not be frozen at import.
+    active_title = REPORT_TAXONOMY[module_id].title
+    if specialization.title == active_title:
+        return specialization
+    return replace(specialization, title=active_title)

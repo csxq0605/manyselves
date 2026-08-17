@@ -1,7 +1,19 @@
-"""Fixed report taxonomy shared by coverage, drafting, and review stages."""
+"""Run-scoped report taxonomy shared by coverage, drafting, and review stages.
 
+The built-in tree is the process default for non-authoring inspection.
+Every new authoring run replaces it with the immutable tree parsed from that
+run's frozen S4-6 workbook.
+"""
+
+from collections.abc import Iterator, Mapping
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
+import hashlib
+from pathlib import Path
 import re
+from typing import Any
+
+from openpyxl import load_workbook
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +69,7 @@ def _module(
     )
 
 
-REPORT_TAXONOMY: dict[str, ModuleDefinition] = {
+_DEFAULT_REPORT_TAXONOMY: dict[str, ModuleDefinition] = {
     "2.1": _module(
         "2.1",
         "配电系统架构问题",
@@ -132,6 +144,200 @@ REPORT_TAXONOMY: dict[str, ModuleDefinition] = {
         ),
     ),
 }
+
+_ACTIVE_REPORT_TAXONOMY: ContextVar[Mapping[str, ModuleDefinition] | None] = (
+    ContextVar("active_report_taxonomy", default=None)
+)
+
+
+class _RunTaxonomyView(Mapping[str, ModuleDefinition]):
+    """Mapping facade whose value follows the current async run context."""
+
+    @staticmethod
+    def _current() -> Mapping[str, ModuleDefinition]:
+        return _ACTIVE_REPORT_TAXONOMY.get() or _DEFAULT_REPORT_TAXONOMY
+
+    def __getitem__(self, key: str) -> ModuleDefinition:
+        return self._current()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._current())
+
+    def __len__(self) -> int:
+        return len(self._current())
+
+
+REPORT_TAXONOMY: Mapping[str, ModuleDefinition] = _RunTaxonomyView()
+
+
+def _section_id(value: Any) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        text = format(float(value), ".12g")
+    else:
+        text = str(value).strip()
+    text = re.sub(r"\s+", "", text)
+    return text if re.fullmatch(r"2\.[1-5](?:\.\d+)*", text) else None
+
+
+def _validate_taxonomy(modules: Mapping[str, ModuleDefinition]) -> None:
+    expected_modules = tuple(f"2.{index}" for index in range(1, 6))
+    if tuple(modules) != expected_modules:
+        raise ValueError(
+            "S4-6 workbook taxonomy must contain ordered modules 2.1 through 2.5; "
+            f"actual={list(modules)}"
+        )
+    seen: set[str] = set(modules)
+    for module_id, module in modules.items():
+        if not module.title.strip() or not module.sections:
+            raise ValueError(f"workbook taxonomy module is empty: {module_id}")
+        for section_id, section in module.sections.items():
+            if section_id in seen:
+                raise ValueError(f"duplicate workbook taxonomy id: {section_id}")
+            seen.add(section_id)
+            if section.module_id != module_id or not section.title.strip():
+                raise ValueError(f"invalid workbook taxonomy section: {section_id}")
+            parent_id = section_id.rsplit(".", 1)[0]
+            if parent_id != module_id and parent_id not in module.sections:
+                raise ValueError(
+                    f"workbook taxonomy section has no parent: {section_id} -> {parent_id}"
+                )
+
+
+def parse_report_taxonomy_workbook(
+    path: Path,
+    *,
+    source_ref: str | None = None,
+    source_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Parse the complete 2.1-2.5 heading tree from a frozen S4-6 workbook."""
+
+    path = Path(path)
+    workbook = load_workbook(path, read_only=False, data_only=False)
+    try:
+        if "评估信息汇总表" not in workbook.sheetnames:
+            raise ValueError("S4-6 workbook is missing sheet: 评估信息汇总表")
+        sheet = workbook["评估信息汇总表"]
+        module_titles: dict[str, str] = {}
+        section_rows: dict[str, list[tuple[str, str]]] = {}
+        ordered_ids: list[str] = []
+        for row in range(1, sheet.max_row + 1):
+            identifier = _section_id(sheet.cell(row, 2).value)
+            if identifier is None:
+                continue
+            title = next(
+                (
+                    str(sheet.cell(row, column).value).strip()
+                    for column in range(3, 6)
+                    if sheet.cell(row, column).value is not None
+                    and str(sheet.cell(row, column).value).strip()
+                ),
+                "",
+            )
+            if not title:
+                raise ValueError(
+                    f"S4-6 workbook taxonomy title is empty at {sheet.title}!B{row}:E{row}"
+                )
+            if identifier in ordered_ids:
+                raise ValueError(f"duplicate S4-6 workbook taxonomy id: {identifier}")
+            ordered_ids.append(identifier)
+            if identifier.count(".") == 1:
+                module_titles[identifier] = title
+                section_rows.setdefault(identifier, [])
+            else:
+                module_id = ".".join(identifier.split(".")[:2])
+                if module_id not in module_titles:
+                    raise ValueError(
+                        f"S4-6 workbook taxonomy child precedes module: {identifier}"
+                    )
+                section_rows[module_id].append((identifier, title))
+        modules = {
+            module_id: _module(
+                module_id,
+                module_titles[module_id],
+                tuple(section_rows[module_id]),
+            )
+            for module_id in module_titles
+        }
+        _validate_taxonomy(modules)
+        digest = source_sha256 or hashlib.sha256(path.read_bytes()).hexdigest()
+        payload = report_taxonomy_snapshot(
+            modules,
+            source_ref=source_ref or path.as_posix(),
+            source_sha256=digest,
+            sheet=sheet.title,
+        )
+        payload["source_kind"] = "xlsx"
+        return payload
+    finally:
+        workbook.close()
+
+
+def taxonomy_from_snapshot(payload: Mapping[str, Any]) -> dict[str, ModuleDefinition]:
+    """Validate and materialize one persisted run taxonomy snapshot."""
+
+    if payload.get("schema_version") != 1:
+        raise ValueError("unsupported report taxonomy snapshot version")
+    modules: dict[str, ModuleDefinition] = {}
+    for raw_module in payload.get("modules") or ():
+        if not isinstance(raw_module, Mapping):
+            raise ValueError("invalid report taxonomy module payload")
+        module_id = str(raw_module.get("id") or "")
+        title = str(raw_module.get("title") or "").strip()
+        sections = tuple(
+            (str(item.get("id") or ""), str(item.get("title") or "").strip())
+            for item in (raw_module.get("sections") or ())
+            if isinstance(item, Mapping)
+        )
+        modules[module_id] = _module(module_id, title, sections)
+    _validate_taxonomy(modules)
+    return modules
+
+
+def report_taxonomy_snapshot(
+    modules: Mapping[str, ModuleDefinition],
+    *,
+    source_ref: str,
+    source_sha256: str,
+    sheet: str,
+) -> dict[str, Any]:
+    """Serialize one validated taxonomy without report prose or evidence."""
+
+    _validate_taxonomy(modules)
+    payload = {
+        "schema_version": 1,
+        "source_ref": source_ref,
+        "source_sha256": source_sha256,
+        "sheet": sheet,
+        "modules": [
+            {
+                "id": module.id,
+                "title": module.title,
+                "sections": [
+                    {"id": section.id, "title": section.title}
+                    for section in module.sections.values()
+                ],
+            }
+            for module in modules.values()
+        ],
+    }
+    return payload
+
+
+def activate_report_taxonomy(
+    payload: Mapping[str, Any],
+) -> Token[Mapping[str, ModuleDefinition] | None]:
+    """Bind a validated immutable taxonomy to the current async run context."""
+
+    modules = taxonomy_from_snapshot(payload)
+    return _ACTIVE_REPORT_TAXONOMY.set(modules)
+
+
+def reset_report_taxonomy(
+    token: Token[Mapping[str, ModuleDefinition] | None],
+) -> None:
+    _ACTIVE_REPORT_TAXONOMY.reset(token)
 
 
 def resolve_submodule(submodule_id: str) -> SubmoduleDefinition:

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from docx import Document
 
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
@@ -22,7 +23,7 @@ class NeverProvider(LLMProvider):
 
 
 @pytest.mark.asyncio
-async def test_delivered_business_lifecycle_does_not_validate_declared_files(
+async def test_completed_business_lifecycle_requires_readable_declared_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -49,7 +50,7 @@ async def test_delivered_business_lifecycle_does_not_validate_declared_files(
 
     result = await service.run(ReportRequest(instruction="offline lifecycle test"))
 
-    assert result.status == "completed"
+    assert result.status == "failed_before_delivery"
     assert result.output_paths == [
         tmp_path / "Outputs/Reports/declared-but-not-stat-checked.docx"
     ]
@@ -57,8 +58,9 @@ async def test_delivered_business_lifecycle_does_not_validate_declared_files(
 
 
 @pytest.mark.asyncio
-async def test_resume_legacy_archive_status_normalizes_business_delivery_without_provider(
+async def test_resume_legacy_archive_without_receipt_reenters_same_run_recovery(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run_id = "report-legacy-archive-resume"
     provider = NeverProvider()
@@ -103,16 +105,27 @@ async def test_resume_legacy_archive_status_normalizes_business_delivery_without
         ).model_dump(mode="json"),
     )
 
+    resumed = False
+
+    async def recover_same_run(*args, **kwargs):
+        nonlocal resumed
+        resumed = True
+        return ReportingRunResult(
+            run_id=run_id,
+            status="failed_before_delivery",
+            error="delivery must be regenerated",
+        )
+
+    monkeypatch.setattr(service, "_execute_locked", recover_same_run)
     result = await service.resume_run(run_id)
 
-    assert result.status == "completed"
+    assert result.status == "failed_before_delivery"
+    assert resumed is True
     assert provider.calls == 0
     completion = json.loads(
         (tmp_path / f"Work/runs/{run_id}/delivery-completion.json").read_text()
     )
-    assert completion["status"] == "delivered"
-    assert completion["delivery_status"] == "delivered"
-    assert "warning" not in completion
+    assert completion["status"] == "archive_failed"
 
 
 def test_republish_materialized_delivery_uses_current_run_files_without_hashes(
@@ -131,9 +144,24 @@ def test_republish_materialized_delivery_uses_current_run_files_without_hashes(
     final_docx = delivery_dir / "配电安全专家咨询报告.docx"
     source_index = delivery_dir / "证据与来源索引.md"
     source_index_docx = delivery_dir / "证据与来源索引.docx"
-    final_docx.write_bytes(b"new report bytes")
+    report_state = delivery_dir / "report-state.json"
+    manifest = delivery_dir / "delivery-manifest.json"
+    document = Document()
+    document.add_paragraph("new report bytes")
+    document.save(final_docx)
+    expected_docx = final_docx.read_bytes()
     source_index.write_text("new index", encoding="utf-8")
     source_index_docx.write_bytes(b"new index docx")
+    report_state.write_text("{}\n", encoding="utf-8")
+    manifest.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "modules": ["2.1", "2.2", "2.3", "2.4", "2.5"],
+            }
+        ),
+        encoding="utf-8",
+    )
     module_files = {}
     for module_id in ("2.1", "2.2", "2.3", "2.4", "2.5"):
         path = modules_dir / f"{module_id}.md"
@@ -149,10 +177,10 @@ def test_republish_materialized_delivery_uses_current_run_files_without_hashes(
                 module_id: path.as_posix()
                 for module_id, path in module_files.items()
             },
-            "report_state": (delivery_dir / "report-state.json").as_posix(),
+            "report_state": report_state.as_posix(),
             "source_index": source_index.as_posix(),
             "source_index_docx": source_index_docx.as_posix(),
-            "manifest_path": (delivery_dir / "delivery-manifest.json").as_posix(),
+            "manifest_path": manifest.as_posix(),
         },
     )
 
@@ -160,7 +188,7 @@ def test_republish_materialized_delivery_uses_current_run_files_without_hashes(
 
     assert (
         tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx"
-    ).read_bytes() == b"new report bytes"
+    ).read_bytes() == expected_docx
     assert (tmp_path / "Outputs/Modules/2.1.md").read_text(
         encoding="utf-8"
     ) == "new module 2.1"
@@ -177,8 +205,11 @@ def test_completed_run_finalization_does_not_require_output_owner(
         llm_provider=NeverProvider(),
     )
 
+    output = tmp_path / "Outputs/Reports/report.md"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"report")
     result = service._finalize_completed_run(
-        ReportingRunResult(run_id=run_id, status="completed"),
+        ReportingRunResult(run_id=run_id, status="completed", output_paths=[output]),
     )
 
     assert result.status == "completed"
@@ -186,7 +217,33 @@ def test_completed_run_finalization_does_not_require_output_owner(
         (tmp_path / f"Work/runs/{run_id}.json").read_text(encoding="utf-8")
     )
     assert persisted.status == "completed"
-    assert persisted.output_paths == result.output_paths
+    assert persisted.output_paths == [output]
+
+
+def test_completed_run_with_corrupt_docx_remains_resumable(
+    tmp_path: Path,
+) -> None:
+    run_id = "report-finalize-corrupt-docx"
+    service = ReportingService(
+        tmp_path,
+        bus=MessageBus(),
+        task_board=TaskBoard(),
+        llm_provider=NeverProvider(),
+    )
+
+    output = tmp_path / "Outputs/Reports/report.docx"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"not-a-valid-docx-package")
+    result = service._finalize_completed_run(
+        ReportingRunResult(run_id=run_id, status="completed", output_paths=[output]),
+    )
+
+    assert result.status == "failed_before_delivery"
+    assert "no readable declared outputs" in (result.error or "")
+    persisted = ReportingRunResult.model_validate_json(
+        (tmp_path / f"Work/runs/{run_id}.json").read_text(encoding="utf-8")
+    )
+    assert persisted.status == "failed_before_delivery"
 
 
 def test_completed_run_finalization_ignores_unrelated_hash_cas_state(
@@ -204,8 +261,11 @@ def test_completed_run_finalization_ignores_unrelated_hash_cas_state(
         "Work/output-owner.json",
         {"run_id": "another-run", "artifact_sha256": {"bad": "not-a-hash"}},
     )
+    output = tmp_path / "Outputs/Reports/report.md"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"report")
     result = service._finalize_completed_run(
-        ReportingRunResult(run_id=run_id, status="completed"),
+        ReportingRunResult(run_id=run_id, status="completed", output_paths=[output]),
     )
 
     assert result.status == "completed"

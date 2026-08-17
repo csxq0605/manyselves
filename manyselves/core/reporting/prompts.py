@@ -227,14 +227,13 @@ class PromptAssembler:
 
         The first task receives :meth:`task_message` with the complete context.
         Later transitions retain the lossless conversation and send only changed
-        task fields/new references.  The active input contract is compared by
-        its business identity (kind/ref) and body; its body is inlined only
-        when it changed, never as a union with historical contracts.
+        task fields/new references. The active input contract is compared by
+        its immutable business reference; its body is inlined only for a new
+        reference, never persisted or unioned with historical contracts.
         """
 
         previous_task_id = str(previous.get("task_id") or "")
         previous_revision = previous.get("revision")
-        previous_contract_payload = previous.get("input_contract_payload")
         previous_contract_kind = str(previous.get("input_contract_kind") or "")
         previous_contract_ref = str(previous.get("input_contract_ref") or "")
         current_contract_kind = str(envelope.input_contract_kind or "")
@@ -242,7 +241,6 @@ class PromptAssembler:
         contract_unchanged = (
             current_contract_kind == previous_contract_kind
             and current_contract_ref == previous_contract_ref
-            and input_contract_payload == previous_contract_payload
         )
         changed_fields: list[str] = []
         scalar_fields = (
@@ -270,6 +268,11 @@ class PromptAssembler:
             "artifact_delivery_modes": dict(envelope.artifact_delivery_modes),
         }
         for field in scalar_fields:
+            if (
+                field == "target_submodule_ids"
+                and previous.get("attention_scope_ref") == current_contract_ref
+            ):
+                continue
             if current[field] != previous.get(field):
                 changed_fields.append(field)
 

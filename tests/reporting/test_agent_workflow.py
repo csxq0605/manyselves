@@ -61,6 +61,7 @@ from manyselves.core.reporting.review_lifecycle import (
     run_module_review,
 )
 from manyselves.core.reporting.source_ledger import SourceLedger
+from manyselves.core.reporting.taxonomy import report_taxonomy_snapshot
 from manyselves.core.reporting.parallel_runtime import (
     ArtifactRef,
     CrossOwnerCompletion,
@@ -564,6 +565,12 @@ def test_preparation_resume_uses_hash_verified_run_snapshot(tmp_path: Path) -> N
         "photo_assets": [],
         "mapping_gaps": [],
         "coverage_matrix": CoverageMatrix(entries={}),
+        "report_taxonomy": report_taxonomy_snapshot(
+            REPORT_TAXONOMY,
+            source_ref="Inputs/S4-6测试目录.xlsx",
+            source_sha256="0" * 64,
+            sheet="评估信息汇总表",
+        ),
         "special_topic_plan": _special_topic_plan(),
     }
     runner._persist_preparation_snapshot(state)
@@ -606,6 +613,12 @@ def test_preparation_staging_failure_never_exposes_partial_snapshot(
         "photo_assets": [],
         "mapping_gaps": [],
         "coverage_matrix": CoverageMatrix(entries={}),
+        "report_taxonomy": report_taxonomy_snapshot(
+            REPORT_TAXONOMY,
+            source_ref="Inputs/S4-6测试目录.xlsx",
+            source_sha256="0" * 64,
+            sheet="评估信息汇总表",
+        ),
     }
     if failure_point == "after_evidence":
         original_write_json = service.store.write_json
@@ -2430,7 +2443,7 @@ def test_delivery_artifacts_reference_current_final_review_completion() -> None:
     assert all(path.is_relative_to(Path("Outputs/Modules")) for path in module_artifacts.values())
 
 
-def test_restore_delivery_uses_business_status_without_receipt_hash_or_version(
+def test_restore_delivery_ignores_status_without_a_readable_receipt(
     tmp_path: Path,
 ) -> None:
     service = _FakeService(tmp_path)
@@ -2459,10 +2472,13 @@ def test_restore_delivery_uses_business_status_without_receipt_hash_or_version(
     )
 
     state = {"run_id": run_id, "final_review_completion_ref": final_review_ref}
+    service._republish_materialized_delivery = lambda _run_id: (_ for _ in ()).throw(
+        ValueError("missing receipt")
+    )
     runner._restore_delivery_completion(state)
 
-    assert state["delivery_restored"] is True
-    assert state["output_artifacts"] == expected
+    assert "delivery_restored" not in state
+    assert "output_artifacts" not in state
 
 
 def test_delivery_root_is_scoped_to_the_owning_run(tmp_path: Path) -> None:
@@ -2472,7 +2488,7 @@ def test_delivery_root_is_scoped_to_the_owning_run(tmp_path: Path) -> None:
     )
 
 
-def test_restore_delivery_does_not_gate_on_output_file_declaration(
+def test_restore_delivery_accepts_typed_declarations_after_package_validation(
     tmp_path: Path,
 ) -> None:
     service = _FakeService(tmp_path)
@@ -2552,6 +2568,7 @@ def test_restore_delivery_does_not_gate_on_output_file_declaration(
         "run_id": run_id,
         "final_review_completion_ref": (f"Work/runs/{run_id}/reviews/final-completion.json"),
     }
+    service._republish_materialized_delivery = lambda _run_id: None
 
     runner._restore_delivery_completion(state)
 
@@ -2563,7 +2580,7 @@ def test_restore_delivery_does_not_gate_on_output_file_declaration(
 
 
 @pytest.mark.asyncio
-async def test_module_resume_invalidates_legacy_parts_without_context_fingerprint(
+async def test_module_resume_invalidates_parts_without_context_marker(
     tmp_path: Path,
 ) -> None:
     service = _FakeService(tmp_path)
@@ -2572,7 +2589,8 @@ async def test_module_resume_invalidates_legacy_parts_without_context_fingerprin
     run_id = "run-marker-correction"
     module_id = "2.3"
     part_ids = list(REPORT_TAXONOMY[module_id].submodules)
-    draft_root = tmp_path / f"Work/runs/{run_id}/drafts/module-{module_id}/r0"
+    task_id = f"module-{module_id}"
+    draft_root = tmp_path / f"Work/runs/{run_id}/drafts/{task_id}/r0"
     draft_root.mkdir(parents=True)
     for part_id in part_ids:
         (draft_root / f"{part_id}.md").write_text(
@@ -2584,7 +2602,7 @@ async def test_module_resume_invalidates_legacy_parts_without_context_fingerprin
         "module_id": module_id,
         "submodule_narratives": {
             part_id: {
-                "artifact_refs": [f"Work/runs/{run_id}/drafts/module-{module_id}/r0/{part_id}.md"]
+                "artifact_refs": [f"Work/runs/{run_id}/drafts/{task_id}/r0/{part_id}.md"]
             }
             for part_id in part_ids
         },
@@ -2608,11 +2626,11 @@ async def test_module_resume_invalidates_legacy_parts_without_context_fingerprin
         "revision_responses": [],
     }
     service.store.write_json(
-        f"Work/runs/{run_id}/submissions/module-{module_id}/attempt-3-raw.json",
+        f"Work/runs/{run_id}/submissions/{task_id}/attempt-3-raw.json",
         {"raw_payload": raw_payload},
     )
     service.store.write_json(
-        f"Work/runs/{run_id}/results/module-{module_id}.json",
+        f"Work/runs/{run_id}/results/{task_id}.json",
         {"status": "failed"},
     )
 
@@ -2685,7 +2703,7 @@ async def test_module_resume_invalidates_legacy_parts_without_context_fingerprin
     marker = json.loads(
         (
             tmp_path
-            / f"Work/runs/{run_id}/drafts/module-{module_id}/r1/_authoring-context.json"
+                / f"Work/runs/{run_id}/drafts/{task_id}/r1/_authoring-context.json"
         ).read_text(encoding="utf-8")
     )
     assert marker["authoring_context_sha256"]

@@ -791,9 +791,8 @@ class LaneAttemptRecord(_StrictModel):
     """Append-only business-state record for one lane dispatch.
 
     The first seven fields (run/stage/lane/attempt/revision/status/result/error)
-    are the active recovery contract.  The remaining fields are retained so
-    old task journals and forensic Provider evidence continue to parse; no
-    recovery decision relies on their hash values.
+    are the active recovery contract. Provider-attempt forensics are separate
+    from recovery state.
     """
     run_id: str = "unknown"
     stage: str = "lane"
@@ -813,8 +812,6 @@ class LaneAttemptRecord(_StrictModel):
         "completed",
         "failed",
         "blocked",
-        "ambiguous",
-        "accepted_or_unknown",
         "invalidated",
         "deferred",
     ] = "started"
@@ -826,7 +823,6 @@ class LaneAttemptRecord(_StrictModel):
         "completed",
         "failed",
         "deferred",
-        "accepted_or_unknown",
         "needs_input",
         "disputed",
         "escalate",
@@ -835,8 +831,7 @@ class LaneAttemptRecord(_StrictModel):
         "unknown",
     ] | None = None
     result_ref: str | None = None
-    # Hashes are compatibility/forensic metadata only.  They intentionally
-    # have no pattern constraint and are not consulted by active recovery.
+    # Hashes belong to the append-only attempt journal and are not recovery gates.
     result_sha256: str | None = None
     result_hash: str | None = None
     error: str | None = None
@@ -878,8 +873,6 @@ class LaneAttemptRecord(_StrictModel):
                 "blocked": "blocked",
                 "invalidated": "invalidated",
                 "deferred": "deferred",
-                "ambiguous": "accepted_or_unknown",
-                "accepted_or_unknown": "accepted_or_unknown",
             }[self.status]
         return self
 
@@ -937,15 +930,11 @@ class LaneExceptionCandidate(_StrictModel):
     lane_id: str
     run_id: str
     module_id: Literal["2.1", "2.2", "2.3", "2.4", "2.5"]
-    # ``accepted_or_unknown`` is deliberately terminal.  It records that a
-    # Provider attempt may have been accepted even though the typed result was
-    # not observed; resume must reconcile that attempt instead of replaying it.
     disposition: Literal[
         "needs_input",
         "disputed",
         "escalate",
         "failed",
-        "accepted_or_unknown",
     ]
     reason: str = Field(min_length=1)
     task_attempt_id: str
@@ -1045,14 +1034,6 @@ class AllReadySupervisor:
         value = getattr(exc, "attempt_disposition", None)
         if value is None:
             value = getattr(exc, "disposition", None)
-        if value is not None and str(value) in {
-            "accepted_or_unknown",
-            "accepted_unknown",
-            "ambiguous",
-        }:
-            return "accepted_or_unknown"
-        if exc.__class__.__name__ == "ProviderAttemptRecoveryRequired":
-            return "accepted_or_unknown"
         if bool(getattr(exc, "hard_stop", False)) or bool(
             getattr(exc, "cost_stop", False)
         ):
@@ -1098,12 +1079,6 @@ class AllReadySupervisor:
             result_ref = result_ref or value.get("result_ref")
             result_hash = result_hash or value.get("result_sha256") or value.get("result_hash")
             disposition = value.get("disposition")
-            if disposition is None and value.get("status") in {
-                "accepted_or_unknown",
-                "accepted_unknown",
-                "ambiguous",
-            }:
-                disposition = value.get("status")
         return candidate, (
             completion.model_dump(mode="json")
             if isinstance(completion, (LaneCompletion, CrossOwnerCompletion))
@@ -1175,8 +1150,8 @@ class AllReadySupervisor:
         recovery = self._recovery_store_for(run_id)
         # Recovery is business-state based: only a completed, readable,
         # ownership/revision-valid result suppresses a new invocation.
-        # accepted_or_unknown is reconciled only when such a result exists;
-        # otherwise the lane receives an explicit new attempt below.
+        # Only a valid completed business result suppresses dispatch; every
+        # other prior attempt remains evidence while explicit resume starts fresh.
         terminals: dict[str, LaneAttemptRecord] = {}
         recovered: list[str] = []
         blocked_ids: list[str] = []
@@ -1186,9 +1161,8 @@ class AllReadySupervisor:
         for spec in ordered:
             task_id = spec.task_id or spec.lane_id or ""
             latest = store.load_latest(task_id, include_payload=True)
-            # RecoveryStateStore is the business-state source of truth.  The
-            # older TaskAttemptStore journal remains a compatibility/fact
-            # projection, so a worker may resume from either one.
+            # RecoveryStateStore is the business-state source of truth; the
+            # attempt journal remains an append-only execution record.
             if latest is None:
                 state = recovery.load_lane_state(spec.stage, task_id)
                 if state is not None:
@@ -1200,19 +1174,11 @@ class AllReadySupervisor:
                             task_id=state.lane_id,
                             attempt=max(1, state.attempt),
                             revision=state.revision,
-                            status=(
-                                "accepted_or_unknown"
-                                if state.status == "accepted_or_unknown"
-                                else state.status
-                            ),
+                            status=state.status,
                             disposition=(
-                                "accepted_or_unknown"
-                                if state.status == "accepted_or_unknown"
-                                else (
-                                    state.status
-                                    if state.status in {"completed", "failed", "blocked", "deferred", "invalidated"}
-                                    else "unknown"
-                                )
+                                state.status
+                                if state.status in {"completed", "failed", "blocked", "deferred", "invalidated"}
+                                else "unknown"
                             ),
                             result_ref=state.result_ref,
                             error=state.error,
@@ -1227,61 +1193,11 @@ class AllReadySupervisor:
                     recovered.append(spec.task_id or spec.lane_id or "")
                     recovered_payloads[task_id] = payload
                     continue
-                if (
-                    previous.disposition == "accepted_or_unknown"
-                    and previous.result_ref
-                    and self._terminal_reusable(spec, previous.model_copy(update={"status": "completed"}))
-                ):
-                    reconciled = previous.model_copy(
-                        update={
-                            "status": "completed",
-                            "disposition": "completed",
-                            "error": None,
-                            "finished_at_ns": time.time_ns(),
-                            "attempt": max(previous.attempt, spec.revision),
-                        }
-                    )
-                    store.append(reconciled, payload=payload)
-                    recovery.record_lane_attempt(reconciled, payload=payload)
-                    terminals[task_id] = reconciled
-                    recovered.append(task_id)
-                    recovered_payloads[task_id] = payload
-                    continue
-                if (
-                    previous.disposition == "accepted_or_unknown"
-                    or previous.status in {"ambiguous", "accepted_or_unknown", "blocked"}
-                ):
-                    # Ambiguous Provider evidence is not a dispatch command.
-                    # Keep it blocked until a caller invokes retry_lanes (or
-                    # reconciles a completed result) explicitly.
-                    blocked_terminal = previous.model_copy(
-                        update={
-                            "status": "blocked",
-                            "error": previous.error
-                            or "accepted_or_unknown has no completed result; explicit retry required",
-                            "finished_at_ns": previous.finished_at_ns or time.time_ns(),
-                        }
-                    )
-                    terminals[task_id] = blocked_terminal
-                    recovery.record_lane_attempt(blocked_terminal, payload=payload)
-                    blocked_ids.append(task_id)
-                    continue
-                # A previous completed/failed/deferred record whose business
-                # result cannot be read is also evidence, not an implicit
-                # retry command.  Keep it blocked so the coordinator must
-                # create a new attempt through retry_lanes explicitly.
-                blocked_terminal = previous.model_copy(
-                    update={
-                        "status": "blocked",
-                        "disposition": "blocked",
-                        "error": previous.error
-                        or "lane result is missing or invalid; explicit retry required",
-                        "finished_at_ns": previous.finished_at_ns or time.time_ns(),
-                    }
-                )
-                terminals[task_id] = blocked_terminal
-                recovery.record_lane_attempt(blocked_terminal, payload=payload)
-                blocked_ids.append(task_id)
+                # Entering this supervisor is already an explicit same-run
+                # recovery action. Failed, blocked, deferred, or corrupt
+                # completed records remain immutable evidence, but none of
+                # them may suppress a fresh higher-numbered attempt.
+                ready.append(spec)
                 continue
             ready.append(spec)
 
@@ -1338,33 +1254,22 @@ class AllReadySupervisor:
                             }
                         )
                     else:
-                        _candidate, _payload, result_ref, result_hash, disposition = self._completion_payload(
+                        _candidate, _payload, result_ref, result_hash, _disposition = self._completion_payload(
                             completion_value
                         )
-                        if disposition in {"accepted_or_unknown", "accepted_unknown", "ambiguous"}:
-                            terminal = claim.model_copy(
-                                update={
-                                    "status": "ambiguous",
-                                    "disposition": "accepted_or_unknown",
-                                    "finished_at_ns": time.time_ns(),
-                                }
-                            )
-                        else:
-                            terminal = claim.model_copy(
-                                update={
-                                    "status": "completed",
-                                    "disposition": "completed",
-                                    "result_ref": result_ref,
-                                    "result_sha256": result_hash,
-                                    "result_hash": result_hash,
-                                    "finished_at_ns": time.time_ns(),
-                                }
-                            )
+                        terminal = claim.model_copy(
+                            update={
+                                "status": "completed",
+                                "disposition": "completed",
+                                "result_ref": result_ref,
+                                "result_sha256": result_hash,
+                                "result_hash": result_hash,
+                                "finished_at_ns": time.time_ns(),
+                            }
+                        )
             except BaseException as exc:  # ordinary lane failures must drain siblings
                 disposition = self._exception_disposition(exc)
-                status = "deferred" if disposition == "deferred" else (
-                    "ambiguous" if disposition == "accepted_or_unknown" else "failed"
-                )
+                status = "deferred" if disposition == "deferred" else "failed"
                 terminal = claim.model_copy(
                     update={
                         "status": status,
@@ -1631,7 +1536,6 @@ class LaneState(_StrictModel):
         "completed",
         "failed",
         "blocked",
-        "accepted_or_unknown",
         "invalidated",
         "deferred",
     ] = "pending"
@@ -1690,7 +1594,6 @@ class RecoveryPlan(_StrictModel):
         "retry_aggregate",
         "invalidate_lane",
         "rollback_aggregate",
-        "reconcile_accepted_or_unknown",
     ]
     lane_ids: list[str] = Field(default_factory=list)
     aggregate_id: str | None = None
@@ -1717,7 +1620,7 @@ class RecoveryStateStore:
     The store only treats a completed lane as reusable when its referenced
     result file exists, contains valid JSON, belongs to this run/stage/lane,
     matches the expected revision (when supplied), and passes an optional
-    business gate.  Hashes are accepted in legacy payloads but never compared.
+    business gate. Attempt-journal hashes are never compared here.
     """
 
     _TERMINAL_FAILURES = {
@@ -1730,7 +1633,6 @@ class RecoveryStateStore:
         "completed",
         "failed",
         "blocked",
-        "accepted_or_unknown",
         "invalidated",
         "deferred",
     }
@@ -1839,10 +1741,6 @@ class RecoveryStateStore:
         if incoming.attempt > current.attempt:
             return None
         if incoming.status == "invalidated" and allow_invalidate:
-            return None
-        if current.status == "accepted_or_unknown" and incoming.status == "completed":
-            # Reconciliation may promote an accepted Provider result observed
-            # after the original attempt without allocating a duplicate call.
             return None
         if current.status in cls._LANE_TERMINAL:
             if (
@@ -2033,10 +1931,7 @@ class RecoveryStateStore:
             state = record
         elif isinstance(record, LaneAttemptRecord):
             lane_status = (
-                "accepted_or_unknown"
-                if record.disposition == "accepted_or_unknown"
-                or record.status in {"ambiguous", "accepted_or_unknown"}
-                else ("running" if record.status in {"started", "running"} else record.status)
+                "running" if record.status in {"started", "running"} else record.status
             )
             state = LaneState(
                 run_id=self.run_id if record.run_id == "unknown" else record.run_id,
@@ -2091,7 +1986,7 @@ class RecoveryStateStore:
                 task_id=state.lane_id,
                 attempt=max(1, state.attempt),
                 revision=state.revision,
-                status=("accepted_or_unknown" if state.status == "accepted_or_unknown" else state.status),
+                status=state.status,
                 result_ref=state.result_ref,
                 error=state.error,
             )
@@ -2260,7 +2155,7 @@ class RecoveryStateStore:
             if state is None:
                 selected.append(lane_id)
                 continue
-            if state.status in self._TERMINAL_FAILURES or state.status == "accepted_or_unknown":
+            if state.status in self._TERMINAL_FAILURES:
                 selected.append(lane_id)
                 continue
             if state.status == "completed" and not self.result_is_reusable(
@@ -2401,10 +2296,10 @@ class RecoveryStateStore:
         if isinstance(value, Mapping):
             status = value.get("status")
             result_ref = value.get("result_ref")
-            if status in {"failed", "blocked", "invalidated", "deferred", "accepted_or_unknown"}:
+            if status in {"failed", "blocked", "invalidated", "deferred"}:
                 return attempt.model_copy(
                     update={
-                        "status": "accepted_or_unknown" if status == "accepted_or_unknown" else status,
+                        "status": status,
                         "disposition": status,
                         "result_ref": result_ref,
                         "error": value.get("error"),
@@ -2760,27 +2655,6 @@ class RecoveryStateStore:
 
     # Explicit aliases used by workers that call the operation by its intent.
     rollback_to_previous_successful_aggregate = rollback_aggregate
-
-    def reconcile_lane(self, stage: str, lane_id: str, *, expected_revision: int | None = None) -> RecoveryPlan | LaneState:
-        state = self.load_lane_state(stage, lane_id)
-        if state is not None and state.status == "accepted_or_unknown" and self.result_is_reusable(
-            state,
-            expected_stage=stage,
-            expected_lane_id=lane_id,
-            expected_revision=expected_revision,
-        ):
-            reconciled = state.model_copy(update={"status": "completed", "error": None, "updated_at_ns": time.time_ns()})
-            self._save_lane_state(reconciled)
-            return reconciled
-        plan = RecoveryPlan(
-            run_id=self.run_id,
-            stage=stage,
-            action="retry_failed_lanes",
-            lane_ids=[lane_id],
-            reason="accepted_or_unknown has no completed result; explicit new attempt required",
-        )
-        self._persist_plan(plan)
-        return plan
 
     def _persist_plan(self, plan: RecoveryPlan) -> RecoveryPlan:
         self.plan_root.mkdir(parents=True, exist_ok=True)

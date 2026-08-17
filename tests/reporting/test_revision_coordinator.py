@@ -21,7 +21,7 @@ from manyselves.core.reporting.revisions import RevisionCoordinator
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.core.reporting.service import ReportingService
 from manyselves.core.reporting.store import ReportingStore
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
+from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY, report_taxonomy_snapshot
 from manyselves.core.reporting.versions import ReportVersion
 from manyselves.core.tools.task_board import TaskBoard
 
@@ -246,9 +246,21 @@ async def test_revision_requires_delivered_business_lifecycle(
         target_module_ids=["2.1"],
     )
 
+    taxonomy_ref = Path("Work/runs/baseline/preparation/report-taxonomy.json")
+    service.store.write_json(
+        taxonomy_ref.as_posix(),
+        report_taxonomy_snapshot(
+            REPORT_TAXONOMY,
+            source_ref="Inputs/S4-6测试目录.xlsx",
+            source_sha256="0" * 64,
+            sheet="评估信息汇总表",
+        ),
+    )
     monkeypatch.setattr(
         "manyselves.core.reporting.revisions.ReportVersionStore.load",
-        lambda _store, _version_id: object(),
+        lambda _store, _version_id: SimpleNamespace(
+            artifact_refs={"report_taxonomy": taxonomy_ref}
+        ),
     )
     monkeypatch.setattr(
         coordinator,

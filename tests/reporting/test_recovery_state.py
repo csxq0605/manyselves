@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -8,10 +7,7 @@ import pytest
 
 from manyselves.core.reporting.parallel_runtime import (
     AggregateState,
-    AllReadySupervisor,
     LaneAttemptRecord,
-    LaneTaskSpec,
-    RecoveryPlan,
     RecoveryStateStore,
 )
 
@@ -52,26 +48,6 @@ def test_load_completed_lanes_uses_business_state_and_file_validation(tmp_path: 
     assert store.load_completed_lanes("author") == {}
 
 
-def test_accepted_unknown_without_result_gets_explicit_new_attempt(tmp_path: Path) -> None:
-    store = RecoveryStateStore(tmp_path, "run-state")
-    store.record_lane_attempt(
-        LaneAttemptRecord(
-            run_id="run-state",
-            stage="author",
-            lane_id="lane-a",
-            attempt=1,
-            revision=2,
-            status="accepted_or_unknown",
-            disposition="accepted_or_unknown",
-        )
-    )
-    plan = store.retry_failed_lanes("author", ["lane-a"])
-    assert isinstance(plan, RecoveryPlan)
-    assert plan.lane_ids == ["lane-a"]
-    attempt = store.retry_lane_attempt("author", "lane-a", revision=2)
-    assert attempt.attempt == 2
-
-
 def test_retry_lanes_and_aggregate_and_rollback_are_explicit(tmp_path: Path) -> None:
     store = RecoveryStateStore(tmp_path, "run-state")
     ref1 = "Work/runs/run-state/results/aggregate-r1.json"
@@ -105,39 +81,6 @@ def test_retry_lanes_and_aggregate_and_rollback_are_explicit(tmp_path: Path) -> 
     )
     rolled = store.rollback_to_aggregate("author")
     assert rolled.result_ref == first.result_ref
-
-
-def test_all_ready_reconciles_only_existing_completed_result(tmp_path: Path) -> None:
-    ref = "Work/runs/run-ready/results/lane-a.json"
-    _write_result(tmp_path, ref, run_id="run-ready", stage="lane", lane_id="lane-a", revision=1)
-    store = RecoveryStateStore(tmp_path, "run-ready")
-    store.record_lane_attempt(
-        LaneAttemptRecord(
-            run_id="run-ready",
-            stage="lane",
-            lane_id="lane-a",
-            task_id="lane-a",
-            attempt=1,
-            revision=1,
-            status="accepted_or_unknown",
-            disposition="accepted_or_unknown",
-            result_ref=ref,
-        )
-    )
-    calls: list[str] = []
-
-    async def run_lane(spec: LaneTaskSpec):
-        calls.append(spec.task_id or "")
-        raise AssertionError("reconciled completed result must not redispatch")
-
-    result = asyncio.run(
-        AllReadySupervisor(tmp_path, "run-ready", recovery_store=store).run(
-            [LaneTaskSpec(run_id="run-ready", stage="lane", task_id="lane-a", revision=1)],
-            run_lane,
-        )
-    )
-    assert calls == []
-    assert result.recovered == ("lane-a",)
 
 
 def test_fixed_attempt_one_cannot_overwrite_terminal_lane_state(tmp_path: Path) -> None:

@@ -223,53 +223,35 @@ def test_crashed_running_job_is_reclaimed_with_new_fencing_epoch(
         runtime.jobs.finish(reclaimed, status="failed", error="test cleanup")
 
 
-@pytest.mark.asyncio
-async def test_ambiguous_provider_outcome_waits_for_explicit_resume(
+def test_headless_completed_job_with_missing_output_can_be_requeued(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _paths(tmp_path)
+    runtime = HeadlessReportingRuntime(paths, llm_provider=NoCallProvider())
     source = paths.project_storage_root / "Work/drafts/approved.md"
     source.parent.mkdir(parents=True)
-    source.write_text("# 报告\n\n正文。\n", encoding="utf-8")
-    runtime = HeadlessReportingRuntime(paths, llm_provider=NoCallProvider())
+    source.write_text("# 报告\n", encoding="utf-8")
     job = runtime.submit(
         ReportRequest(
             operation="render_existing",
-            instruction="ambiguous response",
+            instruction="repair incomplete completion",
             source_markdown_ref=Path("Work/drafts/approved.md"),
-            output_filename="after-explicit-resume.docx",
         )
     )
-
-    async def ambiguous_result(*args, **kwargs) -> ReportingRunResult:
-        result = ReportingRunResult(
+    claim = runtime.jobs.claim_next("worker-false-completion")
+    assert claim is not None
+    runtime.service._save_run(
+        ReportingRunResult(
             run_id=job.run_id,
-            status="ambiguous",
-            error="partial Provider response",
+            status="completed",
+            output_paths=[
+                paths.project_storage_root / "Outputs/Reports/missing.docx"
+            ],
         )
-        runtime.service._save_run(result)
-        return result
-
-    monkeypatch.setattr(
-        runtime.service,
-        "run_prepared_claimed",
-        ambiguous_result,
     )
-    first = await runtime.work_once("worker-ambiguous")
+    runtime.jobs.finish(claim, status="completed")
 
-    assert first is not None and first.status == "ambiguous"
-    assert runtime.jobs.get(job.job_id).status == "ambiguous"
-    assert (
-        await HeadlessReportingRuntime(
-            paths, llm_provider=NoCallProvider()
-        ).work_once("worker-must-wait")
-        is None
-    )
+    resumed = runtime.resume(job.run_id)
 
-    resumed_runtime = HeadlessReportingRuntime(paths, llm_provider=NoCallProvider())
-    resumed_runtime.resume(job.run_id)
-    completed = await resumed_runtime.work_once("worker-after-confirmation")
-
-    assert completed is not None and completed.status == "completed"
-    assert resumed_runtime.jobs.get(job.job_id).status == "completed"
+    assert resumed.status == "queued"
+    assert resumed.resume_requested is True
