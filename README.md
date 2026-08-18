@@ -4,300 +4,212 @@
 
 # ManySelves
 
-### One runtime. Many selves.
-
-**A production multi-agent runtime for file-defined teams and durable workflows.**
+### File-defined agents. Durable workflows. Replaceable runtime workers.
 
 [![Python](https://img.shields.io/badge/Python-%E2%89%A5%203.12-blue.svg)](https://www.python.org/)
-[![Runtime API](https://img.shields.io/badge/runtime-FastAPI-009688.svg)](https://fastapi.tiangolo.com/)
-[![Clients](https://img.shields.io/badge/clients-PyQt%20%7C%20React%20%7C%20Electron-6f42c1.svg)](#current-release-capabilities)
-[![Status](https://img.shields.io/badge/status-live%20%2F%20stable-brightgreen.svg)](#release-status)
+[![API](https://img.shields.io/badge/API-FastAPI-009688.svg)](https://fastapi.tiangolo.com/)
+[![Web](https://img.shields.io/badge/Web-React-61DAFB.svg)](https://react.dev/)
+[![Desktop](https://img.shields.io/badge/Desktop-Electron-47848F.svg)](https://www.electronjs.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 English | [简体中文](README_zh.md)
 
 </div>
 
-ManySelves is a deployed multi-agent runtime that turns versioned **Identity documents** and **Skill documents** into executable teams. The runtime supplies the operational layer around those definitions: model access, tool execution, messaging, project workspaces, task state, checkpoints, review gates, recovery, and deliverable generation.
+ManySelves is a multi-agent runtime that separates **execution infrastructure** from **agent capability definitions**. The runtime hosts model providers, tools, messages, task state, checkpoints, workflow gates, project isolation, event streams, and artifacts. Agent identities, Skills, configuration, interaction contracts, and an increasing share of orchestration rules are supplied as versioned Markdown, YAML, and schema files.
 
-The current release is online and can be used through PyQt, React + FastAPI, or Electron. It includes a complete power-distribution reporting capability as the strongest reference implementation, while the runtime itself is designed to support more teams and task types.
+The architectural direction is a **domain-stateless, reconstructible kernel**: runtime workers may keep live queues, clients, leases, and loops, but business identity and authoritative workflow progress must be reconstructible from definitions plus durable state. This makes one task easier to resume, inspect, version, and migrate without rebuilding a domain-specific application.
 
-> **Architecture roadmap, not current release status**
->
-> A domain-stateless, reconstructible kernel is the final architecture goal. The live release already separates many identities and Skills into files and persists important task state, but some workflow graphs, transition rules, and domain services are still implemented in Python. That future direction is documented separately below and does not change the Production/Stable status of the current deployed feature set.
+## Technical design
 
-## Run or deploy
+ManySelves is organized around four boundaries:
 
-### 1. Clone the maintained branch
+1. **Runtime kernel** — lifecycle, model calls, tools, messaging, task execution, checkpoints, errors, recovery, and artifact access.
+2. **Capability definitions** — Identity, Skills, input/output contracts, policies, gates, workflow topology, schemas, and templates.
+3. **Durable state** — projects, conversations, events, task records, decisions, reviews, checkpoints, and outputs.
+4. **Interface adapters** — React, Electron, and FastAPI expose the runtime without owning domain behavior.
 
-```bash
-git clone --branch feature/react-fastapi-manyselves \
-  https://github.com/csxq0605/manyselves.git
-cd manyselves
+The implementation already externalizes Identity and Skill definitions and persists the main task records. Workflow topology and some domain services are still implemented in Python; moving those rules into validated capability bundles is the next architectural step.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Clients["Interface adapters"]
+        React["React workspace"]
+        Electron["Electron shell"]
+    end
+
+    subgraph API["FastAPI service boundary"]
+        Auth["Session and account routing"]
+        Routes["Projects, files, settings and workflow APIs"]
+        Events["SSE event stream"]
+        Lease["Control lease"]
+    end
+
+    subgraph Kernel["Runtime kernel"]
+        Tenant["TenantRuntime"]
+        Host["RuntimeHost lifecycle"]
+        Manager["LoopManager"]
+        Loops["AgentLoop instances"]
+        Bus["Message bus"]
+        Tools["Tool registry and artifact gateway"]
+        Providers["Provider abstraction"]
+    end
+
+    subgraph Definitions["Versioned capability inputs"]
+        Identity["Identity Markdown + YAML frontmatter"]
+        Skills["Skill Markdown"]
+        Config["Runtime and provider YAML"]
+        Contracts["Schemas, policies, gates and templates"]
+        Workflow["Workflow definitions\npartly declarative today"]
+    end
+
+    subgraph State["Durable state"]
+        Projects["Account and project roots"]
+        Work["Runs, tasks, decisions, reviews and checkpoints"]
+        Conversations["Conversations and event log"]
+        Outputs["Artifacts and deliverables"]
+    end
+
+    React --> Auth
+    Electron --> Auth
+    Auth --> Routes
+    Routes --> Tenant
+    Events <--> Tenant
+    Lease <--> Tenant
+
+    Tenant --> Host
+    Host --> Manager
+    Manager --> Loops
+    Loops <--> Bus
+    Loops --> Tools
+    Loops --> Providers
+
+    Identity --> Loops
+    Skills --> Loops
+    Config --> Host
+    Contracts --> Tools
+    Workflow --> Manager
+
+    Tools <--> Projects
+    Tools <--> Work
+    Bus --> Conversations
+    Tools --> Outputs
 ```
 
-### 2. Local Web: React + FastAPI
+### Runtime kernel
 
-Linux/macOS:
+`manyselves/application/runtime_host.py` owns runtime startup, shutdown, workspace switching, message-bus lifecycle, and loop-manager replacement. `LoopManager` creates and coordinates `AgentLoop` instances; provider and tool abstractions keep model and workspace operations behind stable interfaces.
 
-```bash
-cp .env.example .env
-# Edit .env: replace the administrator password and configure a provider key.
+The FastAPI layer selects the correct account runtime, exposes project and workflow operations, and streams runtime events. React consumes this API, while Electron packages the same Web workspace rather than introducing another business implementation.
 
-chmod +x start.sh
-./start.sh
+### Definition layer
+
+Agent identities are loaded from Markdown with YAML frontmatter. A definition can constrain model policy, tool grants, readable and writable carriers, turn/token limits, memory scope, background execution, and instructions.
+
+```markdown
+---
+name: reviewer
+description: Review one result against evidence and policy.
+model: inherit
+tools: [read]
+disallowedTools: [delete_file]
+maxTurns: 8
+maxTokens: 16384
+effort: high
+memory: task
+background: true
+reads: [module_drafts, claim_ledger]
+writes: [review_findings]
+---
+
+Review the assigned result and return a structured finding record.
 ```
 
-Windows Command Prompt or PowerShell:
+Reusable methods and quality criteria are stored as Skill Markdown. Runtime/provider configuration is stored in YAML and environment variables. These files are executable inputs to the runtime, not ordinary design documentation.
 
-```bat
-copy .env.example .env
-rem Edit .env. On Windows, write MANYSELVES_ALLOWED_ORIGINS as:
-rem MANYSELVES_ALLOWED_ORIGINS=["http://127.0.0.1:9090"]
-
-npm --prefix frontend install
-npm --prefix frontend run build
-scripts\start.bat
-```
-
-Open:
-
-```text
-Application:  http://127.0.0.1:9090
-OpenAPI UI:   http://127.0.0.1:9090/docs
-Live health:  http://127.0.0.1:9090/api/v1/health/live
-Ready health: http://127.0.0.1:9090/api/v1/health/ready
-```
-
-For API-focused development:
-
-```bash
-uv sync
-npm --prefix frontend install
-npm --prefix frontend run build
-
-uv run python run_web.py \
-  --reload \
-  --host 127.0.0.1 \
-  --port 9090 \
-  --data-dir .manyselves
-```
-
-### 3. Local desktop: PyQt
-
-```bash
-uv sync
-cp manyselves.config.example.yaml manyselves.config.yaml
-uv run manyselves
-```
-
-A provider can be configured in the application or through supported environment variables. The workspace can open without a provider key, but model calls require an enabled provider.
-
-### 4. Server deployment: Docker Compose
-
-```bash
-cp deploy/env.example deploy/.env
-chmod 600 deploy/.env
-```
-
-Before starting, edit `deploy/.env` and set at least:
-
-```dotenv
-MANYSELVES_ADMIN_PASSWORD=replace-with-a-long-random-password
-MANYSELVES_DATA_DIR=/absolute/path/to/persistent-data
-MANYSELVES_ALLOWED_ORIGINS=["https://your-manyselves-domain.example"]
-```
-
-For a server exposed directly rather than through a loopback reverse proxy, also set an appropriate bind address:
-
-```dotenv
-MANYSELVES_HTTP_BIND=0.0.0.0
-MANYSELVES_HTTP_PORT=9090
-```
-
-Start:
-
-```bash
-docker compose -f deploy/compose.yaml --env-file deploy/.env config
-docker compose -f deploy/compose.yaml --env-file deploy/.env \
-  up -d --build --wait
-```
-
-Inspect or stop:
-
-```bash
-docker compose -f deploy/compose.yaml --env-file deploy/.env ps
-docker compose -f deploy/compose.yaml --env-file deploy/.env \
-  logs -f --tail 200 api web
-docker compose -f deploy/compose.yaml --env-file deploy/.env down
-```
-
-Verify the HTTP boundary:
-
-```bash
-curl --fail http://127.0.0.1:9090/api/v1/health/live
-curl --fail http://127.0.0.1:9090/api/v1/health/ready
-```
-
-For the authenticated public-API verification drill:
-
-```bash
-uv sync
-set -a
-. deploy/.env
-set +a
-
-uv run python scripts/verify_deployment.py \
-  --url http://127.0.0.1:9090 \
-  --username "$MANYSELVES_ADMIN_USERNAME" \
-  --password-env MANYSELVES_ADMIN_PASSWORD
-```
-
-See [Running ManySelves](docs/RUNNING.md) for Electron, multi-account mode, backup, restore, deployment verification, and troubleshooting.
-
-## Current release capabilities
-
-### One runtime behind multiple interfaces
-
-- **FastAPI** exposes the runtime boundary, authentication, projects, files, settings, control operations, reporting APIs, and server-sent events.
-- **React** provides the browser workspace.
-- **Electron** packages the browser client as a desktop surface.
-- **PyQt6** remains available as the original local desktop interface.
-- All interfaces are intended to invoke the same runtime concepts rather than reimplement business behavior.
-
-### File-defined identities and Skills
-
-Packaged identities live under:
+Current definition locations include:
 
 ```text
 manyselves/templates/agents/
 manyselves/templates/reporting/agents/
-```
-
-They are Markdown files with YAML frontmatter describing role policy, model policy, tool grants, readable and writable carriers, turn limits, memory scope, background execution, and instructions.
-
-Reusable Skills live under:
-
-```text
 manyselves/templates/reporting/skills/
 ProductCapabilities/skills/
 ```
 
-These Markdown files are runtime inputs, not repository documentation, and therefore remain in the repository after the documentation cleanup.
+### Execution lifecycle
 
-### Durable task execution
+A typical task follows this path:
 
-The current implementation includes:
+1. Authenticate and resolve the account runtime.
+2. Resolve the project and capability definitions.
+3. Validate Identity, tool permissions, carriers, model configuration, and task inputs.
+4. Create or restore the workflow run and its authoritative state.
+5. Execute the selected Agent through `LoopManager` and `AgentLoop`.
+6. Persist messages, tool results, task transitions, decisions, and checkpoints.
+7. Evaluate workflow gates before advancing to the next step.
+8. Generate artifacts through controlled project paths.
+9. Resume from persisted state after interruption instead of reconstructing progress from chat history alone.
 
-- project workspaces and controlled file access;
-- task boards, run state, manifests, ledgers, review records, and decisions;
-- content-addressed artifacts and generated deliverables;
-- checkpoints, rollback, resumable execution, and post-delivery revision;
-- conversations and persisted event logs;
-- provider abstraction for OpenAI-compatible and Anthropic-compatible models;
-- explicit waiting, blocked, revision, rejected, failed, and terminal states.
+## State, permissions, and isolation
 
-### Workflow control and quality gates
+### Durable project state
 
-The bundled reporting runtime demonstrates both serial and bounded-parallel work:
+A project normally uses the following boundary:
 
-- one user-facing Main agent delegates bounded tasks;
-- specialist identities work against explicit inputs and output carriers;
-- evidence readiness and missing-input decisions are persisted;
-- module review, revision, recheck, cross-module review, final validation, and delivery checks are gated;
-- interrupted runs can be inspected and resumed rather than silently restarted;
-- final artifacts retain provenance and version information.
+```text
+project/
+├── Inputs/       # Task inputs and uploaded source material
+├── Knowledge/    # Reusable references
+├── Templates/    # Optional delivery templates
+├── Work/         # Runs, state, ledgers, reviews, decisions and checkpoints
+└── Outputs/      # Generated artifacts and deliverables
+```
+
+`Work/` is authoritative task state. It is not temporary documentation and must be retained for resume, audit, rollback, and task migration.
 
 ### Account isolation
 
-A FastAPI process can run in single-account or multi-account mode. In multi-account mode, the authenticated account selects an isolated runtime graph, provider configuration, event broker, control lease, project root, and durable write root.
+Single-account and multi-account modes share one HTTP service contract. In multi-account mode, the authenticated account selects an independent runtime graph and write root:
 
-## Current architecture
-
-```mermaid
-flowchart TB
-    subgraph Interfaces["Interfaces"]
-        React["React browser"]
-        Electron["Electron desktop"]
-        PyQt["PyQt desktop"]
-        API["FastAPI boundary"]
-    end
-
-    subgraph Runtime["Current runtime"]
-        Host["RuntimeHost lifecycle"]
-        Loops["LoopManager + AgentLoop"]
-        Bus["Message bus + SSE events"]
-        Tools["Tool registry + artifact gateway"]
-        Providers["Provider abstraction"]
-        Workflow["Bundled workflow services"]
-    end
-
-    subgraph Definitions["Versioned runtime inputs"]
-        Identity["Identity Markdown + YAML"]
-        Skills["Skill Markdown"]
-        Config["YAML + environment configuration"]
-        Templates["Schemas and delivery templates"]
-    end
-
-    subgraph Durable["Durable workspace and state"]
-        Inputs["Inputs + Knowledge"]
-        Work["Runs + tasks + reviews + checkpoints"]
-        Outputs["Outputs + artifacts"]
-        Events["Events + conversations"]
-    end
-
-    React --> API
-    Electron --> API
-    API --> Host
-    PyQt --> Host
-
-    Host --> Loops
-    Loops <--> Bus
-    Loops --> Tools
-    Loops --> Providers
-    Loops --> Workflow
-
-    Identity --> Loops
-    Skills --> Workflow
-    Config --> Host
-    Templates --> Workflow
-
-    Tools <--> Durable
-    Workflow <--> Durable
-    Bus --> Events
+```text
+<data-root>/accounts/<account-id>/
 ```
 
-`manyselves/application/runtime_host.py` owns startup, shutdown, workspace switching, message-bus lifecycle, and loop-manager replacement. The FastAPI account layer selects or creates the appropriate runtime graph, while project files and run records provide the durable task boundary.
+Each account owns its runtime host, provider configuration, project registry, event broker, control lease, workflow state, and API keys. A multi-account server uses one process worker so that account runtimes are routed explicitly inside the service.
 
-## Final architecture goal: domain-stateless kernel
+### Permission model
 
-The final goal is to make the kernel stable and capability-neutral while moving identity, interaction, orchestration, state schemas, gates, and domain behavior into versioned capability packages.
+Permission enforcement combines:
 
-“Stateless kernel” means **domain-stateless and reconstructible**, not “a process with no live objects.” A running worker will still own provider clients, queues, leases, tasks, and streams. The intended property is that no business identity or irreplaceable workflow truth exists only inside those objects: the worker can be reconstructed from runtime configuration, capability definitions, and persisted run state.
+- Identity-level tool grants and denials;
+- named readable and writable carriers;
+- account and project root isolation;
+- API authentication and account routing;
+- mutation control leases;
+- revision and gate checks before workflow advancement;
+- server-managed secrets that are not returned to the browser.
 
-The target principles are:
+The target is to move file-scope policies, gate policies, and workflow permissions into one validated capability manifest while keeping enforcement in the kernel.
 
-1. **Stable kernel** — model access, tools, messaging, lifecycle, workspace isolation, checkpoints, artifacts, errors, and recovery remain runtime responsibilities.
-2. **Capability outside the kernel** — identity, Skills, interactions, workflow topology, gates, policies, schemas, and templates become versioned inputs.
-3. **Durable authoritative state** — progress survives process replacement and remains inspectable, replayable, auditable, and migratable.
-4. **Workflow as data** — steps, dependencies, transitions, retries, decisions, rejection paths, compensation, and terminal rules are declared.
-5. **Portable tasks** — a capability package plus compatible run state can move to another workspace or compatible ManySelves runtime.
+## Implemented boundary and design direction
 
-### Current production release versus the final goal
-
-| Concern | Current production release | Final architecture goal |
+| Concern | Current mechanism | Design direction |
 | --- | --- | --- |
-| Runtime boundary | `RuntimeHost`, providers, bus, tools, workspaces, checkpoints, artifacts, and API adapters are separated. | The kernel contains no capability-specific route, prompt, carrier name, or workflow assumption. |
-| Live state | `TenantRuntime`, loops, brokers, providers, leases, and task boards exist in memory while authoritative records are also persisted. | Live workers are disposable executors fully reconstructed from definitions and persisted state. |
-| Identity and Skills | Agent identities use Markdown/YAML frontmatter; bundled Skills use Markdown. | One capability manifest versions identities, Skills, interactions, grants, schemas, and compatibility requirements. |
-| Orchestration | The deployed reporting flow supports resume, revision, review, delivery, gates, and bounded parallelism; much of the graph is Python. | Serial and parallel topology, transitions, retries, gates, and compensation load from declarative workflow files. |
-| Capability loading | The runtime loads packaged identities and known reporting definitions. | Any validated compatible capability bundle can be installed and instantiated without capability-specific kernel edits. |
-| State and migration | Projects, events, conversations, checkpoints, run records, and artifacts provide substantial recovery. | A unified typed state/event contract supports replay, migration, compatibility checks, and worker replacement. |
-| Task portability | File definitions and project data can be copied, but some domain Python must move with the repository. | Capability definitions and run state are sufficient to continue the task on a compatible runtime. |
+| Identity | Markdown plus validated YAML frontmatter | Versioned Identity contracts referenced by one capability manifest |
+| Skills | Markdown loaded by known capabilities | Explicit Skill dependencies, versions, scopes, and compatibility metadata |
+| Orchestration | Durable workflow state with Python-defined transitions and gates | Declarative serial/parallel steps, retries, decisions, rejection paths, and terminal rules |
+| State | Project records, conversations, events, checkpoints, decisions, reviews, and artifacts | Unified typed State/Event contract for replay and migration |
+| Capability loading | Packaged identities, Skills, templates, and known workflow services | Installable, validated capability bundles without kernel edits |
+| Runtime workers | Live `TenantRuntime`, loops, providers, queues, brokers, and leases | Disposable workers reconstructed from definitions and authoritative state |
+| Domain coupling | Some reporting carriers, routes, and services remain in Python | Domain vocabulary and behavior registered through stable extension contracts |
 
-### Target capability package
+“Stateless kernel” does not mean that a running process has no memory. It means live objects are replaceable and do not contain the only copy of business identity or workflow truth.
 
-The following is a roadmap contract example, not a claim that every field is accepted by the current loader:
+## Target capability bundle
+
+The following layout describes the intended portable capability contract. It is an architectural target; not every field is accepted by the current loader yet.
 
 ```text
 capabilities/example/
@@ -322,7 +234,7 @@ capabilities/example/
     └── deliverable.docx
 ```
 
-A future workflow definition could look like this:
+Example workflow shape:
 
 ```yaml
 apiVersion: manyselves/v1
@@ -332,7 +244,6 @@ metadata:
   version: 1.0.0
 
 entrypoint: main
-
 identities:
   main: identities/main.md
   executor: identities/executor.md
@@ -362,69 +273,173 @@ workflow:
 
 The portability rule is: **definitions describe capability, durable state describes progress, and the kernel interprets stable contracts.**
 
-## Bundled reference capability
+## Scenario demo: power-distribution safety and reporting
 
-The most complete current capability is the power-distribution reporting workflow. It coordinates evidence intake, specialist analysis, review, revision, final assembly, and DOCX delivery while preserving run state, evidence decisions, and output provenance.
+The power-distribution material in this repository is a **runtime scenario demo**, not the boundary of the kernel. It is used to exercise the full execution path with a domain that requires evidence handling, specialist roles, structured review, revision gates, and document delivery.
 
-A normal project workspace contains:
+The demo covers:
 
-```text
-project/
-├── Inputs/       # Task facts and uploaded source material
-├── Knowledge/    # Reusable references
-├── Templates/    # Optional delivery templates
-├── Work/         # Runs, state, ledgers, reviews, decisions and checkpoints
-└── Outputs/      # Modules, reports and final artifacts
-```
+- source-file intake and evidence indexing;
+- task routing to specialist identities;
+- missing-input decisions and persisted workflow state;
+- module generation, responsibility review, revision, recheck, and cross-review;
+- final composition and DOCX artifact generation;
+- provenance for evidence, Skills, templates, reviews, and report versions.
 
-This capability is deployed functionality and also serves as the reference implementation used to harden the more general runtime contracts.
+Domain-specific identities, Skills, carriers, and workflow services should progressively move behind the capability-bundle contract so that another scenario can replace this demo without changing the runtime kernel.
 
 ## Repository layout
 
 ```text
 manyselves/
 ├── application/        # RuntimeHost and application services
-├── core/               # Loops, providers, tools, state and bundled workflows
-├── webapi/             # FastAPI, auth, events and account runtimes
-├── gui/                # PyQt client
-├── interfaces/         # Shared runtime-facing types
-└── templates/          # Runtime-loaded Identity, Skill and delivery files
+├── core/               # Loops, providers, tools, state and workflow services
+├── webapi/             # FastAPI, authentication, account routing and SSE
+├── interfaces/         # Shared runtime-facing contracts
+└── templates/          # Runtime-loaded Identity, Skill and template files
 
-frontend/               # React client
-desktop/                # Electron client
+frontend/               # React workspace
+desktop/                # Electron shell
 frontend-contract/      # Generated OpenAPI contract
-deploy/                 # Compose and deployment configuration
+deploy/                 # Compose, images, account examples and backup scripts
 docs/                   # Configuration and running instructions
 ```
 
-## Configuration and operations
+## Local run
 
-- [Configuration](docs/CONFIGURATION.md) covers providers, environment variables, account manifests, state locations, and the current Identity frontmatter schema.
-- [Running ManySelves](docs/RUNNING.md) covers all startup modes, health checks, verification, backup, restore, and troubleshooting.
-- `manyselves.config.example.yaml` is the local runtime configuration template.
-- `.env.example` is the local Web environment template.
-- `deploy/env.example` is the Compose environment template.
-- `deploy/accounts.example.yaml` is the multi-account manifest template.
+### Requirements
 
-Do not commit real API keys, passwords, active `.env` files, or account manifests.
+- Python 3.12+
+- [`uv`](https://docs.astral.sh/uv/)
+- Node.js 22+ and npm
+- one supported model-provider API key
 
-## Development
+Clone the default branch:
+
+```bash
+git clone https://github.com/csxq0605/manyselves.git
+cd manyselves
+```
+
+### Linux/macOS
+
+```bash
+cp .env.example .env
+# Edit .env: replace the administrator password and configure a provider key.
+
+chmod +x start.sh
+./start.sh
+```
+
+### Windows
+
+```bat
+copy .env.example .env
+rem Edit .env before starting.
+
+npm --prefix frontend install
+npm --prefix frontend run build
+scripts\start.bat
+```
+
+Open:
+
+```text
+Application:  http://127.0.0.1:9090
+OpenAPI UI:   http://127.0.0.1:9090/docs
+Live health:  http://127.0.0.1:9090/api/v1/health/live
+Ready health: http://127.0.0.1:9090/api/v1/health/ready
+```
+
+API-focused development:
 
 ```bash
 uv sync
-QT_QPA_PLATFORM=offscreen uv run pytest -q
+npm --prefix frontend install
+npm --prefix frontend run build
+
+uv run python run_web.py \
+  --reload \
+  --host 127.0.0.1 \
+  --port 9090 \
+  --data-dir .manyselves
+```
+
+## Docker Compose deployment
+
+```bash
+cp deploy/env.example deploy/.env
+chmod 600 deploy/.env
+```
+
+Set at least the administrator password, persistent data directory, and exact browser origin in `deploy/.env`:
+
+```dotenv
+MANYSELVES_ADMIN_PASSWORD=replace-with-a-long-random-password
+MANYSELVES_DATA_DIR=/srv/manyselves/data
+MANYSELVES_ALLOWED_ORIGINS=["https://manyselves.example.com"]
+```
+
+Validate and start:
+
+```bash
+docker compose -f deploy/compose.yaml --env-file deploy/.env config
+
+docker compose -f deploy/compose.yaml --env-file deploy/.env \
+  up -d --build --wait
+```
+
+Inspect or stop:
+
+```bash
+docker compose -f deploy/compose.yaml --env-file deploy/.env ps
+
+docker compose -f deploy/compose.yaml --env-file deploy/.env \
+  logs -f --tail 200 api web
+
+docker compose -f deploy/compose.yaml --env-file deploy/.env down
+```
+
+Verify:
+
+```bash
+curl --fail http://127.0.0.1:9090/api/v1/health/live
+curl --fail http://127.0.0.1:9090/api/v1/health/ready
+
+set -a
+. deploy/.env
+set +a
+
+uv run python scripts/verify_deployment.py \
+  --url http://127.0.0.1:9090 \
+  --username "$MANYSELVES_ADMIN_USERNAME" \
+  --password-env MANYSELVES_ADMIN_PASSWORD
+```
+
+See [Running ManySelves](docs/RUNNING.md) for Electron, multi-account mode, environment changes, backup, restore, and troubleshooting.
+
+## Configuration
+
+- [Configuration](docs/CONFIGURATION.md) — providers, environment variables, account manifests, state paths, Identity frontmatter, and secrets.
+- [Running ManySelves](docs/RUNNING.md) — local startup, Electron, Compose, verification, backup, restore, and operations.
+- `manyselves.config.example.yaml` — runtime/provider configuration template.
+- `.env.example` — local FastAPI environment template.
+- `deploy/env.example` — Compose environment template.
+- `deploy/accounts.example.yaml` — multi-account manifest template.
+
+Do not commit real API keys, passwords, active `.env` files, runtime configuration containing secrets, or account manifests.
+
+## Development checks
+
+```bash
+uv sync
+uv run pytest -q
 uv run ruff check manyselves tests scripts
 npm --prefix frontend run verify
 npm --prefix desktop run verify
 ```
 
-Changes should preserve the distinction between runtime contracts, capability definitions, persisted task state, and interface-specific behavior.
-
-## Release status
-
-The current ManySelves version is deployed and treated as **Production/Stable**. The PyQt, React + FastAPI, Electron, workspace, reporting, recovery, and account-isolation features documented above describe the current implementation.
-
-The generic capability-package contract and the domain-stateless kernel are continuing architecture goals. They are presented as a roadmap for extending the live system, not as missing prerequisites for calling the current release stable.
+Changes should preserve the separation between kernel contracts, capability definitions, authoritative task state, and interface adapters.
 
 ## License
 

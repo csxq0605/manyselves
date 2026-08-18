@@ -1,6 +1,6 @@
 # Running ManySelves
 
-This document contains the operational commands for the current deployed and stable release. For product positioning and the future domain-stateless kernel roadmap, see the repository [README](../README.md).
+This document is the operational reference for the React/FastAPI runtime, Electron shell, multi-account service, and container deployment. The repository README describes the kernel, capability definitions, durable state, and scenario-demo boundaries.
 
 ## Fastest paths
 
@@ -8,39 +8,46 @@ This document contains the operational commands for the current deployed and sta
 | --- | --- |
 | Local React + FastAPI on Linux/macOS | `cp .env.example .env`, edit it, then `./start.sh` |
 | Local React + FastAPI on Windows | build `frontend/`, then run `scripts\start.bat` |
-| Local PyQt desktop | `uv sync && uv run manyselves` |
-| Server deployment | `docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build --wait` |
-| Health check | `curl --fail http://127.0.0.1:9090/api/v1/health/ready` |
-| Stop Compose deployment | `docker compose -f deploy/compose.yaml --env-file deploy/.env down` |
+| API-focused process | `uv run python run_web.py --reload --host 127.0.0.1 --port 9090` |
+| Compose deployment | `docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build --wait` |
+| Ready check | `curl --fail http://127.0.0.1:9090/api/v1/health/ready` |
+| Stop Compose | `docker compose -f deploy/compose.yaml --env-file deploy/.env down` |
 
 ## Requirements
 
 | Mode | Requirements |
 | --- | --- |
 | React + FastAPI | Python 3.12+, Node.js 22+, npm, model-provider key |
-| PyQt desktop | Python 3.12+, `uv`, model-provider key |
-| Electron | React build plus `desktop/` dependencies |
+| Electron | built React assets plus `desktop/` dependencies |
 | Docker Compose | Docker Compose v2 and a persistent host directory |
-| Multi-account | One FastAPI process, an account manifest, and one password environment variable per account |
-| Deployment verifier | Python 3.12+, `uv`, and access to the running HTTP service |
+| Multi-account | one FastAPI process, account manifest, one password variable per account |
+| Deployment verifier | Python 3.12+, `uv`, and HTTP access to the service |
 
-Clone the maintained branch:
+Clone the default branch:
 
 ```bash
-git clone --branch feature/react-fastapi-manyselves \
-  https://github.com/csxq0605/manyselves.git
+git clone https://github.com/csxq0605/manyselves.git
 cd manyselves
+```
+
+Update an existing checkout:
+
+```bash
+git switch main
+git pull --ff-only origin main
 ```
 
 ## Local React + FastAPI
 
 ### Linux/macOS complete startup
 
+Create the local environment file:
+
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` before starting. At minimum, replace the example administrator password and configure a provider key:
+Edit `.env`. At minimum, replace the administrator password and configure one provider in the file or later through the Web settings page:
 
 ```dotenv
 MANYSELVES_ADMIN_USERNAME=admin
@@ -49,10 +56,11 @@ MANYSELVES_ALLOWED_ORIGINS='["http://127.0.0.1:9090"]'
 MANYSELVES_HTTP_BIND=127.0.0.1
 MANYSELVES_HTTP_PORT=9090
 
-# Configure one provider here or later in the Web settings page.
 MIMO_API_KEY=
 # OPENAI_API_KEY=
 # ANTHROPIC_API_KEY=
+# DEEPSEEK_API_KEY=
+# OPENROUTER_API_KEY=
 ```
 
 Start:
@@ -62,15 +70,17 @@ chmod +x start.sh
 ./start.sh
 ```
 
-The root `start.sh` delegates to `scripts/start.sh`. The script builds `frontend/` when needed, creates `.venv`, installs the Python package, loads `.env`, and starts `run_web.py --reload`.
+The root `start.sh` delegates to `scripts/start.sh`. The script builds the React assets when required, creates `.venv`, installs the Python package, loads `.env`, and starts the FastAPI process.
 
 ### Windows complete startup
+
+Create and edit `.env`:
 
 ```bat
 copy .env.example .env
 ```
 
-Edit `.env`. The Windows batch loader should receive the origins value without outer single quotes:
+The Windows batch loader should receive the origins value without outer single quotes:
 
 ```dotenv
 MANYSELVES_ALLOWED_ORIGINS=["http://127.0.0.1:9090"]
@@ -84,11 +94,11 @@ npm --prefix frontend run build
 scripts\start.bat
 ```
 
-The Windows entry point is `scripts\start.bat`; there is no root-level `start.bat`.
+The Windows entry point is `scripts\start.bat`.
 
 ### Addresses
 
-Repository startup examples use port `9090`:
+Repository examples use port `9090`:
 
 ```text
 Application:  http://127.0.0.1:9090
@@ -111,30 +121,25 @@ uv run python run_web.py \
   --data-dir .manyselves
 ```
 
-`run_web.py` defaults to port `9000`, so set `--port 9090` explicitly when the browser URL, origin configuration, or verification scripts expect port `9090`.
+`run_web.py` defaults to port `9000`; set `--port 9090` explicitly when the browser origin or verification commands expect the repository example URL.
 
 Useful arguments:
 
 ```text
---host  --port  --workers  --reload
---data-dir  --log-level  --accounts-file
+--host
+--port
+--workers
+--reload
+--data-dir
+--log-level
+--accounts-file
 ```
-
-## Local PyQt desktop
-
-```bash
-uv sync
-cp manyselves.config.example.yaml manyselves.config.yaml
-uv run manyselves
-```
-
-The application can open without a provider key, but model calls require an enabled provider. Configure the provider in the application or through a supported environment variable.
 
 ## Electron
 
-The Electron client packages the built React application and connects to the ManySelves FastAPI service.
+Electron packages the built React workspace and connects it to the ManySelves FastAPI boundary.
 
-Build the React assets and Electron main process:
+Build the Web assets and Electron main process:
 
 ```bash
 npm --prefix frontend install
@@ -153,7 +158,7 @@ cd desktop
 npm run package
 ```
 
-The unpacked output is written below `desktop/release/`.
+Output is written below `desktop/release/`.
 
 ## Multi-account mode
 
@@ -164,7 +169,7 @@ cp deploy/accounts.example.yaml deploy/accounts.yaml
 chmod 600 deploy/accounts.yaml
 ```
 
-Set the password variables named by `passwordEnv` in the manifest:
+Set every password variable referenced by `passwordEnv` in the manifest:
 
 ```bash
 export MANYSELVES_ACCOUNT_A_PASSWORD='replace-with-a-long-random-password'
@@ -184,17 +189,17 @@ uv run python run_web.py \
   --data-dir .manyselves
 ```
 
-Multi-account mode requires `--workers 1`. Each account runtime is created lazily and writes below:
+Multi-account mode requires `--workers 1`. Each authenticated account is routed to an isolated runtime graph and durable root:
 
 ```text
 .manyselves/accounts/<account-id>/
 ```
 
-Provider keys can be configured for each account after login. Do not place real account manifests or passwords in source control.
+Provider keys can be configured independently after login. Do not place real account manifests, passwords, or API keys in source control.
 
-## Specialized split-process headless reporting
+## Specialized split-process reporting worker
 
-This entry point separates a reporting API process from a worker process. It is not required for normal PyQt, React + FastAPI, Electron, or Compose startup.
+The `manyselves-headless` entry point separates a reporting API process from a worker process. It is a specialized execution mode for the bundled scenario demo, not the normal Web or Compose path.
 
 ```bash
 export MANYSELVES_PROJECT_STORAGE_ROOT=/srv/manyselves/projects
@@ -209,7 +214,7 @@ export MANYSELVES_PROVIDER_API_KEY='replace-me'
 uv run manyselves-headless worker
 ```
 
-Provider type, base URL, model, secret variable name, and worker ID can be selected with:
+Worker/provider selection uses:
 
 ```text
 MANYSELVES_PROVIDER_TYPE
@@ -228,7 +233,7 @@ cp deploy/env.example deploy/.env
 chmod 600 deploy/.env
 ```
 
-Edit `deploy/.env`. The deployment requires an explicit administrator password and persistent host data directory:
+Edit `deploy/.env`. The deployment requires an explicit administrator password, a persistent host data directory, and an exact browser origin:
 
 ```dotenv
 MANYSELVES_ADMIN_USERNAME=admin
@@ -240,7 +245,7 @@ MANYSELVES_HTTP_PORT=9090
 MANYSELVES_ALLOWED_ORIGINS=["http://127.0.0.1:9090"]
 ```
 
-For a public hostname behind a reverse proxy, set the exact HTTPS origin. For direct network exposure, set an appropriate bind address and protect the service with a firewall and HTTPS.
+For a public hostname behind a reverse proxy, use the exact HTTPS origin. For direct network exposure, set an appropriate bind address and protect the service with a firewall and HTTPS.
 
 Create the persistent host directory before starting:
 
@@ -248,7 +253,7 @@ Create the persistent host directory before starting:
 sudo install -d -m 0750 /srv/manyselves/data
 ```
 
-The container must be able to write this directory. On SELinux-enabled hosts, the Compose volume already applies the `:Z` label.
+The container process must be able to write this directory. The Compose volume uses `:Z` for SELinux-enabled hosts.
 
 ### Validate and start
 
@@ -272,7 +277,7 @@ docker compose -f deploy/compose.yaml --env-file deploy/.env restart
 docker compose -f deploy/compose.yaml --env-file deploy/.env down
 ```
 
-After changing `deploy/.env`, recreate the affected container so it receives the new process environment:
+After changing `deploy/.env`, recreate the affected container so the process receives the new environment:
 
 ```bash
 docker compose -f deploy/compose.yaml --env-file deploy/.env \
@@ -290,7 +295,7 @@ curl --fail http://127.0.0.1:9090/api/v1/health/ready
 
 ### Authenticated public-API drill
 
-From a source checkout with `uv`:
+From a source checkout:
 
 ```bash
 uv sync
@@ -305,17 +310,7 @@ uv run python scripts/verify_deployment.py \
   --password-env MANYSELVES_ADMIN_PASSWORD
 ```
 
-The verifier checks:
-
-- administrator login and cookie reuse;
-- live and ready health endpoints;
-- runtime and event-stream availability;
-- project and conversation APIs;
-- a reversible file create/read/download/delete round trip;
-- SSE response type;
-- control-lease cleanup and logout.
-
-The temporary verifier file is removed during cleanup.
+The verifier checks authentication, live/ready health, runtime availability, projects, conversations, a reversible file round trip, artifact download, the SSE response type, lease cleanup, and logout.
 
 ## Backup and restore
 
@@ -330,7 +325,7 @@ export MANYSELVES_API_URL=http://127.0.0.1:9090
 deploy/backup/backup.sh /srv/manyselves/backups
 ```
 
-Keep the backup directory outside the active `MANYSELVES_DATA_DIR`.
+Keep backup files outside the active `MANYSELVES_DATA_DIR`.
 
 ### Restore
 
@@ -348,13 +343,13 @@ docker compose -f deploy/compose.yaml --env-file deploy/.env \
   up -d --wait
 ```
 
-Run the deployment verifier after restore or rollback.
+Run the health checks and public-API verifier after restore or rollback.
 
 ## Development checks
 
 ```bash
 uv sync
-QT_QPA_PLATFORM=offscreen uv run pytest -q
+uv run pytest -q
 uv run ruff check manyselves tests scripts
 npm --prefix frontend run verify
 npm --prefix desktop run verify
@@ -362,19 +357,19 @@ npm --prefix desktop run verify
 
 ## Troubleshooting
 
-- **No provider available:** the service can start and the workspace can open, but Agent calls require an enabled provider with a valid key.
-- **Port conflict:** run `lsof -i :9090`, stop the conflicting process, or select another port and update the allowed origin.
+- **No provider available:** the workspace can load, but Agent calls require an enabled provider with a valid key.
+- **Port conflict:** run `lsof -i :9090`, stop the conflicting process, or change the port and allowed origin together.
 - **Stale or missing frontend:** remove `frontend/dist`, then run `npm --prefix frontend install` and `npm --prefix frontend run build`.
-- **Windows Web start shows no UI:** build `frontend/` before running `scripts\start.bat`.
+- **Windows starts without the Web UI:** build `frontend/` before running `scripts\start.bat`.
 - **Rejected account manifest:** require `version: 1`, unique IDs and usernames, valid `passwordEnv` values, mode `600` on non-Windows, and `--workers 1`.
-- **Environment change not visible:** restart the local process or recreate the container. A browser refresh cannot replace server environment variables.
+- **Environment change not visible:** restart the local process or recreate the container; a browser refresh cannot replace server environment variables.
 - **Data permission error:** make the data directory writable by the service account and keep one authoritative write root per account or deployment.
-- **Health is live but not ready:** inspect API logs and verify the runtime data directory, account manifest, and provider/configuration state.
+- **Live succeeds but ready fails:** inspect API logs and verify the data directory, account manifest, and runtime/provider configuration.
 
 ## Security
 
-- Replace every example password before shared, server, or networked use.
-- Keep API keys, active `.env` files, and account manifests out of source control.
-- Bind to loopback by default; use HTTPS and an exact allowed origin on networked deployments.
-- Protect the data root and backup directory with operating-system permissions.
-- Do not attach multiple API replicas or unrelated processes to the same authoritative runtime write root.
+- Replace every example password before shared or networked use.
+- Keep API keys, active `.env` files, runtime secrets, and account manifests out of source control.
+- Bind to loopback by default; use HTTPS and exact allowed origins for networked deployments.
+- Restrict the data root and backup directory with operating-system permissions.
+- Do not attach unrelated processes or multiple API replicas to the same authoritative runtime write root.
