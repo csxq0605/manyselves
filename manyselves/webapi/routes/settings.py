@@ -20,8 +20,8 @@ from ..schemas.settings import (
     PresetListResponse,
     PresetSyncResponse,
     ProviderConfigurationUpsert,
-    ProviderConnectionTestResponse,
     ProviderConnectionTestRequest,
+    ProviderConnectionTestResponse,
     ProviderPresetResponse,
     ProviderSettingsCreate,
     ProviderSettingsResponse,
@@ -31,12 +31,13 @@ from ..schemas.settings import (
     SettingsValidationResponse,
 )
 from ..security import require_authenticated_session, require_control_lease_header
+from ..tenant_runtime import request_runtime_state
 
 router = APIRouter(prefix="/settings", dependencies=[Depends(require_authenticated_session)])
 
 
 def _service(request: Request) -> SettingsService:
-    host = request.app.state.runtime_host
+    host = request_runtime_state(request).runtime_host
     return SettingsService(host)
 
 
@@ -120,9 +121,10 @@ def _replace_inactive_active_provider(config, removed_provider_id: str) -> None:
 
 @router.get("", response_model=SettingsResponse)
 async def get_settings(request: Request):
-    facade = request.app.state.runtime_facade
+    state = request_runtime_state(request)
+    facade = state.runtime_facade
     async with facade.read_transaction():
-        return _settings(request.app.state.runtime_host.config_manager)
+        return _settings(state.runtime_host.config_manager)
 
 
 @router.patch("", response_model=SettingsResponse)
@@ -131,9 +133,10 @@ async def update_defaults(
     request: Request,
     lease_token: str = Depends(require_control_lease_header),
 ):
-    manager = request.app.state.runtime_host.config_manager
+    state = request_runtime_state(request)
+    manager = state.runtime_host.config_manager
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+        async with state.runtime_facade.mutation_transaction(lease_token):
             def mutation(config) -> None:
                 selected = None
                 if body.active_provider_id is not None:
@@ -182,9 +185,10 @@ async def update_provider(
     request: Request,
     lease_token: str = Depends(require_control_lease_header),
 ):
-    manager = request.app.state.runtime_host.config_manager
+    state = request_runtime_state(request)
+    manager = state.runtime_host.config_manager
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+        async with state.runtime_facade.mutation_transaction(lease_token):
             def mutation(config) -> None:
                 provider = next(
                     (
@@ -233,9 +237,10 @@ async def create_provider(
     request: Request,
     lease_token: str = Depends(require_control_lease_header),
 ):
-    manager = request.app.state.runtime_host.config_manager
+    state = request_runtime_state(request)
+    manager = state.runtime_host.config_manager
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+        async with state.runtime_facade.mutation_transaction(lease_token):
             secret = body.api_key.get_secret_value() if body.api_key is not None else None
 
             def mutation(config) -> None:
@@ -273,9 +278,10 @@ async def upsert_provider_configuration(
     lease_token: str = Depends(require_control_lease_header),
 ) -> SettingsResponse:
     """Save one complete provider configuration and apply it live atomically."""
-    manager = request.app.state.runtime_host.config_manager
+    state = request_runtime_state(request)
+    manager = state.runtime_host.config_manager
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+        async with state.runtime_facade.mutation_transaction(lease_token):
             def mutation(config) -> None:
                 if not provider_config_id.strip():
                     raise ValueError("provider configuration ID cannot be empty")
@@ -352,7 +358,7 @@ async def test_unsaved_provider_configuration(
             default_model=body.default_model,
             extra_headers=body.extra_headers,
         )
-        async with request.app.state.runtime_facade.read_transaction():
+        async with request_runtime_state(request).runtime_facade.read_transaction():
             result = await _service(request).test_provider_configuration(provider)
         return ProviderConnectionTestResponse(
             ok=result.ok,
@@ -373,7 +379,7 @@ async def test_provider_connection(
     request: Request,
 ) -> ProviderConnectionTestResponse:
     try:
-        async with request.app.state.runtime_facade.read_transaction():
+        async with request_runtime_state(request).runtime_facade.read_transaction():
             result = await _service(request).test_provider_connection(provider_id)
         return ProviderConnectionTestResponse(
             ok=result.ok,
@@ -391,9 +397,10 @@ async def remove_provider(
     request: Request,
     lease_token: str = Depends(require_control_lease_header),
 ):
-    manager = request.app.state.runtime_host.config_manager
+    state = request_runtime_state(request)
+    manager = state.runtime_host.config_manager
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+        async with state.runtime_facade.mutation_transaction(lease_token):
             def mutation(config) -> None:
                 existing = list(config.providers.configurations)
                 if not any(item.id == provider_id for item in existing):
@@ -437,7 +444,7 @@ async def synchronize_provider_presets(
     lease_token: str = Depends(require_control_lease_header),
 ) -> PresetSyncResponse:
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+        async with request_runtime_state(request).runtime_facade.mutation_transaction(lease_token):
             downloaded = await to_thread_non_abandoning(sync_presets)
     except (
         ControlLeaseRequired,
@@ -457,7 +464,7 @@ async def synchronize_provider_presets(
 
 @router.post("/validate", response_model=SettingsValidationResponse)
 async def validate_settings(request: Request) -> SettingsValidationResponse:
-    facade = request.app.state.runtime_facade
+    facade = request_runtime_state(request).runtime_facade
     async with facade.read_transaction():
         valid, available, errors = _service(request).validate()
         return SettingsValidationResponse(

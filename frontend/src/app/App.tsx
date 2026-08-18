@@ -16,6 +16,7 @@ interface EventStreamController {
 }
 
 export interface AppProps {
+  readonly accountUsername?: string;
   readonly createEventStream?: (options: EventStreamOptions) => EventStreamController;
   readonly eventSource?: Pick<EventStreamOptions, "baseUrl" | "fetch">;
   readonly gateway: ApiGateway;
@@ -68,6 +69,7 @@ function eventQueryKey(event: RuntimeEvent): readonly string[] | null {
 }
 
 export function App({
+  accountUsername,
   createEventStream = (options) => new EventStream(options),
   eventSource,
   gateway,
@@ -203,5 +205,5 @@ export function App({
     );
   }
 
-  return <AppRoutes gateway={gateway} {...(onLogout ? { onLogout } : {})} {...(platform ? { platform } : {})} {...(settingsStorage ? { settingsStorage } : {})} />;
+  return <AppRoutes gateway={gateway} {...(accountUsername ? { accountUsername } : {})} {...(onLogout ? { onLogout } : {})} {...(platform ? { platform } : {})} {...(settingsStorage ? { settingsStorage } : {})} />;
 }

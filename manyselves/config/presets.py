@@ -8,8 +8,8 @@ are not available (offline or not yet synced).
 from __future__ import annotations
 
 import re
-from hashlib import sha1
 from dataclasses import dataclass
+from hashlib import sha1
 from pathlib import Path
 
 from loguru import logger
@@ -204,7 +204,19 @@ def _builtin_presets() -> list[ProviderPreset]:
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # 国内主流服务商（OpenAI 兼容协议）
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # Xiaomi MiMo 预设从 cc-switch 加载，只保留 Token Plan 版本
+        ProviderPreset(
+            name="Xiaomi MiMo API (China)",
+            provider="openai",
+            category="cn_official",
+            id="openai-xiaomi-mimo-api-china",
+            base_url="https://api.xiaomimimo.com/v1",
+            default_model="mimo-v2.5-pro",
+            website_url="https://mimo.mi.com",
+            description="Xiaomi MiMo ordinary pay-as-you-go API",
+            icon_color="#FF6900",
+        ),
+        # Retained for coding-tool deployments; custom backends should use the
+        # ordinary OpenAI-compatible API preset above.
         ProviderPreset(
             name="Xiaomi MiMo Token Plan (China)",
             provider="anthropic",
@@ -213,7 +225,7 @@ def _builtin_presets() -> list[ProviderPreset]:
             base_url="https://token-plan-cn.xiaomimimo.com/anthropic",
             default_model="mimo-v2.5-pro",
             website_url="https://xiaomimimo.com",
-            description="Xiaomi MiMo Token Plan",
+            description="Xiaomi MiMo Token Plan (coding tools only)",
             icon_color="#FF6900",
         ),
         ProviderPreset(

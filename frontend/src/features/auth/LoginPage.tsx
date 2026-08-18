@@ -29,9 +29,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     <main className="login-page">
       <section aria-labelledby="login-title" className="login-card">
         <div className="login-mark" aria-hidden="true"><i /><i /><i /></div>
-        <p className="login-label">MANYSELVES / ADMIN</p>
+        <p className="login-label">MANYSELVES / ACCOUNT</p>
         <h1 id="login-title">登录 manyselves</h1>
-        <p className="login-summary">管理员访问</p>
+        <p className="login-summary">账户访问</p>
         <form onSubmit={(event) => void submit(event)}>
           <label htmlFor="login-username">用户名</label>
           <input

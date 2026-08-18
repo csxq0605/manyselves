@@ -22,6 +22,7 @@ from ..schemas.operations import (
     PythonRunRequest,
 )
 from ..security import require_authenticated_session, require_control_lease_header
+from ..tenant_runtime import request_runtime_state
 
 router = APIRouter(prefix="/operations", dependencies=[Depends(require_authenticated_session)])
 
@@ -80,8 +81,9 @@ async def run_python(
 ):
     try:
         command_id = command_id or uuid4()
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            operation = request.app.state.python_run_service.start(
+        state = request_runtime_state(request)
+        async with state.runtime_facade.mutation_transaction(lease_token):
+            operation = state.python_run_service.start(
                 command_id, body.path, body.arguments
             )
             return OperationAcceptedResponse(
@@ -94,7 +96,7 @@ async def run_python(
 @router.get("/{operation_id}", response_model=PythonOperationResponse)
 async def get_operation(operation_id: str, request: Request):
     try:
-        return _response(request.app.state.python_run_service.get(operation_id))
+        return _response(request_runtime_state(request).python_run_service.get(operation_id))
     except PythonOperationNotFoundError as error:
         raise _error(error) from error
 
@@ -106,7 +108,8 @@ async def interrupt_operation(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            return _response(await request.app.state.python_run_service.interrupt(operation_id))
+        state = request_runtime_state(request)
+        async with state.runtime_facade.mutation_transaction(lease_token):
+            return _response(await state.python_run_service.interrupt(operation_id))
     except Exception as error:
         raise _error(error) from error

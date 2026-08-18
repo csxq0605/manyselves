@@ -14,18 +14,26 @@ control_lease_token = APIKeyHeader(
 )
 
 
-def require_authenticated_session(request: Request) -> SessionPrincipal:
+async def require_authenticated_session(request: Request) -> SessionPrincipal:
     """Require a valid browser session for a business API request."""
     value = request.cookies.get(SESSION_COOKIE_NAME)
     signer = request.app.state.session_signer
     principal = None if signer is None else signer.verify(value or "")
-    if principal is None:
+    catalog = request.app.state.account_catalog
+    if (
+        principal is None
+        or catalog is None
+        or not catalog.matches_principal(principal.account_id, principal.username)
+    ):
         raise ApiError(
             status_code=status.HTTP_401_UNAUTHORIZED,
             code="AUTH_REQUIRED",
             message="An authenticated session is required",
             retryable=False,
         )
+    manager = request.app.state.tenant_runtime_manager
+    if manager is not None:
+        request.state.tenant_runtime = await manager.get_or_start(principal.account_id)
     return principal
 
 

@@ -26,6 +26,7 @@ from ..schemas.reporting import (
     ReportingStartRequest,
 )
 from ..security import require_authenticated_session, require_control_lease_header
+from ..tenant_runtime import request_runtime_state
 
 router = APIRouter(prefix="/reporting", dependencies=[Depends(require_authenticated_session)])
 
@@ -62,21 +63,23 @@ def _accepted(command_id: UUID, payload: dict) -> ReportingAcceptedResponse:
 
 @router.get("/runs", response_model=ReportingListResponse)
 async def list_runs(request: Request):
-    facade = request.app.state.runtime_facade
+    state = request_runtime_state(request)
+    facade = state.runtime_facade
     try:
         async with facade.read_transaction():
-            return ReportingListResponse(runs=request.app.state.reporting_facade.list_runs())
+            return ReportingListResponse(runs=state.reporting_facade.list_runs())
     except Exception as error:
         raise _error(error) from error
 
 
 @router.get("/runs/{run_id}", response_model=ReportingSnapshotResponse)
 async def get_run(run_id: str, request: Request):
-    facade = request.app.state.runtime_facade
+    state = request_runtime_state(request)
+    facade = state.runtime_facade
     try:
         async with facade.read_transaction():
             return ReportingSnapshotResponse.model_validate(
-                request.app.state.reporting_facade.snapshot(run_id)
+                state.reporting_facade.snapshot(run_id)
             )
     except Exception as error:
         raise _error(error) from error
@@ -90,8 +93,9 @@ async def start_run(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            return _accepted(command_id, request.app.state.reporting_facade.start(command_id, body.to_core()))
+        state = request_runtime_state(request)
+        async with state.runtime_facade.mutation_transaction(lease_token):
+            return _accepted(command_id, state.reporting_facade.start(command_id, body.to_core()))
     except Exception as error:
         raise _error(error) from error
 
@@ -105,8 +109,9 @@ async def resume_run(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            payload = request.app.state.reporting_facade.resume_run(
+        state = request_runtime_state(request)
+        async with state.runtime_facade.mutation_transaction(lease_token):
+            payload = state.reporting_facade.resume_run(
                 command_id,
                 run_id,
                 max_provider_attempts=body.max_provider_attempts,
@@ -127,8 +132,9 @@ async def resume_decision(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            payload = request.app.state.reporting_facade.resume_decision(
+        state = request_runtime_state(request)
+        async with state.runtime_facade.mutation_transaction(lease_token):
+            payload = state.reporting_facade.resume_decision(
                 command_id, decision_id, body.action, body.supplements
             )
             return _accepted(command_id, payload)
@@ -144,10 +150,11 @@ async def revise(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+        state = request_runtime_state(request)
+        async with state.runtime_facade.mutation_transaction(lease_token):
             return _accepted(
                 command_id,
-                request.app.state.reporting_facade.revise(command_id, body.to_core()),
+                state.reporting_facade.revise(command_id, body.to_core()),
             )
     except Exception as error:
         raise _error(error) from error
@@ -161,10 +168,11 @@ async def cancel_run(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+        state = request_runtime_state(request)
+        async with state.runtime_facade.mutation_transaction(lease_token):
             return _accepted(
                 command_id,
-                request.app.state.reporting_facade.cancel(command_id, run_id),
+                state.reporting_facade.cancel(command_id, run_id),
             )
     except Exception as error:
         raise _error(error) from error

@@ -19,6 +19,7 @@ from ..events.broker import (
 from ..events.models import EventEnvelope, EventLogEntry, EventLogResponse
 from ..events.sanitizer import EventPayloadSanitizer
 from ..security import require_authenticated_session
+from ..tenant_runtime import request_runtime_state
 
 router = APIRouter(prefix="/events", dependencies=[Depends(require_authenticated_session)])
 SSE_HEARTBEAT_SECONDS = 15.0
@@ -167,14 +168,15 @@ async def list_event_logs(
 ) -> EventLogResponse:
     """Return a bounded project event projection with pagination support."""
     # Try SQLite EventStore first (if available)
-    event_store = getattr(request.app.state, "event_store", None)
+    state = request_runtime_state(request)
+    event_store = getattr(state, "event_store", None)
     if event_store is not None:
         events, total = event_store.list(project_id, limit=limit, offset=offset)
         entries = [_event_log_entry(event) for event in events]
         return EventLogResponse(projectId=project_id, entries=entries, total=total)
 
     # Fallback to in-memory replay buffer
-    broker = getattr(request.app.state, "event_broker", None)
+    broker = getattr(state, "event_broker", None)
     if broker is None:
         raise ApiError(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -224,7 +226,7 @@ async def search_event_logs(
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[EventLogEntry]:
     """Search event logs by message content."""
-    event_store = getattr(request.app.state, "event_store", None)
+    event_store = getattr(request_runtime_state(request), "event_store", None)
     if event_store is None:
         raise ApiError(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -243,7 +245,7 @@ async def get_event_log_stats(
     project_id: str = Query(alias="projectId", min_length=1, max_length=128),
 ) -> EventLogStats:
     """Get event log statistics for a project."""
-    event_store = getattr(request.app.state, "event_store", None)
+    event_store = getattr(request_runtime_state(request), "event_store", None)
     if event_store is None:
         raise ApiError(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -283,7 +285,7 @@ async def stream_events(
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     """Stream runtime notifications with replay or an explicit bootstrap requirement."""
-    broker = getattr(request.app.state, "event_broker", None)
+    broker = getattr(request_runtime_state(request), "event_broker", None)
     if broker is None:
         raise ApiError(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

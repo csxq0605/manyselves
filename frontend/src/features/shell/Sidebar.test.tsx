@@ -29,7 +29,7 @@ function renderSidebar(overrides: Partial<SidebarProps> = {}) {
 
 describe("Sidebar", () => {
   it("renders only the three top-level areas and every fixed project section", () => {
-    renderSidebar();
+    renderSidebar({ accountUsername: "alice" });
 
     expect(screen.getByRole("link", { name: "新对话" })).toHaveAttribute("href", "/projects/energy-team/conversations/new");
     expect(screen.getByRole("link", { name: "全局知识库" })).toHaveAttribute("href", "/knowledge");
@@ -40,8 +40,8 @@ describe("Sidebar", () => {
     }
     expect(screen.getByRole("button", { name: "编辑 Energy team" })).toBeVisible();
     expect(screen.getByRole("button", { name: "更多 Energy team" })).toBeVisible();
-    expect(screen.getByText("admin")).toBeVisible();
-    expect(screen.getByText("系统管理员")).toBeVisible();
+    expect(screen.getByText("alice")).toBeVisible();
+    expect(screen.getByText("当前账户")).toBeVisible();
     expect(screen.getByRole("button", { name: "账户与设置" })).toBeVisible();
     expect(screen.queryByText("PROJECT WORKBENCH")).not.toBeInTheDocument();
   });

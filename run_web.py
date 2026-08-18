@@ -70,10 +70,20 @@ def parse_args():
         choices=["critical", "error", "warning", "info", "debug", "trace"],
         help="日志级别 (默认: info)",
     )
+    parser.add_argument(
+        "--accounts-file",
+        type=Path,
+        default=(
+            Path(os.environ["MANYSELVES_ACCOUNTS_FILE"])
+            if os.getenv("MANYSELVES_ACCOUNTS_FILE")
+            else None
+        ),
+        help="多账户清单；同一 HTTP 服务内为每个账户创建独立 worker 和写入根",
+    )
     return parser.parse_args()
 
 
-def setup_environment(data_dir: Path):
+def setup_environment(data_dir: Path, *, multi_account: bool = False):
     """设置环境变量"""
     # 确保数据目录存在
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -91,7 +101,15 @@ def setup_environment(data_dir: Path):
             os.environ[key] = value
 
     # 检查必需配置
-    if not os.getenv("MANYSELVES_OPENAI_API_KEY") and not os.getenv("MANYSELVES_ANTHROPIC_API_KEY"):
+    provider_key_names = (
+        "MIMO_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "MANYSELVES_MIMO_API_KEY",
+        "MANYSELVES_OPENAI_API_KEY",
+        "MANYSELVES_ANTHROPIC_API_KEY",
+    )
+    if not multi_account and not any(os.getenv(name) for name in provider_key_names):
         print("⚠️  警告：未设置 API Key")
         print("请设置环境变量或在 .env 文件中配置：")
         print("  MANYSELVES_OPENAI_API_KEY=your-api-key")
@@ -104,8 +122,13 @@ def setup_environment(data_dir: Path):
 def main():
     args = parse_args()
 
+    if args.accounts_file is not None:
+        if args.workers != 1:
+            raise SystemExit("多账户 worker 由单一服务进程管理，--workers 必须为 1")
+        os.environ["MANYSELVES_ACCOUNTS_FILE"] = str(args.accounts_file.resolve())
+
     # 设置环境
-    setup_environment(args.data_dir)
+    setup_environment(args.data_dir, multi_account=args.accounts_file is not None)
 
     # 打印启动信息
     print("=" * 60)
@@ -114,6 +137,8 @@ def main():
     print(f"📡 地址: http://{args.host}:{args.port}")
     print(f"📂 数据: {args.data_dir.resolve()}")
     print(f"🔧 工作进程: {args.workers}")
+    if args.accounts_file is not None:
+        print(f"👥 账户清单: {args.accounts_file.resolve()}")
     print(f"📝 日志级别: {args.log_level}")
     if args.reload:
         print("🔄 自动重载: 启用")

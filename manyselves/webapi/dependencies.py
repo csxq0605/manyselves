@@ -10,18 +10,19 @@ from ..application.global_knowledge_service import GlobalKnowledgeService
 from ..application.runtime_facade import RuntimeFacade
 from ..application.runtime_host import RuntimeHost
 from .settings import WebSettings
+from .tenant_runtime import request_runtime_state
 
 RuntimeHostProvider = Callable[[], RuntimeHost | Awaitable[RuntimeHost]]
 
 
 def get_runtime_host(request: Request) -> RuntimeHost | None:
     """Return the runtime host only after the application lifespan initializes it."""
-    return cast(RuntimeHost | None, getattr(request.app.state, "runtime_host", None))
+    return cast(RuntimeHost | None, getattr(request_runtime_state(request), "runtime_host", None))
 
 
 def get_runtime_facade(request: Request) -> RuntimeFacade | None:
     """Return the facade owned by the active application lifespan."""
-    return cast(RuntimeFacade | None, getattr(request.app.state, "runtime_facade", None))
+    return cast(RuntimeFacade | None, getattr(request_runtime_state(request), "runtime_facade", None))
 
 
 def get_web_settings(request: Request) -> WebSettings | None:
@@ -33,7 +34,7 @@ def get_global_knowledge_service(request: Request) -> GlobalKnowledgeService | N
     """Return the fixed-root global library only after lifespan initialization."""
     return cast(
         GlobalKnowledgeService | None,
-        getattr(request.app.state, "global_knowledge_service", None),
+        getattr(request_runtime_state(request), "global_knowledge_service", None),
     )
 
 

@@ -1,6 +1,5 @@
 """Routes that establish, inspect, and clear the local browser session."""
 
-import secrets
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request, Response, status
@@ -11,11 +10,6 @@ from ..schemas.auth import LoginRequest, SessionResponse
 SESSION_COOKIE_NAME = "manyselves_session"
 
 router = APIRouter()
-
-
-def _values_equal(left: str, right: str) -> bool:
-    """Compare credential text without selecting a fast mismatch path."""
-    return secrets.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
 
 
 def _session_signer(request: Request):
@@ -32,21 +26,22 @@ async def login(request: LoginRequest, http_request: Request) -> Response:
     settings = http_request.app.state.web_settings
     if settings is None:
         raise RuntimeError("Web settings are unavailable before application startup")
-    password = request.password.get_secret_value()
-    if not (
-        _values_equal(request.username, settings.admin_username)
-        and _values_equal(password, settings.admin_password.get_secret_value())
-    ):
+    catalog = http_request.app.state.account_catalog
+    account = catalog.authenticate(request.username, request.password.get_secret_value())
+    if account is None:
         raise ApiError(
             status_code=status.HTTP_401_UNAUTHORIZED,
             code="AUTH_INVALID",
             message="Username or password is invalid",
             retryable=False,
         )
+    manager = http_request.app.state.tenant_runtime_manager
+    if manager is not None:
+        http_request.state.tenant_runtime = await manager.get_or_start(account.account_id)
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
-        value=_session_signer(http_request).issue(request.username),
+        value=_session_signer(http_request).issue(account.username, account.account_id),
         max_age=settings.session_ttl_seconds,
         httponly=True,
         samesite="strict",
@@ -62,7 +57,10 @@ async def session(http_request: Request) -> SessionResponse:
     principal = _session_signer(http_request).verify(
         http_request.cookies.get(SESSION_COOKIE_NAME, "")
     )
-    if principal is None:
+    catalog = http_request.app.state.account_catalog
+    if principal is None or not catalog.matches_principal(
+        principal.account_id, principal.username
+    ):
         raise ApiError(
             status_code=status.HTTP_401_UNAUTHORIZED,
             code="AUTH_REQUIRED",

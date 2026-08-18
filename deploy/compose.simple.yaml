@@ -12,21 +12,24 @@ services:
     container_name: manyselves-api
     environment:
       # 管理员配置
-      ADMIN_USERNAME: ${MANYSELVES_ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${MANYSELVES_ADMIN_PASSWORD:-yuanxi@2026}
+      MANYSELVES_ADMIN_USERNAME: ${MANYSELVES_ADMIN_USERNAME:-admin}
+      MANYSELVES_ADMIN_PASSWORD: ${MANYSELVES_ADMIN_PASSWORD:-yuanxi@2026}
 
       # API Keys
       OPENAI_API_KEY: ${MANYSELVES_OPENAI_API_KEY:-}
+      MIMO_API_KEY: ${MANYSELVES_MIMO_API_KEY:-}
       ANTHROPIC_API_KEY: ${MANYSELVES_ANTHROPIC_API_KEY:-}
 
       # 配置文件路径（源码配置）
       CONFIG_PATH: ${MANYSELVES_CONFIG_PATH:-/app/deploy/config/manyselves.config.yaml}
-      DATA_ROOT: /data/manyselves
+      MANYSELVES_DATA_ROOT: /data/manyselves
 
       # 其他配置
-      INITIAL_PROJECT_ID: ${MANYSELVES_INITIAL_PROJECT_ID:-default}
+      MANYSELVES_INITIAL_PROJECT_ID: ${MANYSELVES_INITIAL_PROJECT_ID:-default}
       MANYSELVES_BOOTSTRAP_PROVIDER: ${MANYSELVES_BOOTSTRAP_PROVIDER:-openai}
-      ALLOWED_ORIGINS: ${MANYSELVES_ALLOWED_ORIGINS:-["http://localhost:9090"]}
+      MANYSELVES_BOOTSTRAP_API_BASE: ${MANYSELVES_BOOTSTRAP_API_BASE:-https://api.xiaomimimo.com/v1}
+      MANYSELVES_BOOTSTRAP_MODEL: ${MANYSELVES_BOOTSTRAP_MODEL:-mimo-v2.5-pro}
+      MANYSELVES_ALLOWED_ORIGINS: ${MANYSELVES_ALLOWED_ORIGINS:-["http://localhost:9090"]}
     volumes:
       # 数据目录（完全访问权限）
       - ${MANYSELVES_DATA_DIR:-./data/manyselves}:/data/manyselves

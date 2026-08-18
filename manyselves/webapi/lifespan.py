@@ -1,4 +1,4 @@
-"""Application lifecycle ownership for the one shared runtime."""
+"""Application lifecycle ownership for legacy and account-scoped runtimes."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -21,11 +21,13 @@ from ..application.reporting_facade import ReportingFacade
 from ..application.runtime_facade import RuntimeFacade
 from ..core.loops.bus import MessageBus
 from ..interfaces.types import PeerQueryMessage, PeerReplyMessage
+from .accounts import AccountCatalog
 from .dependencies import resolve_runtime_host
 from .events.broker import EventBroker
 from .events.mapper import EventContext
 from .session_auth import SessionSigner
 from .settings import WebSettings
+from .tenant_runtime import TenantRuntimeManager, start_tenant_runtime
 
 
 @dataclass(slots=True)
@@ -160,7 +162,7 @@ def attach_event_persistence(broker: EventBroker, event_store: Any) -> None:
 
 @asynccontextmanager
 async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Start and stop exactly one runtime host for this app instance."""
+    """Start legacy state or own the lazy per-account worker manager."""
     async with app.state.lifecycle_lock:
         if app.state.lifecycle_active:
             raise RuntimeError("Application lifespan is already active")
@@ -195,10 +197,32 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             settings = WebSettings()
             app.state.web_settings = settings
 
+        account_catalog = AccountCatalog.from_settings(settings)
+        app.state.account_catalog = account_catalog
+
         app.state.session_signer = SessionSigner(
             settings.data_root / ".manyselves" / "auth" / "session.key",
             settings.session_ttl_seconds,
         )
+        if settings.accounts_file is not None:
+            factory = app.state.tenant_runtime_factory or start_tenant_runtime
+            tenant_manager = TenantRuntimeManager(
+                account_catalog,
+                settings,
+                factory=factory,
+            )
+            app.state.tenant_runtime_manager = tenant_manager
+            try:
+                yield
+            finally:
+                try:
+                    await tenant_manager.close()
+                finally:
+                    app.state.tenant_runtime_manager = None
+                    async with app.state.lifecycle_lock:
+                        app.state.lifecycle_active = False
+            return
+
         app.state.global_knowledge_service = GlobalKnowledgeService.from_data_root(
             settings.data_root,
             max_text_bytes=settings.text_file_size_limit_bytes,

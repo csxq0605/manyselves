@@ -1,5 +1,6 @@
 """Configuration manager for Manyselves."""
 
+import os
 from pathlib import Path
 
 from loguru import logger
@@ -10,13 +11,40 @@ from .schema import ApiConfig, AppConfig, Settings
 class ConfigManager:
     """Manages application configuration."""
 
-    def __init__(self, config_path: Path | Settings | None = None):
+    def __init__(
+        self,
+        config_path: Path | Settings | None = None,
+        *,
+        inherit_environment: bool = True,
+    ):
         if isinstance(config_path, Settings):
             self._settings = config_path
         elif config_path:
-            self._settings = Settings(config_path=config_path)
+            # An explicit config path is a complete caller-owned boundary. It
+            # must not accidentally ingest the repository working-directory
+            # .env (especially important for account and test isolation).
+            environment_overrides = {}
+            if not inherit_environment:
+                environment_overrides = {
+                    "ANTHROPIC_API_KEY": None,
+                    "OPENAI_API_KEY": None,
+                    "GOOGLE_API_KEY": None,
+                    "DEEPSEEK_API_KEY": None,
+                    "OPENROUTER_API_KEY": None,
+                    "GROQ_API_KEY": None,
+                    "MIMO_API_KEY": None,
+                    "MIMO_MODEL": None,
+                    "MIMO_API_BASE": None,
+                    "MANYSELVES_BOOTSTRAP_MODEL": None,
+                    "MANYSELVES_BOOTSTRAP_API_BASE": None,
+                }
+            self._settings = Settings(
+                config_path=config_path,
+                _env_file=None,
+                **environment_overrides,
+            )
         else:
-            self._settings = Settings()
+            self._settings = Settings(_env_file=".env")
         self._config: AppConfig | None = None
 
     @property
@@ -100,6 +128,7 @@ class ConfigManager:
         import yaml
 
         config_path = self._settings.config_path
+        config_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         config_dict = self.config.model_dump(mode="json", exclude_none=True)
         providers = config_dict.get("providers", {})
         configurations = providers.get("configurations", [])
@@ -119,6 +148,8 @@ class ConfigManager:
 
         with open(config_path, "w", encoding="utf-8") as f:
             yaml.dump(config_dict, f, default_flow_style=False, allow_unicode=True)
+        if os.name != "nt":
+            os.chmod(config_path, 0o600)
 
         logger.info("Configuration saved to {}", config_path)
 

@@ -22,7 +22,7 @@ if not config_path.exists():
         # 默认使用 MiMo API
         api_base = os.environ.get(
             "MANYSELVES_BOOTSTRAP_API_BASE",
-            "https://token-plan-cn.xiaomimimo.com/v1"  # 默认 MiMo API
+            "https://api.xiaomimimo.com/v1"  # 普通按量 API；Token Plan 不用于应用后端
         )
         default_model = os.environ.get(
             "MANYSELVES_BOOTSTRAP_MODEL",
@@ -33,9 +33,11 @@ if not config_path.exists():
             "providers": {
                 "active": f"mimo-{provider}",
                 "configurations": [{
+                    # This camelCase null marker is retained for the image
+                    # security contract; runtime secrets come only from env/UI.
                     "apiKey": None,
-                    "apiBase": api_base,
-                    "defaultModel": default_model,
+                    "api_base": api_base,
+                    "default_model": default_model,
                     "enabled": True,
                     "id": f"mimo-{provider}",
                     "name": "MiMo AI" if provider == "openai" else f"MiMo {provider.title()}",

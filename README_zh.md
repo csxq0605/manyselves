@@ -20,6 +20,9 @@
 > 仍然串行。已实现与待实现边界见
 > [成本控制实验交接说明](docs/experimental-cost-control-handoff.md)。
 
+服务端账户级 worker、项目写入、会话传输和网页 API Key 隔离及 MiMo 模型配置见
+[服务端账户隔离与 MiMo 配置](docs/server-account-isolation-and-mimo.md)。
+
 ## Manyselves 是什么？
 
 Manyselves 是一套本地桌面 Agent 团队运行时。Agent 的身份、边界、技能和

@@ -47,6 +47,7 @@ from ..schemas.files import (
     UploadConflict,
 )
 from ..security import require_authenticated_session, require_control_lease_header
+from ..tenant_runtime import request_runtime_state
 
 router = APIRouter(
     prefix="/projects/{project_id}/files",
@@ -81,7 +82,7 @@ async def _to_thread_non_abandoning(
 
 
 def _file_service(request: Request, project_id: str) -> WorkspaceFiles:
-    registry = request.app.state.project_registry
+    registry = request_runtime_state(request).project_registry
     settings = request.app.state.web_settings
     try:
         root = registry.project_root(project_id)
@@ -240,7 +241,7 @@ async def file_tree(
     files = _file_service(request, project_id)
     try:
         _require_visible_path(files, path, allow_root=True)
-        async with request.app.state.runtime_facade.read_transaction():
+        async with request_runtime_state(request).runtime_facade.read_transaction():
             entries = await _to_thread_non_abandoning(files.list_tree, path)
             if not path:
                 entries = [entry for entry in entries if _is_page_entry(entry)]
@@ -254,7 +255,7 @@ async def read_file(project_id: str, request: Request, path: str = Query()) -> F
     files = _file_service(request, project_id)
     try:
         _require_visible_path(files, path)
-        async with request.app.state.runtime_facade.read_transaction():
+        async with request_runtime_state(request).runtime_facade.read_transaction():
             return _content_response(files.read_text(path))
     except (WorkspaceFileError, UnicodeDecodeError) as error:
         if isinstance(error, UnicodeDecodeError):
@@ -273,7 +274,7 @@ async def save_file(
     files = _file_service(request, project_id)
     try:
         _require_writable_path(files, path)
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+        async with request_runtime_state(request).runtime_facade.mutation_transaction(lease_token):
             return _content_response(files.write_text(path, body.content, body.base_revision))
     except (ControlLeaseRequired, RuntimeNotReadyError, WorkspaceFileError) as error:
         raise _file_error(error) from error
@@ -291,7 +292,7 @@ async def create_entry(
         _require_writable_path(files, body.path)
         if body.kind != "file":
             raise _mutation_forbidden()
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+        async with request_runtime_state(request).runtime_facade.mutation_transaction(lease_token):
             entry = files.entry(files.create_file(body.path, body.content).path)
             return _entry_response(entry)
     except (ControlLeaseRequired, RuntimeNotReadyError, WorkspaceFileError) as error:
@@ -309,7 +310,7 @@ async def rename_entry(
     try:
         _require_writable_path(files, body.source)
         _require_writable_path(files, body.destination)
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+        async with request_runtime_state(request).runtime_facade.mutation_transaction(lease_token):
             _require_regular_file(files, body.source)
             return _entry_response(files.rename(body.source, body.destination, body.base_revision))
     except (ControlLeaseRequired, RuntimeNotReadyError, WorkspaceFileError) as error:
@@ -327,7 +328,7 @@ async def delete_entry(
     files = _file_service(request, project_id)
     try:
         _require_visible_path(files, path)
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+        async with request_runtime_state(request).runtime_facade.mutation_transaction(lease_token):
             _require_regular_file(files, path)
             files.delete(path, _if_match_revision(if_match))
     except (ControlLeaseRequired, RuntimeNotReadyError, WorkspaceFileError) as error:
@@ -354,7 +355,7 @@ async def upload_file(
         content_length = request.headers.get("Content-Length")
         if content_length is not None and int(content_length) > files.max_upload_bytes:
             raise UploadTooLarge()
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+        async with request_runtime_state(request).runtime_facade.mutation_transaction(lease_token):
             return _entry_response(
                 await files.upload(
                     path,
@@ -384,7 +385,7 @@ async def download_file(
     opened = None
     try:
         _require_visible_path(files, path)
-        async with request.app.state.runtime_facade.read_transaction():
+        async with request_runtime_state(request).runtime_facade.read_transaction():
             opened = files.open_download(path)
             byte_range = _parse_range(request.headers.get("Range"), opened.size)
     except WorkspaceFileError as error:
@@ -423,7 +424,7 @@ async def preview_file(project_id: str, request: Request, path: str = Query()) -
         _require_visible_path(files, path)
         content_url = f"/api/v1/projects/{project_id}/files/download?{urlencode({'path': path})}"
         service = _preview_service(request, files)
-        async with request.app.state.runtime_facade.read_transaction():
+        async with request_runtime_state(request).runtime_facade.read_transaction():
             capture = service.capture(path)
         internal = await asyncio.to_thread(
             service.preview_capture,

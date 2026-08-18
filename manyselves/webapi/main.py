@@ -25,7 +25,6 @@ from .errors import (
 )
 from .lifespan import application_lifespan
 from .routes.agents import router as agents_router
-from .routes.auth import SESSION_COOKIE_NAME
 from .routes.auth import router as auth_router
 from .routes.bootstrap import router as bootstrap_router
 from .routes.control import router as control_router
@@ -111,6 +110,9 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.state.maintenance_service = None
     app.state.global_knowledge_service = None
     app.state.session_signer = None
+    app.state.account_catalog = None
+    app.state.tenant_runtime_manager = None
+    app.state.tenant_runtime_factory = None
     app.state.lifecycle_lock = asyncio.Lock()
     app.state.lifecycle_active = False
     app.state._lifecycle_cleanup_pending = None
@@ -181,7 +183,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         ] = {
             "type": "apiKey",
             "in": "cookie",
-            "name": SESSION_COOKIE_NAME,
+            "name": "manyselves_session",
         }
         anonymous_prefixes = (f"{API_PREFIX}/auth/", f"{API_PREFIX}/health/")
         for path, path_item in schema.get("paths", {}).items():

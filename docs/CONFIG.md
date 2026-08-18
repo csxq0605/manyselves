@@ -35,19 +35,22 @@ nano deploy/config/manyselves.config.yaml
 
 ```yaml
 providers:
-  active: mimo-cn
+  active: mimo-api-cn
   configurations:
-    - apiKey: null  # 通过环境变量或设置页面写入
-      apiBase: https://token-plan-cn.xiaomimimo.com/anthropic
-      defaultModel: mimo-v2.5-pro
+    - api_key: null  # 单账户可用环境变量；多账户从登录后的设置页面分别写入
+      api_base: https://api.xiaomimimo.com/v1
+      default_model: mimo-v2.5-pro
       enabled: true
-      id: mimo-cn
-      name: Xiaomi MiMo Token Plan (China)
-      presetId: anthropic-xiaomi-mimo-token-plan-china
-      provider: anthropic
+      id: mimo-api-cn
+      name: Xiaomi MiMo API (China)
+      preset_id: openai-xiaomi-mimo-api-china
+      provider: openai
 ```
 
-`active` 指向保存后的**配置 ID**（上例为 `mimo-cn`），而不是协议名或预设名。
+`active` 指向保存后的**配置 ID**（上例为 `mimo-api-cn`），而不是协议名或预设名。
+
+Token Plan Key 按官方条款仅用于 Coding 工具，不应用于自定义应用服务端；服务端使用上面的
+普通按量 API 配置。
 
 ---
 

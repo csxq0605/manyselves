@@ -6,7 +6,8 @@
 
 | 服务商 | 预设 ID | 协议 | 默认模型 | API 地址 |
 |--------|----------|----------|----------|----------|
-| **MiMo Token Plan（小米）** | `anthropic-xiaomi-mimo-token-plan-china` | `anthropic` | mimo-v2.5-pro | https://token-plan-cn.xiaomimimo.com/anthropic |
+| **MiMo API（小米，服务端推荐）** | `openai-xiaomi-mimo-api-china` | `openai` | mimo-v2.5-pro | https://api.xiaomimimo.com/v1 |
+| **MiMo Token Plan（仅 Coding 工具）** | `anthropic-xiaomi-mimo-token-plan-china` | `anthropic` | mimo-v2.5-pro | https://token-plan-cn.xiaomimimo.com/anthropic |
 | DeepSeek | `openai-deepseek` | `openai` | deepseek-chat | https://api.deepseek.com |
 | Kimi（月之暗面） | `openai-kimi` | `openai` | moonshot-v1-8k | https://api.moonshot.cn/v1 |
 | 通义千问（阿里云） | `openai-qwen` | `openai` | qwen-turbo | https://dashscope.aliyuncs.com/compatible-mode/v1 |

@@ -35,6 +35,7 @@ function Icon({ name }: { readonly name: IconName }) {
 }
 
 export interface SidebarProps {
+  readonly accountUsername?: string;
   readonly onCreateProject: (input: ProjectCreateInput) => Promise<Project>;
   readonly onDeleteProject: (projectId: string) => Promise<void>;
   readonly onLogout?: () => void;
@@ -47,7 +48,7 @@ function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "项目操作失败，请稍后重试";
 }
 
-export function Sidebar({ onCreateProject, onDeleteProject, onLogout, onUpdateProject, projects, projectsError = false }: SidebarProps) {
+export function Sidebar({ accountUsername = "admin", onCreateProject, onDeleteProject, onLogout, onUpdateProject, projects, projectsError = false }: SidebarProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const getActiveSession = useConversationStore((state) => state.getActiveSession);
@@ -156,16 +157,6 @@ export function Sidebar({ onCreateProject, onDeleteProject, onLogout, onUpdatePr
     try { return decodeURIComponent(match[1]); } catch { return home; }
   })();
 
-  // Get current conversation ID from URL or global state
-  const currentConversationId = (() => {
-    const match = /\/conversations\/([^/?#]+)/.exec(location.pathname);
-    if (match?.[1]) return match[1];
-    return null;
-  })();
-
-  // Get active session from global state
-  const activeSessionId = currentConversationId ?? getActiveSession(routeProjectId);
-
   // Helper to build conversation URL
   const buildConversationUrl = (projectId: string, section?: string) => {
     const sessionId = getActiveSession(projectId);
@@ -205,8 +196,8 @@ export function Sidebar({ onCreateProject, onDeleteProject, onLogout, onUpdatePr
         {error ? <p aria-live="polite" role="alert">{error}</p> : null}<button disabled={pending} type="submit">{mode === "delete" ? "删除项目" : "保存"}</button><button disabled={pending} onClick={close} type="button">取消</button>
       </form></div> : null}
       <div className="sidebar__account">
-        <span aria-hidden="true" className="sidebar__avatar">A</span>
-        <span className="sidebar__identity"><strong>admin</strong><small>系统管理员</small></span>
+        <span aria-hidden="true" className="sidebar__avatar">{accountUsername.slice(0, 1).toUpperCase()}</span>
+        <span className="sidebar__identity"><strong>{accountUsername}</strong><small>当前账户</small></span>
         <div className="sidebar__account-menu">
           <button aria-expanded={accountMenuOpen} aria-label="账户与设置" onClick={() => setAccountMenuOpen((current) => !current)} type="button"><Icon name="settings" /></button>
           {accountMenuOpen ? <div><NavLink onClick={() => setAccountMenuOpen(false)} to="/settings/models">模型设置</NavLink>{onLogout ? <button onClick={onLogout} type="button">退出登录</button> : null}</div> : null}

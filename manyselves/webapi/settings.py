@@ -8,10 +8,11 @@ from pydantic_settings import BaseSettings
 
 
 class WebSettings(BaseSettings):
-    """Values required to host the single local runtime."""
+    """Values required to host the HTTP service and account workers."""
 
     # 环境变量映射（支持 MANYSELVES_ 前缀）
     data_root: Path = Path(".manyselves")
+    accounts_file: Path | None = None
     # 默认使用 UUID 作为项目 ID，如果未设置则自动生成
     initial_project_id: str = ""
     admin_username: str = "admin"

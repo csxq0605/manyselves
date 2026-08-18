@@ -12,6 +12,7 @@ from ...application.errors import (
 from ..errors import ApiError
 from ..schemas.maintenance import MaintenanceReleaseRequest, MaintenanceResponse
 from ..security import require_authenticated_session, require_control_lease_header
+from ..tenant_runtime import request_runtime_state
 
 router = APIRouter(prefix="/maintenance", dependencies=[Depends(require_authenticated_session)])
 
@@ -36,7 +37,7 @@ async def quiesce(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
-        token = await request.app.state.maintenance_service.quiesce(lease_token)
+        token = await request_runtime_state(request).maintenance_service.quiesce(lease_token)
         return MaintenanceResponse(quiesced=True, maintenanceToken=token)
     except Exception as error:
         raise _error(error) from error
@@ -49,7 +50,7 @@ async def release(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
-        await request.app.state.maintenance_service.release(
+        await request_runtime_state(request).maintenance_service.release(
             lease_token, body.maintenance_token
         )
         return MaintenanceResponse(quiesced=False)

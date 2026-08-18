@@ -58,8 +58,8 @@ from ...utils.agent_labels import get_agent_badge
 from ...utils.editor_context import user_visible_content
 from ..artifacts.gateway import ArtifactGateway, ArtifactGrant
 from ..mimo_pricing import (
-    calculate_mimo_v25_pro_run_cost,
-    format_mimo_v25_pro_cost,
+    calculate_mimo_run_cost,
+    format_mimo_cost,
 )
 from ..tools.manifest_tool import ManifestManager, ManifestTool
 from ..tools.outcomes import (
@@ -341,9 +341,9 @@ def _canonical_completed_report_response(
             metrics.append(f"总 Token {usage['total_tokens']:,}")
         if metrics:
             usage_line = "\n\n用量：" + "，".join(metrics) + "。"
-    mimo_cost = calculate_mimo_v25_pro_run_cost(workspace, run_id)
+    mimo_cost = calculate_mimo_run_cost(workspace, run_id)
     if mimo_cost is not None:
-        usage_line += "\n\n" + format_mimo_v25_pro_cost(mimo_cost)
+        usage_line += "\n\n" + format_mimo_cost(mimo_cost)
     outputs = "\n".join(f"- `{path}`" for path in existing_paths)
     return (
         f"报告任务 {run_id} 已成功完成并交付。\n\n输出：\n{outputs}"
@@ -433,9 +433,9 @@ def _canonical_completed_report_response(
         if metrics:
             usage_line = "\n\n用量：" + "，".join(metrics) + "。"
 
-    mimo_cost = calculate_mimo_v25_pro_run_cost(workspace, run_id)
+    mimo_cost = calculate_mimo_run_cost(workspace, run_id)
     if mimo_cost is not None:
-        usage_line += "\n\n" + format_mimo_v25_pro_cost(mimo_cost)
+        usage_line += "\n\n" + format_mimo_cost(mimo_cost)
 
     outputs = "\n".join(f"- `{path}`" for path in existing_paths)
     return (

@@ -182,6 +182,18 @@ def test_builtin_presets_include_offline_mimo_token_plan():
     assert mimo.default_model == "mimo-v2.5-pro"
 
 
+def test_builtin_presets_include_ordinary_mimo_api_for_server_use():
+    mimo = next(
+        preset
+        for preset in _builtin_presets()
+        if preset.id == "openai-xiaomi-mimo-api-china"
+    )
+
+    assert mimo.provider == "openai"
+    assert mimo.base_url == "https://api.xiaomimimo.com/v1"
+    assert "pay-as-you-go" in mimo.description
+
+
 def test_builtin_presets_structure():
     presets = _builtin_presets()
     for p in presets:

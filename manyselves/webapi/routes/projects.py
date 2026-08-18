@@ -15,6 +15,7 @@ from ...application.project_registry import (
     ProjectAlreadyExists,
     ProjectNotFound,
     ProjectRecord,
+    ProjectRegistry,
     ProjectRegistryError,
 )
 from ..errors import ApiError
@@ -25,6 +26,7 @@ from ..schemas.projects import (
     ProjectUpdateRequest,
 )
 from ..security import require_authenticated_session, require_control_lease_header
+from ..tenant_runtime import request_runtime_state
 
 router = APIRouter(prefix="/projects", dependencies=[Depends(require_authenticated_session)])
 
@@ -82,8 +84,9 @@ def _project_error(error: Exception) -> ApiError:
 
 @router.get("", response_model=ProjectListResponse)
 async def list_projects(request: Request) -> ProjectListResponse:
-    facade = request.app.state.runtime_facade
-    registry = request.app.state.project_registry
+    state = request_runtime_state(request)
+    facade = state.runtime_facade
+    registry = state.project_registry
     async with facade.read_transaction():
         return ProjectListResponse(projects=[_response(item) for item in registry.list()])
 
@@ -94,8 +97,9 @@ async def create_project(
     request: Request,
     lease_token: str = Depends(require_control_lease_header),
 ) -> ProjectResponse:
-    facade = request.app.state.runtime_facade
-    registry = request.app.state.project_registry
+    state = request_runtime_state(request)
+    facade = state.runtime_facade
+    registry = state.project_registry
     try:
         async with facade.mutation_transaction(lease_token):
             # 如果没有提供 project_id，自动生成 UUID
@@ -122,8 +126,9 @@ async def update_project_metadata(
     request: Request,
     lease_token: str = Depends(require_control_lease_header),
 ) -> ProjectResponse:
-    facade = request.app.state.runtime_facade
-    registry = request.app.state.project_registry
+    state = request_runtime_state(request)
+    facade = state.runtime_facade
+    registry = state.project_registry
     try:
         async with facade.mutation_transaction(lease_token):
             return _response(
@@ -148,8 +153,9 @@ async def delete_project(
     request: Request,
     lease_token: str = Depends(require_control_lease_header),
 ) -> Response:
-    facade = request.app.state.runtime_facade
-    registry = request.app.state.project_registry
+    state = request_runtime_state(request)
+    facade = state.runtime_facade
+    registry = state.project_registry
     try:
         async with facade.mutation_transaction(lease_token):
             registry.delete(project_id)
@@ -164,18 +170,19 @@ async def activate_project(
     request: Request,
     lease_token: str = Depends(require_control_lease_header),
 ) -> ProjectResponse:
-    facade = request.app.state.runtime_facade
-    registry = request.app.state.project_registry
-    settings = request.app.state.web_settings
+    state = request_runtime_state(request)
+    facade = state.runtime_facade
+    registry = state.project_registry
+    settings = state.web_settings if hasattr(state, "web_settings") else request.app.state.web_settings
     previous_state: tuple[str, str] | None = None
     target_workspace = None
     try:
         def resolve_workspace():
             nonlocal previous_state, target_workspace
             if (
-                request.app.state.maintenance_service.pending_work
-                or request.app.state.reporting_facade.active
-                or request.app.state.python_run_service.active
+                state.maintenance_service.pending_work
+                or state.reporting_facade.active
+                or state.python_run_service.active
             ):
                 raise RuntimeBusyError()
             workspace = registry.project_root(project_id)
@@ -187,11 +194,11 @@ async def activate_project(
             assert target_workspace is not None
             record = registry.activate(project_id)
             settings.initial_project_id = record.id
-            request.app.state.conversation_service.rebind(target_workspace)
-            request.app.state.reporting_facade.rebind(
-                request.app.state.runtime_host, target_workspace
+            state.conversation_service.rebind(target_workspace)
+            state.reporting_facade.rebind(
+                state.runtime_host, target_workspace
             )
-            request.app.state.python_run_service.rebind(target_workspace)
+            state.python_run_service.rebind(target_workspace)
             return _response(record)
 
         def rollback_activation() -> None:
@@ -199,11 +206,11 @@ async def activate_project(
             registry.restore_active(previous_state[0])
             settings.initial_project_id = previous_state[1]
             previous_workspace = registry.project_root(previous_state[0])
-            request.app.state.conversation_service.rebind(previous_workspace)
-            request.app.state.reporting_facade.rebind(
-                request.app.state.runtime_host, previous_workspace
+            state.conversation_service.rebind(previous_workspace)
+            state.reporting_facade.rebind(
+                state.runtime_host, previous_workspace
             )
-            request.app.state.python_run_service.rebind(previous_workspace)
+            state.python_run_service.rebind(previous_workspace)
 
         def reconcile_activation(workspace) -> None:
             actual_project_id = workspace.name
@@ -211,11 +218,11 @@ async def activate_project(
                 raise InvalidProjectId()
             registry.restore_active(actual_project_id)
             settings.initial_project_id = actual_project_id
-            request.app.state.conversation_service.rebind(workspace)
-            request.app.state.reporting_facade.rebind(
-                request.app.state.runtime_host, workspace
+            state.conversation_service.rebind(workspace)
+            state.reporting_facade.rebind(
+                state.runtime_host, workspace
             )
-            request.app.state.python_run_service.rebind(workspace)
+            state.python_run_service.rebind(workspace)
 
         return await facade.activate_workspace(
             lease_token=lease_token,

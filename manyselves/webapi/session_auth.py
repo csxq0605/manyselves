@@ -18,6 +18,7 @@ class SessionPrincipal:
     """The non-secret identity carried by a valid browser session."""
 
     username: str
+    account_id: str
     expires_at: int
 
 
@@ -29,10 +30,14 @@ class SessionSigner:
         self._ttl_seconds = ttl_seconds
         self._now = now
 
-    def issue(self, username: str) -> str:
-        """Sign an expiring session value for one administrative username."""
+    def issue(self, username: str, account_id: str = "default") -> str:
+        """Sign an expiring session value bound to one account identity."""
         payload = json.dumps(
-            {"exp": int(self._now()) + self._ttl_seconds, "sub": username},
+            {
+                "account": account_id,
+                "exp": int(self._now()) + self._ttl_seconds,
+                "sub": username,
+            },
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
@@ -52,16 +57,22 @@ class SessionSigner:
                 return None
             payload = json.loads(_decode(encoded_payload))
             username = payload["sub"]
+            account_id = payload.get("account", "default")
             expires_at = payload["exp"]
             if (
                 not isinstance(username, str)
+                or not isinstance(account_id, str)
                 or not isinstance(expires_at, int)
                 or expires_at <= int(self._now())
             ):
                 return None
         except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
             return None
-        return SessionPrincipal(username=username, expires_at=expires_at)
+        return SessionPrincipal(
+            username=username,
+            account_id=account_id,
+            expires_at=expires_at,
+        )
 
 
 def _encode(value: bytes) -> str:

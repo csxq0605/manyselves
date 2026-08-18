@@ -13,7 +13,7 @@ export interface AuthenticatedAppProps {
 }
 
 export function AuthenticatedApp({ eventSource, gatewayOptions, platform, settingsStorage }: AuthenticatedAppProps) {
-  const { logout, returnToLogin } = useAuthenticatedSession();
+  const { logout, returnToLogin, session } = useAuthenticatedSession();
   const gateway = useMemo(
     () => createApiGateway({ ...gatewayOptions, onUnauthorized: returnToLogin }),
     [gatewayOptions, returnToLogin],
@@ -26,5 +26,5 @@ export function AuthenticatedApp({ eventSource, gatewayOptions, platform, settin
     await gateway.controlLease.release();
     await logout();
   }, [gateway, logout]);
-  return <App eventSource={eventSource} gateway={gateway} onLogout={() => void logoutWithLease()} onUnauthorized={returnToLogin} platform={platform} settingsStorage={settingsStorage} />;
+  return <App accountUsername={session.username} eventSource={eventSource} gateway={gateway} onLogout={() => void logoutWithLease()} onUnauthorized={returnToLogin} platform={platform} settingsStorage={settingsStorage} />;
 }

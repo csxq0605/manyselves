@@ -1,0 +1,8 @@
+version: 1
+accounts:
+  - id: account-a
+    username: account-a
+    passwordEnv: MANYSELVES_ACCOUNT_A_PASSWORD
+  - id: account-b
+    username: account-b
+    passwordEnv: MANYSELVES_ACCOUNT_B_PASSWORD

@@ -24,12 +24,13 @@ from ..schemas.conversations import (
     ConversationResponse,
 )
 from ..security import require_authenticated_session, require_control_lease_header
+from ..tenant_runtime import request_runtime_state
 
 router = APIRouter(prefix="/conversations", dependencies=[Depends(require_authenticated_session)])
 
 
 def _project_id(request: Request, requested: str | None) -> str:
-    return requested or request.app.state.project_registry.active_project_id
+    return requested or request_runtime_state(request).project_registry.active_project_id
 
 
 def _response(item: dict) -> ConversationResponse:
@@ -78,8 +79,9 @@ async def list_conversations(
     project_id: str | None = Query(default=None, alias="projectId", min_length=1),
     agent_id: str = Query("main", alias="agentId"),
 ):
-    facade = request.app.state.runtime_facade
-    service = request.app.state.conversation_service
+    state = request_runtime_state(request)
+    facade = state.runtime_facade
+    service = state.conversation_service
     try:
         async with facade.read_transaction():
             bound_project_id = _project_id(request, project_id)
@@ -101,8 +103,9 @@ async def messages(
     project_id: str | None = Query(default=None, alias="projectId", min_length=1),
     agent_id: str = Query("main", alias="agentId"),
 ):
-    facade = request.app.state.runtime_facade
-    service = request.app.state.conversation_service
+    state = request_runtime_state(request)
+    facade = state.runtime_facade
+    service = state.conversation_service
     try:
         async with facade.read_transaction():
             bound_project_id = _project_id(request, project_id)
@@ -123,8 +126,9 @@ async def create_conversation(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            service = request.app.state.conversation_service
+        state = request_runtime_state(request)
+        async with state.runtime_facade.mutation_transaction(lease_token):
+            service = state.conversation_service
             bound_project_id = _project_id(request, body.project_id)
             service.require_project(bound_project_id)
             service.require_switch_safe()
@@ -154,10 +158,11 @@ async def rename_conversation(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
+        state = request_runtime_state(request)
+        async with state.runtime_facade.mutation_transaction(lease_token):
             bound_project_id = _project_id(request, body.project_id)
             return _response(
-                request.app.state.conversation_service.rename(
+                state.conversation_service.rename(
                     session_id,
                     body.name,
                     body.agent_id,
@@ -184,8 +189,9 @@ async def activate_conversation(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            service = request.app.state.conversation_service
+        state = request_runtime_state(request)
+        async with state.runtime_facade.mutation_transaction(lease_token):
+            service = state.conversation_service
             bound_project_id = _project_id(request, project_id)
             service.require_project(bound_project_id)
             service.require_switch_safe()
@@ -217,8 +223,9 @@ async def delete_conversation(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            service = request.app.state.conversation_service
+        state = request_runtime_state(request)
+        async with state.runtime_facade.mutation_transaction(lease_token):
+            service = state.conversation_service
             bound_project_id = _project_id(request, project_id)
             service.require_project(bound_project_id)
             service.require_switch_safe()
@@ -251,8 +258,9 @@ async def clear_conversation(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            service = request.app.state.conversation_service
+        state = request_runtime_state(request)
+        async with state.runtime_facade.mutation_transaction(lease_token):
+            service = state.conversation_service
             bound_project_id = _project_id(request, project_id)
             service.require_project(bound_project_id)
             service.require_switch_safe()

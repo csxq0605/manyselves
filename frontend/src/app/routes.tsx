@@ -115,11 +115,12 @@ function ProjectLanding({ gateway, projectApi }: { readonly gateway: ApiGateway;
   return <section className="route-placeholder"><h1>尚无项目</h1><p>请从侧栏新建项目以开始工作。</p></section>;
 }
 
-function ProjectRouteLayout({ onLogout, projectApi }: { readonly onLogout?: () => void; readonly projectApi: ProjectApi }) {
+function ProjectRouteLayout({ accountUsername, onLogout, projectApi }: { readonly accountUsername?: string; readonly onLogout?: () => void; readonly projectApi: ProjectApi }) {
   const queryClient = useQueryClient();
   const projects = useQuery({ queryFn: () => projectApi.list(), queryKey: ["projects"] });
   const refreshProjects = async () => { await queryClient.invalidateQueries({ queryKey: ["projects"] }); };
   return <><RoutePersistence /><AppLayout
+    {...(accountUsername ? { accountUsername } : {})}
     onCreateProject={async (input) => { const created = await projectApi.create(input); await refreshProjects(); return created; }}
     onDeleteProject={async (projectId) => { await projectApi.delete(projectId); await refreshProjects(); }}
     onUpdateProject={async (projectId, input) => { const updated = await projectApi.update(projectId, input); await refreshProjects(); return updated; }}
@@ -133,10 +134,10 @@ function NotFound() {
   return <section className="route-placeholder"><h1>页面未找到</h1><p>该地址不是可用的工作台路由。</p><Link to="/">返回项目</Link></section>;
 }
 
-export function AppRoutes({ gateway, onLogout, platform, settingsStorage }: { readonly gateway: ApiGateway; readonly onLogout?: () => void; readonly platform?: PlatformBridge; readonly settingsStorage?: SettingsStorage }) {
+export function AppRoutes({ accountUsername, gateway, onLogout, platform, settingsStorage }: { readonly accountUsername?: string; readonly gateway: ApiGateway; readonly onLogout?: () => void; readonly platform?: PlatformBridge; readonly settingsStorage?: SettingsStorage }) {
   const projectApi = createProjectApi(gateway);
   const settingsApi = createSettingsApi(gateway);
-  return <Routes><Route element={<ProjectRouteLayout projectApi={projectApi} {...(onLogout ? { onLogout } : {})} />}>
+  return <Routes><Route element={<ProjectRouteLayout projectApi={projectApi} {...(accountUsername ? { accountUsername } : {})} {...(onLogout ? { onLogout } : {})} />}>
     <Route path="/" element={<ProjectLanding gateway={gateway} projectApi={projectApi} />} />
     <Route path="/knowledge" element={(
       <Suspense fallback={<Placeholder title="正在加载全局知识库…" />}>

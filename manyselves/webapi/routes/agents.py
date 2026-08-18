@@ -42,12 +42,13 @@ from ..schemas.agents import (
     SendMessageRequest,
 )
 from ..security import require_authenticated_session, require_control_lease_header
+from ..tenant_runtime import request_runtime_state
 
 router = APIRouter(prefix="/agents", dependencies=[Depends(require_authenticated_session)])
 
 
 def _project_id(request: Request, requested: str | None) -> str:
-    return requested or request.app.state.project_registry.active_project_id
+    return requested or request_runtime_state(request).project_registry.active_project_id
 
 
 def _error(error: Exception) -> ApiError:
@@ -90,10 +91,11 @@ def _error(error: Exception) -> ApiError:
 
 @router.get("", response_model=AgentListResponse)
 async def list_agents(request: Request):
-    facade = request.app.state.runtime_facade
+    state = request_runtime_state(request)
+    facade = state.runtime_facade
     async with facade.read_transaction():
         snapshot = facade.snapshot()
-        manager = request.app.state.runtime_host.loop_manager
+        manager = state.runtime_host.loop_manager
         return AgentListResponse(
             agents=[
                 AgentSnapshot(
@@ -109,10 +111,11 @@ async def list_agents(request: Request):
 
 
 def _debug_response(request: Request, agent_id: str) -> AgentDebugResponse:
-    manager = request.app.state.runtime_host.loop_manager
+    state = request_runtime_state(request)
+    manager = state.runtime_host.loop_manager
     if manager is None or manager.get_loop(agent_id) is None:
         raise AgentNotFoundError(agent_id)
-    entries = request.app.state.runtime_facade.state_projection.debug_for(agent_id)
+    entries = state.runtime_facade.state_projection.debug_for(agent_id)
     sanitizer = EventPayloadSanitizer()
     return AgentDebugResponse(
         agentId=agent_id,
@@ -134,7 +137,7 @@ def _debug_response(request: Request, agent_id: str) -> AgentDebugResponse:
 
 @router.get("/{agent_id}/debug", response_model=AgentDebugResponse)
 async def get_agent_debug(agent_id: str, request: Request) -> AgentDebugResponse:
-    facade = request.app.state.runtime_facade
+    facade = request_runtime_state(request).runtime_facade
     try:
         async with facade.read_transaction():
             return _debug_response(request, agent_id)
@@ -150,11 +153,12 @@ async def update_agent_debug(
     lease_token: str = Depends(require_control_lease_header),
 ) -> AgentDebugResponse:
     try:
-        async with request.app.state.runtime_facade.mutation_transaction(lease_token):
-            manager = request.app.state.runtime_host.loop_manager
+        state = request_runtime_state(request)
+        async with state.runtime_facade.mutation_transaction(lease_token):
+            manager = state.runtime_host.loop_manager
             if manager is None or manager.get_loop(agent_id) is None:
                 raise AgentNotFoundError(agent_id)
-            request.app.state.runtime_host.backend.set_agent_debug_mode(agent_id, body.enabled)
+            state.runtime_host.backend.set_agent_debug_mode(agent_id, body.enabled)
             return _debug_response(request, agent_id)
     except (
         AgentNotFoundError,
@@ -175,11 +179,12 @@ async def send_message(
 ):
     try:
         project_id = _project_id(request, body.project_id)
-        request.app.state.conversation_service.require_active_project(
+        state = request_runtime_state(request)
+        state.conversation_service.require_active_project(
             agent_id,
             project_id,
         )
-        return await request.app.state.runtime_facade.send_user_message(
+        return await state.runtime_facade.send_user_message(
             SendMessageCommand(
                 command_id=command_id,
                 lease_token=lease_token,
@@ -213,7 +218,8 @@ async def edit_resend(
     command_id: UUID = Header(alias="Idempotency-Key"),
     lease_token: str = Depends(require_control_lease_header),
 ):
-    service = request.app.state.conversation_service
+    state = request_runtime_state(request)
+    service = state.conversation_service
     command = EditResendCommand(
         command_id=command_id,
         lease_token=lease_token,
@@ -225,7 +231,7 @@ async def edit_resend(
     try:
         project_id = _project_id(request, body.project_id)
         service.require_active_project(agent_id, project_id)
-        return await request.app.state.runtime_facade.edit_resend(
+        return await state.runtime_facade.edit_resend(
             command,
             prepare=lambda: service.prepare_edit_resend(agent_id, target_message_id),
             restore=service.restore,
@@ -254,11 +260,12 @@ async def send_file_context(
 ):
     try:
         project_id = _project_id(request, body.project_id)
-        request.app.state.conversation_service.require_active_project(
+        state = request_runtime_state(request)
+        state.conversation_service.require_active_project(
             agent_id,
             project_id,
         )
-        return await request.app.state.runtime_facade.send_file_context(
+        return await state.runtime_facade.send_file_context(
             SendFileContextCommand(
                 command_id=command_id,
                 lease_token=lease_token,
@@ -288,7 +295,7 @@ async def interrupt(
     lease_token: str = Depends(require_control_lease_header),
 ):
     try:
-        return await request.app.state.runtime_facade.interrupt(
+        return await request_runtime_state(request).runtime_facade.interrupt(
             InterruptCommand(command_id=command_id, lease_token=lease_token, agent_id=agent_id)
         )
     except (
@@ -311,11 +318,12 @@ async def rollback(
     command_id: UUID = Header(alias="Idempotency-Key"),
     lease_token: str = Depends(require_control_lease_header),
 ):
-    service = request.app.state.conversation_service
+    state = request_runtime_state(request)
+    service = state.conversation_service
     try:
         project_id = _project_id(request, body.project_id)
         service.require_active_project(agent_id, project_id)
-        result = await request.app.state.runtime_facade.rollback(
+        result = await state.runtime_facade.rollback(
             RollbackCommand(
                 command_id=command_id,
                 lease_token=lease_token,

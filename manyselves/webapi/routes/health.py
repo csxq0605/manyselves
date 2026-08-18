@@ -21,6 +21,8 @@ async def liveness() -> dict[str, str]:
 )
 async def readiness(request: Request) -> dict[str, str]:
     """Report whether the lifespan-owned runtime can accept work."""
+    if getattr(request.app.state, "tenant_runtime_manager", None) is not None:
+        return {"status": "ready"}
     host = getattr(request.app.state, "runtime_host", None)
     if host is None or not host.is_ready:
         raise ApiError(
@@ -49,6 +51,11 @@ async def provider_status(request: Request) -> dict[str, str | bool]:
         - message: Human-readable status message
     """
     host = getattr(request.app.state, "runtime_host", None)
+    if getattr(request.app.state, "tenant_runtime_manager", None) is not None:
+        return {
+            "configured": False,
+            "message": "Sign in to view providers configured for that account.",
+        }
     if host is None or host.loop_manager is None:
         return {
             "configured": False,
