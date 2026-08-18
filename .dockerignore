@@ -1,0 +1,13 @@
+.git
+.worktrees
+.venv*
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/node_modules
+desktop/release
+frontend/dist
+logs
+test-results
+.env
+manyselves.config.yaml

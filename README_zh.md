@@ -20,6 +20,9 @@
 > 仍然串行。已实现与待实现边界见
 > [成本控制实验交接说明](docs/experimental-cost-control-handoff.md)。
 
+服务端账户级 worker、项目写入、会话传输和网页 API Key 隔离及 MiMo 模型配置见
+[服务端账户隔离与 MiMo 配置](docs/server-account-isolation-and-mimo.md)。
+
 ## Manyselves 是什么？
 
 Manyselves 是一套本地桌面 Agent 团队运行时。Agent 的身份、边界、技能和
@@ -91,11 +94,42 @@ export DEEPSEEK_API_KEY="sk-..."
 uv run manyselves
 ```
 
+## 浏览器、Electron 与服务器部署
+
+第一阶段同时保留 PyQt 桌面入口，并提供 React 浏览器客户端、Electron
+客户端和单 Runtime FastAPI 服务。Linux 服务器安装、启动、备份恢复、升级与回滚请见
+[Compose 部署手册](docs/deployment/linux-compose.md)；明确的能力边界请见
+[第一阶段已知限制](docs/phase1/known-limitations.md)。
+
+```bash
+cp deploy/env.example deploy/.env
+# 设置管理员账号、可选的 Provider Key 和绝对数据目录。
+docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build --wait
+set -a
+. deploy/.env
+set +a
+uv run python scripts/verify_deployment.py \
+  --url http://192.168.8.28:9090 \
+  --username "$MANYSELVES_ADMIN_USERNAME" \
+  --password-env MANYSELVES_ADMIN_PASSWORD
+```
+
 ## 配置与本地状态
 
 规范配置文件固定为仓库根目录的 `manyselves.config.yaml`，从任何目录启动
 Manyselves 都使用同一默认文件；规范 Python 包名为 `manyselves`。显式传入的
 配置路径仍优先。
+
+模型配置有两个受支持入口：日常操作使用浏览器的“设置 → 模型设置”；服务器
+管理员也可以直接维护 `manyselves.config.yaml`。二者使用同一个配置模型，项目
+不会额外引入设置数据库，也不会在浏览器中提供原始 YAML 编辑器。模型提供商、
+API 地址、启停状态、默认模型及 Agent 默认参数可以写入 YAML。
+
+Provider API Key 可以在模型设置页首次填写，也可以通过服务器环境变量提供。
+环境变量密钥优先级高于 YAML，页面仅显示“由服务器环境管理”，不会回显或允许
+覆盖。修改 `deploy/.env` 中的密钥后，需要使用 Compose 重建 API 容器；仅刷新
+浏览器不会生效。未填写 Provider Key 仍可启动和管理项目，但真正调用 Agent 模型
+时会失败。
 
 应用偏好写入仓库根目录 `.manyselves/`；项目状态和交付物只写入所选项目目录。
 

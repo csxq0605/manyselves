@@ -113,6 +113,50 @@ export const providerPresets: ProviderPreset[] = [
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_anthropic_compatible_presets_receive_distinct_stable_ids():
+    import shutil
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        ts_content = """
+export const providerPresets: ProviderPreset[] = [
+  {
+    name: "Claude Official",
+    category: "official",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+        ANTHROPIC_MODEL: "claude-sonnet-4-20250514",
+      }
+    },
+  },
+  {
+    name: "Xiaomi MiMo Token Plan (China)",
+    category: "cn_official",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://token-plan-cn.xiaomimimo.com/anthropic",
+        ANTHROPIC_MODEL: "mimo-v2.5-pro",
+      }
+    },
+  },
+];
+"""
+        ts_file = tmp / "presets.ts"
+        ts_file.write_text(ts_content, encoding="utf-8")
+
+        presets = _parse_claude_presets(ts_file)
+
+        assert [preset.provider for preset in presets] == ["anthropic", "anthropic"]
+        assert [preset.id for preset in presets] == [
+            "anthropic-claude-official",
+            "anthropic-xiaomi-mimo-token-plan-china",
+        ]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_builtin_presets():
     presets = _builtin_presets()
     assert len(presets) >= 6
@@ -120,8 +164,34 @@ def test_builtin_presets():
     providers = {p.provider for p in presets}
     assert "anthropic" in providers
     assert "openai" in providers
-    assert "deepseek" in providers
-    assert "custom" in providers
+    assert providers <= {"anthropic", "openai"}
+
+
+def test_builtin_presets_include_offline_mimo_token_plan():
+    presets = _builtin_presets()
+    mimo = next(
+        preset
+        for preset in presets
+        if preset.id == "anthropic-xiaomi-mimo-token-plan-china"
+    )
+
+    assert mimo.name == "Xiaomi MiMo Token Plan (China)"
+    assert mimo.provider == "anthropic"
+    assert mimo.category == "cn_official"
+    assert mimo.base_url == "https://token-plan-cn.xiaomimimo.com/anthropic"
+    assert mimo.default_model == "mimo-v2.5-pro"
+
+
+def test_builtin_presets_include_ordinary_mimo_api_for_server_use():
+    mimo = next(
+        preset
+        for preset in _builtin_presets()
+        if preset.id == "openai-xiaomi-mimo-api-china"
+    )
+
+    assert mimo.provider == "openai"
+    assert mimo.base_url == "https://api.xiaomimimo.com/v1"
+    assert "pay-as-you-go" in mimo.description
 
 
 def test_builtin_presets_structure():

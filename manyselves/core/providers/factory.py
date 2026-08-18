@@ -22,6 +22,7 @@ class ProviderFactory:
         api_key: str,
         api_base: str | None = None,
         model: str | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> LLMProvider:
         """Create a provider instance.
 
@@ -47,13 +48,14 @@ class ProviderFactory:
         resolved_base = api_base or DEFAULT_API_BASES.get(provider_type)
 
         if provider_type == "anthropic":
-            return AnthropicProvider(api_key, resolved_base, default_model)
+            return AnthropicProvider(api_key, resolved_base, default_model, extra_headers)
         else:
             return OpenAICompatProvider(
                 api_key=api_key,
                 api_base=resolved_base,
                 model=default_model,
                 provider_type=provider_type,
+                extra_headers=extra_headers,
             )
 
 

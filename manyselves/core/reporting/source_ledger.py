@@ -6,8 +6,8 @@ import hashlib
 import json
 import threading
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any
+from pathlib import Path, PurePosixPath
+from typing import Any, Literal
 
 from .agentic_models import SourceKind, SourceRecord
 from .parallel_runtime import exclusive_file_lock
@@ -90,12 +90,28 @@ class SourceLedger:
         ]
         return f"{prefix}{max(numbers, default=0) + 1:03d}"
 
-    def _validate_local_locator(self, locator: str) -> None:
+    def _validate_local_locator(
+        self,
+        locator: str,
+        *,
+        namespace: Literal["project", "global"] = "project",
+    ) -> None:
         locator_path = locator.split("；", 1)[0].split("#", 1)[0]
-        resolved = (self.workspace / locator_path).resolve()
-        knowledge_root = (self.workspace / "Knowledge").resolve()
-        if not resolved.is_relative_to(knowledge_root) or resolved == knowledge_root:
-            raise ValueError("local references must be located beneath project Knowledge")
+        if namespace == "project":
+            resolved = (self.workspace / locator_path).resolve()
+            knowledge_root = (self.workspace / "Knowledge").resolve()
+            if not resolved.is_relative_to(knowledge_root) or resolved == knowledge_root:
+                raise ValueError("local references must be located beneath project Knowledge")
+        else:
+            portable = PurePosixPath(locator_path)
+            if (
+                portable.is_absolute()
+                or "\\" in locator_path
+                or len(portable.parts) < 2
+                or portable.parts[0] != "GlobalKnowledge"
+                or any(part in {"", ".", ".."} for part in portable.parts)
+            ):
+                raise ValueError("global references must use a GlobalKnowledge locator")
 
     def register_many(self, entries: list[dict[str, Any]]) -> list[SourceRecord]:
         """Register an ordered batch with one lock, id allocation, and registry write.
@@ -121,8 +137,11 @@ class SourceLedger:
                 raise ValueError("source batch entry is incomplete or invalid") from exc
             if not title or not locator:
                 raise ValueError("source title and locator must be non-empty")
+            namespace = str(entry.get("namespace") or "project")
+            if namespace not in {"project", "global"}:
+                raise ValueError("local reference namespace must be project or global")
             if kind is SourceKind.LOCAL_REFERENCE:
-                self._validate_local_locator(locator)
+                self._validate_local_locator(locator, namespace=namespace)
             evidence_id = (
                 str(entry.get("evidence_id") or "")
                 if kind is SourceKind.PROJECT_EVIDENCE
@@ -139,6 +158,12 @@ class SourceLedger:
                     "content": content,
                     "content_sha256": self._digest(content),
                     "evidence_id": evidence_id,
+                    "namespace": namespace,
+                    "scope_note": (
+                        f"knowledge_namespace={namespace}"
+                        if kind is SourceKind.LOCAL_REFERENCE
+                        else entry.get("scope_note")
+                    ),
                 }
             )
 
@@ -180,6 +205,16 @@ class SourceLedger:
                             ),
                             None,
                         )
+                    if (
+                        existing is not None
+                        and kind is SourceKind.LOCAL_REFERENCE
+                        and existing.scope_note != entry["scope_note"]
+                    ):
+                        record_index = records.index(existing)
+                        existing = existing.model_copy(
+                            update={"scope_note": entry["scope_note"]}
+                        )
+                        records[record_index] = existing
                     if existing is None:
                         source_id = (
                             entry["evidence_id"]
@@ -209,7 +244,14 @@ class SourceLedger:
                 self._persist(records)
                 return results
 
-    def register_local(self, title: str, locator: str, content: str) -> SourceRecord:
+    def register_local(
+        self,
+        title: str,
+        locator: str,
+        content: str,
+        *,
+        namespace: Literal["project", "global"] = "project",
+    ) -> SourceRecord:
         return self.register_many(
             [
                 {
@@ -217,6 +259,7 @@ class SourceLedger:
                     "title": title,
                     "locator": locator,
                     "content": content,
+                    "namespace": namespace,
                 }
             ]
         )[0]

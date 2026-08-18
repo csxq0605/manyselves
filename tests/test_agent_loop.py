@@ -36,6 +36,7 @@ from manyselves.interfaces.types import (
     ReportMessage,
     SystemNotice,
     TaskUpdateMessage,
+    ToolCallMessage,
     UserMessage,
 )
 from manyselves.interfaces.types import (
@@ -566,6 +567,11 @@ async def test_simple_continuation_resumes_latest_real_persisted_run_without_pro
 
     resume_tool.assert_awaited_once_with(run_id=run_id)
     mock_provider.chat.assert_not_awaited()
+    published = list(agent_loop.bus._queue._queue)
+    calls = [item for item in published if isinstance(item, ToolCallMessage)]
+    results = [item for item in published if isinstance(item, ToolResultMsg)]
+    assert calls[0].tool_call_id
+    assert results[0].tool_call_id == calls[0].tool_call_id
     responses = [
         item
         for item in agent_loop.bus._queue._queue
@@ -1098,6 +1104,11 @@ async def test_process_message_with_tool_calls(agent_loop, mock_provider, mock_g
     # Tool was executed with correct arguments
     assert len(tool_called) == 1
     assert tool_called[0] == {"path": "test.txt"}
+    published = list(agent_loop.bus._queue._queue)
+    calls = [item for item in published if isinstance(item, ToolCallMessage)]
+    results = [item for item in published if isinstance(item, ToolResultMsg)]
+    assert calls[0].tool_call_id == tc.id
+    assert results[0].tool_call_id == calls[0].tool_call_id
 
 
 @pytest.mark.asyncio

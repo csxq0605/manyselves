@@ -1,0 +1,63 @@
+name: manyselves-phase1
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/api/Dockerfile
+    image: ${MANYSELVES_API_IMAGE:-manyselves-api:phase1}
+    environment:
+      # Service settings use the MANYSELVES_ prefix in deploy/.env.
+      MANYSELVES_ADMIN_USERNAME: ${MANYSELVES_ADMIN_USERNAME:-admin}
+      MANYSELVES_ADMIN_PASSWORD: ${MANYSELVES_ADMIN_PASSWORD:-yuanxi@2026}
+      MANYSELVES_ALLOWED_ORIGINS: ${MANYSELVES_ALLOWED_ORIGINS:-["http://192.168.8.28:9090"]}
+      MANYSELVES_DATA_ROOT: /data/manyselves
+      MANYSELVES_INITIAL_PROJECT_ID: ${MANYSELVES_INITIAL_PROJECT_ID:-default}
+      MANYSELVES_BOOTSTRAP_PROVIDER: ${MANYSELVES_BOOTSTRAP_PROVIDER:-openai}
+      MANYSELVES_BOOTSTRAP_API_BASE: ${MANYSELVES_BOOTSTRAP_API_BASE:-https://api.xiaomimimo.com/v1}
+      MANYSELVES_BOOTSTRAP_MODEL: ${MANYSELVES_BOOTSTRAP_MODEL:-mimo-v2.5-pro}
+      # Provider keys are documented with MANYSELVES_ names and mapped to
+      # the runtime variable names expected by the Python configuration layer.
+      OPENAI_API_KEY: ${MANYSELVES_OPENAI_API_KEY:-}
+      MIMO_API_KEY: ${MANYSELVES_MIMO_API_KEY:-}
+      ANTHROPIC_API_KEY: ${MANYSELVES_ANTHROPIC_API_KEY:-}
+      DEEPSEEK_API_KEY: ${MANYSELVES_DEEPSEEK_API_KEY:-}
+      OPENROUTER_API_KEY: ${MANYSELVES_OPENROUTER_API_KEY:-}
+      # Configuration file path inside the API container.
+      CONFIG_PATH: ${MANYSELVES_CONFIG_PATH:-/data/manyselves/manyselves.config.yaml}
+    volumes:
+      # Persistent data directory. The :Z label supports SELinux-enabled CentOS/RHEL hosts.
+      - ${MANYSELVES_DATA_DIR:?set MANYSELVES_DATA_DIR}:/data/manyselves:Z
+      # Optional read-only source configuration directory.
+      - ${MANYSELVES_CONFIG_SOURCE:-./config}:/app/deploy/config:ro,Z
+    expose: ["9000"]
+    deploy:
+      replicas: 1
+    healthcheck:
+      test: ["CMD", "python", "/app/deploy/api/healthcheck.py"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=256m"]
+    restart: unless-stopped
+    stop_grace_period: 60s
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web/Dockerfile
+    image: ${MANYSELVES_WEB_IMAGE:-manyselves-web:phase1}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - ${MANYSELVES_HTTP_BIND:-0.0.0.0}:${MANYSELVES_HTTP_PORT:-9090}:9090
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+      - /var/cache/nginx:rw,noexec,nosuid,size=32m
+      - /var/run:rw,noexec,nosuid,size=4m
+    restart: unless-stopped
+    stop_grace_period: 30s

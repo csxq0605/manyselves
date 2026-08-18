@@ -83,6 +83,22 @@ def test_tool_call_message():
     assert msg.arguments["path"] == "data.csv"
 
 
+def test_tool_identity_is_optional_for_legacy_decode_and_serializes_by_alias():
+    legacy = ToolCallMessage(agent_type="main", tool_name="read", arguments={})
+    assert legacy.tool_call_id is None
+
+    current = ToolCallMessage.model_validate(
+        {
+            "agent_type": "main",
+            "tool_name": "read",
+            "arguments": {},
+            "toolCallId": "call-1",
+        }
+    )
+    assert current.tool_call_id == "call-1"
+    assert current.model_dump(mode="json", by_alias=True)["toolCallId"] == "call-1"
+
+
 def test_tool_result_message():
     msg = ToolResult(
         agent_type=AgentType.DATA_ANALYSIS,

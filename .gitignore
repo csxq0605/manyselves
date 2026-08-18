@@ -1,10 +1,18 @@
 __pycache__/
+*.tar
+*.tar.gz
 *.pyc
 .venv/
 *.egg-info/
 dist/
+node_modules/
+/desktop/release/
+test-results/
+/deploy/data/
+/deploy/backups/
+/deploy/restore-smoke/
 .uv-cache
-.build-tmp/
+.build-tmp
 .worktrees/
 .test-home/
 logs/
@@ -15,6 +23,7 @@ external/skills/
 
 # User config (contains API keys)
 manyselves.config.yaml
+.env
 .DS_Store
 
 .pytest_cache/
@@ -23,3 +32,6 @@ pytest-of-*/
 */pytest-of-*/
 .ruff_cache/
 *.bak
+
+# Actual config file with secrets (not tracked)
+deploy/config/manyselves.config.yaml

@@ -100,6 +100,49 @@ export DEEPSEEK_API_KEY="sk-..."
 uv run manyselves
 ```
 
+## Browser, Electron, and server deployment
+
+Phase 1 supports the existing PyQt desktop, a React browser client, and a secure
+Electron client against one FastAPI Runtime.
+
+### Local Python deployment (no Docker)
+
+For local development or simple deployment without Docker:
+
+```bash
+# Quick start
+python run_web.py
+
+# Or use the startup script
+./start.sh  # Linux/macOS
+start.bat    # Windows
+```
+
+See [Local Run Guide](docs/RUN_LOCAL.md) for detailed instructions.
+
+### Docker deployment
+
+For Linux server installation, daily operation, backup/restore, and upgrade/rollback, follow
+[the Compose deployment guide](docs/deployment/linux-compose.md). The concise
+release limitations are in [Phase 1 known limitations](docs/phase1/known-limitations.md).
+For a server-side preflight that does not replace the LAN stack, use
+`deploy/smoke.env.example` with the isolated `manyselves-phase1-smoke` project
+documented in the Compose guide.
+
+```bash
+cp deploy/env.example deploy/.env
+# Set the provider key and absolute data directory. The reviewed LAN login
+# defaults are admin / yuanxi@2026 and can be changed only on the server.
+docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build --wait
+set -a
+. deploy/.env
+set +a
+uv run python scripts/verify_deployment.py \
+  --url http://192.168.8.28:9090 \
+  --username "$MANYSELVES_ADMIN_USERNAME" \
+  --password-env MANYSELVES_ADMIN_PASSWORD
+```
+
 ## Configuration and local state
 
 The canonical application configuration is the repository-root

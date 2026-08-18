@@ -1,4 +1,4 @@
-"""Search the project-local ``Knowledge`` reference library."""
+"""Search deterministic project and optional global knowledge references."""
 
 from __future__ import annotations
 
@@ -8,13 +8,15 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import Literal
 
 from docx import Document
 
 from ..parallel_runtime import exclusive_file_lock
 
 
+KnowledgeNamespace = Literal["project", "global"]
 _RETIRED_HISTORY_SENTINEL = "<persisted_result_part"
 
 
@@ -33,6 +35,7 @@ class ReferenceDocument:
     relative_path: str
     text: str
     content_sha256: str
+    namespace: KnowledgeNamespace = "project"
 
 
 @dataclass(frozen=True)
@@ -42,10 +45,18 @@ class ReferenceHit:
     snippet: str
     score: int
     content_sha256: str
+    namespace: KnowledgeNamespace = "project"
+
+
+@dataclass(frozen=True)
+class _ReferenceRoot:
+    namespace: KnowledgeNamespace
+    logical_prefix: str
+    path: Path
 
 
 class ReferenceLibrary:
-    """A workspace-bound reader which cannot escape the Knowledge directory."""
+    """Read logical knowledge references without exposing either physical root."""
 
     TEXT_SUFFIXES = {".csv", ".html", ".htm", ".json", ".md", ".txt"}
     DOCUMENT_SUFFIXES = {".docx"}
@@ -57,14 +68,18 @@ class ReferenceLibrary:
         *,
         knowledge_root: Path | None = None,
         index_root: Path | None = None,
+        global_root: Path | None = None,
     ):
         self.workspace = Path(workspace).resolve()
-        self.root = (
+        project_input = (
             Path(knowledge_root).resolve()
             if knowledge_root is not None
             else (self.workspace / "Knowledge").resolve()
         )
         self._allow_cas_views = knowledge_root is not None
+        if knowledge_root is None and (self.workspace / "Knowledge").is_symlink():
+            raise ValueError("project Knowledge root must not be a symlink")
+        self.root = project_input
         self.index_root = (
             Path(index_root).resolve()
             if index_root is not None
@@ -74,25 +89,53 @@ class ReferenceLibrary:
             raise ValueError("Knowledge root must stay inside the project workspace")
         if not self.index_root.is_relative_to(self.workspace):
             raise ValueError("Knowledge index must stay inside the project workspace")
+        roots = [_ReferenceRoot("project", "Knowledge", self.root)]
+        self.global_root: Path | None = None
+        if global_root is not None:
+            global_input = Path(global_root)
+            if global_input.is_symlink():
+                raise ValueError("GlobalKnowledge root must not be a symlink")
+            self.global_root = global_input.resolve()
+            roots.append(_ReferenceRoot("global", "GlobalKnowledge", self.global_root))
+        self._roots = tuple(roots)
         self._documents_cache: tuple[ReferenceDocument, ...] | None = None
 
-    def _safe_path(self, value: str | Path) -> Path:
+    def _root_for(self, value: str | Path) -> tuple[_ReferenceRoot, Path]:
         candidate = Path(value)
-        if not candidate.is_absolute():
-            if candidate.parts and candidate.parts[0] == "Knowledge":
-                candidate = self.root.joinpath(*candidate.parts[1:])
-            else:
-                candidate = self.root / candidate
-        logical = candidate.absolute()
-        if not logical.is_relative_to(self.root):
-            raise ValueError("reference path must stay beneath project Knowledge")
+        if candidate.is_absolute():
+            logical = candidate.absolute()
+            for root in self._roots:
+                if logical.is_relative_to(root.path):
+                    return root, logical
+            raise ValueError("reference path must use Knowledge or GlobalKnowledge")
+        logical_path = candidate.as_posix()
+        if not logical_path or "\x00" in logical_path or "\\" in logical_path:
+            raise ValueError("reference path must use Knowledge or GlobalKnowledge")
+        portable = PurePosixPath(logical_path)
+        parts = portable.parts
+        if portable.is_absolute() or any(part in {"", ".", ".."} for part in parts):
+            raise ValueError("reference path must use Knowledge or GlobalKnowledge")
+        if parts and parts[0] in {root.logical_prefix for root in self._roots}:
+            if len(parts) < 2:
+                raise ValueError("reference path must name a Knowledge file")
+            root = next(root for root in self._roots if root.logical_prefix == parts[0])
+            return root, root.path.joinpath(*parts[1:]).absolute()
+        root = self._roots[0]
+        return root, root.path.joinpath(*parts).absolute()
+
+    def _safe_path(self, value: str | Path) -> tuple[_ReferenceRoot, Path]:
+        root, logical = self._root_for(value)
+        if not logical.is_relative_to(root.path):
+            raise ValueError(f"reference path must stay beneath {root.logical_prefix}")
         resolved = logical.resolve()
         cas_root = (self.workspace / "Work/content/sha256").resolve()
-        if not resolved.is_relative_to(self.root) and not (
-            self._allow_cas_views and resolved.is_relative_to(cas_root)
+        if not resolved.is_relative_to(root.path) and not (
+            root.namespace == "project"
+            and self._allow_cas_views
+            and resolved.is_relative_to(cas_root)
         ):
-            raise ValueError("reference path must stay beneath project Knowledge")
-        return logical
+            raise ValueError(f"reference path must stay beneath {root.logical_prefix}")
+        return root, logical
 
     def _read_text(self, path: Path) -> str:
         suffix = path.suffix.casefold()
@@ -108,31 +151,37 @@ class ReferenceLibrary:
         raise ValueError(f"unsupported reference file type: {suffix or '<none>'}")
 
     def _source_inventory(self) -> list[dict]:
-        if not self.root.is_dir():
-            return []
         supported = self.TEXT_SUFFIXES | self.DOCUMENT_SUFFIXES
         inventory: list[dict] = []
-        for path in sorted(self.root.rglob("*")):
-            if not path.is_file():
+        seen_subpaths: set[str] = set()
+        for root in self._roots:
+            if not root.path.is_dir():
                 continue
-            try:
-                safe_path = self._safe_path(path)
-            except ValueError:
-                continue
-            if safe_path.suffix.casefold() not in supported:
-                continue
-            stat = safe_path.stat()
-            inventory.append(
-                {
-                    "relative_path": (
-                        Path("Knowledge") / safe_path.relative_to(self.root)
-                    ).as_posix(),
-                    "size": stat.st_size,
-                    "mtime_ns": stat.st_mtime_ns,
-                    "device": stat.st_dev,
-                    "inode": stat.st_ino,
-                }
-            )
+            for path in sorted(root.path.rglob("*")):
+                if not path.is_file():
+                    continue
+                try:
+                    _, safe_path = self._safe_path(path)
+                except ValueError:
+                    continue
+                if safe_path.suffix.casefold() not in supported:
+                    continue
+                subpath = safe_path.relative_to(root.path).as_posix()
+                subpath_key = subpath.casefold()
+                if subpath_key in seen_subpaths:
+                    continue
+                seen_subpaths.add(subpath_key)
+                stat = safe_path.stat()
+                inventory.append(
+                    {
+                        "namespace": root.namespace,
+                        "relative_path": f"{root.logical_prefix}/{subpath}",
+                        "size": stat.st_size,
+                        "mtime_ns": stat.st_mtime_ns,
+                        "device": stat.st_dev,
+                        "inode": stat.st_ino,
+                    }
+                )
         return inventory
 
     @staticmethod
@@ -180,12 +229,16 @@ class ReferenceLibrary:
         with exclusive_file_lock(lock_path):
             if not manifest_path.is_file():
                 documents: list[dict] = []
+                seen_content: set[str] = set()
                 for item in inventory:
                     relative = item["relative_path"]
-                    safe_path = self._safe_path(relative)
+                    root, safe_path = self._safe_path(relative)
                     text = self._read_text(safe_path)
                     _validate_knowledge_text(text, reference=relative)
                     text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                    if text_sha256 in seen_content:
+                        continue
+                    seen_content.add(text_sha256)
                     text_ref = (
                         self.index_root.relative_to(self.workspace)
                         / "text"
@@ -197,6 +250,7 @@ class ReferenceLibrary:
                         {
                             "title": safe_path.stem,
                             "relative_path": relative,
+                            "namespace": root.namespace,
                             "text_ref": text_ref.as_posix(),
                             "text_sha256": text_sha256,
                             "text_chars": len(text),
@@ -286,6 +340,7 @@ class ReferenceLibrary:
                     relative_path=item["relative_path"],
                     text=text,
                     content_sha256=item["text_sha256"],
+                    namespace=item.get("namespace", "project"),
                 )
             )
         self._documents_cache = tuple(documents)
@@ -304,12 +359,10 @@ class ReferenceLibrary:
         return Path(current["manifest_ref"])
 
     def open(self, relative_path: str) -> ReferenceDocument:
-        path = self._safe_path(relative_path)
+        root, path = self._safe_path(relative_path)
         if not path.is_file():
-            raise ValueError("reference path is not a file in project Knowledge")
-        canonical = (
-            Path("Knowledge") / path.relative_to(self.root)
-        ).as_posix()
+            raise ValueError(f"reference path is not a file in {root.logical_prefix}")
+        canonical = f"{root.logical_prefix}/{path.relative_to(root.path).as_posix()}"
         for document in self._build_or_load_snapshot():
             if document.relative_path == canonical:
                 return document
@@ -317,11 +370,11 @@ class ReferenceLibrary:
 
     def search(self, query: str, limit: int = 5) -> list[ReferenceHit]:
         terms = [term.casefold() for term in query.split() if term.strip()]
-        if not terms or limit <= 0 or not self.root.is_dir():
+        if not terms or limit <= 0:
             return []
 
         hits: list[ReferenceHit] = []
-        for document in self._build_or_load_snapshot():
+        for document in self.documents():
             lowered = document.text.casefold()
             score = sum(lowered.count(term) for term in terms)
             if not score:
@@ -336,6 +389,16 @@ class ReferenceLibrary:
                     snippet=snippet,
                     score=score,
                     content_sha256=document.content_sha256,
+                    namespace=document.namespace,
                 )
             )
-        return sorted(hits, key=lambda hit: (-hit.score, hit.relative_path))[:limit]
+        priority = {"project": 0, "global": 1}
+        return sorted(
+            hits,
+            key=lambda hit: (
+                -hit.score,
+                priority[hit.namespace],
+                hit.relative_path.casefold(),
+                hit.relative_path,
+            ),
+        )[:limit]

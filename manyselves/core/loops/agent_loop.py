@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Sequence
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from .manager import LoopManager
@@ -57,8 +58,8 @@ from ...utils.agent_labels import get_agent_badge
 from ...utils.editor_context import user_visible_content
 from ..artifacts.gateway import ArtifactGateway, ArtifactGrant
 from ..mimo_pricing import (
-    calculate_mimo_v25_pro_run_cost,
-    format_mimo_v25_pro_cost,
+    calculate_mimo_run_cost,
+    format_mimo_cost,
 )
 from ..tools.manifest_tool import ManifestManager, ManifestTool
 from ..tools.outcomes import (
@@ -340,9 +341,9 @@ def _canonical_completed_report_response(
             metrics.append(f"总 Token {usage['total_tokens']:,}")
         if metrics:
             usage_line = "\n\n用量：" + "，".join(metrics) + "。"
-    mimo_cost = calculate_mimo_v25_pro_run_cost(workspace, run_id)
+    mimo_cost = calculate_mimo_run_cost(workspace, run_id)
     if mimo_cost is not None:
-        usage_line += "\n\n" + format_mimo_v25_pro_cost(mimo_cost)
+        usage_line += "\n\n" + format_mimo_cost(mimo_cost)
     outputs = "\n".join(f"- `{path}`" for path in existing_paths)
     return (
         f"报告任务 {run_id} 已成功完成并交付。\n\n输出：\n{outputs}"
@@ -432,9 +433,9 @@ def _canonical_completed_report_response(
         if metrics:
             usage_line = "\n\n用量：" + "，".join(metrics) + "。"
 
-    mimo_cost = calculate_mimo_v25_pro_run_cost(workspace, run_id)
+    mimo_cost = calculate_mimo_run_cost(workspace, run_id)
     if mimo_cost is not None:
-        usage_line += "\n\n" + format_mimo_v25_pro_cost(mimo_cost)
+        usage_line += "\n\n" + format_mimo_cost(mimo_cost)
 
     outputs = "\n".join(f"- `{path}`" for path in existing_paths)
     return (
@@ -2762,6 +2763,7 @@ class AgentLoop:
             return True
 
         arguments = {"run_id": run_id}
+        tool_call_id = f"tool-{uuid4().hex}"
         logger.info("Direct same-run resume route selected: {}", run_id)
         await self._set_status(AgentStatus.RUNNING_TOOL)
         await self.bus.publish(
@@ -2769,6 +2771,7 @@ class AgentLoop:
                 agent_type=self.agent_type,
                 tool_name="resume_reporting_workflow",
                 arguments=arguments,
+                tool_call_id=tool_call_id,
             )
         )
         try:
@@ -2780,6 +2783,7 @@ class AgentLoop:
                     tool_name="resume_reporting_workflow",
                     result=result,
                     error=outcome.error if outcome.status != "ok" else None,
+                    tool_call_id=tool_call_id,
                 )
             )
             self._terminal_outcome = outcome
@@ -2794,6 +2798,7 @@ class AgentLoop:
                     tool_name="resume_reporting_workflow",
                     result=None,
                     error=str(exc),
+                    tool_call_id=tool_call_id,
                 )
             )
 
@@ -3172,6 +3177,7 @@ class AgentLoop:
 
                 await self.bus.publish(
                     ApiDebugMessage(
+                        agent_type=self.agent_type,
                         model=self.llm_provider.model or "unknown",
                         tokens_in=usage_record["input_tokens"],
                         tokens_out=usage_record["output_tokens"],
@@ -4178,6 +4184,7 @@ class AgentLoop:
                             tool_name=tool_call.name,
                             result=None,
                             error=result_str,
+                            tool_call_id=tool_call.id,
                         )
                     )
                     provider_class_name = self.llm_provider.__class__.__name__
@@ -4227,6 +4234,7 @@ class AgentLoop:
                         agent_type=self.agent_type,
                         tool_name=tool_call.name,
                         arguments=visible_tool_call.arguments,
+                        tool_call_id=tool_call.id,
                     )
                 )
 
@@ -4304,6 +4312,8 @@ class AgentLoop:
                     terminal_payload = _report_workflow_terminal_payload(
                         self._current_message
                     )
+                    # Only block if the current message is truly a failed report-workflow terminal message
+                    # AND it's not a fresh user message (source != "report-workflow")
                     if (
                         self.agent_id == "main"
                         and terminal_payload is not None
@@ -4334,6 +4344,7 @@ class AgentLoop:
                         self.agent_id == "main"
                         and terminal_payload is not None
                         and terminal_payload.get("status") == "failed"
+                        and str(getattr(self._current_message, "source", "") or "") == "report-workflow"
                     ):
                         raise PermissionError(
                             "A failed report-workflow terminal turn is explanation-only. "
@@ -4458,6 +4469,7 @@ class AgentLoop:
                                 if outcome.status in {"failed", "blocked"}
                                 else None
                             ),
+                            tool_call_id=tool_call.id,
                         )
                     )
 
@@ -4532,6 +4544,7 @@ class AgentLoop:
                             tool_name=tool_call.name,
                             result=None,
                             error=error_msg,
+                            tool_call_id=tool_call.id,
                         )
                     )
                     result_str = error_msg
@@ -4552,6 +4565,7 @@ class AgentLoop:
                             tool_name=tool_call.name,
                             result=None,
                             error=error_msg,
+                            tool_call_id=tool_call.id,
                         )
                     )
                     result_str = error_msg
@@ -4673,6 +4687,7 @@ class AgentLoop:
 
                 await self.bus.publish(
                     ApiDebugMessage(
+                        agent_type=self.agent_type,
                         model=self.llm_provider.model or "unknown",
                         tokens_in=usage_record["input_tokens"],
                         tokens_out=usage_record["output_tokens"],

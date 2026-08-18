@@ -1,6 +1,7 @@
 """Tests for ApiDebugMessage."""
 
 from datetime import datetime
+
 from manyselves.interfaces.types import ApiDebugMessage, MessageType
 
 
@@ -22,6 +23,23 @@ def test_api_debug_message_creation():
     assert msg.status == "success"
     assert msg.error is None
     assert isinstance(msg.timestamp, datetime)
+
+
+def test_debug_identity_defaults_for_legacy_and_serializes_by_alias():
+    legacy = ApiDebugMessage(
+        model="m", tokens_in=1, tokens_out=2, duration_ms=3, status="success"
+    )
+    assert legacy.agent_type == "main"
+
+    current = ApiDebugMessage(
+        agent_type="dynamic-agent",
+        model="m",
+        tokens_in=1,
+        tokens_out=2,
+        duration_ms=3,
+        status="success",
+    )
+    assert current.model_dump(mode="json", by_alias=True)["agentId"] == "dynamic-agent"
 
 
 def test_api_debug_message_with_error():

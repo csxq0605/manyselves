@@ -24,6 +24,7 @@ from .base import (
 from .defaults import DEFAULT_API_BASES
 
 OPENAI_STREAM_IDLE_TIMEOUT_SECONDS = 300.0
+MIMO_TEXT_MODELS = frozenset({"mimo-v2.5", "mimo-v2.5-pro"})
 
 
 def _value(source: Any, name: str, default: Any = None) -> Any:
@@ -90,6 +91,7 @@ class OpenAICompatProvider(LLMProvider):
         api_base: str | None = None,
         model: str = "gpt-4o",
         provider_type: str = "openai",
+        extra_headers: dict[str, str] | None = None,
     ):
         super().__init__(api_key, api_base, model)
         self.provider_type = provider_type
@@ -98,7 +100,57 @@ class OpenAICompatProvider(LLMProvider):
         # Keep retries visible and bounded in AgentLoop. The SDK default is two
         # hidden retries, which would multiply application retries and make
         # cancellation/retry status impossible to explain in the GUI.
-        self.client = AsyncOpenAI(api_key=api_key, base_url=api_base, max_retries=0)
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=api_base,
+            default_headers=extra_headers,
+            max_retries=0,
+        )
+
+    @property
+    def _is_mimo_text_model(self) -> bool:
+        model = (
+            str(getattr(self, "model", None) or "")
+            .strip()
+            .casefold()
+            .rsplit("/", 1)[-1]
+        )
+        return model in MIMO_TEXT_MODELS
+
+    def _completion_params(
+        self,
+        messages: list[Message],
+        *,
+        tools: list[dict] | None,
+        temperature: float,
+        max_tokens: int,
+        stream: bool,
+        response_format: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Build a protocol payload with MiMo-specific capability parameters."""
+
+        params: dict[str, Any] = {
+            "model": self.model,
+            "messages": self._convert_messages(messages),
+        }
+        if self._is_mimo_text_model:
+            # MiMo documents thinking as an extra_body extension and applies a
+            # combined reasoning/final-answer completion budget. Temperature is
+            # intentionally omitted because MiMo forces 1.0 while thinking.
+            params["max_completion_tokens"] = max_tokens
+            params["extra_body"] = {"thinking": {"type": "enabled"}}
+        else:
+            params["temperature"] = temperature
+            params["max_tokens"] = max_tokens
+        if stream:
+            params["stream"] = True
+            params["stream_options"] = {"include_usage": True}
+        if tools:
+            params["tools"] = self._convert_tools(tools)
+            params["tool_choice"] = "auto"
+        if response_format is not None:
+            params["response_format"] = response_format
+        return params
 
     def _convert_messages(self, messages: list[Message]) -> list[dict]:
         """Convert internal messages to OpenAI Chat Completions format.
@@ -123,11 +175,16 @@ class OpenAICompatProvider(LLMProvider):
                             "arguments": json.dumps(tc.arguments, ensure_ascii=False),
                         },
                     })
-                openai_messages.append({
+                assistant_message = {
                     "role": "assistant",
                     "content": msg.content or None,
                     "tool_calls": tool_calls_api,
-                })
+                }
+                if self._is_mimo_text_model and msg.thinking:
+                    # Required by MiMo for subsequent turns after a thinking-mode
+                    # assistant tool call; omitting it causes a documented 400.
+                    assistant_message["reasoning_content"] = msg.thinking
+                openai_messages.append(assistant_message)
                 continue
 
             # Tool result message
@@ -175,10 +232,17 @@ class OpenAICompatProvider(LLMProvider):
                 continue
 
             # Regular message
-            openai_messages.append({
+            regular_message = {
                 "role": msg.role,
                 "content": msg.content,
-            })
+            }
+            if (
+                self._is_mimo_text_model
+                and msg.role == "assistant"
+                and msg.thinking
+            ):
+                regular_message["reasoning_content"] = msg.thinking
+            openai_messages.append(regular_message)
 
         return openai_messages
 
@@ -190,18 +254,13 @@ class OpenAICompatProvider(LLMProvider):
         max_tokens: int = 8192,
     ) -> LLMResponse:
         """Send chat completion request."""
-        openai_messages = self._convert_messages(messages)
-
-        params: dict[str, Any] = {
-            "model": self.model,
-            "messages": openai_messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-
-        if tools:
-            params["tools"] = self._convert_tools(tools)
-            params["tool_choice"] = "auto"
+        params = self._completion_params(
+            messages,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=False,
+        )
         request_metrics = build_provider_request_metrics(
             params,
             representation="openai_chat_completions_payload_v1",
@@ -247,6 +306,56 @@ class OpenAICompatProvider(LLMProvider):
             content=content,
             tool_calls=tool_calls,
             usage=_normalized_openai_usage(response.usage),
+            thinking=_value(message, "reasoning_content"),
+            stop_reason=getattr(response.choices[0], "finish_reason", None),
+            request_metrics=request_metrics,
+        )
+
+    async def chat_structured(
+        self,
+        messages: list[Message],
+        *,
+        temperature: float = 0.1,
+        max_tokens: int = 8192,
+    ) -> LLMResponse:
+        """Use MiMo/OpenAI-compatible JSON mode and validate the complete object."""
+
+        params = self._completion_params(
+            messages,
+            tools=None,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=False,
+            response_format={"type": "json_object"},
+        )
+        request_metrics = build_provider_request_metrics(
+            params,
+            representation="openai_chat_completions_json_object_payload_v1",
+        )
+        try:
+            response = await self.client.chat.completions.create(**params)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            failure = annotate_provider_request_failure(
+                exc,
+                infer_provider_request_disposition(exc),
+            )
+            if failure is exc:
+                raise
+            raise failure from exc
+        message = response.choices[0].message
+        content = message.content or ""
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as error:
+            raise ValueError("provider structured output is not valid JSON") from error
+        if not isinstance(parsed, dict):
+            raise ValueError("provider structured output must be a JSON object")
+        return LLMResponse(
+            content=content,
+            usage=_normalized_openai_usage(response.usage),
+            thinking=_value(message, "reasoning_content"),
             stop_reason=getattr(response.choices[0], "finish_reason", None),
             request_metrics=request_metrics,
         )
@@ -281,20 +390,13 @@ class OpenAICompatProvider(LLMProvider):
 
         Yields LLMStreamChunk objects as text arrives.
         """
-        openai_messages = self._convert_messages(messages)
-
-        params: dict[str, Any] = {
-            "model": self.model,
-            "messages": openai_messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
-
-        if tools:
-            params["tools"] = self._convert_tools(tools)
-            params["tool_choice"] = "auto"
+        params = self._completion_params(
+            messages,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=True,
+        )
         request_metrics = build_provider_request_metrics(
             params,
             representation="openai_chat_completions_stream_payload_v1",
@@ -354,6 +456,10 @@ class OpenAICompatProvider(LLMProvider):
                 # Text delta
                 if delta and delta.content:
                     yield LLMStreamChunk(delta=delta.content)
+
+                reasoning_content = _value(delta, "reasoning_content") if delta else None
+                if reasoning_content:
+                    yield LLMStreamChunk(thinking=str(reasoning_content))
 
                 # Tool call deltas (OpenAI streams tool calls incrementally)
                 if delta and delta.tool_calls:

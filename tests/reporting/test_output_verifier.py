@@ -26,10 +26,13 @@ def test_verifier_rejects_missing_and_outside_outputs(tmp_path: Path) -> None:
 
 
 def test_verifier_rejects_wrong_run_receipt(tmp_path: Path) -> None:
-    started = time.time_ns()
     output = tmp_path / "Outputs/report.txt"
     output.parent.mkdir(parents=True)
     output.write_text("report", encoding="utf-8")
+    # Use the filesystem's own clock for this receipt-specific assertion. WSL
+    # can report a freshly written file a few milliseconds behind time.time_ns,
+    # which would exercise the independent stale-output guard first.
+    started = output.stat().st_mtime_ns
     manifest = tmp_path / "Outputs/manifest.json"
     manifest.write_text(json.dumps({"version": "other"}), encoding="utf-8")
     receipt = tmp_path / "Work/runs/run/delivery-receipt.json"

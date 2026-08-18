@@ -154,6 +154,11 @@ class ToolCallMessage(Message):
     agent_type: AgentId
     tool_name: str
     arguments: dict[str, Any]
+    tool_call_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("tool_call_id", "toolCallId"),
+        serialization_alias="toolCallId",
+    )
 
 
 class ToolResult(Message):
@@ -164,6 +169,11 @@ class ToolResult(Message):
     tool_name: str
     result: Any
     error: str | None = None
+    tool_call_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("tool_call_id", "toolCallId"),
+        serialization_alias="toolCallId",
+    )
 
 
 class StatusChange(Message):
@@ -285,6 +295,11 @@ class ApiDebugMessage(Message):
 
     type: MessageType = MessageType.API_DEBUG
     timestamp: datetime = Field(default_factory=datetime.now)
+    agent_type: AgentId = Field(
+        default="main",
+        validation_alias=AliasChoices("agent_type", "agentId"),
+        serialization_alias="agentId",
+    )
     model: str  # Model name (e.g., "claude-sonnet-4-20250514")
     tokens_in: int  # Input tokens
     tokens_out: int  # Output tokens

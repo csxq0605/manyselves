@@ -17,8 +17,8 @@ from ...interfaces.types import (
     RollbackStatus,
     normalize_agent_id,
 )
-from ..checkpoints import CheckpointManager
 from ..artifacts import ArtifactGateway, ArtifactGrant
+from ..checkpoints import CheckpointManager
 from ..prompts.loader import PromptLoader
 from ..reporting.config import load_packaged_agents
 from ..reporting.prompts import PromptAssembler
@@ -69,6 +69,7 @@ class LoopManager:
         self.workspace = Path(workspace).resolve()
         self.config_manager = config_manager
         self.bus = bus
+        self.global_knowledge_root: Path | None = None
 
         self._loops: dict[str, AgentLoop] = {}
         self._running = False
@@ -84,6 +85,12 @@ class LoopManager:
         # Subscribe to restart requests and file rollback requests
         self.bus.subscribe(RestartRequest, self._handle_restart_request)
         self.bus.subscribe(FileRollbackRequest, self._handle_file_rollback_request)
+
+    def set_global_knowledge_root(self, root: Path | None) -> None:
+        """Configure the optional server-global knowledge root before startup."""
+        self.global_knowledge_root = (
+            Path(root).resolve() if root is not None else None
+        )
 
     @property
     def is_running(self) -> bool:
@@ -101,6 +108,13 @@ class LoopManager:
 
         # Initialize providers
         await self._initialize_providers()
+
+        # Create loops only if providers are available
+        available = self._provider_manager.get_available_providers()
+        if not available:
+            logger.warning("No LLM providers available. Service started in degraded mode.")
+            logger.info("You can configure providers in the UI settings and restart the service.")
+            return
 
         # Create loops
         await self._create_loops()
@@ -123,6 +137,7 @@ class LoopManager:
                     cfg.api_key,
                     cfg.api_base,
                     cfg.default_model,
+                    cfg.extra_headers,
                 )
                 self._provider_manager.register_provider(cfg.id, provider)
                 logger.info("Initialized {} provider: {}", cfg.provider, cfg.name)
@@ -324,6 +339,7 @@ class LoopManager:
                 task_board=self._task_board,
                 llm_provider=reporting_provider,
                 agent_defaults=self.config_manager.config.agents.defaults,
+                global_root=self.global_knowledge_root,
             )
             registry.register(run_reporting_tool)
             registry.register(CancelReportingWorkflowTool(run_reporting_tool.controller))
@@ -336,6 +352,7 @@ class LoopManager:
                     llm_provider=reporting_provider,
                     agent_defaults=self.config_manager.config.agents.defaults,
                     controller=run_reporting_tool.controller,
+                    global_root=self.global_knowledge_root,
                 )
             )
             registry.register(
@@ -346,6 +363,7 @@ class LoopManager:
                     llm_provider=reporting_provider,
                     agent_defaults=self.config_manager.config.agents.defaults,
                     controller=run_reporting_tool.controller,
+                    global_root=self.global_knowledge_root,
                 )
             )
             registry.register(ProjectSkillEvolutionTool(self.workspace))

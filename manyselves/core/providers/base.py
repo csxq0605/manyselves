@@ -292,3 +292,16 @@ class LLMProvider(ABC):
             LLMStreamChunk with delta content for each chunk.
         """
         raise NotImplementedError(f"Streaming not implemented for {self.__class__.__name__}")
+
+    async def chat_structured(
+        self,
+        messages: list[Message],
+        *,
+        temperature: float = 0.1,
+        max_tokens: int = 8192,
+    ) -> LLMResponse:
+        """Request a JSON object from providers that expose a native JSON mode."""
+
+        raise NotImplementedError(
+            f"Structured output not implemented for {self.__class__.__name__}"
+        )

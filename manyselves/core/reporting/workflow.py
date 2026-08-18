@@ -1571,7 +1571,9 @@ class ReportWorkflowRunner:
                     special_topic_plan.model_dump(mode="json"),
                 )
                 special_topic_knowledge = KnowledgeContextBuilder(
-                    self.service.workspace, run_id
+                    self.service.workspace,
+                    run_id,
+                    global_root=getattr(self.service, "global_root", None),
                 ).build_special_topics(special_topic_plan)
                 state["special_topic_plan"] = special_topic_plan
                 state["special_topic_plan_ref"] = (
@@ -1659,7 +1661,7 @@ class ReportWorkflowRunner:
                     *(
                         [
                             "special_topic_analysis 必须严格按 special_topic_plan 的顺序输出全部且仅输出对应的 ### 4.n 顶层小节；允许在所属 4.n 内使用 #### 4.n.m 等从属小标题，但不得新增顶层 4.n 小节",
-                            "专项分析可使用已内联的项目 Knowledge 和模型世界知识补充机理、方案权衡与行业实践；必须区分当前项目事实、可追溯参考和通用专业判断，禁止把通用知识写成客户事实",
+                            "专项分析可使用已内联的项目/全局 Knowledge 和模型世界知识补充机理、方案权衡与行业实践；必须区分当前项目事实、可追溯参考和通用专业判断，禁止把通用知识写成客户事实",
                         ]
                         if special_topic_plan is not None
                         else [
@@ -4535,7 +4537,11 @@ class ReportWorkflowRunner:
         """Build Main's deterministic fixed-module dispatch."""
 
         request = state["request"]
-        knowledge = KnowledgeContextBuilder(self.service.workspace, state["run_id"])
+        knowledge = KnowledgeContextBuilder(
+            self.service.workspace,
+            state["run_id"],
+            global_root=getattr(self.service, "global_root", None),
+        )
         if not self._load_template_skill(state):
             raise AgentWorkflowError(
                 "fixed template-writing Skill must exist before module dispatch"
@@ -4580,7 +4586,7 @@ class ReportWorkflowRunner:
                 ],
                 constraints=[
                     f"仅分析目标模块 {module_id}",
-                    "叶子任务内联当前叶子的 Knowledge 增量与核心写作方法；整模块 Knowledge 和完整写作 Skill 以共享引用提供，仅在增量不足时按需读取",
+                    "叶子任务内联当前叶子的项目/全局 Knowledge 增量与核心写作方法；整模块 Knowledge 和完整写作 Skill 以共享引用提供，仅在增量不足时按需读取",
                     "R-* 是优先参考而非认知边界；可使用模型世界知识解释机理、备选原因和行业实践，但不能把它补成客户事实",
                     "每个固定子模块必须形成带标题的完整正文，至少包含适用的现状、结论、风险机理和可执行建议",
                     (

@@ -467,6 +467,7 @@ class ReportingAgentRunner:
         *,
         timeout: float | None = None,
         product_skill_root: Path | None = None,
+        global_root: Path | None = None,
         provider_router: ProviderRouter | None = None,
         provider_admission: ProviderAdmissionController | None = None,
         provider_admission_controller: ProviderAdmissionController | None = None,
@@ -477,6 +478,9 @@ class ReportingAgentRunner:
         self.provider_router = provider_router or ProviderRouter(llm_provider)
         self.provider_admission = provider_admission or provider_admission_controller
         self.defaults = defaults
+        self.global_root = (
+            Path(global_root).resolve() if global_root is not None else None
+        )
         # Reporting tasks are already bounded by provider idle timeouts, tool-turn
         # limits, and the run-level request/token budget.  A second wall-clock
         # deadline here used to cancel healthy long-form agents after 600 seconds,
@@ -2137,9 +2141,13 @@ class ReportingAgentRunner:
                     self.workspace
                     / f"Work/runs/{envelope.run_id}/indexes/knowledge"
                 ),
+                global_root=self.global_root,
             )
         else:
-            library = ReferenceLibrary(self.workspace)
+            library = ReferenceLibrary(
+                self.workspace,
+                global_root=self.global_root,
+            )
         key = os.getenv("BRAVE_SEARCH_API_KEY", "").strip()
         web = BraveWebResearchBackend(key) if key else DisabledWebResearchBackend()
         research_guard = self._reporting_research_guard(definition, envelope, workflow_id)

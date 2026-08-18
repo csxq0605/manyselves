@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from hashlib import sha1
 from pathlib import Path
 
 from loguru import logger
@@ -21,6 +22,7 @@ class ProviderPreset:
     name: str
     provider: str  # "anthropic" | "openai" | "google" | "deepseek" | "openrouter" | "groq" | "custom"
     category: str  # "official" | "cn_official" | "aggregator" | "third_party" | "cloud_provider" | "builtin"
+    id: str = ""
     base_url: str = ""
     default_model: str = ""
     website_url: str = ""
@@ -31,6 +33,14 @@ class ProviderPreset:
 
 def _cache_dir() -> Path:
     return Path(__file__).parent.parent.parent / "external" / "cc-switch"
+
+
+def _preset_id(protocol: str, name: str) -> str:
+    """Create a stable UI identity without conflating it with the protocol."""
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    if not slug:
+        slug = f"preset-{sha1(name.encode('utf-8')).hexdigest()[:8]}"
+    return f"{protocol}-{slug}"
 
 
 # ── TS Parser ──────────────────────────────────────────────────────────
@@ -173,6 +183,7 @@ def _parse_claude_presets(filepath: Path) -> list[ProviderPreset]:
                     name=name,
                     provider=provider,
                     category=category,
+                    id=_preset_id(provider, name),
                     base_url=base_url,
                     default_model=default_model,
                     website_url=website_url,
@@ -190,10 +201,85 @@ def _parse_claude_presets(filepath: Path) -> list[ProviderPreset]:
 def _builtin_presets() -> list[ProviderPreset]:
     """Built-in presets available when cc-switch files are not synced."""
     return [
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 国内主流服务商（OpenAI 兼容协议）
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        ProviderPreset(
+            name="Xiaomi MiMo API (China)",
+            provider="openai",
+            category="cn_official",
+            id="openai-xiaomi-mimo-api-china",
+            base_url="https://api.xiaomimimo.com/v1",
+            default_model="mimo-v2.5-pro",
+            website_url="https://mimo.mi.com",
+            description="Xiaomi MiMo ordinary pay-as-you-go API",
+            icon_color="#FF6900",
+        ),
+        # Retained for coding-tool deployments; custom backends should use the
+        # ordinary OpenAI-compatible API preset above.
+        ProviderPreset(
+            name="Xiaomi MiMo Token Plan (China)",
+            provider="anthropic",
+            category="cn_official",
+            id="anthropic-xiaomi-mimo-token-plan-china",
+            base_url="https://token-plan-cn.xiaomimimo.com/anthropic",
+            default_model="mimo-v2.5-pro",
+            website_url="https://xiaomimimo.com",
+            description="Xiaomi MiMo Token Plan (coding tools only)",
+            icon_color="#FF6900",
+        ),
+        ProviderPreset(
+            name="DeepSeek",
+            provider="openai",
+            category="domestic",
+            id="openai-deepseek",
+            base_url="https://api.deepseek.com",
+            default_model="deepseek-chat",
+            website_url="https://www.deepseek.com",
+            description="DeepSeek 深度求索",
+            icon_color="#0E6CFF",
+        ),
+        ProviderPreset(
+            name="Kimi（月之暗面）",
+            provider="openai",
+            category="domestic",
+            id="openai-kimi",
+            base_url="https://api.moonshot.cn/v1",
+            default_model="moonshot-v1-8k",
+            website_url="https://kimi.moonshot.cn",
+            description="Kimi AI 助手",
+            icon_color="#00D4FF",
+        ),
+        ProviderPreset(
+            name="通义千问",
+            provider="openai",
+            category="domestic",
+            id="openai-qwen",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            default_model="qwen-turbo",
+            website_url="https://tongyi.aliyun.com",
+            description="阿里云通义千问",
+            icon_color="#FF6A00",
+        ),
+        ProviderPreset(
+            name="智谱AI（GLM）",
+            provider="openai",
+            category="domestic",
+            id="openai-zhipu-glm",
+            base_url="https://open.bigmodel.cn/api/paas/v4",
+            default_model="glm-4-flash",
+            website_url="https://bigmodel.cn",
+            description="智谱AI ChatGLM",
+            icon_color="#3370FF",
+        ),
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 国际主流服务商
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         ProviderPreset(
             name="Anthropic (Official)",
             provider="anthropic",
             category="official",
+            id="anthropic-official",
             base_url="https://api.anthropic.com",
             default_model="claude-sonnet-4-20250514",
             website_url="https://www.anthropic.com",
@@ -204,6 +290,7 @@ def _builtin_presets() -> list[ProviderPreset]:
             name="OpenAI (Official)",
             provider="openai",
             category="official",
+            id="openai-official",
             base_url="https://api.openai.com/v1",
             default_model="gpt-4o",
             website_url="https://platform.openai.com",
@@ -212,48 +299,48 @@ def _builtin_presets() -> list[ProviderPreset]:
         ),
         ProviderPreset(
             name="Google Gemini",
-            provider="google",
+            provider="openai",
             category="official",
-            base_url="https://generativelanguage.googleapis.com",
+            id="openai-google-gemini",
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai",
             default_model="gemini-2.0-flash-exp",
             website_url="https://ai.google.dev",
             description="Gemini 系列模型",
             icon_color="#4285F4",
         ),
-        ProviderPreset(
-            name="DeepSeek",
-            provider="deepseek",
-            category="official",
-            base_url="https://api.deepseek.com/v1",
-            default_model="deepseek-chat",
-            website_url="https://platform.deepseek.com",
-            description="DeepSeek Chat 模型",
-            icon_color="#1E88E5",
-        ),
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 聚合平台
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         ProviderPreset(
             name="OpenRouter",
-            provider="openrouter",
+            provider="openai",
             category="aggregator",
+            id="openai-openrouter",
             base_url="https://openrouter.ai/api/v1",
             default_model="anthropic/claude-sonnet-4.6",
             website_url="https://openrouter.ai",
             description="多模型聚合平台",
-            icon_color="#6566F1",
+            icon_color="#9945FF",
         ),
         ProviderPreset(
             name="Groq",
-            provider="groq",
-            category="official",
+            provider="openai",
+            category="aggregator",
+            id="openai-groq",
             base_url="https://api.groq.com/openai/v1",
             default_model="llama-3.3-70b-versatile",
             website_url="https://groq.com",
-            description="高速推理 (LPU 加速)",
-            icon_color="#F55036",
+            description="Groq 快速推理平台",
+            icon_color="#F5505B",
         ),
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 自定义服务
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         ProviderPreset(
             name="Custom / Local",
-            provider="custom",
+            provider="openai",
             category="custom",
+            id="openai-custom-local",
             base_url="http://localhost:11434/v1",
             default_model="",
             description="自建服务 (vLLM, Ollama 等)",
@@ -271,7 +358,8 @@ def load_presets() -> list[ProviderPreset]:
     fill gaps for non-Anthropic provider types.
     """
     all_presets: list[ProviderPreset] = []
-    seen: set[str] = set()
+    seen_names: set[str] = set()
+    seen_ids: set[str] = set()
 
     # Load from cc-switch TS files
     cache = _cache_dir()
@@ -282,9 +370,15 @@ def load_presets() -> list[ProviderPreset]:
         try:
             cc_presets = _parse_claude_presets(claude_file)
             for p in cc_presets:
+                # 过滤 Xiaomi 相关预设，只保留 Token Plan 版本
+                if "xiaomi" in p.name.lower() or "mimo" in p.name.lower():
+                    if "token plan" not in p.name.lower():
+                        continue  # 跳过非 Token Plan 版本
+
                 key = p.name.lower()
-                if key not in seen:
-                    seen.add(key)
+                if key not in seen_names and p.id not in seen_ids:
+                    seen_names.add(key)
+                    seen_ids.add(p.id)
                     all_presets.append(p)
             logger.info("Loaded {} presets from cc-switch", len(cc_presets))
         except Exception as e:
@@ -293,8 +387,9 @@ def load_presets() -> list[ProviderPreset]:
     # Add builtin presets for non-Anthropic providers
     for p in _builtin_presets():
         key = p.name.lower()
-        if key not in seen:
-            seen.add(key)
+        if key not in seen_names and p.id not in seen_ids:
+            seen_names.add(key)
+            seen_ids.add(p.id)
             all_presets.append(p)
 
     return all_presets
@@ -304,7 +399,7 @@ def get_presets_by_category() -> dict[str, list[ProviderPreset]]:
     """Group presets by category for UI display."""
     presets = load_presets()
     groups: dict[str, list[ProviderPreset]] = {}
-    order = ["custom", "official", "cn_official", "aggregator", "third_party", "cloud_provider", "builtin"]
+    order = ["custom", "official", "cn_official", "domestic", "aggregator", "third_party", "cloud_provider", "builtin"]
 
     for p in presets:
         cat = p.category if p.category in order else "builtin"

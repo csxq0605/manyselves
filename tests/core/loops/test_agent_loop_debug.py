@@ -2,15 +2,15 @@
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from manyselves.config.schema import AgentDefaults
 from manyselves.core.loops.agent_loop import AgentLoop
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.tools.registry import ToolRegistry
-from manyselves.config.schema import AgentDefaults
-from manyselves.interfaces.types import ApiDebugMessage, UserMessage, AgentType, AgentResponse
+from manyselves.interfaces.types import AgentType, ApiDebugMessage, UserMessage
 
 
 @pytest.fixture
@@ -63,7 +63,7 @@ async def test_api_debug_message_published_on_success(message_bus, mock_llm_prov
     """AgentLoop should publish ApiDebugMessage on successful API call."""
     workspace = Path("/tmp/test_workspace")
     agent_loop = AgentLoop(
-        agent_type=AgentType.MAIN,
+        agent_type=AgentType.DATA_ANALYSIS,
         workspace=workspace,
         tools=tool_registry,
         bus=message_bus,
@@ -89,7 +89,7 @@ async def test_api_debug_message_published_on_success(message_bus, mock_llm_prov
     # Send a user message
     user_msg = UserMessage(
         content="Hello, agent!",
-        agent_type=AgentType.MAIN,
+        agent_type=AgentType.DATA_ANALYSIS,
     )
     await message_bus.publish(user_msg)
 
@@ -116,6 +116,7 @@ async def test_api_debug_message_published_on_success(message_bus, mock_llm_prov
     assert debug_msg.tokens_in > 0
     assert debug_msg.tokens_out >= 0
     assert debug_msg.error is None
+    assert all(msg.agent_type == AgentType.DATA_ANALYSIS for msg in debug_messages)
 
 
 @pytest.mark.asyncio

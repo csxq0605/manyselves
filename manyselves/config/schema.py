@@ -1,13 +1,16 @@
 """Configuration schema using Pydantic."""
 
 from pathlib import Path
+from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPOSITORY_ROOT / "manyselves.config.yaml"
+
+CredentialSource = Literal["none", "yaml", "environment"]
 
 
 class Base(BaseModel):
@@ -31,12 +34,22 @@ class ApiConfig(Base):
 
     id: str = Field(default_factory=lambda: uuid4().hex[:8])
     name: str = "Unnamed"
+    preset_id: str | None = None
     provider: str = "custom"  # anthropic | openai | google | deepseek | openrouter | groq | custom
-    api_key: str | None = None
+    api_key: str | None = Field(default=None, repr=False)
     api_base: str | None = None
     enabled: bool = True
     default_model: str | None = None
     extra_headers: dict[str, str] | None = None
+    credential_source: CredentialSource = Field(default="none", exclude=True)
+    yaml_api_key: str | None = Field(default=None, exclude=True, repr=False)
+
+    def model_post_init(self, __context: Any) -> None:
+        """Remember the persisted secret before environment overrides are applied."""
+        if self.yaml_api_key is None and self.api_key:
+            self.yaml_api_key = self.api_key
+        if self.credential_source == "none" and self.api_key:
+            self.credential_source = "yaml"
 
 
 class ProvidersConfig(Base):
@@ -57,8 +70,8 @@ class MinerUAPIConfig(Base):
 class AgentDefaults(Base):
     """Default agent configuration."""
 
-    model: str = "anthropic/claude-sonnet-4.5"
-    provider: str = "auto"
+    model: str = "mimo-v2.5-pro"
+    provider: str = "openai"
     max_tokens: int = 8192
     temperature: float = 0.1
     max_tool_iterations: int = 200
@@ -101,6 +114,15 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
     openrouter_api_key: str | None = Field(default=None, alias="OPENROUTER_API_KEY")
     groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")
+    mimo_api_key: str | None = Field(default=None, alias="MIMO_API_KEY")
+    mimo_model: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MANYSELVES_BOOTSTRAP_MODEL", "MIMO_MODEL"),
+    )
+    mimo_api_base: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MANYSELVES_BOOTSTRAP_API_BASE", "MIMO_API_BASE"),
+    )
 
     config_path: Path = Field(default_factory=lambda: DEFAULT_CONFIG_PATH)
 
@@ -172,6 +194,33 @@ class Settings(BaseSettings):
             env_key = env_map.get(cfg.provider)
             if env_key:
                 cfg.api_key = env_key
+                cfg.credential_source = "environment"
+            if self._is_mimo_config(cfg):
+                if self.mimo_api_key:
+                    cfg.api_key = self.mimo_api_key
+                    cfg.credential_source = "environment"
+                if self.mimo_model:
+                    cfg.default_model = self.mimo_model
+                if self.mimo_api_base:
+                    cfg.api_base = self.mimo_api_base
+        active = next(
+            (
+                item
+                for item in config.providers.configurations
+                if item.id == config.providers.active
+            ),
+            None,
+        )
+        if active is not None and self._is_mimo_config(active):
+            if self.mimo_model:
+                config.agents.defaults.model = self.mimo_model
+            config.agents.defaults.provider = active.provider
+
+    @staticmethod
+    def _is_mimo_config(config: ApiConfig) -> bool:
+        model = (config.default_model or "").strip().casefold().rsplit("/", 1)[-1]
+        api_base = (config.api_base or "").strip().casefold()
+        return model in {"mimo-v2.5", "mimo-v2.5-pro"} or "xiaomimimo.com" in api_base
 
     def validate_api_keys(self, config: AppConfig) -> list[str]:
         """Validate that at least one enabled configuration has an API key."""

@@ -61,6 +61,7 @@ class AnthropicProvider(LLMProvider):
         api_key: str,
         api_base: str | None = None,
         model: str = "claude-sonnet-4-20250514",
+        extra_headers: dict[str, str] | None = None,
     ):
         super().__init__(api_key, api_base, model)
         self.client = AsyncAnthropic(
@@ -68,6 +69,7 @@ class AnthropicProvider(LLMProvider):
             base_url=api_base,
             max_retries=0,  # Centralize retry logic in agent loop
             auth_token=api_key,  # Prevent ANTHROPIC_AUTH_TOKEN env var override
+            default_headers=extra_headers,
             # The SDK otherwise uses a 5-second connect timeout even though its
             # read timeout is 10 minutes. Compatible gateways can legitimately
             # need longer to establish a streaming connection.

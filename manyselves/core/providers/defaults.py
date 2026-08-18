@@ -12,7 +12,7 @@ from __future__ import annotations
 #: Default model id per provider type. ``custom`` has no default.
 DEFAULT_MODELS: dict[str, str] = {
     "anthropic": "claude-sonnet-4-20250514",
-    "openai": "gpt-4o",
+    "openai": "mimo-v2.5-pro",
     "google": "gemini-2.0-flash-exp",
     "deepseek": "deepseek-chat",
     "openrouter": "anthropic/claude-sonnet-4.6",

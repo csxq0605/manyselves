@@ -96,6 +96,7 @@ class ReportingService:
         task_board: TaskBoard,
         llm_provider: LLMProvider,
         agent_defaults: AgentDefaults | None = None,
+        global_root: Path | None = None,
         provider_router: ProviderRouter | None = None,
         provider_admission: ProviderAdmissionController | None = None,
     ):
@@ -108,6 +109,9 @@ class ReportingService:
         self.task_board = task_board
         self.llm_provider = llm_provider
         self.agent_defaults = agent_defaults or AgentDefaults()
+        self.global_root = (
+            Path(global_root).resolve() if global_root is not None else None
+        )
         self.provider_router = provider_router or ProviderRouter(llm_provider)
         # This controller is owned by the service, not by a module lane or an
         # Agent session.  Consequently all real Provider requests share the
@@ -189,6 +193,7 @@ class ReportingService:
                 self.llm_provider,
                 self.agent_defaults,
                 timeout=None,
+                global_root=self.global_root,
                 provider_router=self.provider_router,
                 provider_admission=self.provider_admission,
             )

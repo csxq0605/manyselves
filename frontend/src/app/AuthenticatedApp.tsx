@@ -1,0 +1,30 @@
+import { createApiGateway, type ApiGatewayOptions } from "../api/gateway";
+import { useCallback, useEffect, useMemo } from "react";
+import { useAuthenticatedSession } from "../features/auth/auth-context";
+import type { SettingsStorage } from "../features/settings/settings-storage";
+import type { PlatformBridge } from "../platform/types";
+import { App } from "./App";
+
+export interface AuthenticatedAppProps {
+  readonly eventSource: { readonly baseUrl: string; readonly fetch: typeof fetch };
+  readonly gatewayOptions: Omit<ApiGatewayOptions, "onUnauthorized">;
+  readonly platform: PlatformBridge;
+  readonly settingsStorage: SettingsStorage;
+}
+
+export function AuthenticatedApp({ eventSource, gatewayOptions, platform, settingsStorage }: AuthenticatedAppProps) {
+  const { logout, returnToLogin, session } = useAuthenticatedSession();
+  const gateway = useMemo(
+    () => createApiGateway({ ...gatewayOptions, onUnauthorized: returnToLogin }),
+    [gatewayOptions, returnToLogin],
+  );
+  useEffect(() => {
+    gateway.controlLease.start();
+    return () => gateway.controlLease.stop();
+  }, [gateway]);
+  const logoutWithLease = useCallback(async () => {
+    await gateway.controlLease.release();
+    await logout();
+  }, [gateway, logout]);
+  return <App accountUsername={session.username} eventSource={eventSource} gateway={gateway} onLogout={() => void logoutWithLease()} onUnauthorized={returnToLogin} platform={platform} settingsStorage={settingsStorage} />;
+}

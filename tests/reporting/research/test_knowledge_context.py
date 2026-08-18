@@ -1,10 +1,59 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from manyselves.core.reporting.models import SpecialTopicPlan
 from manyselves.core.reporting.research.knowledge_context import KnowledgeContextBuilder
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
+
+
+def _write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def test_context_manifest_records_project_and_global_sources(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    global_root = tmp_path / "global"
+    _write(project / "Knowledge/project.md", "project reference")
+    _write(global_root / "global.md", "global reference")
+
+    builder = KnowledgeContextBuilder(project, "run-1", global_root=global_root)
+    documents = builder.freeze_sources()
+    manifest = json.loads(
+        (project / "Work/runs/run-1/context-manifests/knowledge-sources.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert {document.namespace for document in documents} == {"project", "global"}
+    assert {item["namespace"] for item in manifest["sources"]} == {"project", "global"}
+    assert {item["logicalPath"] for item in manifest["sources"]} == {
+        "Knowledge/project.md",
+        "GlobalKnowledge/global.md",
+    }
+    assert all(len(item["sha256"]) == 64 for item in manifest["sources"])
+
+
+def test_run_source_freeze_ignores_later_global_upload_across_builders(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    global_root = tmp_path / "global"
+    _write(global_root / "initial.md", "initial reference")
+    builder = KnowledgeContextBuilder(project, "run-1", global_root=global_root)
+
+    initial = builder.freeze_sources()
+    _write(global_root / "late.md", "late reference")
+    same_builder = builder.freeze_sources()
+    restarted_builder = KnowledgeContextBuilder(
+        project, "run-1", global_root=global_root
+    ).freeze_sources()
+
+    assert [document.relative_path for document in initial] == [
+        "GlobalKnowledge/initial.md"
+    ]
+    assert same_builder == initial
+    assert restarted_builder == initial
 
 
 def test_knowledge_context_is_taxonomy_aligned_and_registers_local_sources(tmp_path) -> None:

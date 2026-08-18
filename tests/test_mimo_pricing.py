@@ -1,8 +1,10 @@
 import pytest
 
 from manyselves.core.mimo_pricing import (
+    calculate_mimo_cost,
     calculate_mimo_v25_pro_cost,
     calculate_mimo_v25_pro_run_cost,
+    configured_mimo_model,
     format_mimo_v25_pro_cost,
 )
 
@@ -60,3 +62,53 @@ def test_mimo_pricing_reads_run_ledger_and_skips_other_models(tmp_path) -> None:
     assert report["tokens"] == {"cached_input": 40, "uncached_input": 110, "output": 20}
     assert report["priced_attempts"] == 1
     assert report["unpriced_attempts"] == 1
+
+
+def test_mimo_v25_uses_its_distinct_api_and_credit_rates() -> None:
+    report = calculate_mimo_cost(
+        [{
+            "timestamp": "2026-08-13T12:00:00+08:00",
+            "model": "mimo-v2.5",
+            "cached_input_tokens": 1_000_000,
+            "uncached_input_tokens": 2_000_000,
+            "output_tokens": 500_000,
+        }]
+    )
+
+    assert report is not None
+    assert report["model"] == "mimo-v2.5"
+    assert report["token_plan"]["credits_used"] == 302_000_000
+    assert report["api"]["cost_cny"] == pytest.approx(3.02)
+    assert report["models"]["mimo-v2.5"]["api_rates_cny_per_million_tokens"] == {
+        "cached_input": 0.02,
+        "uncached_input": 1.0,
+        "output": 2.0,
+    }
+    assert "max" in report["token_plan"]["plans"]
+
+
+def test_mimo_pricing_uses_env_model_only_when_ledger_model_is_absent() -> None:
+    assert configured_mimo_model({"MANYSELVES_BOOTSTRAP_MODEL": "mimo-v2.5"}) == (
+        "mimo-v2.5"
+    )
+    report = calculate_mimo_cost(
+        [{"timestamp": "2026-08-13T12:00:00+08:00", "output_tokens": 10}],
+        default_model="mimo-v2.5",
+    )
+    assert report is not None
+    assert report["model"] == "mimo-v2.5"
+
+
+def test_payg_cache_write_is_free_but_token_plan_treats_it_as_a_miss() -> None:
+    report = calculate_mimo_cost(
+        [{
+            "timestamp": "2026-08-13T12:00:00+08:00",
+            "model": "mimo-v2.5",
+            "input_tokens": 100,
+            "cache_write_input_tokens": 100,
+        }]
+    )
+    assert report is not None
+    assert report["api"]["cost_cny"] == 0
+    assert report["api"]["billable_tokens"]["uncached_input"] == 0
+    assert report["token_plan"]["credits_used"] == 10_000

@@ -1,0 +1,252 @@
+.reporting-workspace {
+  display: grid;
+  grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr);
+  min-height: 100%;
+  background: #0b1115;
+  color: #d8e3e8;
+}
+
+.reporting-workspace__rail {
+  padding: 1rem;
+  border-right: 1px solid #26343b;
+  background: #0d161b;
+}
+
+.reporting-workspace__content {
+  min-width: 0;
+  padding: 1.2rem;
+  overflow: auto;
+}
+
+.reporting-workspace__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.8rem 1.2rem;
+  align-items: center;
+  padding: 1rem 1.2rem;
+  border: 1px solid #31434c;
+  background: linear-gradient(135deg, #12232a, #10191e 70%);
+}
+
+.reporting-workspace__header p,
+.reporting-section-heading p {
+  margin: 0 0 0.2rem;
+  color: #74c9c5;
+  font: 600 0.66rem/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0.12em;
+}
+
+.reporting-workspace__header h2,
+.reporting-section-heading h3 {
+  margin: 0;
+}
+
+.reporting-workspace__commands {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 0.5rem;
+}
+
+.reporting-create,
+.reporting-form,
+.reporting-resume-supplement {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.reporting-create {
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #26343b;
+}
+
+.reporting-create label,
+.reporting-form label,
+.reporting-card label,
+.reporting-resume-supplement {
+  display: grid;
+  gap: 0.3rem;
+  color: #9fb0b8;
+  font-size: 0.78rem;
+}
+
+.reporting-create textarea,
+.reporting-form textarea,
+.reporting-card textarea,
+.reporting-resume-supplement textarea,
+.reporting-create input,
+.reporting-create select,
+.reporting-form select,
+.reporting-card select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.5rem;
+  border: 1px solid #344851;
+  border-radius: 0.25rem;
+  background: #0a1216;
+  color: #e6eef1;
+}
+
+.reporting-create textarea,
+.reporting-form textarea,
+.reporting-card textarea,
+.reporting-resume-supplement textarea {
+  min-height: 4.5rem;
+  resize: vertical;
+}
+
+.reporting-workspace button {
+  padding: 0.45rem 0.65rem;
+  border: 1px solid #41716f;
+  border-radius: 0.25rem;
+  background: #183533;
+  color: #dff7f4;
+  cursor: pointer;
+}
+
+.reporting-workspace button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.reporting-run-list {
+  padding-top: 1rem;
+}
+
+.reporting-run-list ul,
+.reporting-output-list,
+.reporting-timeline {
+  margin: 0.7rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reporting-run-list__item {
+  display: grid;
+  width: 100%;
+  margin-bottom: 0.45rem;
+  text-align: left;
+  background: #101c21 !important;
+}
+
+.reporting-run-list__item[aria-current="true"] {
+  border-color: #75d1cb;
+  box-shadow: inset 3px 0 #75d1cb;
+}
+
+.reporting-run-list__item > span,
+.reporting-output-list li > span {
+  display: grid;
+}
+
+.reporting-run-list small,
+.reporting-output-list small,
+.reporting-agent-grid small {
+  color: #81929a;
+}
+
+.reporting-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  color: #b7c7cd;
+  font-size: 0.74rem;
+}
+
+.reporting-progress__signal {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: #75909a;
+}
+
+.reporting-progress--completed .reporting-progress__signal { background: #6fd39e; }
+.reporting-progress--failed .reporting-progress__signal { background: #e67272; }
+.reporting-progress--running .reporting-progress__signal,
+.reporting-progress--revising .reporting-progress__signal { background: #e9b45a; }
+.reporting-progress--waiting_user .reporting-progress__signal { background: #8bb9ff; }
+
+.reporting-form,
+.reporting-resume-supplement {
+  margin-top: 0.8rem;
+  padding: 1rem;
+  border: 1px solid #725a36;
+  background: #1c1912;
+}
+
+.reporting-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+  margin-top: 0.9rem;
+}
+
+.reporting-card {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid #2c3d45;
+  background: #10191e;
+}
+
+.reporting-module-grid,
+.reporting-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: 0.5rem;
+  margin: 0.8rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reporting-module-grid li,
+.reporting-agent-grid article {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.6rem;
+  border-left: 2px solid #4a7d7a;
+  background: #0b1317;
+}
+
+.reporting-ledger {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.reporting-ledger div {
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.35fr) minmax(0, 1fr);
+  gap: 0.6rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid #24343b;
+}
+
+.reporting-ledger dt { color: #7fcac6; }
+.reporting-ledger dd { margin: 0; overflow-wrap: anywhere; }
+
+.reporting-output-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid #24343b;
+}
+
+.reporting-verification {
+  padding: 0.55rem;
+  border-left: 3px solid #7e98a3;
+  background: #0b1317;
+}
+
+.reporting-verification--passed { border-color: #6fd39e; }
+.reporting-verification--failed { border-color: #e67272; }
+.reporting-empty,
+.reporting-meta,
+.reporting-output-list__blocked { color: #8d9ca3; }
+
+@media (max-width: 1100px) {
+  .reporting-workspace { grid-template-columns: 1fr; }
+  .reporting-workspace__rail { border-right: 0; border-bottom: 1px solid #26343b; }
+  .reporting-dashboard-grid { grid-template-columns: 1fr; }
+}

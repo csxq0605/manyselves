@@ -396,6 +396,68 @@ def test_openai_convert_tool_calls():
     assert tool_msg["tool_call_id"] == "call_1"
 
 
+def test_mimo_replays_reasoning_content_for_tool_call_history():
+    provider = OpenAICompatProvider.__new__(OpenAICompatProvider)
+    provider.model = "mimo-v2.5"
+    tc = LLMToolCall(id="call_1", name="read", arguments={"path": "test.txt"})
+
+    result = provider._convert_messages(
+        [Message(role="assistant", content="", tool_calls=[tc], thinking="reasoning")]
+    )
+
+    assert result[0]["reasoning_content"] == "reasoning"
+
+
+def test_mimo_request_enables_thinking_and_omits_unsupported_temperature():
+    provider = OpenAICompatProvider.__new__(OpenAICompatProvider)
+    provider.model = "mimo-v2.5-pro"
+
+    params = provider._completion_params(
+        [Message(role="user", content="audit")],
+        tools=None,
+        temperature=0.1,
+        max_tokens=4096,
+        stream=False,
+    )
+
+    assert params["extra_body"] == {"thinking": {"type": "enabled"}}
+    assert params["max_completion_tokens"] == 4096
+    assert "temperature" not in params
+    assert "max_tokens" not in params
+
+
+@pytest.mark.asyncio
+async def test_mimo_structured_output_uses_json_mode_and_returns_reasoning():
+    captured = {}
+
+    class Completions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(
+                    message=SimpleNamespace(
+                        content='{"status":"ok"}',
+                        reasoning_content="checked schema",
+                    ),
+                    finish_reason="stop",
+                )],
+                usage=None,
+            )
+
+    provider = OpenAICompatProvider.__new__(OpenAICompatProvider)
+    provider.model = "mimo-v2.5"
+    provider.provider_type = "openai"
+    provider.client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+
+    response = await provider.chat_structured(
+        [Message(role="user", content="Return only JSON with a status field.")]
+    )
+
+    assert captured["response_format"] == {"type": "json_object"}
+    assert response.content == '{"status":"ok"}'
+    assert response.thinking == "checked schema"
+
+
 def test_openai_convert_tools():
     provider = OpenAICompatProvider.__new__(OpenAICompatProvider)
     tools = [{"name": "exec", "description": "Execute", "input_schema": {"type": "object"}}]
