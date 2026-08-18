@@ -24,7 +24,7 @@ The current release is online and can be used through PyQt, React + FastAPI, or 
 
 > **Architecture roadmap, not current release status**
 >
-> A domain-stateless, reconstructible kernel is the final architecture goal. The live release already separates many identities and Skills into files and persists important task state, but some workflow graphs, transition rules, and domain services are still implemented in Python. That future direction is documented separately below and does not make the current deployed feature set a beta.
+> A domain-stateless, reconstructible kernel is the final architecture goal. The live release already separates many identities and Skills into files and persists important task state, but some workflow graphs, transition rules, and domain services are still implemented in Python. That future direction is documented separately below and does not change the Production/Stable status of the current deployed feature set.
 
 ## Run or deploy
 
