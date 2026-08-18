@@ -1,262 +1,306 @@
 <div align="center">
 
-![Manyselves](assets/screenshots/title.png)
+![ManySelves](assets/screenshots/title.png)
+
+# ManySelves
 
 ### One runtime. Many selves.
 
-**A local workspace for document-defined agent teams.**
+**A durable, file-defined runtime for portable agent capabilities.**
 
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#)
-[![Python](https://img.shields.io/badge/python-%E2%89%A5%203.12-blue.svg)](https://www.python.org/)
-[![Built with PyQt6](https://img.shields.io/badge/built%20with-PyQt6-green.svg)](https://www.riverbankcomputing.com/software/pyqt/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
-English | [中文](README_zh.md)
+[![Python](https://img.shields.io/badge/Python-%E2%89%A5%203.12-blue.svg)](https://www.python.org/)
+[![Runtime API](https://img.shields.io/badge/runtime-FastAPI-009688.svg)](https://fastapi.tiangolo.com/)
+[![Clients](https://img.shields.io/badge/clients-PyQt%20%7C%20React%20%7C%20Electron-6f42c1.svg)](#implemented-in-this-branch)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
 
-> **Experimental branch notice:** this checkout documents and implements
-> cost-control-only three-wave collaboration and parallel module authoring.
-> These changes are not present on `main`; module review and the Cross/Chief/Final
-> path remain serial. See
-> [the handoff note](docs/experimental-cost-control-handoff.md) for the exact
-> implemented/planned boundary.
+ManySelves is an experimental, general-purpose capability substrate for AI agents. It expands the project positioning described on [csxq0605.github.io](https://csxq0605.github.io): versionable Identity contracts and Skill documents are realized through durable, recoverable execution behind a controlled runtime boundary.
 
-## What is Manyselves?
+The long-term objective is not another hard-coded agent application. It is to make a capability portable: give the runtime a set of Markdown/YAML definitions and durable run state, then reconstruct an agent or agent team that can execute a task, advance a serial workflow, enforce gates, pause for decisions, resume after failure, and migrate to another workspace or compatible runtime.
 
-Manyselves is a local desktop runtime for teams of AI agents whose identities,
-boundaries, skills, and handoffs live in documents. Keep the same workspace and
-change those definitions to turn it into a different team.
+> **中文概览**
+>
+> ManySelves 希望成为一个“内核稳定、能力外置、状态可恢复”的通用 Agent 运行底座。内核负责模型调用、工具、消息、状态、检查点、权限、工作流推进和交付；身份、技能、交互规范、编排规则与门禁尽量通过 Markdown、YAML、JSON Schema 等文件定义并版本化。当前分支已经具备独立 `RuntimeHost`、FastAPI 边界、文件化 Agent 身份与 Skill、检查点/回滚、任务状态、报告工作流和多账户隔离，但还不是完全声明式、可由任意能力包驱动的无状态内核：部分路由、状态载体、工作流图和领域规则仍写在 Python 中。下文明确区分“已经实现”与“目标架构”。
 
-The runtime supplies the durable parts: a Main Agent conversation, project file
-tree, document preview, task routing, tools, checkpoints, provider integration,
-and local artifacts. The repository currently ships a production-grade
-power-distribution reporting team as its bundled capability; that team is an
-example of what the runtime can host, not the limit of the product.
+## Design principles
 
-![How Manyselves becomes a team](assets/screenshots/workflow.png)
+1. **One stable kernel** — provider access, tool execution, messaging, lifecycle, workspace isolation, checkpoints, artifacts, errors, and recovery belong to the runtime.
+2. **Capability outside the kernel** — identities, skills, interaction contracts, workflow topology, gates, policies, schemas, and templates should be versioned inputs.
+3. **Durable state outside live workers** — progress must survive a process restart and remain inspectable, auditable, and migratable.
+4. **Workflow as data** — steps, transitions, retries, human decisions, rejection paths, compensations, and terminal rules should be declared rather than compiled into one domain flow.
+5. **Interfaces are adapters** — FastAPI, React, Electron, and PyQt should invoke the same runtime concepts without becoming the source of business behavior.
 
-## Define the team, not another app
-
-Three layers shape a Manyselves team:
-
-1. **Identity documents** define each Agent's role, constraints, inputs, outputs,
-   and handoffs.
-2. **Skill documents** encode reusable domain methods and quality criteria.
-3. **Runtime tools and workflows** connect those definitions to files, state,
-   review, and deliverables.
-
-The current definitions are under `manyselves/templates/agents/` and
-`manyselves/templates/reporting/`. See [Defining a team](docs/team-definition.md)
-for the separation between document-only customization and Python extensions.
-The current serial cost-control scope is documented in the
-[cost-control main integration note](docs/cost-control-main-integration.md).
-Future parallel orchestration remains research-only under the
-[parallel Agent orchestration and deployment research plan](docs/parallel-agent-orchestration-research-plan.md).
-
-## Runtime capabilities
-
-- **One stable Main surface** — users talk to Main while task-scoped specialists,
-  auditors, reviewers, and editors report through one timeline.
-- **Local project workspace** — inspect inputs, knowledge, work state, and outputs
-  without moving project data to a separate product database.
-- **Document context** — preview files, add `@` references, attach selected lines,
-  and render Markdown in conversation.
-- **Reliable execution** — streaming responses, task routing, typed state,
-  checkpoints, rollback, and resumable decisions.
-- **Multiple LLM providers** — Anthropic, OpenAI, DeepSeek, and compatible APIs,
-  with provider presets and runtime model selection.
-- **Extensible delivery** — tools and workflows can produce documents, review
-  records, ledgers, state snapshots, and other project artifacts.
-
-## Quick start
-
-Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), and an API key for
-at least one supported LLM provider.
-
-```bash
-git clone <repository-url> manyselves
-cd manyselves
-uv sync
-uv run manyselves
-```
-
-![Manyselves start window](assets/screenshots/start-window.png)
-
-Without `uv`, create the virtual environment inside the repository:
-
-```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -e .
-.venv/bin/manyselves
-```
-
-You can preconfigure provider keys through environment variables:
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-export OPENAI_API_KEY="sk-..."
-export DEEPSEEK_API_KEY="sk-..."
-uv run manyselves
-```
-
-## Browser, Electron, and server deployment
-
-Phase 1 supports the existing PyQt desktop, a React browser client, and a secure
-Electron client against one FastAPI Runtime.
-
-### Local Python deployment (no Docker)
-
-For local development or simple deployment without Docker:
-
-```bash
-# Quick start
-python run_web.py
-
-# Or use the startup script
-./start.sh  # Linux/macOS
-start.bat    # Windows
-```
-
-See [Local Run Guide](docs/RUN_LOCAL.md) for detailed instructions.
-
-### Docker deployment
-
-For Linux server installation, daily operation, backup/restore, and upgrade/rollback, follow
-[the Compose deployment guide](docs/deployment/linux-compose.md). The concise
-release limitations are in [Phase 1 known limitations](docs/phase1/known-limitations.md).
-For a server-side preflight that does not replace the LAN stack, use
-`deploy/smoke.env.example` with the isolated `manyselves-phase1-smoke` project
-documented in the Compose guide.
-
-```bash
-cp deploy/env.example deploy/.env
-# Set the provider key and absolute data directory. The reviewed LAN login
-# defaults are admin / yuanxi@2026 and can be changed only on the server.
-docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build --wait
-set -a
-. deploy/.env
-set +a
-uv run python scripts/verify_deployment.py \
-  --url http://192.168.8.28:9090 \
-  --username "$MANYSELVES_ADMIN_USERNAME" \
-  --password-env MANYSELVES_ADMIN_PASSWORD
-```
-
-## Configuration and local state
-
-The canonical application configuration is the repository-root
-`manyselves.config.yaml`, regardless of the directory from which Manyselves is
-launched. The canonical Python namespace is `manyselves`.
-
-Explicit configuration paths still override the default. Application preferences
-stay under the repository-root `.manyselves/` directory; project state and
-deliverables stay inside the selected project.
-
-![Manyselves API configuration](assets/screenshots/configuration-window.png)
-
-```yaml
-agents:
-  defaults:
-    model: "anthropic/claude-sonnet-4.5"
-    temperature: 0.1
-    max_tool_iterations: 200
-```
-
-## Bundled capability: power-distribution reports
-
-The included team coordinates evidence intake, three-wave collaboration across five
-report modules, responsibility audit, cross-module review, Chief Editor integration,
-governed Skill evolution, and template-backed DOCX delivery.
-
-Customer facts go in `Inputs/`; project standards and interpretation references
-go in `Knowledge/`. The workflow recognizes the three core workbooks, WPS
-`DISPIMG` media, XLSX/XLSM, DOCX, Markdown, text, images, and PDF. Unsupported
-DWG and video files remain visible as `manual_required` instead of disappearing.
-
-Customer facts (`E-*`), reference sources (`R-*`), claims, coverage, missing
-evidence decisions, loaded Skill versions, review findings, and report versions
-remain auditable. Knowledge and web sources can support interpretation but never
-become customer-site facts.
-
-For a full report, modules 2.1–2.5 first complete two bounded collaboration waves,
-then draft concurrently. Their responsibility audits, targeted revisions, and
-same-reviewer rechecks currently run in fixed module order; all five must complete
-before cross review and complete-document composition. Missing evidence defaults
-to an uncertainty-marked `draft`; `ask`, `block`, and `skip` remain explicit
-policies, and durable decisions survive process restarts. A post-delivery revision
-restores a baseline, reruns only the responsible module, rechecks the full report,
-and publishes an immutable child version.
-
-Typical project output:
-
-```text
-project/
-├── Inputs/                         # Customer facts
-├── Knowledge/                      # Project references
-├── Templates/                      # Optional report_template.docx override
-├── Work/
-│   ├── evidence.jsonl
-│   ├── coverage.json
-│   ├── report-state.json
-│   ├── runs/<run-id>/              # State, modules, reviews, ledgers, decisions
-│   └── report-versions/<id>/        # Immutable version snapshots
-└── Outputs/
-    ├── Modules/                     # Modules 2.1–2.5
-    ├── Reviews/                     # Responsibility and cross-module reviews
-    └── Reports/                     # Complete DOCX and render log
-```
-
-Skill evolution is separate from report revision and requires explicit intent:
-`FeedbackRecord → SkillCandidate → EvaluationResult → confirmation → SkillVersion`.
-Later runs resolve packaged, product, then project Skills; every report version
-freezes the exact IDs, versions, scopes, hashes, and template provenance it used.
-
-See the [full capability contract](docs/capabilities/power-distribution.md) for
-evidence decisions, acceptance boundaries, revision, and artifact details.
-
-## Optional document parsing
-
-Manyselves can use an optional document-conversion CLI to convert PDF, images,
-DOCX, PPTX, and XLSX to Markdown. Install and authenticate a compatible converter;
-the application detects it at startup. Core local workspace use does not depend
-on this integration.
+“Stateless kernel” here means **domain-stateless and reconstructible**, not “no live objects.” A running process still owns provider clients, queues, leases, tasks, and streams. The intended property is that no business identity or irreplaceable workflow truth exists only in those objects: a worker can be recreated from configuration, capability definitions, and persisted run state.
 
 ## Architecture
 
-```text
-manyselves/                         # Canonical Python package
-├── app.py                          # CLI and desktop startup
-├── branding.py                     # Public product identity contract
-├── config/                         # Repository-local YAML configuration
-├── core/
-│   ├── loops/                      # Agent runtime and MessageBus
-│   ├── providers/                  # LLM provider abstraction
-│   ├── reporting/                  # Bundled reporting capability
-│   └── tools/                      # Workspace and workflow tools
-├── gui/                            # PyQt6 desktop interface
-├── resources/                      # Manyselves application icon
-└── templates/
-    ├── agents/                     # Main identity and common policy
-    └── reporting/                  # Bundled team identities and Skills
+```mermaid
+flowchart TB
+    subgraph Interfaces["Interfaces / adapters"]
+        Web["React browser"]
+        Electron["Electron desktop"]
+        Qt["PyQt desktop"]
+        API["FastAPI boundary"]
+    end
+
+    subgraph Kernel["Runtime kernel"]
+        Host["RuntimeHost lifecycle"]
+        Loops["LoopManager + AgentLoop"]
+        Bus["Message bus / event stream"]
+        Tools["Tool registry + artifact gateway"]
+        Providers["Provider abstraction"]
+    end
+
+    subgraph Definitions["File-defined capability"]
+        Identity["Identity contracts\nMarkdown + YAML frontmatter"]
+        Skills["Skill documents\nMarkdown"]
+        Config["Runtime/provider config\nYAML + environment"]
+        Workflow["Workflow, state and gates\npartly declarative today"]
+        Schemas["Schemas, policies and templates"]
+    end
+
+    subgraph Durable["Durable state"]
+        Inputs["Inputs / Knowledge"]
+        Work["Runs / tasks / ledgers / reviews"]
+        Outputs["Outputs / artifacts"]
+        Events["Events / conversations / checkpoints"]
+    end
+
+    Web --> API
+    Electron --> API
+    API --> Host
+    Qt --> Host
+    Host --> Loops
+    Loops <--> Bus
+    Loops --> Tools
+    Loops --> Providers
+    Identity --> Loops
+    Skills --> Loops
+    Config --> Host
+    Workflow --> Loops
+    Schemas --> Tools
+    Tools <--> Durable
+    Bus --> Events
 ```
+
+## Implemented in this branch
+
+### Runtime boundary
+
+`manyselves/application/runtime_host.py` owns startup, shutdown, workspace switching, message-bus lifecycle, and loop-manager replacement. The runtime is no longer inseparable from one GUI and can be hosted behind FastAPI or local interfaces.
+
+### File-defined identities and skills
+
+Packaged identities live under `manyselves/templates/agents/` and `manyselves/templates/reporting/agents/`. Each identity is Markdown with validated YAML frontmatter for model policy, tool grants, read/write carriers, turn limits, memory scope, background execution, and instructions. Reusable Skills live under `manyselves/templates/reporting/skills/`.
+
+These Markdown files are **runtime inputs**, not repository documentation, so they remain after the documentation cleanup.
+
+### Durable execution and recovery
+
+The implementation includes project workspaces, task state, manifests, artifacts, checkpoints, rollback, resumable reporting runs, persisted decisions, conversations, and an event store. Interrupted work can be inspected or resumed instead of silently starting from zero.
+
+### Workflow control and gates
+
+The bundled reporting capability demonstrates serial and bounded-parallel execution, task-scoped specialist roles, evidence decisions, revision loops, cross-module review, final validation, delivery checks, and explicit terminal states. One user-facing Main agent delegates bounded work to role definitions.
+
+### Interfaces and account isolation
+
+- **FastAPI** exposes the server boundary and streaming events.
+- **React** provides the browser client.
+- **Electron** packages the browser client as a desktop surface.
+- **PyQt6** remains available as the original local desktop interface.
+- A FastAPI process can lazily create one isolated runtime graph and write root per configured account.
+
+## Actual implementation versus the target substrate
+
+| Concern | Implemented now | Target end state |
+| --- | --- | --- |
+| Kernel boundary | `RuntimeHost`, provider abstraction, message bus, tool registry, workspace, checkpoints, and artifacts exist. | No capability-specific route, prompt, carrier name, or workflow assumption remains in the kernel. |
+| Statelessness | Durable records coexist with live `TenantRuntime`, loops, task boards, brokers, providers, and leases. | Live workers are disposable executors reconstructed from a capability package and persisted state. |
+| Identity and Skills | Agent identities use Markdown/YAML frontmatter; bundled Skills are Markdown. | Identities, Skills, tool grants, interactions, schemas, and compatibility requirements share one versioned capability manifest. |
+| Orchestration | The report workflow supports state, gates, resume, revision, review, and delivery, but much of its graph and transition logic is Python. | Serial/parallel steps, retries, decisions, gates, compensations, and terminal rules load from declarative definitions. |
+| Capability loading | The runtime loads packaged identities and known templates. | An arbitrary validated capability bundle can be installed, selected, and instantiated without capability-specific kernel edits. |
+| Domain coupling | Reporting-specific routing, fixed carrier vocabulary, and domain services still appear in core paths. | Domain packages register vocabulary and behavior through stable extension points. |
+| State model | Checkpoints, conversations, event storage, artifacts, and workflow records cover important recovery paths. | One typed state/event contract supports replay, migration, inspection, and compatibility checks. |
+| Task migration | Definitions and templates can be copied and project data remains durable. | A capability plus its run state can move to another compatible runtime without moving domain-specific Python code. |
+
+The repository therefore contains a useful runtime and a substantial reference capability, but it is not yet a fully generic, zero-code workflow engine.
+
+## Target capability package
+
+The following layout expresses the intended direction. It is a target contract, **not a claim that every field is currently accepted by the loader**.
+
+```text
+capabilities/example/
+├── capability.yaml
+├── identities/
+│   ├── main.md
+│   ├── executor.md
+│   └── reviewer.md
+├── skills/
+│   ├── analysis.md
+│   └── delivery.md
+├── workflows/
+│   └── default.yaml
+├── policies/
+│   ├── access.yaml
+│   └── gates.yaml
+├── schemas/
+│   ├── input.schema.json
+│   ├── state.schema.json
+│   └── output.schema.json
+└── templates/
+    └── deliverable.docx
+```
+
+A future workflow definition could look like this:
+
+```yaml
+apiVersion: manyselves/v1
+kind: Capability
+metadata:
+  id: portable-research-workflow
+  version: 1.0.0
+
+entrypoint: main
+identities:
+  main: identities/main.md
+  executor: identities/executor.md
+  reviewer: identities/reviewer.md
+
+workflow:
+  stateSchema: schemas/state.schema.json
+  steps:
+    - id: execute
+      agent: executor
+      skills: [skills/analysis.md]
+      writes: [work/result.json]
+
+    - id: review
+      needs: [execute]
+      agent: reviewer
+      gate:
+        type: schema-and-policy
+        schema: schemas/output.schema.json
+        onReject: execute
+
+    - id: deliver
+      needs: [review]
+      run: tools.render
+      terminal: true
+```
+
+The portability rule is simple: **definitions describe capability; durable state describes progress; the kernel interprets stable contracts.**
+
+## Bundled reference capability
+
+The most complete current capability is a power-distribution report workflow. It coordinates evidence intake, specialist analysis, review, revision, final assembly, and DOCX delivery while preserving run state and decisions.
+
+A project workspace normally contains:
+
+```text
+project/
+├── Inputs/       # Task facts and uploaded source material
+├── Knowledge/    # Reusable references
+├── Templates/    # Optional delivery templates
+├── Work/         # Runs, state, ledgers, reviews and checkpoints
+└── Outputs/      # Modules, reports and final artifacts
+```
+
+It should be treated as a proving ground for the runtime, not as the permanent boundary of ManySelves.
+
+## Repository layout
+
+```text
+manyselves/
+├── application/        # RuntimeHost and application services
+├── core/               # Loops, providers, tools, state and bundled workflow
+├── webapi/             # FastAPI, auth, events and account runtimes
+├── gui/                # PyQt client
+├── interfaces/         # Shared runtime-facing types
+└── templates/          # Runtime-loaded Identity, Skill and delivery files
+
+frontend/               # React client
+desktop/                # Electron client
+frontend-contract/      # Generated OpenAPI contract
+deploy/                 # Compose and deployment configuration
+docs/                   # Configuration and running instructions only
+```
+
+## Quick start
+
+Requirements: Python 3.12+, [`uv`](https://docs.astral.sh/uv/), a supported model-provider key, and Node.js 22+ when building React/Electron.
+
+### PyQt desktop
+
+```bash
+git clone --branch feature/react-fastapi-manyselves \
+  https://github.com/csxq0605/manyselves.git
+cd manyselves
+
+uv sync
+cp manyselves.config.example.yaml manyselves.config.yaml
+uv run manyselves
+```
+
+### React + FastAPI
+
+```bash
+cp .env.example .env
+# Replace example credentials and provider settings.
+./start.sh
+```
+
+API-focused development:
+
+```bash
+uv sync
+npm --prefix frontend install
+npm --prefix frontend run build
+uv run python run_web.py --reload --host 127.0.0.1 --port 9090
+```
+
+Open `http://127.0.0.1:9090`; OpenAPI documentation is available at `/docs`.
+
+### Docker Compose
+
+```bash
+cp deploy/env.example deploy/.env
+chmod 600 deploy/.env
+# Replace the password and configure the exact browser origin.
+
+docker compose -f deploy/compose.yaml --env-file deploy/.env config
+docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build --wait
+```
+
+See [Running ManySelves](docs/RUNNING.md) for Electron, multi-account mode, health checks, verification, backup, restore, and troubleshooting.
+
+## Configuration
+
+- [Configuration](docs/CONFIGURATION.md) covers providers, environment variables, account manifests, state locations, and the current Identity frontmatter schema.
+- `manyselves.config.example.yaml` is the local runtime template.
+- `.env.example` and `deploy/env.example` are local and Compose environment templates.
+- `deploy/accounts.example.yaml` is the multi-account manifest template.
+
+Do not commit real API keys, passwords, active `.env` files, or account manifests.
 
 ## Development
 
 ```bash
+uv sync
 QT_QPA_PLATFORM=offscreen uv run pytest -q
 uv run ruff check manyselves tests scripts
-uv run python scripts/build_brand_assets.py
+npm --prefix frontend run verify
+npm --prefix desktop run verify
 ```
 
-See [Brand system](docs/brand.md) for naming, assets, palette, and compatibility
-rules.
+Changes should preserve the distinction between runtime contracts, capability definitions, persisted task state, and interface-specific behavior.
 
-## Product identity
+## Project status
 
-Manyselves is maintained as an independent product with its own name, package,
-assets, documentation, configuration, and release artifacts.
+ManySelves is an active experimental system. The general capability-package contract is still evolving; pin the repository revision and capability definitions used by any deployed task.
 
 ## License
 
-MIT License — Copyright (c) 2026 Manyselves contributors.
+MIT License — Copyright (c) 2026 ManySelves contributors.

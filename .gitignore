@@ -33,5 +33,6 @@ pytest-of-*/
 .ruff_cache/
 *.bak
 
-# Actual config file with secrets (not tracked)
+# Actual config files with secrets or account-local identities (not tracked)
 deploy/config/manyselves.config.yaml
+/deploy/accounts.yaml
