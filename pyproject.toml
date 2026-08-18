@@ -1,19 +1,16 @@
 [project]
 name = "manyselves"
 version = "1.2.1"
-description = "A local workspace for document-defined agent teams."
+description = "A file-defined multi-agent runtime with durable workflows and reconstructible execution."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [
-    { name = "Manyselves contributors" },
+    { name = "ManySelves contributors" },
 ]
-keywords = ["agents", "multi-agent", "workspace", "local-first", "pyqt6"]
+keywords = ["agents", "multi-agent", "workflow", "runtime", "local-first"]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
-    "Environment :: X11 Applications :: Qt",
     "Intended Audience :: Developers",
-    "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
