@@ -1,7 +1,7 @@
 [project]
 name = "manyselves"
 version = "1.2.1"
-description = "A durable, file-defined runtime for portable agent capabilities."
+description = "A production multi-agent runtime for file-defined teams and durable workflows."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
@@ -10,7 +10,7 @@ authors = [
 ]
 keywords = ["agents", "multi-agent", "workflow", "runtime", "local-first"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: X11 Applications :: Qt",
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",

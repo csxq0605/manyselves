@@ -1,16 +1,28 @@
 # Running ManySelves
 
-This is the operational reference for local, desktop, and container startup. Design history, phase plans, handoff notes, and debug journals are intentionally excluded.
+This document contains the operational commands for the current deployed and stable release. For product positioning and the future domain-stateless kernel roadmap, see the repository [README](../README.md).
+
+## Fastest paths
+
+| Goal | Command |
+| --- | --- |
+| Local React + FastAPI on Linux/macOS | `cp .env.example .env`, edit it, then `./start.sh` |
+| Local React + FastAPI on Windows | build `frontend/`, then run `scripts\start.bat` |
+| Local PyQt desktop | `uv sync && uv run manyselves` |
+| Server deployment | `docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --build --wait` |
+| Health check | `curl --fail http://127.0.0.1:9090/api/v1/health/ready` |
+| Stop Compose deployment | `docker compose -f deploy/compose.yaml --env-file deploy/.env down` |
 
 ## Requirements
 
 | Mode | Requirements |
 | --- | --- |
-| PyQt desktop | Python 3.12+, `uv`, model-provider key |
 | React + FastAPI | Python 3.12+, Node.js 22+, npm, model-provider key |
+| PyQt desktop | Python 3.12+, `uv`, model-provider key |
 | Electron | React build plus `desktop/` dependencies |
-| Compose | Docker Compose v2 and a persistent host directory |
-| Multi-account | One FastAPI process, account manifest, one password environment variable per account |
+| Docker Compose | Docker Compose v2 and a persistent host directory |
+| Multi-account | One FastAPI process, an account manifest, and one password environment variable per account |
+| Deployment verifier | Python 3.12+, `uv`, and access to the running HTTP service |
 
 Clone the maintained branch:
 
@@ -20,37 +32,63 @@ git clone --branch feature/react-fastapi-manyselves \
 cd manyselves
 ```
 
-## PyQt desktop
+## Local React + FastAPI
 
-```bash
-uv sync
-cp manyselves.config.example.yaml manyselves.config.yaml
-uv run manyselves
-```
-
-The application can start without a provider key, but model calls require an enabled provider. Configure one in the UI or through supported environment variables.
-
-## React + FastAPI
-
-### Complete local startup
-
-Linux/macOS:
+### Linux/macOS complete startup
 
 ```bash
 cp .env.example .env
-# Replace example credentials and provider settings.
+```
+
+Edit `.env` before starting. At minimum, replace the example administrator password and configure a provider key:
+
+```dotenv
+MANYSELVES_ADMIN_USERNAME=admin
+MANYSELVES_ADMIN_PASSWORD=replace-with-a-long-random-password
+MANYSELVES_ALLOWED_ORIGINS='["http://127.0.0.1:9090"]'
+MANYSELVES_HTTP_BIND=127.0.0.1
+MANYSELVES_HTTP_PORT=9090
+
+# Configure one provider here or later in the Web settings page.
+MIMO_API_KEY=
+# OPENAI_API_KEY=
+# ANTHROPIC_API_KEY=
+```
+
+Start:
+
+```bash
 chmod +x start.sh
 ./start.sh
 ```
 
-Windows:
+The root `start.sh` delegates to `scripts/start.sh`. The script builds `frontend/` when needed, creates `.venv`, installs the Python package, loads `.env`, and starts `run_web.py --reload`.
+
+### Windows complete startup
 
 ```bat
 copy .env.example .env
-start.bat
 ```
 
-The startup script builds `frontend/` when needed, prepares a Python virtual environment, and starts the API. Repository examples use port `9090`.
+Edit `.env`. The Windows batch loader should receive the origins value without outer single quotes:
+
+```dotenv
+MANYSELVES_ALLOWED_ORIGINS=["http://127.0.0.1:9090"]
+```
+
+Build the React client and start the API from the repository root:
+
+```bat
+npm --prefix frontend install
+npm --prefix frontend run build
+scripts\start.bat
+```
+
+The Windows entry point is `scripts\start.bat`; there is no root-level `start.bat`.
+
+### Addresses
+
+Repository startup examples use port `9090`:
 
 ```text
 Application:  http://127.0.0.1:9090
@@ -73,7 +111,7 @@ uv run python run_web.py \
   --data-dir .manyselves
 ```
 
-`run_web.py` itself defaults to port `9000`; set the port explicitly when you need one stable URL.
+`run_web.py` defaults to port `9000`, so set `--port 9090` explicitly when the browser URL, origin configuration, or verification scripts expect port `9090`.
 
 Useful arguments:
 
@@ -82,9 +120,21 @@ Useful arguments:
 --data-dir  --log-level  --accounts-file
 ```
 
+## Local PyQt desktop
+
+```bash
+uv sync
+cp manyselves.config.example.yaml manyselves.config.yaml
+uv run manyselves
+```
+
+The application can open without a provider key, but model calls require an enabled provider. Configure the provider in the application or through a supported environment variable.
+
 ## Electron
 
-Build the React assets, then the Electron main process:
+The Electron client packages the built React application and connects to the ManySelves FastAPI service.
+
+Build the React assets and Electron main process:
 
 ```bash
 npm --prefix frontend install
@@ -103,11 +153,48 @@ cd desktop
 npm run package
 ```
 
-The Electron client expects a reachable ManySelves FastAPI service.
+The unpacked output is written below `desktop/release/`.
 
-## Split-process headless reporting
+## Multi-account mode
 
-This specialized entry point separates a reporting API process from a worker process. It is not required for the normal PyQt or FastAPI paths.
+Copy and protect the account manifest:
+
+```bash
+cp deploy/accounts.example.yaml deploy/accounts.yaml
+chmod 600 deploy/accounts.yaml
+```
+
+Set the password variables named by `passwordEnv` in the manifest:
+
+```bash
+export MANYSELVES_ACCOUNT_A_PASSWORD='replace-with-a-long-random-password'
+export MANYSELVES_ACCOUNT_B_PASSWORD='replace-with-a-long-random-password'
+```
+
+Start one FastAPI process:
+
+```bash
+uv sync
+
+uv run python run_web.py \
+  --accounts-file deploy/accounts.yaml \
+  --workers 1 \
+  --host 127.0.0.1 \
+  --port 9090 \
+  --data-dir .manyselves
+```
+
+Multi-account mode requires `--workers 1`. Each account runtime is created lazily and writes below:
+
+```text
+.manyselves/accounts/<account-id>/
+```
+
+Provider keys can be configured for each account after login. Do not place real account manifests or passwords in source control.
+
+## Specialized split-process headless reporting
+
+This entry point separates a reporting API process from a worker process. It is not required for normal PyQt, React + FastAPI, Electron, or Compose startup.
 
 ```bash
 export MANYSELVES_PROJECT_STORAGE_ROOT=/srv/manyselves/projects
@@ -122,48 +209,70 @@ export MANYSELVES_PROVIDER_API_KEY='replace-me'
 uv run manyselves-headless worker
 ```
 
-Provider type, base URL, model, secret variable name, and worker ID can be selected with `MANYSELVES_PROVIDER_TYPE`, `MANYSELVES_PROVIDER_API_BASE`, `MANYSELVES_PROVIDER_MODEL`, `MANYSELVES_PROVIDER_API_KEY_SECRET`, and `MANYSELVES_WORKER_ID`.
+Provider type, base URL, model, secret variable name, and worker ID can be selected with:
 
-## Multi-account mode
-
-```bash
-cp deploy/accounts.example.yaml deplloy/accounts.yaml
-chmod 600 deploy/accounts.yaml
-
-export MANYSELVES_ACCOUNT_A_PASSWORD='replace-me'
-export MANYSELVES_ACCOUNT_B_PASSWORD='replace-me'
-
-uv run python run_web.py \
-  --accounts-file deploy/accounts.yaml \
-  --workers 1 \
-  --host 127.0.0.1 \
-  --port 9090 \
-  --data-dir .manyselves
+```text
+MANYSELVES_PROVIDER_TYPE
+MANYSELVES_PROVIDER_API_BASE
+MANYSELVES_PROVIDER_MODEL
+MANYSELVES_PROVIDER_API_KEY_SECRET
+MANYSELVES_WORKER_ID
 ```
 
-Multi-account mode requires one process (`--workers 1`). Each account runtime is created lazily and writes below `.manyselves/accounts/<account-id>/`.
+## Docker Compose deployment
 
-## Docker Compose
+### Prepare the environment
 
 ```bash
 cp deploy/env.example deploy/.env
 chmod 600 deploy/.env
-# Replace the password, host data directory, and exact browser origin.
-
-docker compose -f deploy/compose.yaml --env-file deploy/.env config
-docker compose -f deploy/compose.yaml --env-file deploy/.env build
-docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --wait
 ```
 
-Operations:
+Edit `deploy/.env`. The deployment requires an explicit administrator password and persistent host data directory:
+
+```dotenv
+MANYSELVES_ADMIN_USERNAME=admin
+MANYSELVES_ADMIN_PASSWORD=replace-with-a-long-random-password
+MANYSELVES_DATA_DIR=/srv/manyselves/data
+
+MANYSELVES_HTTP_BIND=127.0.0.1
+MANYSELVES_HTTP_PORT=9090
+MANYSELVES_ALLOWED_ORIGINS=["http://127.0.0.1:9090"]
+```
+
+For a public hostname behind a reverse proxy, set the exact HTTPS origin. For direct network exposure, set an appropriate bind address and protect the service with a firewall and HTTPS.
+
+Create the persistent host directory before starting:
+
+```bash
+sudo install -d -m 0750 /srv/manyselves/data
+```
+
+The container must be able to write this directory. On SELinux-enabled hosts, the Compose volume already applies the `:Z` label.
+
+### Validate and start
+
+```bash
+docker compose -f deploy/compose.yaml --env-file deploy/.env config
+
+docker compose -f deploy/compose.yaml --env-file deploy/.env \
+  up -d --build --wait
+```
+
+### Daily operations
 
 ```bash
 docker compose -f deploy/compose.yaml --env-file deploy/.env ps
-docker compose -f deploy/compose.yaml --env-file deploy/.env logs -f --tail 200 api web
+
+docker compose -f deploy/compose.yaml --env-file deploy/.env \
+  logs -f --tail 200 api web
+
 docker compose -f deploy/compose.yaml --env-file deploy/.env restart
+
+docker compose -f deploy/compose.yaml --env-file deploy/.env down
 ```
 
-After changing `deploy/.env`, recreate the affected container so it receives the new environment:
+After changing `deploy/.env`, recreate the affected container so it receives the new process environment:
 
 ```bash
 docker compose -f deploy/compose.yaml --env-file deploy/.env \
@@ -172,17 +281,22 @@ docker compose -f deploy/compose.yaml --env-file deploy/.env \
 
 ## Verify a deployment
 
+### Health checks
+
 ```bash
 curl --fail http://127.0.0.1:9090/api/v1/health/live
 curl --fail http://127.0.0.1:9090/api/v1/health/ready
 ```
 
-Public-API verifier:
+### Authenticated public-API drill
+
+From a source checkout with `uv`:
 
 ```bash
+uv sync
+
 set -a
-.
-deploy/.env
+. deploy/.env
 set +a
 
 uv run python scripts/verify_deployment.py \
@@ -191,22 +305,36 @@ uv run python scripts/verify_deployment.py \
   --password-env MANYSELVES_ADMIN_PASSWORD
 ```
 
-It checks authentication, health, runtime availability, projects, conversations, a reversible file operation, event streaming, and artifact download.
+The verifier checks:
+
+- administrator login and cookie reuse;
+- live and ready health endpoints;
+- runtime and event-stream availability;
+- project and conversation APIs;
+- a reversible file create/read/download/delete round trip;
+- SSE response type;
+- control-lease cleanup and logout.
+
+The temporary verifier file is removed during cleanup.
 
 ## Backup and restore
 
-Backup:
+### Backup
 
 ```bash
 set -a
 . deploy/.env
 set +a
-export MANYSELVES_API_URL=http://127.0.0.1:9090
 
+export MANYSELVES_API_URL=http://127.0.0.1:9090
 deploy/backup/backup.sh /srv/manyselves/backups
 ```
 
-Restore is offline:
+Keep the backup directory outside the active `MANYSELVES_DATA_DIR`.
+
+### Restore
+
+Restore is an offline operation:
 
 ```bash
 docker compose -f deploy/compose.yaml --env-file deploy/.env down
@@ -216,10 +344,11 @@ deploy/backup/restore.sh \
   /srv/manyselves/backups/manyselves-YYYYMMDDTHHMMSSZ.tar.gz \
   --force
 
-docker compose -f deploy/compose.yaml --env-file deploy/.env up -d
+docker compose -f deploy/compose.yaml --env-file deploy/.env \
+  up -d --wait
 ```
 
-Keep backups outside the active data root and verify the deployment after restore or rollback.
+Run the deployment verifier after restore or rollback.
 
 ## Development checks
 
@@ -233,16 +362,19 @@ npm --prefix desktop run verify
 
 ## Troubleshooting
 
-- **No provider available:** the service may start in degraded mode, but Agent calls require an enabled provider and valid key.
-- **Port conflict:** run `lsof -i :9090` or select another `--port`.
-- **Stale frontend:** remove `frontend/dist`, run `npm --prefix frontend install`, then `npm --prefix frontend run build`.
-- **Rejected account manifest:** require `version: 1`, unique IDs/usernames, valid `passwordEnv` values, mode `600` on non-Windows, and `--workers 1`.
-- **Environment change not visible:** restart the process or recreate the container; a browser refresh cannot replace process environment variables.
-- **Data permission error:** make the data directory writable by the dedicated service account and keep one write root per account or stack.
+- **No provider available:** the service can start and the workspace can open, but Agent calls require an enabled provider with a valid key.
+- **Port conflict:** run `lsof -i :9090`, stop the conflicting process, or select another port and update the allowed origin.
+- **Stale or missing frontend:** remove `frontend/dist`, then run `npm --prefix frontend install` and `npm --prefix frontend run build`.
+- **Windows Web start shows no UI:** build `frontend/` before running `scripts\start.bat`.
+- **Rejected account manifest:** require `version: 1`, unique IDs and usernames, valid `passwordEnv` values, mode `600` on non-Windows, and `--workers 1`.
+- **Environment change not visible:** restart the local process or recreate the container. A browser refresh cannot replace server environment variables.
+- **Data permission error:** make the data directory writable by the service account and keep one authoritative write root per account or deployment.
+- **Health is live but not ready:** inspect API logs and verify the runtime data directory, account manifest, and provider/configuration state.
 
 ## Security
 
-- Replace every example password before shared or networked use.
+- Replace every example password before shared, server, or networked use.
 - Keep API keys, active `.env` files, and account manifests out of source control.
-- Use HTTPS on any untrusted network and configure the exact allowed browser origin.
-- Do not attach multiple API replicas or processes to the same runtime data root.
+- Bind to loopback by default; use HTTPS and an exact allowed origin on networked deployments.
+- Protect the data root and backup directory with operating-system permissions.
+- Do not attach multiple API replicas or unrelated processes to the same authoritative runtime write root.
