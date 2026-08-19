@@ -1,38 +1,57 @@
+# ─── Python ──────────────────────────────────────────────
 __pycache__/
-*.tar
-*.tar.gz
 *.pyc
 .venv/
 *.egg-info/
-dist/
-node_modules/
-/desktop/release/
-test-results/
-/deploy/data/
-/deploy/backups/
-/deploy/restore-smoke/
-.uv-cache
-.build-tmp
-.worktrees/
-.test-home/
-logs/
-external/cc-switch/
-external/skills/
-
-.manyselves
-
-# User config (contains API keys)
-manyselves.config.yaml
-.env
-.DS_Store
-
 .pytest_cache/
 .tmp_pytest/
 pytest-of-*/
 */pytest-of-*/
 .ruff_cache/
-*.bak
+.uv-cache
+.build-tmp/
+.worktrees/
+.test-home/
+/desktop/release/
 
-# Actual config files with secrets or account-local identities (not tracked)
+# ─── Secrets & local config (NEVER commit) ──────────────
+.env
+**/.env
+!.env.example
+manyselves.config.yaml
+.manyselves
 deploy/config/manyselves.config.yaml
 /deploy/accounts.yaml
+
+# ─── OS / Editor ─────────────────────────────────────────
+.DS_Store
+*.bak
+
+# ─── Node / Frontend / Desktop (sub-projects) ────────────
+**/node_modules/
+**/dist/
+**/release/
+**/.benchmarks/
+**/test-results/
+**/.cache/
+**/.next/
+**/.vite/
+
+# ─── Build artifacts & archives ──────────────────────────
+*.tar
+*.tar.gz
+*.zip
+
+# ─── Deploy runtime artifacts (keep scripts/configs) ─────
+deploy/backup/
+deploy/backups/
+deploy/data/
+deploy/restore-smoke/
+
+# ─── External vendored content ──────────────────────────
+external/cc-switch/
+external/skills/
+
+# ─── Runtime logs ────────────────────────────────────────
+logs/
+*.log
