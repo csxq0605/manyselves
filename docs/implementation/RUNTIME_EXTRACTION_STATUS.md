@@ -8,17 +8,18 @@
 
 - Repository: `csxq0605/manyselves`
 - Plan base branch: `agent/declarative-runtime-plan`
-- Intended implementation branch: `agent/declarative-runtime-implementation`
-- Intended PR: one long-lived Draft PR targeting `agent/declarative-runtime-plan`
+- Implementation branch: `agent/declarative-runtime-implementation`
+- Draft PR: <https://github.com/csxq0605/manyselves/pull/3>, targeting `agent/declarative-runtime-plan`
 - Execution protocol: [`docs/CODEX_AUTONOMOUS_EXECUTION.md`](../CODEX_AUTONOMOUS_EXECUTION.md)
 
 ## Current position
 
-- Current work package: `WP-00`
-- Last completed work package: `none`
-- Current human gate: `none`
-- Human gate result: `not_started`
-- Next automatic action: create or switch to `agent/declarative-runtime-implementation`, establish the legacy characterization and semantic trace baseline, then continue automatically until `HG-00`
+- Current work package: `WP-00 complete`
+- Last completed work package: `WP-00`
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-00: freeze legacy semantic trace` (the commit containing this status update)
+- Current human gate: `HG-00`
+- Human gate result: `awaiting_human_execution`
+- Next automatic action: wait for `APPROVE_GATE HG-00`; record the supplied real Legacy Run ID and artifacts, then begin `WP-01` without repeating WP-00
 
 ## Required startup checks
 
@@ -34,11 +35,17 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
-- None. Planning and handoff documents are on the plan branch; implementation has not started.
+- `90fba9e` — `WP-00: stabilize plan baseline contracts`
+- `WP-00: freeze legacy semantic trace` — stable semantic events, Legacy module-lane characterization, Kernel import boundary, and WP-00 baseline document (this commit)
 
 ## Tests actually run
 
-- None for implementation. The planning branch contains documentation-only changes.
+- Before the user's focused-test-only instruction, the unmodified plan baseline full offline selection ran once: `2521 passed, 11 failed, 3 skipped, 6 deselected`. The 11 failures were existing test/config drift and platform/schema determinism issues, not runtime extraction changes.
+- Each of those 11 baseline failures was rerun through focused/affected selections after correction: `92 passed`; the final OpenAPI/macOS-specific subset: `3 passed`.
+- WP-00 semantic trace and Kernel boundary focused tests: `3 passed`.
+- WP-00 affected Legacy recovery, conversation, review, and resume selection plus the new tests: `15 passed`.
+- Ruff passed for every changed Python and test path. `git diff --check` passed.
+- No real Provider was called. No full regression was rerun after the user's instruction.
 
 ## Open research decisions
 
@@ -46,11 +53,11 @@ The plan baseline must contain the autonomous execution commits and this status 
 - Whether LangGraph or an internal lightweight compiler/runtime should be used remains undecided.
 - No new production orchestration dependency is approved.
 
-These questions do not block `WP-00`. They must only trigger `HG-01` if a later POC shows that a production dependency or long-term public interface decision is necessary.
+These questions do not block the completed `WP-00`. They must only trigger `HG-01` if a later POC shows that a production dependency or long-term public interface decision is necessary.
 
 ## Known blockers
 
-- None at handoff time.
+- Automatic work is paused only for the required `HG-00` real Legacy baseline. The test instructions and evidence checklist are in [`WP_00_LEGACY_BASELINE.md`](WP_00_LEGACY_BASELINE.md).
 
 ## Active user constraints
 
