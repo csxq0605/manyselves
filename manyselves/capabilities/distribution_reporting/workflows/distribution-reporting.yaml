@@ -1,6 +1,6 @@
 id: distribution-reporting
 version: 1.0.0
-description: Adapter-backed declarative workflow index for distribution-reporting
+description: Declarative top-level Reporting stage orchestration
 tasks:
 - module-initial-review
 - module-2.1-revision
@@ -17,5 +17,19 @@ recovery:
 - current-reporting-recovery
 input_contract: distribution_reporting_input
 output_contract: distribution_reporting_output
-actions: []
-
+state: {}
+actions:
+- id: run-module-work
+  kind: invoke_tool
+  tool: run-reporting-module-work
+  input_variable: reporting-state
+  output_variable: reporting-state
+- id: run-reporting-tail
+  kind: invoke_tool
+  tool: run-reporting-tail
+  input_variable: reporting-state
+  output_variable: reporting-state
+- id: finish-reporting
+  kind: end_workflow
+  output_variable: reporting-state
+  output_name: result

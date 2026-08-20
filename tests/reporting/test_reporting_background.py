@@ -18,13 +18,29 @@ class _ControlledService:
     def __init__(self, workspace: Path):
         self.workspace = workspace
         self.release = asyncio.Event()
+        self.engines: list[str] = []
 
-    def prepare_run(self, request: ReportRequest) -> str:
-        return "report-background"
+    def prepare_run(
+        self,
+        request: ReportRequest,
+        *,
+        workflow_engine: str = "legacy",
+    ) -> str:
+        self.engines.append(f"prepare:{workflow_engine}")
+        return (
+            "report-declarative-background"
+            if workflow_engine == "declarative"
+            else "report-background"
+        )
 
     async def run_prepared(
-        self, request: ReportRequest, run_id: str
+        self,
+        request: ReportRequest,
+        run_id: str,
+        *,
+        workflow_engine: str = "legacy",
     ) -> ReportingRunResult:
+        self.engines.append(f"run:{workflow_engine}")
         await self.release.wait()
         return ReportingRunResult(run_id=run_id, status="completed")
 
@@ -35,8 +51,13 @@ class _EmittingService(_ControlledService):
         self.bus = bus
 
     async def run_prepared(
-        self, request: ReportRequest, run_id: str
+        self,
+        request: ReportRequest,
+        run_id: str,
+        *,
+        workflow_engine: str = "legacy",
     ) -> ReportingRunResult:
+        self.engines.append(f"run:{workflow_engine}")
         await self.bus.publish(
             UserMessage(
                 agent_type="module-2.1-specialist--session-new",
@@ -74,6 +95,36 @@ async def test_background_report_returns_immediately_and_reports_completion(tmp_
     bus.shutdown()
     processor.cancel()
     await asyncio.gather(processor, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_background_controller_explicitly_selects_declarative_without_changing_default(
+    tmp_path: Path,
+) -> None:
+    bus = MessageBus()
+    service = _ControlledService(tmp_path)
+    controller = ReportingRunController(service, bus, TaskBoard())  # type: ignore[arg-type]
+
+    legacy = controller.start(ReportRequest(instruction="Legacy report"))
+    declarative = controller.start(
+        ReportRequest(instruction="Declarative report"),
+        workflow_engine="declarative",
+    )
+
+    assert legacy["run_id"] == "report-background"
+    assert declarative["run_id"] == "report-declarative-background"
+    assert service.engines == [
+        "prepare:legacy",
+        "prepare:declarative",
+    ]
+    service.release.set()
+    await asyncio.gather(*controller._tasks.values())
+    assert service.engines == [
+        "prepare:legacy",
+        "prepare:declarative",
+        "run:legacy",
+        "run:declarative",
+    ]
 
 
 def test_status_falls_back_to_persisted_failed_run_after_restart(tmp_path: Path) -> None:

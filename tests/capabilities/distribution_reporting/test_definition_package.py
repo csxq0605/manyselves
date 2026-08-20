@@ -14,6 +14,8 @@ from manyselves.core.reporting.config import (
 )
 from manyselves.core.reporting.config import load_agent_definitions, load_packaged_agents
 from manyselves.kernel.definitions import DefinitionKind
+from manyselves.kernel.executors import build_builtin_executor_registry
+from manyselves.kernel.workflow import WorkflowCompiler
 
 
 def test_distribution_reporting_capability_loads_all_definition_indexes() -> None:
@@ -115,3 +117,23 @@ def test_capability_adapters_expose_the_executable_reporting_definitions() -> No
     assert lane.id == "distribution-module-2.1-review-lane"
     assert cohort.id == "distribution-module-cohort"
     assert tail.id == "distribution-reporting-tail"
+
+
+def test_top_level_reporting_workflow_is_an_executable_capability_definition() -> None:
+    _, registry = load_distribution_reporting_capability()
+    workflow = registry.require(DefinitionKind.WORKFLOW, "distribution-reporting")
+    workflow = workflow.model_copy(
+        deep=True,
+        update={"state": {"reporting-state": {"run_id": "report-characterized"}}},
+    )
+
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        workflow,
+        registry,
+    )
+
+    assert [action.kind for action in plan.actions] == [
+        "invoke_tool",
+        "invoke_tool",
+        "end_workflow",
+    ]

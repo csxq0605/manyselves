@@ -185,6 +185,22 @@ class ReportingFacade:
     def start(self, command_id: UUID, request: ReportRequest) -> dict[str, Any]:
         return self._command(command_id, ("start", request.model_dump_json()), lambda: self._require().start(request))
 
+    def start_declarative(
+        self,
+        command_id: UUID,
+        request: ReportRequest,
+    ) -> dict[str, Any]:
+        """Start the explicit declarative path without changing the Legacy default."""
+
+        return self._command(
+            command_id,
+            ("start_declarative", request.model_dump_json()),
+            lambda: self._require().start(
+                request,
+                workflow_engine="declarative",
+            ),
+        )
+
     def cancel(self, command_id: UUID, run_id: str) -> dict[str, Any]:
         self._safe_id(run_id)
 

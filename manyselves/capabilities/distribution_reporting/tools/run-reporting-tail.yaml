@@ -1,0 +1,10 @@
+id: run-reporting-tail
+version: 1.0.0
+description: Capability adapter for declarative Cross through Delivery
+implementation: capability:distribution-reporting:tail
+input_contract: reporting_tail_state
+output_contract: reporting_tail_state
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

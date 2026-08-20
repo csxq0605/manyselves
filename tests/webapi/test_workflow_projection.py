@@ -37,6 +37,10 @@ class _ReportingAdapter:
         self.calls.append(("start", request))
         return {"run_id": "report-new", "task_id": "task-new"}
 
+    def start_declarative(self, command_id: UUID, request: object) -> dict:
+        self.calls.append(("start_declarative", request))
+        return {"run_id": "report-declarative-new", "task_id": "task-new"}
+
     def resume_run(self, command_id: UUID, run_id: str, **values: object) -> dict:
         self.calls.append(("resume", {"run_id": run_id, **values}))
         return {"run_id": run_id, "task_id": "task-resume"}
@@ -93,9 +97,7 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
         "id": "distribution-reporting",
         "capability_id": "distribution-reporting",
         "version": "1.0.0",
-        "description": (
-            "Adapter-backed declarative workflow index for distribution-reporting"
-        ),
+        "description": "Declarative top-level Reporting stage orchestration",
         "input_contract": "distribution_reporting_input",
         "output_contract": "distribution_reporting_output",
         "runnable": True,
@@ -175,14 +177,18 @@ async def test_run_start_and_input_delegate_to_the_current_reporting_adapter(
 
     assert started == {
         "status": "accepted",
-        "run_id": "report-new",
+        "run_id": "report-declarative-new",
         "task_id": "task-new",
         "capability_id": "distribution-reporting",
         "workflow_id": "distribution-reporting",
     }
     assert resumed["run_id"] == "report-1"
     assert decided["run_id"] == "report-1"
-    assert [name for name, _ in adapter.calls] == ["start", "resume", "decision"]
+    assert [name for name, _ in adapter.calls] == [
+        "start_declarative",
+        "resume",
+        "decision",
+    ]
 
 
 @pytest.mark.asyncio

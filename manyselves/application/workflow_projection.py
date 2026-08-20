@@ -116,7 +116,7 @@ class WorkflowProjectionFacade:
             raise WorkflowNotRunnableError(workflow_id)
         if workflow_id == _REPORTING_WORKFLOW_ID:
             request = ReportRequest.model_validate(values)
-            accepted = self.reporting_adapter.start(command_id, request)
+            accepted = self.reporting_adapter.start_declarative(command_id, request)
             return self._accepted(accepted, capability.id, workflow_id)
         if workflow_id == _PARAMETER_WORKFLOW_ID:
             run_id = f"{_PARAMETER_RUN_PREFIX}{command_id.hex}"

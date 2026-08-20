@@ -10,11 +10,9 @@ import re
 import shutil
 import stat
 import tempfile
-import time
 import uuid
 from pathlib import Path
-from contextlib import contextmanager
-from typing import Iterator
+from typing import Literal
 
 from docx import Document
 from pydantic import BaseModel, ConfigDict, Field
@@ -36,9 +34,10 @@ from .execution_runtime import ProviderRouter
 from .input_snapshot import RunInputSnapshotStore
 from .intake.manifest import build_manifest
 from .intake.wps_images import canonicalize_photo_bindings, extract_wps_images
-from .mappers import map_s2_1, map_s4_4, map_s4_6
 from .locks import exclusive_reporting_writer_lock
+from .mappers import map_s2_1, map_s4_4, map_s4_6
 from .models import (
+    REPORT_MODULE_IDS,
     CostControlMode,
     EvidenceDecisionAction,
     EvidenceDecisionRequest,
@@ -46,7 +45,6 @@ from .models import (
     OutputArtifact,
     PhotoAsset,
     ProjectManifest,
-    REPORT_MODULE_IDS,
     ReportRequest,
     RevisionRequest,
     UserSupplement,
@@ -438,9 +436,19 @@ class ReportingService:
             },
         )
 
-    def prepare_run(self, request: ReportRequest) -> str:
+    def prepare_run(
+        self,
+        request: ReportRequest,
+        *,
+        workflow_engine: Literal["legacy", "declarative"] = "legacy",
+    ) -> str:
         """Persist a new run request and return its stable id before execution starts."""
-        run_id = f"report-{uuid.uuid4().hex[:10]}"
+        prefix = (
+            "report-declarative-"
+            if workflow_engine == "declarative"
+            else "report-"
+        )
+        run_id = f"{prefix}{uuid.uuid4().hex[:10]}"
         with exclusive_reporting_writer_lock(self.workspace):
             self.store.ensure_layout()
             self.store.write_json(
@@ -469,9 +477,21 @@ class ReportingService:
                 self._copy_referenced_existing_assets(run_id, explicit_refs)
         return run_id
 
-    async def run_prepared(self, request: ReportRequest, run_id: str) -> ReportingRunResult:
+    async def run_prepared(
+        self,
+        request: ReportRequest,
+        run_id: str,
+        *,
+        workflow_engine: Literal["legacy", "declarative"] | None = None,
+    ) -> ReportingRunResult:
         """Execute a request previously persisted by :meth:`prepare_run`."""
-        return await self._execute(request, run_id)
+        if workflow_engine is None:
+            return await self._execute(request, run_id)
+        return await self._execute(
+            request,
+            run_id,
+            workflow_engine=workflow_engine,
+        )
 
     async def run_prepared_claimed(
         self,
@@ -480,6 +500,7 @@ class ReportingService:
         project_write_lease: ProjectWriteLease,
         *,
         resume: bool = False,
+        workflow_engine: Literal["legacy", "declarative"] | None = None,
     ) -> ReportingRunResult:
         """Execute beneath a durable worker's already-acquired project lease."""
 
@@ -495,11 +516,19 @@ class ReportingService:
         try:
             with exclusive_reporting_writer_lock(self.workspace):
                 lock_handle = self._acquire_run_lock(run_id)
+                if workflow_engine is None:
+                    return await self._execute_locked(
+                        request,
+                        run_id,
+                        resume=resume,
+                        project_write_lease=project_write_lease,
+                    )
                 return await self._execute_locked(
                     request,
                     run_id,
                     resume=resume,
                     project_write_lease=project_write_lease,
+                    workflow_engine=workflow_engine,
                 )
         finally:
             if lock_handle is not None:
@@ -562,7 +591,12 @@ class ReportingService:
             reset_project_write_lease(token)
 
     async def _execute(
-        self, request: ReportRequest, run_id: str, *, resume: bool = False
+        self,
+        request: ReportRequest,
+        run_id: str,
+        *,
+        resume: bool = False,
+        workflow_engine: Literal["legacy", "declarative"] | None = None,
     ) -> ReportingRunResult:
         with exclusive_reporting_writer_lock(self.workspace):
             project_lease = ProjectWriteLeaseManager(self.workspace).acquire(
@@ -576,11 +610,19 @@ class ReportingService:
             lock_handle = None
             try:
                 lock_handle = self._acquire_run_lock(run_id)
+                if workflow_engine is None:
+                    return await self._execute_locked(
+                        request,
+                        run_id,
+                        resume=resume,
+                        project_write_lease=project_lease.lease,
+                    )
                 return await self._execute_locked(
                     request,
                     run_id,
                     resume=resume,
                     project_write_lease=project_lease.lease,
+                    workflow_engine=workflow_engine,
                 )
             finally:
                 if lock_handle is not None:
@@ -651,7 +693,9 @@ class ReportingService:
         *,
         resume: bool = False,
         project_write_lease: ProjectWriteLease | None = None,
+        workflow_engine: Literal["legacy", "declarative"] | None = None,
     ) -> ReportingRunResult:
+        workflow_engine = workflow_engine or self._workflow_engine_for_run(run_id)
         state: dict = {"request": request, "run_id": run_id, "resume": resume}
         if project_write_lease is not None:
             state["project_write_lease_ref"] = (
@@ -689,7 +733,14 @@ class ReportingService:
                 )
             else:
                 workflow_id = f"full-power-distribution-report:{run_id}"
-                runner = ReportWorkflowRunner(
+                runner_type = ReportWorkflowRunner
+                if workflow_engine == "declarative":
+                    from .declarative_reporting_runner import (
+                        DeclarativeReportWorkflowRunner,
+                    )
+
+                    runner_type = DeclarativeReportWorkflowRunner
+                runner = runner_type(
                     self,
                     self._agent_runner_for(workflow_id),
                 )
@@ -705,6 +756,7 @@ class ReportingService:
             self._save_run(result)
             await self._notice("用户已中断报告流程；当前进度已保存。")
             return result
+
         except ReportingBlockedError as exc:
             self._forget_agent_runner(workflow_id)
             if request.missing_evidence_policy == "ask":
@@ -809,6 +861,16 @@ class ReportingService:
             + ", ".join(str(path.relative_to(self.workspace)) for path in result.output_paths)
         )
         return result
+
+    @staticmethod
+    def _workflow_engine_for_run(
+        run_id: str,
+    ) -> Literal["legacy", "declarative"]:
+        return (
+            "declarative"
+            if run_id.startswith("report-declarative-")
+            else "legacy"
+        )
 
     def _render_existing(self, state: dict) -> None:
         """Render one approved project-local Markdown artifact without analysis Agents."""

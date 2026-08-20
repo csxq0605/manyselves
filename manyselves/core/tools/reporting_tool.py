@@ -50,12 +50,33 @@ class ReportingRunController:
         self._task_ids: dict[str, str] = {}
         self._cancel_notified: set[str] = set()
 
-    def start(self, request: ReportRequest) -> dict[str, Any]:
-        run_id = self.service.prepare_run(request)
+    def start(
+        self,
+        request: ReportRequest,
+        *,
+        workflow_engine: Literal["legacy", "declarative"] = "legacy",
+    ) -> dict[str, Any]:
+        if workflow_engine == "declarative":
+            run_id = self.service.prepare_run(
+                request,
+                workflow_engine=workflow_engine,
+            )
+
+            async def operation():
+                return await self.service.run_prepared(
+                    request,
+                    run_id,
+                    workflow_engine=workflow_engine,
+                )
+        else:
+            run_id = self.service.prepare_run(request)
+
+            async def operation():
+                return await self.service.run_prepared(request, run_id)
         return self.start_operation(
             run_id,
             request.instruction,
-            lambda: self.service.run_prepared(request, run_id),
+            operation,
         )
 
     def start_operation(

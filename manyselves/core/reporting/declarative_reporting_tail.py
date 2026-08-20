@@ -100,10 +100,15 @@ async def execute_declarative_reporting_tail(
     workflow.state = {"reporting-state": deepcopy(state)}
     executors = build_builtin_executor_registry()
     plan = WorkflowCompiler(executors).compile(workflow, definitions)
-    kernel_state = WorkflowState.for_plan(
-        f"{state['run_id']}--reporting-tail",
-        plan,
-    )
+    kernel_run_id = f"{state['run_id']}--reporting-tail"
+    try:
+        kernel_state = state_store.load(kernel_run_id)
+        kernel_state.variables["reporting-state"] = deepcopy(state)
+    except FileNotFoundError:
+        kernel_state = WorkflowState.for_plan(kernel_run_id, plan)
+        save_plan = getattr(state_store, "save_plan", None)
+        if callable(save_plan):
+            save_plan(kernel_run_id, plan)
     adapters = _ReportingTailAdapters(runner, workflow_id)
     stage_tools = {
         "cross": adapters.cross,

@@ -150,15 +150,21 @@ class _ReportingController:
         self.calls: list[tuple[str, object]] = []
         self.live_runs: set[str] = set()
 
-    def start(self, request) -> dict:
-        self.calls.append(("start", request))
-        self.live_runs.add("report-new")
-        run_root = self.service.workspace / "Work/runs/report-new"
+    def start(self, request, *, workflow_engine: str = "legacy") -> dict:
+        call_name = "start_declarative" if workflow_engine == "declarative" else "start"
+        run_id = (
+            "report-declarative-new"
+            if workflow_engine == "declarative"
+            else "report-new"
+        )
+        self.calls.append((call_name, request))
+        self.live_runs.add(run_id)
+        run_root = self.service.workspace / f"Work/runs/{run_id}"
         run_root.mkdir(parents=True, exist_ok=True)
         (run_root / "request.json").write_text(
             json.dumps(request.model_dump(mode="json")), encoding="utf-8"
         )
-        return {"status": "running", "run_id": "report-new", "task_id": "task-new"}
+        return {"status": "running", "run_id": run_id, "task_id": "task-new"}
 
     def status(self, run_id: str) -> dict:
         if run_id in self.live_runs:
@@ -3081,7 +3087,10 @@ async def test_generic_workflow_routes_project_the_current_reporting_run(resourc
     assert cost.json()["usage"]["totals"]["provider_attempts"] == 0
     assert resumed.status_code == 202
     assert host.reporting_controller is not None
-    assert [name for name, _ in host.reporting_controller.calls] == ["start", "resume_run"]
+    assert [name for name, _ in host.reporting_controller.calls] == [
+        "start_declarative",
+        "resume_run",
+    ]
 
 
 @pytest.mark.asyncio
