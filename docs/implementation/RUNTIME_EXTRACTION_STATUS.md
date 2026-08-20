@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-02 in progress`
-- Last completed work package: `WP-01`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-01: complete registry and contract adapters` (the commit containing this status update)
+- Current work package: `WP-03 in progress`
+- Last completed work package: `WP-02`
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-02: execute neutral sequential workflows` (the commit containing this status update)
 - Current migration stage: `Stage 2 — Stateless Kernel and generic Runtime`
 - Final real-test status: `deferred_until_all_four_stages_complete`
-- Next automatic action: begin `WP-02` Characterization for WorkflowState, ResolvedAction/ResolvedPlan, minimal sequential Compiler, Executor Registry, and File State Store
+- Next automatic action: begin `WP-03` Characterization for ToolDefinition adapters, explicit input/output contracts, unified Tool outcomes, and existing Tool Result reuse
 
 ## Required startup checks
 
@@ -40,7 +40,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `c7c1bd8` — `Program: defer real testing until four-stage completion`
 - `396f2be` — `Program: remove residual gate resume wording`
 - `5894cd5` — `WP-01: add definition models and file loaders`
-- `WP-01: complete registry and contract adapters` — capability-directory loading, typed reference resolution, Pydantic/JSON Schema adapters, and WP-01 affected verification (this commit)
+- `e85dc03` — `WP-01: complete registry and contract adapters`
+- `WP-02: execute neutral sequential workflows` — WorkflowState, ResolvedPlan, minimal Compiler, built-in Executor Registry, sequential execution, and file-backed state/plan recovery (this commit)
 
 ## Tests actually run
 
@@ -51,6 +52,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-01 models and single-file loader Characterization: initially failed collection because `manyselves.kernel.definitions` did not exist, then `8 passed` after implementation.
 - WP-01 Registry and Contract Adapter Characterization: initially failed collection because the Registry and contracts package did not exist, then the complete WP-01 focused selection passed: `13 passed`.
 - WP-01 affected Kernel import boundary, existing Reporting frontmatter/module-skill loaders, and Tool Registry selection: `30 passed`.
+- WP-02 neutral sequential workflow Characterization: initially failed collection because the workflow/executor modules did not exist, then `7 passed` after implementation.
+- WP-02 affected Kernel and Runtime selection: `22 passed`.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 

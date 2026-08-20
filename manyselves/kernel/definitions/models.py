@@ -140,6 +140,8 @@ class WorkflowDefinition(DefinitionBase):
     tasks: list[str] = Field(default_factory=list)
     gates: list[str] = Field(default_factory=list)
     recovery: list[str] = Field(default_factory=list)
+    input_contract: str | None = None
+    output_contract: str | None = None
     state: dict[str, Any] = Field(default_factory=dict)
     actions: list[dict[str, Any]] = Field(default_factory=list)
 

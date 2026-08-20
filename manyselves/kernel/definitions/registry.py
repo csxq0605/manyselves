@@ -117,5 +117,9 @@ def _references(
             (DefinitionKind.TASK, tuple(definition.tasks)),
             (DefinitionKind.GATE, tuple(definition.gates)),
             (DefinitionKind.RECOVERY, tuple(definition.recovery)),
+            (
+                DefinitionKind.CONTRACT,
+                _present([definition.input_contract, definition.output_contract]),
+            ),
         )
     return ()
