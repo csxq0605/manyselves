@@ -6,6 +6,7 @@ from inspect import isawaitable
 from typing import Any, Protocol, cast
 
 from manyselves.kernel.contracts import ContractAdapter
+from manyselves.kernel.ports.tool import ToolInvocationOutcome
 from manyselves.kernel.workflow import (
     ActionKind,
     EndWorkflowAction,
@@ -97,12 +98,28 @@ class InvokeToolExecutor:
             tool = context.tools[resolved.tool]
         except KeyError as exc:
             raise RuntimeExecutionError(f"missing tool adapter: {resolved.tool}") from exc
-        output = tool(state.variables[resolved.input_variable])
-        if isawaitable(output):
-            output = await output
+        arguments = state.variables[resolved.input_variable]
+        invoke = getattr(tool, "invoke", None)
+        if callable(invoke):
+            outcome = invoke(arguments, task_id=resolved.id)
+            if isawaitable(outcome):
+                outcome = await outcome
+            if not isinstance(outcome, ToolInvocationOutcome):
+                raise RuntimeExecutionError(
+                    f"tool adapter returned an invalid outcome: {resolved.tool}"
+                )
+        else:
+            output = tool(arguments)
+            if isawaitable(output):
+                output = await output
+            outcome = ToolInvocationOutcome(result=output)
+        if outcome.status != "ok":
+            raise RuntimeExecutionError(
+                outcome.error or f"tool {resolved.tool} returned {outcome.status}"
+            )
         return ActionResult(
-            output=output,
-            variable_updates={resolved.output_variable: output},
+            output=outcome.model_dump(mode="json"),
+            variable_updates={resolved.output_variable: outcome.result},
         )
 
 

@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-03 in progress`
-- Last completed work package: `WP-02`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-02: execute neutral sequential workflows` (the commit containing this status update)
+- Current work package: `WP-04 in progress`
+- Last completed work package: `WP-03`
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-03: adapt current tools to declarative runtime` (the commit containing this status update)
 - Current migration stage: `Stage 2 — Stateless Kernel and generic Runtime`
 - Final real-test status: `deferred_until_all_four_stages_complete`
-- Next automatic action: begin `WP-03` Characterization for ToolDefinition adapters, explicit input/output contracts, unified Tool outcomes, and existing Tool Result reuse
+- Next automatic action: begin `WP-04` Characterization for Conversation keys/records, create-or-resolve semantics, InvokeAgentExecutor, and the Legacy Reporting Agent adapter
 
 ## Required startup checks
 
@@ -41,7 +41,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `396f2be` — `Program: remove residual gate resume wording`
 - `5894cd5` — `WP-01: add definition models and file loaders`
 - `e85dc03` — `WP-01: complete registry and contract adapters`
-- `WP-02: execute neutral sequential workflows` — WorkflowState, ResolvedPlan, minimal Compiler, built-in Executor Registry, sequential execution, and file-backed state/plan recovery (this commit)
+- `e1bfe9c` — `WP-02: execute neutral sequential workflows`
+- `WP-03: adapt current tools to declarative runtime` — current Tool binding, explicit contracts, unified outcome, existing result-index reuse, ReadTool coverage, and InvokeTool integration (this commit)
 
 ## Tests actually run
 
@@ -54,6 +55,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-01 affected Kernel import boundary, existing Reporting frontmatter/module-skill loaders, and Tool Registry selection: `30 passed`.
 - WP-02 neutral sequential workflow Characterization: initially failed collection because the workflow/executor modules did not exist, then `7 passed` after implementation.
 - WP-02 affected Kernel and Runtime selection: `22 passed`.
+- WP-03 Tool Adapter Characterization: initially failed collection because the Tool port and adapter did not exist, then the Tool Adapter plus WP-02 integration selection passed: `13 passed`.
+- WP-03 affected Runtime, Kernel workflow, existing Tool Result Index, Tool Outcome, Tool Registry, and selected ReadTool tests: `31 passed`. One initial command used an incorrect pytest class node and collected no tests; the corrected node selection is the recorded result.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 
