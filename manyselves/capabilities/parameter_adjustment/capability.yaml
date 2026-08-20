@@ -1,0 +1,10 @@
+id: parameter-adjustment
+version: 1.0.0
+description: Neutral declarative parameter adjustment capability
+agents: ./agents
+workflows: ./workflows
+tasks: ./tasks
+contracts: ./contracts
+tools: ./tools
+gates: ./gates
+recovery: ./recovery
