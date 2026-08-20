@@ -4,26 +4,6 @@
  */
 
 export interface paths {
-    "/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Serve Spa
-         * @description Serve React SPA for all non-API routes.
-         */
-        get: operations["get_root"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/agents": {
         parameters: {
             query?: never;
@@ -216,6 +196,23 @@ export interface paths {
          * @description Return the first client snapshot from the active runtime facade.
          */
         get: operations["get_api_v1_bootstrap"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Capabilities */
+        get: operations["get_api_v1_capabilities"];
         put?: never;
         post?: never;
         delete?: never;
@@ -964,6 +961,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Run */
+        post: operations["post_api_v1_runs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run */
+        get: operations["get_api_v1_runs_run_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/cost": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run Cost */
+        get: operations["get_api_v1_runs_run_id_cost"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/input": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Provide Run Input */
+        post: operations["post_api_v1_runs_run_id_input"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/outputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run Outputs */
+        get: operations["get_api_v1_runs_run_id_outputs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings": {
         parameters: {
             query?: never;
@@ -1125,18 +1207,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/{full_path}": {
+    "/api/v1/workflows": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * Serve Spa
-         * @description Serve React SPA for all non-API routes.
-         */
-        get: operations["get_full_path"];
+        /** List Workflows */
+        get: operations["get_api_v1_workflows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflow_id}/input-schema": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Workflow Input Schema */
+        get: operations["get_api_v1_workflows_workflow_id_input_schema"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1253,6 +1349,22 @@ export interface components {
             settings: components["schemas"]["BootstrapSettings"];
             /** Streamid */
             streamId: string;
+        };
+        /** CapabilityListResponse */
+        CapabilityListResponse: {
+            /** Capabilities */
+            capabilities: components["schemas"]["CapabilitySummary"][];
+        };
+        /** CapabilitySummary */
+        CapabilitySummary: {
+            /** Description */
+            description: string;
+            /** Id */
+            id: string;
+            /** Version */
+            version: string;
+            /** Workflowids */
+            workflowIds: string[];
         };
         /** ConversationActiveSessionResponse */
         ConversationActiveSessionResponse: {
@@ -2476,6 +2588,131 @@ export interface components {
              */
             target_ids?: string[];
         };
+        /** WorkflowCostResponse */
+        WorkflowCostResponse: {
+            /** Runid */
+            runId: string;
+            /** Usage */
+            usage: {
+                [key: string]: unknown;
+            };
+        };
+        /** WorkflowInputSchemaResponse */
+        WorkflowInputSchemaResponse: {
+            /** Contractid */
+            contractId: string | null;
+            /** Schema */
+            schema: {
+                [key: string]: unknown;
+            };
+            /** Workflowid */
+            workflowId: string;
+        };
+        /** WorkflowListResponse */
+        WorkflowListResponse: {
+            /** Workflows */
+            workflows: components["schemas"]["WorkflowSummary"][];
+        };
+        /** WorkflowOutput */
+        WorkflowOutput: {
+            /** Exists */
+            exists: boolean;
+            /** Path */
+            path: string;
+            /** Size */
+            size: number;
+        };
+        /** WorkflowOutputListResponse */
+        WorkflowOutputListResponse: {
+            /** Outputs */
+            outputs: components["schemas"]["WorkflowOutput"][];
+            /** Runid */
+            runId: string;
+        };
+        /** WorkflowRunAcceptedResponse */
+        WorkflowRunAcceptedResponse: {
+            /** Capabilityid */
+            capabilityId: string;
+            /**
+             * Commandid
+             * Format: uuid
+             */
+            commandId: string;
+            /** Runid */
+            runId: string;
+            /**
+             * Status
+             * @default accepted
+             * @constant
+             */
+            status: "accepted";
+            /** Taskid */
+            taskId?: string | null;
+            /** Workflowid */
+            workflowId: string;
+        };
+        /** WorkflowRunInputRequest */
+        WorkflowRunInputRequest: {
+            /** Inputid */
+            inputId?: string | null;
+            /** Values */
+            values?: {
+                [key: string]: unknown;
+            };
+        };
+        /** WorkflowRunResponse */
+        WorkflowRunResponse: {
+            run: components["schemas"]["WorkflowRunSummary"];
+            /** State */
+            state: {
+                [key: string]: unknown;
+            };
+            /** Waitinginput */
+            waitingInput: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** WorkflowRunStartRequest */
+        WorkflowRunStartRequest: {
+            /** Input */
+            input: {
+                [key: string]: unknown;
+            };
+            /** Workflowid */
+            workflowId: string;
+        };
+        /** WorkflowRunSummary */
+        WorkflowRunSummary: {
+            /** Active */
+            active: boolean;
+            /** Capabilityid */
+            capabilityId: string;
+            /** Runid */
+            runId: string;
+            /** Status */
+            status: string;
+            /** Taskid */
+            taskId?: string | null;
+            /** Workflowid */
+            workflowId: string;
+        };
+        /** WorkflowSummary */
+        WorkflowSummary: {
+            /** Capabilityid */
+            capabilityId: string;
+            /** Description */
+            description: string;
+            /** Id */
+            id: string;
+            /** Inputcontract */
+            inputContract: string | null;
+            /** Outputcontract */
+            outputContract: string | null;
+            /** Runnable */
+            runnable: boolean;
+            /** Version */
+            version: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -2485,46 +2722,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    get_root: {
-        parameters: {
-            query?: {
-                full_path?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Request validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description API error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     get_api_v1_agents: {
         parameters: {
             query?: never;
@@ -3004,6 +3201,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BootstrapSnapshot"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_capabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapabilityListResponse"];
                 };
             };
             /** @description Request validation failed */
@@ -5118,6 +5353,216 @@ export interface operations {
             };
         };
     };
+    post_api_v1_runs: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowRunStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRunAcceptedResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_runs_run_id: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRunResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_runs_run_id_cost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowCostResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    post_api_v1_runs_run_id_input: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowRunInputRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRunAcceptedResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_runs_run_id_outputs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowOutputListResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     get_api_v1_settings: {
         parameters: {
             query?: never;
@@ -5564,12 +6009,50 @@ export interface operations {
             };
         };
     };
-    get_full_path: {
+    get_api_v1_workflows: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowListResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_workflows_workflow_id_input_schema: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                full_path: string;
+                workflow_id: string;
             };
             cookie?: never;
         };
@@ -5581,7 +6064,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WorkflowInputSchemaResponse"];
                 };
             };
             /** @description Request validation failed */

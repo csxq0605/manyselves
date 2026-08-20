@@ -38,6 +38,7 @@ from .routes.operations import router as operations_router
 from .routes.projects import router as projects_router
 from .routes.reporting import router as reporting_router
 from .routes.settings import router as settings_router
+from .routes.workflows import router as workflows_router
 from .schemas.common import ErrorEnvelope
 from .security import require_authenticated_session
 from .settings import WebSettings
@@ -155,6 +156,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.include_router(settings_router, prefix=API_PREFIX)
     app.include_router(operations_router, prefix=API_PREFIX)
     app.include_router(maintenance_router, prefix=API_PREFIX)
+    app.include_router(workflows_router, prefix=API_PREFIX)
 
     # 挂载 React 前端静态文件
     frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"

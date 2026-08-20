@@ -3041,6 +3041,50 @@ async def test_reporting_named_start_command_returns_accepted(resources) -> None
 
 
 @pytest.mark.asyncio
+async def test_generic_workflow_routes_project_the_current_reporting_run(resources) -> None:
+    client, host, _, _ = resources
+
+    capabilities = await client.get("/api/v1/capabilities")
+    workflows = await client.get("/api/v1/workflows")
+    schema = await client.get(
+        "/api/v1/workflows/distribution-reporting/input-schema"
+    )
+    started = await client.post(
+        "/api/v1/runs",
+        headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000010"},
+        json={
+            "workflowId": "distribution-reporting",
+            "input": {"instruction": "Generate report"},
+        },
+    )
+    run_id = started.json()["runId"]
+    snapshot = await client.get(f"/api/v1/runs/{run_id}")
+    outputs = await client.get(f"/api/v1/runs/{run_id}/outputs")
+    cost = await client.get(f"/api/v1/runs/{run_id}/cost")
+    resumed = await client.post(
+        f"/api/v1/runs/{run_id}/input",
+        headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000011"},
+        json={"values": {"supplements": []}},
+    )
+
+    assert capabilities.status_code == 200
+    assert capabilities.json()["capabilities"][0]["id"] == "distribution-reporting"
+    assert workflows.status_code == 200
+    assert any(
+        item["id"] == "distribution-reporting" and item["runnable"]
+        for item in workflows.json()["workflows"]
+    )
+    assert "instruction" in schema.json()["schema"]["properties"]
+    assert started.status_code == 202
+    assert snapshot.json()["run"]["workflowId"] == "distribution-reporting"
+    assert outputs.json() == {"runId": run_id, "outputs": []}
+    assert cost.json()["usage"]["totals"]["provider_attempts"] == 0
+    assert resumed.status_code == 202
+    assert host.reporting_controller is not None
+    assert [name for name, _ in host.reporting_controller.calls] == ["start", "resume_run"]
+
+
+@pytest.mark.asyncio
 async def test_fresh_reporting_run_is_immediately_queryable_listed_and_cancellable(
     resources,
 ) -> None:

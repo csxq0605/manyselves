@@ -1,6 +1,5 @@
 id: distribution_reporting_input
 version: 1.0.0
-description: Reporting adapter boundary for distribution_reporting_input
-adapter: json_schema
-schema: {}
-
+description: Current Reporting run request contract
+adapter: pydantic
+model: manyselves.core.reporting.models:ReportRequest
