@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { createUuid } from "../../app/uuid";
 import type { WorkflowApi } from "./workflow-api";
@@ -49,6 +49,7 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
     enabled: Boolean(runId),
     queryFn: () => api.get(runId),
     queryKey: ["runs", runId],
+    refetchInterval: (query) => query.state.data?.run.active ? 1000 : false,
   });
   const outputs = useQuery({
     enabled: Boolean(runId),
@@ -60,6 +61,13 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
     queryFn: () => api.cost(runId),
     queryKey: ["runs", runId, "cost"],
   });
+  const refetchOutputs = outputs.refetch;
+  const refetchCost = cost.refetch;
+  useEffect(() => {
+    if (!runId || run.data === undefined || run.data.run.active) return;
+    void refetchOutputs();
+    void refetchCost();
+  }, [refetchCost, refetchOutputs, run.data, runId]);
   const start = useMutation({
     mutationFn: () => api.start(
       { input: parseInput(inputText), workflowId: selectedWorkflowId },

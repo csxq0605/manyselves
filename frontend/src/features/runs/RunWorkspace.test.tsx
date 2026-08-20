@@ -192,4 +192,96 @@ describe("RunWorkspace", () => {
     expect(screen.queryByRole("button", { name: "提交运行输入" })).not.toBeInTheDocument();
     expect(screen.queryByText(/sha/i)).not.toBeInTheDocument();
   });
+
+  it("polls an active run and refreshes its completed output", async () => {
+    const get = vi.fn()
+      .mockResolvedValueOnce({
+        run: {
+          active: true,
+          capabilityId: "distribution-reporting",
+          runId: "report-declarative-polling",
+          status: "running",
+          taskId: "task-polling",
+          workflowId: "distribution-reporting",
+        },
+        state: {},
+        waitingInput: [],
+      })
+      .mockResolvedValue({
+        run: {
+          active: false,
+          capabilityId: "distribution-reporting",
+          runId: "report-declarative-polling",
+          status: "completed",
+          taskId: "task-polling",
+          workflowId: "distribution-reporting",
+        },
+        state: {},
+        waitingInput: [],
+      });
+    const outputs = vi.fn()
+      .mockResolvedValueOnce({ outputs: [], runId: "report-declarative-polling" })
+      .mockResolvedValue({
+        outputs: [{
+          exists: true,
+          id: "Outputs/Reports/polling.docx",
+          kind: "artifact",
+          path: "Outputs/Reports/polling.docx",
+          size: 8,
+        }],
+        runId: "report-declarative-polling",
+      });
+    const api: WorkflowApi = {
+      cost: vi.fn().mockResolvedValue({
+        runId: "report-declarative-polling",
+        usage: { totals: { estimated_cost: 0, total_tokens: 0 } },
+      }),
+      get,
+      inputSchema: vi.fn().mockResolvedValue({
+        contractId: "distribution_reporting_input",
+        schema: { type: "object" },
+        workflowId: "distribution-reporting",
+      }),
+      listCapabilities: vi.fn().mockResolvedValue({
+        capabilities: [{
+          description: "Declarative distribution reporting capability",
+          id: "distribution-reporting",
+          version: "1.0.0",
+          workflowIds: ["distribution-reporting"],
+        }],
+      }),
+      listWorkflows: vi.fn().mockResolvedValue({
+        workflows: [{
+          capabilityId: "distribution-reporting",
+          description: "Distribution reporting",
+          id: "distribution-reporting",
+          inputContract: "distribution_reporting_input",
+          outputContract: "distribution_reporting_output",
+          runnable: true,
+          version: "1.0.0",
+        }],
+      }),
+      outputs,
+      provideInput: vi.fn(),
+      start: vi.fn().mockResolvedValue({
+        capabilityId: "distribution-reporting",
+        commandId: "command-polling",
+        runId: "report-declarative-polling",
+        status: "accepted",
+        taskId: "task-polling",
+        workflowId: "distribution-reporting",
+      }),
+    };
+    const user = userEvent.setup();
+
+    render(<AppProviders><RunWorkspace api={api} /></AppProviders>);
+    await screen.findByText("Declarative distribution reporting capability");
+    await user.click(screen.getByRole("button", { name: "启动工作流" }));
+
+    expect(await screen.findByText("running")).toBeVisible();
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2), { timeout: 2500 });
+    expect(await screen.findByText("completed")).toBeVisible();
+    expect(await screen.findByText("Outputs/Reports/polling.docx")).toBeVisible();
+    expect(outputs).toHaveBeenCalledTimes(2);
+  });
 });

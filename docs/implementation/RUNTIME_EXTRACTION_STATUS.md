@@ -16,10 +16,10 @@
 
 - Current work package: `WP-12 complete; program completion audit follow-up in progress`
 - Last completed work package: `WP-12`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-09: connect the explicit declarative Reporting path` (the commit containing this status update)
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-11: poll generic Run completion` (the commit containing this status update)
 - Current migration stage: `Four-stage implementation complete; automatic completion audit and final handoff preparation`
 - Final real-test status: `deferred_until_all_four_stages_complete`
-- Next automatic action: finish the generic Run Workspace completion behavior, rerun only focused/affected automatic verification, then generate the single final real-test handoff
+- Next automatic action: run the final focused/affected automatic verification, generate the single final real-test handoff, push it, and update the Draft PR
 
 ## Required startup checks
 
@@ -59,6 +59,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `WP-12: execute a second neutral capability` — packages and executes `parameter-adjustment` through Tool, Contract, condition, run-scoped Conversation, Capability-owned Agent, Goto, and output actions; the package contains no Reporting identities, Gate definitions, hashes, CAS, or Reporting imports (this commit)
 - `WP-12: project the neutral capability through Run` — exposes both capabilities through the same generic Workflow/Run API, persists and projects neutral Run state, generalizes Output to artifact-or-value without exposing legacy digests, and lets the React Run Workspace select and display the neutral result (this commit)
 - `WP-09: connect the explicit declarative Reporting path` — closes the completion-audit gap with a top-level executable Reporting definition, persisted declarative module-stage and tail orchestration, explicit `report-declarative-*` selection through the generic Workflow API, and same-run engine recovery by readable run identity; the existing Reporting API and Controller default remain Legacy (this commit)
+- `WP-11: poll generic Run completion` — keeps the generic Run projection live while a background run is active, then refreshes Output and Cost once it reaches a terminal state; completed neutral runs still do not expose Reporting continuation controls (this commit)
 
 ## Tests actually run
 
@@ -108,6 +109,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-12 focused React Workflow API and Run Workspace selection passed: `3 passed`; generated API drift check, targeted ESLint, TypeScript `--noEmit`, and the production Vite build passed. The neutral completed run does not offer Reporting continuation input.
 - Program completion audit found that the declarative Reporting components were not connected to a complete selectable entry. Characterization initially failed collection because `declarative_reporting_runner` did not exist; the executable packaged workflow, module-stage execution/retry, service runner selection, controller default/explicit selection, tail continuation, generic API, and package adapter selection then passed: `29 passed`.
 - The directly affected Reporting service boundary/completion/input-snapshot and Kernel import-boundary selection passed: `55 passed`. No Provider was called. The new selection uses `report-declarative-*`, adds no mode-validation file, Gate, hash, or CAS, and leaves `report-*` on the current Legacy default.
+- WP-11 completion-polling Characterization initially failed because an active Run was queried only once; the focused Run Workspace/API selection then passed: `4 passed`. Targeted ESLint with zero warnings and TypeScript `--noEmit` passed.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 
