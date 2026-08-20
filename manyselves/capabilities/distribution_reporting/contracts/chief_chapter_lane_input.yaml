@@ -1,0 +1,6 @@
+id: chief_chapter_lane_input
+version: 1.0.0
+description: Current Reporting chief_chapter_lane_input contract
+adapter: pydantic
+model: manyselves.core.reporting.input_contracts:ChiefChapterLaneInput
+

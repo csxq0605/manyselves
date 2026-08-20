@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-10 in progress`
-- Last completed work package: `WP-09`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-09: complete the declarative reporting tail` (the commit containing this status update)
-- Current migration stage: `Stage 3 — Reporting migration and Capability package`
+- Current work package: `WP-11 in progress`
+- Last completed work package: `WP-10`
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-10: package the distribution reporting capability` (the commit containing this status update)
+- Current migration stage: `Stage 4 — Generic API/UI projections and second Capability`
 - Final real-test status: `deferred_until_all_four_stages_complete`
-- Next automatic action: begin `WP-10` Characterization for the `capabilities/distribution_reporting/` package, declarative definition files, Reporting adapters, compatibility imports, and Kernel import boundaries without switching the default execution path
+- Next automatic action: begin `WP-11` Characterization for the generic Capability, Workflow, Run, Output, and Cost projections while preserving the existing Reporting API as a compatibility adapter
 
 ## Required startup checks
 
@@ -53,6 +53,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `WP-09: sequence current reporting tail declaratively` — first WP-09 slice: Reporting-owned Cross → Chief → Final → Delivery Tool adapters over the current implementations, ordered neutral actions, stage-marker reuse, and failed-stage continuation state (this commit)
 - `WP-09: compare current and declarative tail traces` — standard semantic Trace adapter for the ordered Cross, Chief, Final, and Delivery stage boundary, compared against direct execution of the same current stage implementations (this commit)
 - `WP-09: complete the declarative reporting tail` — completes WP-09 through Reporting-owned adapters: the current Cross owner pipelines, Chief/Final chapter lanes, Render, Delivery, completion-marker reuse, and same-run failed-stage continuation now execute behind an explicit declarative tail while Legacy remains the default (this commit)
+- `WP-10: package the distribution reporting capability` — packages the 19 current Reporting Agent identities, Task/Workflow/Contract/Tool/Recovery indexes, and executable Reporting adapters under `manyselves.capabilities.distribution_reporting`; the old packaged-Agent loader remains a compatible import, Kernel import boundaries remain intact, and no new Gate definition is introduced (this commit)
 
 ## Tests actually run
 
@@ -88,6 +89,9 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-09 Reporting-tail Characterization initially failed collection because `manyselves.core.reporting.declarative_reporting_tail` did not exist; its order, completion-marker reuse, and failed-stage continuation focused tests then passed: `3 passed`.
 - WP-09 first-slice affected declarative tail, current Cross owner/specialization, selected Chief/Final chapter lanes, current Delivery materialization, Kernel sequential workflow, and import-boundary selection: `28 passed`.
 - WP-09 tail Trace Characterization initially failed because the declarative tail had no Trace adapter; the direct-current/declarative standard semantic Trace comparison selection then passed with the complete tail focused set: `4 passed`.
+- WP-10 Capability-package Characterization initially failed collection because `manyselves.capabilities` did not exist; the packaged definition graph, current-Agent projection, Legacy template-corpus equivalence, compatibility loader, and executable adapter selection then passed: `5 passed`.
+- WP-10 affected packaged Agent config/prompts, declarative module Lane/Cohort/tail, and Kernel import-boundary selection passed: `42 passed`.
+- WP-10 wheel build succeeded, and the built wheel contains the Capability entry file plus its Agent, Task, Contract, Tool, Workflow, and Recovery definition assets.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 
@@ -100,6 +104,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `jsonschema>=4.23,<5` was added only to execute the required generic JSON Schema Contract Adapter; it is not an orchestration dependency and is not used for runtime gates, security checks, hashes, or CAS.
 - WP-07 added no hash or CAS implementation. Its scripted recheck delta contains only the changed assigned narrative, so the new path does not create unchanged-content fingerprints; existing Legacy compact-delta behavior remains untouched.
 - WP-08 uses the cohort WorkflowState as the authoritative result. It does not call the Legacy hash-bearing `WorkflowReducer`, does not write a new barrier artifact, and publishes the cohort output only after all five typed Lane outcomes are completed.
+- WP-10 keeps the Capability `gates/` index intentionally empty because the migrated path has no new acceptance or decision Gate. Existing Reporting recovery behavior is indexed without new attempt limits, hashes, CAS, or validation chains.
 
 The isolated POCs are recorded in `docs/research/DECLARATIVE_RUNTIME_LANDSCAPE.md`. The production path uses the current dependency set and a lightweight internal Compiler/Executor.
 

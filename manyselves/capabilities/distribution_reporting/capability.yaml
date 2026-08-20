@@ -1,0 +1,11 @@
+id: distribution-reporting
+version: 1.0.0
+description: Declarative distribution reporting capability
+agents: ./agents
+workflows: ./workflows
+tasks: ./tasks
+contracts: ./contracts
+tools: ./tools
+gates: ./gates
+recovery: ./recovery
+

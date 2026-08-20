@@ -1,0 +1,18 @@
+id: distribution-module-review-lane
+version: 1.0.0
+description: Adapter-backed declarative workflow index for distribution-module-review-lane
+tasks:
+- module-initial-review
+- module-2.1-revision
+- module-2.2-revision
+- module-2.3-revision
+- module-2.4-revision
+- module-2.5-revision
+- module-recheck
+gates: []
+recovery:
+- current-reporting-recovery
+input_contract: distribution_reporting_input
+output_contract: distribution_reporting_output
+actions: []
+

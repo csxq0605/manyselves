@@ -1,0 +1,11 @@
+id: final-chapter-review
+version: 1.0.0
+description: Chapter-scoped final review
+agent: chief-editor-auditor
+objective: Review the assigned final chapter.
+input_contract: final_chapter_lane_input
+output_contract: final_chapter_lane_finding_submission
+tools:
+- submit_result
+recovery: current-reporting-recovery
+

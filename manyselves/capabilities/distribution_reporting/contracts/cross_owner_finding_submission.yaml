@@ -1,0 +1,6 @@
+id: cross_owner_finding_submission
+version: 1.0.0
+description: Current Reporting cross_owner_finding_submission contract
+adapter: pydantic
+model: manyselves.core.reporting.agentic_models:CrossOwnerFindingSubmission
+

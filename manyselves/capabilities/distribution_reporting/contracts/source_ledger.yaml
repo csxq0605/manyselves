@@ -1,0 +1,6 @@
+id: source_ledger
+version: 1.0.0
+description: Reporting adapter boundary for source_ledger
+adapter: json_schema
+schema: {}
+

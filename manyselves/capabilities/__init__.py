@@ -1,0 +1,2 @@
+"""Packaged declarative capabilities."""
+

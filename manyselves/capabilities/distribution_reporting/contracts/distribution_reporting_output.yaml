@@ -1,0 +1,6 @@
+id: distribution_reporting_output
+version: 1.0.0
+description: Reporting adapter boundary for distribution_reporting_output
+adapter: json_schema
+schema: {}
+

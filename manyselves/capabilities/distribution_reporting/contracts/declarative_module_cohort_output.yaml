@@ -1,0 +1,6 @@
+id: declarative_module_cohort_output
+version: 1.0.0
+description: Reporting adapter boundary for declarative_module_cohort_output
+adapter: json_schema
+schema: {}
+

@@ -1,0 +1,21 @@
+id: module-initial-review
+version: 1.0.0
+description: Initial module-local review
+agent: evidence-auditor
+objective: Review the assigned module.
+input_contract: module_review_input
+output_contract: module_review_finding_submission
+tools:
+- search_project_evidence
+- open_project_source
+- open_reference
+- open_web_source
+- inspect_document
+- inspect_image
+- calculate
+- query_peer
+- reply_peer
+- report_blocked
+- submit_result
+recovery: current-reporting-recovery
+

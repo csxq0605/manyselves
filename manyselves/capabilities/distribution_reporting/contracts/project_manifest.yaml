@@ -1,0 +1,6 @@
+id: project_manifest
+version: 1.0.0
+description: Reporting adapter boundary for project_manifest
+adapter: json_schema
+schema: {}
+

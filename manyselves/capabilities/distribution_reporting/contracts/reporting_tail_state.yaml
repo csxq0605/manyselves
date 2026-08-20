@@ -1,0 +1,6 @@
+id: reporting_tail_state
+version: 1.0.0
+description: Reporting adapter boundary for reporting_tail_state
+adapter: json_schema
+schema: {}
+

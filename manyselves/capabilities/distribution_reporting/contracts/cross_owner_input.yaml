@@ -1,0 +1,6 @@
+id: cross_owner_input
+version: 1.0.0
+description: Current Reporting cross_owner_input contract
+adapter: pydantic
+model: manyselves.core.reporting.input_contracts:CrossOwnerInput
+

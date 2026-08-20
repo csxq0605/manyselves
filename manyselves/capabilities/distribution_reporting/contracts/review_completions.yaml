@@ -1,0 +1,6 @@
+id: review_completions
+version: 1.0.0
+description: Reporting adapter boundary for review_completions
+adapter: json_schema
+schema: {}
+

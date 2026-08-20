@@ -133,7 +133,10 @@ def load_agent_definitions(directory: Path) -> dict[str, AgentDefinition]:
 
 
 def load_packaged_agents() -> dict[str, AgentDefinition]:
-    """Load the built-in reporting Agent identities shipped with Manyselves."""
+    """Compatibility import for the packaged distribution-reporting Agents."""
 
-    templates = Path(__file__).resolve().parents[2] / "templates" / "reporting"
-    return _load_agent_definitions(templates / "agents")
+    from manyselves.capabilities.distribution_reporting.adapters import (
+        load_reporting_agents,
+    )
+
+    return load_reporting_agents()

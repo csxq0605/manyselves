@@ -1,0 +1,6 @@
+id: output_artifacts
+version: 1.0.0
+description: Reporting adapter boundary for output_artifacts
+adapter: json_schema
+schema: {}
+

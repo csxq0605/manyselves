@@ -1,0 +1,6 @@
+id: research_notes
+version: 1.0.0
+description: Reporting adapter boundary for research_notes
+adapter: json_schema
+schema: {}
+

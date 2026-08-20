@@ -1,0 +1,21 @@
+id: distribution-reporting
+version: 1.0.0
+description: Adapter-backed declarative workflow index for distribution-reporting
+tasks:
+- module-initial-review
+- module-2.1-revision
+- module-2.2-revision
+- module-2.3-revision
+- module-2.4-revision
+- module-2.5-revision
+- module-recheck
+- cross-owner-review
+- chief-chapter-edit
+- final-chapter-review
+gates: []
+recovery:
+- current-reporting-recovery
+input_contract: distribution_reporting_input
+output_contract: distribution_reporting_output
+actions: []
+

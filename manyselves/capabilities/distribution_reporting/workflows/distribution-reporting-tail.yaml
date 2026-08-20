@@ -1,0 +1,14 @@
+id: distribution-reporting-tail
+version: 1.0.0
+description: Adapter-backed declarative workflow index for distribution-reporting-tail
+tasks:
+- cross-owner-review
+- chief-chapter-edit
+- final-chapter-review
+gates: []
+recovery:
+- current-reporting-recovery
+input_contract: distribution_reporting_input
+output_contract: distribution_reporting_output
+actions: []
+

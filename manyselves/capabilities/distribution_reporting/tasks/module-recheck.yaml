@@ -1,0 +1,21 @@
+id: module-recheck
+version: 1.0.0
+description: Recheck by original module auditor
+agent: evidence-auditor
+objective: Return verdicts for the required findings.
+input_contract: module_review_input
+output_contract: module_review_verdict_submission
+tools:
+- search_project_evidence
+- open_project_source
+- open_reference
+- open_web_source
+- inspect_document
+- inspect_image
+- calculate
+- query_peer
+- reply_peer
+- report_blocked
+- submit_result
+recovery: current-reporting-recovery
+
