@@ -336,6 +336,103 @@ async def test_parallel_branches_join_declared_outputs(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_parallel_branches_honor_declared_concurrency_limit(
+    tmp_path: Path,
+) -> None:
+    active = 0
+    maximum_active = 0
+
+    async def double(value: int) -> int:
+        nonlocal active, maximum_active
+        active += 1
+        maximum_active = max(maximum_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return value * 2
+
+    actions: list[dict] = [
+        {
+            "id": "parallel",
+            "kind": "parallel",
+            "branches": {
+                "one": "one",
+                "two": "two",
+                "three": "three",
+                "four": "four",
+            },
+            "join": "join",
+            "max_concurrency": 2,
+        }
+    ]
+    for branch in ("one", "two", "three", "four"):
+        actions.extend(
+            [
+                {
+                    "id": branch,
+                    "kind": "invoke_tool",
+                    "tool": "double",
+                    "input_variable": f"{branch}-input",
+                    "output_variable": f"{branch}-output",
+                },
+                {
+                    "id": f"{branch}-done",
+                    "kind": "goto",
+                    "target": "join",
+                },
+            ]
+        )
+    actions.extend(
+        [
+            {
+                "id": "join",
+                "kind": "join",
+                "parallel": "parallel",
+                "inputs": {
+                    branch: f"{branch}-output"
+                    for branch in ("one", "two", "three", "four")
+                },
+                "output_variable": "joined",
+            },
+            {
+                "id": "finish",
+                "kind": "end_workflow",
+                "output_variable": "joined",
+            },
+        ]
+    )
+    workflow = WorkflowDefinition(
+        id="limited-parallel",
+        version="1.0.0",
+        description="Limit neutral branch concurrency",
+        state={
+            "one-input": 1,
+            "two-input": 2,
+            "three-input": 3,
+            "four-input": 4,
+        },
+        actions=actions,
+    )
+    executors, plan = _compile(workflow)
+
+    completed = await ControlFlowWorkflowExecutor(
+        executors,
+        FileWorkflowStateStore(tmp_path),
+    ).execute(
+        plan,
+        WorkflowState.for_plan("run-limited-parallel", plan),
+        RuntimeContext(tools={"double": double}),
+    )
+
+    assert maximum_active == 2
+    assert completed.outputs["result"] == {
+        "one": 2,
+        "two": 4,
+        "three": 6,
+        "four": 8,
+    }
+
+
+@pytest.mark.asyncio
 async def test_subworkflow_binds_parent_input_and_child_output(tmp_path: Path) -> None:
     child = WorkflowDefinition(
         id="double-child",

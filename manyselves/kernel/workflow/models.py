@@ -146,6 +146,7 @@ class ParallelAction(ResolvedActionBase):
     kind: Literal[ActionKind.PARALLEL] = ActionKind.PARALLEL
     branches: dict[str, str] = Field(min_length=2)
     join: str = Field(min_length=1)
+    max_concurrency: int | None = Field(default=None, ge=1)
 
 
 class JoinAction(ResolvedActionBase):

@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-08 in progress`
-- Last completed work package: `WP-07`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-07: migrate one declarative module lane` (the commit containing this status update)
+- Current work package: `WP-09 in progress`
+- Last completed work package: `WP-08`
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-08: join the declarative module cohort` (the commit containing this status update)
 - Current migration stage: `Stage 3 — Reporting migration and Capability package`
 - Final real-test status: `deferred_until_all_four_stages_complete`
-- Next automatic action: begin `WP-08` Characterization for five independent module Lane instances, completion reuse, and an all-ready cohort Join without switching the default execution path
+- Next automatic action: begin `WP-09` Characterization for Cross Initial, routed owner revision, Local Regression, Cross Recheck/Barrier, Chief, Final, Render, and Delivery without switching the default execution path
 
 ## Required startup checks
 
@@ -49,6 +49,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `WP-06 research: choose an internal control-flow runtime` — R-01/R-02 isolated POCs completed; MAF and LangGraph both classified as `reference`, with no production dependency change
 - `WP-06: execute declarative control flow` — neutral If/ConditionGroup/Goto/ForEach/Parallel/Join/Subworkflow actions, explicit back-edge limits, persisted loop cursor, and one authoritative WorkflowState (this commit)
 - `WP-07: migrate one declarative module lane` — one explicit Reporting-owned module review definition, current Pydantic Agent contracts, current packaged Agent prompts and Tool declarations, stable Author/Auditor Conversation Keys, conditional revision, and exact scripted Legacy semantic Trace equivalence (this commit)
+- `WP-08: join the declarative module cohort` — fixed five-Lane Reporting Parallel/Join, optional declared concurrency limit, completion reuse through each Lane WorkflowState, sibling drain through typed Reporting outcomes, and all-complete reduction without new barrier hashes or CAS (this commit)
 
 ## Tests actually run
 
@@ -77,6 +78,10 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-07 declarative module Lane Characterization initially failed collection because `manyselves.core.reporting.declarative_module_lane` did not exist; the new Lane plus Legacy Trace focused selection then passed: `3 passed`.
 - WP-07 named multi-variable Tool input Characterization initially recorded `2 failed, 7 passed`; the additive single-or-named binding implementation then passed its focused selection: `9 passed`.
 - WP-07 affected declarative/Legacy module Lane, current review lifecycle and Conversation identity, Legacy Agent adapter, Kernel sequential/control-flow, and import-boundary selection: `27 passed`.
+- WP-08 declarative cohort Characterization initially failed collection because `manyselves.core.reporting.declarative_module_cohort` did not exist.
+- WP-08 concurrency-limit Characterization initially failed because `ParallelAction` did not accept `max_concurrency`; the focused Kernel case then passed: `1 passed`.
+- WP-08 focused five-Lane all-ready Join, concurrency limit, completed-Lane reuse, sibling drain, and failed-cohort projection selection: `3 passed`.
+- WP-08 affected declarative cohort/Lane, current Legacy module concurrency, ready supervisor and recovery state, Kernel sequential/control-flow, and import-boundary selection: `29 passed`.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 
@@ -88,6 +93,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - No new production orchestration dependency is approved or added.
 - `jsonschema>=4.23,<5` was added only to execute the required generic JSON Schema Contract Adapter; it is not an orchestration dependency and is not used for runtime gates, security checks, hashes, or CAS.
 - WP-07 added no hash or CAS implementation. Its scripted recheck delta contains only the changed assigned narrative, so the new path does not create unchanged-content fingerprints; existing Legacy compact-delta behavior remains untouched.
+- WP-08 uses the cohort WorkflowState as the authoritative result. It does not call the Legacy hash-bearing `WorkflowReducer`, does not write a new barrier artifact, and publishes the cohort output only after all five typed Lane outcomes are completed.
 
 The isolated POCs are recorded in `docs/research/DECLARATIVE_RUNTIME_LANDSCAPE.md`. The production path uses the current dependency set and a lightweight internal Compiler/Executor.
 

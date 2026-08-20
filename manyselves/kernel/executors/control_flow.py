@@ -157,15 +157,29 @@ class ControlFlowWorkflowExecutor:
             return action.body, item
         if isinstance(action, ParallelAction):
             if action.id not in state.parallel_results:
-                branch_results = await asyncio.gather(
-                    *(
-                        self._execute_branch(
+                semaphore = asyncio.Semaphore(
+                    action.max_concurrency or len(action.branches)
+                )
+
+                async def execute_branch(
+                    branch_id: str,
+                    start_action_id: str,
+                ) -> tuple[str, dict[str, Any], dict[str, Any]]:
+                    async with semaphore:
+                        return await self._execute_branch(
                             branch_id,
                             start_action_id,
                             action.join,
                             plan,
                             state,
                             context,
+                        )
+
+                branch_results = await asyncio.gather(
+                    *(
+                        execute_branch(
+                            branch_id,
+                            start_action_id,
                         )
                         for branch_id, start_action_id in action.branches.items()
                     )
