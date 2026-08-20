@@ -16,14 +16,21 @@ from manyselves.kernel.definitions import (
 
 from .models import (
     ActionKind,
+    ConditionGroupAction,
     CreateConversationAction,
     EndWorkflowAction,
+    ForEachAction,
+    GotoAction,
+    IfAction,
     InvokeAgentAction,
     InvokeToolAction,
+    JoinAction,
+    ParallelAction,
     ResolveConversationAction,
     ResolvedAction,
     ResolvedPlan,
     SetVariableAction,
+    SubworkflowAction,
     ValidateContractAction,
 )
 
@@ -42,8 +49,25 @@ _ACTION_MODELS: dict[ActionKind, type[Any]] = {
     ActionKind.CREATE_CONVERSATION: CreateConversationAction,
     ActionKind.RESOLVE_CONVERSATION: ResolveConversationAction,
     ActionKind.INVOKE_AGENT: InvokeAgentAction,
+    ActionKind.IF: IfAction,
+    ActionKind.CONDITION_GROUP: ConditionGroupAction,
+    ActionKind.GOTO: GotoAction,
+    ActionKind.FOR_EACH: ForEachAction,
+    ActionKind.PARALLEL: ParallelAction,
+    ActionKind.JOIN: JoinAction,
+    ActionKind.SUBWORKFLOW: SubworkflowAction,
     ActionKind.VALIDATE_CONTRACT: ValidateContractAction,
     ActionKind.END_WORKFLOW: EndWorkflowAction,
+}
+
+_CONTROL_ACTION_KINDS = {
+    ActionKind.IF,
+    ActionKind.CONDITION_GROUP,
+    ActionKind.GOTO,
+    ActionKind.FOR_EACH,
+    ActionKind.PARALLEL,
+    ActionKind.JOIN,
+    ActionKind.SUBWORKFLOW,
 }
 
 
@@ -65,6 +89,7 @@ class WorkflowCompiler:
         agent_ids: list[str] = []
         task_ids: list[str] = []
         contract_ids: list[str] = []
+        workflow_ids: list[str] = []
         end_actions: list[EndWorkflowAction] = []
 
         for payload in workflow.actions:
@@ -73,7 +98,7 @@ class WorkflowCompiler:
                 kind = ActionKind(raw_kind)
             except ValueError as exc:
                 raise CompilerError(f"unknown action kind: {raw_kind}") from exc
-            if not self._executors.has(kind):
+            if kind not in _CONTROL_ACTION_KINDS and not self._executors.has(kind):
                 raise CompilerError(f"unregistered action kind: {kind}")
             try:
                 action = _ACTION_MODELS[kind].model_validate(payload)
@@ -90,15 +115,22 @@ class WorkflowCompiler:
                 contract_ids,
                 agent_ids,
                 task_ids,
+                workflow_ids,
             )
             if isinstance(action, EndWorkflowAction):
                 end_actions.append(action)
             actions.append(action)
 
-        if len(end_actions) != 1 or not actions or actions[-1] is not end_actions[0]:
+        if not end_actions:
+            raise CompilerError("workflow requires one final end_workflow action")
+        has_control_flow = any(action.kind in _CONTROL_ACTION_KINDS for action in actions)
+        if not has_control_flow and (
+            len(end_actions) != 1 or not actions or actions[-1] is not end_actions[0]
+        ):
             raise CompilerError(
                 "minimal sequential workflow requires one final end_workflow action"
             )
+        self._validate_control_flow(actions, workflow.max_iterations)
         if workflow.output_contract:
             self._require(
                 definitions,
@@ -111,9 +143,13 @@ class WorkflowCompiler:
             workflow_id=workflow.id,
             workflow_version=workflow.version,
             actions=actions,
+            initial_state=workflow.state,
+            entry_action_id=actions[0].id,
+            max_iterations=workflow.max_iterations,
             tool_ids=tool_ids,
             agent_ids=agent_ids,
             task_ids=task_ids,
+            workflow_ids=workflow_ids,
             contract_ids=contract_ids,
             final_output_contract=workflow.output_contract,
         )
@@ -127,6 +163,7 @@ class WorkflowCompiler:
         contract_ids: list[str],
         agent_ids: list[str],
         task_ids: list[str],
+        workflow_ids: list[str],
     ) -> None:
         if isinstance(action, SetVariableAction):
             defined_variables.add(action.variable)
@@ -210,6 +247,43 @@ class WorkflowCompiler:
             _append_unique(task_ids, task.id)
             defined_variables.add(action.output_variable)
             return
+        if isinstance(action, IfAction):
+            self._require_variable(action.condition.variable, defined_variables, action.id)
+            return
+        if isinstance(action, ConditionGroupAction):
+            for branch in action.branches:
+                self._require_variable(
+                    branch.condition.variable,
+                    defined_variables,
+                    action.id,
+                )
+            return
+        if isinstance(action, GotoAction):
+            return
+        if isinstance(action, ForEachAction):
+            self._require_variable(action.items_variable, defined_variables, action.id)
+            defined_variables.add(action.item_variable)
+            return
+        if isinstance(action, ParallelAction):
+            return
+        if isinstance(action, JoinAction):
+            for variable in action.inputs.values():
+                self._require_variable(variable, defined_variables, action.id)
+            defined_variables.add(action.output_variable)
+            return
+        if isinstance(action, SubworkflowAction):
+            self._require_variable(action.input_variable, defined_variables, action.id)
+            child = self._require(
+                definitions,
+                DefinitionKind.WORKFLOW,
+                action.workflow,
+                action.id,
+            )
+            if not isinstance(child, WorkflowDefinition):
+                raise CompilerError(f"definition is not a workflow: {action.workflow}")
+            _append_unique(workflow_ids, action.workflow)
+            defined_variables.add(action.output_variable)
+            return
         if isinstance(action, ValidateContractAction):
             self._require_variable(action.input_variable, defined_variables, action.id)
             self._require(
@@ -222,6 +296,49 @@ class WorkflowCompiler:
             defined_variables.add(action.output_variable)
             return
         self._require_variable(action.output_variable, defined_variables, action.id)
+
+    @staticmethod
+    def _validate_control_flow(
+        actions: list[ResolvedAction],
+        max_iterations: int | None,
+    ) -> None:
+        positions = {action.id: index for index, action in enumerate(actions)}
+        targets: list[tuple[str, str]] = []
+        back_edge = False
+        parallel_ids = {
+            action.id: action for action in actions if isinstance(action, ParallelAction)
+        }
+        for action in actions:
+            action_targets: list[str] = []
+            if isinstance(action, IfAction):
+                action_targets.extend([action.then, action.otherwise])
+            elif isinstance(action, ConditionGroupAction):
+                action_targets.extend(branch.target for branch in action.branches)
+                action_targets.append(action.default)
+            elif isinstance(action, GotoAction):
+                action_targets.append(action.target)
+            elif isinstance(action, ForEachAction):
+                action_targets.extend([action.body, action.after])
+            elif isinstance(action, ParallelAction):
+                action_targets.extend(action.branches.values())
+                action_targets.append(action.join)
+            elif isinstance(action, JoinAction):
+                parallel = parallel_ids.get(action.parallel)
+                if parallel is None:
+                    raise CompilerError(
+                        f"join {action.id} references missing parallel action: {action.parallel}"
+                    )
+                if set(action.inputs) != set(parallel.branches):
+                    raise CompilerError(f"join {action.id} inputs do not match parallel branches")
+            for target in action_targets:
+                targets.append((action.id, target))
+                if target in positions and positions[target] <= positions[action.id]:
+                    back_edge = True
+        for owner, target in targets:
+            if target not in positions:
+                raise CompilerError(f"action {owner} references missing action target: {target}")
+        if back_edge and max_iterations is None:
+            raise CompilerError("workflow with a back edge requires max_iterations")
 
     @staticmethod
     def _require(

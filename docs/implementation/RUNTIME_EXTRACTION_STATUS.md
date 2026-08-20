@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-06 in progress`
-- Last completed work package: `WP-05`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-05: interpret declarative agent recovery policies` (the commit containing this status update)
-- Current migration stage: `Stage 2 — Stateless Kernel and generic Runtime`
+- Current work package: `WP-07 in progress`
+- Last completed work package: `WP-06`
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-06: execute declarative control flow` (the commit containing this status update)
+- Current migration stage: `Stage 3 — Reporting migration and Capability package`
 - Final real-test status: `deferred_until_all_four_stages_complete`
-- Next automatic action: complete `R-01`/`R-02` focused research from current source and minimal POCs, then begin `WP-06` Characterization for neutral branching, looping, parallel Join, and subworkflow control flow
+- Next automatic action: begin `WP-07` Characterization for semantic trace comparison and dual-run equivalence without switching the default execution path
 
 ## Required startup checks
 
@@ -47,6 +47,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `WP-05: interpret declarative agent recovery policies` — generic recovery events/actions/state, explicit Recovery Definition interpretation, Capability-owned correction prompts, declared-only attempt limits, and no-hash progress observations (this commit)
 - `WP-05: align generic recovery event vocabulary` — aligned the Kernel enum exactly with plan section 5.8 and retained completed Tool Result reuse as the additional WP-05 event
 - `WP-06 research: choose an internal control-flow runtime` — R-01/R-02 isolated POCs completed; MAF and LangGraph both classified as `reference`, with no production dependency change
+- `WP-06: execute declarative control flow` — neutral If/ConditionGroup/Goto/ForEach/Parallel/Join/Subworkflow actions, explicit back-edge limits, persisted loop cursor, and one authoritative WorkflowState (this commit)
 
 ## Tests actually run
 
@@ -68,6 +69,9 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-05 affected generic recovery, Kernel import boundary, Legacy Agent adapter, existing reporting recovery/continuation, Schema correction, and Tool Result reuse selection: `24 passed`.
 - WP-06 R-01 isolated POC: MAF 1.0.2 preserved two independent message histories (`[1, 3, 1]`) and produced 5 in-memory checkpoints; PowerFx condition execution was unavailable without .NET, and Goto to a ConditionGroup required its internal `_eval` ID.
 - WP-06 R-02 isolated POC: LangGraph 1.2.11 completed a neutral two-conversation loop, dynamic three-branch parallel Join (`[2, 4, 6]`), output-contract validation, and 11 checkpoint snapshots.
+- WP-06 Control Flow Characterization: initially failed collection because `ControlFlowWorkflowExecutor` did not exist, then `7 passed` after implementation.
+- WP-06 affected Kernel/Runtime selection: `54 passed`; affected Reporting definition/config and Kernel boundary selection: `7 passed`.
+- One initial WP-06 affected command named a nonexistent `tests/runtime/test_state_store.py` and collected no tests. A subsequent combined collection exposed two same-basename test modules; the new Conversation test was renamed, after which the recorded affected selections passed.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 

@@ -8,11 +8,13 @@ from .base import (
     RuntimeExecutionError,
     build_builtin_executor_registry,
 )
+from .control_flow import ControlFlowWorkflowExecutor
 from .sequential import SequentialWorkflowExecutor
 
 __all__ = [
     "ActionExecutor",
     "ActionResult",
+    "ControlFlowWorkflowExecutor",
     "ExecutorRegistry",
     "RuntimeContext",
     "RuntimeExecutionError",

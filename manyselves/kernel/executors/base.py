@@ -27,6 +27,7 @@ from manyselves.kernel.workflow import (
     InvokeToolAction,
     ResolveConversationAction,
     ResolvedAction,
+    ResolvedPlan,
     SetVariableAction,
     ValidateContractAction,
     WorkflowState,
@@ -45,6 +46,7 @@ class RuntimeContext:
     agents: Mapping[str, Any] = field(default_factory=dict)
     definitions: DefinitionRegistry | None = None
     conversations: ConversationRegistry = field(default_factory=ConversationRegistry)
+    subworkflows: Mapping[str, ResolvedPlan] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
