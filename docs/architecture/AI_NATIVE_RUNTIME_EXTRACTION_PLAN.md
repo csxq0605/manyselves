@@ -569,6 +569,17 @@ output.published
 
 ## 11. Codex 工作包
 
+工作包按四阶段连续执行，中间不设置人工验收断点：
+
+```text
+Stage 1: WP-00..WP-01 — 基线与 Definition 层
+Stage 2: WP-02..WP-06 — 无状态 Kernel 与通用 Runtime
+Stage 3: WP-07..WP-10 — Reporting 全流程迁移与 Capability 包
+Stage 4: WP-11..WP-12 — 通用 API/UI 投影与第二 Capability
+```
+
+每个工作包仍是 Characterization、实现、focused/affected tests、提交和回滚边界。四阶段和全部工作包完成前不调用真实 Provider、不要求真实项目/浏览器/服务器人工验证；完成后统一生成一次真实测试交接。Legacy Reporting Runner 在最终真实测试前继续可用并保持默认，声明式路径必须完整实现且可显式选择。
+
 每个工作包必须独立完成、可验证、可回滚。不得跨越多个抽象边界一次提交。
 
 ### WP-00：冻结定位与基线

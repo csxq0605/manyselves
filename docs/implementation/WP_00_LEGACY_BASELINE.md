@@ -123,12 +123,13 @@ import:
 `tests/kernel/test_import_boundary.py` checks Python imports under
 `manyselves/kernel`. It does not scan domain words and it adds no runtime gate.
 
-## Fake baseline and real baseline separation
+## Fake baseline and deferred final real-test separation
 
 The automatic baseline uses only deterministic scripted runners and temporary
 workspaces. It does not call a Provider or use real project material.
 
-The HG-00 real baseline must use:
+The single final real-test matrix, run only after all four migration stages are
+complete, must include a Legacy baseline using:
 
 - the unchanged Legacy Reporting Runner;
 - one fixed representative project workspace and input set;
@@ -138,5 +139,7 @@ The HG-00 real baseline must use:
   same Run;
 - the actual usage/cost record for that Run.
 
-The real run is an HG-00 human action because it transmits project data to a
-Provider and must verify the delivered DOCX in the operator's environment.
+No intermediate real run is required after WP-00. The Legacy run is deferred
+and paired with the completed declarative path in the single final real test,
+because both transmit project data to a Provider and must verify the delivered
+DOCX in the operator's environment.

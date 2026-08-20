@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-00 complete`
+- Current work package: `WP-01 in progress`
 - Last completed work package: `WP-00`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-00: freeze legacy semantic trace` (the commit containing this status update)
-- Current human gate: `HG-00`
-- Human gate result: `awaiting_human_execution`
-- Next automatic action: wait for `APPROVE_GATE HG-00`; record the supplied real Legacy Run ID and artifacts, then begin `WP-01` without repeating WP-00
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `Program: defer real testing until four-stage completion` (the commit containing this status update)
+- Current migration stage: `Stage 1 — Definition`
+- Final real-test status: `deferred_until_all_four_stages_complete`
+- Next automatic action: implement `WP-01` Definition Models, Loader, Registry, and Contract Adapter without repeating `WP-00` or pausing for an intermediate acceptance gate
 
 ## Required startup checks
 
@@ -53,27 +53,26 @@ The plan baseline must contain the autonomous execution commits and this status 
 - Whether LangGraph or an internal lightweight compiler/runtime should be used remains undecided.
 - No new production orchestration dependency is approved.
 
-These questions do not block the completed `WP-00`. They must only trigger `HG-01` if a later POC shows that a production dependency or long-term public interface decision is necessary.
+These questions do not block the completed `WP-00` or implementation of `WP-01`. This implementation run will not add a production orchestration dependency; research and POCs remain isolated while the production path uses the current dependency set and a lightweight internal Compiler/Executor.
 
 ## Known blockers
 
-- Automatic work is paused only for the required `HG-00` real Legacy baseline. The test instructions and evidence checklist are in [`WP_00_LEGACY_BASELINE.md`](WP_00_LEGACY_BASELINE.md).
+- None. The real Legacy baseline is deferred into the single final real-test matrix. Automatic implementation continues through all four stages.
 
 ## Active user constraints
 
-- Default to focused tests and affected test collections. Do not run a full regression suite unless the user explicitly requests it, or a special human-gate instruction requires it after Codex states the exact scope.
+- Default to focused tests and affected test collections. Do not run a full regression suite unless the user explicitly requests it.
 - Do not add unnecessary safety gates, decision gates, hashes, CAS, or extra validation chains. Preserve existing mechanisms without expanding them. If one becomes necessary, explain the concrete need, insufficiency of existing mechanisms, impact, alternatives, and rollback before implementation; explicit user approval is required.
+- Do not create acceptance breakpoints or request intermediate real testing. Complete all four migration stages, the stateless Kernel, Definition layer, Reporting migration, generic projections, and second Capability before requesting one final real test.
 
-## Human gate sequence
+## Four-stage continuous sequence
 
 ```text
-HG-00 Legacy real baseline
-HG-01 Orchestration foundation/dependency choice, conditional
-HG-02 Neutral declarative runtime real test
-HG-03 Single-module real equivalence test
-HG-04 Full-report shadow run
-HG-05 Default-path switch approval
-HG-06 Server and second-capability acceptance
+Stage 1: WP-00..WP-01 — Baseline and Definition layer
+Stage 2: WP-02..WP-06 — Stateless Kernel and generic Runtime
+Stage 3: WP-07..WP-10 — Reporting migration and Capability package
+Stage 4: WP-11..WP-12 — Generic API/UI projections and second Capability
+Final: one real Provider/project/browser/server test handoff
 ```
 
 ## Resume instruction

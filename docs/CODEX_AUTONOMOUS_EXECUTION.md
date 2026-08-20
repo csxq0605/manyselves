@@ -1,24 +1,24 @@
-# Codex 自主连续实施与人工验收门
+# Codex 自主连续实施与最终真实测试
 
 > 文档性质：Manyselves 运行时抽取项目的 Codex 总控协议
 >
-> 目标：Codex 在一个长期实施分支中按主方案自动、顺序推进，不要求人工逐个派发工作包；只在必须由人完成真实环境验证、架构取舍或默认路径切换的关键节点停下
+> 目标：Codex 在一个长期实施分支中按主方案自动、顺序推进，不要求人工逐个派发工作包；四阶段迁移全部完成后才统一请求一次真实环境测试
 >
 > 主方案：[`docs/architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md`](architecture/AI_NATIVE_RUNTIME_EXTRACTION_PLAN.md)
 
 ## 1. 执行模式
 
-本项目采用“自主连续实施 + 人工验收门”，而不是“一次 Codex 任务只做一个工作包”。
+本项目采用“四阶段自主连续实施 + 最终一次真实测试”，而不是“一次 Codex 任务只做一个工作包”。
 
 Codex 接受一次总任务后，应：
 
 1. 从 `WP-00` 开始读取主方案；
 2. 按依赖顺序推进后续工作包；
 3. 每个工作包或更小垂直切片独立提交；
-4. 测试通过且未到人工验收门时，自动进入下一工作包；
+4. focused tests 和受影响测试通过后，自动进入下一工作包；
 5. 在同一个长期实施分支和同一个 Draft PR 中持续更新；
-6. 仅在本文规定的人工验收门、真实阻塞或不可证明的兼容风险处停止；
-7. 人工批准后，从已有分支、状态记录和提交继续，不重新规划已完成工作。
+6. 不设置中途人工验收断点，仅在真实阻塞或不可证明的兼容风险处停止；
+7. 四阶段和 `WP-00`～`WP-12` 全部完成后，才生成最终真实测试交接。
 
 工作包仍然是：
 
@@ -51,8 +51,8 @@ agent/declarative-runtime-implementation
 - 提交信息应包含工作包编号，例如 `WP-02: add minimal workflow compiler`；
 - 不为每个工作包重新创建 PR；
 - 不把多个工作包压成一个无法回滚的大提交；
-- 人工验收门前必须推送全部提交；
-- 未经人工批准，不得合并 PR、切换生产默认路径或删除 Legacy Reporting Runner。
+- 每个工作包或可验证垂直切片完成后必须推送提交；
+- 最终真实测试完成前，不得合并 PR、切换生产默认路径或删除 Legacy Reporting Runner。
 
 ## 3. 唯一执行状态记录
 
@@ -71,8 +71,8 @@ Current branch and latest commit
 Completed commits
 Tests actually run
 Open research decisions
-Current human gate
-Human gate result
+Current migration stage
+Final real-test status
 Known blockers
 Next automatic action
 ```
@@ -80,8 +80,8 @@ Next automatic action
 更新时机仅限：
 
 - 完成一个工作包；
-- 到达人工验收门；
-- 人工验收结果返回；
+- 完成一个迁移阶段；
+- 最终真实测试结果返回；
 - 出现真实阻塞；
 - Codex 需要结束当前会话并交给新会话接续。
 
@@ -93,10 +93,9 @@ Codex 在以下条件全部满足时必须自动继续，不询问用户：
 
 - 当前工作包完成条件满足；
 - 聚焦测试和受影响测试通过；
-- 没有到达本文定义的人工验收门；
 - 没有引入需要人工选择的新生产依赖；
 - 没有发现现有行为与计划不一致且无法由测试解决；
-- 没有需要真实 Provider、真实项目资料、浏览器或服务器环境才能验证的事项；
+- 当前事项可以用 Fake/Scripted Provider、离线项目夹具或自动化投影测试验证；
 - 下一工作包的依赖已满足。
 
 Codex 不得因为以下原因停下询问：
@@ -121,7 +120,7 @@ Codex 不得因为以下原因停下询问：
 
 如果调研后可以在不改变既定架构边界的情况下确定方案，Codex应继续实施，不等待人工确认。
 
-只有以下情况进入架构人工门：
+以下情况视为架构研究触发条件：
 
 - 需要新增 Microsoft Agent Framework、LangGraph、Burr、Temporal、Restate 或其他生产运行时依赖；
 - 两种方案会形成明显不同的长期公共接口；
@@ -129,199 +128,66 @@ Codex 不得因为以下原因停下询问：
 - 需要放弃已写入主方案的关键不变量；
 - 官方来源和 POC 仍不能排除重大不确定性。
 
-如果 Codex 环境无法访问必要官方来源，必须记录精确调研问题和所需来源后停止，不得凭记忆编造结论。
+本轮迁移不新增生产编排依赖。研究和 POC 可以继续，但必须保持隔离；实现优先使用当前依赖和内部轻量 Compiler/Executor。如果现有边界内确实无法继续，记录精确阻塞事实和所需来源后停止，不得凭记忆编造结论。
 
-## 6. 人工验收门
+## 6. 四阶段连续迁移
 
-人工门是执行程序中的显式节点。除这些节点和真实阻塞外，Codex应持续推进。
+本轮实施不设置中途人工验收断点。四阶段只作为依赖、提交和状态记录边界，完成后自动进入下一阶段：
 
-### HG-00：真实 Legacy 基线
+1. **Definition 阶段：** `WP-00`～`WP-01`，冻结基线并实现 Definition Models、Loader、Registry 和 Contract Adapter；
+2. **无状态 Kernel/Runtime 阶段：** `WP-02`～`WP-06`，实现 Workflow State、Compiler、Tool、Conversation、Agent Recovery 和声明式控制流；
+3. **Reporting 迁移阶段：** `WP-07`～`WP-10`，迁移单 Lane、模块 Cohort、Cross/Chief/Final/Delivery，并形成独立配电报告 Capability；
+4. **通用产品化与第二能力阶段：** `WP-11`～`WP-12`，完成通用 FastAPI/React 投影和第二个中立 Capability。
 
-**到达条件：** `WP-00` 的 Characterization、语义 Trace 和测试基线完成。
+每阶段必须：
 
-**Codex 自动完成：**
+- 先 Characterization，再实现；
+- 只运行 focused tests 和受影响测试集合，除非用户明确要求全量回归；
+- 每个可验证切片独立提交、推送并更新 Draft PR；
+- 更新唯一状态文件后自动继续；
+- 不调用真实 Provider，不要求真实项目、浏览器或服务器人工验收。
 
-- 冻结 Fake/Scripted Provider 下的稳定语义 Trace；
-- 列出真实报告运行的固定输入、模型、配置和输出检查项；
-- 生成可执行的人工测试说明；
-- 推送提交并更新状态文件。
+原先分散在各阶段的真实环境检查项合并为最终真实测试矩阵，不再阻断工作包依赖，也不再使用中途批准口令。
 
-**人工执行：**
+## 7. 最终真实测试交接
 
-- 使用当前 Legacy Reporting Runner、真实 Provider 和代表性项目资料运行一次完整报告；
-- 确认模块、审查、Cross、Chief、Final、恢复和 DOCX 交付均真实可用；
-- 保存基线 Run ID、最终产物和实际成本结果。
-
-**批准后：** Codex 自动继续 `WP-01`。
-
-### HG-01：编排底座和依赖选择
-
-**到达条件：** 只有在研究或 POC 表明必须选择外部框架或新增生产运行时依赖时触发；如果自研轻量 Compiler/Executor 可以继续，则不触发。
-
-**Codex 自动完成：**
-
-- 对候选方案完成隔离 POC；
-- 比较当前 AgentLoop、Tool、Artifact、Recovery、部署、依赖体积和迁移成本；
-- 给出推荐、拒绝方案和回退路径；
-- 不把 POC 接入生产路径。
-
-**人工执行：**
-
-- 选择 `adopt`、`adapt` 或 `do-not-adopt`；
-- 批准是否新增生产依赖和公共接口方向。
-
-**批准后：** Codex按决定继续当前工作包。
-
-### HG-02：中立声明式运行时实测
-
-**到达条件：** `WP-01` 至 `WP-06` 完成；Definition、Loader、Registry、Contract、最小 Compiler、Tool、Conversation、InvokeAgent Recovery 和控制流已经形成一条不依赖 reporting 的中立工作流。
-
-**Codex 自动完成：**
-
-- 运行全部自动测试；
-- 提供一个与配电报告无关的样例 Capability；
-- 提供本地运行命令、预期状态变化、恢复触发方式和输出 Schema；
-- 证明 Kernel Import Boundary 通过。
-
-**人工执行：**
-
-- 在真实本地环境使用一个真实 Provider 运行中立工作流；
-- 人为触发一次结构化输出纠正或 Continuation；
-- 检查同 Conversation 恢复、Tool 调用、最终结构化输出和日志。
-
-**批准后：** Codex 自动继续 `WP-07`。
-
-### HG-03：单模块真实 Agent 等价验证
-
-**到达条件：** `WP-07` 完成，单个配电报告模块 Lane 已迁移到新定义/编译/执行路径，并保留 Legacy 路径。
-
-**Codex 自动完成：**
-
-- 使用 Fake/Scripted Provider 证明 Legacy 与新路径语义 Trace 等价；
-- 提供 Feature Flag 和回退方式；
-- 提供单模块真实测试说明；
-- 不切换默认执行路径。
-
-**人工执行：**
-
-- 对同一模块和同一份资料分别运行 Legacy 与新路径；
-- 检查原作者/原审查会话复用、Finding、返修、Recheck、结果结构和实际内容；
-- 检查模型漏提交或输出截断时的新路径恢复。
-
-**批准后：** Codex 自动继续 `WP-08`。
-
-### HG-04：完整报告 Shadow Run
-
-**到达条件：** `WP-08` 和 `WP-09` 完成，五模块、Barrier、Cross、Chief、Final 和 Delivery 已能通过新路径执行，但仍由 Feature Flag 控制。
-
-**Codex 自动完成：**
-
-- 全部自动化等价测试通过；
-- 旧路径继续保持默认；
-- 准备同输入的完整报告 Shadow/paired run 说明；
-- 列出必须比较的身份、合同、Gate、恢复、Markdown、DOCX 和成本项。
-
-**人工执行：**
-
-- 使用真实 Provider 和代表性项目资料分别运行 Legacy 与新路径；
-- 验证 Cross Finding 准确回写、原 Conversation 保持、Local Regression、最终审计和交付；
-- 比较结果质量、失败恢复、耗时和成本；
-- 完成至少一次中途人工补充或模型纠正场景。
-
-**批准后：** Codex 自动继续 `WP-10`，但仍不得删除 Legacy 路径。
-
-### HG-05：默认路径切换批准
-
-**到达条件：** `WP-10` 完成，配电报告已经成为独立参考 Capability，新旧路径兼容测试和真实 Shadow Run 均通过。
-
-**Codex 自动完成：**
-
-- 提供默认路径切换 diff；
-- 提供 Feature Flag、回滚和旧 Run 兼容说明；
-- 列出仍保留的 Legacy 组件；
-- 不自行切换默认值。
-
-**人工执行：**
-
-- 批准 `keep-legacy-default`、`enable-new-default` 或 `revise`；
-- 若批准新默认，执行一次真实完整报告回归。
-
-**批准后：** Codex按决定继续 `WP-11` 和 `WP-12`。
-
-### HG-06：服务端封装与第二 Capability 验收
-
-**到达条件：** `WP-11` 和 `WP-12` 完成。
-
-**Codex 自动完成：**
-
-- FastAPI/React 使用通用 Run、Interaction、Output 和 Cost 投影；
-- 第二个中立 Capability 不依赖 reporting；
-- 自动化测试、构建和部署 Smoke 通过；
-- 提供服务器人工验收说明。
-
-**人工执行：**
-
-- 在内部服务器部署；
-- 分别运行配电报告和第二 Capability；
-- 检查项目、会话、输出、成本、失败恢复和浏览器交互；
-- 确认新 Capability 不包含隐式报告角色或流程。
-
-**批准后：** 进入最终清理、文档更新和合并准备。
-
-## 7. 人工门到达时 Codex 必须输出什么
-
-到达人工门时，Codex必须先完成并推送当前工作，然后停止。回复必须包含：
+只有四阶段、`WP-00`～`WP-12`、自动行为等价验证和文档同步全部完成后，Codex 才停止并请求一次真实测试。交接必须包含：
 
 ```text
-Gate ID
-Why this gate is required
 Branch
 Latest commit
 Draft PR
-Completed work packages
-Changed files
-Automated tests actually run
-Automated test results
-Exact human setup
-Exact human commands or UI steps
-Expected results
+Completed work packages and stages
+Changed architecture and compatibility adapters
+Focused/affected tests actually run
+Exact real Provider and project setup
+Exact CLI, UI, browser and server steps
+Legacy/declarative paired-run procedure
+Expected semantic, output, recovery and cost results
 Artifacts/logs to inspect
 Pass criteria
 Fail criteria
 Rollback steps
 Known limitations
-Resume command/token
 ```
 
-Codex不得只说“请测试一下”。
+该最终真实测试统一覆盖原各人工门中的 Legacy 基线、中立 Runtime、单模块等价、完整报告 Shadow、通用 API/UI、第二 Capability、恢复、DOCX 和成本检查。Codex 不得提前要求用户执行其中任何一部分。
 
-## 8. 人工批准和恢复
+最终真实测试前保持 Legacy Reporting Runner 可用并维持当前默认路径；声明式路径必须完整实现且可显式选择。是否切换默认路径只在最终真实测试结果可用后处理，不阻断 `WP-11` 或 `WP-12` 的实现。
 
-人工回复应使用明确的控制语句：
-
-```text
-APPROVE_GATE HG-XX
-REJECT_GATE HG-XX: <reason>
-SUPPLEMENT_GATE HG-XX: <new facts or artifacts>
-```
-
-Codex收到批准后应：
-
-1. 将人工结果写入唯一状态文件；
-2. 不重复已经完成的工作包；
-3. 从 Gate 定义的下一工作包继续；
-4. 继续自动执行直到下一个人工门。
+## 8. 中断和恢复
 
 如果由新的 Codex 会话接续，启动提示只需要求它：
 
 ```text
 读取 AGENTS.md 和 docs/implementation/RUNTIME_EXTRACTION_STATUS.md，
-确认当前分支和最新提交，从尚未通过的当前 Gate 或 Next automatic action 继续。
+确认当前分支和最新提交，从 Current migration stage / Next automatic action 继续，
+不要重复已完成工作包，也不要创建中途人工验收断点。
 ```
 
 ## 9. 真实失败与停止条件
 
-除人工门外，Codex仅在以下情况停止：
+连续实施期间，Codex 仅在以下情况停止：
 
 - 自动测试失败且经过定位后无法在当前工作包内修复；
 - 新路径无法证明与现有行为兼容；
@@ -330,7 +196,8 @@ Codex收到批准后应：
 - Compiler 无法确定输入输出关系；
 - 新抽象泄漏具体领域概念；
 - 必要外部调研无法完成；
-- 发生破坏性仓库操作或默认路径切换，必须人工批准；
+- 必须执行破坏性仓库操作；
+- 在不新增生产编排依赖、不改变既定长期公共边界的前提下确实无法继续；
 - 当前方案本身存在需要用户重新决策的矛盾。
 
 停止前必须：
@@ -351,6 +218,7 @@ Codex收到批准后应：
 - 至少一个无配电报告角色和流程的新 Capability 运行成功；
 - FastAPI、React 和内部服务器部署封装完成；
 - 任务完成后成本可以展示；
-- 全部人工门有明确通过记录；
-- Legacy 路径的保留或删除经过人工批准；
+- 四阶段和 `WP-00`～`WP-12` 均有自动验证与聚焦提交记录；
+- 已生成唯一最终真实测试交接，且此前没有要求中途人工验收；
+- 最终真实测试前 Legacy 路径保持可用且仍为默认；
 - 文档、测试和实际代码状态一致。
