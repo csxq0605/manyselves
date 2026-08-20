@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+from inspect import isawaitable
 from typing import Any
 
 from manyselves.kernel.contracts import ContractAdapter, build_contract_adapter
@@ -20,6 +21,7 @@ from manyselves.kernel.executors import (
 )
 from manyselves.kernel.ports import WorkflowStateStore
 from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
+from manyselves.runtime.semantic_trace import SemanticEventKind, SemanticTraceRecorder
 
 from .models import REPORT_MODULE_IDS
 
@@ -90,6 +92,7 @@ async def execute_declarative_reporting_tail(
     state: dict[str, Any],
     workflow_id: str,
     state_store: WorkflowStateStore,
+    trace: SemanticTraceRecorder | None = None,
 ) -> WorkflowState:
     """Run current tail stages through neutral actions without changing default routing."""
 
@@ -102,16 +105,35 @@ async def execute_declarative_reporting_tail(
         plan,
     )
     adapters = _ReportingTailAdapters(runner, workflow_id)
+    stage_tools = {
+        "cross": adapters.cross,
+        "chief": adapters.chief,
+        "final": adapters.final,
+        "delivery": adapters.delivery,
+    }
+    if trace is not None:
+        trace.record(
+            SemanticEventKind.WORKFLOW_STARTED,
+            workflow_id=workflow_id,
+            status="running",
+        )
+        stage_tools = {
+            stage: _traced_stage(
+                stage,
+                invoke,
+                trace=trace,
+                workflow_id=workflow_id,
+            )
+            for stage, invoke in stage_tools.items()
+        }
     try:
         completed = await ControlFlowWorkflowExecutor(executors, state_store).execute(
             plan,
             kernel_state,
             RuntimeContext(
                 tools={
-                    "run-reporting-cross": adapters.cross,
-                    "run-reporting-chief": adapters.chief,
-                    "run-reporting-final": adapters.final,
-                    "run-reporting-delivery": adapters.delivery,
+                    f"run-reporting-{stage}": invoke
+                    for stage, invoke in stage_tools.items()
                 },
                 contracts=contracts,
                 definitions=definitions,
@@ -126,6 +148,20 @@ async def execute_declarative_reporting_tail(
         or "delivery_completion_ref" not in state
     ):
         raise DeclarativeReportingTailError("declarative Reporting tail did not deliver")
+    if trace is not None:
+        trace.record(
+            SemanticEventKind.OUTPUT_PUBLISHED,
+            workflow_id=workflow_id,
+            action_id="finish-reporting-tail",
+            output_contract="reporting_tail_state",
+            output_id=str(state["delivery_completion_ref"]),
+            status="completed",
+        )
+        trace.record(
+            SemanticEventKind.WORKFLOW_COMPLETED,
+            workflow_id=workflow_id,
+            status="completed",
+        )
     return completed
 
 
@@ -174,3 +210,46 @@ class _ReportingTailAdapters:
 def _replace_state(target: dict[str, Any], value: Mapping[str, Any]) -> None:
     target.clear()
     target.update(value)
+
+
+def _traced_stage(
+    stage: str,
+    invoke: Any,
+    *,
+    trace: SemanticTraceRecorder,
+    workflow_id: str,
+):
+    async def traced(state: dict[str, Any]) -> dict[str, Any]:
+        action_id = f"run-{stage}"
+        trace.record(
+            SemanticEventKind.ACTION_STARTED,
+            workflow_id=workflow_id,
+            action_id=action_id,
+        )
+        trace.record(
+            SemanticEventKind.TOOL_INVOKED,
+            workflow_id=workflow_id,
+            action_id=action_id,
+            tool_id=f"run-reporting-{stage}",
+        )
+        try:
+            result = invoke(state)
+            if isawaitable(result):
+                result = await result
+        except BaseException:
+            trace.record(
+                SemanticEventKind.ACTION_FAILED,
+                workflow_id=workflow_id,
+                action_id=action_id,
+                status="failed",
+            )
+            raise
+        trace.record(
+            SemanticEventKind.ACTION_COMPLETED,
+            workflow_id=workflow_id,
+            action_id=action_id,
+            status="completed",
+        )
+        return result
+
+    return traced

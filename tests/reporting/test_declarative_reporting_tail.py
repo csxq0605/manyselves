@@ -8,6 +8,7 @@ from manyselves.core.reporting.declarative_reporting_tail import (
 )
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.kernel.workflow import WorkflowStatus
+from manyselves.runtime.semantic_trace import SemanticEventKind, SemanticTraceRecorder
 from manyselves.runtime.state_store import FileWorkflowStateStore
 
 
@@ -68,6 +69,72 @@ def _state(run_id: str) -> dict:
     }
 
 
+async def _capture_current_tail_trace(
+    runner: _TailRunner,
+    state: dict,
+    workflow_id: str,
+) -> list[dict[str, str]]:
+    trace = SemanticTraceRecorder()
+    trace.record(
+        SemanticEventKind.WORKFLOW_STARTED,
+        workflow_id=workflow_id,
+        status="running",
+    )
+    stages = [
+        ("cross", runner._cross_review),
+        ("chief", runner._chief_edit),
+        ("final", runner._final_review_loop),
+        ("delivery", runner._deliver),
+    ]
+    for stage, invoke in stages:
+        action_id = f"run-{stage}"
+        tool_id = f"run-reporting-{stage}"
+        trace.record(
+            SemanticEventKind.ACTION_STARTED,
+            workflow_id=workflow_id,
+            action_id=action_id,
+        )
+        trace.record(
+            SemanticEventKind.TOOL_INVOKED,
+            workflow_id=workflow_id,
+            action_id=action_id,
+            tool_id=tool_id,
+        )
+        if stage in {"cross", "chief"}:
+            await invoke(state, workflow_id)
+        elif stage == "final":
+            await invoke(
+                state,
+                workflow_id,
+                chief_envelope=None,
+                chief_session_key=state["chief_editor_session_key"],
+                approved_module_text=state["approved_module_text"],
+                claims=[],
+            )
+        else:
+            invoke(state)
+        trace.record(
+            SemanticEventKind.ACTION_COMPLETED,
+            workflow_id=workflow_id,
+            action_id=action_id,
+            status="completed",
+        )
+    trace.record(
+        SemanticEventKind.OUTPUT_PUBLISHED,
+        workflow_id=workflow_id,
+        action_id="finish-reporting-tail",
+        output_contract="reporting_tail_state",
+        output_id=state["delivery_completion_ref"],
+        status="completed",
+    )
+    trace.record(
+        SemanticEventKind.WORKFLOW_COMPLETED,
+        workflow_id=workflow_id,
+        status="completed",
+    )
+    return trace.snapshot()
+
+
 @pytest.mark.asyncio
 async def test_declarative_reporting_tail_runs_current_stages_in_order(
     tmp_path: Path,
@@ -87,6 +154,30 @@ async def test_declarative_reporting_tail_runs_current_stages_in_order(
     assert state["delivery_status"] == "delivered"
     assert completed.status is WorkflowStatus.COMPLETED
     assert completed.outputs["result"]["delivery_completion_ref"] == "delivery.json"
+
+
+@pytest.mark.asyncio
+async def test_declarative_reporting_tail_matches_current_stage_trace(
+    tmp_path: Path,
+) -> None:
+    workflow_id = "workflow-wp09-trace"
+    trace = SemanticTraceRecorder()
+    declarative_runner = _TailRunner()
+
+    await execute_declarative_reporting_tail(
+        runner=declarative_runner,
+        state=_state("run-wp09-declarative-trace"),
+        workflow_id=workflow_id,
+        state_store=FileWorkflowStateStore(tmp_path / "declarative"),
+        trace=trace,
+    )
+    current = await _capture_current_tail_trace(
+        _TailRunner(),
+        _state("run-wp09-current-trace"),
+        workflow_id,
+    )
+
+    assert trace.snapshot() == current
 
 
 @pytest.mark.asyncio
