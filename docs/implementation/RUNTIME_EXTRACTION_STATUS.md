@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-05 in progress`
-- Last completed work package: `WP-04`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-04: bind neutral conversations to current agents` (the commit containing this status update)
+- Current work package: `WP-06 in progress`
+- Last completed work package: `WP-05`
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-05: interpret declarative agent recovery policies` (the commit containing this status update)
 - Current migration stage: `Stage 2 — Stateless Kernel and generic Runtime`
 - Final real-test status: `deferred_until_all_four_stages_complete`
-- Next automatic action: begin `WP-05` Characterization for current structured-submission correction, Schema correction, Max Token continuation, Tool Slice continuation, No-progress, and completed Tool Result reuse
+- Next automatic action: complete `R-01`/`R-02` focused research from current source and minimal POCs, then begin `WP-06` Characterization for neutral branching, looping, parallel Join, and subworkflow control flow
 
 ## Required startup checks
 
@@ -42,8 +42,9 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `5894cd5` — `WP-01: add definition models and file loaders`
 - `e85dc03` — `WP-01: complete registry and contract adapters`
 - `e1bfe9c` — `WP-02: execute neutral sequential workflows`
-- `WP-03: adapt current tools to declarative runtime` — current Tool binding, explicit contracts, unified outcome, existing result-index reuse, ReadTool coverage, and InvokeTool integration (this commit)
-- `WP-04: bind neutral conversations to current agents` — neutral Conversation modes/keys/records, create/resolve actions, typed Agent port, InvokeAgent executor, and a Legacy ReportingAgentRunner adapter that passes the original session key (this commit)
+- `be100ae` — `WP-03: adapt current tools to declarative runtime`; current Tool binding, explicit contracts, unified outcome, existing result-index reuse, ReadTool coverage, and InvokeTool integration
+- `71c1a9c` — `WP-04: bind neutral conversations to current agents`; neutral Conversation modes/keys/records, create/resolve actions, typed Agent port, InvokeAgent executor, and a Legacy ReportingAgentRunner adapter that passes the original session key
+- `WP-05: interpret declarative agent recovery policies` — generic recovery events/actions/state, explicit Recovery Definition interpretation, Capability-owned correction prompts, declared-only attempt limits, and no-hash progress observations (this commit)
 
 ## Tests actually run
 
@@ -60,6 +61,9 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-03 affected Runtime, Kernel workflow, existing Tool Result Index, Tool Outcome, Tool Registry, and selected ReadTool tests: `31 passed`. One initial command used an incorrect pytest class node and collected no tests; the corrected node selection is the recorded result.
 - WP-04 Conversation and Agent Adapter Characterization: initially failed collection because the neutral Conversation package did not exist, then `7 passed`; a fresh-registry restoration case was added with the implementation.
 - WP-04 affected Conversation, Agent Adapter, Kernel workflow, Tool Adapter, Kernel import boundary, and four existing Reporting identity/session selections: `26 passed`.
+- WP-05 current-behavior Characterization for structured correction, Schema correction, Max Token continuation, Tool Slice continuation, productive slices, No-progress stop, and completed Tool Result reuse: `8 passed` before generic implementation.
+- WP-05 generic Recovery Controller Characterization: initially failed collection because the Kernel recovery package did not exist, then `11 passed`.
+- WP-05 affected generic recovery, Kernel import boundary, Legacy Agent adapter, existing reporting recovery/continuation, Schema correction, and Tool Result reuse selection: `24 passed`.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 
