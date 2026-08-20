@@ -16,10 +16,10 @@
 
 - Current work package: `WP-01 in progress`
 - Last completed work package: `WP-00`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `Program: defer real testing until four-stage completion` (the commit containing this status update)
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-01: add definition models and file loaders` (the commit containing this status update)
 - Current migration stage: `Stage 1 — Definition`
 - Final real-test status: `deferred_until_all_four_stages_complete`
-- Next automatic action: implement `WP-01` Definition Models, Loader, Registry, and Contract Adapter without repeating `WP-00` or pausing for an intermediate acceptance gate
+- Next automatic action: complete `WP-01` with the Definition Registry, capability-directory loading, reference resolution, and Contract Adapters
 
 ## Required startup checks
 
@@ -36,7 +36,10 @@ The plan baseline must contain the autonomous execution commits and this status 
 ## Completed commits
 
 - `90fba9e` — `WP-00: stabilize plan baseline contracts`
-- `WP-00: freeze legacy semantic trace` — stable semantic events, Legacy module-lane characterization, Kernel import boundary, and WP-00 baseline document (this commit)
+- `9323b12` — `WP-00: freeze legacy semantic trace`
+- `c7c1bd8` — `Program: defer real testing until four-stage completion`
+- `396f2be` — `Program: remove residual gate resume wording`
+- `WP-01: add definition models and file loaders` — business-neutral definition vocabulary plus YAML, JSON, and Markdown-frontmatter single-file loading (this commit)
 
 ## Tests actually run
 
@@ -44,6 +47,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - Each of those 11 baseline failures was rerun through focused/affected selections after correction: `92 passed`; the final OpenAPI/macOS-specific subset: `3 passed`.
 - WP-00 semantic trace and Kernel boundary focused tests: `3 passed`.
 - WP-00 affected Legacy recovery, conversation, review, and resume selection plus the new tests: `15 passed`.
+- WP-01 models and single-file loader Characterization: initially failed collection because `manyselves.kernel.definitions` did not exist, then `8 passed` after implementation.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 
