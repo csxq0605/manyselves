@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-01 in progress`
-- Last completed work package: `WP-00`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-01: add definition models and file loaders` (the commit containing this status update)
-- Current migration stage: `Stage 1 — Definition`
+- Current work package: `WP-02 in progress`
+- Last completed work package: `WP-01`
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-01: complete registry and contract adapters` (the commit containing this status update)
+- Current migration stage: `Stage 2 — Stateless Kernel and generic Runtime`
 - Final real-test status: `deferred_until_all_four_stages_complete`
-- Next automatic action: complete `WP-01` with the Definition Registry, capability-directory loading, reference resolution, and Contract Adapters
+- Next automatic action: begin `WP-02` Characterization for WorkflowState, ResolvedAction/ResolvedPlan, minimal sequential Compiler, Executor Registry, and File State Store
 
 ## Required startup checks
 
@@ -39,7 +39,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `9323b12` — `WP-00: freeze legacy semantic trace`
 - `c7c1bd8` — `Program: defer real testing until four-stage completion`
 - `396f2be` — `Program: remove residual gate resume wording`
-- `WP-01: add definition models and file loaders` — business-neutral definition vocabulary plus YAML, JSON, and Markdown-frontmatter single-file loading (this commit)
+- `5894cd5` — `WP-01: add definition models and file loaders`
+- `WP-01: complete registry and contract adapters` — capability-directory loading, typed reference resolution, Pydantic/JSON Schema adapters, and WP-01 affected verification (this commit)
 
 ## Tests actually run
 
@@ -48,6 +49,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-00 semantic trace and Kernel boundary focused tests: `3 passed`.
 - WP-00 affected Legacy recovery, conversation, review, and resume selection plus the new tests: `15 passed`.
 - WP-01 models and single-file loader Characterization: initially failed collection because `manyselves.kernel.definitions` did not exist, then `8 passed` after implementation.
+- WP-01 Registry and Contract Adapter Characterization: initially failed collection because the Registry and contracts package did not exist, then the complete WP-01 focused selection passed: `13 passed`.
+- WP-01 affected Kernel import boundary, existing Reporting frontmatter/module-skill loaders, and Tool Registry selection: `30 passed`.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 
@@ -56,6 +59,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - Whether to adopt, adapt, or only reference Microsoft Agent Framework Declarative Workflow remains undecided.
 - Whether LangGraph or an internal lightweight compiler/runtime should be used remains undecided.
 - No new production orchestration dependency is approved.
+- `jsonschema>=4.23,<5` was added only to execute the required generic JSON Schema Contract Adapter; it is not an orchestration dependency and is not used for runtime gates, security checks, hashes, or CAS.
 
 These questions do not block the completed `WP-00` or implementation of `WP-01`. This implementation run will not add a production orchestration dependency; research and POCs remain isolated while the production path uses the current dependency set and a lightweight internal Compiler/Executor.
 

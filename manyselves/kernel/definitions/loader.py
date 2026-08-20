@@ -7,7 +7,13 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from .models import DEFINITION_MODELS, Definition, DefinitionKind
+from .models import (
+    DEFINITION_MODELS,
+    CapabilityDefinition,
+    Definition,
+    DefinitionKind,
+)
+from .registry import DefinitionRegistry
 
 
 class DefinitionLoadError(ValueError):
@@ -84,3 +90,45 @@ def load_definition(
         return model.model_validate(payload)  # type: ignore[return-value]
     except ValidationError as exc:
         raise DefinitionLoadError(f"{source}: {exc}") from exc
+
+
+_CAPABILITY_LOCATIONS: tuple[tuple[str, DefinitionKind], ...] = (
+    ("agents", DefinitionKind.AGENT),
+    ("workflows", DefinitionKind.WORKFLOW),
+    ("tasks", DefinitionKind.TASK),
+    ("contracts", DefinitionKind.CONTRACT),
+    ("tools", DefinitionKind.TOOL),
+    ("gates", DefinitionKind.GATE),
+    ("recovery", DefinitionKind.RECOVERY),
+)
+_SUPPORTED_SUFFIXES = {".yaml", ".yml", ".json", ".md"}
+
+
+def load_capability(path: Path) -> tuple[CapabilityDefinition, DefinitionRegistry]:
+    """Load a capability entry file and all definition locations it indexes."""
+
+    source = Path(path)
+    loaded = load_definition(source, expected_kind=DefinitionKind.CAPABILITY)
+    if not isinstance(loaded, CapabilityDefinition):
+        raise DefinitionLoadError(f"{source}: expected capability definition")
+    registry = DefinitionRegistry()
+    registry.register(loaded)
+    root = source.parent
+    for field_name, kind in _CAPABILITY_LOCATIONS:
+        location = root / getattr(loaded, field_name)
+        if location.is_dir():
+            definition_paths = sorted(
+                child
+                for child in location.iterdir()
+                if child.is_file() and child.suffix.lower() in _SUPPORTED_SUFFIXES
+            )
+        elif location.is_file():
+            definition_paths = [location]
+        else:
+            raise DefinitionLoadError(
+                f"{source}: definition location does not exist: {location}"
+            )
+        for definition_path in definition_paths:
+            registry.register(load_definition(definition_path, expected_kind=kind))
+    registry.validate_references()
+    return loaded, registry

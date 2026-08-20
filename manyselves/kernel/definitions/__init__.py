@@ -1,6 +1,6 @@
 """Business-neutral declarative definitions and loaders."""
 
-from .loader import DefinitionLoadError, load_definition
+from .loader import DefinitionLoadError, load_capability, load_definition
 from .models import (
     AgentDefinition,
     CapabilityDefinition,
@@ -15,6 +15,11 @@ from .models import (
     ToolDefinition,
     WorkflowDefinition,
 )
+from .registry import (
+    DefinitionReferenceError,
+    DefinitionRegistry,
+    DuplicateDefinitionError,
+)
 
 __all__ = [
     "AgentDefinition",
@@ -24,11 +29,15 @@ __all__ = [
     "DefinitionBase",
     "DefinitionKind",
     "DefinitionLoadError",
+    "DefinitionReferenceError",
+    "DefinitionRegistry",
+    "DuplicateDefinitionError",
     "GateDefinition",
     "RecoveryPolicyDefinition",
     "RecoveryRule",
     "TaskDefinition",
     "ToolDefinition",
     "WorkflowDefinition",
+    "load_capability",
     "load_definition",
 ]
