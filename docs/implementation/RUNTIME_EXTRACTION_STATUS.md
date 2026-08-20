@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-09 in progress`
-- Last completed work package: `WP-08`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-09: compare current and declarative tail traces` (the commit containing this status update)
+- Current work package: `WP-10 in progress`
+- Last completed work package: `WP-09`
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-09: complete the declarative reporting tail` (the commit containing this status update)
 - Current migration stage: `Stage 3 — Reporting migration and Capability package`
 - Final real-test status: `deferred_until_all_four_stages_complete`
-- Next automatic action: begin `WP-09` Characterization for Cross Initial, routed owner revision, Local Regression, Cross Recheck/Barrier, Chief, Final, Render, and Delivery without switching the default execution path
+- Next automatic action: begin `WP-10` Characterization for the `capabilities/distribution_reporting/` package, declarative definition files, Reporting adapters, compatibility imports, and Kernel import boundaries without switching the default execution path
 
 ## Required startup checks
 
@@ -52,6 +52,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `WP-08: join the declarative module cohort` — fixed five-Lane Reporting Parallel/Join, optional declared concurrency limit, completion reuse through each Lane WorkflowState, sibling drain through typed Reporting outcomes, and all-complete reduction without new barrier hashes or CAS (this commit)
 - `WP-09: sequence current reporting tail declaratively` — first WP-09 slice: Reporting-owned Cross → Chief → Final → Delivery Tool adapters over the current implementations, ordered neutral actions, stage-marker reuse, and failed-stage continuation state (this commit)
 - `WP-09: compare current and declarative tail traces` — standard semantic Trace adapter for the ordered Cross, Chief, Final, and Delivery stage boundary, compared against direct execution of the same current stage implementations (this commit)
+- `WP-09: complete the declarative reporting tail` — completes WP-09 through Reporting-owned adapters: the current Cross owner pipelines, Chief/Final chapter lanes, Render, Delivery, completion-marker reuse, and same-run failed-stage continuation now execute behind an explicit declarative tail while Legacy remains the default (this commit)
 
 ## Tests actually run
 
