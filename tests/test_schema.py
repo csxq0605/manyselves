@@ -47,8 +47,8 @@ def test_mineru_config_defaults():
 
 def test_agent_defaults():
     cfg = AgentDefaults()
-    assert cfg.model == "anthropic/claude-sonnet-4.5"
-    assert cfg.provider == "auto"
+    assert cfg.model == "mimo-v2.5-pro"
+    assert cfg.provider == "openai"
     assert cfg.max_tokens == 8192
     assert cfg.temperature == 0.1
     assert cfg.max_tool_iterations == 200
@@ -67,7 +67,7 @@ def test_settings_load_default():
         settings = Settings(config_path=config_file)
         config = settings.load_config()
         assert isinstance(config, AppConfig)
-        assert config.agents.defaults.provider == "auto"
+        assert config.agents.defaults.provider == "openai"
     finally:
         config_file.unlink(missing_ok=True)
 

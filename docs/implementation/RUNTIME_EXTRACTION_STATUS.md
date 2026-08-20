@@ -52,6 +52,11 @@ These questions do not block `WP-00`. They must only trigger `HG-01` if a later 
 
 - None at handoff time.
 
+## Active user constraints
+
+- Default to focused tests and affected test collections. Do not run a full regression suite unless the user explicitly requests it, or a special human-gate instruction requires it after Codex states the exact scope.
+- Do not add unnecessary safety gates, decision gates, hashes, CAS, or extra validation chains. Preserve existing mechanisms without expanding them. If one becomes necessary, explain the concrete need, insufficiency of existing mechanisms, impact, alternatives, and rollback before implementation; explicit user approval is required.
+
 ## Human gate sequence
 
 ```text

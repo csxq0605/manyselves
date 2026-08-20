@@ -163,8 +163,8 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
 
         # SPA fallback: 所有未匹配的路由返回 index.html
-        @app.get("/")
-        @app.get("/{full_path:path}")
+        @app.get("/", include_in_schema=False)
+        @app.get("/{full_path:path}", include_in_schema=False)
         async def serve_spa(full_path: str = ""):
             """Serve React SPA for all non-API routes."""
             return FileResponse(frontend_dist / "index.html")

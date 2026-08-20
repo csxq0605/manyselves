@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -3861,6 +3862,7 @@ async def test_maintenance_refuses_dangling_symlinked_config_path(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="POSIX fsync path contract")
 async def test_maintenance_flushes_authoritative_workspace_without_following_symlinks(
     resources, tmp_path: Path, monkeypatch
 ) -> None:
@@ -3887,8 +3889,22 @@ async def test_maintenance_flushes_authoritative_workspace_without_following_sym
 
     def record_fsync(descriptor: int) -> None:
         try:
-            flushed.add(Path(os.readlink(f"/proc/self/fd/{descriptor}")).resolve())
-        except OSError:
+            proc_fd = Path(f"/proc/self/fd/{descriptor}")
+            if proc_fd.exists():
+                target = Path(os.readlink(proc_fd))
+            else:
+                import fcntl
+
+                if sys.platform != "darwin":
+                    raise OSError("no fd path resolver for this POSIX platform")
+                raw_path = fcntl.fcntl(
+                    descriptor,
+                    fcntl.F_GETPATH,
+                    b"\0" * 1024,
+                )
+                target = Path(raw_path.rstrip(b"\0").decode())
+            flushed.add(target.resolve())
+        except (AttributeError, OSError):
             pass
 
     monkeypatch.setattr(os, "fsync", record_fsync)

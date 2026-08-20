@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+
 from manyselves.interfaces.types import ApiDebugMessage, ToolCallMessage, ToolResult
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import app as exported_app
@@ -355,9 +356,11 @@ async def test_exported_app_applies_env_loaded_cors_origins(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Deferring settings must not silently discard production CORS origins."""
-    monkeypatch.setenv("DATA_ROOT", str(tmp_path))
-    monkeypatch.setenv("INITIAL_PROJECT_ID", "project-1")
-    monkeypatch.setenv("ALLOWED_ORIGINS", '["https://client.example"]')
+    monkeypatch.setenv("MANYSELVES_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("MANYSELVES_INITIAL_PROJECT_ID", "project-1")
+    monkeypatch.setenv(
+        "MANYSELVES_ALLOWED_ORIGINS", '["https://client.example"]'
+    )
     host = FakeRuntimeHost()
     exported_app.state.web_settings = None
     exported_app.dependency_overrides[get_runtime_host] = lambda: host
