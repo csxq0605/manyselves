@@ -83,5 +83,5 @@ A new Codex session should receive only:
 Read AGENTS.md and docs/implementation/RUNTIME_EXTRACTION_STATUS.md.
 Confirm the current branch and latest commit.
 Follow docs/CODEX_AUTONOMOUS_EXECUTION.md.
-Continue from Current work package / Current human gate without repeating completed work.
+Continue from Current work package / Current migration stage without repeating completed work.
 ```

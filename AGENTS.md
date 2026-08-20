@@ -432,7 +432,7 @@ Codex 必须连续完成四阶段和 `WP-00`～`WP-12`，其间只维护状态�
 读取 AGENTS.md；
 读取 docs/implementation/RUNTIME_EXTRACTION_STATUS.md；
 确认当前分支和最新提交；
-从 Current human gate 或 Next automatic action 继续；
+从 Current migration stage 或 Next automatic action 继续；
 不得重复已完成的工作包。
 ```
 
