@@ -53,6 +53,7 @@ class SequentialWorkflowExecutor:
                 raise
             state.variables.update(result.variable_updates)
             state.outputs.update(result.output_updates)
+            state.conversations.update(result.conversation_updates)
             action_state.output = result.output
             action_state.status = ActionExecutionStatus.COMPLETED
             state.next_action_index = index + 1

@@ -9,6 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field
 class ActionKind(StrEnum):
     SET_VARIABLE = "set_variable"
     INVOKE_TOOL = "invoke_tool"
+    CREATE_CONVERSATION = "create_conversation"
+    RESOLVE_CONVERSATION = "resolve_conversation"
+    INVOKE_AGENT = "invoke_agent"
     VALIDATE_CONTRACT = "validate_contract"
     END_WORKFLOW = "end_workflow"
 
@@ -47,6 +50,31 @@ class InvokeToolAction(ResolvedActionBase):
     output_variable: str = Field(min_length=1)
 
 
+class CreateConversationAction(ResolvedActionBase):
+    kind: Literal[ActionKind.CREATE_CONVERSATION] = ActionKind.CREATE_CONVERSATION
+    agent: str = Field(min_length=1)
+    conversation_key: str = Field(min_length=1)
+    mode: Literal["ephemeral", "run", "persistent"] = "run"
+    output_variable: str = Field(min_length=1)
+
+
+class ResolveConversationAction(ResolvedActionBase):
+    kind: Literal[ActionKind.RESOLVE_CONVERSATION] = ActionKind.RESOLVE_CONVERSATION
+    agent: str = Field(min_length=1)
+    conversation_key: str = Field(min_length=1)
+    mode: Literal["run", "persistent"] = "run"
+    output_variable: str = Field(min_length=1)
+
+
+class InvokeAgentAction(ResolvedActionBase):
+    kind: Literal[ActionKind.INVOKE_AGENT] = ActionKind.INVOKE_AGENT
+    agent: str = Field(min_length=1)
+    task: str = Field(min_length=1)
+    conversation_variable: str = Field(min_length=1)
+    input_variable: str = Field(min_length=1)
+    output_variable: str = Field(min_length=1)
+
+
 class ValidateContractAction(ResolvedActionBase):
     kind: Literal[ActionKind.VALIDATE_CONTRACT] = ActionKind.VALIDATE_CONTRACT
     contract: str = Field(min_length=1)
@@ -63,6 +91,9 @@ class EndWorkflowAction(ResolvedActionBase):
 ResolvedAction = (
     SetVariableAction
     | InvokeToolAction
+    | CreateConversationAction
+    | ResolveConversationAction
+    | InvokeAgentAction
     | ValidateContractAction
     | EndWorkflowAction
 )
@@ -75,6 +106,8 @@ class ResolvedPlan(BaseModel):
     workflow_version: str
     actions: list[ResolvedAction]
     tool_ids: list[str] = Field(default_factory=list)
+    agent_ids: list[str] = Field(default_factory=list)
+    task_ids: list[str] = Field(default_factory=list)
     contract_ids: list[str] = Field(default_factory=list)
     final_output_contract: str | None = None
 

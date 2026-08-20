@@ -5,17 +5,22 @@ from typing import Any, Protocol
 from pydantic import ValidationError
 
 from manyselves.kernel.definitions import (
+    AgentDefinition,
     DefinitionKind,
     DefinitionReferenceError,
     DefinitionRegistry,
+    TaskDefinition,
     ToolDefinition,
     WorkflowDefinition,
 )
 
 from .models import (
     ActionKind,
+    CreateConversationAction,
     EndWorkflowAction,
+    InvokeAgentAction,
     InvokeToolAction,
+    ResolveConversationAction,
     ResolvedAction,
     ResolvedPlan,
     SetVariableAction,
@@ -34,6 +39,9 @@ class ActionKindRegistry(Protocol):
 _ACTION_MODELS: dict[ActionKind, type[Any]] = {
     ActionKind.SET_VARIABLE: SetVariableAction,
     ActionKind.INVOKE_TOOL: InvokeToolAction,
+    ActionKind.CREATE_CONVERSATION: CreateConversationAction,
+    ActionKind.RESOLVE_CONVERSATION: ResolveConversationAction,
+    ActionKind.INVOKE_AGENT: InvokeAgentAction,
     ActionKind.VALIDATE_CONTRACT: ValidateContractAction,
     ActionKind.END_WORKFLOW: EndWorkflowAction,
 }
@@ -54,6 +62,8 @@ class WorkflowCompiler:
         action_ids: set[str] = set()
         defined_variables: set[str] = set(workflow.state)
         tool_ids: list[str] = []
+        agent_ids: list[str] = []
+        task_ids: list[str] = []
         contract_ids: list[str] = []
         end_actions: list[EndWorkflowAction] = []
 
@@ -78,6 +88,8 @@ class WorkflowCompiler:
                 defined_variables,
                 tool_ids,
                 contract_ids,
+                agent_ids,
+                task_ids,
             )
             if isinstance(action, EndWorkflowAction):
                 end_actions.append(action)
@@ -100,6 +112,8 @@ class WorkflowCompiler:
             workflow_version=workflow.version,
             actions=actions,
             tool_ids=tool_ids,
+            agent_ids=agent_ids,
+            task_ids=task_ids,
             contract_ids=contract_ids,
             final_output_contract=workflow.output_contract,
         )
@@ -111,6 +125,8 @@ class WorkflowCompiler:
         defined_variables: set[str],
         tool_ids: list[str],
         contract_ids: list[str],
+        agent_ids: list[str],
+        task_ids: list[str],
     ) -> None:
         if isinstance(action, SetVariableAction):
             defined_variables.add(action.variable)
@@ -140,6 +156,58 @@ class WorkflowCompiler:
             _append_unique(tool_ids, action.tool)
             _append_unique(contract_ids, tool.input_contract)
             _append_unique(contract_ids, tool.output_contract)
+            defined_variables.add(action.output_variable)
+            return
+        if isinstance(action, (CreateConversationAction, ResolveConversationAction)):
+            agent = self._require(
+                definitions,
+                DefinitionKind.AGENT,
+                action.agent,
+                action.id,
+            )
+            if not isinstance(agent, AgentDefinition):
+                raise CompilerError(f"definition is not an agent: {action.agent}")
+            _append_unique(agent_ids, action.agent)
+            defined_variables.add(action.output_variable)
+            return
+        if isinstance(action, InvokeAgentAction):
+            self._require_variable(action.input_variable, defined_variables, action.id)
+            self._require_variable(
+                action.conversation_variable,
+                defined_variables,
+                action.id,
+            )
+            agent = self._require(
+                definitions,
+                DefinitionKind.AGENT,
+                action.agent,
+                action.id,
+            )
+            task = self._require(
+                definitions,
+                DefinitionKind.TASK,
+                action.task,
+                action.id,
+            )
+            if not isinstance(agent, AgentDefinition):
+                raise CompilerError(f"definition is not an agent: {action.agent}")
+            if not isinstance(task, TaskDefinition):
+                raise CompilerError(f"definition is not a task: {action.task}")
+            if task.agent != agent.id:
+                raise CompilerError(
+                    f"action {action.id} binds task {task.id} to agent {agent.id}, "
+                    f"but the task declares {task.agent}"
+                )
+            for contract_id in (task.input_contract, task.output_contract):
+                self._require(
+                    definitions,
+                    DefinitionKind.CONTRACT,
+                    contract_id,
+                    action.id,
+                )
+                _append_unique(contract_ids, contract_id)
+            _append_unique(agent_ids, agent.id)
+            _append_unique(task_ids, task.id)
             defined_variables.add(action.output_variable)
             return
         if isinstance(action, ValidateContractAction):
