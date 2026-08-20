@@ -16,7 +16,7 @@
 
 - Current work package: `WP-09 in progress`
 - Last completed work package: `WP-08`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-08: join the declarative module cohort` (the commit containing this status update)
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-09: sequence current reporting tail declaratively` (the commit containing this status update)
 - Current migration stage: `Stage 3 — Reporting migration and Capability package`
 - Final real-test status: `deferred_until_all_four_stages_complete`
 - Next automatic action: begin `WP-09` Characterization for Cross Initial, routed owner revision, Local Regression, Cross Recheck/Barrier, Chief, Final, Render, and Delivery without switching the default execution path
@@ -50,6 +50,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `WP-06: execute declarative control flow` — neutral If/ConditionGroup/Goto/ForEach/Parallel/Join/Subworkflow actions, explicit back-edge limits, persisted loop cursor, and one authoritative WorkflowState (this commit)
 - `WP-07: migrate one declarative module lane` — one explicit Reporting-owned module review definition, current Pydantic Agent contracts, current packaged Agent prompts and Tool declarations, stable Author/Auditor Conversation Keys, conditional revision, and exact scripted Legacy semantic Trace equivalence (this commit)
 - `WP-08: join the declarative module cohort` — fixed five-Lane Reporting Parallel/Join, optional declared concurrency limit, completion reuse through each Lane WorkflowState, sibling drain through typed Reporting outcomes, and all-complete reduction without new barrier hashes or CAS (this commit)
+- `WP-09: sequence current reporting tail declaratively` — first WP-09 slice: Reporting-owned Cross → Chief → Final → Delivery Tool adapters over the current implementations, ordered neutral actions, stage-marker reuse, and failed-stage continuation state (this commit)
 
 ## Tests actually run
 
@@ -82,6 +83,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-08 concurrency-limit Characterization initially failed because `ParallelAction` did not accept `max_concurrency`; the focused Kernel case then passed: `1 passed`.
 - WP-08 focused five-Lane all-ready Join, concurrency limit, completed-Lane reuse, sibling drain, and failed-cohort projection selection: `3 passed`.
 - WP-08 affected declarative cohort/Lane, current Legacy module concurrency, ready supervisor and recovery state, Kernel sequential/control-flow, and import-boundary selection: `29 passed`.
+- WP-09 Reporting-tail Characterization initially failed collection because `manyselves.core.reporting.declarative_reporting_tail` did not exist; its order, completion-marker reuse, and failed-stage continuation focused tests then passed: `3 passed`.
+- WP-09 first-slice affected declarative tail, current Cross owner/specialization, selected Chief/Final chapter lanes, current Delivery materialization, Kernel sequential workflow, and import-boundary selection: `28 passed`.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 
