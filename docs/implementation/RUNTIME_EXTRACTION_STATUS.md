@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-11 in progress`
-- Last completed work package: `WP-10`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-11: expose generic workflow projections` (the commit containing this status update)
+- Current work package: `WP-12 in progress`
+- Last completed work package: `WP-11`
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-11: add the generic Run workspace` (the commit containing this status update)
 - Current migration stage: `Stage 4 — Generic API/UI projections and second Capability`
 - Final real-test status: `deferred_until_all_four_stages_complete`
-- Next automatic action: continue `WP-11` with a generic React Run Workspace over the new Capability, Workflow, Run, Output, and Cost projections while preserving the existing Reporting UI/API compatibility adapters
+- Next automatic action: begin `WP-12` Characterization and implement a second minimal neutral Capability without Reporting identities or structure, then project it through the same API and React Run Workspace
 
 ## Required startup checks
 
@@ -55,6 +55,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `WP-09: complete the declarative reporting tail` — completes WP-09 through Reporting-owned adapters: the current Cross owner pipelines, Chief/Final chapter lanes, Render, Delivery, completion-marker reuse, and same-run failed-stage continuation now execute behind an explicit declarative tail while Legacy remains the default (this commit)
 - `WP-10: package the distribution reporting capability` — packages the 19 current Reporting Agent identities, Task/Workflow/Contract/Tool/Recovery indexes, and executable Reporting adapters under `manyselves.capabilities.distribution_reporting`; the old packaged-Agent loader remains a compatible import, Kernel import boundaries remain intact, and no new Gate definition is introduced (this commit)
 - `WP-11: expose generic workflow projections` — adds the eight planned generic FastAPI projections for Capability, Workflow, input schema, Run, input, Output, and Cost; current Reporting start/resume/decision behavior remains behind a thin Capability adapter, and generic Outputs do not add or expose new hash/CAS logic (this commit)
+- `WP-11: add the generic Run workspace` — adds a project-scoped React Capability/Workflow selector, JSON input, Run status, Output, Cost, and continuation-input view over the generated generic API; the existing Reporting-specific store/view remains a compatibility adapter and no Reporting identities or SHA-based delivery checks enter the generic UI (this commit)
 
 ## Tests actually run
 
@@ -96,6 +97,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-11 generic projection Characterization initially failed collection because `manyselves.application.workflow_projection` did not exist; pure Capability/Workflow/schema/Run/Output/Cost/command projections plus OpenAPI path coverage then passed: `4 passed`.
 - WP-11 first-slice affected generic routes, complete OpenAPI contract, Distribution Reporting package, and selected current Reporting start/query/cancel compatibility selection passed: `26 passed`.
 - The canonical OpenAPI artifact and generated React TypeScript schema were refreshed; `npm run check:api` passed.
+- WP-11 React Characterization initially failed because the generic Workflow API and Run Workspace modules did not exist; the focused API, operable Workspace, Sidebar, and route selections then passed: `10 passed` total across the selected files/nodes.
+- Targeted ESLint passed for all WP-11 React paths; TypeScript `--noEmit` and the production Vite build passed. No browser/server or full frontend test regression was run.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 

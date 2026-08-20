@@ -1,0 +1,19 @@
+.run-workspace { display: grid; gap: 1rem; padding: 1.5rem; }
+.run-workspace header p { color: #667085; font-size: .75rem; letter-spacing: .12em; margin: 0; }
+.run-workspace header h1 { margin: .25rem 0 0; }
+.run-workspace__capabilities { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.run-workspace__capabilities article,
+.run-workspace form,
+.run-workspace__run { background: #fff; border: 1px solid #d9dde5; border-radius: .75rem; display: grid; gap: .75rem; padding: 1rem; }
+.run-workspace__capabilities article span,
+.run-workspace__capabilities article small { display: block; }
+.run-workspace label { display: grid; gap: .35rem; }
+.run-workspace textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; min-height: 8rem; }
+.run-workspace pre { max-height: 20rem; overflow: auto; }
+.run-workspace dl { display: grid; gap: .5rem; }
+.run-workspace dl div { display: grid; grid-template-columns: 8rem 1fr; }
+.run-workspace dt { color: #667085; }
+.run-workspace dd { margin: 0; }
+.run-workspace__run ul { display: grid; gap: .5rem; list-style: none; margin: 0; padding: 0; }
+.run-workspace__run li { display: flex; justify-content: space-between; }
+

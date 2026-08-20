@@ -5,6 +5,7 @@ import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import type { ApiGateway, BootstrapSnapshot } from "../api/gateway";
 import { ProjectHomePage } from "../features/projects/ProjectHomePage";
 import { createProjectApi, type Project, type ProjectApi } from "../features/projects/project-api";
+import { createWorkflowApi } from "../features/runs/workflow-api";
 import { createSettingsApi } from "../features/settings/settings-api";
 import type { SettingsStorage } from "../features/settings/settings-storage";
 import { AppLayout } from "../features/shell/AppLayout";
@@ -43,6 +44,11 @@ const HistoryRoutePage = lazy(async () => {
 const SettingsPage = lazy(async () => {
   const module = await import("../features/settings/SettingsPage");
   return { default: module.SettingsPage };
+});
+
+const RunWorkspace = lazy(async () => {
+  const module = await import("../features/runs/RunWorkspace");
+  return { default: module.RunWorkspace };
 });
 
 export const lastProjectRouteStorageKey = "manyselves.lastProjectRoute.v1";
@@ -163,6 +169,11 @@ export function AppRoutes({ accountUsername, gateway, onLogout, platform, settin
     <Route path="/projects/:projectId/history" element={(
       <Suspense fallback={<Placeholder title="正在加载历史会话…" />}>
         <HistoryRoutePage gateway={gateway} />
+      </Suspense>
+    )} />
+    <Route path="/projects/:projectId/workflows" element={(
+      <Suspense fallback={<Placeholder title="正在加载通用工作流…" />}>
+        <RunWorkspace api={createWorkflowApi(gateway)} />
       </Suspense>
     )} />
     <Route path="/projects/:projectId/:section" element={(

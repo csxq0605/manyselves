@@ -217,6 +217,34 @@ describe("project operations routes", () => {
   }, 15_000);
 });
 
+describe("generic workflow route", () => {
+  it("mounts the project-scoped Capability and Workflow projection", async () => {
+    const requestJson = vi.fn(async (path: string) => {
+      if (path === "/api/v1/projects") return {
+        projects: [{ active: true, description: "", displayName: "Project 1", id: "project-1", revision: "r1" }],
+      };
+      if (path === "/api/v1/capabilities") return {
+        capabilities: [{ description: "Distribution Reporting", id: "distribution-reporting", version: "1.0.0", workflowIds: ["distribution-reporting"] }],
+      };
+      if (path === "/api/v1/workflows") return {
+        workflows: [{ capabilityId: "distribution-reporting", description: "Full report", id: "distribution-reporting", inputContract: "distribution_reporting_input", outputContract: "distribution_reporting_output", runnable: true, version: "1.0.0" }],
+      };
+      if (path === "/api/v1/workflows/distribution-reporting/input-schema") return {
+        contractId: "distribution_reporting_input", schema: { type: "object" }, workflowId: "distribution-reporting",
+      };
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    render(<AppProviders><MemoryRouter initialEntries={["/projects/project-1/workflows"]}><AppRoutes gateway={{ requestJson } as unknown as ApiGateway} /></MemoryRouter></AppProviders>);
+
+    expect(await screen.findByRole("heading", { name: "通用工作流" }, { timeout: 10_000 })).toBeVisible();
+    expect(await screen.findByText("Distribution Reporting")).toBeVisible();
+    await waitFor(() => expect(requestJson).toHaveBeenCalledWith(
+      "/api/v1/workflows/distribution-reporting/input-schema",
+    ));
+  }, 15_000);
+});
+
 describe("project conversation routes", () => {
   function conversationGateway(initiallyActive = true) {
     let projectActive = initiallyActive;
