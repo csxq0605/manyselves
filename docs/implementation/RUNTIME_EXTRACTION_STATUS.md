@@ -46,6 +46,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `71c1a9c` — `WP-04: bind neutral conversations to current agents`; neutral Conversation modes/keys/records, create/resolve actions, typed Agent port, InvokeAgent executor, and a Legacy ReportingAgentRunner adapter that passes the original session key
 - `WP-05: interpret declarative agent recovery policies` — generic recovery events/actions/state, explicit Recovery Definition interpretation, Capability-owned correction prompts, declared-only attempt limits, and no-hash progress observations (this commit)
 - `WP-05: align generic recovery event vocabulary` — aligned the Kernel enum exactly with plan section 5.8 and retained completed Tool Result reuse as the additional WP-05 event
+- `WP-06 research: choose an internal control-flow runtime` — R-01/R-02 isolated POCs completed; MAF and LangGraph both classified as `reference`, with no production dependency change
 
 ## Tests actually run
 
@@ -65,17 +66,20 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-05 current-behavior Characterization for structured correction, Schema correction, Max Token continuation, Tool Slice continuation, productive slices, No-progress stop, and completed Tool Result reuse: `8 passed` before generic implementation.
 - WP-05 generic Recovery Controller Characterization: initially failed collection because the Kernel recovery package did not exist, then `11 passed`.
 - WP-05 affected generic recovery, Kernel import boundary, Legacy Agent adapter, existing reporting recovery/continuation, Schema correction, and Tool Result reuse selection: `24 passed`.
+- WP-06 R-01 isolated POC: MAF 1.0.2 preserved two independent message histories (`[1, 3, 1]`) and produced 5 in-memory checkpoints; PowerFx condition execution was unavailable without .NET, and Goto to a ConditionGroup required its internal `_eval` ID.
+- WP-06 R-02 isolated POC: LangGraph 1.2.11 completed a neutral two-conversation loop, dynamic three-branch parallel Join (`[2, 4, 6]`), output-contract validation, and 11 checkpoint snapshots.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 
-## Open research decisions
+## Research decisions
 
-- Whether to adopt, adapt, or only reference Microsoft Agent Framework Declarative Workflow remains undecided.
-- Whether LangGraph or an internal lightweight compiler/runtime should be used remains undecided.
-- No new production orchestration dependency is approved.
+- R-01 Microsoft Agent Framework decision: `reference`.
+- R-02 LangGraph decision: `reference`.
+- WP-06 implementation choice: the existing lightweight internal Compiler/Executor, using current dependencies only.
+- No new production orchestration dependency is approved or added.
 - `jsonschema>=4.23,<5` was added only to execute the required generic JSON Schema Contract Adapter; it is not an orchestration dependency and is not used for runtime gates, security checks, hashes, or CAS.
 
-These questions do not block the completed `WP-00` or implementation of `WP-01`. This implementation run will not add a production orchestration dependency; research and POCs remain isolated while the production path uses the current dependency set and a lightweight internal Compiler/Executor.
+The isolated POCs are recorded in `docs/research/DECLARATIVE_RUNTIME_LANDSCAPE.md`. The production path uses the current dependency set and a lightweight internal Compiler/Executor.
 
 ## Known blockers
 

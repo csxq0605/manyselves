@@ -70,18 +70,26 @@ Manyselves 不应把配电报告协作模式抽为内核协议，而应采用：
 
 报告中的 Editor、Auditor、Cross、Chief 只是 Workflow YAML 中引用的 Agent Definition 和业务状态值。
 
-### 2.3 采用决定尚未做出
+### 2.3 采用决定
 
-Microsoft Agent Framework 当前只被确定为首选 POC 对象。需要通过自定义 Adapter 验证：
+Microsoft Agent Framework 已作为首选 POC 对象完成 R-01；LangGraph 已使用同一中立场景完成 R-02。最终决定为：
 
-- 能否复用 Manyselves AgentLoop；
-- 能否保持当前 Tool 和 Artifact 语义；
-- 能否保留结构化提交纠正和 Continuation；
-- Conversation 能否按 Manyselves Key 稳定绑定；
-- Workflow Checkpoint 是否与当前项目文件状态兼容；
-- 依赖体积、Python 版本、许可证和升级成本是否可接受。
+```text
+reference
+```
 
-在 POC 之前不得直接将其加入生产依赖。
+两者都只作为控制流和 Checkpoint 结构参考，不加入生产依赖。Manyselves 保留自己的 Definition、Conversation、Agent/Tool Adapter、Contract、Recovery、Workflow State 和文件状态。
+
+POC 已验证：
+
+- MAF 的自定义 Agent 可以运行，但声明式 Executor 只传消息历史，不把声明式 Conversation ID 或稳定 Session 传给自定义 Agent；
+- MAF 的两个字面 Conversation ID 可以分别保留历史，同一 ID 再调用会得到原历史；
+- MAF 的 Checkpoint Storage 可以保存每个图步状态；
+- MAF 的条件表达式依赖 PowerFx/.NET；当前 macOS 环境未安装 `dotnet` 时无法执行条件；
+- MAF 1.0.2 的 `GotoAction` 指向 `ConditionGroup` 的外部 ID 会失败，必须指向 Builder 生成的内部 `_eval` ID 才能编译；
+- LangGraph 可以运行同一中立循环、两个 Conversation 状态、动态并行和 Join，并生成 Checkpoint；
+- LangGraph 不提供 Manyselves 所需的外部 Definition Compiler、Conversation Key、Agent/Tool/Contract/Recovery 绑定；
+- 两者都不能直接保留当前 ReportingAgentRunner 的 Same-session correction、Continuation、Tool Result reuse 和 Same-run result recovery。
 
 ## 3. Microsoft Agent Framework 详细观察
 
@@ -342,15 +350,74 @@ MAF 和 LangGraph 必须运行相同最小场景：
 
 1. 参考 Microsoft Agent Framework 的 Loader、Factory、Action Model 和 Builder；
 2. 参考 Burr 的显式状态和 Reads/Writes；
-3. 使用 LangGraph 做同场景对照 POC；
+3. R-01 / R-02 已完成，MAF 与 LangGraph 均只作为 `reference`；
 4. 不引入 Temporal / Restate；
 5. 保留 Manyselves 当前 AgentLoop、Tool、Artifact、Recovery 和文件状态；
 6. 先建立自己的通用接口与 Legacy Adapter。
 
-### POC 后的三种可能结论
+### POC 决定
 
-- `adopt`：直接采用 Microsoft Agent Framework Declarative Runtime；
-- `adapt`：采用其 Workflow Runtime，Manyselves 保留 Agent、Tool、Contract 和 Recovery；
-- `reference`：只参考架构，在 Manyselves 内实现轻量 Loader、Compiler 和 Executor Runtime。
+- 选择：`reference`；
+- 未选择 `adopt`：无法直接保留当前 Session、Recovery 和单一权威文件状态；
+- 未选择 `adapt`：仍需自建几乎全部 Manyselves 定义与适配边界，却会增加第二套图状态和生产依赖。
 
-在 POC 数据完成前，主实施方案不依赖具体结论。
+## 12. R-01 / R-02 隔离 POC 结果
+
+### 12.1 环境与来源
+
+- 日期：2026-08-20；
+- Python：仓库当前 Python 3.12；
+- Microsoft Agent Framework：`agent-framework-declarative==1.0.2`，通过隔离 `uv run --isolated --with` 使用，未写入项目依赖；
+- LangGraph：`langgraph==1.2.11`，通过隔离 `uv run --isolated --with` 使用，未写入项目依赖；
+- MAF 官方声明式 Workflow 文档：<https://learn.microsoft.com/en-us/agent-framework/workflows/declarative>；
+- MAF 官方 Python changelog：<https://github.com/microsoft/agent-framework/blob/main/python/CHANGELOG.md>；
+- LangGraph 官方 StateGraph 源码：<https://github.com/langchain-ai/langgraph/blob/main/libs/langgraph/langgraph/graph/state.py>；
+- LangGraph 官方 `Send` / `Command` 源码：<https://github.com/langchain-ai/langgraph/blob/main/libs/langgraph/langgraph/types.py>；
+- LangGraph 官方 Checkpoint 文档源码：<https://github.com/langchain-ai/docs/blob/main/src/oss/langgraph/checkpointers.mdx>。
+
+没有创建生产 POC 包、没有修改锁文件、没有调用 Provider。
+
+### 12.2 R-01：Microsoft Agent Framework
+
+同一 Scripted Agent 依次运行：
+
+```text
+Conversation A first → Conversation A second → Conversation B first
+```
+
+Agent 收到的消息历史长度为 `[1, 3, 1]`：A 的第二次调用保留原历史，B 不共享 A 的历史。这里的复用是 Workflow State 中按 Conversation ID 存消息；`InvokeAzureAgentExecutor` 调用自定义 Agent 时只传 `messages_for_agent`，没有传 Conversation ID 或 Agent Session。要保留 Manyselves 的稳定 Provider Session，仍需在框架外维护一套 Conversation Key → ReportingAgentRunner Session Adapter。
+
+两步 `SetVariable` 工作流使用 `InMemoryCheckpointStorage` 生成 5 个图步 Checkpoint，说明框架的图状态恢复机制可用。但它不是当前 `WorkflowState`、Agent Conversation Trace、Task Attempt 和 Tool Result Index 的直接兼容后端。
+
+控制流 POC 的观察：
+
+- `ConditionGroup` 表达式在当前环境运行时报 `PowerFx is not available (dotnet runtime not installed)`；
+- `GotoAction.actionId: choose` 不能指向 `ConditionGroup id: choose`，Builder 暴露的可用目标是内部 `choose_eval`；
+- 改指内部 ID 后可以编译，但这会把 Builder 实现细节泄漏进外部定义。
+
+决定：`reference`。参考其 Action → Executor Graph、Condition/Foreach/Goto 编译方式，不采用运行时或 Definition 边界。
+
+### 12.3 R-02：LangGraph
+
+同一中立 POC 使用 `StateGraph`、条件回边、`Send` 动态分支、Reducer Join 和 `InMemorySaver`。结果：
+
+```text
+Conversation lengths: {a: 2, b: 1}
+Loop count: 2
+Parallel Join result: [2, 4, 6]
+Checkpoint snapshots: 11
+Output Contract: passed
+```
+
+LangGraph 的图调度和 Checkpoint 能力成熟，但 Conversation 只是调用者自定义 State；动态 Agent/Tool/Contract/Recovery Definition 及其编译仍全部由 Manyselves 实现。将当前文件状态、Reporting Agent Session 和 Same-run 恢复映射到其 Checkpointer 会形成第二套权威状态。其生产依赖还包含 `xxhash`，与本实施程序默认不新增 Hash 逻辑的约束不符。
+
+决定：`reference`。参考其条件边、动态 `Send`、Reducer Join、Subgraph 和 Super-step Checkpoint 语义；WP-06 使用现有依赖实现小型内部 Runtime。
+
+### 12.4 对 WP-06 的直接约束
+
+- 不新增 MAF、LangGraph 或其他生产编排依赖；
+- Kernel 只实现中立 Action 和控制状态；
+- `Parallel` 复用 Python `asyncio`，不建立第二套持久化图状态；
+- Checkpoint 继续由当前单一 `WorkflowState` 保存；
+- 不把 MAF 的内部 ID、PowerFx、LangGraph Reducer/Channel、Hash 或 Checkpointer 格式变成公共定义边界；
+- 不改变 Legacy Reporting Runner 默认路径。
