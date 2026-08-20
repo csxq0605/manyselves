@@ -45,6 +45,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `be100ae` — `WP-03: adapt current tools to declarative runtime`; current Tool binding, explicit contracts, unified outcome, existing result-index reuse, ReadTool coverage, and InvokeTool integration
 - `71c1a9c` — `WP-04: bind neutral conversations to current agents`; neutral Conversation modes/keys/records, create/resolve actions, typed Agent port, InvokeAgent executor, and a Legacy ReportingAgentRunner adapter that passes the original session key
 - `WP-05: interpret declarative agent recovery policies` — generic recovery events/actions/state, explicit Recovery Definition interpretation, Capability-owned correction prompts, declared-only attempt limits, and no-hash progress observations (this commit)
+- `WP-05: align generic recovery event vocabulary` — aligned the Kernel enum exactly with plan section 5.8 and retained completed Tool Result reuse as the additional WP-05 event
 
 ## Tests actually run
 

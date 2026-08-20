@@ -7,11 +7,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class RecoveryEventKind(StrEnum):
-    STRUCTURED_SUBMISSION_MISSING = "structured_submission_missing"
-    CONTRACT_VALIDATION_FAILED = "contract_validation_failed"
+    INVALID_STRUCTURED_OUTPUT = "invalid_structured_output"
+    NATURAL_LANGUAGE_WITHOUT_SUBMISSION = "natural_language_without_submission"
     MAX_TOKENS = "max_tokens"
-    TOOL_SLICE = "tool_slice"
+    TOOL_SLICE_BOUNDARY = "tool_slice_boundary"
     NO_PROGRESS = "no_progress"
+    TOOL_CONTRACT_ERROR = "tool_contract_error"
     COMPLETED_TOOL_RESULT = "completed_tool_result"
     PROVIDER_ERROR = "provider_error"
 
