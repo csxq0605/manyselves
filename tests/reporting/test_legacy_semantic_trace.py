@@ -101,9 +101,9 @@ class _LegacyModuleLaneTraceAdapter(_ScriptedRunner):
         return result
 
 
-async def _capture_legacy_module_lane(workspace: Path) -> list[dict[str, str]]:
-    workflow_id = "workflow-wp00-module-lane"
-    run_id = "run-wp00-module-lane"
+def _module_lane_script(
+    run_id: str = "run-wp00-module-lane",
+) -> tuple[object, str, list[tuple[str, str, object]]]:
     module = _module("2.1")
     target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
     finding_id = "M-2.1-initial-r0-001"
@@ -135,8 +135,9 @@ async def _capture_legacy_module_lane(workspace: Path) -> list[dict[str, str]]:
             }
         ],
     )
-    runner = _LegacyModuleLaneTraceAdapter(
-        workspace,
+    return (
+        module,
+        target,
         [
             (
                 "evidence-auditor",
@@ -167,6 +168,13 @@ async def _capture_legacy_module_lane(workspace: Path) -> list[dict[str, str]]:
             ),
         ],
     )
+
+
+async def _capture_legacy_module_lane(workspace: Path) -> list[dict[str, str]]:
+    workflow_id = "workflow-wp00-module-lane"
+    run_id = "run-wp00-module-lane"
+    module, target, scripted = _module_lane_script(run_id)
+    runner = _LegacyModuleLaneTraceAdapter(workspace, scripted)
     runner.trace.record(
         SemanticEventKind.WORKFLOW_STARTED,
         workflow_id=workflow_id,

@@ -4,7 +4,7 @@ from copy import deepcopy
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ActionKind(StrEnum):
@@ -54,8 +54,15 @@ class SetVariableAction(ResolvedActionBase):
 class InvokeToolAction(ResolvedActionBase):
     kind: Literal[ActionKind.INVOKE_TOOL] = ActionKind.INVOKE_TOOL
     tool: str = Field(min_length=1)
-    input_variable: str = Field(min_length=1)
+    input_variable: str | None = Field(default=None, min_length=1)
+    input_variables: dict[str, str] = Field(default_factory=dict)
     output_variable: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def has_one_input_binding_mode(self) -> "InvokeToolAction":
+        if bool(self.input_variable) == bool(self.input_variables):
+            raise ValueError("invoke_tool requires exactly one input binding mode")
+        return self
 
 
 class CreateConversationAction(ResolvedActionBase):

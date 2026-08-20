@@ -119,7 +119,14 @@ class InvokeToolExecutor:
             tool = context.tools[resolved.tool]
         except KeyError as exc:
             raise RuntimeExecutionError(f"missing tool adapter: {resolved.tool}") from exc
-        arguments = state.variables[resolved.input_variable]
+        arguments = (
+            state.variables[resolved.input_variable]
+            if resolved.input_variable is not None
+            else {
+                name: state.variables[variable]
+                for name, variable in resolved.input_variables.items()
+            }
+        )
         invoke = getattr(tool, "invoke", None)
         if callable(invoke):
             outcome = invoke(arguments, task_id=resolved.id)

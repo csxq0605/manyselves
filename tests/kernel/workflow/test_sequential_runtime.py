@@ -197,6 +197,78 @@ async def test_neutral_workflow_executes_and_persists_final_state(
 
 
 @pytest.mark.asyncio
+async def test_tool_action_can_compose_declared_named_state_inputs(
+    tmp_path: Path,
+) -> None:
+    definitions, contract = _definitions()
+    workflow = WorkflowDefinition(
+        id="neutral-compose",
+        version="1.0.0",
+        description="Compose two declared state values for one tool call",
+        actions=[
+            {
+                "id": "set-left",
+                "kind": "set_variable",
+                "variable": "left",
+                "value": 2,
+            },
+            {
+                "id": "set-right",
+                "kind": "set_variable",
+                "variable": "right",
+                "value": 3,
+            },
+            {
+                "id": "compose",
+                "kind": "invoke_tool",
+                "tool": "increment",
+                "input_variables": {"left": "left", "right": "right"},
+                "output_variable": "composed",
+            },
+            {
+                "id": "finish",
+                "kind": "end_workflow",
+                "output_variable": "composed",
+            },
+        ],
+    )
+    executors = build_builtin_executor_registry()
+    plan = WorkflowCompiler(executors).compile(workflow, definitions)
+    received: list[dict[str, int]] = []
+
+    def compose(value: dict[str, int]) -> dict[str, int]:
+        received.append(value)
+        return {"value": value["left"] + value["right"]}
+
+    completed = await SequentialWorkflowExecutor(
+        executors,
+        FileWorkflowStateStore(tmp_path),
+    ).execute(
+        plan,
+        WorkflowState.for_plan("run-compose", plan),
+        RuntimeContext(
+            tools={"increment": compose},
+            contracts={contract.id: build_contract_adapter(contract)},
+        ),
+    )
+
+    assert received == [{"left": 2, "right": 3}]
+    assert completed.outputs == {"result": {"value": 5}}
+
+
+def test_tool_action_rejects_ambiguous_single_and_named_inputs() -> None:
+    definitions, _contract = _definitions()
+    workflow = _workflow().model_copy(deep=True)
+    workflow.actions[1]["input_variables"] = {"value": "input"}
+
+    with pytest.raises(CompilerError, match="exactly one input binding"):
+        WorkflowCompiler(build_builtin_executor_registry()).compile(
+            workflow,
+            definitions,
+        )
+
+
+@pytest.mark.asyncio
 async def test_loaded_partial_state_resumes_after_completed_action(
     tmp_path: Path,
 ) -> None:

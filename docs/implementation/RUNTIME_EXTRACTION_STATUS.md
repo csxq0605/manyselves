@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-07 in progress`
-- Last completed work package: `WP-06`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-06: execute declarative control flow` (the commit containing this status update)
+- Current work package: `WP-08 in progress`
+- Last completed work package: `WP-07`
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-07: migrate one declarative module lane` (the commit containing this status update)
 - Current migration stage: `Stage 3 — Reporting migration and Capability package`
 - Final real-test status: `deferred_until_all_four_stages_complete`
-- Next automatic action: begin `WP-07` Characterization for semantic trace comparison and dual-run equivalence without switching the default execution path
+- Next automatic action: begin `WP-08` Characterization for five independent module Lane instances, completion reuse, and an all-ready cohort Join without switching the default execution path
 
 ## Required startup checks
 
@@ -48,6 +48,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `WP-05: align generic recovery event vocabulary` — aligned the Kernel enum exactly with plan section 5.8 and retained completed Tool Result reuse as the additional WP-05 event
 - `WP-06 research: choose an internal control-flow runtime` — R-01/R-02 isolated POCs completed; MAF and LangGraph both classified as `reference`, with no production dependency change
 - `WP-06: execute declarative control flow` — neutral If/ConditionGroup/Goto/ForEach/Parallel/Join/Subworkflow actions, explicit back-edge limits, persisted loop cursor, and one authoritative WorkflowState (this commit)
+- `WP-07: migrate one declarative module lane` — one explicit Reporting-owned module review definition, current Pydantic Agent contracts, current packaged Agent prompts and Tool declarations, stable Author/Auditor Conversation Keys, conditional revision, and exact scripted Legacy semantic Trace equivalence (this commit)
 
 ## Tests actually run
 
@@ -72,6 +73,10 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-06 Control Flow Characterization: initially failed collection because `ControlFlowWorkflowExecutor` did not exist, then `7 passed` after implementation.
 - WP-06 affected Kernel/Runtime selection: `54 passed`; affected Reporting definition/config and Kernel boundary selection: `7 passed`.
 - One initial WP-06 affected command named a nonexistent `tests/runtime/test_state_store.py` and collected no tests. A subsequent combined collection exposed two same-basename test modules; the new Conversation test was renamed, after which the recorded affected selections passed.
+- WP-07 Legacy semantic Trace Characterization passed before implementation: `1 passed`.
+- WP-07 declarative module Lane Characterization initially failed collection because `manyselves.core.reporting.declarative_module_lane` did not exist; the new Lane plus Legacy Trace focused selection then passed: `3 passed`.
+- WP-07 named multi-variable Tool input Characterization initially recorded `2 failed, 7 passed`; the additive single-or-named binding implementation then passed its focused selection: `9 passed`.
+- WP-07 affected declarative/Legacy module Lane, current review lifecycle and Conversation identity, Legacy Agent adapter, Kernel sequential/control-flow, and import-boundary selection: `27 passed`.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 
@@ -82,6 +87,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-06 implementation choice: the existing lightweight internal Compiler/Executor, using current dependencies only.
 - No new production orchestration dependency is approved or added.
 - `jsonschema>=4.23,<5` was added only to execute the required generic JSON Schema Contract Adapter; it is not an orchestration dependency and is not used for runtime gates, security checks, hashes, or CAS.
+- WP-07 added no hash or CAS implementation. Its scripted recheck delta contains only the changed assigned narrative, so the new path does not create unchanged-content fingerprints; existing Legacy compact-delta behavior remains untouched.
 
 The isolated POCs are recorded in `docs/research/DECLARATIVE_RUNTIME_LANDSCAPE.md`. The production path uses the current dependency set and a lightweight internal Compiler/Executor.
 
