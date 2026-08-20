@@ -137,12 +137,18 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
         </dl>
         <h3>Outputs</h3>
         <ul>{outputs.data?.outputs.map((output) => (
-          <li key={output.path}><span>{output.path}</span><small>{output.size} B</small></li>
+          <li key={output.id}>
+            <span>{output.path ?? JSON.stringify(output.value)}</span>
+            {typeof output.size === "number" ? <small>{output.size} B</small> : null}
+          </li>
         ))}</ul>
         <h3>Cost</h3>
         <p>{String(totals.total_tokens ?? 0)} tokens</p>
         <p>{String(totals.estimated_cost ?? 0)}</p>
-        {!run.data.run.active ? <form onSubmit={(event) => { event.preventDefault(); provideInput.mutate(); }}>
+        {!run.data.run.active && (
+          run.data.run.capabilityId === "distribution-reporting"
+          || run.data.waitingInput.length > 0
+        ) ? <form onSubmit={(event) => { event.preventDefault(); provideInput.mutate(); }}>
           <label>继续输入 JSON<textarea onChange={(event) => setContinuationText(event.target.value)} value={continuationText} /></label>
           <button disabled={provideInput.isPending} type="submit">提交运行输入</button>
         </form> : null}

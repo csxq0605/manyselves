@@ -1,6 +1,8 @@
 from pathlib import Path
 from uuid import UUID
 
+import pytest
+
 from manyselves.application.workflow_projection import WorkflowProjectionFacade
 from manyselves.core.usage_ledger import UsageLedger
 from manyselves.webapi.main import create_app
@@ -79,7 +81,13 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
                 "distribution-reporting",
                 "distribution-reporting-tail",
             ],
-        }
+        },
+        {
+            "id": "parameter-adjustment",
+            "version": "1.0.0",
+            "description": "Neutral declarative parameter adjustment capability",
+            "workflow_ids": ["parameter-adjustment"],
+        },
     ]
     assert next(item for item in workflows if item["id"] == "distribution-reporting") == {
         "id": "distribution-reporting",
@@ -126,6 +134,8 @@ def test_run_outputs_and_cost_reuse_current_reporting_state_without_new_hashes(
         "run_id": "report-1",
         "outputs": [
             {
+                "id": "Outputs/Reports/report.docx",
+                "kind": "artifact",
                 "path": "Outputs/Reports/report.docx",
                 "exists": True,
                 "size": 4,
@@ -137,14 +147,15 @@ def test_run_outputs_and_cost_reuse_current_reporting_state_without_new_hashes(
     assert cost["usage"]["totals"]["total_tokens"] == 15
 
 
-def test_run_start_and_input_delegate_to_the_current_reporting_adapter(
+@pytest.mark.asyncio
+async def test_run_start_and_input_delegate_to_the_current_reporting_adapter(
     tmp_path: Path,
 ) -> None:
     adapter = _ReportingAdapter()
     facade = WorkflowProjectionFacade(tmp_path, adapter)
     command_id = UUID("30000000-0000-4000-8000-000000000001")
 
-    started = facade.start(
+    started = await facade.start(
         command_id,
         "distribution-reporting",
         {"instruction": "Generate the current report."},
@@ -172,6 +183,45 @@ def test_run_start_and_input_delegate_to_the_current_reporting_adapter(
     assert resumed["run_id"] == "report-1"
     assert decided["run_id"] == "report-1"
     assert [name for name, _ in adapter.calls] == ["start", "resume", "decision"]
+
+
+@pytest.mark.asyncio
+async def test_second_capability_runs_through_the_same_generic_projection(
+    tmp_path: Path,
+) -> None:
+    facade = WorkflowProjectionFacade(tmp_path, _ReportingAdapter())
+    command_id = UUID("30000000-0000-4000-8000-000000000012")
+
+    schema = facade.input_schema("parameter-adjustment")
+    started = await facade.start(
+        command_id,
+        "parameter-adjustment",
+        {"value": 4},
+    )
+    run = facade.get_run(started["run_id"])
+    outputs = facade.get_outputs(started["run_id"])
+    cost = facade.get_cost(started["run_id"])
+
+    assert schema == {
+        "workflow_id": "parameter-adjustment",
+        "contract_id": "parameter-input",
+        "schema": {
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        },
+    }
+    assert started["capability_id"] == "parameter-adjustment"
+    assert started["workflow_id"] == "parameter-adjustment"
+    assert run["run"]["status"] == "completed"
+    assert run["run"]["capability_id"] == "parameter-adjustment"
+    assert run["waiting_input"] == []
+    assert outputs == {
+        "run_id": started["run_id"],
+        "outputs": [{"id": "result", "kind": "value", "value": 10}],
+    }
+    assert cost["usage"]["totals"]["total_tokens"] == 0
 
 
 def test_openapi_exposes_the_generic_workflow_projection_paths(tmp_path: Path) -> None:

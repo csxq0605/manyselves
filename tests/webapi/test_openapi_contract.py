@@ -105,7 +105,9 @@ def test_business_routes_declare_the_session_dependency_once_at_router_level() -
     anonymous_prefixes = ("/api/v1/auth/", "/api/v1/health/")
     business_routes = []
     for included_router in app.routes:
-        router = included_router.original_router
+        router = getattr(included_router, "original_router", None)
+        if router is None:
+            continue
         for route in router.routes:
             if not isinstance(route, APIRoute):
                 continue

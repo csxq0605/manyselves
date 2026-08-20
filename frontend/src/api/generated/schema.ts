@@ -2616,11 +2616,20 @@ export interface components {
         /** WorkflowOutput */
         WorkflowOutput: {
             /** Exists */
-            exists: boolean;
+            exists?: boolean | null;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "artifact" | "value";
             /** Path */
-            path: string;
+            path?: string | null;
             /** Size */
-            size: number;
+            size?: number | null;
+            /** Value */
+            value?: unknown;
         };
         /** WorkflowOutputListResponse */
         WorkflowOutputListResponse: {

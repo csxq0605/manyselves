@@ -3633,22 +3633,57 @@
         "additionalProperties": false,
         "properties": {
           "exists": {
-            "title": "Exists",
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exists"
           },
-          "path": {
-            "title": "Path",
+          "id": {
+            "title": "Id",
             "type": "string"
           },
+          "kind": {
+            "enum": [
+              "artifact",
+              "value"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
           "size": {
-            "title": "Size",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "value": {
+            "title": "Value"
           }
         },
         "required": [
-          "path",
-          "exists",
-          "size"
+          "id",
+          "kind"
         ],
         "title": "WorkflowOutput",
         "type": "object"

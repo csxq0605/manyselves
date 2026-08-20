@@ -155,7 +155,7 @@ async def start_run(
     state = request_runtime_state(request)
     try:
         async with state.runtime_facade.mutation_transaction(lease_token):
-            payload = _projection(request).start(
+            payload = await _projection(request).start(
                 command_id,
                 body.workflow_id,
                 body.input,
@@ -225,4 +225,3 @@ async def get_run_cost(run_id: str, request: Request):
             )
     except Exception as error:
         raise _error(error) from error
-

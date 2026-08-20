@@ -76,9 +76,12 @@ class WorkflowRunResponse(_ProjectionModel):
 
 
 class WorkflowOutput(_ProjectionModel):
-    path: str
-    exists: bool
-    size: int
+    id: str
+    kind: Literal["artifact", "value"]
+    value: Any = None
+    path: str | None = None
+    exists: bool | None = None
+    size: int | None = None
 
 
 class WorkflowOutputListResponse(_ProjectionModel):
@@ -89,4 +92,3 @@ class WorkflowOutputListResponse(_ProjectionModel):
 class WorkflowCostResponse(_ProjectionModel):
     run_id: str = Field(alias="runId")
     usage: dict[str, Any]
-

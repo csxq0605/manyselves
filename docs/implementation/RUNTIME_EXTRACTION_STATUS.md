@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-12 in progress`
-- Last completed work package: `WP-11`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-12: execute a second neutral capability` (the commit containing this status update)
-- Current migration stage: `Stage 4 — Generic API/UI projections and second Capability`
+- Current work package: `WP-12 complete; program completion audit in progress`
+- Last completed work package: `WP-12`
+- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-12: project the neutral capability through Run` (the commit containing this status update)
+- Current migration stage: `Four-stage implementation complete; automatic completion audit and final handoff preparation`
 - Final real-test status: `deferred_until_all_four_stages_complete`
-- Next automatic action: project the completed neutral `parameter-adjustment` Capability through the same generic API and React Run Workspace, then complete the four-stage automatic verification and final real-test handoff
+- Next automatic action: audit the complete implementation against the program completion definition, close any code-proven gap without changing the Legacy default, then generate the single final real-test handoff
 
 ## Required startup checks
 
@@ -57,6 +57,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `WP-11: expose generic workflow projections` — adds the eight planned generic FastAPI projections for Capability, Workflow, input schema, Run, input, Output, and Cost; current Reporting start/resume/decision behavior remains behind a thin Capability adapter, and generic Outputs do not add or expose new hash/CAS logic (this commit)
 - `WP-11: add the generic Run workspace` — adds a project-scoped React Capability/Workflow selector, JSON input, Run status, Output, Cost, and continuation-input view over the generated generic API; the existing Reporting-specific store/view remains a compatibility adapter and no Reporting identities or SHA-based delivery checks enter the generic UI (this commit)
 - `WP-12: execute a second neutral capability` — packages and executes `parameter-adjustment` through Tool, Contract, condition, run-scoped Conversation, Capability-owned Agent, Goto, and output actions; the package contains no Reporting identities, Gate definitions, hashes, CAS, or Reporting imports (this commit)
+- `WP-12: project the neutral capability through Run` — exposes both capabilities through the same generic Workflow/Run API, persists and projects neutral Run state, generalizes Output to artifact-or-value without exposing legacy digests, and lets the React Run Workspace select and display the neutral result (this commit)
 
 ## Tests actually run
 
@@ -101,6 +102,9 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-11 React Characterization initially failed because the generic Workflow API and Run Workspace modules did not exist; the focused API, operable Workspace, Sidebar, and route selections then passed: `10 passed` total across the selected files/nodes.
 - Targeted ESLint passed for all WP-11 React paths; TypeScript `--noEmit` and the production Vite build passed. No browser/server or full frontend test regression was run.
 - WP-12 second-Capability Characterization initially failed collection because `manyselves.capabilities.parameter_adjustment` did not exist; the complete definition graph and both direct-finish and Agent/Goto execution cases then passed: `3 passed`.
+- WP-12 generic-projection Characterization initially recorded `4 failed, 1 passed` because the facade still projected only Reporting; the second Capability, async start, neutral Run state, value Output, and Reporting artifact Output selection then passed with the Capability tests: `8 passed`.
+- WP-12 affected generic Reporting and neutral HTTP Run routes passed: `2 passed`; the complete OpenAPI contract selection passed: `14 passed`. The OpenAPI route-dependency Characterization was made independent of an existing built frontend static `Mount`; no production route behavior changed.
+- WP-12 focused React Workflow API and Run Workspace selection passed: `3 passed`; generated API drift check, targeted ESLint, TypeScript `--noEmit`, and the production Vite build passed. The neutral completed run does not offer Reporting continuation input.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 
