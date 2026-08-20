@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-12 complete; program completion audit follow-up in progress`
+- Current work package: `WP-00 through WP-12 complete`
 - Last completed work package: `WP-12`
-- Current branch and latest implementation commit: `agent/declarative-runtime-implementation`; `WP-11: poll generic Run completion` (the commit containing this status update)
-- Current migration stage: `Four-stage implementation complete; automatic completion audit and final handoff preparation`
-- Final real-test status: `deferred_until_all_four_stages_complete`
-- Next automatic action: run the final focused/affected automatic verification, generate the single final real-test handoff, push it, and update the Draft PR
+- Current branch and latest functional implementation commit: `agent/declarative-runtime-implementation`; `8eb67e6` (`WP-11: poll generic Run completion`)
+- Current migration stage: `All four stages complete; automatic implementation and verification complete`
+- Final real-test status: `ready_for_user_execution`
+- Next action: execute [`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md) once with a real Provider, real project, browser, and server; preserve the same failed Run if any step fails
 
 ## Required startup checks
 
@@ -110,6 +110,13 @@ The plan baseline must contain the autonomous execution commits and this status 
 - Program completion audit found that the declarative Reporting components were not connected to a complete selectable entry. Characterization initially failed collection because `declarative_reporting_runner` did not exist; the executable packaged workflow, module-stage execution/retry, service runner selection, controller default/explicit selection, tail continuation, generic API, and package adapter selection then passed: `29 passed`.
 - The directly affected Reporting service boundary/completion/input-snapshot and Kernel import-boundary selection passed: `55 passed`. No Provider was called. The new selection uses `report-declarative-*`, adds no mode-validation file, Gate, hash, or CAS, and leaves `report-*` on the current Legacy default.
 - WP-11 completion-polling Characterization initially failed because an active Run was queried only once; the focused Run Workspace/API selection then passed: `4 passed`. Targeted ESLint with zero warnings and TypeScript `--noEmit` passed.
+- Final affected Kernel/Runtime/Capability selection: `67 passed`.
+- Final affected declarative/Legacy Reporting, recovery, background execution, service boundary, completion, and input-snapshot selection: `165 passed`.
+- Final affected generic projection, OpenAPI, Legacy start, declarative Reporting route, and neutral Capability HTTP selection: `22 passed`.
+- Final frontend generated-API drift check passed; focused Run Workspace/API selection: `4 passed`; targeted ESLint, TypeScript `--noEmit`, and the Vite production build passed.
+- Final source and wheel distributions built successfully. The wheel contains both `distribution_reporting` and `parameter_adjustment` Capability definitions and assets.
+- Final incremental scan found no newly added hash, digest, SHA, or CAS logic in the Kernel, Runtime, Capability packages, declarative Reporting adapters, or generic projection. Kernel business-term inspection found no Reporting implementation dependency.
+- `uv lock --check` and `git diff --check` passed.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
 
@@ -129,7 +136,7 @@ The isolated POCs are recorded in `docs/research/DECLARATIVE_RUNTIME_LANDSCAPE.m
 
 ## Known blockers
 
-- None. The real Legacy baseline is deferred into the single final real-test matrix. Automatic implementation continues through all four stages.
+- None in automatic implementation. Real Provider, project, browser, server, DOCX, recovery, and cost validation remain intentionally unexecuted and are consolidated in the final handoff.
 
 ## Active user constraints
 
@@ -146,6 +153,9 @@ Stage 3: WP-07..WP-10 — Reporting migration and Capability package
 Stage 4: WP-11..WP-12 — Generic API/UI projections and second Capability
 Final: one real Provider/project/browser/server test handoff
 ```
+
+All four stages and the automatic completion audit are complete. The final
+handoff is [`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md).
 
 ## Resume instruction
 
