@@ -62,6 +62,12 @@ from .declarative_cross_owner_cohort import (
     register_cross_owner_pipeline_specializations,
     retry_failed_cross_owner_pipelines,
 )
+from .declarative_final_chapter_cohort import (
+    DeclarativeFinalChapterRuntime,
+    compile_final_chapter_workflows,
+    register_final_chapter_lane_specializations,
+    retry_failed_final_chapter_lanes,
+)
 from .declarative_module_cohort import (
     DeclarativeModuleLaneOutcome,
     _retry_failed_module_lanes,
@@ -308,6 +314,7 @@ def _reporting_agent_invokers(
     module_invokers: Mapping[str, AgentInvoker],
     cross_invokers: Mapping[str, AgentInvoker],
     chief_invokers: Mapping[str, AgentInvoker] | None = None,
+    final_invokers: Mapping[str, AgentInvoker] | None = None,
 ) -> dict[str, AgentInvoker]:
     """Compose module, Cross, and Chief adapters for the declared runtime."""
 
@@ -331,6 +338,7 @@ def _reporting_agent_invokers(
             task_routes,
         )
     combined.update(chief_invokers or {})
+    combined.update(final_invokers or {})
     return combined
 
 
@@ -340,6 +348,7 @@ def build_reporting_module_stage_definition() -> tuple[DefinitionRegistry, Workf
     _capability, registry = load_distribution_reporting_capability()
     register_cross_owner_pipeline_specializations(registry)
     register_chief_chapter_lane_specializations(registry)
+    register_final_chapter_lane_specializations(registry)
     workflow = registry.require(
         DefinitionKind.WORKFLOW,
         "distribution-reporting",
@@ -358,6 +367,7 @@ class _CompiledReportingRuntime:
     cohort_plan: ResolvedPlan
     cross_cohort_plan: ResolvedPlan
     chief_cohort_plan: ResolvedPlan
+    final_cohort_plan: ResolvedPlan
     subworkflows: dict[str, ResolvedPlan]
 
 
@@ -393,6 +403,10 @@ def _compile_reporting_runtime(
         definitions,
         executors,
     )
+    final_cohort_plan, final_lane_plans = compile_final_chapter_workflows(
+        definitions,
+        executors,
+    )
     cohort = definitions.require(
         DefinitionKind.WORKFLOW,
         "distribution-module-cohort",
@@ -416,6 +430,7 @@ def _compile_reporting_runtime(
         cohort_plan=cohort_plan,
         cross_cohort_plan=cross_cohort_plan,
         chief_cohort_plan=chief_cohort_plan,
+        final_cohort_plan=final_cohort_plan,
         subworkflows={
             cohort.id: cohort_plan,
             **runtime_lane_plans,
@@ -424,6 +439,8 @@ def _compile_reporting_runtime(
             **cross_pipeline_plans,
             "distribution-chief-chapter-cohort": chief_cohort_plan,
             **chief_lane_plans,
+            "distribution-final-chapter-cohort": final_cohort_plan,
+            **final_lane_plans,
         },
     )
 
@@ -479,6 +496,7 @@ async def execute_declarative_module_stage(
     cohort_plan = compiled.cohort_plan
     cross_cohort_plan = compiled.cross_cohort_plan
     chief_cohort_plan = compiled.chief_cohort_plan
+    final_cohort_plan = compiled.final_cohort_plan
     if module_runtime is None:
         if execute_current is None:
             raise TypeError("module runtime is required")
@@ -516,9 +534,17 @@ async def execute_declarative_module_stage(
                     chief_cohort_plan,
                     chief_state,
                 )
-                child.subworkflow_states["run-chief"] = chief_state.model_dump(
-                    mode="json"
+                child.subworkflow_states["run-chief"] = chief_state.model_dump(mode="json")
+            saved_final = child.subworkflow_states.get("run-final")
+            if saved_final is not None:
+                final_state = WorkflowState.model_validate(saved_final)
+                final_state.variables["reporting-state"] = deepcopy(state)
+                final_state.variables["prepared-final-state"] = deepcopy(state)
+                final_state = retry_failed_final_chapter_lanes(
+                    final_cohort_plan,
+                    final_state,
                 )
+                child.subworkflow_states["run-final"] = final_state.model_dump(mode="json")
             kernel_state.subworkflow_states["run-reporting-tail"] = child.model_dump(mode="json")
         saved_cohort = kernel_state.subworkflow_states.get("run-module-cohort")
         if saved_cohort is not None:
@@ -550,6 +576,12 @@ async def execute_declarative_module_stage(
         workflow_id,
         compatibility_chief=tail_adapters.chief,
     )
+    final_runtime = DeclarativeFinalChapterRuntime(
+        tail_runner,
+        state,
+        workflow_id,
+        continue_final=tail_adapters.final,
+    )
     module_tools = {
         "start-current-module-lane": lambda values: module_runtime.start_lane(
             str(values["module_id"]),
@@ -569,24 +601,18 @@ async def execute_declarative_module_stage(
         "resume-current-module-authoring": module_runtime.resume_author_lane,
         "module-lane-can-review": module_runtime.can_review_lane,
         "prepare-current-module-review": module_runtime.prepare_review_lane,
-        "module-review-preflight-needs-revision": (
-            module_runtime.review_preflight_needs_revision
-        ),
+        "module-review-preflight-needs-revision": (module_runtime.review_preflight_needs_revision),
         "prepare-current-module-preflight-revision": (
             module_runtime.prepare_preflight_revision_lane
         ),
-        "accept-current-module-preflight-revision": (
-            module_runtime.accept_preflight_revision_lane
-        ),
+        "accept-current-module-preflight-revision": (module_runtime.accept_preflight_revision_lane),
         "module-review-requires-agent": module_runtime.review_requires_agent,
         "accept-current-module-review": module_runtime.accept_review_lane,
         "module-review-needs-revision": module_runtime.review_needs_revision,
         "module-review-needs-recheck": module_runtime.review_needs_recheck,
         "prepare-current-module-revision": module_runtime.prepare_revision_lane,
         "accept-current-module-revision": module_runtime.accept_revision_lane,
-        "prepare-current-module-author-exception": (
-            module_runtime.prepare_author_exception_lane
-        ),
+        "prepare-current-module-author-exception": (module_runtime.prepare_author_exception_lane),
         "prepare-current-module-recheck": module_runtime.prepare_recheck_lane,
         "module-recheck-requires-agent": module_runtime.recheck_requires_agent,
         "accept-current-module-recheck": module_runtime.accept_recheck_lane,
@@ -595,30 +621,18 @@ async def execute_declarative_module_stage(
         "module-lane-has-deferred-main-exception": (
             module_runtime.lane_has_deferred_main_exception
         ),
-        "module-lane-retries-preflight-revision": (
-            module_runtime.lane_retries_preflight_revision
-        ),
+        "module-lane-retries-preflight-revision": (module_runtime.lane_retries_preflight_revision),
         "module-preflight-revision-needs-recheck": (
             module_runtime.preflight_revision_needs_recheck
         ),
-        "prepare-current-module-main-exception": (
-            module_runtime.prepare_main_exception_lane
-        ),
-        "module-main-exception-requires-agent": (
-            module_runtime.main_exception_requires_agent
-        ),
-        "accept-current-module-main-exception": (
-            module_runtime.accept_main_exception_lane
-        ),
-        "module-main-exception-requests-user": (
-            module_runtime.main_exception_requests_user
-        ),
+        "prepare-current-module-main-exception": (module_runtime.prepare_main_exception_lane),
+        "module-main-exception-requires-agent": (module_runtime.main_exception_requires_agent),
+        "accept-current-module-main-exception": (module_runtime.accept_main_exception_lane),
+        "module-main-exception-requests-user": (module_runtime.main_exception_requests_user),
         "apply-current-module-main-exception-user-input": (
             module_runtime.apply_main_exception_user_input
         ),
-        "route-current-module-after-main-exception": (
-            module_runtime.route_after_main_exception
-        ),
+        "route-current-module-after-main-exception": (module_runtime.route_after_main_exception),
         "complete-current-module-lane": module_runtime.complete_lane,
     }
     module_tools["prepare-module-cohort"] = module_runtime.prepare_lanes
@@ -636,22 +650,12 @@ async def execute_declarative_module_stage(
                     **module_tools,
                     "prepare-cross-owner-cohort": cross_runtime.prepare,
                     "prepare-current-cross-owner-initial": cross_runtime.prepare_initial,
-                    "cross-owner-initial-requires-agent": (
-                        cross_runtime.initial_requires_agent
-                    ),
+                    "cross-owner-initial-requires-agent": (cross_runtime.initial_requires_agent),
                     "accept-current-cross-owner-initial": cross_runtime.accept_initial,
-                    "cross-owner-initial-has-findings": (
-                        cross_runtime.initial_has_findings
-                    ),
-                    "prepare-current-cross-owner-revision": (
-                        cross_runtime.prepare_revision
-                    ),
-                    "cross-owner-revision-requires-agent": (
-                        cross_runtime.revision_requires_agent
-                    ),
-                    "accept-current-cross-owner-revision": (
-                        cross_runtime.accept_revision
-                    ),
+                    "cross-owner-initial-has-findings": (cross_runtime.initial_has_findings),
+                    "prepare-current-cross-owner-revision": (cross_runtime.prepare_revision),
+                    "cross-owner-revision-requires-agent": (cross_runtime.revision_requires_agent),
+                    "accept-current-cross-owner-revision": (cross_runtime.accept_revision),
                     "prepare-current-cross-owner-author-exception": (
                         cross_runtime.prepare_author_exception
                     ),
@@ -679,25 +683,13 @@ async def execute_declarative_module_stage(
                     "cross-owner-local-review-requires-agent": (
                         cross_runtime.local_review_requires_agent
                     ),
-                    "accept-current-cross-owner-local-review": (
-                        cross_runtime.accept_local_review
-                    ),
-                    "prepare-current-cross-owner-recheck": (
-                        cross_runtime.prepare_recheck
-                    ),
-                    "cross-owner-recheck-requires-agent": (
-                        cross_runtime.recheck_requires_agent
-                    ),
-                    "accept-current-cross-owner-recheck": (
-                        cross_runtime.accept_recheck
-                    ),
+                    "accept-current-cross-owner-local-review": (cross_runtime.accept_local_review),
+                    "prepare-current-cross-owner-recheck": (cross_runtime.prepare_recheck),
+                    "cross-owner-recheck-requires-agent": (cross_runtime.recheck_requires_agent),
+                    "accept-current-cross-owner-recheck": (cross_runtime.accept_recheck),
                     "advance-current-cross-owner-round": cross_runtime.advance_round,
-                    "cross-owner-round-needs-revision": (
-                        cross_runtime.round_needs_revision
-                    ),
-                    "complete-current-cross-owner-pipeline": (
-                        cross_runtime.complete_owner_round
-                    ),
+                    "cross-owner-round-needs-revision": (cross_runtime.round_needs_revision),
+                    "complete-current-cross-owner-pipeline": (cross_runtime.complete_owner_round),
                     "complete-current-cross-owner-without-findings": (
                         cross_runtime.complete_owner_without_findings
                     ),
@@ -708,13 +700,20 @@ async def execute_declarative_module_stage(
                     "accept-current-chief-chapter": chief_runtime.accept_lane,
                     "complete-current-chief-chapter": chief_runtime.complete_lane,
                     "reduce-chief-chapter-cohort": chief_runtime.reduce,
-                    "run-reporting-final": tail_adapters.final,
+                    "prepare-final-chapter-cohort": final_runtime.prepare,
+                    "prepare-current-final-chapter": final_runtime.prepare_lane,
+                    "final-chapter-initial-requires-agent": (final_runtime.requires_agent),
+                    "accept-current-final-chapter-initial": final_runtime.accept_lane,
+                    "complete-current-final-chapter": final_runtime.complete_lane,
+                    "reduce-final-chapter-cohort": final_runtime.reduce,
+                    "continue-current-final-review": final_runtime.continue_review,
                     "run-reporting-delivery": tail_adapters.delivery,
                 },
                 agents=_reporting_agent_invokers(
                     module_runtime.agent_invokers,
                     cross_runtime.agent_invokers,
                     chief_runtime.agent_invokers,
+                    final_runtime.agent_invokers,
                 ),
                 contracts=compiled.contracts,
                 definitions=definitions,
@@ -724,6 +723,7 @@ async def execute_declarative_module_stage(
     except BaseException:
         current = (
             tail_adapters.current_state
+            or final_runtime.current_state
             or chief_runtime.current_state
             or cross_runtime.current_state
             or module_runtime.current_state
@@ -736,6 +736,7 @@ async def execute_declarative_module_stage(
     if completed.status is WorkflowStatus.WAITING:
         current = (
             tail_adapters.current_state
+            or final_runtime.current_state
             or chief_runtime.current_state
             or cross_runtime.current_state
             or module_runtime.current_state
@@ -969,7 +970,6 @@ class _BatchModuleRuntime:
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:
         return context
-
 
     async def complete_lane(
         self,
@@ -1268,16 +1268,13 @@ class _CurrentModuleStages:
             if saved_context is not None and (
                 lane_outcome.status == "deferred" or lane_outcome.retry_requested
             ):
-                restored = DeclarativeModuleRuntimeLaneContext.model_validate(
-                    saved_context
-                )
+                restored = DeclarativeModuleRuntimeLaneContext.model_validate(saved_context)
                 reporting_state = deepcopy(restored.reporting_state)
                 reporting_state["resume"] = True
                 reporting_state["_defer_main_exceptions"] = False
                 status = (
                     restored.resume_status
-                    if lane_outcome.status == "failed"
-                    and restored.resume_status is not None
+                    if lane_outcome.status == "failed" and restored.resume_status is not None
                     else restored.status
                 )
                 return restored.model_copy(
@@ -1298,9 +1295,7 @@ class _CurrentModuleStages:
                         lane_state,
                     )
                 ),
-                status=(
-                    "completed" if lane_outcome.status == "completed" else "failed"
-                ),
+                status=("completed" if lane_outcome.status == "completed" else "failed"),
                 module=lane_outcome.module,
                 completion_ref=lane_outcome.completion_ref,
                 completion=(
@@ -1518,9 +1513,7 @@ class _CurrentModuleStages:
             return context
         previous_review = context.review
         preflight_progress = (
-            previous_review.prepared.preflight_progress
-            if previous_review is not None
-            else None
+            previous_review.prepared.preflight_progress if previous_review is not None else None
         )
         try:
             preparation = await self._runner._prepare_module_initial_review_step(
@@ -1542,9 +1535,7 @@ class _CurrentModuleStages:
                     "preflight_revision_pending"
                     if preparation.mode == "preflight_revision"
                     else (
-                        "review_ready"
-                        if preparation.mode == "invoke_agent"
-                        else "review_resumed"
+                        "review_ready" if preparation.mode == "invoke_agent" else "review_resumed"
                     )
                 ),
                 "module": preparation.current,
@@ -1573,19 +1564,15 @@ class _CurrentModuleStages:
                 context.recheck is not None
                 and context.recheck.prepared.mode == "preflight_revision"
             ):
-                preparation = (
-                    await self._runner._prepare_module_recheck_preflight_revision(
-                        context.recheck.prepared,
-                        context.reporting_state,
-                    )
+                preparation = await self._runner._prepare_module_recheck_preflight_revision(
+                    context.recheck.prepared,
+                    context.reporting_state,
                 )
             else:
                 reviewing = cast(DeclarativeModuleReviewPreparation, context.review)
-                preparation = (
-                    await self._runner._prepare_module_initial_review_preflight_revision(
-                        reviewing.prepared,
-                        context.reporting_state,
-                    )
+                preparation = await self._runner._prepare_module_initial_review_preflight_revision(
+                    reviewing.prepared,
+                    context.reporting_state,
                 )
         except asyncio.CancelledError:
             raise
@@ -1619,13 +1606,11 @@ class _CurrentModuleStages:
                 context.recheck is not None
                 and context.recheck.prepared.mode == "preflight_revision"
             ):
-                revised, _subject_ref = (
-                    self._runner._accept_module_recheck_preflight_revision(
-                        context.recheck.prepared,
-                        revision.prepared,
-                        cast(Any, result.submission),
-                        context.reporting_state,
-                    )
+                revised, _subject_ref = self._runner._accept_module_recheck_preflight_revision(
+                    context.recheck.prepared,
+                    revision.prepared,
+                    cast(Any, result.submission),
+                    context.reporting_state,
                 )
                 next_status = "recheck_pending"
             else:
@@ -1803,9 +1788,7 @@ class _CurrentModuleStages:
             )
         return self._failed_lane_context(
             context,
-            ReviewLifecycleError(
-                "module recheck continuation has no declared recovery state"
-            ),
+            ReviewLifecycleError("module recheck continuation has no declared recovery state"),
         )
 
     async def review_needs_revision(
@@ -1887,9 +1870,7 @@ class _CurrentModuleStages:
             return context
         previous_recheck = context.recheck
         preflight_progress = (
-            previous_recheck.prepared.preflight_progress
-            if previous_recheck is not None
-            else None
+            previous_recheck.prepared.preflight_progress if previous_recheck is not None else None
         )
         try:
             preparation = await self._runner._prepare_module_recheck(
@@ -1913,9 +1894,7 @@ class _CurrentModuleStages:
                     "preflight_revision_pending"
                     if preparation.mode == "preflight_revision"
                     else (
-                        "recheck_ready"
-                        if preparation.mode == "invoke_agent"
-                        else "review_resumed"
+                        "recheck_ready" if preparation.mode == "invoke_agent" else "review_resumed"
                     )
                 ),
                 "module": preparation.current,
@@ -1948,10 +1927,7 @@ class _CurrentModuleStages:
         context = context.model_copy(deep=True, update={"recheck": rechecking})
         escalated = bool(
             result.submission is not None
-            and any(
-                verdict.verdict == "escalate"
-                for verdict in result.submission.verdicts
-            )
+            and any(verdict.verdict == "escalate" for verdict in result.submission.verdicts)
         )
         try:
             accepted = await self._runner._accept_module_recheck(
@@ -2062,9 +2038,7 @@ class _CurrentModuleStages:
                     subject_refs=[cast(str, rechecking.prepared.subject_ref)],
                     finding_refs=list(rechecking.prepared.finding_refs),
                     verdicts=[
-                        verdict
-                        for verdict in submission.verdicts
-                        if verdict.verdict == "escalate"
+                        verdict for verdict in submission.verdicts if verdict.verdict == "escalate"
                     ],
                     responses=list(rechecking.prepared.responses),
                 )
@@ -2314,14 +2288,12 @@ class _CurrentModuleStages:
             Literal["completed", "deferred", "failed"],
             (
                 "deferred"
-                if context.status
-                in {"author_exception_deferred", "reviewer_exception_deferred"}
+                if context.status in {"author_exception_deferred", "reviewer_exception_deferred"}
                 else context.status
             ),
         )
         include_lane_context = status == "deferred" or (
-            status == "failed"
-            and context.resume_status == "preflight_revision_ready"
+            status == "failed" and context.resume_status == "preflight_revision_ready"
         )
         include_lane_state = include_lane_context or context.module is not None
         return DeclarativeModuleLaneOutcome(

@@ -56,6 +56,11 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
         "distribution-chief-chapter-lane",
         "distribution-cross-owner-cohort",
         "distribution-cross-owner-pipeline",
+        "distribution-final-chapter-1-lane",
+        "distribution-final-chapter-3-lane",
+        "distribution-final-chapter-4-lane",
+        "distribution-final-chapter-cohort",
+        "distribution-final-chapter-lane",
         "distribution-module-review-lane",
         "distribution-module-runtime-lane",
         "distribution-module-cohort",
@@ -70,9 +75,7 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
     }
     assert registry.all(DefinitionKind.RECOVERY)
     assert registry.all(DefinitionKind.GATE) == ()
-    assert {
-        definition.id for definition in registry.all(DefinitionKind.INTERACTION)
-    } == {
+    assert {definition.id for definition in registry.all(DefinitionKind.INTERACTION)} == {
         "cross-owner-main-exception-decision",
         "module-main-exception-decision",
     }
@@ -160,9 +163,7 @@ def test_capability_adapters_expose_the_executable_reporting_definitions() -> No
         ]
         == 2
     )
-    initial_lane = next(
-        action for action in cohort.actions if action["id"] == "execute-module-2.1"
-    )
+    initial_lane = next(action for action in cohort.actions if action["id"] == "execute-module-2.1")
     assert initial_lane["kind"] == "subworkflow"
     assert initial_lane["input_variables"] == {
         "reporting-state": "prepared-module-inputs",
@@ -416,6 +417,51 @@ def test_production_chief_is_a_chapter_cohort_subworkflow() -> None:
         assert "run-reporting-chief" not in lane_plan.tool_ids
 
 
+def test_production_final_is_a_chapter_auditor_cohort_subworkflow() -> None:
+    """Characterize the file-owned Final initial chapter wave."""
+
+    registry, _, tail = build_reporting_tail_definition()
+    run_final = next(action for action in tail.actions if action["id"] == "run-final")
+    assert run_final["kind"] == "subworkflow"
+    assert run_final["workflow"] == "distribution-final-chapter-cohort"
+
+    cohort = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-final-chapter-cohort",
+    )
+    cohort_plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        cohort,
+        registry,
+    )
+    parallel = next(action for action in cohort_plan.actions if action.kind == "parallel")
+    assert set(parallel.branches) == {"1", "3", "4"}
+    join = next(action for action in cohort_plan.actions if action.kind == "join")
+    assert join.parallel == parallel.id
+    assert set(join.inputs) == {"1", "3", "4"}
+
+    for chapter_id, branch_id in parallel.branches.items():
+        branch = next(action for action in cohort_plan.actions if action.id == branch_id)
+        assert branch.kind == "subworkflow"
+        workflow_id = f"distribution-final-chapter-{chapter_id}-lane"
+        assert branch.workflow == workflow_id
+        lane = registry.require(DefinitionKind.WORKFLOW, workflow_id)
+        lane_plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+            lane,
+            registry,
+        )
+        assert lane_plan.agent_ids == ["chief-editor-auditor"]
+        assert lane_plan.task_ids == ["final-chapter-review"]
+        conversation = next(
+            action for action in lane_plan.actions if action.kind == "create_conversation"
+        )
+        assert conversation.agent == "chief-editor-auditor"
+        assert conversation.conversation_key == f"final-chapter-{chapter_id}"
+        invoke = next(action for action in lane_plan.actions if action.kind == "invoke_agent")
+        assert invoke.agent == "chief-editor-auditor"
+        assert invoke.task == "final-chapter-review"
+        assert "run-reporting-final" not in lane_plan.tool_ids
+
+
 def test_cross_owner_21_pipeline_declares_initial_reviewer_agent_boundary() -> None:
     _, registry = load_distribution_reporting_capability()
     # The owner specializations are registered by the same loader used by the
@@ -479,9 +525,7 @@ def test_cross_owner_21_pipeline_declares_initial_reviewer_agent_boundary() -> N
         "context": "owner-context",
         "result": "cross-owner-initial-agent-result",
     }
-    assert "continue-current-cross-owner-pipeline" not in {
-        action.id for action in plan.actions
-    }
+    assert "continue-current-cross-owner-pipeline" not in {action.id for action in plan.actions}
 
 
 def test_cross_owner_21_pipeline_declares_owner_finding_revision_boundary() -> None:
@@ -726,9 +770,7 @@ def test_cross_owner_21_pipeline_advances_recovered_recheck_verdict() -> None:
     )
 
     choose_recheck = next(
-        action
-        for action in plan.actions
-        if action.id == "choose-cross-owner-recheck-source"
+        action for action in plan.actions if action.id == "choose-cross-owner-recheck-source"
     )
     assert choose_recheck.otherwise == "prepare-current-cross-owner-reviewer-exception"
     assert all(action.kind != "gate" for action in plan.actions)
@@ -763,13 +805,9 @@ def test_cross_owner_21_pipeline_declares_main_exception_agent_routes() -> None:
         if action.kind == "invoke_agent" and action.agent == "main-agent"
     ]
     assert len(main_conversations) == 2
-    assert {action.conversation_key for action in main_conversations} == {
-        "main-cross-exception"
-    }
+    assert {action.conversation_key for action in main_conversations} == {"main-cross-exception"}
     assert len(main_invocations) == 2
-    assert {action.task for action in main_invocations} == {
-        "cross-owner-runtime-main-exception"
-    }
+    assert {action.task for action in main_invocations} == {"cross-owner-runtime-main-exception"}
     assert "continue-current-cross-owner-pipeline" not in plan.tool_ids
     assert pipeline.gates == []
     assert plan.max_iterations is None

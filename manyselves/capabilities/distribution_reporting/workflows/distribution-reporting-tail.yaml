@@ -28,9 +28,11 @@ actions:
   child_output_name: result
   output_variable: reporting-state
 - id: run-final
-  kind: invoke_tool
-  tool: run-reporting-final
-  input_variable: reporting-state
+  kind: subworkflow
+  workflow: distribution-final-chapter-cohort
+  input_variables:
+    reporting-state: reporting-state
+  child_output_name: result
   output_variable: reporting-state
 - id: run-delivery
   kind: invoke_tool

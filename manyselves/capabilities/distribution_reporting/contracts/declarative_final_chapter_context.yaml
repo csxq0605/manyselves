@@ -1,0 +1,5 @@
+id: declarative_final_chapter_context
+version: 1.0.0
+description: Serializable preparation and result context for one Final initial chapter branch
+adapter: pydantic
+model: manyselves.core.reporting.declarative_final_chapter_cohort:DeclarativeFinalChapterContext

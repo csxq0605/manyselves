@@ -1,0 +1,10 @@
+id: final-chapter-initial-requires-agent
+version: 1.0.0
+description: Select whether the prepared Final initial lane needs its Auditor turn
+implementation: capability:distribution-reporting:final-chapter-initial-requires-agent
+input_contract: declarative_final_chapter_context
+output_contract: boolean
+side_effect: none
+parallel_safe: true
+reuse_result: false
+model_visible: false

@@ -1,0 +1,10 @@
+id: prepare-final-chapter-cohort
+version: 1.0.0
+description: Prepare the shared Reporting state for Final initial chapter lanes
+implementation: capability:distribution-reporting:prepare-final-chapter-cohort
+input_contract: reporting_tail_state
+output_contract: reporting_tail_state
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false
