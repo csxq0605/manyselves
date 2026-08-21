@@ -38,6 +38,10 @@ from .declarative_cross_owner_cohort import (
     register_cross_owner_pipeline_specializations,
     retry_failed_cross_owner_pipelines,
 )
+from .declarative_delivery import (
+    DeclarativeDeliveryRuntime,
+    compile_delivery_workflow,
+)
 from .declarative_final_chapter_cohort import (
     DeclarativeFinalChapterRuntime,
     compile_final_chapter_workflows,
@@ -102,6 +106,7 @@ async def execute_declarative_reporting_tail(
         executors,
     )
     final_review_plans = compile_final_review_workflows(definitions, executors)
+    delivery_plan = compile_delivery_workflow(definitions, executors)
     kernel_run_id = str(state["run_id"])
     try:
         kernel_state = state_store.load(kernel_run_id)
@@ -145,7 +150,6 @@ async def execute_declarative_reporting_tail(
     stage_tools = {
         "cross": adapters.cross,
         "chief": adapters.chief,
-        "delivery": adapters.delivery,
     }
     if trace is not None:
         trace.record(
@@ -180,6 +184,23 @@ async def execute_declarative_reporting_tail(
         workflow_id,
     )
     final_review_runtime = DeclarativeFinalReviewRuntime(runner, state, workflow_id)
+    delivery_runtime = DeclarativeDeliveryRuntime(runner)
+    delivery_tools = {
+        "prepare-render-delivery": delivery_runtime.prepare,
+        "publish-materialize-delivery": delivery_runtime.publish,
+        "complete-delivery": delivery_runtime.complete,
+    }
+    if trace is not None:
+        delivery_tools = {
+            tool_id: _traced_action(
+                tool_id,
+                tool_id,
+                invoke,
+                trace=trace,
+                workflow_id=workflow_id,
+            )
+            for tool_id, invoke in delivery_tools.items()
+        }
     final_agents = compose_final_review_agent_invokers(
         {
             **cross_runtime.agent_invokers,
@@ -198,11 +219,7 @@ async def execute_declarative_reporting_tail(
             kernel_state,
             RuntimeContext(
                 tools={
-                    **{
-                        f"run-reporting-{stage}": invoke
-                        for stage, invoke in stage_tools.items()
-                        if stage not in {"cross", "chief"}
-                    },
+                    **delivery_tools,
                     "prepare-chief-chapter-cohort": chief_runtime.prepare,
                     "prepare-current-chief-chapter": chief_runtime.prepare_lane,
                     "chief-chapter-requires-agent": chief_runtime.requires_agent,
@@ -297,13 +314,15 @@ async def execute_declarative_reporting_tail(
                     "distribution-final-chapter-cohort": final_cohort_plan,
                     **final_lane_plans,
                     **final_review_plans,
+                    "distribution-report-delivery": delivery_plan,
                 },
             ),
         )
     except BaseException:
         _replace_state(
             state,
-            adapters.current_state
+            delivery_runtime.current_state
+            or adapters.current_state
             or final_review_runtime.current_state
             or final_runtime.current_state
             or chief_runtime.current_state
@@ -350,13 +369,6 @@ class _ReportingTailAdapters:
             await self._runner._chief_edit(state, self._workflow_id)
         return state
 
-    def delivery(self, state: dict[str, Any]) -> dict[str, Any]:
-        _restore_module_submissions(state)
-        self.current_state = state
-        if "delivery_completion_ref" not in state:
-            self._runner._deliver(state)
-        return state
-
 
 def _replace_state(target: dict[str, Any], value: Mapping[str, Any]) -> None:
     restored = dict(value)
@@ -380,8 +392,24 @@ def _traced_stage(
     trace: SemanticTraceRecorder,
     workflow_id: str,
 ):
+    return _traced_action(
+        f"run-{stage}",
+        f"run-reporting-{stage}",
+        invoke,
+        trace=trace,
+        workflow_id=workflow_id,
+    )
+
+
+def _traced_action(
+    action_id: str,
+    tool_id: str,
+    invoke: Any,
+    *,
+    trace: SemanticTraceRecorder,
+    workflow_id: str,
+):
     async def traced(state: dict[str, Any]) -> dict[str, Any]:
-        action_id = f"run-{stage}"
         trace.record(
             SemanticEventKind.ACTION_STARTED,
             workflow_id=workflow_id,
@@ -391,7 +419,7 @@ def _traced_stage(
             SemanticEventKind.TOOL_INVOKED,
             workflow_id=workflow_id,
             action_id=action_id,
-            tool_id=f"run-reporting-{stage}",
+            tool_id=tool_id,
         )
         try:
             result = invoke(state)

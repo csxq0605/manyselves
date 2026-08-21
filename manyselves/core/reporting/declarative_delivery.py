@@ -1,0 +1,103 @@
+"""Reporting-owned bindings for the file-declared Delivery stages."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+from manyselves.kernel.definitions import (
+    DefinitionKind,
+    DefinitionRegistry,
+    WorkflowDefinition,
+)
+from manyselves.kernel.executors import ExecutorRegistry
+from manyselves.kernel.workflow import ResolvedPlan, WorkflowCompiler
+
+from .agentic_models import ModuleSubmission
+from .workflow import _DeliveryContext
+
+_DELIVERY_CONTEXT_KEY = "_declarative_delivery_context"
+
+
+def compile_delivery_workflow(
+    definitions: DefinitionRegistry,
+    executors: ExecutorRegistry,
+) -> ResolvedPlan:
+    """Compile the packaged Render, Publish, and completion sequence."""
+
+    workflow = definitions.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-report-delivery",
+    )
+    if not isinstance(workflow, WorkflowDefinition):
+        raise TypeError("distribution-report-delivery is not a workflow")
+    return WorkflowCompiler(executors).compile(workflow, definitions)
+
+
+class DeclarativeDeliveryRuntime:
+    """Bind three declared actions to the current Reporting delivery semantics."""
+
+    def __init__(self, runner: Any) -> None:
+        self._runner = getattr(runner, "_runner", runner)
+        self.current_state: dict[str, Any] = {}
+
+    def prepare(self, state: dict[str, Any]) -> dict[str, Any]:
+        self._restore_module_submissions(state)
+        self.current_state = state
+        if "delivery_completion_ref" in state:
+            return state
+        context = self._runner._prepare_and_render_delivery(state)
+        self._save_context(state, context)
+        return state
+
+    def publish(self, state: dict[str, Any]) -> dict[str, Any]:
+        self._restore_module_submissions(state)
+        self.current_state = state
+        if "delivery_completion_ref" in state:
+            return state
+        context = self._runner._publish_and_materialize_delivery(
+            self._load_context(state)
+        )
+        self._save_context(state, context)
+        return state
+
+    def complete(self, state: dict[str, Any]) -> dict[str, Any]:
+        self._restore_module_submissions(state)
+        self.current_state = state
+        if "delivery_completion_ref" in state:
+            return state
+        self._runner._complete_delivery(self._load_context(state))
+        state.pop(_DELIVERY_CONTEXT_KEY)
+        return state
+
+    @staticmethod
+    def _save_context(
+        state: dict[str, Any],
+        context: _DeliveryContext,
+    ) -> None:
+        state[_DELIVERY_CONTEXT_KEY] = context.model_dump(
+            mode="json",
+            exclude={"state"},
+        )
+
+    @staticmethod
+    def _load_context(state: dict[str, Any]) -> _DeliveryContext:
+        return _DeliveryContext.model_validate(
+            {
+                "state": state,
+                **state[_DELIVERY_CONTEXT_KEY],
+            }
+        )
+
+    @staticmethod
+    def _restore_module_submissions(state: dict[str, Any]) -> None:
+        modules = state.get("module_submissions")
+        if not isinstance(modules, Mapping):
+            return
+        state["module_submissions"] = {
+            module_id: ModuleSubmission.model_validate(value)
+            for module_id, value in modules.items()
+        }
+
+
+__all__ = ["DeclarativeDeliveryRuntime", "compile_delivery_workflow"]

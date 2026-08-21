@@ -51,7 +51,7 @@ from manyselves.core.reporting.review_lifecycle import (
 )
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
-from manyselves.core.reporting.workflow import ReportWorkflowRunner
+from manyselves.core.reporting.workflow import ReportWorkflowRunner, _DeliveryContext
 from manyselves.core.tools.task_board import TaskBoard
 from manyselves.kernel.executors import build_builtin_executor_registry
 from manyselves.kernel.workflow import (
@@ -2164,10 +2164,48 @@ class _TopLevelTailRunner:
             improvement_action_plan="actions",
         )
 
-    def _deliver(self, state: dict) -> None:
-        self.calls.append("delivery")
-        self._fail("delivery")
-        state["delivery_completion_ref"] = "delivery.json"
+    def _prepare_and_render_delivery(self, state: dict) -> _DeliveryContext:
+        self.calls.append("prepare")
+        self._fail("prepare")
+        return _top_level_delivery_context(state)
+
+    def _publish_and_materialize_delivery(
+        self,
+        context: _DeliveryContext,
+    ) -> _DeliveryContext:
+        self.calls.append("publish")
+        self._fail("publish")
+        return context
+
+    def _complete_delivery(self, context: _DeliveryContext) -> None:
+        self.calls.append("complete")
+        self._fail("complete")
+        context.state["delivery_completion_ref"] = "delivery.json"
+
+
+def _top_level_delivery_context(state: dict) -> _DeliveryContext:
+    root = Path("Work") / "runs" / str(state["run_id"])
+    return _DeliveryContext(
+        state=state,
+        final_audit_snapshot_ref=f"{root}/final-audit.json",
+        claim_ledger_path=root / "claims.json",
+        source_ledger_path=root / "sources.json",
+        evidence_snapshot_path=root / "evidence.jsonl",
+        approved_module_paths={},
+        edited_submission_path=root / "edited.json",
+        request_snapshot_path=root / "request.json",
+        photo_manifest_path=root / "photos.json",
+        delivery_markdown="# Report",
+        report_state_path=root / "report-state.json",
+        markdown_path=root / "report.md",
+        source_index_markdown="# Sources",
+        source_index_path=root / "sources.md",
+        source_index_docx_path=root / "sources.docx",
+        template_snapshot=root / "template.docx",
+        template_provenance_path=root / "template.json",
+        output=root / "report.docx",
+        render_result_ref=root / "render-result.json",
+    )
 
 
 @pytest.mark.asyncio
@@ -2204,7 +2242,7 @@ async def test_top_level_runtime_nests_the_file_defined_tail_in_one_run(
         event_sink=FileWorkflowEventSink(tmp_path),
     )
 
-    assert tail.calls == ["cross", "chief", "delivery"]
+    assert tail.calls == ["cross", "chief", "prepare", "publish", "complete"]
     assert state["delivery_completion_ref"] == "delivery.json"
     assert completed.status is WorkflowStatus.COMPLETED
     assert completed.subworkflow_states["run-reporting-tail"]["status"] == "completed"
@@ -2231,6 +2269,22 @@ async def test_top_level_runtime_nests_the_file_defined_tail_in_one_run(
         ("action.completed", "run-delivery"),
         ("action.started", "finish-reporting-tail"),
         ("action.completed", "finish-reporting-tail"),
+        ("workflow.completed", None),
+    ]
+    assert [
+        (event["kind"], event["action_id"])
+        for event in events
+        if event["workflow_id"] == "distribution-report-delivery"
+    ] == [
+        ("workflow.started", None),
+        ("action.started", "prepare-render-delivery"),
+        ("action.completed", "prepare-render-delivery"),
+        ("action.started", "publish-materialize-delivery"),
+        ("action.completed", "publish-materialize-delivery"),
+        ("action.started", "complete-delivery"),
+        ("action.completed", "complete-delivery"),
+        ("action.started", "finish-report-delivery"),
+        ("action.completed", "finish-report-delivery"),
         ("workflow.completed", None),
     ]
 
@@ -2290,7 +2344,7 @@ async def test_top_level_runtime_resumes_inside_the_failed_tail_subworkflow(
 
     assert module_calls == 1
     assert failing_tail.calls == ["cross", "chief"]
-    assert resumed_tail.calls == ["chief", "delivery"]
+    assert resumed_tail.calls == ["chief", "prepare", "publish", "complete"]
     assert completed.status is WorkflowStatus.COMPLETED
 
 

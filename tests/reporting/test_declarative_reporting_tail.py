@@ -7,6 +7,7 @@ from manyselves.core.reporting.declarative_reporting_tail import (
     execute_declarative_reporting_tail,
 )
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
+from manyselves.core.reporting.workflow import _DeliveryContext
 from manyselves.kernel.workflow import WorkflowStatus
 from manyselves.runtime.semantic_trace import SemanticEventKind, SemanticTraceRecorder
 from manyselves.runtime.state_store import FileWorkflowStateStore
@@ -33,11 +34,49 @@ class _TailRunner:
         state["chief_editor_session_key"] = "chief-editor"
         state["approved_module_text"] = {"2.1": "approved"}
 
-    def _deliver(self, state: dict) -> None:
-        self.calls.append("delivery")
-        self._fail("delivery")
-        state["delivery_completion_ref"] = "delivery.json"
-        state["delivery_status"] = "delivered"
+    def _prepare_and_render_delivery(self, state: dict) -> _DeliveryContext:
+        self.calls.append("prepare")
+        self._fail("prepare")
+        return _delivery_context(state)
+
+    def _publish_and_materialize_delivery(
+        self,
+        context: _DeliveryContext,
+    ) -> _DeliveryContext:
+        self.calls.append("publish")
+        self._fail("publish")
+        return context
+
+    def _complete_delivery(self, context: _DeliveryContext) -> None:
+        self.calls.append("complete")
+        self._fail("complete")
+        context.state["delivery_completion_ref"] = "delivery.json"
+        context.state["delivery_status"] = "delivered"
+
+
+def _delivery_context(state: dict) -> _DeliveryContext:
+    root = Path("Work") / "runs" / str(state["run_id"])
+    return _DeliveryContext(
+        state=state,
+        final_audit_snapshot_ref=f"{root}/final-audit.json",
+        claim_ledger_path=root / "claims.json",
+        source_ledger_path=root / "sources.json",
+        evidence_snapshot_path=root / "evidence.jsonl",
+        approved_module_paths={},
+        edited_submission_path=root / "edited.json",
+        request_snapshot_path=root / "request.json",
+        photo_manifest_path=root / "photos.json",
+        delivery_markdown="# Report",
+        report_state_path=root / "report-state.json",
+        markdown_path=root / "report.md",
+        source_index_markdown="# Sources",
+        source_index_path=root / "sources.md",
+        source_index_docx_path=root / "sources.docx",
+        template_snapshot=root / "template.docx",
+        template_provenance_path=root / "template.json",
+        output=root / "report.docx",
+        render_result_ref=root / "render-result.json",
+    )
 
 
 def _state(run_id: str) -> dict:
@@ -87,11 +126,10 @@ async def _capture_current_tail_trace(
         status="running",
     )
     stages = [
-        ("cross", runner._cross_review),
-        ("chief", runner._chief_edit),
-        ("delivery", runner._deliver),
+        ("cross", runner._cross_review, True),
+        ("chief", runner._chief_edit, True),
     ]
-    for stage, invoke in stages:
+    for stage, invoke, is_async in stages:
         action_id = f"run-{stage}"
         tool_id = f"run-reporting-{stage}"
         trace.record(
@@ -105,10 +143,46 @@ async def _capture_current_tail_trace(
             action_id=action_id,
             tool_id=tool_id,
         )
-        if stage in {"cross", "chief"}:
+        if is_async:
             await invoke(state, workflow_id)
-        else:
-            invoke(state)
+        trace.record(
+            SemanticEventKind.ACTION_COMPLETED,
+            workflow_id=workflow_id,
+            action_id=action_id,
+            status="completed",
+        )
+    delivery_context = _delivery_context(state)
+    for action_id, tool_id, invoke in [
+        (
+            "prepare-render-delivery",
+            "prepare-render-delivery",
+            lambda: runner._prepare_and_render_delivery(state),
+        ),
+        (
+            "publish-materialize-delivery",
+            "publish-materialize-delivery",
+            lambda: runner._publish_and_materialize_delivery(delivery_context),
+        ),
+        (
+            "complete-delivery",
+            "complete-delivery",
+            lambda: runner._complete_delivery(delivery_context),
+        ),
+    ]:
+        trace.record(
+            SemanticEventKind.ACTION_STARTED,
+            workflow_id=workflow_id,
+            action_id=action_id,
+        )
+        trace.record(
+            SemanticEventKind.TOOL_INVOKED,
+            workflow_id=workflow_id,
+            action_id=action_id,
+            tool_id=tool_id,
+        )
+        result = invoke()
+        if isinstance(result, _DeliveryContext):
+            delivery_context = result
         trace.record(
             SemanticEventKind.ACTION_COMPLETED,
             workflow_id=workflow_id,
@@ -146,7 +220,7 @@ async def test_declarative_reporting_tail_runs_current_stages_in_order(
         state_store=store,
     )
 
-    assert runner.calls == ["cross", "chief", "delivery"]
+    assert runner.calls == ["cross", "chief", "prepare", "publish", "complete"]
     assert state["delivery_status"] == "delivered"
     assert completed.status is WorkflowStatus.COMPLETED
     assert completed.outputs["result"]["delivery_completion_ref"] == "delivery.json"
@@ -198,7 +272,7 @@ async def test_declarative_reporting_tail_skips_current_completion_markers(
         state_store=FileWorkflowStateStore(tmp_path),
     )
 
-    assert runner.calls == ["delivery"]
+    assert runner.calls == ["prepare", "publish", "complete"]
     assert state["cross_review_completion_ref"] == "existing-cross.json"
     assert state["chief_candidate_ref"] == "existing-chief.json"
 
@@ -233,8 +307,44 @@ async def test_declarative_reporting_tail_resumes_failed_stage_from_saved_state(
         state_store=store,
     )
 
-    assert resumed.calls == ["chief", "delivery"]
+    assert resumed.calls == ["chief", "prepare", "publish", "complete"]
     assert completed.status is WorkflowStatus.COMPLETED
     assert [path.name for path in (tmp_path / "Work" / "runs").iterdir()] == [
         run_id
     ]
+
+
+@pytest.mark.asyncio
+async def test_declarative_reporting_tail_resumes_failed_publish_without_replaying_prepare(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-wp09-failed-delivery-publish"
+    state = _state(run_id)
+    store = FileWorkflowStateStore(tmp_path)
+    failing = _TailRunner(fail_stage="publish")
+
+    with pytest.raises(RuntimeError, match="injected publish failure"):
+        await execute_declarative_reporting_tail(
+            runner=failing,
+            state=state,
+            workflow_id="workflow-wp09-failed-delivery-publish",
+            state_store=store,
+        )
+
+    assert failing.calls == ["cross", "chief", "prepare", "publish"]
+    saved = store.load(run_id)
+    delivery_state = saved.subworkflow_states["run-delivery"]
+    assert delivery_state["actions"]["prepare-render-delivery"]["status"] == "completed"
+    assert delivery_state["actions"]["publish-materialize-delivery"]["status"] == "failed"
+
+    resumed = _TailRunner()
+    completed = await execute_declarative_reporting_tail(
+        runner=resumed,
+        state=state,
+        workflow_id="workflow-wp09-failed-delivery-publish",
+        state_store=store,
+    )
+
+    assert resumed.calls == ["publish", "complete"]
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert state["delivery_completion_ref"] == "delivery.json"

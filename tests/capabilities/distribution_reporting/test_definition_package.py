@@ -75,6 +75,7 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
         "distribution-final-recheck-cohort",
         "distribution-final-recheck-lane",
         "distribution-final-review-cycle",
+        "distribution-report-delivery",
         "distribution-module-review-lane",
         "distribution-module-runtime-lane",
         "distribution-module-cohort",
@@ -88,6 +89,9 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
         definition.id for definition in registry.all(DefinitionKind.TOOL)
     }
     assert "continue-current-final-review" not in {
+        definition.id for definition in registry.all(DefinitionKind.TOOL)
+    }
+    assert "run-reporting-delivery" not in {
         definition.id for definition in registry.all(DefinitionKind.TOOL)
     }
     assert registry.all(DefinitionKind.RECOVERY)
@@ -219,6 +223,56 @@ def test_top_level_reporting_workflow_is_an_executable_capability_definition() -
         "distribution-module-cohort",
         "distribution-reporting-tail",
     ]
+
+
+def test_production_delivery_is_a_typed_render_publish_completion_subworkflow() -> None:
+    registry, _, tail = build_reporting_tail_definition()
+    run_delivery = next(action for action in tail.actions if action["id"] == "run-delivery")
+    assert run_delivery == {
+        "id": "run-delivery",
+        "kind": "subworkflow",
+        "workflow": "distribution-report-delivery",
+        "input_variables": {"reporting-state": "reporting-state"},
+        "child_output_name": "result",
+        "output_variable": "reporting-state",
+    }
+
+    delivery = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-report-delivery",
+    )
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        delivery,
+        registry,
+    )
+
+    assert delivery.gates == []
+    assert [action.kind for action in plan.actions] == [
+        "invoke_tool",
+        "invoke_tool",
+        "invoke_tool",
+        "end_workflow",
+    ]
+    assert [action.id for action in plan.actions] == [
+        "prepare-render-delivery",
+        "publish-materialize-delivery",
+        "complete-delivery",
+        "finish-report-delivery",
+    ]
+    assert plan.workflow_ids == []
+    assert plan.tool_ids == [
+        "prepare-render-delivery",
+        "publish-materialize-delivery",
+        "complete-delivery",
+    ]
+    assert all(action.kind not in {"if", "parallel", "join", "goto"} for action in plan.actions)
+
+    for tool_id in plan.tool_ids:
+        tool = registry.require(DefinitionKind.TOOL, tool_id)
+        assert tool.input_contract == "reporting_tail_state"
+        assert tool.output_contract == "reporting_tail_state"
+        assert tool.side_effect == "ordered_state"
+        assert tool.model_visible is False
 
 
 def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:

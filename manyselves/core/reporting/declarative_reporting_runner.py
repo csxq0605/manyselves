@@ -62,6 +62,10 @@ from .declarative_cross_owner_cohort import (
     register_cross_owner_pipeline_specializations,
     retry_failed_cross_owner_pipelines,
 )
+from .declarative_delivery import (
+    DeclarativeDeliveryRuntime,
+    compile_delivery_workflow,
+)
 from .declarative_final_chapter_cohort import (
     DeclarativeFinalChapterRuntime,
     compile_final_chapter_workflows,
@@ -415,6 +419,7 @@ def _compile_reporting_runtime(
         executors,
     )
     final_review_plans = compile_final_review_workflows(definitions, executors)
+    delivery_plan = compile_delivery_workflow(definitions, executors)
     cohort = definitions.require(
         DefinitionKind.WORKFLOW,
         "distribution-module-cohort",
@@ -450,6 +455,7 @@ def _compile_reporting_runtime(
             "distribution-final-chapter-cohort": final_cohort_plan,
             **final_lane_plans,
             **final_review_plans,
+            "distribution-report-delivery": delivery_plan,
         },
     )
 
@@ -595,6 +601,7 @@ async def execute_declarative_module_stage(
         state,
         workflow_id,
     )
+    delivery_runtime = DeclarativeDeliveryRuntime(tail_runner)
     module_tools = {
         "start-current-module-lane": lambda values: module_runtime.start_lane(
             str(values["module_id"]),
@@ -743,7 +750,9 @@ async def execute_declarative_module_stage(
                     "complete-current-final-recheck": (final_review_runtime.complete_recheck),
                     "reduce-final-recheck-cohort": (final_review_runtime.reduce_rechecks),
                     "complete-final-review": final_review_runtime.complete_review,
-                    "run-reporting-delivery": tail_adapters.delivery,
+                    "prepare-render-delivery": delivery_runtime.prepare,
+                    "publish-materialize-delivery": delivery_runtime.publish,
+                    "complete-delivery": delivery_runtime.complete,
                 },
                 agents=compose_final_review_agent_invokers(
                     _reporting_agent_invokers(
@@ -761,7 +770,8 @@ async def execute_declarative_module_stage(
         )
     except BaseException:
         current = (
-            tail_adapters.current_state
+            delivery_runtime.current_state
+            or tail_adapters.current_state
             or final_review_runtime.current_state
             or final_runtime.current_state
             or chief_runtime.current_state
@@ -775,7 +785,8 @@ async def execute_declarative_module_stage(
         raise
     if completed.status is WorkflowStatus.WAITING:
         current = (
-            tail_adapters.current_state
+            delivery_runtime.current_state
+            or tail_adapters.current_state
             or final_review_runtime.current_state
             or final_runtime.current_state
             or chief_runtime.current_state
@@ -2541,10 +2552,6 @@ class _CurrentTailStages:
             workflow_id,
             **values,
         )
-
-    def _deliver(self, state: dict) -> None:
-        ReportWorkflowRunner._deliver(self._runner, state)
-
 
 __all__ = [
     "DeclarativeReportWorkflowRunner",

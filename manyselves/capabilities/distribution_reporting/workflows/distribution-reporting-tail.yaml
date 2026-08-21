@@ -35,9 +35,11 @@ actions:
   child_output_name: result
   output_variable: reporting-state
 - id: run-delivery
-  kind: invoke_tool
-  tool: run-reporting-delivery
-  input_variable: reporting-state
+  kind: subworkflow
+  workflow: distribution-report-delivery
+  input_variables:
+    reporting-state: reporting-state
+  child_output_name: result
   output_variable: reporting-state
 - id: finish-reporting-tail
   kind: end_workflow

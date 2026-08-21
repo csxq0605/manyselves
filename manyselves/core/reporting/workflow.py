@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..usage_ledger import UsageLedger
 from .agent_runner import ReportingAgentRunner
@@ -213,6 +213,41 @@ class _ModuleAuthoringPreparationContext:
     revision: int
     review: bool
     checkpoint: bool
+
+
+class _DeliveryContext(BaseModel):
+    """Capability-owned values passed through the synchronous Delivery stages."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    # The workflow state remains the runner-owned mutable mapping.  Keeping it
+    # opaque here preserves the existing in-place completion updates while the
+    # delivery artifacts crossing stage boundaries stay typed.
+    state: Any
+    final_audit_snapshot_ref: str
+    claim_ledger_path: Path
+    source_ledger_path: Path
+    evidence_snapshot_path: Path
+    approved_module_paths: dict[str, Path]
+    edited_submission_path: Path
+    request_snapshot_path: Path
+    photo_manifest_path: Path
+    delivery_markdown: str
+    report_state_path: Path
+    markdown_path: Path
+    source_index_markdown: str
+    source_index_path: Path
+    source_index_docx_path: Path
+    template_snapshot: Path
+    template_provenance_path: Path
+    output: Path
+    render_result_ref: Path
+    public_markdown: Path | None = None
+    public_docx: Path | None = None
+    public_source_index: Path | None = None
+    public_source_index_docx: Path | None = None
+    receipt: MaterializedDeliveryReceipt | None = None
+    receipt_path: Path | None = None
 
 
 class FullReportCheckpoint(StrictModel):
@@ -8316,6 +8351,11 @@ class ReportWorkflowRunner:
         return report, ledger.bind_citations(PdsDocxRenderer._compose_markdown(report))
 
     def _deliver(self, state: dict) -> None:
+        context = self._prepare_and_render_delivery(state)
+        context = self._publish_and_materialize_delivery(context)
+        self._complete_delivery(context)
+
+    def _prepare_and_render_delivery(self, state: dict) -> _DeliveryContext:
         if "final_review_completion_ref" not in state:
             raise AgentWorkflowError(
                 "delivery requires an independent final review completion record"
@@ -8464,6 +8504,39 @@ class ReportWorkflowRunner:
                 protected_prose_verified=True,
             ).model_dump(mode="json"),
         )
+        return _DeliveryContext(
+            state=state,
+            final_audit_snapshot_ref=final_audit_snapshot_ref,
+            claim_ledger_path=claim_ledger_path,
+            source_ledger_path=source_ledger_path,
+            evidence_snapshot_path=evidence_snapshot_path,
+            approved_module_paths=approved_module_paths,
+            edited_submission_path=edited_submission_path,
+            request_snapshot_path=request_snapshot_path,
+            photo_manifest_path=photo_manifest_path,
+            delivery_markdown=delivery_markdown,
+            report_state_path=report_state_path,
+            markdown_path=markdown_path,
+            source_index_markdown=source_index_markdown,
+            source_index_path=source_index_path,
+            source_index_docx_path=source_index_docx_path,
+            template_snapshot=template_snapshot,
+            template_provenance_path=template_provenance_path,
+            output=output,
+            render_result_ref=render_result_ref,
+        )
+
+    def _publish_and_materialize_delivery(
+        self,
+        context: _DeliveryContext,
+    ) -> _DeliveryContext:
+        state = context.state
+        delivery_markdown = context.delivery_markdown
+        report_state_path = context.report_state_path
+        source_index_path = context.source_index_path
+        source_index_docx_path = context.source_index_docx_path
+        output = context.output
+
         public_markdown = self.service.store.write_text(
             "Outputs/Reports/配电安全专家咨询报告.md",
             delivery_markdown,
@@ -8475,7 +8548,7 @@ class ReportWorkflowRunner:
         )
         public_source_index = self.service.store.write_text(
             "Outputs/Reports/证据与来源索引.md",
-            source_index_markdown.rstrip() + "\n",
+            context.source_index_markdown.rstrip() + "\n",
         )
         public_source_index_docx = self._atomic_copy_file(
             source_index_docx_path,
@@ -8497,19 +8570,40 @@ class ReportWorkflowRunner:
             f"Work/runs/{state['run_id']}/delivery-receipt.json",
             receipt.model_dump(mode="json"),
         )
+        return context.model_copy(
+            update={
+                "public_markdown": public_markdown,
+                "public_docx": public_docx,
+                "public_source_index": public_source_index,
+                "public_source_index_docx": public_source_index_docx,
+                "receipt": receipt,
+                "receipt_path": receipt_path,
+            }
+        )
+
+    def _complete_delivery(self, context: _DeliveryContext) -> None:
+        state = context.state
+        receipt = context.receipt
+        receipt_path = context.receipt_path
+        final_audit_snapshot_ref = context.final_audit_snapshot_ref
+
         completion_ref = f"Work/runs/{state['run_id']}/delivery-completion.json"
         state["output_artifacts"] = self._delivery_output_artifacts(
             final_review_ref=state["final_review_completion_ref"],
             delivery_manifest_ref=receipt.manifest_path.relative_to(self.service.workspace),
-            final_markdown_ref=public_markdown.relative_to(self.service.workspace),
-            final_docx_ref=public_docx.relative_to(self.service.workspace),
-            source_index_ref=public_source_index.relative_to(self.service.workspace),
-            source_index_docx_ref=public_source_index_docx.relative_to(
+            final_markdown_ref=context.public_markdown.relative_to(self.service.workspace),
+            final_docx_ref=context.public_docx.relative_to(self.service.workspace),
+            source_index_ref=context.public_source_index.relative_to(
+                self.service.workspace
+            ),
+            source_index_docx_ref=context.public_source_index_docx.relative_to(
                 self.service.workspace
             ),
         )
         template_skill_refs = state.get("template_skill_refs", {})
-        summary_refs = SessionSummaryStore(self.service.workspace).relevant(run_id=state["run_id"])
+        summary_refs = SessionSummaryStore(self.service.workspace).relevant(
+            run_id=state["run_id"]
+        )
         summary_refs = list(
             dict.fromkeys([*state.get("inherited_summary_refs", []), *summary_refs])
         )
@@ -8526,17 +8620,31 @@ class ReportWorkflowRunner:
             },
             "delivery_receipt": receipt_path.relative_to(self.service.workspace),
             "delivery_manifest": receipt.manifest_path.relative_to(self.service.workspace),
-            "claim_ledger": claim_ledger_path.relative_to(self.service.workspace),
-            "source_ledger": source_ledger_path.relative_to(self.service.workspace),
-            "evidence": evidence_snapshot_path.relative_to(self.service.workspace),
+            "claim_ledger": context.claim_ledger_path.relative_to(
+                self.service.workspace
+            ),
+            "source_ledger": context.source_ledger_path.relative_to(
+                self.service.workspace
+            ),
+            "evidence": context.evidence_snapshot_path.relative_to(
+                self.service.workspace
+            ),
             **{
-                f"module_submission:{module_id}": path.relative_to(self.service.workspace)
-                for module_id, path in approved_module_paths.items()
+                f"module_submission:{module_id}": path.relative_to(
+                    self.service.workspace
+                )
+                for module_id, path in context.approved_module_paths.items()
             },
-            "edited_submission": edited_submission_path.relative_to(self.service.workspace),
-            "canonical_markdown": markdown_path.relative_to(self.service.workspace),
-            "render_request": Path(f"Work/runs/{state['run_id']}/render-request.json"),
-            "render_result": render_result_ref,
+            "edited_submission": context.edited_submission_path.relative_to(
+                self.service.workspace
+            ),
+            "canonical_markdown": context.markdown_path.relative_to(
+                self.service.workspace
+            ),
+            "render_request": Path(
+                f"Work/runs/{state['run_id']}/render-request.json"
+            ),
+            "render_result": context.render_result_ref,
             "handoff_contracts": Path(
                 f"Work/runs/{state['run_id']}/handoff-contracts.json"
             ),
@@ -8549,11 +8657,17 @@ class ReportWorkflowRunner:
                 if state.get("cross_review_completion_ref")
                 else {}
             ),
-            "report_request": request_snapshot_path.relative_to(self.service.workspace),
+            "report_request": context.request_snapshot_path.relative_to(
+                self.service.workspace
+            ),
             "report_taxonomy": Path(state["preparation_refs"]["report_taxonomy"]),
-            "photo_manifest": photo_manifest_path.relative_to(self.service.workspace),
-            "report_template": template_snapshot.relative_to(self.service.workspace),
-            "template_provenance": template_provenance_path.relative_to(
+            "photo_manifest": context.photo_manifest_path.relative_to(
+                self.service.workspace
+            ),
+            "report_template": context.template_snapshot.relative_to(
+                self.service.workspace
+            ),
+            "template_provenance": context.template_provenance_path.relative_to(
                 self.service.workspace
             ),
             **{
