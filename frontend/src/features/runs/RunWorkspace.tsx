@@ -82,11 +82,15 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
   const provideInput = useMutation({
     mutationFn: () => {
       const waiting = run.data?.waitingInput[0];
-      const inputId = typeof waiting?.decision_id === "string"
-        ? waiting.decision_id
-        : typeof waiting?.decisionId === "string"
-          ? waiting.decisionId
-          : undefined;
+      const inputId = typeof waiting?.input_id === "string"
+        ? waiting.input_id
+        : typeof waiting?.inputId === "string"
+          ? waiting.inputId
+          : typeof waiting?.decision_id === "string"
+            ? waiting.decision_id
+            : typeof waiting?.decisionId === "string"
+              ? waiting.decisionId
+              : undefined;
       return api.provideInput(
         runId,
         { ...(inputId ? { inputId } : {}), values: parseInput(continuationText) },

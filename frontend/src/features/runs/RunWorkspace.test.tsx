@@ -194,6 +194,93 @@ describe("RunWorkspace", () => {
     expect(screen.queryByText(/sha/i)).not.toBeInTheDocument();
   });
 
+  it("submits the Kernel input id for a nested waiting workflow", async () => {
+    const provideInput = vi.fn().mockResolvedValue({
+      capabilityId: "distribution-reporting",
+      commandId: "command-input",
+      runId: "report-declarative-waiting",
+      status: "accepted",
+      taskId: "task-input",
+      workflowId: "distribution-reporting",
+    });
+    const api: WorkflowApi = {
+      cost: vi.fn().mockResolvedValue({
+        runId: "report-declarative-waiting",
+        usage: { totals: { estimated_cost: 1, total_tokens: 20 } },
+      }),
+      get: vi.fn().mockResolvedValue({
+        run: {
+          active: false,
+          capabilityId: "distribution-reporting",
+          runId: "report-declarative-waiting",
+          status: "waiting",
+          taskId: "task-input",
+          workflowId: "distribution-reporting",
+        },
+        state: {},
+        waitingInput: [{
+          input_id: "ask-child",
+          path: [{ action_id: "run-child", kind: "subworkflow" }],
+          schema: { type: "object" },
+        }],
+      }),
+      inputSchema: vi.fn().mockResolvedValue({
+        contractId: "distribution_reporting_input",
+        schema: { type: "object" },
+        workflowId: "distribution-reporting",
+      }),
+      listCapabilities: vi.fn().mockResolvedValue({
+        capabilities: [{
+          description: "Declarative distribution reporting capability",
+          id: "distribution-reporting",
+          version: "1.0.0",
+          workflowIds: ["distribution-reporting"],
+        }],
+      }),
+      listWorkflows: vi.fn().mockResolvedValue({
+        workflows: [{
+          capabilityId: "distribution-reporting",
+          description: "Distribution reporting",
+          id: "distribution-reporting",
+          inputContract: "distribution_reporting_input",
+          outputContract: "distribution_reporting_output",
+          runnable: true,
+          version: "1.0.0",
+        }],
+      }),
+      outputs: vi.fn().mockResolvedValue({
+        outputs: [],
+        runId: "report-declarative-waiting",
+      }),
+      provideInput,
+      start: vi.fn().mockResolvedValue({
+        capabilityId: "distribution-reporting",
+        commandId: "command-start",
+        runId: "report-declarative-waiting",
+        status: "accepted",
+        taskId: "task-input",
+        workflowId: "distribution-reporting",
+      }),
+    };
+    const user = userEvent.setup();
+
+    render(<AppProviders><RunWorkspace api={api} /></AppProviders>);
+    await screen.findByText("Declarative distribution reporting capability");
+    await user.click(screen.getByRole("button", { name: "启动工作流" }));
+
+    const continuation = await screen.findByRole("textbox", { name: "继续输入 JSON" });
+    await user.clear(continuation);
+    await user.click(continuation);
+    await user.paste('{"answer":"Ada"}');
+    await user.click(screen.getByRole("button", { name: "提交运行输入" }));
+
+    await waitFor(() => expect(provideInput).toHaveBeenCalledWith(
+      "report-declarative-waiting",
+      { inputId: "ask-child", values: { answer: "Ada" } },
+      expect.any(String),
+    ));
+  });
+
   it("polls an active run and refreshes its completed output", async () => {
     const get = vi.fn()
       .mockResolvedValueOnce({
