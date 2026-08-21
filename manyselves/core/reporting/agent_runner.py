@@ -24,6 +24,15 @@ from ...interfaces.types import (
     Error,
     UserMessage,
 )
+from ...kernel.definitions import RecoveryPolicyDefinition
+from ...kernel.recovery import (
+    ProgressObservation,
+    RecoveryActionKind,
+    RecoveryController,
+    RecoveryEvent,
+    RecoveryEventKind,
+    RecoveryState,
+)
 from ..artifacts import ArtifactGateway, ArtifactGrant, ToolContractError, parse_artifact
 from ..artifacts.content_store import ContentAddressedStore
 from ..loops.agent_loop import (
@@ -70,6 +79,11 @@ from .capabilities import (
     scoped_gateway,
 )
 from .config import AgentDefinition
+from .context_manifest import (
+    HashOccurrenceTracker,
+    build_manifest_payload,
+    sha256_value,
+)
 from .context_rebase import ReportingContextRebuilder
 from .context_state import (
     ContextManifest,
@@ -79,21 +93,15 @@ from .context_state import (
     TaskStateStore,
     ToolResultMemoStore,
 )
-from .context_manifest import (
-    HashOccurrenceTracker,
-    build_manifest_payload,
-    sha256_value,
-)
 from .execution_runtime import ProviderRouter, ResolvedTaskExecutionProfile
-from .input_snapshot import RunInputSnapshotStore
 from .input_contracts import (
     INPUT_CONTRACT_TYPES,
     AggregateEditorInput,
     ChiefChapterLaneInput,
     ChiefEditorInput,
     ChiefRevisionInput,
-    CrossReviewInput,
     CrossOwnerInput,
+    CrossReviewInput,
     FinalChapterLaneInput,
     FinalReviewInput,
     ModuleAuthoringInput,
@@ -101,6 +109,7 @@ from .input_contracts import (
     ModuleRevisionInput,
     TemplateDistillationInput,
 )
+from .input_snapshot import RunInputSnapshotStore
 from .message_router import WorkflowMessageRouter, artifact_path_refs
 from .models import CHIEF_RESULT_PART_IDS, CHIEF_SECTION_RESULT_PART_IDS
 from .module_skills import ModuleSkillLibrary
@@ -111,8 +120,8 @@ from .parallel_runtime import (
     TaskCorrelation,
     exclusive_file_lock,
 )
-from .provider_admission import ProviderAdmissionController
 from .prompts import PromptAssembler
+from .provider_admission import ProviderAdmissionController
 from .research.evidence_memory import EvidenceResearchMemory
 from .research.reference_library import ReferenceLibrary
 from .research.web import BraveWebResearchBackend, DisabledWebResearchBackend
@@ -453,6 +462,34 @@ class CalculateTool(Tool):
             raise ValueError("unsupported expression")
 
         return {"expression": expression, "result": evaluate(ast.parse(expression, mode="eval"))}
+
+
+class _RecoveryAwareReportingTool:
+    """Dispatch Tool contract failures without changing Provider-visible schemas."""
+
+    def __init__(
+        self,
+        delegate: Tool,
+        callback: Callable[[str, dict[str, Any]], Awaitable[Any]],
+    ) -> None:
+        self._delegate = delegate
+        self._callback = callback
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+    async def __call__(self, **kwargs: Any) -> Any:
+        try:
+            return await self._delegate(**kwargs)
+        except ToolContractError as exc:
+            await self._callback(
+                RecoveryEventKind.TOOL_CONTRACT_ERROR.value,
+                {
+                    "tool": self._delegate.name,
+                    "error": str(exc),
+                },
+            )
+            raise
 
 
 class ReportingAgentRunner:
@@ -2090,6 +2127,7 @@ class ReportingAgentRunner:
         gateway: ArtifactGateway | None = None,
         shared_artifacts: list[str] | None = None,
         task_correlation: TaskCorrelation | None = None,
+        recovery_event_callback: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None,
     ) -> ToolRegistry:
         registry = ToolRegistry()
         gateway = gateway or scoped_gateway(
@@ -2387,6 +2425,7 @@ class ReportingAgentRunner:
                 input_contract_ref=envelope.input_contract_ref,
                 submission_schemas=task_submission_schemas,
                 task_correlation=task_correlation,
+                recovery_event_callback=recovery_event_callback,
             ),
             "write_result_part": WriteResultPartTool(
                 envelope.run_id,
@@ -2510,6 +2549,15 @@ class ReportingAgentRunner:
                 }
             )
             registry._schema_cache["submit_result"] = submission_tool_schema
+        if recovery_event_callback is not None:
+            # Registration above already captured each concrete Tool schema.
+            # Replace only the private executable map so declarative Reporting
+            # can dispatch ToolContractError without changing AgentLoop, Kernel,
+            # or the Provider-visible Tool contract.
+            registry._tools = {
+                name: _RecoveryAwareReportingTool(tool, recovery_event_callback)
+                for name, tool in registry._tools.items()
+            }
         return registry
 
     @staticmethod
@@ -3037,6 +3085,7 @@ class ReportingAgentRunner:
         *,
         workflow_id: str,
         session_key: str | None = None,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> AgentResult:
         """Run one typed task while holding a cross-process identity fence."""
 
@@ -3071,6 +3120,7 @@ class ReportingAgentRunner:
                 workflow_id=workflow_id,
                 session_key=session_key,
                 identity_lease=lease_handle.lease,
+                recovery_policy=recovery_policy,
             )
         finally:
             if task_lease is not None:
@@ -3086,7 +3136,62 @@ class ReportingAgentRunner:
         workflow_id: str,
         session_key: str | None = None,
         identity_lease: IdentityLease,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> AgentResult:
+        recovery_controller = RecoveryController() if recovery_policy is not None else None
+        recovery_state = RecoveryState()
+
+        def apply_recovery_policy(
+            event_kind: RecoveryEventKind,
+            expected_action: RecoveryActionKind,
+            detail: dict[str, Any] | None = None,
+        ):
+            if recovery_controller is None or recovery_policy is None:
+                return None
+            decision = recovery_controller.decide(
+                RecoveryEvent(kind=event_kind, detail=dict(detail or {})),
+                recovery_policy,
+                recovery_state,
+            )
+            if decision.action is not expected_action:
+                raise RuntimeError(
+                    f"recovery policy action {decision.action.value} does not match "
+                    f"the reporting path requiring {expected_action.value} for "
+                    f"{event_kind.value}"
+                )
+            return decision
+
+        def observe_recovery_progress(
+            progressed: bool,
+            detail: dict[str, Any] | None = None,
+        ):
+            if recovery_controller is None or recovery_policy is None:
+                return None
+            decision = recovery_controller.observe_progress(
+                ProgressObservation(
+                    progressed=progressed,
+                    detail=dict(detail or {}),
+                ),
+                recovery_policy,
+                recovery_state,
+            )
+            if decision is not None and decision.action is not RecoveryActionKind.STOP:
+                raise RuntimeError(
+                    f"recovery policy action {decision.action.value} does not match "
+                    "the reporting no-progress path requiring stop"
+                )
+            return decision
+
+        async def recovery_event_callback(
+            event_kind: str,
+            detail: dict[str, Any],
+        ) -> None:
+            apply_recovery_policy(
+                RecoveryEventKind(event_kind),
+                RecoveryActionKind.CORRECT,
+                detail,
+            )
+
         router = self._routers.get(workflow_id)
         if router is None:
             router = WorkflowMessageRouter(self.bus, workflow_id)
@@ -3200,6 +3305,11 @@ class ReportingAgentRunner:
                 # but an explicit later dispatch must be allowed to create a
                 # fresh attempt rather than returning that non-success forever.
                 if terminal.status == AgentRunStatus.COMPLETED.value:
+                    apply_recovery_policy(
+                        RecoveryEventKind.COMPLETED_TOOL_RESULT,
+                        RecoveryActionKind.REUSE_RESULT,
+                        {"task_id": envelope.task_id, "source": "persisted_result"},
+                    )
                     runtime_id = self._runtime_id(
                         definition,
                         identity_key,
@@ -3256,6 +3366,11 @@ class ReportingAgentRunner:
                     gateway=gateway,
                     shared_artifacts=shared_artifacts,
                     task_correlation=task_correlation,
+                    recovery_event_callback=(
+                        recovery_event_callback
+                        if recovery_policy is not None
+                        else None
+                    ),
                 ),
                 "bus": self.bus,
                 "config": config,
@@ -3342,6 +3457,11 @@ class ReportingAgentRunner:
                 gateway=gateway,
                 shared_artifacts=shared_artifacts,
                 task_correlation=task_correlation,
+                recovery_event_callback=(
+                    recovery_event_callback
+                    if recovery_policy is not None
+                    else None
+                ),
             )
             loop.usage_run_id = envelope.run_id
             loop.usage_task_id = envelope.task_id
@@ -3738,6 +3858,15 @@ class ReportingAgentRunner:
                     AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
                 }:
                     max_tokens_continuation = turn.content == AGENT_MAX_TOKENS_CONTINUATION_REQUIRED
+                    apply_recovery_policy(
+                        (
+                            RecoveryEventKind.MAX_TOKENS
+                            if max_tokens_continuation
+                            else RecoveryEventKind.TOOL_SLICE_BOUNDARY
+                        ),
+                        RecoveryActionKind.CONTINUE,
+                        {"task_id": envelope.task_id},
+                    )
                     continuation_kind = (
                         "max_tokens_continuation"
                         if max_tokens_continuation
@@ -3779,6 +3908,13 @@ class ReportingAgentRunner:
                         not first_observation
                         and state["no_progress_observations"]
                         >= limits["max_no_progress_observations"]
+                    )
+                    observe_recovery_progress(
+                        progressed,
+                        {
+                            "task_id": envelope.task_id,
+                            "turn_kind": continuation_kind,
+                        },
                     )
                     event = {
                         "sequence": len(state["events"]) + 1,
@@ -3902,6 +4038,11 @@ class ReportingAgentRunner:
             ):
                 result = await persist_untyped_completion(turn)
             elif isinstance(turn, AgentResponse) and envelope.allowed_outputs:
+                apply_recovery_policy(
+                    RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
+                    RecoveryActionKind.CORRECT,
+                    {"task_id": envelope.task_id},
+                )
                 expected = ", ".join(envelope.allowed_outputs)
                 if envelope.task_id == "template-skill-distillation":
                     correction = (

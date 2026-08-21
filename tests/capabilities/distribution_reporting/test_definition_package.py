@@ -94,7 +94,15 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
     assert "run-reporting-delivery" not in {
         definition.id for definition in registry.all(DefinitionKind.TOOL)
     }
-    assert registry.all(DefinitionKind.RECOVERY)
+    assert "run-reporting-cross" not in {
+        definition.id for definition in registry.all(DefinitionKind.TOOL)
+    }
+    assert {definition.id for definition in registry.all(DefinitionKind.RECOVERY)} == {
+        "current-reporting-recovery"
+    }
+    assert {
+        definition.recovery for definition in registry.all(DefinitionKind.TASK)
+    } == {"current-reporting-recovery"}
     assert registry.all(DefinitionKind.GATE) == ()
     assert {definition.id for definition in registry.all(DefinitionKind.INTERACTION)} == {
         "cross-owner-main-exception-decision",

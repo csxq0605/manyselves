@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ...kernel.definitions import RecoveryPolicyDefinition
 from ..usage_ledger import UsageLedger
 from .agent_runner import ReportingAgentRunner
 from .agentic_models import (
@@ -834,6 +835,7 @@ class ReportWorkflowRunner:
         workflow_id: str,
         *,
         session_key: str | None = None,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
     ):
         self._raise_if_cancel_requested(envelope.run_id)
         if self._budget is not None:
@@ -865,6 +867,7 @@ class ReportWorkflowRunner:
                     artifacts,
                     workflow_id=workflow_id,
                     session_key=session_key,
+                    recovery_policy=recovery_policy,
                 )
             except asyncio.CancelledError:
                 self.service.task_board.cancel_task(

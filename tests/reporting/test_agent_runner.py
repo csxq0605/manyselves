@@ -10,6 +10,10 @@ from docx import Document
 from docx.shared import Inches
 from PIL import Image
 
+import manyselves.core.reporting.agent_runner as agent_runner_module
+from manyselves.capabilities.distribution_reporting import (
+    load_distribution_reporting_capability,
+)
 from manyselves.config.schema import AgentDefaults
 from manyselves.core.artifacts import ToolContractError
 from manyselves.core.artifacts.content_store import ContentAddressedStore
@@ -18,8 +22,10 @@ from manyselves.core.providers.base import (
     LLMProvider,
     LLMResponse,
     LLMToolCall,
-    Message as LLMMessage,
     build_provider_request_metrics,
+)
+from manyselves.core.providers.base import (
+    Message as LLMMessage,
 )
 from manyselves.core.reporting.agent_runner import (
     InspectDocumentTool,
@@ -54,6 +60,8 @@ from manyselves.interfaces.types import (
     AgentResultMessage,
     UserMessage,
 )
+from manyselves.kernel.definitions import DefinitionKind
+from manyselves.kernel.recovery import RecoveryActionKind, RecoveryEventKind
 
 
 def _write_template_contract(
@@ -3091,3 +3099,435 @@ def test_editor_chief_final_and_cross_use_identity_reference_persistence(
     )
     assert "compaction_summary" not in manifest
     assert "restart_state_sha256" not in manifest
+
+
+def _current_reporting_recovery_policy():
+    _capability, registry = load_distribution_reporting_capability()
+    return registry.require(
+        DefinitionKind.RECOVERY,
+        "current-reporting-recovery",
+    )
+
+
+def _install_recovery_controller_spy(
+    monkeypatch: pytest.MonkeyPatch,
+    calls: list[tuple[str, str]],
+    observations: list[tuple[bool, str | None]],
+) -> None:
+    real_controller = agent_runner_module.RecoveryController
+
+    class SpyRecoveryController:
+        def __init__(self) -> None:
+            self.delegate = real_controller()
+
+        def decide(self, event, policy, state):
+            decision = self.delegate.decide(event, policy, state)
+            calls.append((event.kind.value, decision.action.value))
+            return decision
+
+        def observe_progress(self, observation, policy, state):
+            decision = self.delegate.observe_progress(observation, policy, state)
+            observations.append(
+                (observation.progressed, decision.action.value if decision else None)
+            )
+            if decision is not None:
+                calls.append((decision.event.kind.value, decision.action.value))
+            return decision
+
+    monkeypatch.setattr(
+        agent_runner_module,
+        "RecoveryController",
+        SpyRecoveryController,
+    )
+
+
+@pytest.mark.asyncio
+async def test_declarative_recovery_policy_actions_drive_reporting_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Characterize continuation and typed-result actions at Reporting boundary."""
+
+    calls: list[tuple[str, str]] = []
+    observations: list[tuple[bool, str | None]] = []
+    _install_recovery_controller_spy(monkeypatch, calls, observations)
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    provider = ToolSliceContinuationProvider()
+    runner = ReportingAgentRunner(
+        tmp_path,
+        bus,
+        provider,
+        AgentDefaults(max_tool_iterations=1),
+        timeout=5,
+    )
+    envelope = TaskEnvelope(
+        task_id="module-2.1",
+        run_id="run-declarative-recovery-actions",
+        agent_id="module-2.1-specialist",
+        objective="验证声明式 recovery action 驱动续接与复用",
+        allowed_outputs=["module_submission"],
+        target_submodule_ids=list(REPORT_TAXONOMY["2.1"].submodules),
+    )
+
+    recovery_runner = None
+    try:
+        first = await runner.run(
+            load_packaged_agents()["module-2.1-specialist"].model_copy(
+                update={"max_turns": 1}
+            ),
+            envelope,
+            [],
+            workflow_id="wf-declarative-recovery-actions",
+            recovery_policy=_current_reporting_recovery_policy(),
+        )
+        await runner.close_workflow("wf-declarative-recovery-actions")
+
+        class NoCallProvider(LLMProvider):
+            def __init__(self) -> None:
+                super().__init__("test", model="tool-slice-continuation")
+
+            async def chat(self, *_args, **_kwargs):
+                raise AssertionError("persisted typed result must bypass Provider")
+
+        recovery_runner = ReportingAgentRunner(
+            tmp_path,
+            bus,
+            NoCallProvider(),
+            AgentDefaults(max_tool_iterations=1),
+            timeout=5,
+        )
+        recovered = await recovery_runner.run(
+            load_packaged_agents()["module-2.1-specialist"].model_copy(
+                update={"max_turns": 1}
+            ),
+            envelope.model_copy(),
+            [],
+            workflow_id="wf-declarative-recovery-actions",
+            recovery_policy=_current_reporting_recovery_policy(),
+        )
+    finally:
+        await runner.close_workflow("wf-declarative-recovery-actions")
+        if recovery_runner is not None:
+            await recovery_runner.close_workflow("wf-declarative-recovery-actions")
+        bus.shutdown()
+        await bus_task
+
+    assert first.status is AgentRunStatus.COMPLETED
+    assert recovered == first
+    assert provider.calls > 0
+    assert (
+        RecoveryEventKind.TOOL_SLICE_BOUNDARY.value,
+        RecoveryActionKind.CONTINUE.value,
+    ) in calls
+    assert (
+        RecoveryEventKind.COMPLETED_TOOL_RESULT.value,
+        RecoveryActionKind.REUSE_RESULT.value,
+    ) in calls
+
+
+@pytest.mark.asyncio
+async def test_declarative_recovery_policy_handles_max_tokens_and_natural_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Characterize max-token continuation and ordinary-text correction actions."""
+
+    calls: list[tuple[str, str]] = []
+    observations: list[tuple[bool, str | None]] = []
+    _install_recovery_controller_spy(monkeypatch, calls, observations)
+    policy = _current_reporting_recovery_policy()
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    runner = ReportingAgentRunner(
+        tmp_path,
+        bus,
+        MaxTokensThenDirectSubmissionProvider(),
+        AgentDefaults(max_tool_iterations=5),
+        timeout=5,
+    )
+    envelope = TaskEnvelope(
+        task_id="module-2.1",
+        run_id="run-declarative-recovery-max-tokens",
+        agent_id="module-2.1-specialist",
+        objective="验证声明式 max_tokens continuation",
+        allowed_outputs=["module_submission"],
+    )
+
+    try:
+        result = await runner.run(
+            load_packaged_agents()["module-2.1-specialist"],
+            envelope,
+            [],
+            workflow_id="wf-declarative-recovery-max-tokens",
+            recovery_policy=policy,
+        )
+    finally:
+        await runner.close_workflow("wf-declarative-recovery-max-tokens")
+        bus.shutdown()
+        await bus_task
+
+    assert result.status is AgentRunStatus.COMPLETED
+    assert (
+        RecoveryEventKind.MAX_TOKENS.value,
+        RecoveryActionKind.CONTINUE.value,
+    ) in calls
+
+    template_ref = "template-natural.docx"
+    Document().save(tmp_path / template_ref)
+    contract_ref = _write_template_contract(
+        tmp_path,
+        run_id="run-declarative-recovery-natural",
+        template_ref=template_ref,
+    )
+    natural_bus = MessageBus()
+    natural_bus_task = asyncio.create_task(natural_bus.process_queue())
+    natural_runner = ReportingAgentRunner(
+        tmp_path,
+        natural_bus,
+        NaturalCompletionProvider(),
+        AgentDefaults(max_tool_iterations=5),
+        timeout=5,
+    )
+    natural_envelope = TaskEnvelope(
+        task_id="template-skill-distillation",
+        run_id="run-declarative-recovery-natural",
+        agent_id="template-distiller",
+        objective="验证普通文字 completion 的 correction",
+        input_refs=[contract_ref, template_ref],
+        allowed_outputs=["template_skill_submission"],
+        input_contract_kind="template_distillation_input",
+        input_contract_ref=contract_ref,
+    )
+    try:
+        natural = await natural_runner.run(
+            load_packaged_agents()["template-distiller"],
+            natural_envelope,
+            [],
+            workflow_id="wf-declarative-recovery-natural",
+            recovery_policy=policy,
+        )
+    finally:
+        await natural_runner.close_workflow("wf-declarative-recovery-natural")
+        natural_bus.shutdown()
+        await natural_bus_task
+
+    assert natural.status is AgentRunStatus.INCOMPLETE
+    assert (
+        RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION.value,
+        RecoveryActionKind.CORRECT.value,
+    ) in calls
+
+
+@pytest.mark.asyncio
+async def test_declarative_recovery_policy_uses_no_progress_observer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Characterize no-progress STOP as a RecoveryController observation."""
+
+    calls: list[tuple[str, str]] = []
+    observations: list[tuple[bool, str | None]] = []
+    _install_recovery_controller_spy(monkeypatch, calls, observations)
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    runner = ReportingAgentRunner(
+        tmp_path,
+        bus,
+        RepeatingNoProgressToolProvider(),
+        AgentDefaults(max_tool_iterations=1),
+        timeout=5,
+    )
+    envelope = TaskEnvelope(
+        task_id="module-2.1",
+        task_attempt_id="attempt-declarative-no-progress",
+        run_id="run-declarative-recovery-no-progress",
+        agent_id="module-2.1-specialist",
+        objective="验证声明式 no-progress stop",
+        allowed_outputs=["module_submission"],
+    )
+    try:
+        result = await runner.run(
+            load_packaged_agents()["module-2.1-specialist"].model_copy(
+                update={"max_turns": 1}
+            ),
+            envelope,
+            [],
+            workflow_id="wf-declarative-recovery-no-progress",
+            recovery_policy=_current_reporting_recovery_policy(),
+        )
+    finally:
+        await runner.close_workflow("wf-declarative-recovery-no-progress")
+        bus.shutdown()
+        await bus_task
+
+    assert result.status is AgentRunStatus.INCOMPLETE
+    assert (False, RecoveryActionKind.STOP.value) in observations
+
+
+@pytest.mark.asyncio
+async def test_declarative_recovery_policy_observes_invalid_structured_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Characterize SubmitResultTool schema correction through the Controller."""
+
+    calls: list[tuple[str, str]] = []
+    observations: list[tuple[bool, str | None]] = []
+    _install_recovery_controller_spy(monkeypatch, calls, observations)
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    runner = ReportingAgentRunner(
+        tmp_path,
+        bus,
+        WrappedThenFlatSubmissionProvider(),
+        AgentDefaults(max_tool_iterations=10),
+        timeout=5,
+    )
+    envelope = TaskEnvelope(
+        task_id="module-2.1",
+        run_id="run-declarative-recovery-invalid-structured",
+        agent_id="module-2.1-specialist",
+        objective="验证 invalid structured output correction",
+        allowed_outputs=["module_submission"],
+    )
+    try:
+        result = await runner.run(
+            load_packaged_agents()["module-2.1-specialist"],
+            envelope,
+            [],
+            workflow_id="wf-declarative-recovery-invalid-structured",
+            recovery_policy=_current_reporting_recovery_policy(),
+        )
+    finally:
+        await runner.close_workflow("wf-declarative-recovery-invalid-structured")
+        bus.shutdown()
+        await bus_task
+
+    assert result.status is AgentRunStatus.COMPLETED
+    assert (
+        RecoveryEventKind.INVALID_STRUCTURED_OUTPUT.value,
+        RecoveryActionKind.CORRECT.value,
+    ) in calls
+
+
+@pytest.mark.asyncio
+async def test_declarative_recovery_policy_drives_tool_contract_correction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Characterize Reporting-private ToolContractError policy dispatch."""
+
+    class ToolContractThenTextProvider(LLMProvider):
+        def __init__(self) -> None:
+            super().__init__("test", model="scripted")
+            self.calls = 0
+            self.tool_definitions: list[dict] = []
+
+        async def chat(self, *_args, **_kwargs):
+            self.calls += 1
+            self.tool_definitions = list(_kwargs.get("tools") or [])
+            if self.calls == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        LLMToolCall(
+                            id="inspect-invalid-photo",
+                            name="inspect_image",
+                            arguments={"path": "P-999"},
+                        )
+                    ],
+                )
+            return LLMResponse(content="finished without a typed submission")
+
+    calls: list[tuple[str, str]] = []
+    observations: list[tuple[bool, str | None]] = []
+    _install_recovery_controller_spy(monkeypatch, calls, observations)
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    provider = ToolContractThenTextProvider()
+    runner = ReportingAgentRunner(
+        tmp_path,
+        bus,
+        provider,
+        AgentDefaults(max_tool_iterations=5),
+        timeout=5,
+    )
+    envelope = TaskEnvelope(
+        task_id="tool-contract-correction",
+        run_id="run-declarative-recovery-tool-contract",
+        agent_id="module-2.1-specialist",
+        objective="验证 tool contract correction",
+    )
+    try:
+        result = await runner.run(
+            load_packaged_agents()["module-2.1-specialist"].model_copy(
+                update={"tools": ["inspect_image"]}
+            ),
+            envelope,
+            [],
+            workflow_id="wf-declarative-recovery-tool-contract",
+            recovery_policy=_current_reporting_recovery_policy(),
+        )
+    finally:
+        await runner.close_workflow("wf-declarative-recovery-tool-contract")
+        bus.shutdown()
+        await bus_task
+
+    assert result.status is AgentRunStatus.INCOMPLETE
+    assert (
+        RecoveryEventKind.TOOL_CONTRACT_ERROR.value,
+        RecoveryActionKind.CORRECT.value,
+    ) in calls
+    inspect_schema = next(
+        item["input_schema"]
+        for item in provider.tool_definitions
+        if item["name"] == "inspect_image"
+    )
+    assert inspect_schema["anyOf"] == [{"required": ["path"]}, {"required": ["ref"]}]
+
+
+@pytest.mark.asyncio
+async def test_recovery_policy_mismatch_does_not_default_to_continuation(
+    tmp_path: Path,
+) -> None:
+    """A declared action mismatch fails the path instead of continuing implicitly."""
+
+    policy = _current_reporting_recovery_policy()
+    rules = dict(policy.rules)
+    rules[RecoveryEventKind.TOOL_SLICE_BOUNDARY.value] = rules[
+        RecoveryEventKind.TOOL_SLICE_BOUNDARY.value
+    ].model_copy(update={"action": RecoveryActionKind.STOP.value})
+    mismatched_policy = policy.model_copy(update={"rules": rules})
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    runner = ReportingAgentRunner(
+        tmp_path,
+        bus,
+        ToolSliceContinuationProvider(),
+        AgentDefaults(max_tool_iterations=1),
+        timeout=5,
+    )
+    envelope = TaskEnvelope(
+        task_id="module-2.1",
+        run_id="run-declarative-recovery-mismatch",
+        agent_id="module-2.1-specialist",
+        objective="验证不匹配 recovery action 不会隐式续接",
+        allowed_outputs=["module_submission"],
+        target_submodule_ids=list(REPORT_TAXONOMY["2.1"].submodules),
+    )
+    try:
+        with pytest.raises(RuntimeError, match="does not match"):
+            await runner.run(
+                load_packaged_agents()["module-2.1-specialist"].model_copy(
+                    update={"max_turns": 1}
+                ),
+                envelope,
+                [],
+                workflow_id="wf-declarative-recovery-mismatch",
+                recovery_policy=mismatched_policy,
+            )
+    finally:
+        await runner.close_workflow("wf-declarative-recovery-mismatch")
+        bus.shutdown()
+        await bus_task

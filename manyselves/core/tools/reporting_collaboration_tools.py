@@ -9,7 +9,7 @@ import unicodedata
 from copy import deepcopy
 from html import escape
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -25,22 +25,23 @@ from ...interfaces.types import (
 from ..loops.bus import MessageBus
 from ..reporting.agentic_models import (
     CROSS_REVIEW_DIMENSIONS,
+    TEMPLATE_ROLE_SKILL_IDS,
     AgentResult,
     AgentRunStatus,
     ChiefChapterLaneRevisionSubmission,
     ChiefChapterLaneSubmission,
     ChiefRevisionSubmission,
     ChiefRevisionSubmissionInput,
-    CrossReviewFindingSubmission,
-    CrossReviewVerdictSubmission,
     CrossOwnerFindingSubmission,
     CrossOwnerVerdictSubmission,
+    CrossReviewFindingSubmission,
+    CrossReviewVerdictSubmission,
     EditedReportSubmission,
     EditedReportSubmissionInput,
-    FinalReviewFindingSubmission,
-    FinalReviewVerdictSubmission,
     FinalChapterLaneFindingSubmission,
     FinalChapterLaneVerdictSubmission,
+    FinalReviewFindingSubmission,
+    FinalReviewVerdictSubmission,
     ModuleReviewFindingSubmission,
     ModuleReviewVerdictSubmission,
     ModuleRevisionSubmission,
@@ -48,7 +49,6 @@ from ..reporting.agentic_models import (
     ModuleSubmission,
     ModuleSubmissionInput,
     TableSubmission,
-    TEMPLATE_ROLE_SKILL_IDS,
     TemplateSkillBoundaryManifest,
     TemplateSkillSubmission,
     TemplateSkillSubmissionInput,
@@ -59,15 +59,15 @@ from ..reporting.agentic_models import (
 from ..reporting.claim_ledger import ClaimLedger
 from ..reporting.input_contracts import (
     INPUT_CONTRACT_TYPES,
-    AggregateFinalReviewInput,
     AggregateEditorInput,
+    AggregateFinalReviewInput,
     ChiefChapterLaneInput,
     ChiefEditorInput,
     ChiefRevisionInput,
     CrossOwnerInput,
     CrossReviewInput,
-    FinalReviewInput,
     FinalChapterLaneInput,
+    FinalReviewInput,
     ModuleAuthoringInput,
     ModuleReviewInput,
     ModuleRevisionInput,
@@ -88,7 +88,6 @@ from ..reporting.submission_contracts import submission_schema
 from ..reporting.taxonomy import REPORT_TAXONOMY, resolve_submodule
 from .document_tool import InspectDocumentTool
 from .registry import Tool
-
 
 _PERSISTED_RESULT_PART_SENTINEL = "<persisted_result_part"
 
@@ -202,6 +201,7 @@ class SubmitResultTool(_ResultTool):
         input_contract_kind: str | None = None,
         input_contract_ref: str | None = None,
         submission_schemas: dict[str, dict] | None = None,
+        recovery_event_callback: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -210,6 +210,7 @@ class SubmitResultTool(_ResultTool):
         self.input_contract_kind = input_contract_kind
         self.input_contract_ref = input_contract_ref
         self.submission_schemas = deepcopy(submission_schemas or {})
+        self._recovery_event_callback = recovery_event_callback
         submissions_root = (
             self.store.workspace / "Work/runs" / self.run_id / "submissions" / self.task_id
         )
@@ -2749,6 +2750,15 @@ class SubmitResultTool(_ResultTool):
         try:
             return await self._submit_once(payload)
         except (ValidationError, SubmissionValidationError) as exc:
+            if self._recovery_event_callback is not None:
+                await self._recovery_event_callback(
+                    "invalid_structured_output",
+                    {
+                        "task_id": self.task_id,
+                        "submission_kind": self._submission_kind_hint(payload),
+                        "error": str(exc),
+                    },
+                )
             self._validation_failures += 1
             feedback_payload, transport_normalization = (
                 self._normalize_schema_transport_fields(payload)

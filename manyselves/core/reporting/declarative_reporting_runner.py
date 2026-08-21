@@ -18,6 +18,7 @@ from manyselves.kernel.definitions import (
     AgentDefinition,
     DefinitionKind,
     DefinitionRegistry,
+    RecoveryPolicyDefinition,
     TaskDefinition,
     WorkflowDefinition,
     specialize_workflow,
@@ -1046,6 +1047,40 @@ class _BatchModuleRuntime:
 
 class DeclarativeReportWorkflowRunner(ReportWorkflowRunner):
     """Select declarative stage orchestration without replacing current semantics."""
+
+    def __init__(self, service, agent_runner) -> None:
+        super().__init__(service, agent_runner)
+        _capability, definitions = load_distribution_reporting_capability()
+        policy = definitions.require(
+            DefinitionKind.RECOVERY,
+            "current-reporting-recovery",
+        )
+        if not isinstance(policy, RecoveryPolicyDefinition):
+            raise TypeError("current-reporting-recovery is not a recovery policy")
+        self._declarative_recovery_policy = policy
+
+    async def _agent(
+        self,
+        agent_id: str,
+        envelope: TaskEnvelope,
+        artifacts: list[str],
+        workflow_id: str,
+        *,
+        session_key: str | None = None,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
+    ):
+        return await super()._agent(
+            agent_id,
+            envelope,
+            artifacts,
+            workflow_id,
+            session_key=session_key,
+            recovery_policy=(
+                recovery_policy
+                if recovery_policy is not None
+                else self._declarative_recovery_policy
+            ),
+        )
 
     async def _run_module_lanes(
         self,

@@ -7,6 +7,7 @@ import pytest
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.agentic_models import (
+    AgentRunStatus,
     EditedReportSubmission,
     ModuleReviewFinding,
     ModuleReviewFindingSubmission,
@@ -18,6 +19,7 @@ from manyselves.core.reporting.agentic_models import (
     TaskEnvelope,
     WorkflowDecisionSubmission,
 )
+from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.reporting.declarative_cross_owner_cohort import (
     compile_cross_owner_workflows,
 )
@@ -77,6 +79,68 @@ def test_one_parent_runtime_routes_cross_local_review_by_declared_task() -> None
     assert routed._task_routes == {
         "cross-owner-runtime-local-review": cross_local_auditor,
     }
+
+
+@pytest.mark.asyncio
+async def test_declarative_runner_injects_task_recovery_policy_at_reporting_boundary(
+    tmp_path: Path,
+) -> None:
+    class SpyTaskBoard:
+        def create_task(self, **_kwargs):
+            return SimpleNamespace(task_id="task-1")
+
+        def start_task(self, *_args, **_kwargs):
+            return None
+
+        def complete_task(self, *_args, **_kwargs):
+            return None
+
+        def fail_task(self, *_args, **_kwargs):
+            return None
+
+        def block_task(self, *_args, **_kwargs):
+            return None
+
+        def cancel_task(self, *_args, **_kwargs):
+            return None
+
+    class SpyAgentRunner:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def run(self, *_args, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(
+                status=AgentRunStatus.COMPLETED,
+                payload={"policy_injected": True},
+            )
+
+    agent_runner = SpyAgentRunner()
+    service = SimpleNamespace(
+        workspace=tmp_path,
+        agents=load_packaged_agents(),
+        task_board=SpyTaskBoard(),
+    )
+    runner = DeclarativeReportWorkflowRunner(service, agent_runner)
+    envelope = TaskEnvelope(
+        task_id="module-2.1",
+        run_id="run-declarative-policy-boundary",
+        agent_id="module-2.1-specialist",
+        objective="验证声明式 Task recovery 注入",
+        allowed_outputs=["module_submission"],
+    )
+
+    payload = await runner._agent(
+        envelope.agent_id,
+        envelope,
+        [],
+        "wf-declarative-policy-boundary",
+    )
+
+    assert payload == {"policy_injected": True}
+    assert len(agent_runner.calls) == 1
+    policy = agent_runner.calls[0]["recovery_policy"]
+    assert policy.id == "current-reporting-recovery"
 
 
 def test_generic_reporting_input_resumes_persisted_plan_without_overwriting_projection(
