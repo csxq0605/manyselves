@@ -16,6 +16,7 @@ from manyselves.kernel.definitions import (
     ToolDefinition,
     WorkflowDefinition,
     load_definition,
+    specialize_workflow,
 )
 
 
@@ -115,6 +116,36 @@ def test_definition_models_cover_the_wp01_vocabulary() -> None:
     ]
 
     assert [definition.kind for definition in definitions] == list(DefinitionKind)
+
+
+def test_file_workflow_parameters_specialize_without_mutating_the_template() -> None:
+    template = WorkflowDefinition(
+        id="reusable",
+        version="1.0.0",
+        description="Reusable neutral workflow",
+        parameters=["value", "suffix"],
+        state={"input": "{value}"},
+        actions=[
+            {
+                "id": "finish-{suffix}",
+                "kind": "end_workflow",
+                "output_variable": "input",
+            }
+        ],
+    )
+
+    specialized = specialize_workflow(
+        template,
+        {"value": 4, "suffix": "four"},
+        workflow_id="reusable-four",
+    )
+
+    assert specialized.id == "reusable-four"
+    assert specialized.parameters == []
+    assert specialized.state == {"input": 4}
+    assert specialized.actions[0]["id"] == "finish-four"
+    assert template.id == "reusable"
+    assert template.state == {"input": "{value}"}
 
 
 @pytest.mark.parametrize(

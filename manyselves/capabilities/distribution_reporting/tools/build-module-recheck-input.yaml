@@ -1,0 +1,9 @@
+id: build-module-recheck-input
+version: 1.0.0
+description: Build the changed-scope module recheck contract
+implementation: capability:distribution-reporting:build-module-recheck-input
+input_contract: module_lane_bindings
+output_contract: module_review_input
+side_effect: pure_read
+parallel_safe: true
+model_visible: false

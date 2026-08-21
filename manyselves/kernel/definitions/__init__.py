@@ -23,6 +23,7 @@ from .registry import (
     DefinitionRegistry,
     DuplicateDefinitionError,
 )
+from .specialization import specialize_workflow
 
 __all__ = [
     "AgentDefinition",
@@ -48,4 +49,5 @@ __all__ = [
     "WorkflowDefinition",
     "load_capability",
     "load_definition",
+    "specialize_workflow",
 ]

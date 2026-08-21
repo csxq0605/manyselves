@@ -1,0 +1,9 @@
+id: complete-module-recheck
+version: 1.0.0
+description: Return the module after its typed recheck closes
+implementation: capability:distribution-reporting:complete-module-recheck
+input_contract: module_lane_bindings
+output_contract: module_submission
+side_effect: pure_read
+parallel_safe: true
+model_visible: false

@@ -8,12 +8,15 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from manyselves.kernel.contracts import ContractAdapter, build_contract_adapter
+from manyselves.capabilities.distribution_reporting import (
+    load_distribution_reporting_capability,
+)
+from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
 from manyselves.kernel.definitions import (
-    ContractDefinition,
+    DefinitionKind,
     DefinitionRegistry,
-    ToolDefinition,
     WorkflowDefinition,
+    specialize_workflow,
 )
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.ports import AgentInvoker, WorkflowStateStore
@@ -58,132 +61,20 @@ def build_module_cohort_definition(
     *,
     max_concurrency: int | None,
 ) -> tuple[DefinitionRegistry, dict[str, ContractAdapter], WorkflowDefinition]:
-    """Build the fixed five-branch Reporting workflow and its contracts."""
+    """Specialize the packaged fixed five-branch Reporting workflow."""
 
-    registry = DefinitionRegistry()
-    contracts: dict[str, ContractAdapter] = {}
-    for definition in (
-        ContractDefinition(
-            id="module_submission",
-            version="1.0.0",
-            description="Current Reporting module submission",
-            adapter="pydantic",
-            model="manyselves.core.reporting.agentic_models:ModuleSubmission",
-        ),
-        ContractDefinition(
-            id="declarative_module_lane_outcome",
-            version="1.0.0",
-            description="One drained declarative module lane outcome",
-            adapter="pydantic",
-            model=(
-                "manyselves.core.reporting.declarative_module_cohort:"
-                "DeclarativeModuleLaneOutcome"
-            ),
-        ),
-        ContractDefinition(
-            id="declarative_module_cohort_output",
-            version="1.0.0",
-            description="Joined module lane outcomes",
-            adapter="json_schema",
-            schema={"type": "object"},
-        ),
-    ):
-        registry.register(definition)
-        contracts[definition.id] = build_contract_adapter(definition)
-
-    module_ids = tuple(REPORT_TAXONOMY)
-    for module_id in module_ids:
-        registry.register(
-            ToolDefinition(
-                id=f"execute-module-lane-{module_id}",
-                version="1.0.0",
-                description=f"Execute or reuse Reporting module lane {module_id}",
-                implementation=f"capability:module-lane-{module_id}",
-                input_contract="module_submission",
-                output_contract="declarative_module_lane_outcome",
-                side_effect="ordered_state",
-                parallel_safe=True,
-            )
-        )
-    registry.register(
-        ToolDefinition(
-            id="reduce-module-cohort",
-            version="1.0.0",
-            description="Publish modules only when all five joined lanes completed",
-            implementation="capability:reduce-module-cohort",
-            input_contract="declarative_module_cohort_output",
-            output_contract="declarative_module_cohort_output",
-            side_effect="pure_read",
-            parallel_safe=True,
-        )
+    _capability, registry = load_distribution_reporting_capability()
+    template = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-module-cohort",
     )
-
-    branches = {
-        module_id: f"execute-module-{module_id}"
-        for module_id in module_ids
-    }
-    actions: list[dict[str, Any]] = [
-        {
-            "id": "module-cohort",
-            "kind": "parallel",
-            "branches": branches,
-            "join": "join-module-cohort",
-            "max_concurrency": max_concurrency,
-        }
-    ]
-    for module_id in module_ids:
-        actions.extend(
-            [
-                {
-                    "id": f"execute-module-{module_id}",
-                    "kind": "invoke_tool",
-                    "tool": f"execute-module-lane-{module_id}",
-                    "input_variable": f"module-{module_id}",
-                    "output_variable": f"outcome-{module_id}",
-                },
-                {
-                    "id": f"complete-module-{module_id}-branch",
-                    "kind": "goto",
-                    "target": "join-module-cohort",
-                },
-            ]
-        )
-    actions.extend(
-        [
-            {
-                "id": "join-module-cohort",
-                "kind": "join",
-                "parallel": "module-cohort",
-                "inputs": {
-                    module_id: f"outcome-{module_id}"
-                    for module_id in module_ids
-                },
-                "output_variable": "module-outcomes",
-            },
-            {
-                "id": "reduce-module-cohort",
-                "kind": "invoke_tool",
-                "tool": "reduce-module-cohort",
-                "input_variable": "module-outcomes",
-                "output_variable": "completed-modules",
-            },
-            {
-                "id": "finish-module-cohort",
-                "kind": "end_workflow",
-                "output_variable": "completed-modules",
-                "output_name": "result",
-            },
-        ]
+    if not isinstance(template, WorkflowDefinition):
+        raise TypeError("distribution-module-cohort is not a workflow")
+    workflow = specialize_workflow(
+        template,
+        {"max_concurrency": max_concurrency},
     )
-    workflow = WorkflowDefinition(
-        id="distribution-module-cohort",
-        version="1.0.0",
-        description="Join the five independent Reporting module lanes",
-        output_contract="declarative_module_cohort_output",
-        state={},
-        actions=actions,
-    )
-    return registry, contracts, workflow
+    return registry, build_contract_catalog(registry), workflow
 
 
 async def execute_declarative_module_cohort(

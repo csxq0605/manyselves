@@ -1,0 +1,9 @@
+id: execute-module-lane-2.2
+version: 1.0.0
+description: Execute the file-defined review lane for module 2.2
+implementation: capability:distribution-reporting:execute-module-lane-2.2
+input_contract: module_submission
+output_contract: declarative_module_lane_outcome
+side_effect: ordered_state
+parallel_safe: true
+model_visible: false

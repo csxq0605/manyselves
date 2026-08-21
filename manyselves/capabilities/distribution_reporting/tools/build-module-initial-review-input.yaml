@@ -1,0 +1,9 @@
+id: build-module-initial-review-input
+version: 1.0.0
+description: Build the current module initial-review contract
+implementation: capability:distribution-reporting:build-module-initial-review-input
+input_contract: module_lane_bindings
+output_contract: module_review_input
+side_effect: pure_read
+parallel_safe: true
+model_visible: false

@@ -115,12 +115,26 @@ def test_capability_agent_projection_matches_the_legacy_template_corpus() -> Non
 
 
 def test_capability_adapters_expose_the_executable_reporting_definitions() -> None:
+    _, packaged = load_distribution_reporting_capability()
+    packaged_lane = packaged.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-module-review-lane",
+    )
+    packaged_cohort = packaged.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-module-cohort",
+    )
     _, _, lane = build_module_lane_definitions("2.1")
     _, _, cohort = build_module_cohort_definition(max_concurrency=2)
     _, _, tail = build_reporting_tail_definition()
 
+    assert packaged_lane.actions
+    assert packaged_cohort.actions
     assert lane.id == "distribution-module-2.1-review-lane"
+    assert lane.actions[0]["tool"] == "build-module-initial-review-input"
+    assert lane.actions[2]["id"] == "module-2.1-initial-review-r0"
     assert cohort.id == "distribution-module-cohort"
+    assert cohort.actions[0]["max_concurrency"] == 2
     assert tail.id == "distribution-reporting-tail"
 
 

@@ -1,6 +1,6 @@
 id: distribution-module-review-lane
 version: 1.0.0
-description: Adapter-backed declarative workflow index for distribution-module-review-lane
+description: Reusable file-defined review lane for one Reporting module
 tasks:
 - module-initial-review
 - module-2.1-revision
@@ -12,7 +12,110 @@ tasks:
 gates: []
 recovery:
 - current-reporting-recovery
-input_contract: distribution_reporting_input
-output_contract: distribution_reporting_output
-actions: []
-
+input_contract: module_submission
+output_contract: module_submission
+parameters:
+- module_id
+- author_id
+- revision_task_id
+- lifecycle_id
+- revision
+state:
+  report_run_id: null
+  current_module: null
+  initial_scope: []
+actions:
+- id: build-initial-review-input
+  kind: invoke_tool
+  tool: build-module-initial-review-input
+  input_variables:
+    run_id: report_run_id
+    module: current_module
+    scope: initial_scope
+  output_variable: initial_review_input
+- id: create-module-auditor
+  kind: create_conversation
+  agent: evidence-auditor
+  conversation_key: module-auditor-{module_id}
+  mode: run
+  output_variable: auditor_conversation
+- id: module-{module_id}-{lifecycle_id}-review-r0
+  kind: invoke_agent
+  agent: evidence-auditor
+  task: module-initial-review
+  conversation_variable: auditor_conversation
+  input_variable: initial_review_input
+  output_variable: initial_findings
+- id: findings-present
+  kind: invoke_tool
+  tool: has-module-findings
+  input_variable: initial_findings
+  output_variable: requires_revision
+- id: choose-revision
+  kind: if
+  condition:
+    variable: requires_revision
+    operator: truthy
+  then: build-revision-input
+  otherwise: finish-without-revision
+- id: build-revision-input
+  kind: invoke_tool
+  tool: build-module-revision-input
+  input_variables:
+    run_id: report_run_id
+    module: current_module
+    findings: initial_findings
+  output_variable: revision_input
+- id: create-module-author
+  kind: create_conversation
+  agent: "{author_id}"
+  conversation_key: module-{module_id}
+  mode: run
+  output_variable: author_conversation
+- id: module-revision-r{revision}-{module_id}
+  kind: invoke_agent
+  agent: "{author_id}"
+  task: "{revision_task_id}"
+  conversation_variable: author_conversation
+  input_variable: revision_input
+  output_variable: revision_submission
+- id: apply-revision
+  kind: invoke_tool
+  tool: apply-module-revision
+  input_variables:
+    module: current_module
+    revision: revision_submission
+    findings: initial_findings
+  output_variable: revised_module
+- id: build-recheck-input
+  kind: invoke_tool
+  tool: build-module-recheck-input
+  input_variables:
+    run_id: report_run_id
+    baseline: current_module
+    module: revised_module
+    findings: initial_findings
+  output_variable: recheck_input
+- id: module-{module_id}-{lifecycle_id}-review-r1
+  kind: invoke_agent
+  agent: evidence-auditor
+  task: module-recheck
+  conversation_variable: auditor_conversation
+  input_variable: recheck_input
+  output_variable: recheck_verdicts
+- id: complete-recheck
+  kind: invoke_tool
+  tool: complete-module-recheck
+  input_variables:
+    module: revised_module
+    findings: initial_findings
+    verdicts: recheck_verdicts
+  output_variable: completed_module
+- id: finish-with-revision
+  kind: end_workflow
+  output_variable: completed_module
+  output_name: result
+- id: finish-without-revision
+  kind: end_workflow
+  output_variable: current_module
+  output_name: result

@@ -9,14 +9,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Protocol
 
-from manyselves.kernel.contracts import ContractAdapter, build_contract_adapter
+from manyselves.capabilities.distribution_reporting import (
+    load_distribution_reporting_capability,
+)
+from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
 from manyselves.kernel.definitions import (
     AgentDefinition,
-    ContractDefinition,
+    DefinitionKind,
     DefinitionRegistry,
     TaskDefinition,
-    ToolDefinition,
     WorkflowDefinition,
+    specialize_workflow,
 )
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.ports import AgentInvocationOutcome, AgentInvoker, WorkflowStateStore
@@ -33,8 +36,6 @@ from .agentic_models import (
     ModuleRevisionSubmission,
     ModuleSubmission,
 )
-from .config import AgentDefinition as ReportingAgentDefinition
-from .config import load_packaged_agents
 from .input_contracts import (
     ModuleReviewInput,
     ModuleRevisionDiff,
@@ -66,155 +67,34 @@ class DeclarativeModuleLaneError(RuntimeError):
     """Raised when the WP-07 single-revision vertical slice cannot complete."""
 
 
-_CONTRACT_MODELS: dict[str, str] = {
-    "module_submission": (
-        "manyselves.core.reporting.agentic_models:ModuleSubmission"
-    ),
-    "module_review_input": (
-        "manyselves.core.reporting.input_contracts:ModuleReviewInput"
-    ),
-    "module_review_finding_submission": (
-        "manyselves.core.reporting.agentic_models:ModuleReviewFindingSubmission"
-    ),
-    "module_revision_input": (
-        "manyselves.core.reporting.input_contracts:ModuleRevisionInput"
-    ),
-    "module_revision_submission": (
-        "manyselves.core.reporting.agentic_models:ModuleRevisionSubmission"
-    ),
-    "module_review_verdict_submission": (
-        "manyselves.core.reporting.agentic_models:ModuleReviewVerdictSubmission"
-    ),
-}
-
-
 def build_module_lane_definitions(
     module_id: str,
+    *,
+    lifecycle_id: str = "initial",
+    revision: int = 1,
 ) -> tuple[DefinitionRegistry, dict[str, ContractAdapter], WorkflowDefinition]:
-    """Build one Reporting-owned workflow definition from current Agent files."""
+    """Specialize the packaged file workflow for one Reporting module."""
 
-    current_agents = load_packaged_agents()
-    auditor = current_agents["evidence-auditor"]
+    _capability, registry = load_distribution_reporting_capability()
+    template = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-module-review-lane",
+    )
+    if not isinstance(template, WorkflowDefinition):
+        raise TypeError("distribution-module-review-lane is not a workflow")
     author_id = f"module-{module_id}-specialist"
-    author = current_agents[author_id]
-    registry = DefinitionRegistry()
-    contracts: dict[str, ContractAdapter] = {}
-
-    for contract_id, model in _CONTRACT_MODELS.items():
-        definition = ContractDefinition(
-            id=contract_id,
-            version="1.0.0",
-            description=f"Current Reporting {contract_id} contract",
-            adapter="pydantic",
-            model=model,
-        )
-        registry.register(definition)
-        contracts[contract_id] = build_contract_adapter(definition)
-    for contract_id, schema in {
-        "module_lane_bindings": {"type": "object"},
-        "boolean": {"type": "boolean"},
-    }.items():
-        definition = ContractDefinition(
-            id=contract_id,
-            version="1.0.0",
-            description=f"Internal Reporting {contract_id} value",
-            adapter="json_schema",
-            schema=schema,
-        )
-        registry.register(definition)
-        contracts[contract_id] = build_contract_adapter(definition)
-
-    registry.register(
-        _kernel_agent(
-            auditor,
-            accepts=["module_review_input"],
-            produces=[
-                "module_review_finding_submission",
-                "module_review_verdict_submission",
-            ],
-        )
+    workflow = specialize_workflow(
+        template,
+        {
+            "module_id": module_id,
+            "author_id": author_id,
+            "revision_task_id": f"module-{module_id}-revision",
+            "lifecycle_id": lifecycle_id,
+            "revision": revision,
+        },
+        workflow_id=f"distribution-module-{module_id}-review-lane",
     )
-    registry.register(
-        _kernel_agent(
-            author,
-            accepts=["module_revision_input"],
-            produces=["module_revision_submission"],
-        )
-    )
-    tasks = [
-        TaskDefinition(
-            id="module-initial-review",
-            version="1.0.0",
-            description="Initial module-local semantic review",
-            agent="evidence-auditor",
-            objective=f"审查模块 {module_id} 的当前正文、Claim 与证据边界。",
-            input_contract="module_review_input",
-            output_contract="module_review_finding_submission",
-            tools=["submit_result"],
-        ),
-        TaskDefinition(
-            id="module-revision",
-            version="1.0.0",
-            description="One bounded revision by the original module author",
-            agent=author_id,
-            objective=(
-                f"以完整模块 {module_id} 的单一作者身份，一次完成所有明确分配的"
-                "定向修订；只替换受影响小节，不重复提交未变正文。"
-            ),
-            input_contract="module_revision_input",
-            output_contract="module_revision_submission",
-            tools=["submit_result"],
-        ),
-        TaskDefinition(
-            id="module-recheck",
-            version="1.0.0",
-            description="Recheck by the original module auditor",
-            agent="evidence-auditor",
-            objective=(
-                f"只对模块 {module_id} 的 required_findings 返回逐项 verdict，"
-                "并检查修改回归。"
-            ),
-            input_contract="module_review_input",
-            output_contract="module_review_verdict_submission",
-            tools=["submit_result"],
-        ),
-    ]
-    for task in tasks:
-        registry.register(task)
-
-    for tool_id, output_contract in {
-        "build-module-initial-review-input": "module_review_input",
-        "has-module-findings": "boolean",
-        "build-module-revision-input": "module_revision_input",
-        "apply-module-revision": "module_submission",
-        "build-module-recheck-input": "module_review_input",
-        "complete-module-recheck": "module_submission",
-    }.items():
-        registry.register(
-            ToolDefinition(
-                id=tool_id,
-                version="1.0.0",
-                description=f"Reporting module lane adapter: {tool_id}",
-                implementation=(
-                    "manyselves.core.reporting.declarative_module_lane:"
-                    f"{tool_id.replace('-', '_')}"
-                ),
-                input_contract="module_lane_bindings",
-                output_contract=output_contract,
-                side_effect="pure_read",
-                parallel_safe=True,
-            )
-        )
-
-    workflow = WorkflowDefinition(
-        id=f"distribution-module-{module_id}-review-lane",
-        version="1.0.0",
-        description=f"Declarative review lane for Reporting module {module_id}",
-        input_contract="module_submission",
-        output_contract="module_submission",
-        actions=[],
-    )
-    return registry, contracts, workflow
+    return registry, build_contract_catalog(registry), workflow
 
 
 async def execute_declarative_module_lane(
@@ -232,17 +112,16 @@ async def execute_declarative_module_lane(
 ) -> ModuleSubmission | tuple[ModuleSubmission, WorkflowState]:
     """Execute the explicit WP-07 path without changing the Legacy default."""
 
-    definitions, contracts, workflow = build_module_lane_definitions(module.module_id)
+    definitions, contracts, workflow = build_module_lane_definitions(
+        module.module_id,
+        lifecycle_id=lifecycle_id,
+        revision=module.revision + 1,
+    )
     workflow.state = {
         "report_run_id": run_id,
         "current_module": module,
         "initial_scope": sorted(initial_scope),
     }
-    workflow.actions = _module_lane_actions(
-        module.module_id,
-        lifecycle_id=lifecycle_id,
-        revision=module.revision + 1,
-    )
     executors = build_builtin_executor_registry()
     plan = WorkflowCompiler(executors).compile(workflow, definitions)
     lane_run_id = f"{run_id}--module-{module.module_id}-{lifecycle_id}"
@@ -321,166 +200,6 @@ async def execute_declarative_module_lane(
     if return_state:
         return result, completed
     return result
-
-
-def _kernel_agent(
-    current: ReportingAgentDefinition,
-    *,
-    accepts: list[str],
-    produces: list[str],
-) -> AgentDefinition:
-    return AgentDefinition(
-        id=current.id,
-        version="1.0.0",
-        description=current.description,
-        instructions=current.instructions,
-        model=current.model,
-        profile=current.effort,
-        tools=list(current.tools),
-        accepts=accepts,
-        produces=produces,
-        conversation_mode="run",
-        limits={
-            "max_turns": current.max_turns,
-            "max_tokens": current.max_tokens,
-        },
-    )
-
-
-def _module_lane_actions(
-    module_id: str,
-    *,
-    lifecycle_id: str,
-    revision: int,
-) -> list[dict[str, Any]]:
-    author_id = f"module-{module_id}-specialist"
-    return [
-        {
-            "id": "build-initial-review-input",
-            "kind": "invoke_tool",
-            "tool": "build-module-initial-review-input",
-            "input_variables": {
-                "run_id": "report_run_id",
-                "module": "current_module",
-                "scope": "initial_scope",
-            },
-            "output_variable": "initial_review_input",
-        },
-        {
-            "id": "create-module-auditor",
-            "kind": "create_conversation",
-            "agent": "evidence-auditor",
-            "conversation_key": f"module-auditor-{module_id}",
-            "mode": "run",
-            "output_variable": "auditor_conversation",
-        },
-        {
-            "id": f"module-{module_id}-{lifecycle_id}-review-r0",
-            "kind": "invoke_agent",
-            "agent": "evidence-auditor",
-            "task": "module-initial-review",
-            "conversation_variable": "auditor_conversation",
-            "input_variable": "initial_review_input",
-            "output_variable": "initial_findings",
-        },
-        {
-            "id": "findings-present",
-            "kind": "invoke_tool",
-            "tool": "has-module-findings",
-            "input_variable": "initial_findings",
-            "output_variable": "requires_revision",
-        },
-        {
-            "id": "choose-revision",
-            "kind": "if",
-            "condition": {"variable": "requires_revision", "operator": "truthy"},
-            "then": "build-revision-input",
-            "otherwise": "finish-without-revision",
-        },
-        {
-            "id": "build-revision-input",
-            "kind": "invoke_tool",
-            "tool": "build-module-revision-input",
-            "input_variables": {
-                "run_id": "report_run_id",
-                "module": "current_module",
-                "findings": "initial_findings",
-            },
-            "output_variable": "revision_input",
-        },
-        {
-            "id": "create-module-author",
-            "kind": "create_conversation",
-            "agent": author_id,
-            "conversation_key": f"module-{module_id}",
-            "mode": "run",
-            "output_variable": "author_conversation",
-        },
-        {
-            "id": f"module-revision-r{revision}-{module_id}",
-            "kind": "invoke_agent",
-            "agent": author_id,
-            "task": "module-revision",
-            "conversation_variable": "author_conversation",
-            "input_variable": "revision_input",
-            "output_variable": "revision_submission",
-        },
-        {
-            "id": "apply-revision",
-            "kind": "invoke_tool",
-            "tool": "apply-module-revision",
-            "input_variables": {
-                "module": "current_module",
-                "revision": "revision_submission",
-                "findings": "initial_findings",
-            },
-            "output_variable": "revised_module",
-        },
-        {
-            "id": "build-recheck-input",
-            "kind": "invoke_tool",
-            "tool": "build-module-recheck-input",
-            "input_variables": {
-                "run_id": "report_run_id",
-                "baseline": "current_module",
-                "module": "revised_module",
-                "findings": "initial_findings",
-            },
-            "output_variable": "recheck_input",
-        },
-        {
-            "id": f"module-{module_id}-{lifecycle_id}-review-r1",
-            "kind": "invoke_agent",
-            "agent": "evidence-auditor",
-            "task": "module-recheck",
-            "conversation_variable": "auditor_conversation",
-            "input_variable": "recheck_input",
-            "output_variable": "recheck_verdicts",
-        },
-        {
-            "id": "complete-recheck",
-            "kind": "invoke_tool",
-            "tool": "complete-module-recheck",
-            "input_variables": {
-                "module": "revised_module",
-                "findings": "initial_findings",
-                "verdicts": "recheck_verdicts",
-            },
-            "output_variable": "completed_module",
-        },
-        {
-            "id": "finish-with-revision",
-            "kind": "end_workflow",
-            "output_variable": "completed_module",
-            "output_name": "result",
-        },
-        {
-            "id": "finish-without-revision",
-            "kind": "end_workflow",
-            "output_variable": "current_module",
-            "output_name": "result",
-        },
-    ]
 
 
 def _initial_review_input(

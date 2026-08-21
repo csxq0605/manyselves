@@ -7,6 +7,7 @@ from .adapters import (
     JsonSchemaContractAdapter,
     PydanticContractAdapter,
     build_contract_adapter,
+    build_contract_catalog,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "JsonSchemaContractAdapter",
     "PydanticContractAdapter",
     "build_contract_adapter",
+    "build_contract_catalog",
 ]

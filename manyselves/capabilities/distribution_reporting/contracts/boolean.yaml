@@ -2,5 +2,5 @@ id: boolean
 version: 1.0.0
 description: Reporting adapter boundary for boolean
 adapter: json_schema
-schema: {}
-
+schema:
+  type: boolean

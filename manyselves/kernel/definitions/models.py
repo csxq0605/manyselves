@@ -169,6 +169,7 @@ class WorkflowDefinition(DefinitionBase):
     outputs: list[str] = Field(default_factory=list)
     input_contract: str | None = None
     output_contract: str | None = None
+    parameters: list[str] = Field(default_factory=list)
     max_iterations: int | None = Field(default=None, ge=1)
     state: dict[str, Any] = Field(default_factory=dict)
     actions: list[dict[str, Any]] = Field(default_factory=list)

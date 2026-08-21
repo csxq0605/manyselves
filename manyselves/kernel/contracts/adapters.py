@@ -10,7 +10,11 @@ from jsonschema.validators import validator_for
 from pydantic import TypeAdapter
 from pydantic import ValidationError as PydanticValidationError
 
-from manyselves.kernel.definitions import ContractDefinition
+from manyselves.kernel.definitions import (
+    ContractDefinition,
+    DefinitionKind,
+    DefinitionRegistry,
+)
 
 
 class ContractDefinitionError(ValueError):
@@ -101,3 +105,15 @@ def build_contract_adapter(definition: ContractDefinition) -> ContractAdapter:
         return PydanticContractAdapter(_import_reference(definition.model))
     assert definition.schema_ is not None
     return JsonSchemaContractAdapter(definition.schema_)
+
+
+def build_contract_catalog(
+    definitions: DefinitionRegistry,
+) -> dict[str, ContractAdapter]:
+    """Build every file-declared Contract adapter in one Registry."""
+
+    return {
+        definition.id: build_contract_adapter(definition)
+        for definition in definitions.all(DefinitionKind.CONTRACT)
+        if isinstance(definition, ContractDefinition)
+    }

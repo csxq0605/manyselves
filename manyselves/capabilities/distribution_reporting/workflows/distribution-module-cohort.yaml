@@ -1,6 +1,6 @@
 id: distribution-module-cohort
 version: 1.0.0
-description: Adapter-backed declarative workflow index for distribution-module-cohort
+description: File-defined parallel Join for the five Reporting module lanes
 tasks:
 - module-2.1-revision
 - module-2.2-revision
@@ -11,6 +11,82 @@ gates: []
 recovery:
 - current-reporting-recovery
 input_contract: distribution_reporting_input
-output_contract: distribution_reporting_output
-actions: []
-
+output_contract: declarative_module_cohort_output
+parameters:
+- max_concurrency
+state:
+  module-2.1: null
+  module-2.2: null
+  module-2.3: null
+  module-2.4: null
+  module-2.5: null
+actions:
+- id: module-cohort
+  kind: parallel
+  branches:
+    "2.1": execute-module-2.1
+    "2.2": execute-module-2.2
+    "2.3": execute-module-2.3
+    "2.4": execute-module-2.4
+    "2.5": execute-module-2.5
+  join: join-module-cohort
+  max_concurrency: "{max_concurrency}"
+- id: execute-module-2.1
+  kind: invoke_tool
+  tool: execute-module-lane-2.1
+  input_variable: module-2.1
+  output_variable: outcome-2.1
+- id: complete-module-2.1-branch
+  kind: goto
+  target: join-module-cohort
+- id: execute-module-2.2
+  kind: invoke_tool
+  tool: execute-module-lane-2.2
+  input_variable: module-2.2
+  output_variable: outcome-2.2
+- id: complete-module-2.2-branch
+  kind: goto
+  target: join-module-cohort
+- id: execute-module-2.3
+  kind: invoke_tool
+  tool: execute-module-lane-2.3
+  input_variable: module-2.3
+  output_variable: outcome-2.3
+- id: complete-module-2.3-branch
+  kind: goto
+  target: join-module-cohort
+- id: execute-module-2.4
+  kind: invoke_tool
+  tool: execute-module-lane-2.4
+  input_variable: module-2.4
+  output_variable: outcome-2.4
+- id: complete-module-2.4-branch
+  kind: goto
+  target: join-module-cohort
+- id: execute-module-2.5
+  kind: invoke_tool
+  tool: execute-module-lane-2.5
+  input_variable: module-2.5
+  output_variable: outcome-2.5
+- id: complete-module-2.5-branch
+  kind: goto
+  target: join-module-cohort
+- id: join-module-cohort
+  kind: join
+  parallel: module-cohort
+  inputs:
+    "2.1": outcome-2.1
+    "2.2": outcome-2.2
+    "2.3": outcome-2.3
+    "2.4": outcome-2.4
+    "2.5": outcome-2.5
+  output_variable: module-outcomes
+- id: reduce-module-cohort
+  kind: invoke_tool
+  tool: reduce-module-cohort
+  input_variable: module-outcomes
+  output_variable: completed-modules
+- id: finish-module-cohort
+  kind: end_workflow
+  output_variable: completed-modules
+  output_name: result
