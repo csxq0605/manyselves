@@ -137,6 +137,7 @@ async def test_runtime_host_executes_effects_persists_events_and_reuses_completi
     assert completed.outputs == {"result": 8}
     assert repeated.outputs == {"result": 8}
     assert calls == 1
+    assert store.load_plan("host-run") == plan
     assert [event.kind for event in events.events] == [
         "workflow.started",
         "action.started",

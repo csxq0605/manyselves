@@ -9,9 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class ActionKind(StrEnum):
     SET_VARIABLE = "set_variable"
+    APPEND_VARIABLE = "append_variable"
+    MERGE_VARIABLE = "merge_variable"
     INVOKE_TOOL = "invoke_tool"
     CREATE_CONVERSATION = "create_conversation"
     RESOLVE_CONVERSATION = "resolve_conversation"
+    RESET_CONVERSATION = "reset_conversation"
     INVOKE_AGENT = "invoke_agent"
     IF = "if"
     CONDITION_GROUP = "condition_group"
@@ -21,8 +24,11 @@ class ActionKind(StrEnum):
     JOIN = "join"
     SUBWORKFLOW = "subworkflow"
     VALIDATE_CONTRACT = "validate_contract"
+    EVALUATE_GATE = "evaluate_gate"
     REQUEST_INPUT = "request_input"
+    WAIT_INPUT = "wait_input"
     PUBLISH_RESULT = "publish_result"
+    FAIL_WORKFLOW = "fail_workflow"
     END_WORKFLOW = "end_workflow"
 
 
@@ -54,6 +60,34 @@ class SetVariableAction(ResolvedActionBase):
     value: Any
 
 
+class AppendVariableAction(ResolvedActionBase):
+    kind: Literal[ActionKind.APPEND_VARIABLE] = ActionKind.APPEND_VARIABLE
+    variable: str = Field(min_length=1)
+    value: Any = None
+    value_variable: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def has_one_value_binding(self) -> "AppendVariableAction":
+        has_literal = "value" in self.model_fields_set
+        if has_literal == (self.value_variable is not None):
+            raise ValueError("append_variable requires exactly one value binding")
+        return self
+
+
+class MergeVariableAction(ResolvedActionBase):
+    kind: Literal[ActionKind.MERGE_VARIABLE] = ActionKind.MERGE_VARIABLE
+    variable: str = Field(min_length=1)
+    value: dict[str, Any] | None = None
+    value_variable: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def has_one_value_binding(self) -> "MergeVariableAction":
+        has_literal = "value" in self.model_fields_set
+        if has_literal == (self.value_variable is not None):
+            raise ValueError("merge_variable requires exactly one value binding")
+        return self
+
+
 class InvokeToolAction(ResolvedActionBase):
     kind: Literal[ActionKind.INVOKE_TOOL] = ActionKind.INVOKE_TOOL
     tool: str = Field(min_length=1)
@@ -81,6 +115,14 @@ class ResolveConversationAction(ResolvedActionBase):
     agent: str = Field(min_length=1)
     conversation_key: str = Field(min_length=1)
     mode: Literal["run", "persistent"] = "run"
+    output_variable: str = Field(min_length=1)
+
+
+class ResetConversationAction(ResolvedActionBase):
+    kind: Literal[ActionKind.RESET_CONVERSATION] = ActionKind.RESET_CONVERSATION
+    agent: str = Field(min_length=1)
+    conversation_key: str = Field(min_length=1)
+    mode: Literal["ephemeral", "run", "persistent"] = "run"
     output_variable: str = Field(min_length=1)
 
 
@@ -182,8 +224,21 @@ class ValidateContractAction(ResolvedActionBase):
     output_variable: str = Field(min_length=1)
 
 
+class EvaluateGateAction(ResolvedActionBase):
+    kind: Literal[ActionKind.EVALUATE_GATE] = ActionKind.EVALUATE_GATE
+    gate: str = Field(min_length=1)
+    input_variable: str = Field(min_length=1)
+    output_variable: str = Field(min_length=1)
+
+
 class RequestInputAction(ResolvedActionBase):
     kind: Literal[ActionKind.REQUEST_INPUT] = ActionKind.REQUEST_INPUT
+    interaction: str = Field(min_length=1)
+    output_variable: str = Field(min_length=1)
+
+
+class WaitInputAction(ResolvedActionBase):
+    kind: Literal[ActionKind.WAIT_INPUT] = ActionKind.WAIT_INPUT
     interaction: str = Field(min_length=1)
     output_variable: str = Field(min_length=1)
 
@@ -195,6 +250,18 @@ class PublishResultAction(ResolvedActionBase):
     output_name: str = Field(min_length=1)
 
 
+class FailWorkflowAction(ResolvedActionBase):
+    kind: Literal[ActionKind.FAIL_WORKFLOW] = ActionKind.FAIL_WORKFLOW
+    message: str | None = Field(default=None, min_length=1)
+    error_variable: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def has_one_error_binding(self) -> "FailWorkflowAction":
+        if bool(self.message) == bool(self.error_variable):
+            raise ValueError("fail_workflow requires exactly one error binding")
+        return self
+
+
 class EndWorkflowAction(ResolvedActionBase):
     kind: Literal[ActionKind.END_WORKFLOW] = ActionKind.END_WORKFLOW
     output_variable: str = Field(min_length=1)
@@ -203,9 +270,12 @@ class EndWorkflowAction(ResolvedActionBase):
 
 ResolvedAction = (
     SetVariableAction
+    | AppendVariableAction
+    | MergeVariableAction
     | InvokeToolAction
     | CreateConversationAction
     | ResolveConversationAction
+    | ResetConversationAction
     | InvokeAgentAction
     | IfAction
     | ConditionGroupAction
@@ -215,8 +285,11 @@ ResolvedAction = (
     | JoinAction
     | SubworkflowAction
     | ValidateContractAction
+    | EvaluateGateAction
     | RequestInputAction
+    | WaitInputAction
     | PublishResultAction
+    | FailWorkflowAction
     | EndWorkflowAction
 )
 
@@ -231,12 +304,18 @@ class ResolvedPlan(BaseModel):
     entry_action_id: str | None = None
     max_iterations: int | None = Field(default=None, ge=1)
     tool_ids: list[str] = Field(default_factory=list)
+    agent_tool_ids: list[str] = Field(default_factory=list)
+    tool_implementations: dict[str, str] = Field(default_factory=dict)
     agent_ids: list[str] = Field(default_factory=list)
     task_ids: list[str] = Field(default_factory=list)
     workflow_ids: list[str] = Field(default_factory=list)
     contract_ids: list[str] = Field(default_factory=list)
     interaction_ids: list[str] = Field(default_factory=list)
     output_ids: list[str] = Field(default_factory=list)
+    gate_ids: list[str] = Field(default_factory=list)
+    recovery_ids: list[str] = Field(default_factory=list)
+    conversation_bindings: dict[str, dict[str, str]] = Field(default_factory=dict)
+    control_flow_edges: dict[str, list[str]] = Field(default_factory=dict)
     final_output_contract: str | None = None
 
 

@@ -21,7 +21,11 @@ from manyselves.kernel.executors import (
 from manyselves.kernel.ports import ToolInvocationOutcome
 from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState
 from manyselves.runtime.state_store import FileWorkflowStateStore
-from manyselves.runtime.tool_adapter import LegacyToolAdapterFactory
+from manyselves.runtime.tool_adapter import (
+    CapabilityToolAdapterFactory,
+    LegacyToolAdapterFactory,
+    ToolAdapterError,
+)
 
 
 def _contract(contract_id: str) -> ContractDefinition:
@@ -51,6 +55,45 @@ def _definition(*, reuse_result: bool = True) -> ToolDefinition:
         parallel_safe=True,
         reuse_result=reuse_result,
     )
+
+
+def _capability_definition(*, implementation: str) -> ToolDefinition:
+    return ToolDefinition(
+        id="normalize-parameter",
+        version="1.0.0",
+        description="Normalize one parameter",
+        implementation=implementation,
+        input_contract="parameter-input",
+        output_contract="parameter-value",
+        side_effect="pure_read",
+        parallel_safe=True,
+    )
+
+
+def _capability_contracts() -> dict[str, object]:
+    input_definition = ContractDefinition(
+        id="parameter-input",
+        version="1.0.0",
+        description="One parameter",
+        adapter="json_schema",
+        schema={
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        },
+    )
+    output_definition = ContractDefinition(
+        id="parameter-value",
+        version="1.0.0",
+        description="One integer",
+        adapter="json_schema",
+        schema={"type": "integer"},
+    )
+    return {
+        input_definition.id: build_contract_adapter(input_definition),
+        output_definition.id: build_contract_adapter(output_definition),
+    }
 
 
 class IncrementTool(Tool):
@@ -130,6 +173,52 @@ async def test_input_contract_fails_before_current_tool_is_called(tmp_path: Path
         await adapter.invoke({"value": "not-an-integer"}, task_id="invoke-increment")
 
     assert tool.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_capability_tool_reference_resolves_declared_callable(
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, int]] = []
+
+    def normalize_parameter(arguments: dict[str, int]) -> int:
+        calls.append(arguments)
+        return arguments["value"]
+
+    adapter = CapabilityToolAdapterFactory(
+        "parameter-adjustment",
+        {"normalize-parameter": normalize_parameter},
+        _capability_contracts(),
+    ).build(_capability_definition(
+        implementation="capability:parameter-adjustment:normalize-parameter",
+    ))
+
+    outcome = await adapter.invoke({"value": 4}, task_id="normalize")
+
+    assert outcome.status == "ok"
+    assert outcome.result == 4
+    assert calls == [{"value": 4}]
+
+
+@pytest.mark.parametrize(
+    "implementation",
+    [
+        "capability:parameter-adjustment:changed-tool",
+        "capability:other-capability:normalize-parameter",
+        "invalid-reference",
+    ],
+)
+def test_capability_tool_reference_fails_before_runtime_assembly(
+    implementation: str,
+) -> None:
+    factory = CapabilityToolAdapterFactory(
+        "parameter-adjustment",
+        {"normalize-parameter": lambda arguments: arguments["value"]},
+        _capability_contracts(),
+    )
+
+    with pytest.raises(ToolAdapterError, match="capability Tool"):
+        factory.build(_capability_definition(implementation=implementation))
 
 
 @pytest.mark.asyncio

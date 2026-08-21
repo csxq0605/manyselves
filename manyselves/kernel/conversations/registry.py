@@ -9,6 +9,7 @@ class ConversationRegistry:
     def __init__(self) -> None:
         self._records: dict[str, ConversationRecord] = {}
         self._ephemeral_sequence = 0
+        self._reset_sequence = 0
 
     def create(
         self,
@@ -57,8 +58,33 @@ class ConversationRegistry:
 
         if record.key.mode is ConversationMode.EPHEMERAL:
             return
+        marker = ":reset:"
+        if marker in record.conversation_id:
+            suffix = record.conversation_id.rsplit(marker, maxsplit=1)[-1]
+            if suffix.isdigit():
+                self._reset_sequence = max(self._reset_sequence, int(suffix))
         run_id = record.run_id or "persistent"
         self._records[self._storage_key(record.key, run_id)] = record
+
+    def reset(
+        self,
+        key: ConversationKey,
+        *,
+        run_id: str,
+    ) -> ConversationRecord:
+        """Replace one conversation identity while retaining its declared binding."""
+
+        storage_key = self._storage_key(key, run_id)
+        self._records.pop(storage_key, None)
+        self._reset_sequence += 1
+        record = ConversationRecord(
+            conversation_id=f"{storage_key}:reset:{self._reset_sequence}",
+            key=key,
+            run_id=None if key.mode is ConversationMode.PERSISTENT else run_id,
+        )
+        if key.mode is not ConversationMode.EPHEMERAL:
+            self._records[storage_key] = record
+        return record
 
     @staticmethod
     def _storage_key(key: ConversationKey, run_id: str) -> str:

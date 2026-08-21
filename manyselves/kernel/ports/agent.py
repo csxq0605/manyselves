@@ -5,7 +5,11 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel
 
 from manyselves.kernel.conversations import ConversationRecord
-from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
+from manyselves.kernel.definitions import (
+    AgentDefinition,
+    RecoveryPolicyDefinition,
+    TaskDefinition,
+)
 
 
 class AgentInvocationOutcome(BaseModel):
@@ -24,4 +28,19 @@ class AgentInvoker(Protocol):
         conversation: ConversationRecord,
         *,
         task_id: str,
+    ) -> AgentInvocationOutcome: ...
+
+
+class RecoveryAwareAgentInvoker(AgentInvoker, Protocol):
+    """Optional port for invokers that consume declared recovery policies."""
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
     ) -> AgentInvocationOutcome: ...

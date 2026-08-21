@@ -61,9 +61,11 @@ async def test_request_input_waits_resumes_and_publishes_declared_output(
     assert waiting.waiting_input == {
         "input_id": "ask-name",
         "interaction_id": "request-name",
+        "interaction_type": "form",
         "contract_id": "name-input",
         "title": "Your name",
         "description": "Collect one user name",
+        "submit_label": "Continue",
         "schema": {
             "type": "object",
             "properties": {"name": {"type": "string"}},

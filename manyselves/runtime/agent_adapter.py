@@ -7,7 +7,11 @@ from pydantic import BaseModel
 
 from manyselves.core.reporting.config import AgentDefinition as ReportingAgentDefinition
 from manyselves.kernel.conversations import ConversationRecord
-from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
+from manyselves.kernel.definitions import (
+    AgentDefinition,
+    RecoveryPolicyDefinition,
+    TaskDefinition,
+)
 from manyselves.kernel.ports import AgentInvocationOutcome
 
 
@@ -40,6 +44,45 @@ class LegacyReportingAgentAdapter:
         *,
         task_id: str,
     ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        """Forward a declared policy through the private legacy bridge."""
+
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
+
+    async def _invoke(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
+    ) -> AgentInvocationOutcome:
         try:
             definition = self._definitions[agent.id]
         except KeyError:
@@ -54,12 +97,17 @@ class LegacyReportingAgentAdapter:
             conversation,
             task_id,
         )
+        run_kwargs: dict[str, Any] = {
+            "workflow_id": self._workflow_id,
+            "session_key": conversation.key.value,
+        }
+        if recovery_policy is not None:
+            run_kwargs["recovery_policy"] = recovery_policy
         result = await self._runner.run(
             definition,
             envelope,
             self._shared_artifacts(value),
-            workflow_id=self._workflow_id,
-            session_key=conversation.key.value,
+            **run_kwargs,
         )
         status = str(result.status)
         if status == "completed":

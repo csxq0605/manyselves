@@ -43,6 +43,7 @@ class ControlFlowWorkflowExecutor:
     ) -> WorkflowState:
         if state.status is WorkflowStatus.COMPLETED:
             return state
+        self._state_store.save_plan(state.run_id, plan)
         if state.next_action_id is None:
             state.next_action_id = plan.entry_action_id
         return await self._execute_until(plan, state, context, persist=True)
@@ -246,7 +247,10 @@ class ControlFlowWorkflowExecutor:
             state.waiting_input = result.waiting_input
         if result.workflow_status is not None:
             state.status = result.workflow_status
-        return _next_id(action.id, plan.actions, positions), result.output
+        return (
+            result.next_action_id or _next_id(action.id, plan.actions, positions),
+            result.output,
+        )
 
     async def _execute_branch(
         self,

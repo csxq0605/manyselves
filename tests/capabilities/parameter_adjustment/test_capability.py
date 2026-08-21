@@ -12,13 +12,16 @@ from manyselves.kernel.contracts import build_contract_adapter
 from manyselves.kernel.definitions import (
     ContractDefinition,
     DefinitionKind,
+    DefinitionRegistry,
+    ToolDefinition,
     WorkflowDefinition,
     load_capability,
 )
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.ports import AgentInvocationOutcome
-from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState
+from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
 from manyselves.runtime.state_store import FileWorkflowStateStore
+from manyselves.runtime.tool_adapter import ToolAdapterError
 from manyselves.runtime.workflow_host import (
     InMemoryWorkflowEventSink,
     WorkflowRuntimeHost,
@@ -132,3 +135,60 @@ async def test_production_binding_projects_generic_run_value_and_cost(
     }
     assert cost["usage"]["totals"]["provider_attempts"] == 0
     assert cost["usage"]["totals"]["total_tokens"] == 0
+
+
+def test_generic_waiting_run_is_inactive_so_the_ui_can_request_input(
+    tmp_path: Path,
+) -> None:
+    run_id = "parameter-adjustment-waiting"
+    FileWorkflowStateStore(tmp_path).save(
+        WorkflowState(
+            run_id=run_id,
+            workflow_id="parameter-adjustment",
+            status=WorkflowStatus.WAITING,
+            waiting_input={"input_id": "number", "schema": {"type": "integer"}},
+        )
+    )
+
+    projected = ParameterAdjustmentRuntimeBinding(tmp_path).get_run(run_id)
+
+    assert projected["run"]["active"] is False
+    assert projected["waiting_input"] == [
+        {"input_id": "number", "schema": {"type": "integer"}}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_production_binding_rejects_an_unresolved_declared_tool_before_run_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capability, loaded = load_capability(FIXTURE)
+    registry = DefinitionRegistry()
+    for definition in loaded.all():
+        if isinstance(definition, ToolDefinition):
+            definition = definition.model_copy(
+                update={
+                    "implementation": (
+                        "capability:parameter-adjustment:missing-implementation"
+                    )
+                }
+            )
+        registry.register(definition)
+    monkeypatch.setattr(
+        "manyselves.capabilities.parameter_adjustment.adapters.runtime."
+        "load_parameter_adjustment_capability",
+        lambda: (capability, registry),
+    )
+
+    with pytest.raises(
+        ToolAdapterError,
+        match="parameter-adjustment:missing-implementation",
+    ):
+        await ParameterAdjustmentRuntimeBinding(tmp_path).start(
+            UUID("40000000-0000-4000-8000-000000000099"),
+            "parameter-adjustment",
+            {"value": 4},
+        )
+
+    assert not (tmp_path / "Work/runs").exists()

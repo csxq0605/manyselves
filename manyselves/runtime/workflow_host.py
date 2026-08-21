@@ -92,6 +92,7 @@ class WorkflowRuntimeHost:
     ) -> WorkflowState:
         if state.status is WorkflowStatus.COMPLETED:
             return state
+        self._state_store.save_plan(state.run_id, plan)
         actions = {action.id: action for action in plan.actions}
         self._emit("workflow.started", state)
         event = StartWorkflow()

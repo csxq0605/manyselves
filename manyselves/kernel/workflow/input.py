@@ -10,6 +10,7 @@ from .models import (
     RequestInputAction,
     ResolvedPlan,
     SubworkflowAction,
+    WaitInputAction,
     WorkflowState,
     WorkflowStatus,
 )
@@ -110,8 +111,8 @@ def _resume_leaf_waiting_input(
     if state.status is not WorkflowStatus.WAITING or waiting is None:
         raise WorkflowInputError("workflow is not waiting for input")
     action = next((item for item in plan.actions if item.id == input_id), None)
-    if not isinstance(action, RequestInputAction):
-        raise WorkflowInputError(f"waiting action is not request_input: {input_id}")
+    if not isinstance(action, (RequestInputAction, WaitInputAction)):
+        raise WorkflowInputError(f"waiting action is not an input action: {input_id}")
     contract_id = waiting.get("contract_id")
     try:
         contract = contracts[contract_id]

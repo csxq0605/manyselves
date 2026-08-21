@@ -28,13 +28,19 @@ class SequentialWorkflowExecutor:
     ) -> WorkflowState:
         if state.status is WorkflowStatus.COMPLETED:
             return state
+        self._state_store.save_plan(state.run_id, plan)
         state.status = WorkflowStatus.RUNNING
         self._state_store.save(state)
-        for index in range(state.next_action_index, len(plan.actions)):
+        action_positions = {
+            action.id: index for index, action in enumerate(plan.actions)
+        }
+        index = state.next_action_index
+        while index < len(plan.actions):
             action = plan.actions[index]
             action_state = state.actions[action.id]
             if action_state.status is ActionExecutionStatus.COMPLETED:
-                state.next_action_index = index + 1
+                index += 1
+                state.next_action_index = index
                 continue
             action_state.status = ActionExecutionStatus.RUNNING
             action_state.error = None
@@ -67,6 +73,10 @@ class SequentialWorkflowExecutor:
                 self._state_store.save(state)
                 return state
             action_state.status = ActionExecutionStatus.COMPLETED
-            state.next_action_index = index + 1
+            if result.next_action_id is None:
+                index += 1
+            else:
+                index = action_positions[result.next_action_id]
+            state.next_action_index = index
             self._state_store.save(state)
         return state
