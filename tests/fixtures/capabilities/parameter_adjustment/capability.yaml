@@ -8,3 +8,5 @@ contracts: ./contracts
 tools: ./tools
 gates: ./gates
 recovery: ./recovery
+entrypoints:
+- parameter-adjustment

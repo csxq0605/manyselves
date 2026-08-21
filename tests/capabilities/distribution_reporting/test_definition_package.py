@@ -22,6 +22,11 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
     capability, registry = load_distribution_reporting_capability()
 
     assert capability.id == "distribution-reporting"
+    assert capability.entrypoints == ["distribution-reporting"]
+    assert capability.runtime == (
+        "manyselves.capabilities.distribution_reporting.adapters.runtime:"
+        "build_runtime_binding"
+    )
     assert {definition.id for definition in registry.all(DefinitionKind.AGENT)} == {
         "chief-editor-auditor",
         "chief-editor",

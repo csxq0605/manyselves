@@ -6,6 +6,7 @@ from manyselves.kernel.definitions import (
     CapabilityCatalog,
     CapabilityCatalogError,
     DefinitionKind,
+    DefinitionReferenceError,
 )
 
 
@@ -74,6 +75,18 @@ def test_catalog_rejects_duplicate_public_workflow_ids(tmp_path: Path) -> None:
     _write_capability(tmp_path, "beta", "shared-entry")
 
     with pytest.raises(CapabilityCatalogError, match="duplicate workflow id"):
+        CapabilityCatalog.discover([tmp_path])
+
+
+def test_capability_entrypoints_must_reference_loaded_workflows(tmp_path: Path) -> None:
+    source = _write_capability(tmp_path, "alpha", "alpha-entry")
+    source.write_text(
+        source.read_text(encoding="utf-8")
+        + "entrypoints:\n- missing-entry\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DefinitionReferenceError, match="missing-entry"):
         CapabilityCatalog.discover([tmp_path])
 
 

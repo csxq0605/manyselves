@@ -40,6 +40,8 @@ class CapabilityDefinition(DefinitionBase):
     tools: str
     gates: str
     recovery: str
+    entrypoints: list[str] = Field(default_factory=list)
+    runtime: str | None = Field(default=None, min_length=1)
 
 
 class AgentDefinition(DefinitionBase):

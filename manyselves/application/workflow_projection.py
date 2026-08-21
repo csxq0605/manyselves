@@ -5,18 +5,20 @@ from typing import Any
 from uuid import UUID
 
 from manyselves.capabilities import load_builtin_capability_catalog
-from manyselves.core.reporting.models import ReportRequest, UserSupplement
-from manyselves.core.usage_ledger import UsageLedger
 from manyselves.kernel.contracts import build_contract_adapter
 from manyselves.kernel.definitions import (
+    CapabilityCatalog,
     CapabilityCatalogError,
     ContractDefinition,
     DefinitionKind,
     LoadedCapability,
     WorkflowDefinition,
 )
-
-_REPORTING_WORKFLOW_ID = "distribution-reporting"
+from manyselves.runtime.capability_binding import (
+    CapabilityRunNotFoundError,
+    RuntimeBindingCatalog,
+    load_runtime_bindings,
+)
 
 
 class WorkflowProjectionNotFoundError(LookupError):
@@ -34,10 +36,22 @@ class WorkflowInputError(ValueError):
 class WorkflowProjectionFacade:
     """Project neutral definitions over current Capability-owned run adapters."""
 
-    def __init__(self, workspace: Path, reporting_adapter: Any) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        reporting_adapter: Any,
+        *,
+        catalog: CapabilityCatalog | None = None,
+        runtime_bindings: RuntimeBindingCatalog | None = None,
+    ) -> None:
         self.workspace = Path(workspace)
         self.reporting_adapter = reporting_adapter
-        self._catalog = load_builtin_capability_catalog()
+        self._catalog = catalog or load_builtin_capability_catalog()
+        self._runtime_bindings = runtime_bindings or load_runtime_bindings(
+            self._catalog,
+            workspace=self.workspace,
+            host=reporting_adapter,
+        )
 
     def list_capabilities(self) -> list[dict[str, Any]]:
         return [
@@ -63,7 +77,7 @@ class WorkflowProjectionFacade:
                 "description": definition.description,
                 "input_contract": definition.input_contract,
                 "output_contract": definition.output_contract,
-                "runnable": definition.id == capability.id,
+                "runnable": definition.id in capability.entrypoints,
             }
             for loaded in self._catalog.all()
             for capability, registry in [(loaded.definition, loaded.registry)]
@@ -103,13 +117,14 @@ class WorkflowProjectionFacade:
     ) -> dict[str, Any]:
         loaded, _workflow = self._find_workflow(workflow_id)
         capability = loaded.definition
-        if workflow_id != capability.id:
+        if workflow_id not in capability.entrypoints:
             raise WorkflowNotRunnableError(workflow_id)
-        if workflow_id == _REPORTING_WORKFLOW_ID:
-            request = ReportRequest.model_validate(values)
-            accepted = self.reporting_adapter.start_declarative(command_id, request)
-            return self._accepted(accepted, capability.id, workflow_id)
-        raise WorkflowNotRunnableError(workflow_id)
+        accepted = await self._runtime_bindings.require(capability.id).start(
+            command_id,
+            workflow_id,
+            values,
+        )
+        return self._accepted(accepted, capability.id, workflow_id)
 
     def provide_input(
         self,
@@ -119,72 +134,31 @@ class WorkflowProjectionFacade:
         input_id: str | None,
         values: dict[str, Any],
     ) -> dict[str, Any]:
-        supplements = [
-            UserSupplement.model_validate(item)
-            for item in values.get("supplements", [])
-        ]
-        if input_id is not None:
-            action = values.get("action")
-            if not isinstance(action, str) or not action:
-                raise WorkflowInputError("decision input requires action")
-            accepted = self.reporting_adapter.resume_decision(
-                command_id,
-                input_id,
-                action,
-                supplements,
-            )
-        else:
-            accepted = self.reporting_adapter.resume_run(
-                command_id,
-                run_id,
-                max_provider_attempts=values.get("max_provider_attempts"),
-                max_total_tokens=values.get("max_total_tokens"),
-                supplements=supplements,
-            )
+        binding, projection = self._locate_run(run_id)
+        accepted = binding.provide_input(
+            command_id,
+            run_id,
+            input_id=input_id,
+            values=values,
+        )
+        current = projection["run"]
         return self._accepted(
             accepted,
-            _REPORTING_WORKFLOW_ID,
-            _REPORTING_WORKFLOW_ID,
+            current["capability_id"],
+            current["workflow_id"],
         )
 
     def get_run(self, run_id: str) -> dict[str, Any]:
-        snapshot = self.reporting_adapter.snapshot(run_id)
-        current = snapshot.get("run", {})
-        state = snapshot.get("state", {})
-        return {
-            "run": {
-                "run_id": run_id,
-                "capability_id": _REPORTING_WORKFLOW_ID,
-                "workflow_id": _REPORTING_WORKFLOW_ID,
-                "status": current.get("status") or state.get("status") or "unknown",
-                "active": bool(current.get("active", False)),
-                "task_id": current.get("task_id"),
-            },
-            "state": state,
-            "waiting_input": snapshot.get("waitingInput", []),
-        }
+        _binding, projection = self._locate_run(run_id)
+        return projection
 
     def get_outputs(self, run_id: str) -> dict[str, Any]:
-        snapshot = self.reporting_adapter.snapshot(run_id)
-        return {
-            "run_id": run_id,
-            "outputs": [
-                {
-                    "id": output.get("path", ""),
-                    "kind": "artifact",
-                    "path": output.get("path", ""),
-                    "exists": bool(output.get("exists", False)),
-                    "size": int(output.get("size", 0) or 0),
-                }
-                for output in snapshot.get("outputs", [])
-            ],
-        }
+        binding, _projection = self._locate_run(run_id)
+        return binding.get_outputs(run_id)
 
     def get_cost(self, run_id: str) -> dict[str, Any]:
-        return {
-            "run_id": run_id,
-            "usage": UsageLedger(self.workspace, run_id).summarize(group_by="stage"),
-        }
+        binding, _projection = self._locate_run(run_id)
+        return binding.get_cost(run_id)
 
     def _find_workflow(
         self,
@@ -194,6 +168,12 @@ class WorkflowProjectionFacade:
             return self._catalog.require_workflow(workflow_id)
         except CapabilityCatalogError as exc:
             raise WorkflowProjectionNotFoundError(workflow_id) from exc
+
+    def _locate_run(self, run_id: str):
+        try:
+            return self._runtime_bindings.locate_run(run_id)
+        except CapabilityRunNotFoundError as exc:
+            raise WorkflowProjectionNotFoundError(run_id) from exc
 
     def _accepted(
         self,

@@ -8,4 +8,6 @@ contracts: ./contracts
 tools: ./tools
 gates: ./gates
 recovery: ./recovery
-
+entrypoints:
+- distribution-reporting
+runtime: manyselves.capabilities.distribution_reporting.adapters.runtime:build_runtime_binding

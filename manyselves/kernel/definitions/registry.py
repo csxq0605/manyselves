@@ -4,6 +4,7 @@ from collections.abc import Iterable
 
 from .models import (
     AgentDefinition,
+    CapabilityDefinition,
     Definition,
     DefinitionKind,
     GateDefinition,
@@ -76,6 +77,8 @@ def _present(values: Iterable[str | None]) -> tuple[str, ...]:
 def _references(
     definition: Definition,
 ) -> tuple[tuple[DefinitionKind, tuple[str, ...]], ...]:
+    if isinstance(definition, CapabilityDefinition):
+        return ((DefinitionKind.WORKFLOW, tuple(definition.entrypoints)),)
     if isinstance(definition, AgentDefinition):
         return (
             (DefinitionKind.TOOL, tuple(definition.tools)),
