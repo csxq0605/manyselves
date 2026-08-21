@@ -171,6 +171,58 @@ class ReportingModuleRuntime(Protocol):
     async def reduce_lanes(self, outcomes: Mapping[str, Any]) -> dict[str, Any]: ...
 
 
+class _TaskScopedAgentInvoker:
+    """Route one reused Agent identity by its exact declared Task."""
+
+    def __init__(
+        self,
+        default: AgentInvoker,
+        task_routes: Mapping[str, AgentInvoker],
+    ) -> None:
+        self._default = default
+        self._task_routes = task_routes
+
+    async def invoke(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        invoker = self._task_routes.get(task.id, self._default)
+        return await invoker.invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+        )
+
+
+def _reporting_agent_invokers(
+    module_invokers: Mapping[str, AgentInvoker],
+    cross_invokers: Mapping[str, AgentInvoker],
+) -> dict[str, AgentInvoker]:
+    """Compose module and Cross adapters for their shared Author identities."""
+
+    combined = dict(module_invokers)
+    for agent_id, cross_invoker in cross_invokers.items():
+        module_invoker = combined.get(agent_id)
+        if module_invoker is None:
+            combined[agent_id] = cross_invoker
+            continue
+        module_id = agent_id.removeprefix("module-").removesuffix("-specialist")
+        combined[agent_id] = _TaskScopedAgentInvoker(
+            module_invoker,
+            {
+                f"cross-owner-module-{module_id}-revision-r1": cross_invoker,
+            },
+        )
+    return combined
+
+
 def build_reporting_module_stage_definition() -> tuple[DefinitionRegistry, WorkflowDefinition]:
     """Compatibility loader for the packaged top-level Reporting workflow."""
 
@@ -333,16 +385,28 @@ async def execute_declarative_module_stage(
                         cross_runtime.initial_requires_agent
                     ),
                     "accept-current-cross-owner-initial": cross_runtime.accept_initial,
+                    "cross-owner-initial-has-findings": (
+                        cross_runtime.initial_has_findings
+                    ),
+                    "prepare-current-cross-owner-revision": (
+                        cross_runtime.prepare_revision
+                    ),
+                    "cross-owner-revision-requires-agent": (
+                        cross_runtime.revision_requires_agent
+                    ),
+                    "accept-current-cross-owner-revision": (
+                        cross_runtime.accept_revision
+                    ),
                     "continue-current-cross-owner-pipeline": cross_runtime.continue_owner,
                     "reduce-cross-owner-cohort": cross_runtime.reduce,
                     "run-reporting-chief": tail_adapters.chief,
                     "run-reporting-final": tail_adapters.final,
                     "run-reporting-delivery": tail_adapters.delivery,
                 },
-                agents={
-                    **module_runtime.agent_invokers,
-                    **cross_runtime.agent_invokers,
-                },
+                agents=_reporting_agent_invokers(
+                    module_runtime.agent_invokers,
+                    cross_runtime.agent_invokers,
+                ),
                 contracts=build_contract_catalog(definitions),
                 definitions=definitions,
                 subworkflows={

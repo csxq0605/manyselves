@@ -3,6 +3,11 @@ version: 1.0.0
 description: Reusable current Cross owner pipeline bound to Reporting behavior
 tasks:
 - cross-owner-runtime-initial-review
+- cross-owner-module-2.1-revision-r1
+- cross-owner-module-2.2-revision-r1
+- cross-owner-module-2.3-revision-r1
+- cross-owner-module-2.4-revision-r1
+- cross-owner-module-2.5-revision-r1
 gates: []
 recovery:
 - current-reporting-recovery
@@ -11,6 +16,9 @@ output_contract: declarative_cross_owner_pipeline_outcome
 parameters:
 - owner_module_id
 - conversation_key
+- revision_agent_id
+- revision_task_id
+- revision_conversation_key
 state:
   reporting-state: {}
   owner-module-id: "{owner_module_id}"
@@ -33,7 +41,7 @@ actions:
     variable: should-invoke-cross-owner-initial
     operator: truthy
   then: create-cross-owner-conversation
-  otherwise: continue-current-cross-owner-pipeline
+  otherwise: cross-owner-initial-has-findings
 - id: create-cross-owner-conversation
   kind: create_conversation
   agent: cross-module-reviewer
@@ -55,6 +63,58 @@ actions:
     result: cross-owner-initial-agent-result
   output_variable: owner-context
 - id: continue-after-cross-owner-initial
+  kind: goto
+  target: cross-owner-initial-has-findings
+- id: cross-owner-initial-has-findings
+  kind: invoke_tool
+  tool: cross-owner-initial-has-findings
+  input_variable: owner-context
+  output_variable: owner-initial-has-findings
+- id: choose-cross-owner-revision
+  kind: if
+  condition:
+    variable: owner-initial-has-findings
+    operator: truthy
+  then: prepare-current-cross-owner-revision
+  otherwise: continue-current-cross-owner-pipeline
+- id: prepare-current-cross-owner-revision
+  kind: invoke_tool
+  tool: prepare-current-cross-owner-revision
+  input_variable: owner-context
+  output_variable: owner-context
+- id: cross-owner-revision-requires-agent
+  kind: invoke_tool
+  tool: cross-owner-revision-requires-agent
+  input_variable: owner-context
+  output_variable: should-invoke-cross-owner-revision
+- id: choose-cross-owner-revision-source
+  kind: if
+  condition:
+    variable: should-invoke-cross-owner-revision
+    operator: truthy
+  then: create-cross-owner-revision-conversation
+  otherwise: continue-current-cross-owner-pipeline
+- id: create-cross-owner-revision-conversation
+  kind: create_conversation
+  agent: "{revision_agent_id}"
+  conversation_key: "{revision_conversation_key}"
+  mode: run
+  output_variable: cross-owner-revision-conversation
+- id: invoke-current-cross-owner-revision
+  kind: invoke_agent
+  agent: "{revision_agent_id}"
+  task: "{revision_task_id}"
+  conversation_variable: cross-owner-revision-conversation
+  input_variable: owner-context
+  output_variable: cross-owner-revision-agent-result
+- id: accept-current-cross-owner-revision
+  kind: invoke_tool
+  tool: accept-current-cross-owner-revision
+  input_variables:
+    context: owner-context
+    result: cross-owner-revision-agent-result
+  output_variable: owner-context
+- id: continue-after-cross-owner-revision
   kind: goto
   target: continue-current-cross-owner-pipeline
 - id: continue-current-cross-owner-pipeline

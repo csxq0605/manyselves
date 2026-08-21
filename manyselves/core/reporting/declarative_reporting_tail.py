@@ -141,6 +141,18 @@ async def execute_declarative_reporting_tail(
                         cross_runtime.initial_requires_agent
                     ),
                     "accept-current-cross-owner-initial": cross_runtime.accept_initial,
+                    "cross-owner-initial-has-findings": (
+                        cross_runtime.initial_has_findings
+                    ),
+                    "prepare-current-cross-owner-revision": (
+                        cross_runtime.prepare_revision
+                    ),
+                    "cross-owner-revision-requires-agent": (
+                        cross_runtime.revision_requires_agent
+                    ),
+                    "accept-current-cross-owner-revision": (
+                        cross_runtime.accept_revision
+                    ),
                     "continue-current-cross-owner-pipeline": cross_runtime.continue_owner,
                     "reduce-cross-owner-cohort": cross_runtime.reduce,
                 },

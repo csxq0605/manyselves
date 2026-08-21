@@ -308,12 +308,22 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
             pipeline,
             registry,
         )
-        assert pipeline_plan.agent_ids == ["cross-module-reviewer"]
-        assert pipeline_plan.task_ids == ["cross-owner-runtime-initial-review"]
+        assert pipeline_plan.agent_ids == [
+            "cross-module-reviewer",
+            f"module-{module_id}-specialist",
+        ]
+        assert pipeline_plan.task_ids == [
+            "cross-owner-runtime-initial-review",
+            f"cross-owner-module-{module_id}-revision-r1",
+        ]
         assert pipeline_plan.tool_ids == [
             "prepare-current-cross-owner-initial",
             "cross-owner-initial-requires-agent",
             "accept-current-cross-owner-initial",
+            "cross-owner-initial-has-findings",
+            "prepare-current-cross-owner-revision",
+            "cross-owner-revision-requires-agent",
+            "accept-current-cross-owner-revision",
             "continue-current-cross-owner-pipeline",
         ]
         conversation = next(
@@ -343,7 +353,7 @@ def test_cross_owner_21_pipeline_declares_initial_reviewer_agent_boundary() -> N
         registry,
     )
 
-    assert [action.kind for action in plan.actions] == [
+    assert [action.kind for action in plan.actions[:7]] == [
         "invoke_tool",
         "invoke_tool",
         "if",
@@ -351,17 +361,14 @@ def test_cross_owner_21_pipeline_declares_initial_reviewer_agent_boundary() -> N
         "invoke_agent",
         "invoke_tool",
         "goto",
-        "invoke_tool",
-        "end_workflow",
     ]
-    assert plan.tool_ids == [
+    assert plan.tool_ids[:3] == [
         "prepare-current-cross-owner-initial",
         "cross-owner-initial-requires-agent",
         "accept-current-cross-owner-initial",
-        "continue-current-cross-owner-pipeline",
     ]
-    assert plan.agent_ids == ["cross-module-reviewer"]
-    assert plan.task_ids == ["cross-owner-runtime-initial-review"]
+    assert plan.agent_ids[0] == "cross-module-reviewer"
+    assert plan.task_ids[0] == "cross-owner-runtime-initial-review"
     assert "execute-current-cross-owner-pipeline" not in plan.tool_ids
 
     prepare = plan.actions[0]
@@ -375,7 +382,7 @@ def test_cross_owner_21_pipeline_declares_initial_reviewer_agent_boundary() -> N
     choose = plan.actions[2]
     create = plan.actions[3]
     assert choose.then == create.id
-    assert choose.otherwise == "continue-current-cross-owner-pipeline"
+    assert choose.otherwise == "cross-owner-initial-has-findings"
     assert create.agent == "cross-module-reviewer"
     assert create.conversation_key == "cross-owner-2.1"
 
@@ -390,6 +397,66 @@ def test_cross_owner_21_pipeline_declares_initial_reviewer_agent_boundary() -> N
         "context": "owner-context",
         "result": "cross-owner-initial-agent-result",
     }
-    continue_action = plan.actions[7]
+    continue_action = next(
+        action
+        for action in plan.actions
+        if action.id == "continue-current-cross-owner-pipeline"
+    )
     assert continue_action.tool == "continue-current-cross-owner-pipeline"
     assert continue_action.input_variable == "owner-context"
+
+
+def test_cross_owner_21_pipeline_declares_owner_finding_revision_boundary() -> None:
+    """Characterize the next Cross owner slice before its implementation exists."""
+
+    _, registry = load_distribution_reporting_capability()
+    from manyselves.core.reporting.declarative_cross_owner_cohort import (
+        register_cross_owner_pipeline_specializations,
+    )
+
+    register_cross_owner_pipeline_specializations(registry)
+    pipeline = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-cross-owner-2.1-pipeline",
+    )
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        pipeline,
+        registry,
+    )
+
+    action_ids = [action.id for action in plan.actions]
+    assert "cross-owner-initial-has-findings" in action_ids
+    assert "prepare-current-cross-owner-revision" in action_ids
+    assert "accept-current-cross-owner-revision" in action_ids
+    assert "continue-current-cross-owner-pipeline" in action_ids
+
+    finding_route = next(
+        action for action in plan.actions if action.id == "cross-owner-initial-has-findings"
+    )
+    assert finding_route.kind == "invoke_tool"
+    revision_prepare = next(
+        action for action in plan.actions if action.id == "prepare-current-cross-owner-revision"
+    )
+    assert revision_prepare.kind == "invoke_tool"
+    revision_accept = next(
+        action for action in plan.actions if action.id == "accept-current-cross-owner-revision"
+    )
+    assert revision_accept.kind == "invoke_tool"
+
+    revision_agents = [
+        action
+        for action in plan.actions
+        if action.kind == "invoke_agent" and action.agent == "module-2.1-specialist"
+    ]
+    assert len(revision_agents) == 1
+    revision_agent = revision_agents[0]
+    assert "cross" in revision_agent.task
+    assert "2.1" in revision_agent.task
+    revision_conversation = next(
+        action
+        for action in plan.actions
+        if action.kind == "create_conversation"
+        and action.agent == "module-2.1-specialist"
+    )
+    assert revision_conversation.conversation_key == "module-2.1"
+    assert revision_agent.conversation_variable == revision_conversation.output_variable

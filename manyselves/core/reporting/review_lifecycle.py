@@ -10,7 +10,7 @@ import time
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Literal
+from typing import TYPE_CHECKING, Iterable, Literal, cast
 from uuid import uuid4
 
 from pydantic import Field
@@ -2949,6 +2949,40 @@ class CrossOwnerInitialReviewAcceptance(StrictModel):
     next_action: Literal["continue_existing"] = "continue_existing"
 
 
+class CrossOwnerRevisionPreparation(StrictModel):
+    """Typed boundary before the original owner Author revises Cross findings."""
+
+    mode: Literal["invoke_agent", "continue_existing"]
+    run_id: str
+    workflow_id: str
+    owner_module_id: str
+    review_round: int
+    owner_input_ref: str
+    current: ModuleSubmission
+    findings: list[CrossReviewFinding]
+    finding_refs: list[str]
+    prior_completion_ref: str | None = None
+    prepared: ModuleRevisionPreparation | None = None
+    existing_candidate: ModuleSubmission | None = None
+    existing_candidate_ref: str | None = None
+
+
+class CrossOwnerRevisionAcceptance(StrictModel):
+    """Typed accepted Author candidate passed into owner-local regression."""
+
+    run_id: str
+    workflow_id: str
+    owner_module_id: str
+    review_round: int
+    owner_input_ref: str
+    current: ModuleSubmission
+    findings: list[CrossReviewFinding]
+    finding_refs: list[str]
+    prior_completion_ref: str | None = None
+    revised: ModuleSubmission
+    candidate_ref: str
+
+
 _CROSS_OWNER_MODULE_IDS = tuple(REPORT_TAXONOMY)
 
 
@@ -4261,6 +4295,136 @@ def verify_cross_owner_barrier(
     )
 
 
+def _load_cross_owner_revision_candidate(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    module_id: str,
+    current: ModuleSubmission,
+    findings: list[CrossReviewFinding],
+) -> tuple[ModuleSubmission, str] | None:
+    """Load the same persisted owner Author candidate used by the Legacy lane."""
+
+    modules_root = runner.service.workspace / f"Work/runs/{state['run_id']}/modules"
+    candidates: list[ModuleSubmission] = []
+    for path in modules_root.glob(f"{module_id}-r*.json"):
+        try:
+            candidate = ModuleSubmission.model_validate_json(path.read_text(encoding="utf-8"))
+            if candidate.revision <= current.revision:
+                continue
+            _validate_responses(
+                candidate.revision_responses,
+                {finding.id for finding in findings},
+                {
+                    target_id
+                    for finding in findings
+                    for target_id in finding.target_submodule_ids
+                },
+            )
+            candidates.append(candidate)
+        except (OSError, ValueError):
+            continue
+    if not candidates:
+        return None
+    candidate = max(candidates, key=lambda item: item.revision)
+    candidate_ref = (
+        f"Work/runs/{state['run_id']}/modules/{module_id}-r{candidate.revision}.json"
+    )
+    return candidate, candidate_ref
+
+
+async def prepare_cross_owner_revision(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    workflow_id: str,
+    owner_module_id: str,
+    review_round: int,
+    owner_input_ref: str,
+    current: ModuleSubmission,
+    findings: list[CrossReviewFinding],
+    finding_refs: list[str],
+    prior_completion_ref: str | None,
+) -> CrossOwnerRevisionPreparation:
+    """Prepare or recover the existing original-Author Cross revision."""
+
+    existing = _load_cross_owner_revision_candidate(
+        runner,
+        state=state,
+        module_id=owner_module_id,
+        current=current,
+        findings=findings,
+    )
+    if existing is not None:
+        candidate, candidate_ref = existing
+        return CrossOwnerRevisionPreparation(
+            mode="continue_existing",
+            run_id=state["run_id"],
+            workflow_id=workflow_id,
+            owner_module_id=owner_module_id,
+            review_round=review_round,
+            owner_input_ref=owner_input_ref,
+            current=current,
+            findings=findings,
+            finding_refs=finding_refs,
+            prior_completion_ref=prior_completion_ref,
+            existing_candidate=candidate,
+            existing_candidate_ref=candidate_ref,
+        )
+    prepared = await prepare_module_revision(
+        runner,
+        state=state,
+        workflow_id=workflow_id,
+        subject=current,
+        cross_findings=findings,
+    )
+    return CrossOwnerRevisionPreparation(
+        mode="invoke_agent",
+        run_id=state["run_id"],
+        workflow_id=workflow_id,
+        owner_module_id=owner_module_id,
+        review_round=review_round,
+        owner_input_ref=owner_input_ref,
+        current=current,
+        findings=findings,
+        finding_refs=finding_refs,
+        prior_completion_ref=prior_completion_ref,
+        prepared=prepared,
+    )
+
+
+def accept_cross_owner_revision(
+    runner: "ReportWorkflowRunner",
+    *,
+    preparation: CrossOwnerRevisionPreparation,
+    result: ModuleRevisionSubmission | None,
+) -> CrossOwnerRevisionAcceptance:
+    """Accept a fresh or existing original-Author candidate without copying apply logic."""
+
+    if preparation.mode == "continue_existing":
+        revised = cast(ModuleSubmission, preparation.existing_candidate)
+        candidate_ref = cast(str, preparation.existing_candidate_ref)
+    else:
+        revised, candidate_ref = accept_module_revision(
+            runner,
+            preparation=cast(ModuleRevisionPreparation, preparation.prepared),
+            result=cast(ModuleRevisionSubmission, result),
+        )
+    return CrossOwnerRevisionAcceptance(
+        run_id=preparation.run_id,
+        workflow_id=preparation.workflow_id,
+        owner_module_id=preparation.owner_module_id,
+        review_round=preparation.review_round,
+        owner_input_ref=preparation.owner_input_ref,
+        current=preparation.current,
+        findings=preparation.findings,
+        finding_refs=preparation.finding_refs,
+        prior_completion_ref=preparation.prior_completion_ref,
+        revised=revised,
+        candidate_ref=candidate_ref,
+    )
+
+
 async def _run_cross_owner_lane(
     runner: "ReportWorkflowRunner",
     *,
@@ -4274,6 +4438,7 @@ async def _run_cross_owner_lane(
     owner_input_ref: str | None = None,
     prior_completion_ref: str | None = None,
     defer_main_exceptions: bool = True,
+    accepted_revision: CrossOwnerRevisionAcceptance | None = None,
 ) -> _CrossOwnerLaneResult:
     """Run one owner-local revision and original-auditor regression in private state."""
 
@@ -4307,32 +4472,22 @@ async def _run_cross_owner_lane(
             f"Cross local regression prior completion does not bind {module_id}"
         )
 
-    persisted_candidate: ModuleSubmission | None = None
-    modules_root = runner.service.workspace / f"Work/runs/{state['run_id']}/modules"
-    candidates: list[ModuleSubmission] = []
-    for path in modules_root.glob(f"{module_id}-r*.json"):
-        try:
-            candidate = ModuleSubmission.model_validate_json(path.read_text(encoding="utf-8"))
-            if candidate.revision <= current.revision:
-                continue
-            _validate_responses(
-                candidate.revision_responses,
-                {finding.id for finding in findings},
-                {target_id for finding in findings for target_id in finding.target_submodule_ids},
-            )
-            candidates.append(candidate)
-        except (OSError, ValueError):
-            continue
-    if candidates:
-        persisted_candidate = max(candidates, key=lambda item: item.revision)
+    persisted = (
+        (accepted_revision.revised, accepted_revision.candidate_ref)
+        if accepted_revision is not None
+        else _load_cross_owner_revision_candidate(
+            runner,
+            state=state,
+            module_id=module_id,
+            current=current,
+            findings=findings,
+        )
+    )
 
     while True:
-        if persisted_candidate is not None:
-            revised = persisted_candidate
-            revised_ref = (
-                f"Work/runs/{state['run_id']}/modules/{module_id}-r{revised.revision}.json"
-            )
-            persisted_candidate = None
+        if persisted is not None:
+            revised, revised_ref = persisted
+            persisted = None
         else:
             revised, revised_ref = await request_module_revision(
                 runner,
@@ -4844,11 +4999,49 @@ class CrossReviewCoordinator:
             result=result,
         )
 
+    async def prepare_owner_revision(
+        self,
+        initial: CrossOwnerInitialReviewAcceptance,
+    ) -> CrossOwnerRevisionPreparation:
+        """Prepare or recover the first original-Author Cross revision."""
+
+        owner_module_id = initial.owner_module_id
+        return await prepare_cross_owner_revision(
+            self.runner,
+            state=self.state,
+            workflow_id=self.workflow_id,
+            owner_module_id=owner_module_id,
+            review_round=1,
+            owner_input_ref=initial.owner_input_ref,
+            current=cast(dict[str, ModuleSubmission], self.frozen_modules)[
+                owner_module_id
+            ],
+            findings=list(initial.result.findings),
+            finding_refs=[initial.result_ref],
+            prior_completion_ref=self.state.get(
+                "module_review_completion_refs", {}
+            ).get(owner_module_id),
+        )
+
+    def accept_owner_revision(
+        self,
+        preparation: CrossOwnerRevisionPreparation,
+        result: ModuleRevisionSubmission | None = None,
+    ) -> CrossOwnerRevisionAcceptance:
+        """Accept one generic-runtime original-Author Cross revision."""
+
+        return accept_cross_owner_revision(
+            self.runner,
+            preparation=preparation,
+            result=result,
+        )
+
     async def run_owner(
         self,
         owner_module_id: str,
         *,
         initial_acceptance: CrossOwnerInitialReviewAcceptance | None = None,
+        revision_acceptance: CrossOwnerRevisionAcceptance | None = None,
     ) -> _CrossOwnerPipelineResult:
         if self.ensure_prepared():
             raise ReviewLifecycleError(
@@ -5062,6 +5255,9 @@ class CrossReviewCoordinator:
                     review_round=review_round,
                     owner_input_ref=owner_input_ref,
                     prior_completion_ref=current_review_completion_ref,
+                    accepted_revision=(
+                        revision_acceptance if review_round == 1 else None
+                    ),
                 )
 
             # A later Cross regression round reviews the module revision that
