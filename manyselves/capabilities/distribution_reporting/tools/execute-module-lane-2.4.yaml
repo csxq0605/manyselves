@@ -1,8 +1,8 @@
 id: execute-module-lane-2.4
 version: 1.0.0
-description: Execute the file-defined review lane for module 2.4
+description: Execute the complete current lane inside the file-defined module 2.4 branch
 implementation: capability:distribution-reporting:execute-module-lane-2.4
-input_contract: module_submission
+input_contract: reporting_tail_state
 output_contract: declarative_module_lane_outcome
 side_effect: ordered_state
 parallel_safe: true

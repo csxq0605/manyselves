@@ -15,11 +15,11 @@
 ## Current position
 
 - Current work package: `WP-01/WP-11 architecture completion audit reopened`
-- Last completed vertical slice: nested Subworkflows emit their own standard workflow/action/output lifecycle into the parent Run event sink, and the selectable production path persists the combined trace as `workflow-events.jsonl`
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `afd0d1a` (`WP-08/WP-09: run reporting stages in one parent state`); the nested-event slice is this document's commit
+- Last completed vertical slice: the packaged module Cohort is the production top-level Subworkflow; YAML owns preparation, five Parallel branches, Join, reduction, and failed-branch-only retry while each branch delegates the complete current Lane lifecycle
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `d8dab30` (`WP-02/WP-09: persist nested runtime events`); the production Cohort slice is this document's commit
 - Current migration stage: `file-defined Reporting workflow migration`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
-- Next automatic action: decompose the remaining coarse `run-reporting-module-work` adapter into file-defined authoring Lane instances plus the packaged module-review Cohort, while retaining the current lane recovery/artifact semantics
+- Next automatic action: decompose each complete-Lane Capability adapter into a file-defined authoring Lane and the existing module-review workflow, retaining the current recovery, preflight, correction, continuation, Conversation, and artifact implementations behind smaller Capability adapters until their equivalence is proved
 
 ## Reopened architecture completion audit
 
@@ -27,10 +27,11 @@ The 2026-08-21 live-code audit found that the previous completion record proved
 several useful vertical slices but did not prove the requested target
 architecture:
 
-- the selectable Reporting runner still subclasses `ReportWorkflowRunner` and
-  wraps unchanged module work in one coarse Tool action;
-- the packaged detailed Lane and Cohort definitions are file-owned and executable,
-  but are not yet the production module entry path;
+- the selectable Reporting runner still subclasses `ReportWorkflowRunner`; its
+  production module entry is now the packaged Cohort, but each branch still
+  delegates one complete current Lane lifecycle to a Capability adapter;
+- the packaged detailed review Lane is file-owned and executable, but the full
+  production authoring/preflight/review lifecycle is not yet decomposed into it;
 - `RecoveryController` is not yet part of the production generic Agent execution
   chain;
 - the current Cross implementation and combined Render/Delivery implementation
@@ -57,6 +58,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
+- `WP-07/WP-08: run production modules through the file cohort` — the top-level workflow invokes the packaged module Cohort as a Subworkflow; its YAML owns preparation, fixed five-branch Parallel/Join, and reduction; production branches delegate complete current Lane semantics, successful siblings remain embedded in one parent Run, only failed branches retry, the coarse `run-reporting-module-work` Tool definition is removed, and the existing legacy barrier finalizer is reused from one extracted boundary without copying or adding hash/CAS logic (this commit)
 - `WP-02/WP-09: persist nested runtime events` — nested Subworkflows now emit standard workflow/action/output lifecycle events through the parent Runtime Host sink; the selectable Reporting runner persists top-level and tail events in the exact Run directory, without a child state directory (this commit)
 - `WP-08/WP-09: run reporting stages in one parent state` — `distribution-reporting.yaml` now branches partial/full work itself and invokes the packaged tail as a recoverable Subworkflow; the selectable declarative runner enters one `WorkflowRuntimeHost`, persists only the exact run identity, removes the coarse tail Tool, and resumes inside a failed tail without replaying completed module work or prior tail stages (this commit)
 - `WP-06/WP-09: persist failed subworkflow progress` — a failed nested effect now returns its child WorkflowState to the parent Runtime Host before the parent failure transition is persisted; a same-Run retry reuses completed child Actions and reruns only the failed Action without creating a child Run directory (this commit)
@@ -97,6 +99,9 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Production-Cohort Characterization first failed because the top-level plan still began with the coarse Tool; after the YAML change it compiled as Cohort Subworkflow → If → Tail Subworkflow → End. The first execution then failed because the Runtime Context lacked the compiled Cohort, which was corrected by binding that child plan and its file-declared branch Tools.
+- Failed-branch Characterization proved a two-module production adapter attempt drained its sibling, persisted the child branch states inside the parent Run, then retried only failed module `2.2`: `1 passed`. The legacy finalizer extraction retained the existing all-ready and failure-barrier behavior: `2 passed`.
+- Production Cohort affected Reporting runner/Cohort/Lane/tail, current module concurrency, Capability package, Runtime Host, and Kernel import-boundary selection passed: `29 passed`. The wheel rebuilt and contains the top-level/Cohort YAML plus `prepare-module-cohort.yaml`, and no longer contains `run-reporting-module-work.yaml`. Ruff passed for the changed focused paths and `git diff --check` passed. No full regression or real runtime test ran.
 - Nested-event Characterization first failed because the child workflow had no events; after implementation the generic Host emitted the complete child lifecycle and the production Reporting entry persisted the ordered tail lifecycle beside the one authoritative state: `2 passed` focused, `10 passed` affected. Ruff and `git diff --check` passed. No full regression or real runtime test ran.
 - Top-level file-graph Characterization initially failed because the packaged workflow still used a coarse tail Tool; after implementation its compiled kinds are Tool → If → Subworkflow → End and the declared child Workflow is resolved.
 - One-parent focused cases passed for partial module delivery, failed module retry, complete module→tail execution, and failed-tail nested recovery. The latter proved module work called once, Cross reused, Chief retried, and one Run directory: `5 passed` with the packaged compiler case.
@@ -185,7 +190,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 - No new production orchestration dependency is approved or added.
 - `jsonschema>=4.23,<5` was added only to execute the required generic JSON Schema Contract Adapter; it is not an orchestration dependency and is not used for runtime gates, security checks, hashes, or CAS.
 - WP-07 added no hash or CAS implementation. Its scripted recheck delta contains only the changed assigned narrative, so the new path does not create unchanged-content fingerprints; existing Legacy compact-delta behavior remains untouched.
-- WP-08 uses the cohort WorkflowState as the authoritative result. It does not call the Legacy hash-bearing `WorkflowReducer`, does not write a new barrier artifact, and publishes the cohort output only after all five typed Lane outcomes are completed.
+- The original WP-08 standalone detailed-review Cohort uses its WorkflowState as the authoritative result. It does not call the Legacy hash-bearing `WorkflowReducer`, does not write a new barrier artifact, and publishes its output only after all five typed Lane outcomes are completed.
+- The production Cohort reuses the existing `ReportWorkflowRunner._finalize_module_lanes` compatibility boundary, which contains the pre-existing `WorkflowReducer.write_module_barrier` call and historical completion metadata. The extraction moved that code without copying, expanding, or adding any hash/CAS calculation; generic branch retry depends only on WorkflowState outcomes.
 - WP-10 keeps the Capability `gates/` index intentionally empty because the migrated path has no new acceptance or decision Gate. Existing Reporting recovery behavior is indexed without new attempt limits, hashes, CAS, or validation chains.
 - The explicit Reporting engine selection is routing, not a new acceptance or safety Gate: existing Reporting starts omit the parameter and remain `legacy`; only the generic declarative Capability start passes `declarative`. The readable run prefix preserves the same selection across resume without a new metadata verifier, digest, or CAS record.
 

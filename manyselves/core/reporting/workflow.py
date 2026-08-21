@@ -5281,6 +5281,165 @@ class ReportWorkflowRunner:
         )
         return submission, completion_ref, completion, lane_state
 
+    def _finalize_module_lanes(
+        self,
+        requested_modules: tuple[str, ...],
+        state: dict,
+        workflow_id: str,
+        results: dict[
+            str, tuple[ModuleSubmission, str, LaneCompletion, dict]
+        ],
+        failures: list[BaseException],
+        failures_by_module: dict[str, BaseException],
+    ) -> None:
+        """Integrate module results and reduce the cohort at its barrier."""
+
+        completions: list[tuple[str, LaneCompletion]] = []
+        for module_id in requested_modules:
+            if module_id in results:
+                submission, completion_ref, completion, lane_state = results[module_id]
+                state.setdefault("module_submissions", {})[module_id] = submission
+                state.setdefault("specialist_submissions", {})[module_id] = lane_state[
+                    "specialist_submissions"
+                ][module_id]
+                state.setdefault("module_review_completion_refs", {})[module_id] = (
+                    lane_state["module_review_completion_refs"][module_id]
+                )
+                state.setdefault("review_exception_refs", []).extend(
+                    ref
+                    for ref in lane_state.get("review_exception_refs", [])
+                    if ref not in state.get("review_exception_refs", [])
+                )
+            elif module_id in state.get("module_submissions", {}):
+                submission = state["module_submissions"][module_id]
+                spec = self._lane_task_spec(state, module_id)
+                completion_ref, completion = self._build_lane_completion(
+                    state, module_id, submission, spec
+                )
+            else:
+                # The lane has no promotable typed completion. Preserve successful siblings
+                # and record this terminal state in the cohort barrier below.
+                continue
+            self._record_recovery_lane(
+                state,
+                stage="module",
+                lane_id=module_id,
+                status="completed",
+                result_ref=(
+                    f"Work/runs/{state['run_id']}/modules/"
+                    f"{module_id}-r{submission.revision}.json"
+                ),
+                revision=submission.revision,
+            )
+            completions.append((completion_ref, completion))
+
+        if failures_by_module:
+            failure_refs: dict[str, list[str]] = {}
+            for module_id in sorted(failures_by_module, key=float):
+                exception_root = (
+                    self.service.workspace
+                    / f"Work/runs/{state['run_id']}/lanes/module-{module_id}/exceptions"
+                )
+                failure_refs[module_id] = [
+                    path.relative_to(self.service.workspace).as_posix()
+                    for path in sorted(exception_root.glob("*.json"))
+                    if path.is_file()
+                ]
+            terminal_ref = (
+                f"Work/runs/{state['run_id']}/lanes/"
+                + (
+                    "module-barrier.json"
+                    if set(requested_modules) == set(REPORT_MODULE_IDS)
+                    else "partial-module-barrier.json"
+                )
+            )
+            self.service.store.write_json(
+                terminal_ref,
+                {
+                    "kind": "module_lane_terminal_barrier",
+                    "version": 1,
+                    "run_id": state["run_id"],
+                    "target_modules": sorted(requested_modules, key=float),
+                    "status": "failed",
+                    "scope": (
+                        "full"
+                        if set(requested_modules) == set(REPORT_MODULE_IDS)
+                        else "partial"
+                    ),
+                    "completion_refs": {
+                        completion.module_id: ref for ref, completion in completions
+                    },
+                    "completion_hashes": {
+                        completion.module_id: completion.completion_sha256()
+                        for _ref, completion in completions
+                    },
+                    "failure_refs": failure_refs,
+                    "terminal_statuses": {
+                        module_id: (
+                            "completed"
+                            if any(
+                                completion.module_id == module_id
+                                for _ref, completion in completions
+                            )
+                            else "failed"
+                        )
+                        for module_id in sorted(requested_modules, key=float)
+                    },
+                },
+            )
+            state["module_lane_barrier_ref"] = terminal_ref
+            for module_id, failure in failures_by_module.items():
+                self._record_recovery_lane(
+                    state,
+                    stage="module",
+                    lane_id=module_id,
+                    status="failed",
+                    error=str(failure),
+                )
+            self._checkpoint(
+                state,
+                "module-work",
+                "failed",
+                "; ".join(
+                    f"{module_id}: {failures_by_module[module_id]}"
+                    for module_id in sorted(failures_by_module, key=float)
+                ),
+            )
+            # Do not enter Cross when any module lane failed.  The caller will
+            # surface the first deterministic error while all successful lane
+            # artifacts remain recoverable.
+            raise failures[0]
+
+        barrier = WorkflowReducer(
+            self.service.workspace, state["run_id"]
+        ).write_module_barrier(
+            list(requested_modules),
+            completions,
+            partial=set(requested_modules) != set(REPORT_MODULE_IDS),
+        )
+        state["module_lane_barrier_ref"] = (
+            f"Work/runs/{state['run_id']}/lanes/"
+            + (
+                "module-barrier.json"
+                if barrier.scope == "full"
+                else "partial-module-barrier.json"
+            )
+        )
+        self._record_recovery_aggregate(
+            state,
+            stage="module",
+            lane_ids=list(requested_modules),
+            result_ref=state["module_lane_barrier_ref"],
+        )
+        LocalEventStore(self.service.workspace, state["run_id"]).append(
+            "StageCompleted",
+            stage_id="module-work",
+            artifact_refs=[self._artifact_ref(state["module_lane_barrier_ref"])],
+            correlation_id=workflow_id,
+            payload={"target_modules": list(requested_modules)},
+        )
+        self._checkpoint(state, "module-work", "in_progress")
+
     async def _run_module_lanes(
         self,
         requested_modules: tuple[str, ...],
@@ -5492,151 +5651,14 @@ class ReportWorkflowRunner:
         # recover the missing lane.  Keep this map intentionally best-effort;
         # no ordinary failure is replayed inside the same cohort.
 
-        completions: list[tuple[str, LaneCompletion]] = []
-        for module_id in requested_modules:
-            if module_id in results:
-                submission, completion_ref, completion, lane_state = results[module_id]
-                state.setdefault("module_submissions", {})[module_id] = submission
-                state.setdefault("specialist_submissions", {})[module_id] = lane_state[
-                    "specialist_submissions"
-                ][module_id]
-                state.setdefault("module_review_completion_refs", {})[module_id] = (
-                    lane_state["module_review_completion_refs"][module_id]
-                )
-                state.setdefault("review_exception_refs", []).extend(
-                    ref
-                    for ref in lane_state.get("review_exception_refs", [])
-                    if ref not in state.get("review_exception_refs", [])
-                )
-            elif module_id in state.get("module_submissions", {}):
-                submission = state["module_submissions"][module_id]
-                spec = self._lane_task_spec(state, module_id)
-                completion_ref, completion = self._build_lane_completion(
-                    state, module_id, submission, spec
-                )
-            else:
-                # The lane has no promotable typed completion. Preserve successful siblings
-                # and record this terminal state in the cohort barrier below.
-                continue
-            self._record_recovery_lane(
-                state,
-                stage="module",
-                lane_id=module_id,
-                status="completed",
-                result_ref=(
-                    f"Work/runs/{state['run_id']}/modules/"
-                    f"{module_id}-r{submission.revision}.json"
-                ),
-                revision=submission.revision,
-            )
-            completions.append((completion_ref, completion))
-
-        if failures_by_module:
-            failure_refs: dict[str, list[str]] = {}
-            for module_id in sorted(failures_by_module, key=float):
-                exception_root = (
-                    self.service.workspace
-                    / f"Work/runs/{state['run_id']}/lanes/module-{module_id}/exceptions"
-                )
-                failure_refs[module_id] = [
-                    path.relative_to(self.service.workspace).as_posix()
-                    for path in sorted(exception_root.glob("*.json"))
-                    if path.is_file()
-                ]
-            terminal_ref = (
-                f"Work/runs/{state['run_id']}/lanes/"
-                + (
-                    "module-barrier.json"
-                    if set(requested_modules) == set(REPORT_MODULE_IDS)
-                    else "partial-module-barrier.json"
-                )
-            )
-            self.service.store.write_json(
-                terminal_ref,
-                {
-                    "kind": "module_lane_terminal_barrier",
-                    "version": 1,
-                    "run_id": state["run_id"],
-                    "target_modules": sorted(requested_modules, key=float),
-                    "status": "failed",
-                    "scope": (
-                        "full"
-                        if set(requested_modules) == set(REPORT_MODULE_IDS)
-                        else "partial"
-                    ),
-                    "completion_refs": {
-                        completion.module_id: ref for ref, completion in completions
-                    },
-                    "completion_hashes": {
-                        completion.module_id: completion.completion_sha256()
-                        for _ref, completion in completions
-                    },
-                    "failure_refs": failure_refs,
-                    "terminal_statuses": {
-                        module_id: (
-                            "completed"
-                            if any(
-                                completion.module_id == module_id
-                                for _ref, completion in completions
-                            )
-                            else "failed"
-                        )
-                        for module_id in sorted(requested_modules, key=float)
-                    },
-                },
-            )
-            state["module_lane_barrier_ref"] = terminal_ref
-            for module_id, failure in failures_by_module.items():
-                self._record_recovery_lane(
-                    state,
-                    stage="module",
-                    lane_id=module_id,
-                    status="failed",
-                    error=str(failure),
-                )
-            self._checkpoint(
-                state,
-                "module-work",
-                "failed",
-                "; ".join(
-                    f"{module_id}: {failures_by_module[module_id]}"
-                    for module_id in sorted(failures_by_module, key=float)
-                ),
-            )
-            # Do not enter Cross when any module lane failed.  The caller will
-            # surface the first deterministic error while all successful lane
-            # artifacts remain recoverable.
-            raise failures[0]
-
-        barrier = WorkflowReducer(
-            self.service.workspace, state["run_id"]
-        ).write_module_barrier(
-            list(requested_modules),
-            completions,
-            partial=set(requested_modules) != set(REPORT_MODULE_IDS),
-        )
-        state["module_lane_barrier_ref"] = (
-            f"Work/runs/{state['run_id']}/lanes/"
-            + (
-                "module-barrier.json"
-                if barrier.scope == "full"
-                else "partial-module-barrier.json"
-            )
-        )
-        self._record_recovery_aggregate(
+        self._finalize_module_lanes(
+            requested_modules,
             state,
-            stage="module",
-            lane_ids=list(requested_modules),
-            result_ref=state["module_lane_barrier_ref"],
+            workflow_id,
+            results,
+            failures,
+            failures_by_module,
         )
-        event_store.append(
-            "StageCompleted",
-            stage_id="module-work",
-            artifact_refs=[self._artifact_ref(state["module_lane_barrier_ref"])],
-            correlation_id=workflow_id,
-            payload={"target_modules": list(requested_modules)},
-        )
-        self._checkpoint(state, "module-work", "in_progress")
 
     async def _module_pipeline(
         self,

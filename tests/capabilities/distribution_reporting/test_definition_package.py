@@ -139,7 +139,9 @@ def test_capability_adapters_expose_the_executable_reporting_definitions() -> No
     assert lane.actions[0]["tool"] == "build-module-initial-review-input"
     assert lane.actions[2]["id"] == "module-2.1-initial-review-r0"
     assert cohort.id == "distribution-module-cohort"
-    assert cohort.actions[0]["max_concurrency"] == 2
+    assert next(
+        action for action in cohort.actions if action["id"] == "module-cohort"
+    )["max_concurrency"] == 2
     assert tail.id == "distribution-reporting-tail"
     assert tail.actions == packaged_tail.actions
 
@@ -163,9 +165,12 @@ def test_top_level_reporting_workflow_is_an_executable_capability_definition() -
     )
 
     assert [action.kind for action in plan.actions] == [
-        "invoke_tool",
+        "subworkflow",
         "if",
         "subworkflow",
         "end_workflow",
     ]
-    assert plan.workflow_ids == ["distribution-reporting-tail"]
+    assert plan.workflow_ids == [
+        "distribution-module-cohort",
+        "distribution-reporting-tail",
+    ]

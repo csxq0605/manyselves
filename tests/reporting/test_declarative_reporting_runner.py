@@ -8,9 +8,11 @@ from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.agentic_models import ModuleSubmission
 from manyselves.core.reporting.declarative_reporting_runner import (
     DeclarativeReportWorkflowRunner,
+    _CurrentModuleStages,
     execute_declarative_module_stage,
 )
 from manyselves.core.reporting.models import REPORT_MODULE_IDS, ReportRequest
+from manyselves.core.reporting.parallel_runtime import LaneCompletion
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
@@ -44,7 +46,7 @@ async def test_declarative_module_stage_runs_the_current_complete_cohort_as_an_a
     assert state["completed"] == ["2.1", "2.2"]
     assert completed.status is WorkflowStatus.COMPLETED
     assert completed.outputs["result"]["run_id"] == "report-declarative-module"
-    assert completed.subworkflow_states == {}
+    assert completed.subworkflow_states["run-module-cohort"]["status"] == "completed"
     assert [path.name for path in (tmp_path / "Work" / "runs").iterdir()] == [
         "report-declarative-module"
     ]
@@ -85,6 +87,128 @@ async def test_declarative_module_stage_resumes_the_same_failed_action(
     assert calls == 2
     assert state["module_stage"] == "completed"
     assert completed.status is WorkflowStatus.COMPLETED
+
+
+class _EmptyLaneRecovery:
+    def load_completed_lanes(self, _stage, _module_ids):
+        return {}
+
+
+class _CurrentLaneRunner:
+    def __init__(self) -> None:
+        self.calls = {module_id: 0 for module_id in REPORT_MODULE_IDS}
+        self.fail_once = "2.2"
+
+    def _raise_if_cancel_requested(self, _run_id: str) -> None:
+        return None
+
+    def _recovery_store(self, _state: dict) -> _EmptyLaneRecovery:
+        return _EmptyLaneRecovery()
+
+    def _recovery_stage_name(self, stage: str) -> str:
+        return stage
+
+    def _load_recovery_module_lane(self, *_args):
+        return None
+
+    async def _execute_module_lane(
+        self,
+        module_id: str,
+        lane_state: dict,
+        _workflow_id: str,
+        **_kwargs,
+    ):
+        self.calls[module_id] += 1
+        if module_id == self.fail_once:
+            self.fail_once = ""
+            raise RuntimeError("injected declarative lane failure")
+        submission = ModuleSubmission(
+            module_id=module_id,
+            submodule_narratives={
+                submodule_id: f"{submodule_id} body"
+                for submodule_id in REPORT_TAXONOMY[module_id].submodules
+            },
+            claims=[],
+            source_ids=[],
+            unresolved_questions=[],
+            revision=0,
+        )
+        lane_state.setdefault("module_submissions", {})[module_id] = submission
+        lane_state.setdefault("specialist_submissions", {})[module_id] = submission
+        lane_state.setdefault("module_review_completion_refs", {})[module_id] = (
+            f"reviews/{module_id}.json"
+        )
+        completion = LaneCompletion(
+            lane_id=f"module-{module_id}",
+            run_id=lane_state["run_id"],
+            stage="module",
+            module_id=module_id,
+            result_ref=f"modules/{module_id}.json",
+        )
+        return (
+            submission,
+            f"lanes/{module_id}.json",
+            completion,
+            lane_state,
+        )
+
+    def _finalize_module_lanes(
+        self,
+        requested_modules,
+        state,
+        _workflow_id,
+        _results,
+        failures,
+        _failures_by_module,
+    ) -> None:
+        if failures:
+            raise failures[0]
+        state["cohort_finalized"] = list(requested_modules)
+
+
+@pytest.mark.asyncio
+async def test_top_level_runtime_retries_only_the_failed_file_defined_module_branch(
+    tmp_path: Path,
+) -> None:
+    run_id = "report-declarative-cohort-retry"
+    workflow_id = f"full-power-distribution-report:{run_id}"
+    requested = ("2.1", "2.2")
+    state = {"run_id": run_id}
+    runner = _CurrentLaneRunner()
+    store = FileWorkflowStateStore(tmp_path)
+
+    with pytest.raises(RuntimeError, match="injected declarative lane failure"):
+        await execute_declarative_module_stage(
+            requested_modules=requested,
+            state=state,
+            workflow_id=workflow_id,
+            state_store=store,
+            module_runtime=_CurrentModuleStages(
+                runner,
+                requested,
+                state,
+                workflow_id,
+            ),
+        )
+
+    completed = await execute_declarative_module_stage(
+        requested_modules=requested,
+        state=state,
+        workflow_id=workflow_id,
+        state_store=store,
+        module_runtime=_CurrentModuleStages(
+            runner,
+            requested,
+            state,
+            workflow_id,
+        ),
+    )
+
+    assert runner.calls["2.1"] == 1
+    assert runner.calls["2.2"] == 2
+    assert all(runner.calls[module_id] == 0 for module_id in REPORT_MODULE_IDS[2:])
+    assert state["cohort_finalized"] == ["2.1", "2.2"]
+    assert completed.subworkflow_states["run-module-cohort"]["status"] == "completed"
 
 
 class _TopLevelTailRunner:

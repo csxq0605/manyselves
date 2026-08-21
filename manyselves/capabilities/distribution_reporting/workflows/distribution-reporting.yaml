@@ -21,10 +21,12 @@ state:
   reporting-state: {}
   full-report: false
 actions:
-- id: run-module-work
-  kind: invoke_tool
-  tool: run-reporting-module-work
+- id: run-module-cohort
+  kind: subworkflow
+  workflow: distribution-module-cohort
   input_variable: reporting-state
+  child_input_variable: module-inputs
+  child_output_name: result
   output_variable: reporting-state
 - id: select-reporting-tail
   kind: if

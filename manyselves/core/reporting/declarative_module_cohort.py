@@ -47,10 +47,12 @@ class DeclarativeModuleLaneOutcome(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     module_id: str
-    status: Literal["completed", "failed"]
+    status: Literal["completed", "deferred", "failed"]
     module: ModuleSubmission | None = None
     error: str | None = None
     lane_state: dict[str, Any] | None = None
+    completion_ref: str | None = None
+    completion: dict[str, Any] | None = None
 
 
 class DeclarativeModuleCohortError(RuntimeError):
@@ -94,20 +96,19 @@ async def execute_declarative_module_cohort(
         max_concurrency=max_concurrency,
     )
     module_ids = tuple(REPORT_TAXONOMY)
-    workflow.state = {
-        f"module-{module_id}": modules[module_id]
-        for module_id in module_ids
-    }
+    workflow.state = {"module-inputs": dict(modules)}
     executors = build_builtin_executor_registry()
     plan = WorkflowCompiler(executors).compile(workflow, definitions)
 
     def lane_tool(module_id: str):
-        async def execute(module: Any) -> DeclarativeModuleLaneOutcome:
+        async def execute(module_inputs: Any) -> DeclarativeModuleLaneOutcome:
             try:
                 lane_result = await execute_declarative_module_lane(
                     run_id=run_id,
                     workflow_id=f"{workflow_id}--module-{module_id}",
-                    module=ModuleSubmission.model_validate(module),
+                    module=ModuleSubmission.model_validate(
+                        module_inputs[module_id]
+                    ),
                     initial_scope=initial_scopes[module_id],
                     lifecycle_id="initial",
                     agent_invokers=lane_agent_invokers[module_id],
@@ -137,6 +138,7 @@ async def execute_declarative_module_cohort(
         f"execute-module-lane-{module_id}": lane_tool(module_id)
         for module_id in module_ids
     }
+    tools["prepare-module-cohort"] = lambda value: value
     tools["reduce-module-cohort"] = _reduce_module_cohort
     try:
         state = state_store.load(run_id)
