@@ -173,8 +173,14 @@ class WorkflowRuntimeHost:
         context: RuntimeContext,
     ) -> ActionResult:
         semaphore = asyncio.Semaphore(action.max_concurrency or len(action.branches))
+        existing_results = state.parallel_results.get(action.id, {})
+        existing_states = state.parallel_states.get(action.id, {})
 
         async def execute_branch(branch_id: str, start_action_id: str):
+            if branch_id in existing_results and branch_id in existing_states:
+                return branch_id, WorkflowState.model_validate(
+                    existing_states[branch_id]
+                )
             async with semaphore:
                 branch_state = WorkflowState.for_plan(state.run_id, plan)
                 branch_state.variables = deepcopy(state.variables)
@@ -204,14 +210,20 @@ class WorkflowRuntimeHost:
             next_action_id=action.join,
             parallel_result_updates={
                 action.id: {
-                    branch_id: branch_state.variables
-                    for branch_id, branch_state in completed_branches
+                    **existing_results,
+                    **{
+                        branch_id: branch_state.variables
+                        for branch_id, branch_state in completed_branches
+                    },
                 }
             },
             parallel_state_updates={
                 action.id: {
-                    branch_id: branch_state.model_dump(mode="json")
-                    for branch_id, branch_state in completed_branches
+                    **existing_states,
+                    **{
+                        branch_id: branch_state.model_dump(mode="json")
+                        for branch_id, branch_state in completed_branches
+                    },
                 }
             },
         )
@@ -272,6 +284,9 @@ class WorkflowRuntimeHost:
                 return state
             effect = transition.effects[0]
             if effect.action_id == stop_at:
+                state = state.model_copy(deep=True)
+                state.status = WorkflowStatus.COMPLETED
+                state.next_action_id = None
                 return state
             action = actions[effect.action_id]
             result = await self._execute_action(plan, action, state, context)

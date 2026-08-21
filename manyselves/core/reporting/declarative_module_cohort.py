@@ -15,13 +15,20 @@ from manyselves.kernel.definitions import (
     ToolDefinition,
     WorkflowDefinition,
 )
-from manyselves.kernel.executors import (
-    ControlFlowWorkflowExecutor,
-    RuntimeContext,
-    build_builtin_executor_registry,
-)
+from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.ports import AgentInvoker, WorkflowStateStore
-from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
+from manyselves.kernel.workflow import (
+    ResolvedPlan,
+    WorkflowCompiler,
+    WorkflowState,
+    WorkflowStatus,
+    retry_parallel_branches,
+)
+from manyselves.runtime.state_store import InMemoryWorkflowStateStore
+from manyselves.runtime.workflow_host import (
+    InMemoryWorkflowEventSink,
+    WorkflowRuntimeHost,
+)
 
 from .agentic_models import ModuleSubmission
 from .declarative_module_lane import (
@@ -40,6 +47,7 @@ class DeclarativeModuleLaneOutcome(BaseModel):
     status: Literal["completed", "failed"]
     module: ModuleSubmission | None = None
     error: str | None = None
+    lane_state: dict[str, Any] | None = None
 
 
 class DeclarativeModuleCohortError(RuntimeError):
@@ -205,7 +213,7 @@ async def execute_declarative_module_cohort(
     def lane_tool(module_id: str):
         async def execute(module: Any) -> DeclarativeModuleLaneOutcome:
             try:
-                result = await execute_declarative_module_lane(
+                lane_result = await execute_declarative_module_lane(
                     run_id=run_id,
                     workflow_id=f"{workflow_id}--module-{module_id}",
                     module=ModuleSubmission.model_validate(module),
@@ -213,8 +221,10 @@ async def execute_declarative_module_cohort(
                     lifecycle_id="initial",
                     agent_invokers=lane_agent_invokers[module_id],
                     validate_subject=validate_subject,
-                    state_store=state_store,
+                    state_store=InMemoryWorkflowStateStore(),
+                    return_state=True,
                 )
+                result, lane_state = lane_result
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -227,6 +237,7 @@ async def execute_declarative_module_cohort(
                 module_id=module_id,
                 status="completed",
                 module=result,
+                lane_state=lane_state.model_dump(mode="json"),
             )
 
         return execute
@@ -236,9 +247,19 @@ async def execute_declarative_module_cohort(
         for module_id in module_ids
     }
     tools["reduce-module-cohort"] = _reduce_module_cohort
-    completed = await ControlFlowWorkflowExecutor(executors, state_store).execute(
+    try:
+        state = state_store.load(run_id)
+    except FileNotFoundError:
+        state = WorkflowState.for_plan(run_id, plan)
+    else:
+        state = _retry_failed_module_lanes(plan, state, module_ids)
+    completed = await WorkflowRuntimeHost(
+        executors,
+        state_store,
+        InMemoryWorkflowEventSink(),
+    ).execute(
         plan,
-        WorkflowState.for_plan(f"{run_id}--module-cohort", plan),
+        state,
         RuntimeContext(tools=tools, contracts=contracts, definitions=definitions),
     )
     if completed.status is not WorkflowStatus.COMPLETED:
@@ -248,6 +269,33 @@ async def execute_declarative_module_cohort(
         module_id: ModuleSubmission.model_validate(value)
         for module_id, value in completed.outputs["result"].items()
     }
+
+
+def _retry_failed_module_lanes(
+    plan: ResolvedPlan,
+    state: WorkflowState,
+    module_ids: tuple[str, ...],
+) -> WorkflowState:
+    if state.status is not WorkflowStatus.FAILED:
+        return state
+    branches = state.parallel_results.get("module-cohort", {})
+    failed = {
+        module_id
+        for module_id in module_ids
+        if module_id in branches
+        and DeclarativeModuleLaneOutcome.model_validate(
+            branches[module_id][f"outcome-{module_id}"]
+        ).status
+        == "failed"
+    }
+    if not failed:
+        return state
+    return retry_parallel_branches(
+        plan,
+        state,
+        parallel_action_id="module-cohort",
+        branch_ids=failed,
+    )
 
 
 def _reduce_module_cohort(values: Mapping[str, Any]) -> dict[str, ModuleSubmission]:

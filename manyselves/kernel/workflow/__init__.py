@@ -1,7 +1,7 @@
 """Business-neutral workflow models and compiler."""
 
 from .compiler import CompilerError, WorkflowCompiler
-from .input import WorkflowInputError, resume_waiting_input
+from .input import WorkflowInputError, resume_waiting_input, retry_parallel_branches
 from .models import (
     ActionExecutionState,
     ActionExecutionStatus,
@@ -76,4 +76,5 @@ __all__ = [
     "WorkflowTransition",
     "WorkflowInputError",
     "resume_waiting_input",
+    "retry_parallel_branches",
 ]

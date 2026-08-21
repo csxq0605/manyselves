@@ -15,11 +15,11 @@
 ## Current position
 
 - Current work package: `WP-01/WP-11 architecture completion audit reopened`
-- Last completed vertical slice: Parallel/Join and Subworkflow execute as Runtime effects while branch and child states remain nested in the one authoritative parent WorkflowState
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `01033d3` (`WP-06: reduce basic control flow in the stateless kernel`); the nested parallel/subworkflow slice is this document's commit
+- Last completed vertical slice: the Reporting module Lane and Cohort run through the stateless Runtime Host; Cohort recovery keeps completed branches inside the parent WorkflowState and reruns only failed branches
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `ce37244` (`WP-06: keep parallel and child state in one runtime run`); the Reporting one-state migration slice is this document's commit
 - Current migration stage: `stateless Kernel and Runtime Host migration`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
-- Next automatic action: migrate the packaged Reporting module Lane and Cohort definitions to `WorkflowRuntimeHost`, remove their programmatic-only workflow construction, and stop creating per-Lane/per-Cohort shadow state directories
+- Next automatic action: move the detailed Reporting Lane and Cohort definitions out of programmatic builders into the packaged Capability files, then compile those same files for execution
 
 ## Reopened architecture completion audit
 
@@ -61,6 +61,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
+- `WP-07/WP-08: recover module lanes in one runtime state` — both detailed Reporting paths execute effects through `WorkflowRuntimeHost`; Lane states are embedded in parent Parallel branch state, only the parent Run is persisted, and a failed Cohort retry uses a generic pure branch-reset transform so completed sibling branches are not replayed (this commit)
 - `WP-06: keep parallel and child state in one runtime run` — Runtime Host executes Parallel/Join/Subworkflow effects, honors declared concurrency, and stores branch/child WorkflowState snapshots inside the parent state; tests prove no branch or child Run directories are created (this commit)
 - `01033d3` — `WP-06: reduce basic control flow in the stateless kernel`; moves If/ConditionGroup/Goto/ForEach decisions and bounded back-edge state into the pure reducer; the neutral parameter fixture now runs Tool, Contract, branch, Agent, Conversation, and Goto through `WorkflowRuntimeHost` instead of the persistence-owning control executor
 - `6fde929` — `WP-02: execute effects outside the stateless kernel`; adds the pure Start/Success/Failure reducer and ExecuteAction effects; a Runtime Host now executes effects, persists one WorkflowState, appends standard workflow/action/output events, and reuses a completed same-Run result without replay
@@ -95,6 +96,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Reporting one-state recovery Characterization replaced the old shadow-directory assertion and initially failed because the parent branch snapshot stopped at Join as `running`; after implementation, a same-Run retry invoked only failed module `2.2`, reused the other four completed branches, completed the parent Run, and left exactly one Run directory: `1 passed`.
+- Reporting one-state affected Lane, Cohort, Runtime Host, Interaction/Output, and basic-control selection passed: `18 passed`; Ruff and `git diff --check` passed. No full regression, Provider, browser, or server test ran.
 - Stateless Parallel/Join/Subworkflow focused Host selection passed: `4 passed`; affected new/legacy control, sequential, neutral Capability, and Kernel boundary selection passed: `25 passed`; Ruff passed after import normalization.
 - Stateless basic-control focused Host plus neutral Tool/Agent/If/Goto selection passed: `5 passed`; the affected legacy/new sequential and control-flow comparison plus Kernel boundary selection passed: `23 passed`.
 - Stateless-kernel Characterization initially failed collection because StartWorkflow and the Runtime Host did not exist; after implementation, pure non-mutating transition and effect/persistence/event/same-Run reuse tests passed: `2 passed`.

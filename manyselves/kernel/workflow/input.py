@@ -6,6 +6,7 @@ from manyselves.kernel.contracts import ContractAdapter
 
 from .models import (
     ActionExecutionStatus,
+    ParallelAction,
     RequestInputAction,
     ResolvedPlan,
     WorkflowState,
@@ -15,6 +16,48 @@ from .models import (
 
 class WorkflowInputError(ValueError):
     """Raised when supplied input does not match the current waiting action."""
+
+
+def retry_parallel_branches(
+    plan: ResolvedPlan,
+    state: WorkflowState,
+    *,
+    parallel_action_id: str,
+    branch_ids: set[str],
+) -> WorkflowState:
+    """Return a runnable copy that preserves every unselected branch result."""
+
+    parallel_index, parallel_action = next(
+        (index, action)
+        for index, action in enumerate(plan.actions)
+        if action.id == parallel_action_id
+    )
+    if not isinstance(parallel_action, ParallelAction):
+        raise WorkflowInputError(f"action is not parallel: {parallel_action_id}")
+
+    resumed = state.model_copy(deep=True)
+    results = resumed.parallel_results.get(parallel_action_id, {})
+    branch_states = resumed.parallel_states.get(parallel_action_id, {})
+    for branch_id in branch_ids:
+        results.pop(branch_id, None)
+        branch_states.pop(branch_id, None)
+
+    for action in plan.actions[parallel_index:]:
+        action_state = resumed.actions[action.id]
+        action_state.status = ActionExecutionStatus.PENDING
+        action_state.output = None
+        action_state.error = None
+        resumed.control_frames.pop(action.id, None)
+        output_variable = getattr(action, "output_variable", None)
+        if output_variable is not None:
+            resumed.variables.pop(output_variable, None)
+
+    resumed.status = WorkflowStatus.PENDING
+    resumed.outputs.clear()
+    resumed.waiting_input = None
+    resumed.next_action_index = parallel_index
+    resumed.next_action_id = parallel_action_id
+    return resumed
 
 
 def resume_waiting_input(

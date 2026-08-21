@@ -5,6 +5,32 @@ from pathlib import Path
 from manyselves.kernel.workflow import ResolvedPlan, WorkflowState
 
 
+class InMemoryWorkflowStateStore:
+    """Non-persisting store for branch and child execution nested in a parent Run."""
+
+    def __init__(self) -> None:
+        self._states: dict[str, WorkflowState] = {}
+        self._plans: dict[str, ResolvedPlan] = {}
+
+    def save(self, state: WorkflowState) -> None:
+        self._states[state.run_id] = state.model_copy(deep=True)
+
+    def load(self, run_id: str) -> WorkflowState:
+        try:
+            return self._states[run_id].model_copy(deep=True)
+        except KeyError as exc:
+            raise FileNotFoundError(run_id) from exc
+
+    def save_plan(self, run_id: str, plan: ResolvedPlan) -> None:
+        self._plans[run_id] = plan.model_copy(deep=True)
+
+    def load_plan(self, run_id: str) -> ResolvedPlan:
+        try:
+            return self._plans[run_id].model_copy(deep=True)
+        except KeyError as exc:
+            raise FileNotFoundError(run_id) from exc
+
+
 class FileWorkflowStateStore:
     def __init__(self, workspace: Path) -> None:
         self._workspace = Path(workspace)

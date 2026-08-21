@@ -11,9 +11,6 @@ from manyselves.core.reporting.agentic_models import (
 from manyselves.core.reporting.declarative_module_cohort import (
     execute_declarative_module_cohort,
 )
-from manyselves.core.reporting.declarative_module_lane import (
-    execute_declarative_module_lane,
-)
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
@@ -171,17 +168,6 @@ async def test_failed_lane_does_not_reexecute_or_erase_completed_lane(
     tracker = _tracker()
     modules, scopes, invokers = _cohort_inputs(tracker, failed="2.2")
     completed_invoker = invokers["2.1"]["evidence-auditor"]
-    await execute_declarative_module_lane(
-        run_id=run_id,
-        workflow_id="workflow-wp08-precompleted-2.1",
-        module=modules["2.1"],
-        initial_scope=scopes["2.1"],
-        lifecycle_id="initial",
-        agent_invokers=invokers["2.1"],
-        validate_subject=_passed_validation,
-        state_store=state_store,
-    )
-    assert completed_invoker.calls == 1
 
     with pytest.raises(RuntimeError, match="injected lane failure"):
         await execute_declarative_module_cohort(
@@ -196,9 +182,39 @@ async def test_failed_lane_does_not_reexecute_or_erase_completed_lane(
         )
 
     assert completed_invoker.calls == 1
-    completed_state = state_store.load(f"{run_id}--module-2.1-initial")
-    assert completed_state.status is WorkflowStatus.COMPLETED
-    assert completed_state.outputs["result"]["module_id"] == "2.1"
-    cohort_state = state_store.load(f"{run_id}--module-cohort")
+    cohort_state = state_store.load(run_id)
     assert cohort_state.status is WorkflowStatus.FAILED
     assert cohort_state.outputs == {}
+    assert (
+        cohort_state.parallel_states["module-cohort"]["2.1"]["status"]
+        == WorkflowStatus.COMPLETED
+    )
+
+    retry_tracker = _tracker()
+    retry_modules, retry_scopes, retry_invokers = _cohort_inputs(retry_tracker)
+    completed = await execute_declarative_module_cohort(
+        run_id=run_id,
+        workflow_id="workflow-wp08-failure",
+        modules=retry_modules,
+        initial_scopes=retry_scopes,
+        lane_agent_invokers=retry_invokers,
+        validate_subject=_passed_validation,
+        state_store=state_store,
+        max_concurrency=2,
+    )
+
+    assert set(completed) == set(MODULE_IDS)
+    assert completed_invoker.calls == 1
+    assert retry_invokers["2.1"]["evidence-auditor"].calls == 0
+    assert retry_invokers["2.2"]["evidence-auditor"].calls == 1
+    assert all(
+        retry_invokers[module_id]["evidence-auditor"].calls == 0
+        for module_id in MODULE_IDS
+        if module_id != "2.2"
+    )
+    recovered_state = state_store.load(run_id)
+    assert recovered_state.status is WorkflowStatus.COMPLETED
+    assert set(recovered_state.parallel_states["module-cohort"]) == set(MODULE_IDS)
+    assert [path.name for path in (tmp_path / "Work" / "runs").iterdir()] == [
+        run_id
+    ]

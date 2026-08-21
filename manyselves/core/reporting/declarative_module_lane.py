@@ -18,14 +18,14 @@ from manyselves.kernel.definitions import (
     ToolDefinition,
     WorkflowDefinition,
 )
-from manyselves.kernel.executors import (
-    ControlFlowWorkflowExecutor,
-    RuntimeContext,
-    build_builtin_executor_registry,
-)
+from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.ports import AgentInvocationOutcome, AgentInvoker, WorkflowStateStore
 from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
 from manyselves.runtime.semantic_trace import SemanticEventKind, SemanticTraceRecorder
+from manyselves.runtime.workflow_host import (
+    InMemoryWorkflowEventSink,
+    WorkflowRuntimeHost,
+)
 
 from .agentic_models import (
     ModuleReviewFindingSubmission,
@@ -228,7 +228,8 @@ async def execute_declarative_module_lane(
     validate_subject: ModuleSubjectValidator,
     state_store: WorkflowStateStore,
     trace: SemanticTraceRecorder | None = None,
-) -> ModuleSubmission:
+    return_state: bool = False,
+) -> ModuleSubmission | tuple[ModuleSubmission, WorkflowState]:
     """Execute the explicit WP-07 path without changing the Legacy default."""
 
     definitions, contracts, workflow = build_module_lane_definitions(module.module_id)
@@ -286,7 +287,11 @@ async def execute_declarative_module_lane(
             status="running",
         )
 
-    completed = await ControlFlowWorkflowExecutor(executors, state_store).execute(
+    completed = await WorkflowRuntimeHost(
+        executors,
+        state_store,
+        InMemoryWorkflowEventSink(),
+    ).execute(
         plan,
         state,
         RuntimeContext(
@@ -313,6 +318,8 @@ async def execute_declarative_module_lane(
             workflow_id=workflow_id,
             status="completed",
         )
+    if return_state:
+        return result, completed
     return result
 
 

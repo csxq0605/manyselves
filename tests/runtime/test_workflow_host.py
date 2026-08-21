@@ -18,6 +18,7 @@ from manyselves.kernel.workflow import (
     WorkflowCompiler,
     WorkflowState,
     WorkflowStatus,
+    retry_parallel_branches,
 )
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.workflow_host import (
@@ -196,10 +197,12 @@ async def test_runtime_host_joins_parallel_branches_inside_one_run_state(
     registry.register(workflow)
     plan = WorkflowCompiler(executors).compile(workflow, registry)
     active = 0
+    calls = 0
     maximum_active = 0
 
     async def double(value: int) -> int:
-        nonlocal active, maximum_active
+        nonlocal active, calls, maximum_active
+        calls += 1
         active += 1
         maximum_active = max(maximum_active, active)
         await asyncio.sleep(0)
@@ -207,23 +210,40 @@ async def test_runtime_host_joins_parallel_branches_inside_one_run_state(
         return value * 2
 
     store = FileWorkflowStateStore(tmp_path)
-    completed = await WorkflowRuntimeHost(
+    host = WorkflowRuntimeHost(
         executors,
         store,
         InMemoryWorkflowEventSink(),
-    ).execute(
+    )
+    context = RuntimeContext(
+        tools={"double": double},
+        contracts=contracts,
+        definitions=registry,
+    )
+    completed = await host.execute(
         plan,
         WorkflowState.for_plan("parallel-host-run", plan),
-        RuntimeContext(
-            tools={"double": double},
-            contracts=contracts,
-            definitions=registry,
-        ),
+        context,
     )
 
     assert maximum_active == 2
+    assert calls == 2
     assert completed.outputs == {"result": {"left": 2, "right": 4}}
     assert set(completed.parallel_states["parallel"]) == {"left", "right"}
+    resumed = retry_parallel_branches(
+        plan,
+        completed,
+        parallel_action_id="parallel",
+        branch_ids={"left"},
+    )
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert set(completed.parallel_states["parallel"]) == {"left", "right"}
+    assert set(resumed.parallel_states["parallel"]) == {"right"}
+
+    recovered = await host.execute(plan, resumed, context)
+
+    assert recovered.outputs == {"result": {"left": 2, "right": 4}}
+    assert calls == 3
     run_directories = [
         path.name for path in (tmp_path / "Work" / "runs").iterdir()
     ]
