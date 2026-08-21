@@ -1,19 +1,24 @@
 """Effect execution, state persistence, and event logging around the Kernel."""
 
+import asyncio
+from copy import deepcopy
 from pathlib import Path
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from manyselves.kernel.executors import ExecutorRegistry, RuntimeContext
+from manyselves.kernel.executors import ActionResult, ExecutorRegistry, RuntimeContext
 from manyselves.kernel.ports import WorkflowStateStore
 from manyselves.kernel.workflow import (
     ActionFailed,
     ActionKind,
     ActionSucceeded,
+    JoinAction,
+    ParallelAction,
     ResolvedPlan,
     StartWorkflow,
     StatelessWorkflowKernel,
+    SubworkflowAction,
     WorkflowState,
     WorkflowStatus,
 )
@@ -115,11 +120,7 @@ class WorkflowRuntimeHost:
             action = actions[effect.action_id]
             self._emit("action.started", state, action_id=action.id)
             try:
-                result = await self._executors.require(action.kind).execute(
-                    action,
-                    state,
-                    context,
-                )
+                result = await self._execute_action(plan, action, state, context)
             except Exception as exc:
                 failed = self._kernel.transition(
                     plan,
@@ -130,6 +131,150 @@ class WorkflowRuntimeHost:
                 self._emit("action.failed", failed.state, action_id=action.id, error=str(exc))
                 self._emit("workflow.failed", failed.state, error=str(exc))
                 raise
+            event = ActionSucceeded(action.id, result)
+
+    async def _execute_action(
+        self,
+        plan: ResolvedPlan,
+        action,
+        state: WorkflowState,
+        context: RuntimeContext,
+    ) -> ActionResult:
+        if isinstance(action, ParallelAction):
+            return await self._execute_parallel(plan, action, state, context)
+        if isinstance(action, JoinAction):
+            try:
+                branches = state.parallel_results[action.parallel]
+            except KeyError as exc:
+                raise RuntimeError(
+                    f"join {action.id} has no completed parallel result"
+                ) from exc
+            joined = {
+                branch_id: branches[branch_id][variable]
+                for branch_id, variable in action.inputs.items()
+            }
+            return ActionResult(
+                output=joined,
+                variable_updates={action.output_variable: joined},
+            )
+        if isinstance(action, SubworkflowAction):
+            return await self._execute_subworkflow(action, state, context)
+        return await self._executors.require(action.kind).execute(
+            action,
+            state,
+            context,
+        )
+
+    async def _execute_parallel(
+        self,
+        plan: ResolvedPlan,
+        action: ParallelAction,
+        state: WorkflowState,
+        context: RuntimeContext,
+    ) -> ActionResult:
+        semaphore = asyncio.Semaphore(action.max_concurrency or len(action.branches))
+
+        async def execute_branch(branch_id: str, start_action_id: str):
+            async with semaphore:
+                branch_state = WorkflowState.for_plan(state.run_id, plan)
+                branch_state.variables = deepcopy(state.variables)
+                branch_state.conversations = deepcopy(state.conversations)
+                branch_state.next_action_index = next(
+                    index
+                    for index, candidate in enumerate(plan.actions)
+                    if candidate.id == start_action_id
+                )
+                branch_state.next_action_id = start_action_id
+                completed = await self._execute_nested(
+                    plan,
+                    branch_state,
+                    context,
+                    stop_at=action.join,
+                )
+                return branch_id, completed
+
+        completed_branches = await asyncio.gather(
+            *(
+                execute_branch(branch_id, start_action_id)
+                for branch_id, start_action_id in action.branches.items()
+            )
+        )
+        return ActionResult(
+            output=sorted(action.branches),
+            next_action_id=action.join,
+            parallel_result_updates={
+                action.id: {
+                    branch_id: branch_state.variables
+                    for branch_id, branch_state in completed_branches
+                }
+            },
+            parallel_state_updates={
+                action.id: {
+                    branch_id: branch_state.model_dump(mode="json")
+                    for branch_id, branch_state in completed_branches
+                }
+            },
+        )
+
+    async def _execute_subworkflow(
+        self,
+        action: SubworkflowAction,
+        state: WorkflowState,
+        context: RuntimeContext,
+    ) -> ActionResult:
+        try:
+            child_plan = context.subworkflows[action.workflow]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"missing compiled subworkflow: {action.workflow}"
+            ) from exc
+        saved = state.subworkflow_states.get(action.id)
+        if saved is None:
+            child_state = WorkflowState.for_plan(state.run_id, child_plan)
+            child_state.variables[action.child_input_variable] = state.variables[
+                action.input_variable
+            ]
+        else:
+            child_state = WorkflowState.model_validate(saved)
+        completed = await self._execute_nested(
+            child_plan,
+            child_state,
+            context,
+        )
+        try:
+            child_output = completed.outputs[action.child_output_name]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"subworkflow {action.workflow} has no output {action.child_output_name}"
+            ) from exc
+        return ActionResult(
+            output=child_output,
+            variable_updates={action.output_variable: child_output},
+            subworkflow_state_updates={
+                action.id: completed.model_dump(mode="json")
+            },
+        )
+
+    async def _execute_nested(
+        self,
+        plan: ResolvedPlan,
+        state: WorkflowState,
+        context: RuntimeContext,
+        *,
+        stop_at: str | None = None,
+    ) -> WorkflowState:
+        actions = {action.id: action for action in plan.actions}
+        event = StartWorkflow()
+        while True:
+            transition = self._kernel.transition(plan, state, event)
+            state = transition.state
+            if not transition.effects:
+                return state
+            effect = transition.effects[0]
+            if effect.action_id == stop_at:
+                return state
+            action = actions[effect.action_id]
+            result = await self._execute_action(plan, action, state, context)
             event = ActionSucceeded(action.id, result)
 
     def _emit(

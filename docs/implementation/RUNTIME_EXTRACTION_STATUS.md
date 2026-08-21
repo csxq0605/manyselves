@@ -15,11 +15,11 @@
 ## Current position
 
 - Current work package: `WP-01/WP-11 architecture completion audit reopened`
-- Last completed vertical slice: `If`, `ConditionGroup`, `Goto`, and `ForEach` decisions now reduce inside the stateless Kernel; the neutral Tool/Agent/Goto loop executes through the Runtime Host
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `6fde929` (`WP-02: execute effects outside the stateless kernel`); the stateless basic-control slice is this document's commit
+- Last completed vertical slice: Parallel/Join and Subworkflow execute as Runtime effects while branch and child states remain nested in the one authoritative parent WorkflowState
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `01033d3` (`WP-06: reduce basic control flow in the stateless kernel`); the nested parallel/subworkflow slice is this document's commit
 - Current migration stage: `stateless Kernel and Runtime Host migration`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
-- Next automatic action: move Parallel/Join and Subworkflow scheduling onto the pure Transition/Effect boundary with branch/child state nested in the one authoritative Run state, then remove StateStore ownership from Kernel executor modules
+- Next automatic action: migrate the packaged Reporting module Lane and Cohort definitions to `WorkflowRuntimeHost`, remove their programmatic-only workflow construction, and stop creating per-Lane/per-Cohort shadow state directories
 
 ## Reopened architecture completion audit
 
@@ -61,7 +61,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
-- `WP-06: reduce basic control flow in the stateless kernel` — moves If/ConditionGroup/Goto/ForEach decisions and bounded back-edge state into the pure reducer; the neutral parameter fixture now runs Tool, Contract, branch, Agent, Conversation, and Goto through `WorkflowRuntimeHost` instead of the persistence-owning control executor (this commit)
+- `WP-06: keep parallel and child state in one runtime run` — Runtime Host executes Parallel/Join/Subworkflow effects, honors declared concurrency, and stores branch/child WorkflowState snapshots inside the parent state; tests prove no branch or child Run directories are created (this commit)
+- `01033d3` — `WP-06: reduce basic control flow in the stateless kernel`; moves If/ConditionGroup/Goto/ForEach decisions and bounded back-edge state into the pure reducer; the neutral parameter fixture now runs Tool, Contract, branch, Agent, Conversation, and Goto through `WorkflowRuntimeHost` instead of the persistence-owning control executor
 - `6fde929` — `WP-02: execute effects outside the stateless kernel`; adds the pure Start/Success/Failure reducer and ExecuteAction effects; a Runtime Host now executes effects, persists one WorkflowState, appends standard workflow/action/output events, and reuses a completed same-Run result without replay
 - `197cca6` — `WP-02/WP-11: execute declared interactions and outputs`; adds Interaction/Output definition kinds and references, compiles RequestInput/PublishResult, persists a waiting WorkflowState, resumes through a pure validated state transition, and publishes the declared result without Capability-specific logic
 - `6cd2688` — `WP-01/WP-11: bind capability runtimes from definitions`; adds explicit Capability entry points and trusted Python runtime-factory references, dispatches start/input/run/output/cost through a generic binding catalog, and moves all ReportRequest/UserSupplement/snapshot translation into the Distribution Reporting adapter
@@ -94,6 +95,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Stateless Parallel/Join/Subworkflow focused Host selection passed: `4 passed`; affected new/legacy control, sequential, neutral Capability, and Kernel boundary selection passed: `25 passed`; Ruff passed after import normalization.
 - Stateless basic-control focused Host plus neutral Tool/Agent/If/Goto selection passed: `5 passed`; the affected legacy/new sequential and control-flow comparison plus Kernel boundary selection passed: `23 passed`.
 - Stateless-kernel Characterization initially failed collection because StartWorkflow and the Runtime Host did not exist; after implementation, pure non-mutating transition and effect/persistence/event/same-Run reuse tests passed: `2 passed`.
 - Stateless sequential affected Runtime, Workflow, Definition, neutral Capability, and Kernel import-boundary selection passed: `50 passed`; Ruff passed for all changed paths.

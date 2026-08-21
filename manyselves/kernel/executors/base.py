@@ -59,6 +59,14 @@ class ActionResult:
     variable_updates: dict[str, Any] = field(default_factory=dict)
     output_updates: dict[str, Any] = field(default_factory=dict)
     conversation_updates: dict[str, ConversationRecord] = field(default_factory=dict)
+    parallel_result_updates: dict[str, dict[str, dict[str, Any]]] = field(
+        default_factory=dict
+    )
+    parallel_state_updates: dict[str, dict[str, dict[str, Any]]] = field(
+        default_factory=dict
+    )
+    subworkflow_state_updates: dict[str, dict[str, Any]] = field(default_factory=dict)
+    next_action_id: str | None = None
     waiting_input: dict[str, Any] | None = None
     clear_waiting_input: bool = False
     workflow_status: WorkflowStatus | None = None

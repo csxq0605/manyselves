@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -142,4 +143,163 @@ async def test_runtime_host_executes_effects_persists_events_and_reuses_completi
         "action.started",
         "action.completed",
         "workflow.completed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_host_joins_parallel_branches_inside_one_run_state(
+    tmp_path: Path,
+) -> None:
+    registry, executors, _plan, contracts = _workflow()
+    workflow = WorkflowDefinition(
+        id="host-parallel",
+        version="1.0.0",
+        description="Parallel host fixture",
+        state={"left-input": 1, "right-input": 2},
+        actions=[
+            {
+                "id": "parallel",
+                "kind": "parallel",
+                "branches": {"left": "left", "right": "right"},
+                "join": "join",
+            },
+            {
+                "id": "left",
+                "kind": "invoke_tool",
+                "tool": "double",
+                "input_variable": "left-input",
+                "output_variable": "left-output",
+            },
+            {"id": "left-done", "kind": "goto", "target": "join"},
+            {
+                "id": "right",
+                "kind": "invoke_tool",
+                "tool": "double",
+                "input_variable": "right-input",
+                "output_variable": "right-output",
+            },
+            {"id": "right-done", "kind": "goto", "target": "join"},
+            {
+                "id": "join",
+                "kind": "join",
+                "parallel": "parallel",
+                "inputs": {"left": "left-output", "right": "right-output"},
+                "output_variable": "joined",
+            },
+            {
+                "id": "finish",
+                "kind": "end_workflow",
+                "output_variable": "joined",
+            },
+        ],
+    )
+    registry.register(workflow)
+    plan = WorkflowCompiler(executors).compile(workflow, registry)
+    active = 0
+    maximum_active = 0
+
+    async def double(value: int) -> int:
+        nonlocal active, maximum_active
+        active += 1
+        maximum_active = max(maximum_active, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return value * 2
+
+    store = FileWorkflowStateStore(tmp_path)
+    completed = await WorkflowRuntimeHost(
+        executors,
+        store,
+        InMemoryWorkflowEventSink(),
+    ).execute(
+        plan,
+        WorkflowState.for_plan("parallel-host-run", plan),
+        RuntimeContext(
+            tools={"double": double},
+            contracts=contracts,
+            definitions=registry,
+        ),
+    )
+
+    assert maximum_active == 2
+    assert completed.outputs == {"result": {"left": 2, "right": 4}}
+    assert set(completed.parallel_states["parallel"]) == {"left", "right"}
+    run_directories = [
+        path.name for path in (tmp_path / "Work" / "runs").iterdir()
+    ]
+    assert run_directories == ["parallel-host-run"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_host_nests_subworkflow_state_in_the_parent_run(
+    tmp_path: Path,
+) -> None:
+    registry, executors, _plan, contracts = _workflow()
+    child = WorkflowDefinition(
+        id="host-child",
+        version="1.0.0",
+        description="Child fixture",
+        state={"input": 0},
+        actions=[
+            {
+                "id": "child-double",
+                "kind": "invoke_tool",
+                "tool": "double",
+                "input_variable": "input",
+                "output_variable": "doubled",
+            },
+            {
+                "id": "child-finish",
+                "kind": "end_workflow",
+                "output_variable": "doubled",
+            },
+        ],
+    )
+    parent = WorkflowDefinition(
+        id="host-parent",
+        version="1.0.0",
+        description="Parent fixture",
+        state={"value": 4},
+        actions=[
+            {
+                "id": "call-child",
+                "kind": "subworkflow",
+                "workflow": child.id,
+                "input_variable": "value",
+                "child_input_variable": "input",
+                "child_output_name": "result",
+                "output_variable": "child-result",
+            },
+            {
+                "id": "parent-finish",
+                "kind": "end_workflow",
+                "output_variable": "child-result",
+            },
+        ],
+    )
+    registry.register(child)
+    registry.register(parent)
+    child_plan = WorkflowCompiler(executors).compile(child, registry)
+    parent_plan = WorkflowCompiler(executors).compile(parent, registry)
+    store = FileWorkflowStateStore(tmp_path)
+
+    completed = await WorkflowRuntimeHost(
+        executors,
+        store,
+        InMemoryWorkflowEventSink(),
+    ).execute(
+        parent_plan,
+        WorkflowState.for_plan("subworkflow-host-run", parent_plan),
+        RuntimeContext(
+            tools={"double": lambda value: value * 2},
+            contracts=contracts,
+            definitions=registry,
+            subworkflows={child.id: child_plan},
+        ),
+    )
+
+    assert completed.outputs == {"result": 8}
+    assert completed.subworkflow_states["call-child"]["status"] == "completed"
+    assert [path.name for path in (tmp_path / "Work" / "runs").iterdir()] == [
+        "subworkflow-host-run"
     ]

@@ -87,6 +87,9 @@ class StatelessWorkflowKernel:
         next_state.variables.update(result.variable_updates)
         next_state.outputs.update(result.output_updates)
         next_state.conversations.update(result.conversation_updates)
+        next_state.parallel_results.update(result.parallel_result_updates)
+        next_state.parallel_states.update(result.parallel_state_updates)
+        next_state.subworkflow_states.update(result.subworkflow_state_updates)
         if result.clear_waiting_input:
             next_state.waiting_input = None
         if result.waiting_input is not None:
@@ -103,7 +106,14 @@ class StatelessWorkflowKernel:
         current_index = next(
             index for index, action in enumerate(plan.actions) if action.id == event.action_id
         )
-        next_state.next_action_index = current_index + 1
+        next_index = current_index + 1
+        if result.next_action_id is not None:
+            next_index = next(
+                index
+                for index, action in enumerate(plan.actions)
+                if action.id == result.next_action_id
+            )
+        next_state.next_action_index = next_index
         if next_state.status is WorkflowStatus.COMPLETED:
             next_state.next_action_id = None
             return WorkflowTransition(next_state)
@@ -111,7 +121,7 @@ class StatelessWorkflowKernel:
         return self._schedule(
             plan,
             next_state,
-            current_index + 1,
+            next_index,
             reuse_completed=False,
         )
 

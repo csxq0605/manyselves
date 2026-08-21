@@ -255,6 +255,8 @@ class WorkflowState(BaseModel):
     control_steps: int = Field(default=0, ge=0)
     control_frames: dict[str, Any] = Field(default_factory=dict)
     parallel_results: dict[str, dict[str, dict[str, Any]]] = Field(default_factory=dict)
+    parallel_states: dict[str, dict[str, dict[str, Any]]] = Field(default_factory=dict)
+    subworkflow_states: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     @classmethod
     def for_plan(cls, run_id: str, plan: ResolvedPlan) -> "WorkflowState":
