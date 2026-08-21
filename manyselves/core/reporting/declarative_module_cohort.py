@@ -57,6 +57,7 @@ class DeclarativeModuleLaneOutcome(BaseModel):
     lane_state: dict[str, Any] | None = None
     completion_ref: str | None = None
     completion: dict[str, Any] | None = None
+    retry_requested: bool = False
 
 
 class DeclarativeModuleCohortError(RuntimeError):
@@ -140,6 +141,11 @@ async def execute_declarative_module_cohort(
         "resume-current-module-authoring": lane_runtime.resume_author_lane,
         "module-lane-can-review": lane_runtime.can_review_lane,
         "prepare-current-module-review": lane_runtime.prepare_review_lane,
+        "module-review-preflight-needs-revision": lane_runtime.false_lane,
+        "prepare-current-module-preflight-revision": lane_runtime.noop_lane,
+        "accept-current-module-preflight-revision": (
+            lane_runtime.accept_passthrough
+        ),
         "module-review-requires-agent": lane_runtime.review_requires_agent,
         "accept-current-module-review": lane_runtime.accept_review_lane,
         "module-review-needs-revision": lane_runtime.review_needs_revision,
@@ -158,6 +164,7 @@ async def execute_declarative_module_cohort(
         "module-lane-has-deferred-main-exception": (
             lane_runtime.lane_has_deferred_main_exception
         ),
+        "module-lane-retries-preflight-revision": lane_runtime.false_lane,
         "prepare-current-module-main-exception": lane_runtime.noop_lane,
         "module-main-exception-requires-agent": lane_runtime.false_lane,
         "accept-current-module-main-exception": lane_runtime.accept_passthrough,
@@ -429,23 +436,37 @@ def _retry_failed_module_lanes(
     if state.status is not WorkflowStatus.FAILED:
         return state
     branches = state.parallel_results.get("module-cohort", {})
-    failed = {
-        module_id
+    outcomes = {
+        module_id: DeclarativeModuleLaneOutcome.model_validate(
+            branches[module_id][f"outcome-{module_id}"]
+        )
         for module_id in module_ids
         if module_id in branches
-        and DeclarativeModuleLaneOutcome.model_validate(
-            branches[module_id][f"outcome-{module_id}"]
-        ).status
-        == "failed"
+    }
+    failed = {
+        module_id
+        for module_id, outcome in outcomes.items()
+        if outcome.status == "failed"
     }
     if not failed:
         return state
-    return retry_parallel_branches(
+    resumed = retry_parallel_branches(
         plan,
         state,
         parallel_action_id="module-cohort",
         branch_ids=failed,
     )
+    resumable = {
+        module_id: outcome.model_copy(
+            update={"retry_requested": True}
+        ).model_dump(mode="json")
+        for module_id, outcome in outcomes.items()
+        if module_id in failed
+        and (outcome.lane_state or {}).get("lane_context") is not None
+    }
+    if resumable:
+        resumed.variables["lane-outcomes"] = resumable
+    return resumed
 
 
 def _reduce_module_cohort(values: Mapping[str, Any]) -> dict[str, ModuleSubmission]:

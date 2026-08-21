@@ -139,6 +139,21 @@ class ReportingModuleRuntime(Protocol):
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext: ...
 
+    async def review_preflight_needs_revision(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool: ...
+
+    async def prepare_preflight_revision_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def accept_preflight_revision_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
     async def review_requires_agent(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
@@ -205,6 +220,11 @@ class ReportingModuleRuntime(Protocol):
     ) -> DeclarativeModuleRuntimeLaneContext: ...
 
     async def lane_has_deferred_main_exception(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool: ...
+
+    async def lane_retries_preflight_revision(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> bool: ...
@@ -512,6 +532,15 @@ async def execute_declarative_module_stage(
         "resume-current-module-authoring": module_runtime.resume_author_lane,
         "module-lane-can-review": module_runtime.can_review_lane,
         "prepare-current-module-review": module_runtime.prepare_review_lane,
+        "module-review-preflight-needs-revision": (
+            module_runtime.review_preflight_needs_revision
+        ),
+        "prepare-current-module-preflight-revision": (
+            module_runtime.prepare_preflight_revision_lane
+        ),
+        "accept-current-module-preflight-revision": (
+            module_runtime.accept_preflight_revision_lane
+        ),
         "module-review-requires-agent": module_runtime.review_requires_agent,
         "accept-current-module-review": module_runtime.accept_review_lane,
         "module-review-needs-revision": module_runtime.review_needs_revision,
@@ -529,6 +558,9 @@ async def execute_declarative_module_stage(
         "continue-current-module-recheck": module_runtime.continue_recheck_lane,
         "module-lane-has-deferred-main-exception": (
             module_runtime.lane_has_deferred_main_exception
+        ),
+        "module-lane-retries-preflight-revision": (
+            module_runtime.lane_retries_preflight_revision
         ),
         "prepare-current-module-main-exception": (
             module_runtime.prepare_main_exception_lane
@@ -747,6 +779,24 @@ class _BatchModuleRuntime:
     ) -> DeclarativeModuleRuntimeLaneContext:
         return context
 
+    async def review_preflight_needs_revision(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def prepare_preflight_revision_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
+
+    async def accept_preflight_revision_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+
     async def review_requires_agent(
         self,
         _context: DeclarativeModuleRuntimeLaneContext,
@@ -826,6 +876,12 @@ class _BatchModuleRuntime:
         return context
 
     async def lane_has_deferred_main_exception(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def lane_retries_preflight_revision(
         self,
         _context: DeclarativeModuleRuntimeLaneContext,
     ) -> bool:
@@ -1162,16 +1218,29 @@ class _CurrentModuleStages:
     ) -> DeclarativeModuleRuntimeLaneContext:
         if lane_outcome is not None:
             saved_context = (lane_outcome.lane_state or {}).get("lane_context")
-            if saved_context is not None:
+            if saved_context is not None and (
+                lane_outcome.status == "deferred" or lane_outcome.retry_requested
+            ):
                 restored = DeclarativeModuleRuntimeLaneContext.model_validate(
                     saved_context
                 )
                 reporting_state = deepcopy(restored.reporting_state)
                 reporting_state["resume"] = True
                 reporting_state["_defer_main_exceptions"] = False
+                status = (
+                    restored.resume_status
+                    if lane_outcome.status == "failed"
+                    and restored.resume_status is not None
+                    else restored.status
+                )
                 return restored.model_copy(
                     deep=True,
-                    update={"reporting_state": reporting_state},
+                    update={
+                        "reporting_state": reporting_state,
+                        "status": status,
+                        "resume_status": None,
+                        "error": None,
+                    },
                 )
             return DeclarativeModuleRuntimeLaneContext(
                 module_id=module_id,
@@ -1400,13 +1469,20 @@ class _CurrentModuleStages:
     ) -> DeclarativeModuleRuntimeLaneContext:
         if context.status != "authored":
             return context
+        previous_review = context.review
+        preflight_progress = (
+            previous_review.prepared.preflight_progress
+            if previous_review is not None
+            else None
+        )
         try:
-            preparation = await self._runner._prepare_module_initial_review(
+            preparation = await self._runner._prepare_module_initial_review_step(
                 context.module_id,
                 cast(Any, context.module),
                 context.reporting_state,
                 context.workflow_id,
                 initial_scope=set(REPORT_TAXONOMY[context.module_id].submodules),
+                preflight_progress=preflight_progress,
             )
         except asyncio.CancelledError:
             raise
@@ -1416,14 +1492,90 @@ class _CurrentModuleStages:
             deep=True,
             update={
                 "status": (
-                    "review_ready" if preparation.mode == "invoke_agent" else "review_resumed"
+                    "preflight_revision_pending"
+                    if preparation.mode == "preflight_revision"
+                    else (
+                        "review_ready"
+                        if preparation.mode == "invoke_agent"
+                        else "review_resumed"
+                    )
                 ),
                 "module": preparation.current,
                 "review": DeclarativeModuleReviewPreparation(
-                    envelope=cast(Any, preparation.envelope),
+                    envelope=preparation.envelope,
                     reviewer_session_key=preparation.reviewer_session_key,
                     prepared=preparation,
                 ),
+            },
+        )
+
+    @staticmethod
+    async def review_preflight_needs_revision(
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return context.status == "preflight_revision_pending"
+
+    async def prepare_preflight_revision_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.status != "preflight_revision_pending":
+            return context
+        reviewing = cast(DeclarativeModuleReviewPreparation, context.review)
+        try:
+            preparation = (
+                await self._runner._prepare_module_initial_review_preflight_revision(
+                    reviewing.prepared,
+                    context.reporting_state,
+                )
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": "preflight_revision_ready",
+                "revision": DeclarativeModuleRevisionPreparation(
+                    prepared=preparation,
+                ),
+            },
+        )
+
+    async def accept_preflight_revision_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+        result = DeclarativeModuleRevisionAgentResult.model_validate(values["result"])
+        if result.status == "failed":
+            exc = self._author_failures.pop(
+                context.module_id,
+                AgentWorkflowError(result.error or "module preflight revision failed"),
+            )
+            return self._failed_lane_context(context, exc)
+        reviewing = cast(DeclarativeModuleReviewPreparation, context.review)
+        revision = cast(DeclarativeModuleRevisionPreparation, context.revision)
+        try:
+            revised, _subject_ref = (
+                self._runner._accept_module_initial_review_preflight_revision(
+                    reviewing.prepared,
+                    revision.prepared,
+                    cast(Any, result.submission),
+                    context.reporting_state,
+                )
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": "authored",
+                "module": revised,
+                "revision": None,
             },
         )
 
@@ -1785,6 +1937,12 @@ class _CurrentModuleStages:
             "reviewer_exception_deferred",
         }
 
+    @staticmethod
+    async def lane_retries_preflight_revision(
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return context.status == "preflight_revision_ready"
+
     async def prepare_main_exception_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
@@ -2092,7 +2250,11 @@ class _CurrentModuleStages:
                 else context.status
             ),
         )
-        include_lane_state = status == "deferred" or context.module is not None
+        include_lane_context = status == "deferred" or (
+            status == "failed"
+            and context.resume_status == "preflight_revision_ready"
+        )
+        include_lane_state = include_lane_context or context.module is not None
         return DeclarativeModuleLaneOutcome(
             module_id=context.module_id,
             status=status,
@@ -2103,7 +2265,7 @@ class _CurrentModuleStages:
                     "reporting_state": context.reporting_state,
                     **(
                         {"lane_context": context.model_dump(mode="json")}
-                        if status == "deferred"
+                        if include_lane_context
                         else {}
                     ),
                 }
@@ -2142,6 +2304,7 @@ class _CurrentModuleStages:
             deep=True,
             update={
                 "status": status,
+                "resume_status": context.resume_status or context.status,
                 "reporting_state": reporting_state,
                 "error": str(exc),
             },

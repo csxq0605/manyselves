@@ -141,6 +141,16 @@ class ModuleReviewProgress(StrictModel):
     review_protocol_version: int = 1
 
 
+class ModuleReviewPreflightProgress(StrictModel):
+    """In-process state for the existing bounded machine-preflight loop."""
+
+    current: ModuleSubmission
+    attempts: int = 0
+    failure_signatures: list[tuple[tuple[str, str, str], ...]] = Field(
+        default_factory=list
+    )
+
+
 class ModuleInitialReviewPreparation(StrictModel):
     """Typed, serializable boundary before one module Auditor turn.
 
@@ -150,7 +160,7 @@ class ModuleInitialReviewPreparation(StrictModel):
     ``resume=True``.
     """
 
-    mode: Literal["invoke_agent", "continue_existing"]
+    mode: Literal["invoke_agent", "continue_existing", "preflight_revision"]
     run_id: str
     module_id: str
     lifecycle_id: str
@@ -159,6 +169,7 @@ class ModuleInitialReviewPreparation(StrictModel):
     review_root: str
     progress_ref: str
     review_round: int
+    phase: str = "initial"
     scope: list[str]
     current: ModuleSubmission
     subject_ref: str | None = None
@@ -166,6 +177,9 @@ class ModuleInitialReviewPreparation(StrictModel):
     review_input: ModuleReviewInput | None = None
     envelope: TaskEnvelope | None = None
     progress: ModuleReviewProgress | None = None
+    validation_ref: str | None = None
+    validation_target_submodule_ids: list[str] = Field(default_factory=list)
+    preflight_progress: ModuleReviewPreflightProgress | None = None
 
 
 class ModuleInitialReviewAcceptance(StrictModel):
@@ -984,7 +998,7 @@ def _restore_completed_module_review(
     return str(completion_ref)
 
 
-async def prepare_module_initial_review(
+async def prepare_module_initial_review_step(
     runner: "ReportWorkflowRunner",
     *,
     module_id: str,
@@ -994,13 +1008,15 @@ async def prepare_module_initial_review(
     initial_scope: set[str],
     lifecycle_id: str,
     regression_context: ModuleLocalRegressionContext | None = None,
+    preflight_progress: ModuleReviewPreflightProgress | None = None,
 ) -> ModuleInitialReviewPreparation:
-    """Prepare the current initial or local-regression Auditor boundary.
+    """Prepare one machine-preflight or initial/local-regression Auditor step.
 
     The returned model is safe to pass through a generic runtime.  On a
     resumed run with a valid persisted lifecycle, it deliberately returns
     ``continue_existing`` so the caller can invoke ``run_module_review`` with
-    ``resume=True`` instead of repeating the initial Auditor turn.
+    ``resume=True`` instead of repeating the initial Auditor turn.  A failed
+    machine check returns ``preflight_revision`` without invoking an Agent.
     """
 
     if payload.module_id != module_id:
@@ -1049,6 +1065,7 @@ async def prepare_module_initial_review(
                 review_root=review_root,
                 progress_ref=progress_ref,
                 review_round=progress.review_round,
+                phase=progress.phase,
                 scope=list(progress.scope),
                 current=progress.current,
                 subject_ref=(
@@ -1056,6 +1073,7 @@ async def prepare_module_initial_review(
                     f"{module_id}-r{progress.current.revision}.json"
                 ),
                 progress=progress,
+                preflight_progress=preflight_progress,
             )
         if progress.next_action == "review" and progress.phase == "initial":
             current = progress.current
@@ -1063,43 +1081,43 @@ async def prepare_module_initial_review(
             scope = set(progress.scope)
             phase = progress.phase
 
-    preflight_attempts = 0
-    preflight_failure_fingerprints: dict[tuple, int] = {}
-    while True:
-        subject_ref = f"Work/runs/{state['run_id']}/modules/{module_id}-r{current.revision}.json"
-        if not (runner.service.workspace / subject_ref).is_file():
-            _write_model(runner, subject_ref, current)
-        structure_ref = runner._validate_module_structure(
-            state,
-            current,
-            f"review-r{review_round}",
-        )
-        structure_report = ValidationReport.model_validate_json(
-            (runner.service.workspace / structure_ref).read_text(encoding="utf-8")
-        )
-        _require_validation_binding(
-            runner,
-            structure_report,
-            subject_ref=subject_ref,
-            subject_revision=current.revision,
-        )
-        preflight = evaluate_module_review_preflight(
-            runner.service.workspace,
-            run_id=state["run_id"],
-            subject=current,
-            subject_ref=subject_ref,
-            upstream_report=structure_report,
-        )
-        signal_ref = _write_model(
-            runner,
-            (f"{review_root}/preflight-subject-r{current.revision}-review-r{review_round}.json"),
-            preflight.report,
-        )
-        validation_report = preflight.report
-        if validation_report.passed:
-            break
-        preflight_attempts += 1
-        fingerprint = tuple(
+    current_preflight_progress = (
+        ModuleReviewPreflightProgress(current=current)
+        if preflight_progress is None
+        else preflight_progress.model_copy(update={"current": current})
+    )
+    subject_ref = f"Work/runs/{state['run_id']}/modules/{module_id}-r{current.revision}.json"
+    if not (runner.service.workspace / subject_ref).is_file():
+        _write_model(runner, subject_ref, current)
+    structure_ref = runner._validate_module_structure(
+        state,
+        current,
+        f"review-r{review_round}",
+    )
+    structure_report = ValidationReport.model_validate_json(
+        (runner.service.workspace / structure_ref).read_text(encoding="utf-8")
+    )
+    _require_validation_binding(
+        runner,
+        structure_report,
+        subject_ref=subject_ref,
+        subject_revision=current.revision,
+    )
+    preflight = evaluate_module_review_preflight(
+        runner.service.workspace,
+        run_id=state["run_id"],
+        subject=current,
+        subject_ref=subject_ref,
+        upstream_report=structure_report,
+    )
+    signal_ref = _write_model(
+        runner,
+        (f"{review_root}/preflight-subject-r{current.revision}-review-r{review_round}.json"),
+        preflight.report,
+    )
+    validation_report = preflight.report
+    if not validation_report.passed:
+        failure_signature = tuple(
             sorted(
                 (
                     failure.check_id,
@@ -1109,44 +1127,42 @@ async def prepare_module_initial_review(
                 for failure in validation_report.failures
             )
         )
-        repeated = preflight_failure_fingerprints.get(fingerprint, 0) + 1
-        preflight_failure_fingerprints[fingerprint] = repeated
-        if repeated >= 2 or preflight_attempts >= 3:
+        failure_signatures = [
+            *current_preflight_progress.failure_signatures,
+            failure_signature,
+        ]
+        attempts = current_preflight_progress.attempts + 1
+        current_preflight_progress = current_preflight_progress.model_copy(
+            update={
+                "attempts": attempts,
+                "failure_signatures": failure_signatures,
+            }
+        )
+        if failure_signatures.count(failure_signature) >= 2 or attempts >= 3:
             raise ReviewLifecycleError(
                 "module preflight failed repeatedly before semantic review; "
                 "no reviewer finding or verdict was created. "
-                f"module={module_id}; attempts={preflight_attempts}; "
+                f"module={module_id}; attempts={attempts}; "
                 f"validation_ref={signal_ref}"
             )
-        current, _ = await request_module_revision(
-            runner,
-            state=state,
-            workflow_id=workflow_id,
-            subject=current,
-            module_findings=[],
-            cross_findings=(
-                regression_context.trigger_cross_findings if regression_context is not None else []
-            ),
-            validation_ref=signal_ref,
-            validation_target_submodule_ids=set(preflight.target_submodule_ids),
-        )
-        _save_module_review_progress(
-            runner,
-            state=state,
-            progress_ref=progress_ref,
+        return ModuleInitialReviewPreparation(
+            mode="preflight_revision",
+            run_id=state["run_id"],
             module_id=module_id,
-            next_action="review",
-            current=current,
-            pending=[],
-            responses=[],
-            finding_refs=[],
-            verdict_refs=[],
-            resolved_ids=set(),
+            lifecycle_id=lifecycle_id,
+            workflow_id=workflow_id,
+            reviewer_session_key=reviewer_session_key,
+            review_root=review_root,
+            progress_ref=progress_ref,
             review_round=review_round,
             phase=phase,
-            scope=scope,
-            reviewer_session_key=reviewer_session_key,
-            last_reviewed_subject_ref=None,
+            scope=sorted(scope),
+            current=current,
+            subject_ref=subject_ref,
+            progress=progress,
+            validation_ref=signal_ref,
+            validation_target_submodule_ids=sorted(preflight.target_submodule_ids),
+            preflight_progress=current_preflight_progress,
         )
 
     review_subject = module_content_view(current, scope)
@@ -1273,6 +1289,7 @@ async def prepare_module_initial_review(
         review_root=review_root,
         progress_ref=progress_ref,
         review_round=review_round,
+        phase=phase,
         scope=sorted(scope),
         current=current,
         subject_ref=subject_ref,
@@ -1280,7 +1297,91 @@ async def prepare_module_initial_review(
         review_input=review_input,
         envelope=envelope,
         progress=progress,
+        validation_ref=signal_ref,
+        validation_target_submodule_ids=sorted(preflight.target_submodule_ids),
+        preflight_progress=current_preflight_progress,
     )
+
+
+def _record_module_initial_review_preflight_revision(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    preparation: ModuleInitialReviewPreparation,
+    current: ModuleSubmission,
+) -> None:
+    _save_module_review_progress(
+        runner,
+        state=state,
+        progress_ref=preparation.progress_ref,
+        module_id=preparation.module_id,
+        next_action="review",
+        current=current,
+        pending=[],
+        responses=[],
+        finding_refs=[],
+        verdict_refs=[],
+        resolved_ids=set(),
+        review_round=preparation.review_round,
+        phase=preparation.phase,
+        scope=set(preparation.scope),
+        reviewer_session_key=preparation.reviewer_session_key,
+        last_reviewed_subject_ref=None,
+    )
+
+
+async def prepare_module_initial_review(
+    runner: "ReportWorkflowRunner",
+    *,
+    module_id: str,
+    payload: ModuleSubmission,
+    state: dict,
+    workflow_id: str,
+    initial_scope: set[str],
+    lifecycle_id: str,
+    regression_context: ModuleLocalRegressionContext | None = None,
+) -> ModuleInitialReviewPreparation:
+    """Preserve the Legacy machine-correction loop over the one-step boundary."""
+
+    current = payload
+    preflight_progress: ModuleReviewPreflightProgress | None = None
+    while True:
+        preparation = await prepare_module_initial_review_step(
+            runner,
+            module_id=module_id,
+            payload=current,
+            state=state,
+            workflow_id=workflow_id,
+            initial_scope=initial_scope,
+            lifecycle_id=lifecycle_id,
+            regression_context=regression_context,
+            preflight_progress=preflight_progress,
+        )
+        if preparation.mode != "preflight_revision":
+            return preparation
+        current, _ = await request_module_revision(
+            runner,
+            state=state,
+            workflow_id=workflow_id,
+            subject=preparation.current,
+            module_findings=[],
+            cross_findings=(
+                regression_context.trigger_cross_findings
+                if regression_context is not None
+                else []
+            ),
+            validation_ref=preparation.validation_ref,
+            validation_target_submodule_ids=set(
+                preparation.validation_target_submodule_ids
+            ),
+        )
+        _record_module_initial_review_preflight_revision(
+            runner,
+            state=state,
+            preparation=preparation,
+            current=current,
+        )
+        preflight_progress = preparation.preflight_progress
 
 
 def _validate_verdicts(
@@ -1804,6 +1905,30 @@ def accept_module_revision(
                 (runner.service.workspace / subject_ref).read_bytes()
             ).hexdigest(),
         },
+    )
+    return revised, subject_ref
+
+
+def accept_module_initial_review_preflight_revision(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    preparation: ModuleInitialReviewPreparation,
+    revision_preparation: ModuleRevisionPreparation,
+    result: ModuleRevisionSubmission,
+) -> tuple[ModuleSubmission, str]:
+    """Accept one declared machine-preflight correction and resume its review."""
+
+    revised, subject_ref = accept_module_revision(
+        runner,
+        preparation=revision_preparation,
+        result=result,
+    )
+    _record_module_initial_review_preflight_revision(
+        runner,
+        state=state,
+        preparation=preparation,
+        current=revised,
     )
     return revised, subject_ref
 

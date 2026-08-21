@@ -73,7 +73,7 @@ class DeclarativeModuleReviewPreparation(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    envelope: TaskEnvelope
+    envelope: TaskEnvelope | None
     reviewer_session_key: str
     prepared: ModuleInitialReviewPreparation
     acceptance: ModuleInitialReviewAcceptance | ModuleRecheckAcceptance | None = None
@@ -127,6 +127,34 @@ class DeclarativeModuleRecheckPreparation(BaseModel):
     acceptance: ModuleRecheckAcceptance | None = None
 
 
+DeclarativeModuleRuntimeLaneStatus = Literal[
+    "ready",
+    "author_ready",
+    "author_resumed",
+    "authored",
+    "review_ready",
+    "review_resumed",
+    "preflight_revision_pending",
+    "preflight_revision_ready",
+    "revision_pending",
+    "revision_ready",
+    "recheck_pending",
+    "recheck_ready",
+    "author_exception_deferred",
+    "author_exception_ready",
+    "author_exception_resumed",
+    "author_exception_accepted",
+    "reviewer_exception_deferred",
+    "reviewer_exception_ready",
+    "reviewer_exception_resumed",
+    "reviewer_exception_accepted",
+    "reviewed",
+    "completed",
+    "deferred",
+    "failed",
+]
+
+
 class DeclarativeModuleRuntimeLaneContext(BaseModel):
     """Capability-owned state threaded through one file-defined module Lane."""
 
@@ -135,30 +163,8 @@ class DeclarativeModuleRuntimeLaneContext(BaseModel):
     module_id: str
     workflow_id: str
     reporting_state: dict[str, Any]
-    status: Literal[
-        "ready",
-        "author_ready",
-        "author_resumed",
-        "authored",
-        "review_ready",
-        "review_resumed",
-        "revision_pending",
-        "revision_ready",
-        "recheck_pending",
-        "recheck_ready",
-        "author_exception_deferred",
-        "author_exception_ready",
-        "author_exception_resumed",
-        "author_exception_accepted",
-        "reviewer_exception_deferred",
-        "reviewer_exception_ready",
-        "reviewer_exception_resumed",
-        "reviewer_exception_accepted",
-        "reviewed",
-        "completed",
-        "deferred",
-        "failed",
-    ]
+    status: DeclarativeModuleRuntimeLaneStatus
+    resume_status: DeclarativeModuleRuntimeLaneStatus | None = None
     attempt: DeclarativeModuleLaneAttempt | None = None
     authoring: DeclarativeModuleAuthoringPreparation | None = None
     review: DeclarativeModuleReviewPreparation | None = None

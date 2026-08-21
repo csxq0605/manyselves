@@ -16,6 +16,7 @@ parameters:
 - max_concurrency
 state:
   module-inputs: {}
+  lane-outcomes: {}
   module-id-2.1: "2.1"
   module-id-2.2: "2.2"
   module-id-2.3: "2.3"
@@ -43,6 +44,7 @@ actions:
   input_variables:
     reporting-state: prepared-module-inputs
     module-id: module-id-2.1
+    lane-outcomes: lane-outcomes
   child_output_name: result
   output_variable: outcome-2.1
 - id: complete-module-2.1-branch
@@ -54,6 +56,7 @@ actions:
   input_variables:
     reporting-state: prepared-module-inputs
     module-id: module-id-2.2
+    lane-outcomes: lane-outcomes
   child_output_name: result
   output_variable: outcome-2.2
 - id: complete-module-2.2-branch
@@ -65,6 +68,7 @@ actions:
   input_variables:
     reporting-state: prepared-module-inputs
     module-id: module-id-2.3
+    lane-outcomes: lane-outcomes
   child_output_name: result
   output_variable: outcome-2.3
 - id: complete-module-2.3-branch
@@ -76,6 +80,7 @@ actions:
   input_variables:
     reporting-state: prepared-module-inputs
     module-id: module-id-2.4
+    lane-outcomes: lane-outcomes
   child_output_name: result
   output_variable: outcome-2.4
 - id: complete-module-2.4-branch
@@ -87,6 +92,7 @@ actions:
   input_variables:
     reporting-state: prepared-module-inputs
     module-id: module-id-2.5
+    lane-outcomes: lane-outcomes
   child_output_name: result
   output_variable: outcome-2.5
 - id: complete-module-2.5-branch

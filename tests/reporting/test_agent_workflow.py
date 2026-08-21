@@ -65,9 +65,11 @@ from manyselves.core.reporting.review_lifecycle import (
     _apply_chief_patch,
     _require_validation_binding,
     accept_module_initial_review,
+    accept_module_initial_review_preflight_revision,
     accept_module_recheck,
     accept_module_revision,
     prepare_module_initial_review,
+    prepare_module_initial_review_step,
     prepare_module_recheck,
     prepare_module_revision,
     request_module_revision,
@@ -1285,6 +1287,176 @@ async def test_module_preflight_machine_correction_precedes_paid_review(
     )
     assert paid_review_input["subject_revision"] == 1
     assert paid_review_input["validation_report"]["passed"] is True
+
+
+def _preflight_revision_patch(
+    module: ModuleSubmission,
+    target: str,
+    *,
+    preserve_failure: bool,
+) -> ModuleRevisionSubmission:
+    narrative = (
+        module.submodule_narratives[target]
+        if preserve_failure
+        else "### 修订后正文\n\n已移除运行时控制标记，保留现状、风险、行动和验收正文。"
+    )
+    return ModuleRevisionSubmission(
+        module_id=module.module_id,
+        base_revision=module.revision,
+        revision=module.revision + 1,
+        submodule_narratives={target: narrative},
+        claims_upsert=[],
+        claim_ids_remove=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision_responses=[],
+    )
+
+
+@pytest.mark.asyncio
+async def test_module_initial_review_step_returns_machine_correction_before_auditor(
+    tmp_path: Path,
+) -> None:
+    module = _module("2.1")
+    target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
+    module = module.model_copy(
+        update={
+            "submodule_narratives": {
+                **module.submodule_narratives,
+                target: module.submodule_narratives[target] + "\n\n[[APPROVED_MODULE:2.1]]",
+            }
+        }
+    )
+    runner = _ScriptedRunner(tmp_path, [])
+    state = {"run_id": "run-initial-review-machine-step"}
+
+    correction = await prepare_module_initial_review_step(
+        runner,
+        module_id="2.1",
+        payload=module,
+        state=state,
+        workflow_id="workflow-initial-review-machine-step",
+        initial_scope={target},
+        lifecycle_id="initial",
+    )
+
+    assert isinstance(correction, ModuleInitialReviewPreparation)
+    assert correction.mode == "preflight_revision"
+    assert correction.validation_ref is not None
+    assert correction.validation_target_submodule_ids == [target]
+    assert correction.preflight_progress is not None
+    assert correction.envelope is None
+    assert correction.review_input is None
+    assert runner.calls == []
+
+    revision_preparation = await prepare_module_revision(
+        runner,
+        state=state,
+        workflow_id="workflow-initial-review-machine-step",
+        subject=module,
+        validation_ref=correction.validation_ref,
+        validation_target_submodule_ids=set(correction.validation_target_submodule_ids),
+    )
+    revised, subject_ref = accept_module_initial_review_preflight_revision(
+        runner,
+        state=state,
+        preparation=correction,
+        revision_preparation=revision_preparation,
+        result=_preflight_revision_patch(module, target, preserve_failure=False),
+    )
+    assert revised.revision == 1
+    assert subject_ref.endswith("/modules/2.1-r1.json")
+
+    review = await prepare_module_initial_review_step(
+        runner,
+        module_id="2.1",
+        payload=revised,
+        state={**state, "resume": True},
+        workflow_id="workflow-initial-review-machine-step",
+        initial_scope={target},
+        lifecycle_id="initial",
+        preflight_progress=correction.preflight_progress,
+    )
+
+    assert isinstance(review, ModuleInitialReviewPreparation)
+    assert review.mode == "invoke_agent"
+    assert review.envelope is not None
+    assert review.envelope.agent_id == "evidence-auditor"
+    assert review.envelope.allowed_outputs == ["module_review_finding_submission"]
+    assert review.review_input is not None
+    assert review.review_input.subject_ref.endswith("/modules/2.1-r1.json")
+    assert runner.calls == []
+
+    assert review.preflight_progress is not None
+    assert review.preflight_progress.current == revised
+
+
+@pytest.mark.asyncio
+async def test_module_initial_review_step_stops_repeated_machine_failure_before_second_correction(
+    tmp_path: Path,
+) -> None:
+    module = _module("2.1")
+    target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
+    module = module.model_copy(
+        update={
+            "submodule_narratives": {
+                **module.submodule_narratives,
+                target: module.submodule_narratives[target] + "\n\n[[APPROVED_MODULE:2.1]]",
+            }
+        }
+    )
+    runner = _ScriptedRunner(tmp_path, [])
+    state = {"run_id": "run-initial-review-machine-repeat"}
+
+    correction = await prepare_module_initial_review_step(
+        runner,
+        module_id="2.1",
+        payload=module,
+        state=state,
+        workflow_id="workflow-initial-review-machine-repeat",
+        initial_scope={target},
+        lifecycle_id="initial",
+    )
+    assert isinstance(correction, ModuleInitialReviewPreparation)
+    assert correction.mode == "preflight_revision"
+    assert correction.validation_ref is not None
+    assert correction.validation_target_submodule_ids == [target]
+    assert correction.preflight_progress is not None
+
+    revision_preparation = await prepare_module_revision(
+        runner,
+        state=state,
+        workflow_id="workflow-initial-review-machine-repeat",
+        subject=module,
+        validation_ref=correction.validation_ref,
+        validation_target_submodule_ids=set(correction.validation_target_submodule_ids),
+    )
+    revised, subject_ref = accept_module_initial_review_preflight_revision(
+        runner,
+        state=state,
+        preparation=correction,
+        revision_preparation=revision_preparation,
+        result=_preflight_revision_patch(module, target, preserve_failure=True),
+    )
+    assert revised.revision == 1
+    assert subject_ref.endswith("/modules/2.1-r1.json")
+
+    with pytest.raises(ReviewLifecycleError, match="repeated"):
+        await prepare_module_initial_review_step(
+            runner,
+            module_id="2.1",
+            payload=revised,
+            state={**state, "resume": True},
+            workflow_id="workflow-initial-review-machine-repeat",
+            initial_scope={target},
+            lifecycle_id="initial",
+            preflight_progress=correction.preflight_progress,
+        )
+
+    assert runner.calls == []
+    assert not (
+        tmp_path / "Work/runs/run-initial-review-machine-repeat/modules/2.1-r2.json"
+    ).exists()
 
 
 @pytest.mark.asyncio

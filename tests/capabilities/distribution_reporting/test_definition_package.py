@@ -155,10 +155,15 @@ def test_capability_adapters_expose_the_executable_reporting_definitions() -> No
         ]
         == 2
     )
-    assert (
-        next(action for action in cohort.actions if action["id"] == "execute-module-2.1")["kind"]
-        == "subworkflow"
+    initial_lane = next(
+        action for action in cohort.actions if action["id"] == "execute-module-2.1"
     )
+    assert initial_lane["kind"] == "subworkflow"
+    assert initial_lane["input_variables"] == {
+        "reporting-state": "prepared-module-inputs",
+        "module-id": "module-id-2.1",
+        "lane-outcomes": "lane-outcomes",
+    }
     assert tail.id == "distribution-reporting-tail"
     assert tail.actions == packaged_tail.actions
 
@@ -209,6 +214,12 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "invoke_tool",
         "invoke_tool",
         "if",
+        "create_conversation",
+        "invoke_agent",
+        "invoke_tool",
+        "goto",
+        "invoke_tool",
+        "if",
         "invoke_tool",
         "invoke_tool",
         "if",
@@ -234,6 +245,13 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "invoke_tool",
         "if",
         "invoke_tool",
+        "invoke_tool",
+        "if",
+        "invoke_tool",
+        "create_conversation",
+        "invoke_agent",
+        "invoke_tool",
+        "goto",
         "invoke_tool",
         "if",
         "invoke_tool",
@@ -274,6 +292,8 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
     ]
     assert plan.tool_ids == [
         "start-current-module-lane",
+        "module-lane-retries-preflight-revision",
+        "accept-current-module-preflight-revision",
         "module-lane-has-deferred-main-exception",
         "prepare-current-module-main-exception",
         "module-main-exception-requires-agent",
@@ -287,6 +307,8 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "resume-current-module-authoring",
         "module-lane-can-review",
         "prepare-current-module-review",
+        "module-review-preflight-needs-revision",
+        "prepare-current-module-preflight-revision",
         "module-review-requires-agent",
         "resume-current-module-review",
         "accept-current-module-review",
@@ -303,15 +325,15 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "complete-current-module-lane",
     ]
     assert plan.agent_ids == [
-        "main-agent",
         "module-2.1-specialist",
+        "main-agent",
         "evidence-auditor",
     ]
     assert plan.task_ids == [
+        "module-2.1-runtime-revision",
         "module-runtime-main-exception",
         "module-2.1-authoring",
         "module-runtime-initial-review",
-        "module-2.1-runtime-revision",
         "module-runtime-recheck",
     ]
     assert plan.interaction_ids == ["module-main-exception-decision"]

@@ -43,6 +43,41 @@ actions:
     module_id: module-id
     lane_outcomes: lane-outcomes
   output_variable: lane-context
+- id: module-lane-retries-preflight-revision
+  kind: invoke_tool
+  tool: module-lane-retries-preflight-revision
+  input_variable: lane-context
+  output_variable: should-retry-module-preflight-revision
+- id: choose-module-lane-retry
+  kind: if
+  condition:
+    variable: should-retry-module-preflight-revision
+    operator: truthy
+  then: retry-module-preflight-revision-conversation
+  otherwise: module-lane-has-deferred-main-exception
+- id: retry-module-preflight-revision-conversation
+  kind: create_conversation
+  agent: "{author_id}"
+  conversation_key: "{revision_conversation_key}"
+  mode: run
+  output_variable: retried-module-preflight-revision-conversation
+- id: retry-current-module-preflight-revision
+  kind: invoke_agent
+  agent: "{author_id}"
+  task: "{revision_task_id}"
+  conversation_variable: retried-module-preflight-revision-conversation
+  input_variable: lane-context
+  output_variable: retried-module-preflight-revision-agent-result
+- id: accept-retried-module-preflight-revision
+  kind: invoke_tool
+  tool: accept-current-module-preflight-revision
+  input_variables:
+    context: lane-context
+    result: retried-module-preflight-revision-agent-result
+  output_variable: lane-context
+- id: continue-after-retried-module-preflight-revision
+  kind: goto
+  target: prepare-current-module-review
 - id: module-lane-has-deferred-main-exception
   kind: invoke_tool
   tool: module-lane-has-deferred-main-exception
@@ -191,6 +226,46 @@ actions:
   tool: prepare-current-module-review
   input_variable: lane-context
   output_variable: lane-context
+- id: module-review-preflight-needs-revision
+  kind: invoke_tool
+  tool: module-review-preflight-needs-revision
+  input_variable: lane-context
+  output_variable: should-revise-module-preflight
+- id: choose-module-review-preflight
+  kind: if
+  condition:
+    variable: should-revise-module-preflight
+    operator: truthy
+  then: prepare-current-module-preflight-revision
+  otherwise: module-review-requires-agent
+- id: prepare-current-module-preflight-revision
+  kind: invoke_tool
+  tool: prepare-current-module-preflight-revision
+  input_variable: lane-context
+  output_variable: lane-context
+- id: create-module-preflight-revision-conversation
+  kind: create_conversation
+  agent: "{author_id}"
+  conversation_key: "{revision_conversation_key}"
+  mode: run
+  output_variable: module-preflight-revision-conversation
+- id: invoke-current-module-preflight-revision
+  kind: invoke_agent
+  agent: "{author_id}"
+  task: "{revision_task_id}"
+  conversation_variable: module-preflight-revision-conversation
+  input_variable: lane-context
+  output_variable: module-preflight-revision-agent-result
+- id: accept-current-module-preflight-revision
+  kind: invoke_tool
+  tool: accept-current-module-preflight-revision
+  input_variables:
+    context: lane-context
+    result: module-preflight-revision-agent-result
+  output_variable: lane-context
+- id: continue-after-module-preflight-revision
+  kind: goto
+  target: prepare-current-module-review
 - id: module-review-requires-agent
   kind: invoke_tool
   tool: module-review-requires-agent

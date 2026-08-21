@@ -132,11 +132,14 @@ from .review_lifecycle import (
     ModuleInitialReviewPreparation,
     ModuleRecheckAcceptance,
     ModuleRecheckPreparation,
+    ModuleReviewPreflightProgress,
     ModuleRevisionPreparation,
     accept_module_initial_review,
+    accept_module_initial_review_preflight_revision,
     accept_module_recheck,
     accept_module_revision,
     prepare_module_initial_review,
+    prepare_module_initial_review_step,
     prepare_module_recheck,
     prepare_module_revision,
     request_module_revision,
@@ -6114,6 +6117,59 @@ class ReportWorkflowRunner:
             workflow_id=workflow_id,
             initial_scope=initial_scope,
             lifecycle_id="initial",
+        )
+
+    async def _prepare_module_initial_review_step(
+        self,
+        module_id: str,
+        payload: ModuleSubmission,
+        state: dict,
+        workflow_id: str,
+        *,
+        initial_scope: set[str],
+        preflight_progress: ModuleReviewPreflightProgress | None,
+    ) -> ModuleInitialReviewPreparation:
+        return await prepare_module_initial_review_step(
+            self,
+            module_id=module_id,
+            payload=payload,
+            state=state,
+            workflow_id=workflow_id,
+            initial_scope=initial_scope,
+            lifecycle_id="initial",
+            preflight_progress=preflight_progress,
+        )
+
+    async def _prepare_module_initial_review_preflight_revision(
+        self,
+        preparation: ModuleInitialReviewPreparation,
+        state: dict,
+    ) -> ModuleRevisionPreparation:
+        return await prepare_module_revision(
+            self,
+            state=state,
+            workflow_id=preparation.workflow_id,
+            subject=preparation.current,
+            module_findings=[],
+            validation_ref=preparation.validation_ref,
+            validation_target_submodule_ids=set(
+                preparation.validation_target_submodule_ids
+            ),
+        )
+
+    def _accept_module_initial_review_preflight_revision(
+        self,
+        preparation: ModuleInitialReviewPreparation,
+        revision_preparation: ModuleRevisionPreparation,
+        result: ModuleRevisionSubmission,
+        state: dict,
+    ) -> tuple[ModuleSubmission, str]:
+        return accept_module_initial_review_preflight_revision(
+            self,
+            state=state,
+            preparation=preparation,
+            revision_preparation=revision_preparation,
+            result=result,
         )
 
     def _accept_module_initial_review(
