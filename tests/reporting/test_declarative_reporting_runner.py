@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,7 +13,7 @@ from manyselves.core.reporting.declarative_reporting_runner import (
     execute_declarative_module_stage,
 )
 from manyselves.core.reporting.models import REPORT_MODULE_IDS, ReportRequest
-from manyselves.core.reporting.parallel_runtime import LaneCompletion
+from manyselves.core.reporting.parallel_runtime import LaneCompletion, LaneTaskSpec
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
@@ -95,8 +96,10 @@ class _EmptyLaneRecovery:
 
 
 class _CurrentLaneRunner:
-    def __init__(self) -> None:
+    def __init__(self, workspace: Path) -> None:
+        self.service = SimpleNamespace(workspace=workspace)
         self.calls = {module_id: 0 for module_id in REPORT_MODULE_IDS}
+        self.lifecycle = {module_id: [] for module_id in REPORT_MODULE_IDS}
         self.fail_once = "2.2"
 
     def _raise_if_cancel_requested(self, _run_id: str) -> None:
@@ -111,14 +114,38 @@ class _CurrentLaneRunner:
     def _load_recovery_module_lane(self, *_args):
         return None
 
-    async def _execute_module_lane(
+    def _start_module_lane_attempt(
+        self,
+        module_id: str,
+        lane_state: dict,
+        workflow_id: str,
+        _defer_main_exceptions: bool,
+        _lane_state_override,
+    ) -> SimpleNamespace:
+        self.lifecycle[module_id].append("start")
+        return SimpleNamespace(
+            lane_state=lane_state,
+            spec=LaneTaskSpec(
+                lane_id=f"module-{module_id}",
+                run_id=lane_state["run_id"],
+                stage="module",
+                module_id=module_id,
+            ),
+            spec_ref=f"lanes/{module_id}/spec.json",
+            lane_attempt_id=f"attempt-{module_id}",
+            started_at_ns=1,
+            attempt_ref=f"lanes/{module_id}/attempt.json",
+        )
+
+    async def _module_pipeline(
         self,
         module_id: str,
         lane_state: dict,
         _workflow_id: str,
         **_kwargs,
-    ):
+    ) -> ModuleSubmission:
         self.calls[module_id] += 1
+        self.lifecycle[module_id].append("author")
         if module_id == self.fail_once:
             self.fail_once = ""
             raise RuntimeError("injected declarative lane failure")
@@ -133,24 +160,48 @@ class _CurrentLaneRunner:
             unresolved_questions=[],
             revision=0,
         )
+        lane_state.setdefault("specialist_submissions", {})[module_id] = submission
+        return submission
+
+    async def _module_review_loop(
+        self,
+        module_id: str,
+        submission: ModuleSubmission,
+        lane_state: dict,
+        _workflow_id: str,
+        **_kwargs,
+    ) -> ModuleSubmission:
+        self.lifecycle[module_id].append("review")
         lane_state.setdefault("module_submissions", {})[module_id] = submission
         lane_state.setdefault("specialist_submissions", {})[module_id] = submission
         lane_state.setdefault("module_review_completion_refs", {})[module_id] = (
             f"reviews/{module_id}.json"
         )
+        return submission
+
+    def _complete_module_lane_attempt(
+        self,
+        context,
+        submission: ModuleSubmission,
+    ):
+        self.lifecycle[context.module_id].append("complete")
         completion = LaneCompletion(
-            lane_id=f"module-{module_id}",
-            run_id=lane_state["run_id"],
+            lane_id=f"module-{context.module_id}",
+            run_id=context.lane_state["run_id"],
             stage="module",
-            module_id=module_id,
-            result_ref=f"modules/{module_id}.json",
+            module_id=context.module_id,
+            result_ref=f"modules/{context.module_id}.json",
         )
         return (
             submission,
-            f"lanes/{module_id}.json",
+            f"lanes/{context.module_id}.json",
             completion,
-            lane_state,
+            context.lane_state,
         )
+
+    def _fail_module_lane_attempt(self, context, _exc: BaseException) -> None:
+        self.lifecycle[context.module_id].append("fail")
+        return None
 
     def _finalize_module_lanes(
         self,
@@ -174,7 +225,7 @@ async def test_top_level_runtime_retries_only_the_failed_file_defined_module_bra
     workflow_id = f"full-power-distribution-report:{run_id}"
     requested = ("2.1", "2.2")
     state = {"run_id": run_id}
-    runner = _CurrentLaneRunner()
+    runner = _CurrentLaneRunner(tmp_path)
     store = FileWorkflowStateStore(tmp_path)
 
     with pytest.raises(RuntimeError, match="injected declarative lane failure"):
@@ -206,6 +257,21 @@ async def test_top_level_runtime_retries_only_the_failed_file_defined_module_bra
 
     assert runner.calls["2.1"] == 1
     assert runner.calls["2.2"] == 2
+    assert runner.lifecycle["2.1"] == [
+        "start",
+        "author",
+        "review",
+        "complete",
+    ]
+    assert runner.lifecycle["2.2"] == [
+        "start",
+        "author",
+        "fail",
+        "start",
+        "author",
+        "review",
+        "complete",
+    ]
     assert all(runner.calls[module_id] == 0 for module_id in REPORT_MODULE_IDS[2:])
     assert state["cohort_finalized"] == ["2.1", "2.2"]
     assert completed.subworkflow_states["run-module-cohort"]["status"] == "completed"

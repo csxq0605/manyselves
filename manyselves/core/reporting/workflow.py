@@ -13,6 +13,7 @@ import tempfile
 import time
 from contextvars import Token
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -157,6 +158,22 @@ TEMPLATE_SKILL_SOURCE = TEMPLATE_SKILL_ROOT / "source.json"
 FINAL_REVIEW_COMPLETION_SESSION_KEYS = frozenset(
     {"chief-editor-auditor", "final-chapter-wave"}
 )
+
+
+@dataclass(slots=True)
+class _ModuleLaneAttemptContext:
+    """Durable bookkeeping context for one module lane attempt."""
+
+    module_id: str
+    state: dict
+    lane_state: dict
+    workflow_id: str
+    spec: LaneTaskSpec
+    spec_ref: str
+    lane_attempt_id: str
+    started_at_ns: int
+    event_store: LocalEventStore
+    attempt_ref: str
 
 
 class FullReportCheckpoint(StrictModel):
@@ -5130,15 +5147,14 @@ class ReportWorkflowRunner:
             self.service.store.write_json(completion_ref, payload)
         return completion_ref, completion
 
-    async def _execute_module_lane(
+    def _start_module_lane_attempt(
         self,
         module_id: str,
         state: dict,
         workflow_id: str,
-        *,
-        defer_main_exceptions: bool = True,
-        lane_state_override: dict | None = None,
-    ) -> tuple[ModuleSubmission, str, LaneCompletion, dict]:
+        defer_main_exceptions: bool,
+        lane_state_override: dict | None,
+    ) -> _ModuleLaneAttemptContext:
         # A deferred Main exception is resumed from the exact private lane
         # state that reached the cohort boundary.  Rebuilding from the shared
         # state would re-run the author/auditor and could duplicate Provider
@@ -5186,100 +5202,147 @@ class ReportWorkflowRunner:
             correlation_id=workflow_id,
             payload={"module_id": module_id},
         )
-        try:
-            submission = await self._module_pipeline(
-                module_id,
-                lane_state,
-                workflow_id,
-                review=True,
-                checkpoint=False,
-            )
-            completion_ref, completion = self._build_lane_completion(
-                lane_state, module_id, submission, spec
-            )
-        except BaseException as exc:
-            if isinstance(exc, DeferredMainDecision):
-                # Keep the exact in-memory lane state available to the cohort
-                # drain.  The state is also represented by durable progress
-                # and candidate artifacts; this attribute is only a
-                # same-process continuation hint.
-                try:
-                    setattr(exc, "lane_state", lane_state)
-                except Exception:
-                    pass
-            if isinstance(exc, DeferredMainDecision):
-                disposition = "escalate"
-            elif isinstance(
-                exc,
-                (AgentWorkflowBlocked, ReportingNeedsDecisionError),
-            ):
-                disposition = "needs_input"
-            else:
-                disposition = "failed"
-            self.service.store.write_json(
-                attempt_ref,
-                LaneAttemptRecord(
-                    lane_id=spec.lane_id,
-                    task_attempt_id=lane_attempt_id,
-                    lease_epoch=1,
-                    started_at_ns=started_at_ns,
-                    finished_at_ns=time.time_ns(),
-                    status="failed",
-                    error=str(exc),
-                ).model_dump(mode="json"),
-            )
-            candidate_ref = (
-                f"Work/runs/{state['run_id']}/lanes/module-{module_id}/"
-                f"exceptions/{lane_attempt_id}.json"
-            )
-            self.service.store.write_json(
-                candidate_ref,
-                LaneExceptionCandidate(
-                    lane_id=spec.lane_id,
-                    run_id=state["run_id"],
-                    module_id=module_id,
-                    disposition=disposition,
-                    reason=str(exc),
-                    task_attempt_id=lane_attempt_id,
-                ).model_dump(mode="json"),
-            )
-            event_store.append(
-                "TaskFailed",
-                stage_id="module-work",
-                task_id=spec.lane_id,
-                task_attempt_id=lane_attempt_id,
-                lease_epoch=1,
-                correlation_id=workflow_id,
-                artifact_refs=[self._artifact_ref(candidate_ref)],
-                payload={
-                    "module_id": module_id,
-                    "error": str(exc),
-                    "exception_candidate_ref": candidate_ref,
-                },
-            )
-            raise
+        return _ModuleLaneAttemptContext(
+            module_id=module_id,
+            state=state,
+            lane_state=lane_state,
+            workflow_id=workflow_id,
+            spec=spec,
+            spec_ref=spec_ref,
+            lane_attempt_id=lane_attempt_id,
+            started_at_ns=started_at_ns,
+            event_store=event_store,
+            attempt_ref=attempt_ref,
+        )
+
+    def _fail_module_lane_attempt(
+        self,
+        context: _ModuleLaneAttemptContext,
+        exc: BaseException,
+    ) -> None:
+        if isinstance(exc, DeferredMainDecision):
+            # Keep the exact in-memory lane state available to the cohort
+            # drain.  The state is also represented by durable progress
+            # and candidate artifacts; this attribute is only a
+            # same-process continuation hint.
+            try:
+                setattr(exc, "lane_state", context.lane_state)
+            except Exception:
+                pass
+        if isinstance(exc, DeferredMainDecision):
+            disposition = "escalate"
+        elif isinstance(
+            exc,
+            (AgentWorkflowBlocked, ReportingNeedsDecisionError),
+        ):
+            disposition = "needs_input"
+        else:
+            disposition = "failed"
         self.service.store.write_json(
-            attempt_ref,
+            context.attempt_ref,
             LaneAttemptRecord(
-                lane_id=spec.lane_id,
-                task_attempt_id=lane_attempt_id,
+                lane_id=context.spec.lane_id,
+                task_attempt_id=context.lane_attempt_id,
+                lease_epoch=1,
+                started_at_ns=context.started_at_ns,
+                finished_at_ns=time.time_ns(),
+                status="failed",
+                error=str(exc),
+            ).model_dump(mode="json"),
+        )
+        candidate_ref = (
+            f"Work/runs/{context.state['run_id']}/lanes/module-{context.module_id}/"
+            f"exceptions/{context.lane_attempt_id}.json"
+        )
+        self.service.store.write_json(
+            candidate_ref,
+            LaneExceptionCandidate(
+                lane_id=context.spec.lane_id,
+                run_id=context.state["run_id"],
+                module_id=context.module_id,
+                disposition=disposition,
+                reason=str(exc),
+                task_attempt_id=context.lane_attempt_id,
+            ).model_dump(mode="json"),
+        )
+        context.event_store.append(
+            "TaskFailed",
+            stage_id="module-work",
+            task_id=context.spec.lane_id,
+            task_attempt_id=context.lane_attempt_id,
+            lease_epoch=1,
+            correlation_id=context.workflow_id,
+            artifact_refs=[self._artifact_ref(candidate_ref)],
+            payload={
+                "module_id": context.module_id,
+                "error": str(exc),
+                "exception_candidate_ref": candidate_ref,
+            },
+        )
+
+    def _complete_module_lane_attempt(
+        self,
+        context: _ModuleLaneAttemptContext,
+        submission: ModuleSubmission,
+    ) -> tuple[ModuleSubmission, str, LaneCompletion, dict]:
+        completion_ref, completion = self._build_lane_completion(
+            context.lane_state,
+            context.module_id,
+            submission,
+            context.spec,
+        )
+        self.service.store.write_json(
+            context.attempt_ref,
+            LaneAttemptRecord(
+                lane_id=context.spec.lane_id,
+                task_attempt_id=context.lane_attempt_id,
                 lease_epoch=completion.lease_epoch,
-                started_at_ns=started_at_ns,
+                started_at_ns=context.started_at_ns,
                 finished_at_ns=time.time_ns(),
                 status="completed",
             ).model_dump(mode="json"),
         )
-        event_store.append(
+        context.event_store.append(
             "TypedResultAccepted",
             stage_id="module-work",
-            task_id=spec.lane_id,
-            task_attempt_id=lane_attempt_id,
+            task_id=context.spec.lane_id,
+            task_attempt_id=context.lane_attempt_id,
             lease_epoch=completion.lease_epoch,
             artifact_refs=[self._artifact_ref(completion_ref)],
-            correlation_id=workflow_id,
-            payload={"module_id": module_id},
+            correlation_id=context.workflow_id,
+            payload={"module_id": context.module_id},
         )
-        return submission, completion_ref, completion, lane_state
+        return submission, completion_ref, completion, context.lane_state
+
+    async def _execute_module_lane(
+        self,
+        module_id: str,
+        state: dict,
+        workflow_id: str,
+        *,
+        defer_main_exceptions: bool = True,
+        lane_state_override: dict | None = None,
+    ) -> tuple[ModuleSubmission, str, LaneCompletion, dict]:
+        context = self._start_module_lane_attempt(
+            module_id,
+            state,
+            workflow_id,
+            defer_main_exceptions,
+            lane_state_override,
+        )
+        try:
+            submission = await self._module_pipeline(
+                module_id,
+                context.lane_state,
+                workflow_id,
+                review=True,
+                checkpoint=False,
+            )
+            completed = self._complete_module_lane_attempt(context, submission)
+        except BaseException as exc:
+            self._fail_module_lane_attempt(context, exc)
+            raise
+        return completed
 
     def _finalize_module_lanes(
         self,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
@@ -32,11 +32,21 @@ from .declarative_module_cohort import (
     DeclarativeModuleLaneOutcome,
     _retry_failed_module_lanes,
 )
+from .declarative_module_runtime_lane import (
+    DeclarativeModuleLaneAttempt,
+    DeclarativeModuleRuntimeLaneContext,
+)
 from .declarative_reporting_tail import _ReportingTailAdapters
+from .distributed_runtime import LocalEventStore
 from .models import REPORT_MODULE_IDS
 from .parallel_runtime import LaneCompletion
 from .review_lifecycle import DeferredMainDecision
-from .workflow import AgentWorkflowError, ReportWorkflowRunner
+from .taxonomy import REPORT_TAXONOMY
+from .workflow import (
+    AgentWorkflowError,
+    ReportWorkflowRunner,
+    _ModuleLaneAttemptContext,
+)
 
 
 class ReportingModuleRuntime(Protocol):
@@ -46,12 +56,32 @@ class ReportingModuleRuntime(Protocol):
 
     async def prepare_lanes(self, state: dict[str, Any]) -> dict[str, Any]: ...
 
-    async def execute_lane(
+    async def start_lane(
         self,
         module_id: str,
         state: dict[str, Any],
         workflow_id: str,
-    ) -> Any: ...
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def author_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def can_review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool: ...
+
+    async def review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def complete_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleLaneOutcome: ...
 
     async def reduce_lanes(self, outcomes: Mapping[str, Any]) -> dict[str, Any]: ...
 
@@ -163,11 +193,15 @@ async def execute_declarative_module_stage(
 
     tail_adapters = _ReportingTailAdapters(tail_runner, workflow_id)
     module_tools = {
-        "execute-current-module-lane": lambda values: module_runtime.execute_lane(
+        "start-current-module-lane": lambda values: module_runtime.start_lane(
             str(values["module_id"]),
             values["state"],
             workflow_id,
-        )
+        ),
+        "author-current-module-lane": module_runtime.author_lane,
+        "module-lane-can-review": module_runtime.can_review_lane,
+        "review-current-module-lane": module_runtime.review_lane,
+        "complete-current-module-lane": module_runtime.complete_lane,
     }
     module_tools["prepare-module-cohort"] = module_runtime.prepare_lanes
     module_tools["reduce-module-cohort"] = module_runtime.reduce_lanes
@@ -230,14 +264,43 @@ class _BatchModuleRuntime:
     async def prepare_lanes(self, state: dict[str, Any]) -> dict[str, Any]:
         return state
 
-    async def execute_lane(
+    async def start_lane(
         self,
         module_id: str,
-        _state: dict[str, Any],
-        _workflow_id: str,
+        state: dict[str, Any],
+        workflow_id: str,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return DeclarativeModuleRuntimeLaneContext(
+            module_id=module_id,
+            workflow_id=workflow_id,
+            reporting_state=state,
+            status="completed",
+        )
+
+    async def author_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
+
+    async def can_review_lane(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
+
+    async def complete_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleLaneOutcome:
         return DeclarativeModuleLaneOutcome(
-            module_id=module_id,
+            module_id=context.module_id,
             status="completed",
         )
 
@@ -297,15 +360,17 @@ class _CurrentModuleStages:
     async def prepare_lanes(self, state: dict[str, Any]) -> dict[str, Any]:
         return state
 
-    async def execute_lane(
+    async def start_lane(
         self,
         module_id: str,
         lane_state: dict[str, Any],
         workflow_id: str,
-    ) -> DeclarativeModuleLaneOutcome:
+    ) -> DeclarativeModuleRuntimeLaneContext:
         if module_id not in self._requested_modules:
-            return DeclarativeModuleLaneOutcome(
+            return DeclarativeModuleRuntimeLaneContext(
                 module_id=module_id,
+                workflow_id=workflow_id,
+                reporting_state=deepcopy(lane_state),
                 status="completed",
             )
         try:
@@ -327,45 +392,207 @@ class _CurrentModuleStages:
                 "module_submissions",
                 {},
             ):
-                recovered = await self._runner._execute_module_lane(
+                attempt = self._runner._start_module_lane_attempt(
                     module_id,
                     lane_state,
                     workflow_id,
-                    defer_main_exceptions=True,
+                    True,
+                    None,
                 )
         except asyncio.CancelledError:
             raise
-        except DeferredMainDecision as exc:
-            deferred_state = getattr(exc, "lane_state", lane_state)
-            return DeclarativeModuleLaneOutcome(
-                module_id=module_id,
-                status="deferred",
-                error=str(exc),
-                lane_state={"reporting_state": deferred_state},
-            )
         except BaseException as exc:
             self._failures[module_id] = exc
-            return DeclarativeModuleLaneOutcome(
+            return DeclarativeModuleRuntimeLaneContext(
                 module_id=module_id,
+                workflow_id=workflow_id,
+                reporting_state=deepcopy(lane_state),
                 status="failed",
                 error=str(exc),
             )
-        if recovered is None:
-            module = lane_state["module_submissions"][module_id]
-            return DeclarativeModuleLaneOutcome(
+        if recovered is not None:
+            submission, completion_ref, completion, completed_lane_state = recovered
+            return DeclarativeModuleRuntimeLaneContext(
                 module_id=module_id,
+                workflow_id=workflow_id,
+                reporting_state=completed_lane_state,
                 status="completed",
-                module=module,
-                lane_state={"reporting_state": lane_state},
+                module=submission,
+                completion_ref=completion_ref,
+                completion=completion,
             )
-        submission, completion_ref, completion, completed_lane_state = recovered
-        return DeclarativeModuleLaneOutcome(
+        if module_id in lane_state.get("module_submissions", {}):
+            return DeclarativeModuleRuntimeLaneContext(
+                module_id=module_id,
+                workflow_id=workflow_id,
+                reporting_state=lane_state,
+                status="completed",
+                module=lane_state["module_submissions"][module_id],
+            )
+        return DeclarativeModuleRuntimeLaneContext(
             module_id=module_id,
-            status="completed",
-            module=submission,
-            lane_state={"reporting_state": completed_lane_state},
-            completion_ref=completion_ref,
-            completion=completion.model_dump(mode="json"),
+            workflow_id=workflow_id,
+            reporting_state=attempt.lane_state,
+            status="ready",
+            attempt=DeclarativeModuleLaneAttempt(
+                spec=attempt.spec,
+                spec_ref=attempt.spec_ref,
+                lane_attempt_id=attempt.lane_attempt_id,
+                started_at_ns=attempt.started_at_ns,
+                attempt_ref=attempt.attempt_ref,
+            ),
+        )
+
+    async def author_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.status != "ready":
+            return context
+        try:
+            submission = await self._runner._module_pipeline(
+                context.module_id,
+                context.reporting_state,
+                context.workflow_id,
+                review=False,
+                checkpoint=False,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={"status": "authored", "module": submission},
+        )
+
+    async def can_review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return context.status == "authored"
+
+    async def review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.status != "authored":
+            return context
+        try:
+            reviewed = await self._runner._module_review_loop(
+                context.module_id,
+                cast(Any, context.module),
+                context.reporting_state,
+                context.workflow_id,
+                initial_scope=set(REPORT_TAXONOMY[context.module_id].submodules),
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={"status": "reviewed", "module": reviewed},
+        )
+
+    async def complete_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleLaneOutcome:
+        if context.status == "reviewed":
+            try:
+                submission, completion_ref, completion, lane_state = (
+                    self._runner._complete_module_lane_attempt(
+                        self._restore_attempt(context),
+                        cast(Any, context.module),
+                    )
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                context = self._failed_lane_context(context, exc)
+            else:
+                context = context.model_copy(
+                    deep=True,
+                    update={
+                        "status": "completed",
+                        "module": submission,
+                        "reporting_state": lane_state,
+                        "completion_ref": completion_ref,
+                        "completion": completion,
+                    },
+                )
+        status = cast(
+            Literal["completed", "deferred", "failed"],
+            context.status,
+        )
+        include_lane_state = status == "deferred" or context.module is not None
+        return DeclarativeModuleLaneOutcome(
+            module_id=context.module_id,
+            status=status,
+            module=context.module,
+            error=context.error,
+            lane_state=(
+                {"reporting_state": context.reporting_state}
+                if include_lane_state
+                else None
+            ),
+            completion_ref=context.completion_ref,
+            completion=(
+                context.completion.model_dump(mode="json")
+                if context.completion is not None
+                else None
+            ),
+        )
+
+    def _failed_lane_context(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+        exc: BaseException,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        self._runner._fail_module_lane_attempt(
+            self._restore_attempt(context),
+            exc,
+        )
+        self._failures[context.module_id] = exc
+        if isinstance(exc, DeferredMainDecision):
+            status = "deferred"
+            reporting_state = getattr(
+                exc,
+                "lane_state",
+                context.reporting_state,
+            )
+        else:
+            status = "failed"
+            reporting_state = context.reporting_state
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": status,
+                "reporting_state": reporting_state,
+                "error": str(exc),
+            },
+        )
+
+    def _restore_attempt(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> _ModuleLaneAttemptContext:
+        attempt = cast(DeclarativeModuleLaneAttempt, context.attempt)
+        return _ModuleLaneAttemptContext(
+            module_id=context.module_id,
+            state=context.reporting_state,
+            lane_state=context.reporting_state,
+            workflow_id=context.workflow_id,
+            spec=attempt.spec,
+            spec_ref=attempt.spec_ref,
+            lane_attempt_id=attempt.lane_attempt_id,
+            started_at_ns=attempt.started_at_ns,
+            event_store=LocalEventStore(
+                self._runner.service.workspace,
+                str(context.reporting_state["run_id"]),
+            ),
+            attempt_ref=attempt.attempt_ref,
         )
 
     async def reduce_lanes(

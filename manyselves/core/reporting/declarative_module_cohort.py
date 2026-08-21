@@ -38,6 +38,9 @@ from .declarative_module_lane import (
     ModuleSubjectValidator,
     execute_declarative_module_lane,
 )
+from .declarative_module_runtime_lane import (
+    DeclarativeModuleRuntimeLaneContext,
+)
 from .taxonomy import REPORT_TAXONOMY
 
 
@@ -110,45 +113,23 @@ async def execute_declarative_module_cohort(
         definitions,
     )
 
-    def lane_tool(module_id: str):
-        async def execute(module_inputs: Any) -> DeclarativeModuleLaneOutcome:
-            try:
-                lane_result = await execute_declarative_module_lane(
-                    run_id=run_id,
-                    workflow_id=f"{workflow_id}--module-{module_id}",
-                    module=ModuleSubmission.model_validate(
-                        module_inputs[module_id]
-                    ),
-                    initial_scope=initial_scopes[module_id],
-                    lifecycle_id="initial",
-                    agent_invokers=lane_agent_invokers[module_id],
-                    validate_subject=validate_subject,
-                    state_store=InMemoryWorkflowStateStore(),
-                    return_state=True,
-                )
-                result, lane_state = lane_result
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                return DeclarativeModuleLaneOutcome(
-                    module_id=module_id,
-                    status="failed",
-                    error=str(exc),
-                )
-            return DeclarativeModuleLaneOutcome(
-                module_id=module_id,
-                status="completed",
-                module=result,
-                lane_state=lane_state.model_dump(mode="json"),
-            )
-
-        return execute
-
-    async def execute_current_lane(values: Mapping[str, Any]):
-        module_id = str(values["module_id"])
-        return await lane_tool(module_id)(values["state"])
-
-    tools = {"execute-current-module-lane": execute_current_lane}
+    lane_runtime = _StandaloneModuleRuntime(
+        run_id=run_id,
+        workflow_id=workflow_id,
+        initial_scopes=initial_scopes,
+        lane_agent_invokers=lane_agent_invokers,
+        validate_subject=validate_subject,
+    )
+    tools = {
+        "start-current-module-lane": lambda values: lane_runtime.start_lane(
+            str(values["module_id"]),
+            values["state"],
+        ),
+        "author-current-module-lane": lane_runtime.author_lane,
+        "module-lane-can-review": lane_runtime.can_review_lane,
+        "review-current-module-lane": lane_runtime.review_lane,
+        "complete-current-module-lane": lane_runtime.complete_lane,
+    }
     tools["prepare-module-cohort"] = lambda value: value
     tools["reduce-module-cohort"] = _reduce_module_cohort
     try:
@@ -178,6 +159,94 @@ async def execute_declarative_module_cohort(
         module_id: ModuleSubmission.model_validate(value)
         for module_id, value in completed.outputs["result"].items()
     }
+
+
+class _StandaloneModuleRuntime:
+    """Bind the reusable characterization Lane to the production Lane graph."""
+
+    def __init__(
+        self,
+        *,
+        run_id: str,
+        workflow_id: str,
+        initial_scopes: Mapping[str, set[str]],
+        lane_agent_invokers: Mapping[str, Mapping[str, AgentInvoker]],
+        validate_subject: ModuleSubjectValidator,
+    ) -> None:
+        self._run_id = run_id
+        self._workflow_id = workflow_id
+        self._initial_scopes = initial_scopes
+        self._lane_agent_invokers = lane_agent_invokers
+        self._validate_subject = validate_subject
+
+    async def start_lane(
+        self,
+        module_id: str,
+        module_inputs: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return DeclarativeModuleRuntimeLaneContext(
+            module_id=module_id,
+            workflow_id=f"{self._workflow_id}--module-{module_id}",
+            reporting_state=dict(module_inputs),
+            status="ready",
+            module=ModuleSubmission.model_validate(module_inputs[module_id]),
+        )
+
+    async def author_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context.model_copy(update={"status": "authored"})
+
+    async def can_review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return context.status == "authored"
+
+    async def review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        try:
+            lane_result = await execute_declarative_module_lane(
+                run_id=self._run_id,
+                workflow_id=context.workflow_id,
+                module=ModuleSubmission.model_validate(context.module),
+                initial_scope=self._initial_scopes[context.module_id],
+                lifecycle_id="initial",
+                agent_invokers=self._lane_agent_invokers[context.module_id],
+                validate_subject=self._validate_subject,
+                state_store=InMemoryWorkflowStateStore(),
+                return_state=True,
+            )
+            result, lane_state = lane_result
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            return context.model_copy(
+                update={"status": "failed", "error": str(exc)}
+            )
+        return context.model_copy(
+            update={
+                "status": "reviewed",
+                "module": result,
+                "reporting_state": lane_state.model_dump(mode="json"),
+            }
+        )
+
+    async def complete_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleLaneOutcome:
+        status = "completed" if context.status == "reviewed" else "failed"
+        return DeclarativeModuleLaneOutcome(
+            module_id=context.module_id,
+            status=status,
+            module=context.module if status == "completed" else None,
+            error=context.error,
+            lane_state=context.reporting_state if status == "completed" else None,
+        )
 
 
 def _retry_failed_module_lanes(

@@ -1,0 +1,10 @@
+id: start-current-module-lane
+version: 1.0.0
+description: Start or recover one current Reporting module Lane
+implementation: capability:distribution-reporting:start-current-module-lane
+input_contract: reporting_tool_input
+output_contract: declarative_module_runtime_lane_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

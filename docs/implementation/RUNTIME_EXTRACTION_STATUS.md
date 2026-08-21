@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-01/WP-11 architecture completion audit reopened`
-- Last completed vertical slice: every production module branch now invokes one reusable packaged Lane Subworkflow with named Reporting-state/module-ID bindings; five duplicate branch Tool definitions were replaced by one Capability Tool while nested Lane state/events remain inside the same Run
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `fe8bedc` (`WP-07/WP-08: run production modules through the file cohort`); the reusable production-Lane slice is this document's commit
+- Current work package: `WP-07 production module Lane decomposition`
+- Last completed vertical slice: the reusable production module Lane now declares start/recovery, authoring, review routing, current review, and completion as separate Capability actions; the former one-Tool whole-Lane adapter is removed while current attempt records, Conversations, correction behavior, sibling drain, and failed-branch retry remain unchanged
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `d13c23d` (`WP-06/WP-07: nest reusable production module lanes`); the production Lane lifecycle-action slice is this document's commit
 - Current migration stage: `file-defined Reporting workflow migration`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
-- Next automatic action: split the reusable Lane's remaining `execute-current-module-lane` adapter into file-defined authoring, current review, and completion actions, retaining current preflight, correction, continuation, Conversation, attempt, and artifact behavior at the Capability boundary
+- Next automatic action: move the production module author's Provider invocation from the authoring compatibility Tool into file-declared Conversation and Agent actions, mechanically separating current input preparation and result acceptance while retaining the exact TaskEnvelope, Tool Slice/Max Token continuations, structured corrections, result-part reuse, and `specialist-{module_id}` session identity
 
 ## Reopened architecture completion audit
 
@@ -28,8 +28,9 @@ several useful vertical slices but did not prove the requested target
 architecture:
 
 - the selectable Reporting runner still subclasses `ReportWorkflowRunner`; its
-  production module entry is now the packaged Cohort, but each branch still
-  delegates one complete current Lane lifecycle to a Capability adapter;
+  production module entry is the packaged Cohort and each branch now declares
+  its lifecycle boundaries, but author and review internals still use current
+  compatibility adapters rather than file-declared Agent actions;
 - the packaged detailed review Lane is file-owned and executable, but the full
   production authoring/preflight/review lifecycle is not yet decomposed into it;
 - `RecoveryController` is not yet part of the production generic Agent execution
@@ -58,6 +59,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
+- `WP-07: declare production module Lane lifecycle actions` — the reusable production Lane YAML now owns separate start/recovery, author, review-route, review, and completion actions with one typed Capability-owned context; the one-Tool whole-Lane definition is removed; current author/review methods and extracted attempt start/failure/completion bookkeeping remain the compatibility implementations, and failed outcomes still drain through the five-branch Cohort before only failed branches retry (this commit)
 - `WP-06/WP-07: nest reusable production module lanes` — generic Subworkflow actions accept either one input or multiple named parent-to-child bindings; the packaged Cohort uses that neutral feature to invoke one reusable production Lane workflow for all five module IDs; each branch now has nested Lane WorkflowState/events and the five duplicate module Tool definitions are replaced by one Capability Tool without a module-specific Kernel Action (this commit)
 - `WP-07/WP-08: run production modules through the file cohort` — the top-level workflow invokes the packaged module Cohort as a Subworkflow; its YAML owns preparation, fixed five-branch Parallel/Join, and reduction; production branches delegate complete current Lane semantics, successful siblings remain embedded in one parent Run, only failed branches retry, the coarse `run-reporting-module-work` Tool definition is removed, and the existing legacy barrier finalizer is reused from one extracted boundary without copying or adding hash/CAS logic (this commit)
 - `WP-02/WP-09: persist nested runtime events` — nested Subworkflows now emit standard workflow/action/output lifecycle events through the parent Runtime Host sink; the selectable Reporting runner persists top-level and tail events in the exact Run directory, without a child state directory (this commit)
@@ -100,6 +102,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Production-Lane lifecycle Characterization first failed because the packaged Lane still compiled as one coarse Tool followed by End; after implementation it compiles as five named Capability Tools, one necessary `If`, and End, with no `execute-current-module-lane` Tool: `1 passed`.
+- Standalone Cohort concurrency/failure recovery and the production one-parent adapter selection passed: `9 passed`; Capability package, detailed review Lane, legacy module concurrency/drain, Legacy semantic trace, and prior-revision recovery selection passed: `13 passed`. Focused Ruff, compileall, `git diff --check`, and wheel build passed; the wheel contains the five lifecycle Tool files and typed context contract but not the removed whole-Lane Tool. No full regression, Provider, browser, or server test ran.
 - Named-Subworkflow Characterization first failed because Subworkflow accepted only one parent variable; after implementation the child received two named values and returned their result: `1 passed`; affected Host/sequential/control-flow selection passed: `23 passed`.
 - Reusable production-Lane package Characterization first failed because the workflow did not exist and Cohort branches were Tools; after implementation the package contains the Lane workflow, Cohort branches compile as Subworkflows, standalone Cohort concurrency/retry and production failed-branch retry remain green. Combined affected Runtime/Compiler/Reporting/Capability/import-boundary selection: `39 passed`. Ruff, `git diff --check`, and wheel build passed; the wheel contains the singular Lane Tool and reusable Lane YAML, not the five old branch Tool files. No full regression or real runtime test ran.
 - Production-Cohort Characterization first failed because the top-level plan still began with the coarse Tool; after the YAML change it compiled as Cohort Subworkflow → If → Tail Subworkflow → End. The first execution then failed because the Runtime Context lacked the compiled Cohort, which was corrected by binding that child plan and its file-declared branch Tools.
@@ -195,6 +199,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - WP-07 added no hash or CAS implementation. Its scripted recheck delta contains only the changed assigned narrative, so the new path does not create unchanged-content fingerprints; existing Legacy compact-delta behavior remains untouched.
 - The original WP-08 standalone detailed-review Cohort uses its WorkflowState as the authoritative result. It does not call the Legacy hash-bearing `WorkflowReducer`, does not write a new barrier artifact, and publishes its output only after all five typed Lane outcomes are completed.
 - The production Cohort reuses the existing `ReportWorkflowRunner._finalize_module_lanes` compatibility boundary, which contains the pre-existing `WorkflowReducer.write_module_barrier` call and historical completion metadata. The extraction moved that code without copying, expanding, or adding any hash/CAS calculation; generic branch retry depends only on WorkflowState outcomes.
+- The production-Lane lifecycle split mechanically extracts the existing attempt start/failure/completion bookkeeping and threads its existing `LaneTaskSpec` through a typed Capability context. It adds no digest/hash/CAS calculation or comparison; those historical optional fields remain untouched compatibility metadata, and retry still depends on typed WorkflowState outcomes.
 - WP-10 keeps the Capability `gates/` index intentionally empty because the migrated path has no new acceptance or decision Gate. Existing Reporting recovery behavior is indexed without new attempt limits, hashes, CAS, or validation chains.
 - The explicit Reporting engine selection is routing, not a new acceptance or safety Gate: existing Reporting starts omit the parameter and remain `legacy`; only the generic declarative Capability start passes `declarative`. The readable run prefix preserves the same selection across resume without a new metadata verifier, digest, or CAS record.
 

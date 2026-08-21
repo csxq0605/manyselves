@@ -11,12 +11,39 @@ state:
   reporting-state: {}
   module-id: null
 actions:
-- id: execute-current-module-lane
+- id: start-current-module-lane
   kind: invoke_tool
-  tool: execute-current-module-lane
+  tool: start-current-module-lane
   input_variables:
     state: reporting-state
     module_id: module-id
+  output_variable: lane-context
+- id: author-current-module-lane
+  kind: invoke_tool
+  tool: author-current-module-lane
+  input_variable: lane-context
+  output_variable: lane-context
+- id: module-lane-can-review
+  kind: invoke_tool
+  tool: module-lane-can-review
+  input_variable: lane-context
+  output_variable: should-review-module-lane
+- id: choose-module-lane-review
+  kind: if
+  condition:
+    variable: should-review-module-lane
+    operator: truthy
+  then: review-current-module-lane
+  otherwise: complete-current-module-lane
+- id: review-current-module-lane
+  kind: invoke_tool
+  tool: review-current-module-lane
+  input_variable: lane-context
+  output_variable: lane-context
+- id: complete-current-module-lane
+  kind: invoke_tool
+  tool: complete-current-module-lane
+  input_variable: lane-context
   output_variable: lane-outcome
 - id: finish-module-lane
   kind: end_workflow

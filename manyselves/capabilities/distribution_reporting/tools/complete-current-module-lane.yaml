@@ -1,0 +1,10 @@
+id: complete-current-module-lane
+version: 1.0.0
+description: Project one drained module Lane to its typed cohort outcome
+implementation: capability:distribution-reporting:complete-current-module-lane
+input_contract: declarative_module_runtime_lane_context
+output_contract: declarative_module_lane_outcome
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

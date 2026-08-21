@@ -178,3 +178,34 @@ def test_top_level_reporting_workflow_is_an_executable_capability_definition() -
         "distribution-module-cohort",
         "distribution-reporting-tail",
     ]
+
+
+def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
+    _, registry = load_distribution_reporting_capability()
+    workflow = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-module-runtime-lane",
+    )
+
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        workflow,
+        registry,
+    )
+
+    assert [action.kind for action in plan.actions] == [
+        "invoke_tool",
+        "invoke_tool",
+        "invoke_tool",
+        "if",
+        "invoke_tool",
+        "invoke_tool",
+        "end_workflow",
+    ]
+    assert plan.tool_ids == [
+        "start-current-module-lane",
+        "author-current-module-lane",
+        "module-lane-can-review",
+        "review-current-module-lane",
+        "complete-current-module-lane",
+    ]
+    assert "execute-current-module-lane" not in plan.tool_ids
