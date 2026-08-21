@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `final real-test handoff correction and Draft PR synchronization`
-- Last completed vertical slice: the generic React Run Workspace now returns the existing Kernel `waitingInput.input_id` for leaf or nested `RequestInput` recovery while retaining the existing Reporting `decision_id` compatibility route; the nested path remains entirely in persisted WorkflowState
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `7399403` (`WP-05/WP-10: drive reporting recovery from definitions`); the generic input-ID closure is this document's commit
-- Current migration stage: `all four implementation stages complete; focused source/wheel/frontend verification passed`
-- Final real-test status: `not ready until the executable handoff paths are corrected and committed`; no Provider, browser, server, or real project test has run
-- Next automatic action: correct the final handoff to the one authoritative `runtime-state.json` Run directory, rerun only final focused documentation/build checks, update the Draft PR, and then mark the single user-operated real test ready; do not switch the default execution path
+- Current work package: `WP-00 through WP-12 complete; one user-operated real test ready`
+- Last completed vertical slice: the final handoff now inspects the one authoritative `runtime-state.json`, its nested module/tail states, the parent resolved plan, and the shared event stream, and it returns the persisted input/decision ID on recovery; obsolete split-state paths are removed from the procedure
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `0060fd6` (`WP-11: submit generic nested workflow input`); the final status and executable handoff are this document's commit
+- Current migration stage: `all four implementation stages complete; focused source, wheel, Runtime, Capability, API, and frontend verification passed`
+- Final real-test status: `ready`; no Provider, browser, server, or real project test has run yet
+- Next action: the user may execute the single isolated procedure in [`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md); preserve all evidence on failure and do not switch the Legacy default path
 
 ## Reopened architecture completion audit
 
@@ -80,10 +80,11 @@ architecture:
   continuation input only for Kernel-owned `waitingInput`; Reporting exception
   translation is contained by its Capability adapter.
 
-Therefore all prior “complete” entries below are retained as historical commit
-and test evidence, not as a current architecture-completion assertion. Legacy
-Reporting remains the default and no real Provider, browser, project, or server
-test is requested while this audit is open.
+The audit is now closed: the missing production connections listed above are
+implemented and the prior entries remain as their commit and test evidence.
+Legacy Reporting remains the default. The one deferred real Provider, browser,
+project, and server test is now ready under the final handoff; passing it does
+not authorize a default-path switch.
 
 ## Required startup checks
 
@@ -99,6 +100,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
+- `Final: publish the executable real-test handoff` — replaces obsolete split Runtime-state paths with the one authoritative Run directory, adds exact nested-state/plan/event inspection, and makes persisted input/decision recovery submit the current input ID. It records the final focused Runtime, Capability, frontend, lock, build, and wheel verification without running a Provider, browser, server, real project, or full regression (this commit)
 - `WP-11: submit generic nested workflow input` — the Run Workspace recognizes the existing Kernel `input_id`/`inputId` projection before the existing Reporting decision identifiers and sends it through the unchanged generic `/runs/{run_id}/input` request. Nested outer-to-inner path ownership remains in WorkflowState and the Runtime resume implementation; the UI adds no replay decision, Gate, hash/CAS logic, validation chain, dependency, or public interface (this commit)
 - `WP-05/WP-10: drive Reporting recovery from definitions` — `DeclarativeReportWorkflowRunner` loads the single Recovery policy explicitly named by every packaged Reporting Task and injects it only into the declarative Agent path. `ReportingAgentRunner` consults the generic `RecoveryController` at the existing continuation/correction/reuse decisions, while `SubmitResultTool` reports schema failures and a Reporting-private transparent Tool proxy reports `ToolContractError` without modifying AgentLoop, Kernel, RuntimeContext, AgentInvoker, or Provider-visible schemas. Existing prompts, correction limits, continuation progress artifacts, Conversation/Session identity, Provider-call behavior, and persisted completed-result reuse remain in place. The obsolete unbound `run-reporting-cross` Tool is removed. No new Gate, hash/CAS logic, lock, dependency, attempt limit, or public interface is added (this commit)
 - `WP-11/WP-12: complete generic Run surface and second capability` — production discovery includes the neutral `parameter-adjustment` package with Markdown Agent, JSON Schema contracts, Task, deterministic Tool, conditional/Goto Workflow, Runtime binding, file state/events, and value Output. It executes through `WorkflowCompiler` and `WorkflowRuntimeHost` without Reporting imports, Gate definitions, Provider calls, hash/CAS logic, or new dependencies. Generic FastAPI routes consume only Capability Runtime errors, both capabilities use the same Run/Output/Cost surface, and React continuation controls depend only on projected `waitingInput` rather than a Capability ID. The historical test fixture remains available but is no longer the product implementation (this commit)
@@ -170,6 +172,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Final handoff verification at functional HEAD: Runtime Host, generic WebAPI projection, production `parameter-adjustment`, and Distribution definition package passed `43`; generated frontend API drift check passed; focused Run Workspace/API Vitest passed `5`; targeted ESLint, TypeScript `--noEmit`, and the production Vite build passed. `uv lock --check`, `git diff --check`, and a fresh wheel build passed. The wheel contains both Capability entry files, Reporting Recovery and Delivery definitions, the neutral Markdown Agent and Workflow, and omits the four obsolete coarse Reporting workflow Tools. Pytest emitted only the existing Pydantic deprecation and temporary-directory cleanup warnings; Vite emitted only its existing chunk-size warning. No full regression, Provider, browser, server, or real project test ran.
 - Generic nested-input UI Characterization first failed because `waitingInput.input_id` was displayed but omitted from the submit request. After the minimal projection mapping, focused Run Workspace/API Vitest passed `5`; targeted ESLint and TypeScript `--noEmit` passed. Existing `decision_id` handling remains covered. No full regression, Provider, browser, server, or real project test ran.
 - WP-05/WP-10 Characterization initially failed because declarative production calls never instantiated `RecoveryController`; the Tool-contract Characterization then failed because `AgentLoop` consumed `ToolContractError` as an ordinary tool error without policy dispatch. After the private Reporting-boundary connection, focused Controller/action tests, Agent/Tool adapters, the complete affected Reporting Agent runner, declarative parent runner, Capability package, and Kernel import boundary passed `156`. The new tests prove policy injection without direct test wiring, Controller-driven Tool Slice and Max Token continuation, first-observation/No-progress behavior, natural-language and invalid-structured correction, `ToolContractError` correction with unchanged Tool schemas, and a second-process persisted typed-result reuse with no Provider call. A mismatched declared action fails rather than silently defaulting. Ruff passes for the new/changed code when ignoring the listed HEAD-pre-existing issues; `git diff --check` passes. No full regression, Provider, browser, server, or real project test ran.
 - WP-11/WP-12 Characterization first failed because production discovery and HTTP tests still asserted that only Reporting was installed and that `parameter-adjustment` returned 404. After restoring the production package, its direct Tool/Contract/Condition/Agent/Goto execution and runtime binding passed `4`; affected Capability catalog, binding, generic projection, Distribution package, and both HTTP Run paths passed `40`; the focused production HTTP chain returned `completed`, value Output `10`, and zero Provider attempts/tokens. Focused React Run Workspace/API tests passed `4`; targeted ESLint and TypeScript `--noEmit` passed. Ruff, compileall, and `git diff --check` passed. An initial Vitest invocation used the wrong `npm exec` argument separator and exited before collecting tests; the corrected command is the recorded result. No full regression, Provider, browser, server, or real project test ran.
@@ -351,10 +354,9 @@ Stage 4: WP-11..WP-12 — Generic API/UI projections and second Capability
 Final: one real Provider/project/browser/server test handoff
 ```
 
-The original four-stage commit sequence exists, but its automatic completion
-claim is superseded by the reopened architecture audit above. The previous
-[`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md) is
-historical and must not be executed until this status returns to `ready`.
+The original four-stage commit sequence and the reopened architecture audit are
+complete. [`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md)
+is current and ready for the single isolated user-operated real test.
 
 ## Resume instruction
 

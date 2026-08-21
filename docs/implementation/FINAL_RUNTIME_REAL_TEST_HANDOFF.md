@@ -21,7 +21,7 @@ No full regression is part of this handoff.
 - Base: `agent/declarative-runtime-plan`
 - Branch: `agent/declarative-runtime-implementation`
 - Draft PR: <https://github.com/csxq0605/manyselves/pull/3>
-- Last functional commit before this handoff: `8eb67e6`
+- Last functional commit before this handoff: `0060fd6`
 - Required Python: 3.12+
 - Required Node.js: 22+
 - Required command-line tools for the API steps: `curl`, `jq`, and `uuidgen`
@@ -36,7 +36,7 @@ git branch --show-current
 git log -1 --oneline
 uv sync --frozen
 cd frontend
-npm install
+npm ci
 npm run build
 cd ..
 ```
@@ -112,7 +112,7 @@ Expected result:
 - Cost shows `0 tokens` and zero Provider attempts.
 - No Reporting continuation form is shown.
 - The persisted state is
-  `$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/parameter-adjustment-*/workflow-state.json`.
+  `$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/parameter-adjustment-*/runtime-state.json`.
 
 Repeat once with `{"value":12}`. Expected Output is `12`, also with zero
 Provider attempts. This proves the same generic UI/API runs a non-Reporting
@@ -159,22 +159,50 @@ artifacts:
 
 ```bash
 test -s "$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/$MS_DECL_RUN.json"
-test -s "$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/$MS_DECL_RUN/workflow-state.json"
+test -s "$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/$MS_DECL_RUN/runtime-state.json"
+test -s "$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/$MS_DECL_RUN/resolved-plan.json"
+test -s "$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/$MS_DECL_RUN/workflow-events.jsonl"
 test -s "$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/$MS_DECL_RUN/delivery-receipt.json"
 test -s "$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/$MS_DECL_RUN/delivery-completion.json"
-test -s "$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/$MS_DECL_RUN--reporting-module-stage/resolved-plan.json"
-test -s "$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/$MS_DECL_RUN--reporting-module-stage/workflow-state.json"
-test -s "$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/$MS_DECL_RUN--reporting-tail/resolved-plan.json"
-test -s "$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/$MS_DECL_RUN--reporting-tail/workflow-state.json"
 test -s "$MS_DECL_DATA/$MS_PROJECT_ID/Outputs/Reports/证据与来源索引.docx"
 find "$MS_DECL_DATA/$MS_PROJECT_ID/Outputs/Reports" -maxdepth 1 -type f -print
 find "$MS_DECL_DATA/$MS_PROJECT_ID/Outputs/Modules" -maxdepth 1 -type f -print
+
+jq -e '
+  .status == "completed" and
+  .workflow_id == "distribution-reporting" and
+  .subworkflow_states["run-module-cohort"].status == "completed" and
+  .subworkflow_states["run-reporting-tail"].status == "completed" and
+  .subworkflow_states["run-reporting-tail"].subworkflow_states["run-cross"].status == "completed" and
+  .subworkflow_states["run-reporting-tail"].subworkflow_states["run-chief"].status == "completed" and
+  .subworkflow_states["run-reporting-tail"].subworkflow_states["run-final"].status == "completed" and
+  .subworkflow_states["run-reporting-tail"].subworkflow_states["run-delivery"].status == "completed"
+' "$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/$MS_DECL_RUN/runtime-state.json"
+
+jq -e '
+  .workflow_id == "distribution-reporting" and
+  [.actions[].id] == [
+    "run-module-cohort",
+    "select-reporting-tail",
+    "run-reporting-tail",
+    "finish-reporting"
+  ]
+' "$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/$MS_DECL_RUN/resolved-plan.json"
+
+jq -r '
+  select(.kind == "action.completed") |
+  [.workflow_id, .action_id] |
+  @tsv
+' "$MS_DECL_DATA/$MS_PROJECT_ID/Work/runs/$MS_DECL_RUN/workflow-events.jsonl"
 ```
 
 All `test -s` commands must exit `0`. `Outputs/Modules` must contain modules
-2.1 through 2.5. The two Kernel `workflow-state.json` files must say
-`completed`; their resolved plans must show the module-stage and ordered
-Cross → Chief → Final → Delivery actions respectively.
+2.1 through 2.5. Both `jq -e` commands must exit `0`. There is exactly one
+authoritative Kernel `runtime-state.json`; its nested Subworkflow states must
+show the module cohort and ordered Cross → Chief → Final → Delivery work as
+completed. The event listing must contain the corresponding declared Workflow
+and action completions in that order; there must be no separate
+`--reporting-module-stage` or `--reporting-tail` state authority.
 
 ## C. Legacy paired run through the real server API
 
@@ -306,7 +334,7 @@ export MS_RECOVERY_LEASE_TOKEN="$(jq -r .leaseToken "$MS_FINAL_TEST_ROOT/recover
 ```
 
 6. GET the same Run and confirm it still reports the pending `waitingInput` and
-   decision ID:
+   input/decision ID:
 
 ```bash
 export MS_RECOVERY_RUN="report-declarative-replace-with-the-waiting-run-id"
@@ -315,6 +343,15 @@ curl --fail-with-body -sS -b "$MS_RECOVERY_COOKIE_JAR" \
   "http://127.0.0.1:9092/api/v1/runs/$MS_RECOVERY_RUN" \
   | tee "$MS_FINAL_TEST_ROOT/recovery-before-resume.json" \
   | jq '{run: .run, waitingInput: .waitingInput}'
+
+export MS_RECOVERY_INPUT_ID="$(jq -r '
+  .waitingInput[0].input_id //
+  .waitingInput[0].inputId //
+  .waitingInput[0].decision_id //
+  .waitingInput[0].decisionId //
+  empty
+' "$MS_FINAL_TEST_ROOT/recovery-before-resume.json")"
+test -n "$MS_RECOVERY_INPUT_ID"
 ```
 
 7. Resume that decision with the same Run ID:
@@ -326,7 +363,7 @@ curl --fail-with-body -sS -b "$MS_RECOVERY_COOKIE_JAR" \
   -H 'Content-Type: application/json' \
   -H "X-Control-Lease: $MS_RECOVERY_LEASE_TOKEN" \
   -H "Idempotency-Key: $MS_RECOVERY_COMMAND_ID" \
-  -d '{"values":{"action":"draft","supplements":[]}}' \
+  -d "{\"inputId\":\"$MS_RECOVERY_INPUT_ID\",\"values\":{\"action\":\"draft\",\"supplements\":[]}}" \
   "http://127.0.0.1:9092/api/v1/runs/$MS_RECOVERY_RUN/input"
 ```
 
@@ -346,7 +383,8 @@ The final real test passes only when all of these are true:
   ID does not have the declarative prefix.
 - Both paired Runs complete and produce readable current-Run DOCX, module,
   review, receipt, and index artifacts.
-- The declarative module-stage and tail resolved plans/states exist and complete.
+- The single declarative resolved plan and authoritative Runtime state exist;
+  its nested module cohort and tail stages complete in declared order.
 - Recovery retains the same declarative Run and its persisted decision,
   Conversations, completed results, and remaining work.
 - Provider usage and cost are visible, non-zero for Reporting, and not silently
@@ -377,8 +415,6 @@ browser screenshot and browser console/network errors
 Run ID and terminal status
 Work/runs/<run-id>.json
 Work/runs/<run-id>/
-Work/runs/<run-id>--reporting-module-stage/
-Work/runs/<run-id>--reporting-tail/
 Outputs/
 the request JSON and Provider/model name (never the API Key)
 ```
