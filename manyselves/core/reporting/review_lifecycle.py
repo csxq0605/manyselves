@@ -195,6 +195,24 @@ class ModuleInitialReviewAcceptance(StrictModel):
     completion_ref: str | None = None
 
 
+class ModuleRevisionPreparation(StrictModel):
+    """Typed, serializable boundary before one module-author revision turn."""
+
+    run_id: str
+    module_id: str
+    workflow_id: str
+    specialist_id: str
+    session_key: str
+    subject: ModuleSubmission
+    revision_input: ModuleRevisionInput
+    input_ref: str
+    subject_ref: str
+    revision: int
+    target_submodule_ids: list[str]
+    required_finding_ids: list[str]
+    envelope: TaskEnvelope
+
+
 class ModuleLocalRegressionContext(StrictModel):
     """Cross-triggered context needed for a scoped local regression review."""
 
@@ -1223,7 +1241,7 @@ async def _main_exception_decision_locked(
     return result
 
 
-async def request_module_revision(
+async def prepare_module_revision(
     runner: "ReportWorkflowRunner",
     *,
     state: dict,
@@ -1234,8 +1252,8 @@ async def request_module_revision(
     requested_changes: list[RequestedModuleChange] | None = None,
     validation_ref: str | None = None,
     validation_target_submodule_ids: set[str] | None = None,
-) -> tuple[ModuleSubmission, str]:
-    """Revise one complete module in one explicit author submission.
+) -> ModuleRevisionPreparation:
+    """Prepare one complete module revision for a generic Agent runtime.
 
     Module-level revision is the only supported revision protocol.  A single
     specialist receives the exact assigned submodule slice, writes one typed
@@ -1360,48 +1378,68 @@ async def request_module_revision(
         # carries only the changed business contract.
         inline_context="",
     )
-    patch = await runner._agent(
-        specialist_id,
-        envelope,
-        envelope.input_refs,
-        workflow_id,
+    return ModuleRevisionPreparation(
+        run_id=state["run_id"],
+        module_id=subject.module_id,
+        workflow_id=workflow_id,
+        specialist_id=specialist_id,
         session_key=f"module-{subject.module_id}",
+        subject=subject,
+        revision_input=revision_input,
+        input_ref=input_ref,
+        subject_ref=revision_input.subject_ref,
+        revision=revision,
+        target_submodule_ids=sorted(targets),
+        required_finding_ids=sorted(required_ids),
+        envelope=envelope,
     )
-    if not isinstance(patch, ModuleRevisionSubmission):
+
+
+def accept_module_revision(
+    runner: "ReportWorkflowRunner",
+    *,
+    preparation: ModuleRevisionPreparation,
+    result: ModuleRevisionSubmission,
+) -> tuple[ModuleSubmission, str]:
+    """Apply and persist one prepared module-author revision submission."""
+
+    if not isinstance(result, ModuleRevisionSubmission):
         raise ReviewLifecycleError(
-            f"module specialist returned the wrong revision type for {subject.module_id}"
+            "module specialist returned the wrong revision type for "
+            f"{preparation.module_id}"
         )
     revised = _apply_module_patch(
-        subject,
-        patch,
-        target_submodule_ids=targets,
-        required_finding_ids=required_ids,
+        preparation.subject,
+        result,
+        target_submodule_ids=set(preparation.target_submodule_ids),
+        required_finding_ids=set(preparation.required_finding_ids),
     )
     subject_ref = _write_model(
         runner,
-        f"Work/runs/{state['run_id']}/modules/{subject.module_id}-r{revision}.json",
+        f"Work/runs/{preparation.run_id}/modules/"
+        f"{preparation.module_id}-r{preparation.revision}.json",
         revised,
     )
     runner.service.store.write_json(
         (
-            f"Work/runs/{state['run_id']}/reviews/module-diff-"
-            f"{subject.module_id}-r{revision}.json"
+            f"Work/runs/{preparation.run_id}/reviews/module-diff-"
+            f"{preparation.module_id}-r{preparation.revision}.json"
         ),
-        build_revision_diff(subject, revised),
+        build_revision_diff(preparation.subject, revised),
     )
     runner.service.store.write_json(
         (
-            f"Work/runs/{state['run_id']}/reviews/module-revisions/"
-            f"{subject.module_id}/r{revision}/module-barrier.json"
+            f"Work/runs/{preparation.run_id}/reviews/module-revisions/"
+            f"{preparation.module_id}/r{preparation.revision}/module-barrier.json"
         ),
         {
             "kind": "module_revision_barrier",
             "version": 1,
-            "run_id": state["run_id"],
-            "module_id": subject.module_id,
-            "base_revision": subject.revision,
-            "revision": revision,
-            "target_submodule_ids": sorted(targets),
+            "run_id": preparation.run_id,
+            "module_id": preparation.module_id,
+            "base_revision": preparation.subject.revision,
+            "revision": preparation.revision,
+            "target_submodule_ids": sorted(preparation.target_submodule_ids),
             "subject_ref": subject_ref,
             "subject_sha256": hashlib.sha256(
                 (runner.service.workspace / subject_ref).read_bytes()
@@ -1409,6 +1447,45 @@ async def request_module_revision(
         },
     )
     return revised, subject_ref
+
+
+async def request_module_revision(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    workflow_id: str,
+    subject: ModuleSubmission,
+    module_findings: list[ModuleReviewFinding] | None = None,
+    cross_findings: list[CrossReviewFinding] | None = None,
+    requested_changes: list[RequestedModuleChange] | None = None,
+    validation_ref: str | None = None,
+    validation_target_submodule_ids: set[str] | None = None,
+) -> tuple[ModuleSubmission, str]:
+    """Revise one complete module in one explicit author submission."""
+
+    preparation = await prepare_module_revision(
+        runner,
+        state=state,
+        workflow_id=workflow_id,
+        subject=subject,
+        module_findings=module_findings,
+        cross_findings=cross_findings,
+        requested_changes=requested_changes,
+        validation_ref=validation_ref,
+        validation_target_submodule_ids=validation_target_submodule_ids,
+    )
+    patch = await runner._agent(
+        preparation.specialist_id,
+        preparation.envelope,
+        preparation.envelope.input_refs,
+        workflow_id,
+        session_key=preparation.session_key,
+    )
+    return accept_module_revision(
+        runner,
+        preparation=preparation,
+        result=patch,
+    )
 
 
 def _module_review_completion(

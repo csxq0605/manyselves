@@ -15,12 +15,17 @@ from manyselves.kernel.definitions import (
 
 from .agentic_models import (
     ModuleReviewFindingSubmission,
+    ModuleRevisionSubmission,
     ModuleSubmission,
     TaskEnvelope,
 )
 from .models import REPORT_MODULE_IDS
 from .parallel_runtime import LaneCompletion, LaneTaskSpec
-from .review_lifecycle import ModuleInitialReviewPreparation
+from .review_lifecycle import (
+    ModuleInitialReviewAcceptance,
+    ModuleInitialReviewPreparation,
+    ModuleRevisionPreparation,
+)
 
 
 class DeclarativeModuleLaneAttempt(BaseModel):
@@ -66,6 +71,7 @@ class DeclarativeModuleReviewPreparation(BaseModel):
     envelope: TaskEnvelope
     reviewer_session_key: str
     prepared: ModuleInitialReviewPreparation
+    acceptance: ModuleInitialReviewAcceptance | None = None
 
 
 class DeclarativeModuleReviewAgentResult(BaseModel):
@@ -76,6 +82,24 @@ class DeclarativeModuleReviewAgentResult(BaseModel):
     status: Literal["completed", "failed"]
     submission: ModuleReviewFindingSubmission | None = None
     error: str | None = None
+
+
+class DeclarativeModuleRevisionAgentResult(BaseModel):
+    """Typed business result returned by the original module Author adapter."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["completed", "failed"]
+    submission: ModuleRevisionSubmission | None = None
+    error: str | None = None
+
+
+class DeclarativeModuleRevisionPreparation(BaseModel):
+    """Serializable exact original-Author revision prepared by Reporting."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prepared: ModuleRevisionPreparation
 
 
 class DeclarativeModuleRuntimeLaneContext(BaseModel):
@@ -93,6 +117,8 @@ class DeclarativeModuleRuntimeLaneContext(BaseModel):
         "authored",
         "review_ready",
         "review_resumed",
+        "revision_pending",
+        "revision_ready",
         "reviewed",
         "completed",
         "deferred",
@@ -101,6 +127,7 @@ class DeclarativeModuleRuntimeLaneContext(BaseModel):
     attempt: DeclarativeModuleLaneAttempt | None = None
     authoring: DeclarativeModuleAuthoringPreparation | None = None
     review: DeclarativeModuleReviewPreparation | None = None
+    revision: DeclarativeModuleRevisionPreparation | None = None
     module: ModuleSubmission | None = None
     completion_ref: str | None = None
     completion: LaneCompletion | None = None
@@ -129,6 +156,8 @@ def register_module_runtime_lane_specializations(
                 "author_task_id": f"module-{module_id}-authoring",
                 "author_conversation_key": f"specialist-{module_id}",
                 "auditor_conversation_key": f"module-auditor-{module_id}",
+                "revision_task_id": f"module-{module_id}-runtime-revision",
+                "revision_conversation_key": f"module-{module_id}",
             },
             workflow_id=workflow_id,
         )
@@ -143,6 +172,8 @@ __all__ = [
     "DeclarativeModuleLaneAttempt",
     "DeclarativeModuleReviewAgentResult",
     "DeclarativeModuleReviewPreparation",
+    "DeclarativeModuleRevisionAgentResult",
+    "DeclarativeModuleRevisionPreparation",
     "DeclarativeModuleRuntimeLaneContext",
     "register_module_runtime_lane_specializations",
 ]

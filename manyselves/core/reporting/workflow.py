@@ -38,7 +38,9 @@ from .agentic_models import (
     FinalChapterLaneFindingSubmission,
     FinalChapterLaneVerdictSubmission,
     ModuleDispatchPlan,
+    ModuleReviewFinding,
     ModuleReviewFindingSubmission,
+    ModuleRevisionSubmission,
     ModuleSubmission,
     StrictModel,
     TaskEnvelope,
@@ -127,8 +129,11 @@ from .review_lifecycle import (
     DeferredMainDecision,
     ModuleInitialReviewAcceptance,
     ModuleInitialReviewPreparation,
+    ModuleRevisionPreparation,
     accept_module_initial_review,
+    accept_module_revision,
     prepare_module_initial_review,
+    prepare_module_revision,
     request_module_revision,
     run_cross_review,
     run_final_review,
@@ -6115,6 +6120,32 @@ class ReportWorkflowRunner:
             preparation=preparation,
             result=result,
             state=state,
+        )
+
+    async def _prepare_module_revision(
+        self,
+        subject: ModuleSubmission,
+        state: dict,
+        workflow_id: str,
+        module_findings: list[ModuleReviewFinding],
+    ) -> ModuleRevisionPreparation:
+        return await prepare_module_revision(
+            self,
+            state=state,
+            workflow_id=workflow_id,
+            subject=subject,
+            module_findings=module_findings,
+        )
+
+    def _accept_module_revision(
+        self,
+        preparation: ModuleRevisionPreparation,
+        result: ModuleRevisionSubmission,
+    ) -> tuple[ModuleSubmission, str]:
+        return accept_module_revision(
+            self,
+            preparation=preparation,
+            result=result,
         )
 
     async def _cross_review(self, state: dict, workflow_id: str) -> None:

@@ -8,6 +8,11 @@ tasks:
 - module-2.4-authoring
 - module-2.5-authoring
 - module-runtime-initial-review
+- module-2.1-runtime-revision
+- module-2.2-runtime-revision
+- module-2.3-runtime-revision
+- module-2.4-runtime-revision
+- module-2.5-runtime-revision
 gates: []
 recovery:
 - current-reporting-recovery
@@ -19,6 +24,8 @@ parameters:
 - author_task_id
 - author_conversation_key
 - auditor_conversation_key
+- revision_task_id
+- revision_conversation_key
 state:
   reporting-state: {}
   module-id: "{module_id}"
@@ -125,6 +132,46 @@ actions:
     result: module-review-agent-result
   output_variable: lane-context
 - id: continue-after-module-review
+  kind: goto
+  target: module-review-needs-revision
+- id: module-review-needs-revision
+  kind: invoke_tool
+  tool: module-review-needs-revision
+  input_variable: lane-context
+  output_variable: should-revise-module
+- id: choose-module-review-revision
+  kind: if
+  condition:
+    variable: should-revise-module
+    operator: truthy
+  then: prepare-current-module-revision
+  otherwise: continue-current-module-review
+- id: prepare-current-module-revision
+  kind: invoke_tool
+  tool: prepare-current-module-revision
+  input_variable: lane-context
+  output_variable: lane-context
+- id: create-module-revision-conversation
+  kind: create_conversation
+  agent: "{author_id}"
+  conversation_key: "{revision_conversation_key}"
+  mode: run
+  output_variable: module-revision-conversation
+- id: invoke-current-module-revision
+  kind: invoke_agent
+  agent: "{author_id}"
+  task: "{revision_task_id}"
+  conversation_variable: module-revision-conversation
+  input_variable: lane-context
+  output_variable: module-revision-agent-result
+- id: accept-current-module-revision
+  kind: invoke_tool
+  tool: accept-current-module-revision
+  input_variables:
+    context: lane-context
+    result: module-revision-agent-result
+  output_variable: lane-context
+- id: continue-after-module-revision
   kind: goto
   target: continue-current-module-review
 - id: continue-current-module-review

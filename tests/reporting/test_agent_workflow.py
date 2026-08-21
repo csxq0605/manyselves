@@ -58,11 +58,14 @@ from manyselves.core.reporting.parallel_runtime import (
 from manyselves.core.reporting.prompts import PromptAssembler
 from manyselves.core.reporting.review_lifecycle import (
     ModuleInitialReviewPreparation,
+    ModuleRevisionPreparation,
     ReviewLifecycleError,
     _apply_chief_patch,
     _require_validation_binding,
     accept_module_initial_review,
+    accept_module_revision,
     prepare_module_initial_review,
+    prepare_module_revision,
     request_module_revision,
     run_cross_review,
     run_final_review,
@@ -893,6 +896,86 @@ async def test_module_review_requires_author_response_and_original_reviewer_verd
         (tmp_path / state["module_review_completion_refs"]["2.1"]).read_text(encoding="utf-8")
     )
     assert completion.resolved_finding_ids == ["M-2.1-initial-r0-001"]
+
+
+@pytest.mark.asyncio
+async def test_module_revision_boundary_is_typed_and_accepts_one_patch(
+    tmp_path: Path,
+) -> None:
+    module = _module("2.1")
+    target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
+    change = RequestedModuleChange(
+        id="USER-2.1-R1",
+        instruction="补充目标小节的责任、动作和验收闭环。",
+        target_submodule_ids=[target],
+    )
+    runner = _ScriptedRunner(tmp_path, [])
+    state = {"run_id": "run-module-revision-boundary"}
+
+    preparation = await prepare_module_revision(
+        runner,
+        state=state,
+        workflow_id="workflow-module-revision-boundary",
+        subject=module,
+        requested_changes=[change],
+    )
+
+    assert isinstance(preparation, ModuleRevisionPreparation)
+    assert (
+        ModuleRevisionPreparation.model_validate_json(preparation.model_dump_json())
+        == preparation
+    )
+    assert preparation.specialist_id == "module-2.1-specialist"
+    assert preparation.session_key == "module-2.1"
+    assert preparation.revision == 1
+    assert preparation.target_submodule_ids == [target]
+    assert preparation.required_finding_ids == [change.id]
+    assert preparation.envelope.task_id == "module-revision-r1-2.1"
+
+    revised, subject_ref = accept_module_revision(
+        runner,
+        preparation=preparation,
+        result=ModuleRevisionSubmission(
+            module_id="2.1",
+            base_revision=0,
+            revision=1,
+            submodule_narratives={
+                target: f"### {target}\n\n已补充责任、动作和验收闭环。",
+            },
+            claims_upsert=[],
+            claim_ids_remove=[],
+            source_ids=[],
+            unresolved_questions=[],
+            revision_responses=[
+                {
+                    "finding_id": change.id,
+                    "action": "implemented",
+                    "summary": "目标小节已经按照指定要求完成责任、动作和验收闭环修订。",
+                    "changed_target_ids": [target],
+                }
+            ],
+        ),
+    )
+
+    assert revised.revision == 1
+    assert subject_ref == "Work/runs/run-module-revision-boundary/modules/2.1-r1.json"
+    assert (tmp_path / subject_ref).is_file()
+    assert (
+        tmp_path
+        / "Work/runs/run-module-revision-boundary/reviews/module-revision-input-2.1-r1.json"
+    ).is_file()
+    assert (
+        tmp_path
+        / "Work/runs/run-module-revision-boundary/reviews/module-diff-2.1-r1.json"
+    ).is_file()
+    barrier = json.loads(
+        (
+            tmp_path
+            / "Work/runs/run-module-revision-boundary/reviews/module-revisions/"
+            "2.1/r1/module-barrier.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert barrier["subject_ref"] == subject_ref
 
 
 @pytest.mark.asyncio

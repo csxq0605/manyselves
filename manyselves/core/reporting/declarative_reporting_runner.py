@@ -46,6 +46,8 @@ from .declarative_module_runtime_lane import (
     DeclarativeModuleLaneAttempt,
     DeclarativeModuleReviewAgentResult,
     DeclarativeModuleReviewPreparation,
+    DeclarativeModuleRevisionAgentResult,
+    DeclarativeModuleRevisionPreparation,
     DeclarativeModuleRuntimeLaneContext,
     register_module_runtime_lane_specializations,
 )
@@ -114,6 +116,21 @@ class ReportingModuleRuntime(Protocol):
     ) -> bool: ...
 
     async def accept_review_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def review_needs_revision(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool: ...
+
+    async def prepare_revision_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def accept_revision_lane(
         self,
         values: Mapping[str, Any],
     ) -> DeclarativeModuleRuntimeLaneContext: ...
@@ -249,6 +266,9 @@ async def execute_declarative_module_stage(
         "prepare-current-module-review": module_runtime.prepare_review_lane,
         "module-review-requires-agent": module_runtime.review_requires_agent,
         "accept-current-module-review": module_runtime.accept_review_lane,
+        "module-review-needs-revision": module_runtime.review_needs_revision,
+        "prepare-current-module-revision": module_runtime.prepare_revision_lane,
+        "accept-current-module-revision": module_runtime.accept_revision_lane,
         "continue-current-module-review": module_runtime.continue_review_lane,
         "complete-current-module-lane": module_runtime.complete_lane,
     }
@@ -376,6 +396,24 @@ class _BatchModuleRuntime:
     ) -> DeclarativeModuleRuntimeLaneContext:
         return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
 
+    async def review_needs_revision(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def prepare_revision_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
+
+    async def accept_revision_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+
     async def continue_review_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
@@ -450,6 +488,29 @@ class _CurrentModuleAuthorInvoker:
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
+        if context.revision is not None:
+            preparation = context.revision.prepared
+            try:
+                payload = await self._runner._agent(
+                    preparation.specialist_id,
+                    preparation.envelope,
+                    preparation.envelope.input_refs,
+                    context.workflow_id,
+                    session_key=conversation.key.value,
+                )
+                result = DeclarativeModuleRevisionAgentResult(
+                    status="completed",
+                    submission=payload,
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                self._capture_failure(context.module_id, exc)
+                result = DeclarativeModuleRevisionAgentResult(
+                    status="failed",
+                    error=str(exc),
+                )
+            return AgentInvocationOutcome(status="ok", result=result)
         authoring = cast(
             DeclarativeModuleAuthoringPreparation,
             context.authoring,
@@ -833,10 +894,13 @@ class _CurrentModuleStages:
                 "status": (
                     "reviewed"
                     if accepted.next_action == "completed"
-                    else "review_resumed"
+                    else "revision_pending"
                 ),
                 "module": accepted.current,
-                "review": None,
+                "review": cast(
+                    DeclarativeModuleReviewPreparation,
+                    context.review,
+                ).model_copy(update={"acceptance": accepted}),
             },
         )
 
@@ -864,6 +928,75 @@ class _CurrentModuleStages:
         return context.model_copy(
             deep=True,
             update={"status": "reviewed", "module": reviewed, "review": None},
+        )
+
+    async def review_needs_revision(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return context.status == "revision_pending"
+
+    async def prepare_revision_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.status != "revision_pending":
+            return context
+        reviewing = cast(DeclarativeModuleReviewPreparation, context.review)
+        acceptance = cast(Any, reviewing.acceptance)
+        try:
+            preparation = await self._runner._prepare_module_revision(
+                acceptance.current,
+                context.reporting_state,
+                context.workflow_id,
+                acceptance.findings,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": "revision_ready",
+                "revision": DeclarativeModuleRevisionPreparation(
+                    prepared=preparation,
+                ),
+            },
+        )
+
+    async def accept_revision_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(
+            values["context"]
+        )
+        result = DeclarativeModuleRevisionAgentResult.model_validate(
+            values["result"]
+        )
+        if result.status == "failed":
+            exc = self._author_failures.pop(
+                context.module_id,
+                AgentWorkflowError(result.error or "module revision failed"),
+            )
+            return self._failed_lane_context(context, exc)
+        try:
+            revised, _subject_ref = self._runner._accept_module_revision(
+                cast(DeclarativeModuleRevisionPreparation, context.revision).prepared,
+                cast(Any, result.submission),
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": "review_resumed",
+                "module": revised,
+                "revision": None,
+            },
         )
 
     def _capture_review_failure(

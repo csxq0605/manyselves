@@ -15,11 +15,11 @@
 ## Current position
 
 - Current work package: `WP-07 production module Lane decomposition`
-- Last completed vertical slice: each production module's exact initial Auditor TaskEnvelope now runs through a file-declared Task, the original `module-auditor-{module_id}` Conversation, and the generic Agent action; initial findings/completion are persisted before continuation, resume skips an already persisted first review, and Agent failure remains a typed Lane outcome so sibling branches drain
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `79faa7f` (`WP-07: invoke production module authors as declared agents`); the production initial-Auditor slice is this document's commit
+- Last completed vertical slice: an initial module finding now routes through file-declared revision preparation, the module-specialized revision Task, the original `module-{module_id}` Author Conversation, generic Agent invocation, and typed revision acceptance; the persisted candidate then enters the existing review continuation without a duplicate Author call
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `dfe4816` (`WP-07: invoke production initial auditors as declared agents`); the first production Author-revision slice is this document's commit
 - Current migration stage: `file-defined Reporting workflow migration`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
-- Next automatic action: decompose the persisted module finding continuation into file-declared original-Author revision and original-Auditor recheck actions, retaining current preflight correction, disputed/needs-input handling, repeated-review loop, and Deferred Main behavior at Capability boundaries
+- Next automatic action: decompose the original Auditor recheck and its persisted verdict routing into file-declared actions, retaining current preflight correction, disputed/needs-input handling, repeated-review loop, and Deferred Main behavior at Capability boundaries
 
 ## Reopened architecture completion audit
 
@@ -30,9 +30,10 @@ architecture:
 - the selectable Reporting runner still subclasses `ReportWorkflowRunner`; its
   production module entry is the packaged Cohort and each branch now declares
   its lifecycle boundaries; initial authors now execute as file-declared Agents,
-  and initial Auditors now execute as file-declared Agents, but the subsequent
-  author-correction/Auditor-recheck loop still uses a compatibility Tool rather
-  than file-declared Agent actions;
+  and initial Auditors plus the first finding-triggered Author correction now
+  execute as file-declared Agents, but the subsequent Auditor recheck and any
+  repeated correction rounds still use a compatibility Tool rather than
+  file-declared Agent actions;
 - the packaged detailed review Lane is file-owned and executable, but the full
   production authoring/preflight/review lifecycle is not yet decomposed into it;
 - `RecoveryController` is not yet part of the production generic Agent execution
@@ -61,6 +62,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
+- `WP-07: invoke first module revisions as declared Agents` — an initial finding routes through Capability-owned typed preparation into one of five module-specialized file Tasks, the original `module-{module_id}` Author Conversation, and the generic Agent port; typed acceptance applies and persists the exact existing patch/diff/barrier behavior once, and the existing review continuation consumes that persisted candidate without replaying the Author (this commit)
 - `WP-07: invoke production initial auditors as declared Agents` — the reusable production Lane declares initial review preparation, persisted-progress routing, the original module Auditor Conversation, generic Agent invocation, result acceptance, and continuation; the exact current preflight/input/envelope and finding/completion persistence are reusable Reporting boundaries, resumed progress bypasses duplicate initial review, and Reviewer failures remain typed Lane outcomes so siblings drain before failed-branch retry (this commit)
 - `WP-07: invoke production module authors as declared Agents` — one reusable production Lane template is specialized into five statically bound Agent/Task/Conversation workflows; exact current author TaskEnvelope preparation and acceptance are mechanically extracted, Provider work crosses the generic Agent port with `specialist-{module_id}` run Conversation keys, same-run author submissions take the declared reuse branch without an Agent call, and author failures still become typed Lane outcomes so siblings drain before failed-branch retry (this commit)
 - `WP-07: declare production module Lane lifecycle actions` — the reusable production Lane YAML now owns separate start/recovery, author, review-route, review, and completion actions with one typed Capability-owned context; the one-Tool whole-Lane definition is removed; current author/review methods and extracted attempt start/failure/completion bookkeeping remain the compatibility implementations, and failed outcomes still drain through the five-branch Cohort before only failed branches retry (this commit)
@@ -106,6 +108,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- First-revision Characterization initially failed because the production Lane ended initial review in the compatibility continuation; after implementation the compiled specialization declares finding routing, revision preparation, the original `module-2.1` Conversation, module-specialized revision Agent Task, typed acceptance, and continuation: `1 passed`. The focused fresh-finding execution proves one initial Author call, one original-Conversation revision call, one acceptance, and no duplicate Author before review continuation: `1 passed`.
+- The exact current review/revision lifecycle and new typed prepare/accept boundaries passed: `53 passed`; affected Capability package, declarative Lane/Cohort/runner, Legacy semantic trace, module-Auditor concurrency, semantic trace, and Runtime Host selection passed: `31 passed`. Protected Max Token continuation, Tool Slice continuation, productive slices, No-progress stop, Schema correction, persisted Provider result reuse, original Auditor session reuse, and finding-progress resume passed: `8 passed`. Focused Ruff/import ordering, compileall, `git diff --check`, and wheel build passed; the wheel contains all five revision Tasks, three revision boundary Tools, and the typed revision Agent-result contract. No full regression, Provider, browser, or server test ran.
 - Production-initial-Auditor Characterization first failed because the Lane still compiled the entire review as `review-current-module-lane`; after implementation the specialization declares review preparation/routing, `module-auditor-2.1` Conversation, `evidence-auditor` Agent, typed acceptance, continuation, and no obsolete whole-review Tool: `1 passed`.
 - The exact current module review lifecycle plus the new typed initial boundary passed: `52 passed`; affected Capability package, production runner, standalone Lane/Cohort, semantic trace, module-Auditor concurrency, and Runtime Host selection passed: `29 passed`. The focused production Reviewer-failure case proves sibling drain and failed-Lane-only retry: `1 passed`; protected Max Token continuation, Tool Slice continuation, productive slices, No-progress stop, Schema submission correction, persisted Provider result reuse, original Author/Auditor correction, and finding-progress resume passed: `8 passed`. Focused Ruff/import ordering, compileall, and `git diff --check` passed. No full regression, Provider, browser, or server test ran.
 - Production-author Characterization first failed because no module-specialized runtime Lane existed; after implementation the 2.1 specialization compiles with its declared author Agent, Task, Conversation, Tool branches, and current review/completion tail: `1 passed`.
@@ -210,6 +214,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - The production-Lane lifecycle split mechanically extracts the existing attempt start/failure/completion bookkeeping and threads its existing `LaneTaskSpec` through a typed Capability context. It adds no digest/hash/CAS calculation or comparison; those historical optional fields remain untouched compatibility metadata, and retry still depends on typed WorkflowState outcomes.
 - The production-author split serializes the exact existing TaskEnvelope, including any pre-existing compatibility delivery-mode values, but adds no digest/hash/CAS calculation or comparison. Runtime specialization statically binds the five existing Agent/Task/Conversation identities and avoids a new dynamic module action or Kernel decision type.
 - The production-initial-Auditor split mechanically reuses the existing preflight, `ModuleReviewInput`, TaskEnvelope, finding/completion, and `ModuleReviewProgress` shapes. It introduces no digest/hash/CAS calculation or comparison; resume routing depends on the existing typed progress action and the same `module-auditor-{module_id}` identity, while the historical recheck delivery metadata remains untouched inside the current continuation.
+- The first production Author-revision split mechanically factors the existing `request_module_revision` operation into typed prepare and accept boundaries. The original Author identity, `module-{module_id}` Conversation, TaskEnvelope, patch application, diff, and pre-existing compatibility barrier are preserved; the historical SHA-256 write remains in one accept implementation and was moved once without copying, expanding, or adding hash/CAS logic.
 - WP-10 keeps the Capability `gates/` index intentionally empty because the migrated path has no new acceptance or decision Gate. Existing Reporting recovery behavior is indexed without new attempt limits, hashes, CAS, or validation chains.
 - The explicit Reporting engine selection is routing, not a new acceptance or safety Gate: existing Reporting starts omit the parameter and remain `legacy`; only the generic declarative Capability start passes `declarative`. The readable run prefix preserves the same selection across resume without a new metadata verifier, digest, or CAS record.
 

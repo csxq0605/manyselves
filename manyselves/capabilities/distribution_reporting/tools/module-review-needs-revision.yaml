@@ -1,0 +1,10 @@
+id: module-review-needs-revision
+version: 1.0.0
+description: Route a newly persisted module finding to its original Author
+implementation: capability:distribution-reporting:module-review-needs-revision
+input_contract: declarative_module_runtime_lane_context
+output_contract: boolean
+side_effect: none
+parallel_safe: true
+reuse_result: false
+model_visible: false
