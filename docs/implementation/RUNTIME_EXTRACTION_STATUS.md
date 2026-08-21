@@ -14,12 +14,29 @@
 
 ## Current position
 
-- Current work package: `WP-00 through WP-12 complete; one user-operated real test ready`
-- Last completed vertical slice: the final handoff now inspects the one authoritative `runtime-state.json`, its nested module/tail states, the parent resolved plan, and the shared event stream, and it returns the persisted input/decision ID on recovery; obsolete split-state paths are removed from the procedure
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `0060fd6` (`WP-11: submit generic nested workflow input`); the final status and executable handoff are this document's commit
-- Current migration stage: `all four implementation stages complete; focused source, wheel, Runtime, Capability, API, and frontend verification passed`
-- Final real-test status: `ready`; no Provider, browser, server, or real project test has run yet
-- Next action: the user may execute the single isolated procedure in [`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md); preserve all evidence on failure and do not switch the Legacy default path
+- Current work package: `WP-00 through WP-12 complete; reopened five-gap architecture reconciliation in final focused verification`
+- Last completed vertical slice: the generic Compiler/ResolvedPlan, Capability Tool assembly, declared Agent Recovery port, Schema/WAITING UI, and browser-only handoff now correspond to the target architecture rather than only indexing definitions
+- Current branch and pre-reconciliation baseline: `agent/declarative-runtime-implementation`; `6bc376d` (`Final: publish declarative runtime real-test handoff`)
+- Current migration stage: `all four implementation stages complete; final architecture-difference remediation implemented; focused affected verification in progress`
+- Final real-test status: `not yet requested`; an isolated local browser/server Demo has verified the neutral Capability without a Provider, while the real Provider and real project Reporting run remain the single final user test
+- Next action: finish the remaining focused Reporting Recovery checks, commit and push the reconciliation slices, then use the simplified [`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md); preserve all evidence on failure and do not switch the Legacy default path
+
+## Five-gap architecture reconciliation
+
+The 2026-08-22 audit reopened the previous completion claim and compared live
+production call paths with the target architecture. The five gaps and their
+implemented closures are:
+
+| Gap | Live-code finding | Closure |
+| --- | --- | --- |
+| 1. Compiler and plan completeness | Several planned generic Actions were absent, contract flow and Agent/Conversation ownership were not compiled, and the persisted plan omitted implementation and control-flow bindings. | The full planned Action vocabulary is registered; the Compiler resolves contracts, Tool implementations, Agent Tool refs, Recovery, Gate, Conversation bindings, and successor edges; every Host saves one resolved plan before execution. |
+| 2. Definition-driven Tools | The neutral Capability used a direct Tool-ID callable map and Reporting actions were also assembled by IDs, so changing `ToolDefinition.implementation` did not govern production assembly. | `CapabilityToolAdapterFactory` resolves `capability:<owner>:<implementation>`, validates declared input/output contracts, and both production capabilities assemble invoked Tools from their definitions before the Host runs. |
+| 3. Definition-driven Agent Recovery | `TaskDefinition.recovery` and `RecoveryController` existed, but generic `InvokeAgent` did not carry the policy through every real Reporting wrapper. | The optional `RecoveryAwareAgentInvoker` port carries the resolved policy through all production module, Cross, Chief, Final, and task-routed wrappers into the current mature Reporting runner without replacing its correction, continuation, no-progress, completed-result, Conversation, or Session behavior. |
+| 4. Generic input and WAITING UI | The workspace had a Reporting-ID display branch, hid WAITING input when a run was active, and reduced most real `ReportRequest` schemas to a raw JSON box. | Rendering is driven only by JSON Schema and `waitingInput`; primitive, enum, nullable, array, object/`$ref`, defaults, constraints, descriptions, typed submission, nested input IDs, and unknown-schema fallback are supported without Capability identity checks. |
+| 5. User-operable proof | The handoff mixed developer pytest, `curl`/`jq`, internal artifact inspection, Legacy/Declarative A/B, and the final user test. | Developer equivalence remains automated and focused. The final handoff is a short browser-only Demo for the two workflows, status, output, cost, and same-Run WAITING continuation. |
+
+No new production dependency, hash, CAS, lock, default-path switch, or
+Reporting-specific Kernel Action was introduced by this reconciliation.
 
 ## Reopened architecture completion audit
 
@@ -172,6 +189,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Five-gap reconciliation used Characterization-first focused tests only, not a full regression. Compiler/plan/Host/Interaction/Agent/Tool/neutral Capability/WebAPI/import-boundary selection passed `69`; the exact Reporting Tool assembly and module/Cross/Chief/Final Recovery wrapper selection passed `9`; the earlier affected Reporting collection reached `65 passed, 2 failed`, exposing the omitted Final/Chief/Cross wrappers, and both exact failures then passed after completing every production wrapper. The complete changed-wrapper count is `15 invoke / 15 invoke_with_recovery`. React Run Workspace/API Vitest passed `7`; targeted ESLint, TypeScript `--noEmit`, and the production Vite build passed. Ruff for every changed Python file, compileall, and `git diff --check` passed. An isolated local server and in-app browser with a temporary data directory displayed both production capabilities and the real Reporting Schema controls; `parameter-adjustment` input `4` completed with output `10` and zero tokens/cost. No real Reporting Provider call or real project run was started. Two initial test commands used obsolete paths and collected no tests, and one initial Vitest command selected only one file; corrected commands produced the recorded results.
 - Final handoff verification at functional HEAD: Runtime Host, generic WebAPI projection, production `parameter-adjustment`, and Distribution definition package passed `43`; generated frontend API drift check passed; focused Run Workspace/API Vitest passed `5`; targeted ESLint, TypeScript `--noEmit`, and the production Vite build passed. `uv lock --check`, `git diff --check`, and a fresh wheel build passed. The wheel contains both Capability entry files, Reporting Recovery and Delivery definitions, the neutral Markdown Agent and Workflow, and omits the four obsolete coarse Reporting workflow Tools. Pytest emitted only the existing Pydantic deprecation and temporary-directory cleanup warnings; Vite emitted only its existing chunk-size warning. No full regression, Provider, browser, server, or real project test ran.
 - Generic nested-input UI Characterization first failed because `waitingInput.input_id` was displayed but omitted from the submit request. After the minimal projection mapping, focused Run Workspace/API Vitest passed `5`; targeted ESLint and TypeScript `--noEmit` passed. Existing `decision_id` handling remains covered. No full regression, Provider, browser, server, or real project test ran.
 - WP-05/WP-10 Characterization initially failed because declarative production calls never instantiated `RecoveryController`; the Tool-contract Characterization then failed because `AgentLoop` consumed `ToolContractError` as an ordinary tool error without policy dispatch. After the private Reporting-boundary connection, focused Controller/action tests, Agent/Tool adapters, the complete affected Reporting Agent runner, declarative parent runner, Capability package, and Kernel import boundary passed `156`. The new tests prove policy injection without direct test wiring, Controller-driven Tool Slice and Max Token continuation, first-observation/No-progress behavior, natural-language and invalid-structured correction, `ToolContractError` correction with unchanged Tool schemas, and a second-process persisted typed-result reuse with no Provider call. A mismatched declared action fails rather than silently defaulting. Ruff passes for the new/changed code when ignoring the listed HEAD-pre-existing issues; `git diff --check` passes. No full regression, Provider, browser, server, or real project test ran.
