@@ -1,0 +1,5 @@
+id: declarative_chief_chapter_context
+version: 1.0.0
+description: Serializable preparation and result context for one Chief chapter branch
+adapter: pydantic
+model: manyselves.core.reporting.declarative_chief_chapter_cohort:DeclarativeChiefChapterContext

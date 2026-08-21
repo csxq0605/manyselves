@@ -1,0 +1,10 @@
+id: accept-current-chief-chapter
+version: 1.0.0
+description: Accept one typed Chief chapter Agent result
+implementation: capability:distribution-reporting:accept-current-chief-chapter
+input_contract: reporting_tool_input
+output_contract: declarative_chief_chapter_context
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

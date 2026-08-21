@@ -49,6 +49,11 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
         "template-distiller",
     }
     assert {definition.id for definition in registry.all(DefinitionKind.WORKFLOW)} == {
+        "distribution-chief-chapter-1-lane",
+        "distribution-chief-chapter-3-lane",
+        "distribution-chief-chapter-4-lane",
+        "distribution-chief-chapter-cohort",
+        "distribution-chief-chapter-lane",
         "distribution-cross-owner-cohort",
         "distribution-cross-owner-pipeline",
         "distribution-module-review-lane",
@@ -368,6 +373,47 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
             if action.id == "create-cross-owner-conversation"
         )
         assert conversation.conversation_key == f"cross-owner-{module_id}"
+
+
+def test_production_chief_is_a_chapter_cohort_subworkflow() -> None:
+    """Chief chapter Agents and their Join must be owned by files."""
+
+    registry, _, tail = build_reporting_tail_definition()
+    run_chief = next(action for action in tail.actions if action["id"] == "run-chief")
+    assert run_chief["kind"] == "subworkflow"
+    assert run_chief["workflow"] == "distribution-chief-chapter-cohort"
+
+    cohort = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-chief-chapter-cohort",
+    )
+    cohort_plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        cohort,
+        registry,
+    )
+    parallel = next(action for action in cohort_plan.actions if action.kind == "parallel")
+    assert set(parallel.branches) == {"1", "3", "4"}
+    join = next(action for action in cohort_plan.actions if action.kind == "join")
+    assert join.parallel == parallel.id
+    assert set(join.inputs) == {"1", "3", "4"}
+
+    for chapter_id, branch_id in parallel.branches.items():
+        branch = next(action for action in cohort_plan.actions if action.id == branch_id)
+        assert branch.kind == "subworkflow"
+        workflow_id = f"distribution-chief-chapter-{chapter_id}-lane"
+        assert branch.workflow == workflow_id
+        lane = registry.require(DefinitionKind.WORKFLOW, workflow_id)
+        lane_plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+            lane,
+            registry,
+        )
+        assert lane_plan.agent_ids == ["chief-editor"]
+        assert lane_plan.task_ids == ["chief-chapter-edit"]
+        conversation = next(
+            action for action in lane_plan.actions if action.kind == "create_conversation"
+        )
+        assert conversation.conversation_key == f"chief-chapter-{chapter_id}"
+        assert "run-reporting-chief" not in lane_plan.tool_ids
 
 
 def test_cross_owner_21_pipeline_declares_initial_reviewer_agent_boundary() -> None:

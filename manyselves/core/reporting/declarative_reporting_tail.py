@@ -26,6 +26,12 @@ from manyselves.runtime.workflow_host import (
 )
 
 from .agentic_models import ModuleSubmission
+from .declarative_chief_chapter_cohort import (
+    DeclarativeChiefChapterRuntime,
+    compile_chief_chapter_workflows,
+    register_chief_chapter_lane_specializations,
+    retry_failed_chief_chapter_lanes,
+)
 from .declarative_cross_owner_cohort import (
     DeclarativeCrossOwnerRuntime,
     compile_cross_owner_workflows,
@@ -46,6 +52,7 @@ def build_reporting_tail_definition() -> tuple[
 
     _capability, registry = load_distribution_reporting_capability()
     register_cross_owner_pipeline_specializations(registry)
+    register_chief_chapter_lane_specializations(registry)
     workflow = registry.require(
         DefinitionKind.WORKFLOW,
         "distribution-reporting-tail",
@@ -73,6 +80,10 @@ async def execute_declarative_reporting_tail(
         definitions,
         executors,
     )
+    chief_cohort_plan, chief_lane_plans = compile_chief_chapter_workflows(
+        definitions,
+        executors,
+    )
     kernel_run_id = str(state["run_id"])
     try:
         kernel_state = state_store.load(kernel_run_id)
@@ -87,6 +98,18 @@ async def execute_declarative_reporting_tail(
                 cross_state,
             )
             kernel_state.subworkflow_states["run-cross"] = cross_state.model_dump(mode="json")
+        saved_chief = kernel_state.subworkflow_states.get("run-chief")
+        if saved_chief is not None:
+            chief_state = WorkflowState.model_validate(saved_chief)
+            chief_state.variables["reporting-state"] = deepcopy(state)
+            chief_state.variables["prepared-chief-state"] = deepcopy(state)
+            chief_state = retry_failed_chief_chapter_lanes(
+                chief_cohort_plan,
+                chief_state,
+            )
+            kernel_state.subworkflow_states["run-chief"] = chief_state.model_dump(
+                mode="json"
+            )
     except FileNotFoundError:
         kernel_state = WorkflowState.for_plan(kernel_run_id, plan)
         save_plan = getattr(state_store, "save_plan", None)
@@ -120,6 +143,12 @@ async def execute_declarative_reporting_tail(
         workflow_id,
         compatibility_cross=stage_tools["cross"],
     )
+    chief_runtime = DeclarativeChiefChapterRuntime(
+        runner,
+        state,
+        workflow_id,
+        compatibility_chief=stage_tools["chief"],
+    )
     try:
         completed = await WorkflowRuntimeHost(
             executors,
@@ -133,8 +162,14 @@ async def execute_declarative_reporting_tail(
                     **{
                         f"run-reporting-{stage}": invoke
                         for stage, invoke in stage_tools.items()
-                        if stage != "cross"
+                        if stage not in {"cross", "chief"}
                     },
+                    "prepare-chief-chapter-cohort": chief_runtime.prepare,
+                    "prepare-current-chief-chapter": chief_runtime.prepare_lane,
+                    "chief-chapter-requires-agent": chief_runtime.requires_agent,
+                    "accept-current-chief-chapter": chief_runtime.accept_lane,
+                    "complete-current-chief-chapter": chief_runtime.complete_lane,
+                    "reduce-chief-chapter-cohort": chief_runtime.reduce,
                     "prepare-cross-owner-cohort": cross_runtime.prepare,
                     "prepare-current-cross-owner-initial": cross_runtime.prepare_initial,
                     "cross-owner-initial-requires-agent": (
@@ -204,19 +239,26 @@ async def execute_declarative_reporting_tail(
                     ),
                     "reduce-cross-owner-cohort": cross_runtime.reduce,
                 },
-                agents=cross_runtime.agent_invokers,
+                agents={
+                    **cross_runtime.agent_invokers,
+                    **chief_runtime.agent_invokers,
+                },
                 contracts=contracts,
                 definitions=definitions,
                 subworkflows={
                     "distribution-cross-owner-cohort": cross_cohort_plan,
                     **cross_pipeline_plans,
+                    "distribution-chief-chapter-cohort": chief_cohort_plan,
+                    **chief_lane_plans,
                 },
             ),
         )
     except BaseException:
         _replace_state(
             state,
-            cross_runtime.current_state or adapters.current_state,
+            adapters.current_state
+            or chief_runtime.current_state
+            or cross_runtime.current_state
         )
         raise
     _replace_state(state, completed.outputs["result"])

@@ -15,11 +15,11 @@
 ## Current position
 
 - Current work package: `WP-07/WP-08 remaining Reporting compatibility boundaries`
-- Last completed vertical slice: recheck-stage machine-preflight failures now use a typed original-Author correction and return to the original Auditor through declared actions; the obsolete whole-module review fallback is removed, while repeat/total-stop, exceptional Main acceptance, failed-correction recovery, Conversation reuse, and terminal recovery remain compatible
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `71ea69f` (`WP-07: declare module machine preflight corrections`); the recheck-preflight/fallback-removal slice is this document's commit
+- Last completed vertical slice: the initial Chief Chapter 1/3/(optional 4) wave is a file-declared Cohort of chapter Subworkflows, generic Agent/Conversation actions, typed outcomes, Parallel/Join reduction, and failed-chapter-only recovery; the coarse `run-reporting-chief` Tool is removed while the existing Reporting-owned input, result-part, recovery, and aggregate semantics remain unchanged
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `93ffd8e` (`WP-07: remove module review fallback after recheck preflight`); the Chief Cohort slice is this document's commit
 - Current migration stage: `file-defined Reporting workflow migration`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
-- Next automatic action: decompose Chief/Final/Render/Delivery into typed file-declared actions, then remove their remaining coarse Reporting adapters
+- Next automatic action: decompose the Final Auditor / affected-only Chief revision and recheck lifecycle into typed file-declared actions, then split Render/Publish/Delivery completion and remove their remaining coarse Reporting adapters
 
 ## Reopened architecture completion audit
 
@@ -58,7 +58,12 @@ architecture:
   routes and explicit user waits are file-owned; nested WAITING state, contract
   projection, generic input submission, and same-Run resume are Runtime-owned;
   no owner branch or Capability definition retains the obsolete whole-owner
-  continuation Tool, while combined Render/Delivery remains to be decomposed;
+  continuation Tool; the initial Chief Chapter 1/3/(optional 4) Agent wave is
+  now a file-owned Cohort with static chapter Subworkflows, exact existing
+  Conversation keys, typed outcomes, Parallel/Join reduction, and
+  failed-chapter-only retry, and the coarse Chief Tool is removed; Final's
+  affected-only Chief revision/recheck waves and combined Render/Delivery
+  remain to be decomposed;
 - application and React projections require a final audit for remaining
   Reporting-specific dispatch or presentation decisions.
 
@@ -81,6 +86,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
+- `WP-09: declare initial Chief chapter cohort` — the Reporting tail now invokes a packaged Chief Cohort whose Chapter 1, Chapter 3, and optional Chapter 4 branches are file-declared Subworkflows. Each active branch prepares the existing `ChiefChapterLaneInput` and `TaskEnvelope`, uses the original `chief-chapter-{id}` Conversation and `chief-editor` Agent through the generic executor, persists the existing result-part submission and RecoveryStore lane record, and joins a typed outcome before the existing deterministic `EditedReportSubmission` reduction. An inactive Chapter 4 is a typed skipped branch using the existing special-topic condition; an Agent failure drains siblings and same-Run retry resets only the failed chapter. The obsolete `run-reporting-chief` Tool is removed. No new Gate, cap, hash/CAS calculation, validation chain, lock, dependency, or public interface is added (this commit)
 - `WP-07: remove module review fallback after declared recheck preflight` — the recheck-stage machine check exposes the same typed original-Author correction as the initial stage, preserves the existing second-identical/third-total stopping rules and current `ModuleReviewProgress`, returns accepted corrections to the original Auditor, and retries a failed correction from its same prepared context. The file graph no longer contains `continue-current-module-recheck`, and incomplete or corrupt recheck state fails instead of replaying `_module_review_loop`; accepted Author exceptions remain bound to the existing typed Main result. No new cap, acceptance Gate, hash/CAS logic, public interface, lock, or dependency is added (this commit)
 - `WP-07: declare module machine-preflight corrections` — one exact machine-preflight attempt is exposed as a typed boundary; a failed check routes through the existing original-Author revision preparation/acceptance behind declared Tool, Conversation, and Agent actions before returning to the original Auditor path. The pre-existing repeated-fingerprint/third-attempt stopping semantics remain in the Legacy wrapper, while failed correction recovery persists only the typed preflight turn and does not replay initial Author work; no new cap, acceptance Gate, hash/CAS logic, public interface, lock, or dependency is added (this commit)
 - `WP-07/WP-08: declare module Main exceptions after Join` — Author `disputed`/`needs_input` and Auditor `escalate` outcomes persist their typed Lane context, drain all five Parallel siblings, and only then invoke the packaged Main Task through the original `main-module-exception` Conversation; existing Main decision preparation/acceptance, serialization, user-input semantics, and Author/Auditor return routes are reused without replaying a completed Lane, while a generic failed-branch reset now also clears only that branch action's nested Subworkflow snapshot (this commit)
@@ -256,6 +262,10 @@ The plan baseline must contain the autonomous execution commits and this status 
 - `uv lock --check` and `git diff --check` passed.
 - Ruff passed for every changed Python and test path. `git diff --check` passed.
 - No real Provider was called. No full regression was rerun after the user's instruction.
+- Chief definition Characterization was RED while `run-chief` remained an `invoke_tool`; after the slice, the package exposes the Chief Cohort, Chapter 1/3/4 Lane definitions, generic `chief-editor` Agent boundary, exact chapter Conversations, and no `run-reporting-chief`: `17 passed`.
+- Chief fresh failure/retry Characterization proved all three branches drained to typed outcomes, Chapter 1 stayed completed, inactive Chapter 4 stayed skipped, and same-Run retry invoked only failed Chapter 3 before deterministic reduction: `1 passed`.
+- Chief affected packaged definitions, current initial/recovery chapter behavior, chapter contracts/tool plumbing, direct Tail, one-parent Runner, and Kernel import boundary: `67 passed`. The protected structured-correction, Schema correction, Max Token, Tool Slice, productive-slice, No-progress, Tool Result reuse, Conversation isolation, and persisted-review-resume selection: `9 passed`.
+- No full regression, Provider, browser, server, or real project test ran for the Chief slice. Pytest emitted only the existing temporary-directory cleanup warnings.
 
 ## Research decisions
 
@@ -286,6 +296,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - Recovered Cross rechecks reuse the acceptance already produced by `prepare_owner_recheck` and change only the existing false-branch target from the compatibility closure to typed round advancement. No new predicate, Tool, Gate, hash/CAS logic, or public boundary was added.
 - Cross Main exception extraction moves the existing exception input, TaskEnvelope, exact-finding acceptance, persisted decision, and `request_user`/`stop_incomplete` behavior into shared typed Capability boundaries used by both Legacy and declarative paths. The new graph declares the existing `main-agent`, original `main-cross-exception` Conversation, and only the two existing business routes; it reuses the pre-existing `_main_exception_lock` to preserve serialization and adds no lock, Gate, cap, hash/CAS expression, or production dependency.
 - Module Main exception extraction preserves the existing all-siblings-drained ordering by serializing each deferred typed Lane context into the Join outcome and resuming its file-defined Lane only after Join. It reuses the pre-existing `main-module-exception` Conversation, Main preparation/acceptance, and `_main_exception_lock`; the graph adds no Gate, cap, hash/CAS expression, lock, public interface, or production dependency. The generic failed-branch reset clears the already-owned nested state for only the reset Subworkflow action so a retried branch cannot reuse a stale post-Join result.
+- Initial Chief extraction preserves the existing Chapter 1/3/(optional 4) selection, chapter-local source projection, result-part validation, RecoveryStore records, deterministic reducer, and `chief-chapter-{id}` Conversation identities. The optional Chapter 4 `If` is the pre-existing special-topic business condition, not a new safety or acceptance Gate. Retry depends only on typed WorkflowState outcomes; no hash/CAS expression, cap, lock, public interface, orchestration dependency, or additional validation chain was introduced.
 - WP-10 keeps the Capability `gates/` index intentionally empty because the migrated path has no new acceptance or decision Gate. Existing Reporting recovery behavior is indexed without new attempt limits, hashes, CAS, or validation chains.
 - The explicit Reporting engine selection is routing, not a new acceptance or safety Gate: existing Reporting starts omit the parameter and remain `legacy`; only the generic declarative Capability start passes `declarative`. The readable run prefix preserves the same selection across resume without a new metadata verifier, digest, or CAS record.
 

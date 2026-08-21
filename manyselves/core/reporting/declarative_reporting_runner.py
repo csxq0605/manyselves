@@ -48,6 +48,12 @@ from manyselves.runtime.workflow_host import (
 )
 
 from .agentic_models import TaskEnvelope, WorkflowDecisionSubmission
+from .declarative_chief_chapter_cohort import (
+    DeclarativeChiefChapterRuntime,
+    compile_chief_chapter_workflows,
+    register_chief_chapter_lane_specializations,
+    retry_failed_chief_chapter_lanes,
+)
 from .declarative_cross_owner_cohort import (
     DeclarativeCrossOwnerRuntime,
     DeclarativeMainExceptionAgentResult,
@@ -301,8 +307,9 @@ class _TaskScopedAgentInvoker:
 def _reporting_agent_invokers(
     module_invokers: Mapping[str, AgentInvoker],
     cross_invokers: Mapping[str, AgentInvoker],
+    chief_invokers: Mapping[str, AgentInvoker] | None = None,
 ) -> dict[str, AgentInvoker]:
-    """Compose module and Cross adapters for their shared Author identities."""
+    """Compose module, Cross, and Chief adapters for the declared runtime."""
 
     combined = dict(module_invokers)
     for agent_id, cross_invoker in cross_invokers.items():
@@ -323,6 +330,7 @@ def _reporting_agent_invokers(
             module_invoker,
             task_routes,
         )
+    combined.update(chief_invokers or {})
     return combined
 
 
@@ -331,6 +339,7 @@ def build_reporting_module_stage_definition() -> tuple[DefinitionRegistry, Workf
 
     _capability, registry = load_distribution_reporting_capability()
     register_cross_owner_pipeline_specializations(registry)
+    register_chief_chapter_lane_specializations(registry)
     workflow = registry.require(
         DefinitionKind.WORKFLOW,
         "distribution-reporting",
@@ -348,6 +357,7 @@ class _CompiledReportingRuntime:
     plan: ResolvedPlan
     cohort_plan: ResolvedPlan
     cross_cohort_plan: ResolvedPlan
+    chief_cohort_plan: ResolvedPlan
     subworkflows: dict[str, ResolvedPlan]
 
 
@@ -379,6 +389,10 @@ def _compile_reporting_runtime(
         definitions,
         executors,
     )
+    chief_cohort_plan, chief_lane_plans = compile_chief_chapter_workflows(
+        definitions,
+        executors,
+    )
     cohort = definitions.require(
         DefinitionKind.WORKFLOW,
         "distribution-module-cohort",
@@ -401,12 +415,15 @@ def _compile_reporting_runtime(
         plan=plan,
         cohort_plan=cohort_plan,
         cross_cohort_plan=cross_cohort_plan,
+        chief_cohort_plan=chief_cohort_plan,
         subworkflows={
             cohort.id: cohort_plan,
             **runtime_lane_plans,
             tail.id: tail_plan,
             "distribution-cross-owner-cohort": cross_cohort_plan,
             **cross_pipeline_plans,
+            "distribution-chief-chapter-cohort": chief_cohort_plan,
+            **chief_lane_plans,
         },
     )
 
@@ -461,6 +478,7 @@ async def execute_declarative_module_stage(
     plan = compiled.plan
     cohort_plan = compiled.cohort_plan
     cross_cohort_plan = compiled.cross_cohort_plan
+    chief_cohort_plan = compiled.chief_cohort_plan
     if module_runtime is None:
         if execute_current is None:
             raise TypeError("module runtime is required")
@@ -489,6 +507,18 @@ async def execute_declarative_module_stage(
                     cross_state,
                 )
                 child.subworkflow_states["run-cross"] = cross_state.model_dump(mode="json")
+            saved_chief = child.subworkflow_states.get("run-chief")
+            if saved_chief is not None:
+                chief_state = WorkflowState.model_validate(saved_chief)
+                chief_state.variables["reporting-state"] = deepcopy(state)
+                chief_state.variables["prepared-chief-state"] = deepcopy(state)
+                chief_state = retry_failed_chief_chapter_lanes(
+                    chief_cohort_plan,
+                    chief_state,
+                )
+                child.subworkflow_states["run-chief"] = chief_state.model_dump(
+                    mode="json"
+                )
             kernel_state.subworkflow_states["run-reporting-tail"] = child.model_dump(mode="json")
         saved_cohort = kernel_state.subworkflow_states.get("run-module-cohort")
         if saved_cohort is not None:
@@ -513,6 +543,12 @@ async def execute_declarative_module_stage(
         state,
         workflow_id,
         compatibility_cross=tail_adapters.cross,
+    )
+    chief_runtime = DeclarativeChiefChapterRuntime(
+        tail_runner,
+        state,
+        workflow_id,
+        compatibility_chief=tail_adapters.chief,
     )
     module_tools = {
         "start-current-module-lane": lambda values: module_runtime.start_lane(
@@ -666,13 +702,19 @@ async def execute_declarative_module_stage(
                         cross_runtime.complete_owner_without_findings
                     ),
                     "reduce-cross-owner-cohort": cross_runtime.reduce,
-                    "run-reporting-chief": tail_adapters.chief,
+                    "prepare-chief-chapter-cohort": chief_runtime.prepare,
+                    "prepare-current-chief-chapter": chief_runtime.prepare_lane,
+                    "chief-chapter-requires-agent": chief_runtime.requires_agent,
+                    "accept-current-chief-chapter": chief_runtime.accept_lane,
+                    "complete-current-chief-chapter": chief_runtime.complete_lane,
+                    "reduce-chief-chapter-cohort": chief_runtime.reduce,
                     "run-reporting-final": tail_adapters.final,
                     "run-reporting-delivery": tail_adapters.delivery,
                 },
                 agents=_reporting_agent_invokers(
                     module_runtime.agent_invokers,
                     cross_runtime.agent_invokers,
+                    chief_runtime.agent_invokers,
                 ),
                 contracts=compiled.contracts,
                 definitions=definitions,
@@ -682,6 +724,7 @@ async def execute_declarative_module_stage(
     except BaseException:
         current = (
             tail_adapters.current_state
+            or chief_runtime.current_state
             or cross_runtime.current_state
             or module_runtime.current_state
             or state
@@ -693,6 +736,7 @@ async def execute_declarative_module_stage(
     if completed.status is WorkflowStatus.WAITING:
         current = (
             tail_adapters.current_state
+            or chief_runtime.current_state
             or cross_runtime.current_state
             or module_runtime.current_state
             or state

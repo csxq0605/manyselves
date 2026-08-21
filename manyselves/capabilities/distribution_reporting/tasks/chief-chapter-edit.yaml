@@ -3,11 +3,10 @@ version: 1.0.0
 description: Chapter-scoped chief edit
 agent: chief-editor
 objective: Edit the assigned report chapter.
-input_contract: chief_chapter_lane_input
-output_contract: chief_chapter_lane_submission
+input_contract: declarative_chief_chapter_context
+output_contract: declarative_chief_chapter_agent_result
 tools:
 - write_result_part
 - list_result_parts
 - submit_result
 recovery: current-reporting-recovery
-
