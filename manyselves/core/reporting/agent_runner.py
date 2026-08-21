@@ -9,7 +9,6 @@ import json
 import operator
 import os
 import re
-import tempfile
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import asdict, is_dataclass
@@ -24,7 +23,11 @@ from ...interfaces.types import (
     Error,
     UserMessage,
 )
-from ...kernel.definitions import RecoveryPolicyDefinition
+from ...kernel.definitions import (
+    DefinitionKind,
+    RecoveryPolicyDefinition,
+    ToolDefinition,
+)
 from ...kernel.recovery import (
     ProgressObservation,
     RecoveryActionKind,
@@ -33,6 +36,7 @@ from ...kernel.recovery import (
     RecoveryEventKind,
     RecoveryState,
 )
+from ...kernel.workflow import ResolvedPlan, restore_plan_definition_registry
 from ..artifacts import ArtifactGateway, ArtifactGrant, ToolContractError, parse_artifact
 from ..artifacts.content_store import ContentAddressedStore
 from ..loops.agent_loop import (
@@ -490,6 +494,60 @@ class _RecoveryAwareReportingTool:
                 },
             )
             raise
+
+
+def _saved_reporting_tool_definitions(
+    workspace: Path,
+    run_id: str,
+    *,
+    declarative: bool,
+) -> dict[str, ToolDefinition]:
+    """Restore Agent-visible Tool definitions captured by one declarative Run."""
+
+    if not declarative:
+        return {}
+    plan_path = workspace / "Work" / "runs" / run_id / "resolved-plan.json"
+    if not plan_path.is_file():
+        return {}
+    plan = ResolvedPlan.model_validate_json(plan_path.read_text(encoding="utf-8"))
+    if not plan.definition_snapshots:
+        return {}
+    definitions = restore_plan_definition_registry(plan)
+    return {
+        definition.id: definition
+        for definition in definitions.all(DefinitionKind.TOOL)
+        if isinstance(definition, ToolDefinition)
+    }
+
+
+def _reporting_tool_implementation_id(definition: ToolDefinition) -> str:
+    prefix = "capability:distribution-reporting:"
+    if not definition.implementation.startswith(prefix):
+        raise ValueError(
+            "unsupported declarative Reporting Tool implementation: "
+            f"{definition.implementation}"
+        )
+    implementation_id = definition.implementation.removeprefix(prefix)
+    if not implementation_id or ":" in implementation_id:
+        raise ValueError(
+            "unsupported declarative Reporting Tool implementation: "
+            f"{definition.implementation}"
+        )
+    return implementation_id
+
+
+def _apply_saved_reporting_tool_definition(
+    tool: Tool,
+    definition: ToolDefinition,
+) -> Tool:
+    """Apply one saved declarative projection to a fresh current Tool instance."""
+
+    tool.name = definition.id
+    tool.description = definition.instructions or definition.description
+    tool.side_effect = definition.side_effect  # type: ignore[assignment]
+    tool.parallel_safe = definition.parallel_safe
+    tool.reuse_result = definition.reuse_result  # type: ignore[attr-defined]
+    return tool
 
 
 class ReportingAgentRunner:
@@ -2128,6 +2186,7 @@ class ReportingAgentRunner:
         shared_artifacts: list[str] | None = None,
         task_correlation: TaskCorrelation | None = None,
         recovery_event_callback: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> ToolRegistry:
         registry = ToolRegistry()
         gateway = gateway or scoped_gateway(
@@ -2464,10 +2523,26 @@ class ReportingAgentRunner:
             available["product_skill_evolution"] = ProductSkillEvolutionTool(
                 self.product_skill_root.parents[1]
             )
+        saved_tool_definitions = _saved_reporting_tool_definitions(
+            self.workspace,
+            envelope.run_id,
+            declarative=recovery_policy is not None,
+        )
         for name in access.tool_names:
-            if name not in available:
+            saved_definition = saved_tool_definitions.get(name)
+            if saved_definition is not None and not saved_definition.model_visible:
+                continue
+            implementation_id = (
+                _reporting_tool_implementation_id(saved_definition)
+                if saved_definition is not None
+                else name
+            )
+            if implementation_id not in available:
                 raise ValueError(f"unsupported tool in {definition.id}: {name}")
-            registry.register(available[name])
+            tool = available[implementation_id]
+            if saved_definition is not None:
+                tool = _apply_saved_reporting_tool_definition(tool, saved_definition)
+            registry.register(tool)
         for name in (
             "open_artifact",
             "open_tool_result",
@@ -2520,7 +2595,7 @@ class ReportingAgentRunner:
                     else None
                 ),
             )
-        if "submit_result" in definition.tools:
+        if registry.get("submit_result") is not None:
             output_schemas = list(task_submission_schemas.values())
             if not output_schemas:
                 raise ValueError(
@@ -3153,7 +3228,15 @@ class ReportingAgentRunner:
                 recovery_policy,
                 recovery_state,
             )
-            if decision.action is not expected_action:
+            if decision.action is RecoveryActionKind.FAIL:
+                raise RuntimeError(
+                    f"recovery policy {recovery_policy.id} failed "
+                    f"{event_kind.value}"
+                )
+            if decision.action not in {
+                expected_action,
+                RecoveryActionKind.STOP,
+            }:
                 raise RuntimeError(
                     f"recovery policy action {decision.action.value} does not match "
                     f"the reporting path requiring {expected_action.value} for "
@@ -3175,7 +3258,14 @@ class ReportingAgentRunner:
                 recovery_policy,
                 recovery_state,
             )
-            if decision is not None and decision.action is not RecoveryActionKind.STOP:
+            if decision is not None and decision.action is RecoveryActionKind.FAIL:
+                raise RuntimeError(
+                    f"recovery policy {recovery_policy.id} failed no_progress"
+                )
+            if decision is not None and decision.action not in {
+                RecoveryActionKind.CONTINUE,
+                RecoveryActionKind.STOP,
+            }:
                 raise RuntimeError(
                     f"recovery policy action {decision.action.value} does not match "
                     "the reporting no-progress path requiring stop"
@@ -3191,6 +3281,30 @@ class ReportingAgentRunner:
                 RecoveryActionKind.CORRECT,
                 detail,
             )
+
+        async def provider_recovery_decider(
+            detail: dict[str, Any],
+        ) -> str | None:
+            if recovery_controller is None or recovery_policy is None:
+                return None
+            decision = recovery_controller.decide(
+                RecoveryEvent(
+                    kind=RecoveryEventKind.PROVIDER_ERROR,
+                    detail=dict(detail),
+                ),
+                recovery_policy,
+                recovery_state,
+            )
+            if decision.action not in {
+                RecoveryActionKind.CONTINUE,
+                RecoveryActionKind.STOP,
+                RecoveryActionKind.FAIL,
+            }:
+                raise RuntimeError(
+                    f"recovery policy action {decision.action.value} cannot "
+                    "handle provider_error"
+                )
+            return decision.action.value
 
         router = self._routers.get(workflow_id)
         if router is None:
@@ -3371,6 +3485,7 @@ class ReportingAgentRunner:
                         if recovery_policy is not None
                         else None
                     ),
+                    recovery_policy=recovery_policy,
                 ),
                 "bus": self.bus,
                 "config": config,
@@ -3383,6 +3498,11 @@ class ReportingAgentRunner:
                     None
                     if self._provider_attempt_guard is None
                     else lambda: self._provider_attempt_guard(definition.id, envelope.task_id)
+                ),
+                "provider_recovery_decider": (
+                    provider_recovery_decider
+                    if recovery_policy is not None
+                    else None
                 ),
             }
             if self.provider_admission is not None:
@@ -3405,10 +3525,18 @@ class ReportingAgentRunner:
                 # their construction path usable; the reporting task still
                 # has a persisted typed capsule for callers that can install
                 # one later.
-                if "context_rebuilder" not in str(exc) and "pre_send_context_guard" not in str(exc):
+                if not any(
+                    optional_hook in str(exc)
+                    for optional_hook in (
+                        "context_rebuilder",
+                        "pre_send_context_guard",
+                        "provider_recovery_decider",
+                    )
+                ):
                     raise
                 loop_kwargs.pop("context_rebuilder", None)
                 loop_kwargs.pop("pre_send_context_guard", None)
+                loop_kwargs.pop("provider_recovery_decider", None)
                 loop = AgentLoop(**loop_kwargs)
             # Reporting persists identity and canonical refs in its v4 state.
             # In-memory compaction is still allowed, but its process summary is
@@ -3462,6 +3590,7 @@ class ReportingAgentRunner:
                     if recovery_policy is not None
                     else None
                 ),
+                recovery_policy=recovery_policy,
             )
             loop.usage_run_id = envelope.run_id
             loop.usage_task_id = envelope.task_id
@@ -3470,6 +3599,11 @@ class ReportingAgentRunner:
                 None
                 if self._provider_attempt_guard is None
                 else lambda: self._provider_attempt_guard(definition.id, envelope.task_id)
+            )
+            loop.provider_recovery_decider = (
+                provider_recovery_decider
+                if recovery_policy is not None
+                else None
             )
             if self.provider_admission is not None:
                 loop.provider_admission = self.provider_admission
@@ -3858,7 +3992,7 @@ class ReportingAgentRunner:
                     AGENT_MAX_TOKENS_CONTINUATION_REQUIRED,
                 }:
                     max_tokens_continuation = turn.content == AGENT_MAX_TOKENS_CONTINUATION_REQUIRED
-                    apply_recovery_policy(
+                    recovery_decision = apply_recovery_policy(
                         (
                             RecoveryEventKind.MAX_TOKENS
                             if max_tokens_continuation
@@ -3867,6 +4001,20 @@ class ReportingAgentRunner:
                         RecoveryActionKind.CONTINUE,
                         {"task_id": envelope.task_id},
                     )
+                    if (
+                        recovery_decision is not None
+                        and recovery_decision.action is RecoveryActionKind.STOP
+                    ):
+                        return turn.model_copy(
+                            update={
+                                "content": (
+                                    f"{CONTINUATION_HARNESS_STOPPED}"
+                                    f"recovery_policy_stop;turn_kind="
+                                    f"{'max_tokens_continuation' if max_tokens_continuation else 'tool_slice_continuation'}"
+                                ),
+                                "internal": True,
+                            }
+                        )
                     continuation_kind = (
                         "max_tokens_continuation"
                         if max_tokens_continuation
@@ -3909,12 +4057,21 @@ class ReportingAgentRunner:
                         and state["no_progress_observations"]
                         >= limits["max_no_progress_observations"]
                     )
-                    observe_recovery_progress(
-                        progressed,
-                        {
-                            "task_id": envelope.task_id,
-                            "turn_kind": continuation_kind,
-                        },
+                    progress_decision = (
+                        observe_recovery_progress(
+                            False,
+                            {
+                                "task_id": envelope.task_id,
+                                "turn_kind": continuation_kind,
+                            },
+                        )
+                        if stalled
+                        else None
+                    )
+                    policy_stopped = (
+                        stalled
+                        if progress_decision is None
+                        else progress_decision.action is RecoveryActionKind.STOP
                     )
                     event = {
                         "sequence": len(state["events"]) + 1,
@@ -3927,10 +4084,10 @@ class ReportingAgentRunner:
                         "result_parts": snapshot["result_parts"],
                         "continuations_already_issued": count,
                     }
-                    if stalled or profile_limit_reached:
+                    if policy_stopped or profile_limit_reached:
                         stop_reason = (
                             "repeated_no_progress"
-                            if stalled
+                            if policy_stopped
                             else "execution_profile_continuation_limit"
                         )
                         event.update(
@@ -3956,7 +4113,9 @@ class ReportingAgentRunner:
                     state["events"].append(event)
                     state["status"] = "continuing"
                     save_state(state)
-                    if max_tokens_continuation:
+                    if recovery_decision is not None and recovery_decision.prompt:
+                        continuation_instruction = recovery_decision.prompt
+                    elif max_tokens_continuation:
                         continuation_instruction = (
                             "上一模型轮次达到单次 max_tokens 上限，未产生完整提交；"
                             "这是未完成续写，不是提交格式纠正，也不表示分析已经完成。"
@@ -3971,9 +4130,13 @@ class ReportingAgentRunner:
                             else "继续使用当前输入引用和已经获得的上下文；不要重新检索或重读已有内容。"
                         )
                     boundary_explanation = (
-                        "上一模型输出达到单次生成上限，但任务没有失败。你仍是原 Agent。"
-                        if max_tokens_continuation
-                        else "上一工具执行片段已达到单次轮次边界，但任务没有失败。你仍是原 Agent。"
+                        ""
+                        if recovery_decision is not None and recovery_decision.prompt
+                        else (
+                            "上一模型输出达到单次生成上限，但任务没有失败。你仍是原 Agent。"
+                            if max_tokens_continuation
+                            else "上一工具执行片段已达到单次轮次边界，但任务没有失败。你仍是原 Agent。"
+                        )
                     )
                     semantic_reason = PromptAssembler.semantic_turn(
                         (
@@ -4038,13 +4201,24 @@ class ReportingAgentRunner:
             ):
                 result = await persist_untyped_completion(turn)
             elif isinstance(turn, AgentResponse) and envelope.allowed_outputs:
-                apply_recovery_policy(
+                recovery_decision = apply_recovery_policy(
                     RecoveryEventKind.NATURAL_LANGUAGE_WITHOUT_SUBMISSION,
                     RecoveryActionKind.CORRECT,
                     {"task_id": envelope.task_id},
                 )
                 expected = ", ".join(envelope.allowed_outputs)
-                if envelope.task_id == "template-skill-distillation":
+                if (
+                    recovery_decision is not None
+                    and recovery_decision.action is RecoveryActionKind.STOP
+                ):
+                    correction = None
+                elif recovery_decision is not None and recovery_decision.prompt:
+                    correction = (
+                        "<submission_correction>\n"
+                        f"{recovery_decision.prompt}\n"
+                        "</submission_correction>"
+                    )
+                elif envelope.task_id == "template-skill-distillation":
                     correction = (
                         "<submission_correction>\n"
                         "你刚才错误地用普通文字结束。现在不得解释或重读模板。立即调用 "
@@ -4132,30 +4306,33 @@ class ReportingAgentRunner:
                         "不得压缩或省略已完成内容，不得重新读取文件或重新检索。\n"
                         "</submission_correction>"
                     )
-                self._context_reason_turn(
-                    context_rebuilder,
-                    content=correction,
-                    turn_kind="submission_correction",
-                    prior_output=(
-                        turn.content if isinstance(turn, AgentResponse) else None
-                    ),
-                )
-                corrected = await finish_tool_slices(
-                    await one_turn(
-                        correction,
-                        internal=True,
+                if correction is None:
+                    result = await persist_untyped_completion(turn)
+                else:
+                    self._context_reason_turn(
+                        context_rebuilder,
+                        content=correction,
                         turn_kind="submission_correction",
-                        provider_stream_idle_timeout_seconds=(
-                            REPORTING_SUBMISSION_STREAM_IDLE_TIMEOUT_SECONDS
+                        prior_output=(
+                            turn.content if isinstance(turn, AgentResponse) else None
                         ),
-                    ),
-                    origin_turn_kind="submission_correction",
-                )
-                result = (
-                    corrected
-                    if isinstance(corrected, AgentResult)
-                    else await persist_untyped_completion(corrected)
-                )
+                    )
+                    corrected = await finish_tool_slices(
+                        await one_turn(
+                            correction,
+                            internal=True,
+                            turn_kind="submission_correction",
+                            provider_stream_idle_timeout_seconds=(
+                                REPORTING_SUBMISSION_STREAM_IDLE_TIMEOUT_SECONDS
+                            ),
+                        ),
+                        origin_turn_kind="submission_correction",
+                    )
+                    result = (
+                        corrected
+                        if isinstance(corrected, AgentResult)
+                        else await persist_untyped_completion(corrected)
+                    )
             elif isinstance(turn, AgentResponse):
                 result = await persist_untyped_completion(turn)
             else:
@@ -4171,7 +4348,7 @@ class ReportingAgentRunner:
                 status="cancelled",
             )
             raise
-        except Exception as exc:
+        except Exception:
             self._context_terminal(
                 context_rebuilder,
                 status="failed",

@@ -17,7 +17,11 @@ from manyselves.core.reporting.input_contracts import (
     ValidationReport,
 )
 from manyselves.kernel.conversations import ConversationRecord
-from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
+from manyselves.kernel.definitions import (
+    AgentDefinition,
+    RecoveryPolicyDefinition,
+    TaskDefinition,
+)
 from manyselves.kernel.ports import AgentInvocationOutcome
 from manyselves.runtime.semantic_trace import SemanticTraceRecorder
 from manyselves.runtime.state_store import FileWorkflowStateStore
@@ -32,6 +36,7 @@ class _ScriptedDeclarativeInvoker:
         self._scripted = list(scripted)
         self.inputs: list[object] = []
         self.conversations: list[tuple[str, str]] = []
+        self.recovery_policies: list[str] = []
 
     async def invoke(
         self,
@@ -51,6 +56,25 @@ class _ScriptedDeclarativeInvoker:
         self.inputs.append(value)
         self.conversations.append((agent.id, conversation.key.value))
         return AgentInvocationOutcome(status="ok", result=result)
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        self.recovery_policies.append(recovery_policy.id)
+        return await self.invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+        )
 
 
 def _passed_validation(
@@ -107,6 +131,7 @@ async def test_declarative_module_lane_matches_legacy_semantic_trace(
         ("module-2.1-specialist", "module-2.1"),
         ("evidence-auditor", "module-auditor-2.1"),
     ]
+    assert invoker.recovery_policies == ["current-reporting-recovery"] * 3
 
 
 @pytest.mark.asyncio
@@ -142,4 +167,5 @@ async def test_declarative_module_lane_skips_revision_without_findings(
     assert result == module
     assert len(invoker.inputs) == 1
     assert isinstance(invoker.inputs[0], ModuleReviewInput)
+    assert invoker.recovery_policies == ["current-reporting-recovery"]
     assert not invoker._scripted

@@ -38,6 +38,7 @@ from .agentic_models import (
     ModuleSubmission,
     TaskEnvelope,
 )
+from .declarative_task_binding import bind_declared_task
 from .final_specialization import final_lane_specialization
 from .input_contracts import FinalChapterLaneInput
 from .models import (
@@ -130,7 +131,7 @@ class _FinalChapterInvoker:
     async def _invoke(
         self,
         _agent: AgentDefinition,
-        _task: TaskDefinition,
+        task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
@@ -139,7 +140,7 @@ class _FinalChapterInvoker:
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeFinalChapterContext.model_validate(value)
-        envelope = cast(TaskEnvelope, context.envelope)
+        envelope = bind_declared_task(cast(TaskEnvelope, context.envelope), task)
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,

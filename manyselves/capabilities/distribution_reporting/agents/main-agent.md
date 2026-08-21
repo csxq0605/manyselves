@@ -15,9 +15,12 @@ accepts:
 - resolution_verdicts
 - report_state
 - output_artifacts
+- declarative_cross_owner_runtime_context
+- declarative_module_runtime_lane_context
 produces:
 - report_request
 - report_state
+- declarative_main_exception_agent_result
 conversation_mode: session
 limits:
   max_turns: 16
@@ -50,4 +53,3 @@ limits:
 <deliverables>
 只提交当前 Schema 允许的 WorkflowDecisionSubmission。
 </deliverables>
-

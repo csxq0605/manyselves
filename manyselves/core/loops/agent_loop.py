@@ -1981,6 +1981,9 @@ class AgentLoop:
         provider_attempt_record_observer: (
             Callable[[dict[str, Any]], Awaitable[None]] | None
         ) = None,
+        provider_recovery_decider: (
+            Callable[[dict[str, Any]], Awaitable[Any] | Any] | None
+        ) = None,
         context_rebuilder: Any | None = None,
         pre_send_context_guard: Callable[..., Any] | None = None,
     ):
@@ -2058,6 +2061,10 @@ class AgentLoop:
         self.provider_admission_identity_key = provider_admission_identity_key
         self.provider_attempt_observer = provider_attempt_observer
         self.provider_attempt_record_observer = provider_attempt_record_observer
+        # Optional domain-neutral failure policy.  It may preserve an already
+        # legal retry with ``continue`` or narrow it with ``stop``/``fail``;
+        # it can never turn a non-retryable Provider failure into a retry.
+        self.provider_recovery_decider = provider_recovery_decider
         # Optional typed context hook.  ``None`` intentionally preserves the
         # historical conversation-building path byte-for-byte.
         self.context_rebuilder = context_rebuilder
@@ -4023,6 +4030,24 @@ class AgentLoop:
                     retry_decision = "stop_cancelled"
                 else:
                     retry_decision = "stop_not_proven_safe"
+                recovery_detail = {
+                    "phase": phase,
+                    "attempt": attempts,
+                    "error": str(failure.original),
+                    "error_class": type(failure.original).__name__,
+                    "attempt_disposition": attempt_disposition.value,
+                    "retryable": policy.retryable,
+                    "can_retry": can_retry,
+                    "retry_decision": retry_decision,
+                    "partial_output": failure.partial_output,
+                    "ambiguous": ambiguous,
+                }
+                recovery_action = await self._decide_provider_recovery(
+                    recovery_detail
+                )
+                if can_retry and recovery_action in {"stop", "fail"}:
+                    can_retry = False
+                    retry_decision = f"recovery_{recovery_action}"
                 self._last_usage_record = self._record_token_usage(
                     provider_messages,
                     _LoopLLMResponse(content="", tool_calls=[]),
@@ -4063,6 +4088,26 @@ class AgentLoop:
                 )
                 if await self._wait_before_retry(policy.delay_seconds):
                     return _LoopLLMResponse(content="", tool_calls=[])
+
+    async def _decide_provider_recovery(
+        self,
+        detail: dict[str, Any],
+    ) -> str | None:
+        """Apply an optional retry-narrowing policy to one Provider failure."""
+
+        if self.provider_recovery_decider is None:
+            return None
+        action = self.provider_recovery_decider(dict(detail))
+        if inspect.isawaitable(action):
+            action = await action
+        if action is None:
+            return None
+        normalized = str(getattr(action, "value", action)).strip().lower()
+        if normalized not in {"continue", "stop", "fail"}:
+            raise ValueError(
+                "provider_recovery_decider must return continue, stop, fail, or None"
+            )
+        return normalized
 
     async def _notify_provider_attempt_record(
         self,

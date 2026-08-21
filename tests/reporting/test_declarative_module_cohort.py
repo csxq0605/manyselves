@@ -13,7 +13,11 @@ from manyselves.core.reporting.declarative_module_cohort import (
 )
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.kernel.conversations import ConversationRecord
-from manyselves.kernel.definitions import AgentDefinition, TaskDefinition
+from manyselves.kernel.definitions import (
+    AgentDefinition,
+    RecoveryPolicyDefinition,
+    TaskDefinition,
+)
 from manyselves.kernel.ports import AgentInvocationOutcome
 from manyselves.kernel.workflow import WorkflowStatus
 from manyselves.runtime.state_store import FileWorkflowStateStore
@@ -72,6 +76,25 @@ class _CohortInvoker:
                 coverage={"submodule_ids": [self.target]},
                 findings=[],
             ),
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        assert recovery_policy.id == "current-reporting-recovery"
+        return await self.invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
         )
 
 

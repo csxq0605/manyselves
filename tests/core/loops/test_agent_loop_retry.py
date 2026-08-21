@@ -158,6 +158,74 @@ def _loop(tmp_path: Path, provider: LLMProvider) -> AgentLoop:
     )
 
 
+@pytest.mark.parametrize("action", ["stop", "fail"])
+@pytest.mark.asyncio
+async def test_provider_recovery_can_only_tighten_an_existing_retry(
+    tmp_path: Path,
+    action: str,
+) -> None:
+    provider = EventuallySuccessfulProvider(failures=1)
+    decisions: list[dict] = []
+
+    async def decide(detail: dict) -> str:
+        decisions.append(detail)
+        return action
+
+    loop = AgentLoop(
+        agent_type="main",
+        workspace=tmp_path,
+        tools=ToolRegistry(),
+        bus=MessageBus(),
+        config=AgentDefaults(),
+        llm_provider=provider,
+        provider_recovery_decider=decide,
+    )
+
+    with pytest.raises(RuntimeError, match="request limit"):
+        await loop._chat_with_retries([], None, "message-1")
+
+    assert provider.calls == 1
+    assert len(decisions) == 1
+    assert decisions[0]["can_retry"] is True
+    row = UsageLedger(tmp_path, "main").rows()[0]
+    assert row["retry"] is False
+    assert row["retry_decision"] == f"recovery_{action}"
+
+
+@pytest.mark.asyncio
+async def test_provider_recovery_continue_cannot_loosen_non_retryable_failure(
+    tmp_path: Path,
+) -> None:
+    provider = PreTokenAmbiguousFailureProvider(
+        HttpFailureError(409, "request id already exists")
+    )
+    decisions: list[dict] = []
+
+    async def decide(detail: dict) -> str:
+        decisions.append(detail)
+        return "continue"
+
+    loop = AgentLoop(
+        agent_type="main",
+        workspace=tmp_path,
+        tools=ToolRegistry(),
+        bus=MessageBus(),
+        config=AgentDefaults(),
+        llm_provider=provider,
+        provider_recovery_decider=decide,
+    )
+
+    with pytest.raises(RuntimeError, match="409"):
+        await loop._chat_with_retries([], None, "message-1")
+
+    assert provider.calls == 1
+    assert len(decisions) == 1
+    assert decisions[0]["can_retry"] is False
+    row = UsageLedger(tmp_path, "main").rows()[0]
+    assert row["retry"] is False
+    assert row["retry_decision"] == "stop_non_retryable"
+
+
 @pytest.mark.asyncio
 async def test_provider_retry_is_bounded_and_announced(tmp_path: Path, monkeypatch):
     provider = EventuallySuccessfulProvider(failures=2)

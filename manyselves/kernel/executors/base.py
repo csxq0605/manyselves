@@ -579,6 +579,17 @@ class EndWorkflowExecutor:
     ) -> ActionResult:
         resolved = cast(EndWorkflowAction, action)
         output = state.variables[resolved.output_variable]
+        if resolved.output_contract is not None:
+            try:
+                output = context.contracts[resolved.output_contract].validate(output)
+            except KeyError as exc:
+                raise RuntimeExecutionError(
+                    f"missing final output contract adapter: {resolved.output_contract}"
+                ) from exc
+            except ContractValidationError as exc:
+                raise RuntimeExecutionError(
+                    f"final output contract {resolved.output_contract} rejected the result"
+                ) from exc
         return ActionResult(
             output=output,
             output_updates={resolved.output_name: output},

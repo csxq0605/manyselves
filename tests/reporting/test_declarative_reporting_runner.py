@@ -78,7 +78,7 @@ from manyselves.kernel.workflow import (
     WorkflowStatus,
 )
 from manyselves.runtime.state_store import FileWorkflowStateStore
-from manyselves.runtime.tool_adapter import CapabilityToolAdapter, ToolAdapterError
+from manyselves.runtime.tool_adapter import CapabilityToolAdapter
 from manyselves.runtime.workflow_host import (
     FileWorkflowEventSink,
     InMemoryWorkflowEventSink,
@@ -123,7 +123,7 @@ def test_reporting_runtime_binds_declared_capability_tools_through_factory() -> 
     assert isinstance(bound["reduce-module-cohort"], CapabilityToolAdapter)
 
 
-def test_reporting_runtime_rejects_changed_capability_implementation_before_host() -> None:
+def test_reporting_runtime_binds_saved_capability_implementation_before_host() -> None:
     compiled = _compile_reporting_runtime(
         {"run_id": "reporting-invalid-tool-binding"},
         full_report=False,
@@ -142,13 +142,19 @@ def test_reporting_runtime_rejects_changed_capability_implementation_before_host
         }
     )
 
-    with pytest.raises(ToolAdapterError, match="not registered"):
-        _assemble_reporting_capability_tools(
-            compiled.definitions,
-            compiled.contracts,
-            {"prepare-module-cohort": lambda value: value},
-            compiled.cohort_plan,
-        )
+    bound = _assemble_reporting_capability_tools(
+        compiled.definitions,
+        compiled.contracts,
+        {
+            "prepare-module-cohort": lambda value: value,
+            "reduce-module-cohort": lambda value: value,
+        },
+        compiled.cohort_plan,
+    )
+
+    assert bound["prepare-module-cohort"].definition.implementation == (
+        "capability:distribution-reporting:prepare-module-cohort"
+    )
 
 
 @pytest.mark.asyncio
@@ -188,7 +194,7 @@ async def test_reporting_capability_tool_validates_typed_input_and_output_contra
 
 
 @pytest.mark.asyncio
-async def test_declarative_runner_injects_task_recovery_policy_at_reporting_boundary(
+async def test_declarative_runner_does_not_invent_task_recovery_policy(
     tmp_path: Path,
 ) -> None:
     class SpyTaskBoard:
@@ -246,7 +252,7 @@ async def test_declarative_runner_injects_task_recovery_policy_at_reporting_boun
     assert payload == {"policy_injected": True}
     assert len(agent_runner.calls) == 1
     policy = agent_runner.calls[0]["recovery_policy"]
-    assert policy.id == "current-reporting-recovery"
+    assert policy is None
 
 
 @pytest.mark.asyncio
@@ -288,7 +294,7 @@ async def test_production_module_agent_wrapper_forwards_recovery_and_session(
         async def _agent(
             self,
             agent_id: str,
-            _envelope: TaskEnvelope,
+            envelope: TaskEnvelope,
             artifacts: list[str],
             workflow_id: str,
             *,
@@ -298,6 +304,7 @@ async def test_production_module_agent_wrapper_forwards_recovery_and_session(
             self.calls.append(
                 {
                     "agent_id": agent_id,
+                    "envelope": envelope,
                     "artifacts": artifacts,
                     "workflow_id": workflow_id,
                     "session_key": session_key,
@@ -368,6 +375,10 @@ async def test_production_module_agent_wrapper_forwards_recovery_and_session(
     assert spy_runner.calls[0]["workflow_id"] == lane_context.workflow_id
     assert spy_runner.calls[0]["session_key"] == "module-auditor-2.1"
     assert spy_runner.calls[0]["recovery_policy"] is recovery
+    bound_envelope = spy_runner.calls[0]["envelope"]
+    assert isinstance(bound_envelope, TaskEnvelope)
+    assert bound_envelope.objective == envelope.objective
+    assert bound_envelope.allowed_tools == task.tools
     assert completed.conversations["conversation"].key.value == "module-auditor-2.1"
 
 

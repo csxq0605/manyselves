@@ -2,12 +2,13 @@
 
 from typing import Any, Protocol
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from manyselves.kernel.contracts import build_contract_adapter
 from manyselves.kernel.definitions import (
     AgentDefinition,
     ContractDefinition,
+    Definition,
     DefinitionKind,
     DefinitionReferenceError,
     DefinitionRegistry,
@@ -47,6 +48,8 @@ from .models import (
     ValidateContractAction,
     WaitInputAction,
 )
+
+_DEFINITION_ADAPTER = TypeAdapter(Definition)
 
 
 class CompilerError(ValueError):
@@ -104,6 +107,42 @@ class WorkflowCompiler:
         workflow: WorkflowDefinition,
         definitions: DefinitionRegistry,
     ) -> ResolvedPlan:
+        compiled: dict[str, ResolvedPlan] = {}
+        plan = self._compile(
+            workflow,
+            definitions,
+            workflow_stack=(),
+            compiled=compiled,
+        )
+        definition_snapshots = _snapshot_plan_definitions(
+            compiled,
+            definitions,
+            root_workflow=workflow,
+        )
+        return plan.model_copy(
+            update={
+                "subworkflow_plans": {
+                    workflow_id: child_plan
+                    for workflow_id, child_plan in compiled.items()
+                    if workflow_id != workflow.id
+                },
+                "definition_snapshots": definition_snapshots,
+            }
+        )
+
+    def _compile(
+        self,
+        workflow: WorkflowDefinition,
+        definitions: DefinitionRegistry,
+        *,
+        workflow_stack: tuple[str, ...],
+        compiled: dict[str, ResolvedPlan],
+    ) -> ResolvedPlan:
+        if workflow.id in workflow_stack:
+            cycle = " -> ".join((*workflow_stack, workflow.id))
+            raise CompilerError(f"recursive subworkflow reference: {cycle}")
+        if workflow.id in compiled:
+            return compiled[workflow.id]
         actions: list[ResolvedAction] = []
         action_ids: set[str] = set()
         defined_variables: set[str] = set(workflow.state)
@@ -204,7 +243,8 @@ class WorkflowCompiler:
                     workflow.output_contract,
                     action.id,
                 )
-        return ResolvedPlan(
+                action.output_contract = workflow.output_contract
+        plan = ResolvedPlan(
             workflow_id=workflow.id,
             workflow_version=workflow.version,
             actions=actions,
@@ -226,6 +266,23 @@ class WorkflowCompiler:
             control_flow_edges=control_flow_edges,
             final_output_contract=workflow.output_contract,
         )
+        compiled[workflow.id] = plan
+        for workflow_id in workflow_ids:
+            child = self._require(
+                definitions,
+                DefinitionKind.WORKFLOW,
+                workflow_id,
+                workflow.id,
+            )
+            if not isinstance(child, WorkflowDefinition):
+                raise CompilerError(f"definition is not a workflow: {workflow_id}")
+            self._compile(
+                child,
+                definitions,
+                workflow_stack=(*workflow_stack, workflow.id),
+                compiled=compiled,
+            )
+        return plan
 
     def _resolve_action(
         self,
@@ -353,6 +410,52 @@ class WorkflowCompiler:
                     f"action {action.id} binds task {task.id} to agent {agent.id}, "
                     f"but the task declares {task.agent}"
                 )
+            if task.input_contract not in agent.accepts:
+                raise CompilerError(
+                    f"agent {agent.id} does not accept contract "
+                    f"{task.input_contract} for task {task.id}"
+                )
+            if task.output_contract not in agent.produces:
+                raise CompilerError(
+                    f"agent {agent.id} does not produce contract "
+                    f"{task.output_contract} for task {task.id}"
+                )
+            for tool_id in task.tools:
+                if tool_id not in agent.tools:
+                    raise CompilerError(
+                        f"agent {agent.id} does not declare task tool "
+                        f"{tool_id} for task {task.id}"
+                    )
+            resolved_task_tools: list[ToolDefinition] = []
+            for tool_id in task.tools:
+                tool = self._require(
+                    definitions,
+                    DefinitionKind.TOOL,
+                    tool_id,
+                    action.id,
+                )
+                if not isinstance(tool, ToolDefinition):
+                    raise CompilerError(f"definition is not a tool: {tool_id}")
+                if not tool.model_visible:
+                    raise CompilerError(
+                        f"task {task.id} exposes non-model-visible tool {tool_id}"
+                    )
+                resolved_task_tools.append(tool)
+            for tool_id in agent.tools:
+                if tool_id in task.tools:
+                    continue
+                tool = self._require(
+                    definitions,
+                    DefinitionKind.TOOL,
+                    tool_id,
+                    action.id,
+                )
+                if not isinstance(tool, ToolDefinition):
+                    raise CompilerError(f"definition is not a tool: {tool_id}")
+                if not tool.model_visible:
+                    raise CompilerError(
+                        f"agent {agent.id} exposes non-model-visible tool {tool_id}"
+                    )
             conversation_agent = conversation_agents.get(action.conversation_variable)
             if conversation_agent is not None and conversation_agent != agent.id:
                 raise CompilerError(
@@ -373,15 +476,7 @@ class WorkflowCompiler:
                     action.id,
                 )
                 _append_unique(contract_ids, contract_id)
-            for tool_id in task.tools:
-                tool = self._require(
-                    definitions,
-                    DefinitionKind.TOOL,
-                    tool_id,
-                    action.id,
-                )
-                if not isinstance(tool, ToolDefinition):
-                    raise CompilerError(f"definition is not a tool: {tool_id}")
+            for tool in resolved_task_tools:
                 _append_unique(agent_tool_ids, tool.id)
                 tool_implementations[tool.id] = tool.implementation
             _append_unique(agent_ids, agent.id)
@@ -653,6 +748,25 @@ class WorkflowCompiler:
                         "workflow with a back edge requires max_iterations unless "
                         "its natural loop has an explicit If/ConditionGroup exit"
                     )
+        reachable = {actions[0].id}
+        pending = [actions[0].id]
+        while pending:
+            owner = pending.pop()
+            for target in successors[owner]:
+                if target not in reachable:
+                    reachable.add(target)
+                    pending.append(target)
+        action_by_id = {action.id: action for action in actions}
+        for action_id in reachable:
+            if successors[action_id]:
+                continue
+            if not isinstance(
+                action_by_id[action_id],
+                (EndWorkflowAction, FailWorkflowAction),
+            ):
+                raise CompilerError(
+                    f"reachable action {action_id} has no explicit terminal"
+                )
         return {
             action.id: sorted(successors[action.id], key=positions.__getitem__)
             for action in actions
@@ -685,6 +799,108 @@ class WorkflowCompiler:
 def _append_unique(values: list[str], value: str) -> None:
     if value not in values:
         values.append(value)
+
+
+def restore_plan_definition_registry(plan: ResolvedPlan) -> DefinitionRegistry:
+    """Restore the immutable definition projection captured with one Run plan."""
+
+    registry = DefinitionRegistry()
+    for payload in plan.definition_snapshots.values():
+        registry.register(_DEFINITION_ADAPTER.validate_python(payload))
+    return registry
+
+
+def _snapshot_plan_definitions(
+    plans: dict[str, ResolvedPlan],
+    definitions: DefinitionRegistry,
+    *,
+    root_workflow: WorkflowDefinition,
+) -> dict[str, dict[str, Any]]:
+    pending: list[tuple[DefinitionKind, str]] = []
+    for plan in plans.values():
+        pending.append((DefinitionKind.WORKFLOW, plan.workflow_id))
+        for kind, definition_ids in (
+            (DefinitionKind.TOOL, [*plan.tool_ids, *plan.agent_tool_ids]),
+            (DefinitionKind.AGENT, plan.agent_ids),
+            (DefinitionKind.TASK, plan.task_ids),
+            (DefinitionKind.CONTRACT, plan.contract_ids),
+            (DefinitionKind.INTERACTION, plan.interaction_ids),
+            (DefinitionKind.OUTPUT, plan.output_ids),
+            (DefinitionKind.GATE, plan.gate_ids),
+            (DefinitionKind.RECOVERY, plan.recovery_ids),
+        ):
+            pending.extend((kind, definition_id) for definition_id in definition_ids)
+
+    snapshots: dict[str, dict[str, Any]] = {}
+    while pending:
+        kind, definition_id = pending.pop()
+        key = f"{kind.value}:{definition_id}"
+        if key in snapshots:
+            continue
+        definition = (
+            root_workflow
+            if kind is DefinitionKind.WORKFLOW
+            and definition_id == root_workflow.id
+            else definitions.require(kind, definition_id)
+        )
+        snapshots[key] = definition.model_dump(mode="json", by_alias=True)
+        pending.extend(_definition_dependencies(definition))
+    return snapshots
+
+
+def _definition_dependencies(
+    definition: Definition,
+) -> list[tuple[DefinitionKind, str]]:
+    if isinstance(definition, AgentDefinition):
+        return [
+            *((DefinitionKind.TOOL, value) for value in definition.tools),
+            *((DefinitionKind.CONTRACT, value) for value in definition.accepts),
+            *((DefinitionKind.CONTRACT, value) for value in definition.produces),
+        ]
+    if isinstance(definition, ToolDefinition):
+        contracts = [definition.input_contract, definition.output_contract]
+        if definition.error_contract is not None:
+            contracts.append(definition.error_contract)
+        return [(DefinitionKind.CONTRACT, value) for value in contracts]
+    if isinstance(definition, TaskDefinition):
+        dependencies = [
+            (DefinitionKind.AGENT, definition.agent),
+            (DefinitionKind.CONTRACT, definition.input_contract),
+            (DefinitionKind.CONTRACT, definition.output_contract),
+            *((DefinitionKind.TOOL, value) for value in definition.tools),
+        ]
+        if definition.recovery is not None:
+            dependencies.append((DefinitionKind.RECOVERY, definition.recovery))
+        return dependencies
+    if isinstance(definition, GateDefinition):
+        dependencies = []
+        if definition.contract is not None:
+            dependencies.append((DefinitionKind.CONTRACT, definition.contract))
+        if definition.validator_tool is not None:
+            dependencies.append((DefinitionKind.TOOL, definition.validator_tool))
+        return dependencies
+    if isinstance(definition, InteractionDefinition):
+        return [(DefinitionKind.CONTRACT, definition.input_contract)]
+    if isinstance(definition, OutputDefinition):
+        return (
+            []
+            if definition.contract is None
+            else [(DefinitionKind.CONTRACT, definition.contract)]
+        )
+    if isinstance(definition, WorkflowDefinition):
+        dependencies = [
+            *((DefinitionKind.TASK, value) for value in definition.tasks),
+            *((DefinitionKind.GATE, value) for value in definition.gates),
+            *((DefinitionKind.RECOVERY, value) for value in definition.recovery),
+            *((DefinitionKind.INTERACTION, value) for value in definition.interactions),
+            *((DefinitionKind.OUTPUT, value) for value in definition.outputs),
+        ]
+        if definition.input_contract is not None:
+            dependencies.append((DefinitionKind.CONTRACT, definition.input_contract))
+        if definition.output_contract is not None:
+            dependencies.append((DefinitionKind.CONTRACT, definition.output_contract))
+        return dependencies
+    return []
 
 
 def _explicit_targets(

@@ -1,5 +1,6 @@
 """Application runtime binding owned by distribution reporting."""
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -33,7 +34,7 @@ class DistributionReportingRuntimeBinding:
         self,
         command_id: UUID,
         workflow_id: str,
-        values: dict[str, Any],
+        values: Any,
     ) -> dict[str, Any]:
         request = ReportRequest.model_validate(values)
         try:
@@ -49,7 +50,7 @@ class DistributionReportingRuntimeBinding:
         run_id: str,
         *,
         input_id: str | None,
-        values: dict[str, Any],
+        values: Any,
     ) -> dict[str, Any]:
         try:
             runtime_state = self._runtime_state(run_id)
@@ -61,6 +62,10 @@ class DistributionReportingRuntimeBinding:
                         input_id,
                         values,
                     )
+            if not isinstance(values, Mapping):
+                raise CapabilityRunInputError(
+                    "legacy reporting input requires a JSON object"
+                )
             supplements = [
                 UserSupplement.model_validate(item)
                 for item in values.get("supplements", [])

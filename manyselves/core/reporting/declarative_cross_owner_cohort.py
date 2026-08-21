@@ -46,6 +46,7 @@ from .declarative_module_runtime_lane import (
     DeclarativeModuleReviewAgentResult,
     DeclarativeModuleRevisionAgentResult,
 )
+from .declarative_task_binding import bind_declared_task
 from .models import REPORT_MODULE_IDS
 from .review_lifecycle import (
     CrossOwnerInitialReviewAcceptance,
@@ -206,7 +207,7 @@ class _CrossOwnerInitialInvoker:
     async def _invoke(
         self,
         _agent: AgentDefinition,
-        _task: TaskDefinition,
+        task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
@@ -216,7 +217,10 @@ class _CrossOwnerInitialInvoker:
         del task_id
         context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
         preparation = cast(CrossOwnerInitialReviewPreparation, context.preparation)
-        envelope = cast(TaskEnvelope, preparation.envelope)
+        envelope = bind_declared_task(
+            cast(TaskEnvelope, preparation.envelope),
+            task,
+        )
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
@@ -290,7 +294,7 @@ class _CrossOwnerRevisionInvoker:
     async def _invoke(
         self,
         _agent: AgentDefinition,
-        _task: TaskDefinition,
+        task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
@@ -304,6 +308,7 @@ class _CrossOwnerRevisionInvoker:
             context.revision_preparation,
         )
         prepared = cast(ModuleRevisionPreparation, preparation.prepared)
+        envelope = bind_declared_task(prepared.envelope, task)
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
@@ -312,8 +317,8 @@ class _CrossOwnerRevisionInvoker:
                 runner_kwargs["recovery_policy"] = recovery_policy
             payload = await self._runtime._current_runner._agent(
                 prepared.specialist_id,
-                prepared.envelope,
-                prepared.envelope.input_refs,
+                envelope,
+                envelope.input_refs,
                 preparation.workflow_id,
                 **runner_kwargs,
             )
@@ -377,7 +382,7 @@ class _CrossOwnerLocalReviewInvoker:
     async def _invoke(
         self,
         _agent: AgentDefinition,
-        _task: TaskDefinition,
+        task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
@@ -391,7 +396,10 @@ class _CrossOwnerLocalReviewInvoker:
             context.local_review_preparation,
         )
         prepared = cast(ModuleInitialReviewPreparation, boundary.prepared)
-        envelope = cast(TaskEnvelope, prepared.envelope)
+        envelope = bind_declared_task(
+            cast(TaskEnvelope, prepared.envelope),
+            task,
+        )
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
@@ -465,7 +473,7 @@ class _CrossOwnerRecheckInvoker:
     async def _invoke(
         self,
         _agent: AgentDefinition,
-        _task: TaskDefinition,
+        task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
@@ -478,7 +486,10 @@ class _CrossOwnerRecheckInvoker:
             CrossOwnerRecheckPreparation,
             context.recheck_preparation,
         )
-        envelope = cast(TaskEnvelope, preparation.envelope)
+        envelope = bind_declared_task(
+            cast(TaskEnvelope, preparation.envelope),
+            task,
+        )
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
@@ -552,7 +563,7 @@ class _CrossOwnerMainExceptionInvoker:
     async def _invoke(
         self,
         _agent: AgentDefinition,
-        _task: TaskDefinition,
+        task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
@@ -562,7 +573,7 @@ class _CrossOwnerMainExceptionInvoker:
         del task_id
         context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
         preparation = cast(MainExceptionDecisionPreparation, context.main_preparation)
-        envelope = preparation.envelope
+        envelope = bind_declared_task(preparation.envelope, task)
 
         async def invoke_once() -> Any:
             runner_kwargs: dict[str, Any] = {

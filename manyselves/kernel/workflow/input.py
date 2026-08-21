@@ -2,8 +2,9 @@
 
 from collections.abc import Mapping
 
-from manyselves.kernel.contracts import ContractAdapter
+from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
 
+from .compiler import restore_plan_definition_registry
 from .models import (
     ActionExecutionStatus,
     ParallelAction,
@@ -75,12 +76,16 @@ def resume_waiting_input(
     """Return a new runnable state containing validated external input."""
 
     waiting = state.waiting_input
+    if plan.definition_snapshots:
+        contracts = build_contract_catalog(restore_plan_definition_registry(plan))
     if state.status is not WorkflowStatus.WAITING or waiting is None:
         raise WorkflowInputError("workflow is not waiting for input")
     if waiting.get("input_id") != input_id:
         raise WorkflowInputError(f"workflow is waiting for input: {waiting.get('input_id')}")
     path = waiting.get("path", [])
     if path:
+        resolved_subworkflows = dict(subworkflows or {})
+        resolved_subworkflows.update(plan.subworkflow_plans)
         return _resume_nested_waiting_input(
             plan,
             state,
@@ -88,7 +93,7 @@ def resume_waiting_input(
             input_id=input_id,
             values=values,
             contracts=contracts,
-            subworkflows=subworkflows or {},
+            subworkflows=resolved_subworkflows,
         )
     return _resume_leaf_waiting_input(
         plan,
@@ -151,6 +156,8 @@ def _resume_nested_waiting_input(
         if not isinstance(action, SubworkflowAction):
             raise WorkflowInputError(f"waiting path is not a subworkflow: {action_id}")
         child_plan = subworkflows[action.workflow]
+        child_subworkflows = dict(subworkflows)
+        child_subworkflows.update(child_plan.subworkflow_plans)
         child_state = WorkflowState.model_validate(
             resumed.subworkflow_states[action_id]
         )
@@ -162,7 +169,7 @@ def _resume_nested_waiting_input(
                 input_id=input_id,
                 values=values,
                 contracts=contracts,
-                subworkflows=subworkflows,
+                subworkflows=child_subworkflows,
             )
             if remaining
             else _resume_leaf_waiting_input(

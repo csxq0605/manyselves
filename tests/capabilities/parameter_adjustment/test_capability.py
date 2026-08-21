@@ -20,6 +20,7 @@ from manyselves.kernel.definitions import (
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.ports import AgentInvocationOutcome
 from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
+from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.tool_adapter import ToolAdapterError
 from manyselves.runtime.workflow_host import (
@@ -156,6 +157,16 @@ def test_generic_waiting_run_is_inactive_so_the_ui_can_request_input(
     assert projected["waiting_input"] == [
         {"input_id": "number", "schema": {"type": "integer"}}
     ]
+
+
+def test_binding_does_not_claim_another_workflow_runtime_state(tmp_path: Path) -> None:
+    run_id = "foreign-run"
+    FileWorkflowStateStore(tmp_path).save(
+        WorkflowState(run_id=run_id, workflow_id="another-capability")
+    )
+
+    with pytest.raises(CapabilityRunNotFoundError):
+        ParameterAdjustmentRuntimeBinding(tmp_path).get_run(run_id)
 
 
 @pytest.mark.asyncio

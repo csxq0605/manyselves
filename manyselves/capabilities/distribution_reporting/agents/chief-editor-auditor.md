@@ -9,9 +9,13 @@ tools:
 accepts:
 - final_chapter_lane_input
 - review_findings
+- declarative_final_chapter_context
+- declarative_final_recheck_context
 produces:
 - final_chapter_lane_finding_submission
 - final_chapter_lane_verdict_submission
+- declarative_final_chapter_agent_result
+- declarative_final_recheck_agent_result
 conversation_mode: task
 limits:
   max_turns: 16
@@ -47,4 +51,3 @@ assigned lane 忠实、完整、连贯、可追溯且可交付；不把其它章
 <deliverables>
 只提交当前 contract 允许的 finding 或 verdict 结果；完成状态由工作流推导。
 </deliverables>
-

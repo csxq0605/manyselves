@@ -21,9 +21,16 @@ accepts:
 - evidence_items
 - claim_ledger
 - source_ledger
+- declarative_cross_owner_runtime_context
+- declarative_module_runtime_lane_context
+- module_review_input
 produces:
 - review_findings
 - resolution_verdicts
+- declarative_module_recheck_agent_result
+- declarative_module_review_agent_result
+- module_review_finding_submission
+- module_review_verdict_submission
 conversation_mode: task
 limits:
   max_turns: 10
@@ -59,4 +66,3 @@ finding 不可改写；作者响应不等于关闭；只有同一 Auditor 的 ve
 <deliverables>
 只提交当前任务允许的 finding 或 verdict 结果。
 </deliverables>
-

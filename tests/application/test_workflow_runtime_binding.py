@@ -165,3 +165,16 @@ async def test_facade_dispatches_through_definition_owned_runtime_binding(
     )
     assert resumed["run_id"] == run_id
     assert binding.inputs == [{"value": 3}, {"value": 4}]
+
+
+def test_workflow_without_a_runtime_binding_is_not_projected_as_runnable(
+    tmp_path: Path,
+) -> None:
+    facade = WorkflowProjectionFacade(
+        tmp_path,
+        reporting_adapter=None,
+        catalog=_catalog(tmp_path),
+        runtime_bindings=RuntimeBindingCatalog(),
+    )
+
+    assert facade.list_workflows()[0]["runnable"] is False

@@ -13,6 +13,10 @@ from manyselves.runtime.capability_binding import (
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.webapi.main import create_app
 from manyselves.webapi.routes.workflows import _error
+from manyselves.webapi.schemas.workflows import (
+    WorkflowRunInputRequest,
+    WorkflowRunStartRequest,
+)
 from manyselves.webapi.settings import WebSettings
 
 
@@ -259,6 +263,23 @@ def test_waiting_declarative_input_uses_workflow_resume_contract_for_generic_val
             "values": values,
         },
     )
+
+
+def test_generic_waiting_input_request_accepts_any_json_contract_value() -> None:
+    request = WorkflowRunInputRequest.model_validate(
+        {"inputId": "ask-number", "values": 7}
+    )
+
+    assert request.input_id == "ask-number"
+    assert request.values == 7
+
+
+def test_generic_start_request_accepts_any_json_contract_value() -> None:
+    request = WorkflowRunStartRequest.model_validate(
+        {"workflowId": "primitive-workflow", "input": [1, 2, 3]}
+    )
+
+    assert request.input == [1, 2, 3]
 
 
 def test_existing_decision_input_without_kernel_waiting_state_uses_resume_decision(

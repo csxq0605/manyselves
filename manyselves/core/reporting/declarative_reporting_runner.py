@@ -13,7 +13,7 @@ from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
 from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
-from manyselves.kernel.conversations import ConversationRecord
+from manyselves.kernel.conversations import ConversationRecord, ConversationRegistry
 from manyselves.kernel.definitions import (
     AgentDefinition,
     DefinitionKind,
@@ -38,8 +38,10 @@ from manyselves.kernel.workflow import (
     WorkflowCompiler,
     WorkflowState,
     WorkflowStatus,
+    restore_plan_definition_registry,
     resume_waiting_input,
 )
+from manyselves.runtime.conversation_store import FileConversationStore
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.tool_adapter import CapabilityToolAdapterFactory
 from manyselves.runtime.workflow_host import (
@@ -52,7 +54,6 @@ from manyselves.runtime.workflow_host import (
 from .agentic_models import TaskEnvelope, WorkflowDecisionSubmission
 from .declarative_chief_chapter_cohort import (
     DeclarativeChiefChapterRuntime,
-    compile_chief_chapter_workflows,
     register_chief_chapter_lane_specializations,
     retry_failed_chief_chapter_lanes,
 )
@@ -60,23 +61,19 @@ from .declarative_cross_owner_cohort import (
     DeclarativeCrossOwnerRuntime,
     DeclarativeMainExceptionAgentResult,
     DeclarativeMainExceptionUserInput,
-    compile_cross_owner_workflows,
     register_cross_owner_pipeline_specializations,
     retry_failed_cross_owner_pipelines,
 )
 from .declarative_delivery import (
     DeclarativeDeliveryRuntime,
-    compile_delivery_workflow,
 )
 from .declarative_final_chapter_cohort import (
     DeclarativeFinalChapterRuntime,
-    compile_final_chapter_workflows,
     register_final_chapter_lane_specializations,
     retry_failed_final_chapter_lanes,
 )
 from .declarative_final_review_cycle import (
     DeclarativeFinalReviewRuntime,
-    compile_final_review_workflows,
     compose_final_review_agent_invokers,
     register_final_review_lane_specializations,
 )
@@ -98,6 +95,7 @@ from .declarative_module_runtime_lane import (
     register_module_runtime_lane_specializations,
 )
 from .declarative_reporting_tail import _ReportingTailAdapters
+from .declarative_task_binding import bind_declared_task
 from .distributed_runtime import LocalEventStore
 from .models import REPORT_MODULE_IDS
 from .parallel_runtime import LaneCompletion
@@ -444,7 +442,26 @@ def _compile_reporting_runtime(
     """Compile the top-level plan and every file-defined nested workflow."""
 
     definitions, workflow = build_reporting_module_stage_definition()
-    runtime_lanes = register_module_runtime_lane_specializations(definitions)
+    register_module_runtime_lane_specializations(definitions)
+    cohort_template = definitions.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-module-cohort",
+    )
+    if not isinstance(cohort_template, WorkflowDefinition):
+        raise TypeError("distribution-module-cohort is not a workflow")
+    cohort = specialize_workflow(
+        cohort_template,
+        {"max_concurrency": len(REPORT_MODULE_IDS)},
+    )
+    specialized_definitions = DefinitionRegistry()
+    for definition in definitions.all():
+        specialized_definitions.register(
+            cohort
+            if definition.kind is DefinitionKind.WORKFLOW
+            and definition.id == cohort.id
+            else definition
+        )
+    definitions = specialized_definitions
     workflow.state = {
         "reporting-state": deepcopy(dict(reporting_state)),
         "full-report": full_report,
@@ -452,43 +469,11 @@ def _compile_reporting_runtime(
     executors = build_builtin_executor_registry()
     compiler = WorkflowCompiler(executors)
     plan = compiler.compile(workflow, definitions)
-
-    tail = definitions.require(
-        DefinitionKind.WORKFLOW,
-        "distribution-reporting-tail",
-    )
-    if not isinstance(tail, WorkflowDefinition):
-        raise TypeError("distribution-reporting-tail is not a workflow")
-    tail_plan = compiler.compile(tail, definitions)
-    cross_cohort_plan, cross_pipeline_plans = compile_cross_owner_workflows(
-        definitions,
-        executors,
-    )
-    chief_cohort_plan, chief_lane_plans = compile_chief_chapter_workflows(
-        definitions,
-        executors,
-    )
-    final_cohort_plan, final_lane_plans = compile_final_chapter_workflows(
-        definitions,
-        executors,
-    )
-    final_review_plans = compile_final_review_workflows(definitions, executors)
-    delivery_plan = compile_delivery_workflow(definitions, executors)
-    cohort = definitions.require(
-        DefinitionKind.WORKFLOW,
-        "distribution-module-cohort",
-    )
-    if not isinstance(cohort, WorkflowDefinition):
-        raise TypeError("distribution-module-cohort is not a workflow")
-    cohort = specialize_workflow(
-        cohort,
-        {"max_concurrency": len(REPORT_MODULE_IDS)},
-    )
-    cohort_plan = compiler.compile(cohort, definitions)
-    runtime_lane_plans = {
-        workflow_id: compiler.compile(runtime_lane, definitions)
-        for workflow_id, runtime_lane in runtime_lanes.items()
-    }
+    subworkflows = plan.subworkflow_plans
+    cohort_plan = subworkflows[cohort.id]
+    cross_cohort_plan = subworkflows["distribution-cross-owner-cohort"]
+    chief_cohort_plan = subworkflows["distribution-chief-chapter-cohort"]
+    final_cohort_plan = subworkflows["distribution-final-chapter-cohort"]
     return _CompiledReportingRuntime(
         definitions=definitions,
         contracts=build_contract_catalog(definitions),
@@ -498,19 +483,7 @@ def _compile_reporting_runtime(
         cross_cohort_plan=cross_cohort_plan,
         chief_cohort_plan=chief_cohort_plan,
         final_cohort_plan=final_cohort_plan,
-        subworkflows={
-            cohort.id: cohort_plan,
-            **runtime_lane_plans,
-            tail.id: tail_plan,
-            "distribution-cross-owner-cohort": cross_cohort_plan,
-            **cross_pipeline_plans,
-            "distribution-chief-chapter-cohort": chief_cohort_plan,
-            **chief_lane_plans,
-            "distribution-final-chapter-cohort": final_cohort_plan,
-            **final_lane_plans,
-            **final_review_plans,
-            "distribution-report-delivery": delivery_plan,
-        },
+        subworkflows=subworkflows,
     )
 
 
@@ -535,6 +508,11 @@ def _assemble_reporting_capability_tools(
                 continue
             seen.add(tool_id)
             definition = definitions.require(DefinitionKind.TOOL, tool_id)
+            implementation = plan.tool_implementations.get(tool_id)
+            if implementation is not None:
+                definition = definition.model_copy(
+                    update={"implementation": implementation}
+                )
             bound[tool_id] = factory.build(definition)
     return bound
 
@@ -555,13 +533,19 @@ def resume_declarative_reporting_input(
         reporting_state if isinstance(reporting_state, Mapping) else {},
         full_report=bool(state.variables.get("full-report", False)),
     )
+    saved_plan = state_store.load_plan(run_id)
+    definitions = (
+        restore_plan_definition_registry(saved_plan)
+        if saved_plan.definition_snapshots
+        else compiled.definitions
+    )
     resumed = resume_waiting_input(
-        state_store.load_plan(run_id),
+        saved_plan,
         state,
         input_id=input_id,
         values=values,
-        contracts=compiled.contracts,
-        subworkflows=compiled.subworkflows,
+        contracts=build_contract_catalog(definitions),
+        subworkflows=saved_plan.subworkflow_plans or compiled.subworkflows,
     )
     state_store.save(resumed)
     return resumed
@@ -579,6 +563,7 @@ async def execute_declarative_module_stage(
     execute_current: (
         Callable[[tuple[str, ...], dict[str, Any], str], Awaitable[None]] | None
     ) = None,
+    workspace: Path | None = None,
 ) -> WorkflowState:
     """Run current modules and the file-defined tail in one parent state."""
 
@@ -603,6 +588,31 @@ async def execute_declarative_module_stage(
     kernel_run_id = str(state["run_id"])
     try:
         kernel_state = state_store.load(kernel_run_id)
+        load_plan = getattr(state_store, "load_plan", None)
+        if callable(load_plan):
+            try:
+                plan = load_plan(kernel_run_id)
+            except FileNotFoundError:
+                save_plan = getattr(state_store, "save_plan", None)
+                if callable(save_plan):
+                    save_plan(kernel_run_id, plan)
+        subworkflows = plan.subworkflow_plans or compiled.subworkflows
+        cohort_plan = subworkflows.get(
+            "distribution-module-cohort",
+            cohort_plan,
+        )
+        cross_cohort_plan = subworkflows.get(
+            "distribution-cross-owner-cohort",
+            cross_cohort_plan,
+        )
+        chief_cohort_plan = subworkflows.get(
+            "distribution-chief-chapter-cohort",
+            chief_cohort_plan,
+        )
+        final_cohort_plan = subworkflows.get(
+            "distribution-final-chapter-cohort",
+            final_cohort_plan,
+        )
         kernel_state.variables["reporting-state"] = deepcopy(state)
         kernel_state.variables["full-report"] = full_report
         saved_tail = kernel_state.subworkflow_states.get("run-reporting-tail")
@@ -656,6 +666,14 @@ async def execute_declarative_module_stage(
         save_plan = getattr(state_store, "save_plan", None)
         if callable(save_plan):
             save_plan(kernel_run_id, plan)
+        subworkflows = plan.subworkflow_plans or compiled.subworkflows
+
+    definitions = (
+        restore_plan_definition_registry(plan)
+        if plan.definition_snapshots
+        else compiled.definitions
+    )
+    contracts = build_contract_catalog(definitions)
 
     tail_adapters = _ReportingTailAdapters(tail_runner, workflow_id)
     cross_runtime = DeclarativeCrossOwnerRuntime(
@@ -804,14 +822,14 @@ async def execute_declarative_module_stage(
     }
     runtime_tools = _assemble_reporting_capability_tools(
         definitions,
-        compiled.contracts,
+        contracts,
         runtime_tools,
         plan,
         cohort_plan,
         cross_cohort_plan,
         chief_cohort_plan,
         final_cohort_plan,
-        *compiled.subworkflows.values(),
+        *subworkflows.values(),
     )
     try:
         completed = await WorkflowRuntimeHost(
@@ -832,9 +850,14 @@ async def execute_declarative_module_stage(
                     ),
                     final_review_runtime,
                 ),
-                contracts=compiled.contracts,
+                contracts=contracts,
                 definitions=definitions,
-                subworkflows=compiled.subworkflows,
+                conversations=(
+                    ConversationRegistry(FileConversationStore(workspace))
+                    if workspace is not None
+                    else ConversationRegistry()
+                ),
+                subworkflows=subworkflows,
             ),
         )
     except BaseException:
@@ -1118,14 +1141,6 @@ class DeclarativeReportWorkflowRunner(ReportWorkflowRunner):
 
     def __init__(self, service, agent_runner) -> None:
         super().__init__(service, agent_runner)
-        _capability, definitions = load_distribution_reporting_capability()
-        policy = definitions.require(
-            DefinitionKind.RECOVERY,
-            "current-reporting-recovery",
-        )
-        if not isinstance(policy, RecoveryPolicyDefinition):
-            raise TypeError("current-reporting-recovery is not a recovery policy")
-        self._declarative_recovery_policy = policy
 
     async def _agent(
         self,
@@ -1143,11 +1158,7 @@ class DeclarativeReportWorkflowRunner(ReportWorkflowRunner):
             artifacts,
             workflow_id,
             session_key=session_key,
-            recovery_policy=(
-                recovery_policy
-                if recovery_policy is not None
-                else self._declarative_recovery_policy
-            ),
+            recovery_policy=recovery_policy,
         )
 
     async def _run_module_lanes(
@@ -1169,6 +1180,7 @@ class DeclarativeReportWorkflowRunner(ReportWorkflowRunner):
                 state,
                 workflow_id,
             ),
+            workspace=self.service.workspace,
         )
 
 
@@ -1223,7 +1235,7 @@ class _CurrentModuleAuthorInvoker:
     async def _invoke(
         self,
         _agent: AgentDefinition,
-        _task: TaskDefinition,
+        task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
@@ -1240,10 +1252,11 @@ class _CurrentModuleAuthorInvoker:
                 }
                 if recovery_policy is not None:
                     runner_kwargs["recovery_policy"] = recovery_policy
+                envelope = bind_declared_task(preparation.envelope, task)
                 payload = await self._runner._agent(
                     preparation.specialist_id,
-                    preparation.envelope,
-                    preparation.envelope.input_refs,
+                    envelope,
+                    envelope.input_refs,
                     context.workflow_id,
                     **runner_kwargs,
                 )
@@ -1264,14 +1277,15 @@ class _CurrentModuleAuthorInvoker:
             DeclarativeModuleAuthoringPreparation,
             context.authoring,
         )
+        envelope = bind_declared_task(authoring.envelope, task)
         try:
             runner_kwargs = {"session_key": conversation.key.value}
             if recovery_policy is not None:
                 runner_kwargs["recovery_policy"] = recovery_policy
             payload = await self._runner._agent(
                 authoring.specialist_id,
-                authoring.envelope,
-                authoring.envelope.input_refs,
+                envelope,
+                envelope.input_refs,
                 context.workflow_id,
                 **runner_kwargs,
             )
@@ -1342,7 +1356,7 @@ class _CurrentModuleReviewerInvoker:
     async def _invoke(
         self,
         _agent: AgentDefinition,
-        _task: TaskDefinition,
+        task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
@@ -1353,7 +1367,10 @@ class _CurrentModuleReviewerInvoker:
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
         if context.recheck is not None:
             preparation = context.recheck.prepared
-            envelope = cast(TaskEnvelope, preparation.envelope)
+            envelope = bind_declared_task(
+                cast(TaskEnvelope, preparation.envelope),
+                task,
+            )
             try:
                 runner_kwargs: dict[str, Any] = {
                     "session_key": conversation.key.value,
@@ -1381,7 +1398,10 @@ class _CurrentModuleReviewerInvoker:
                 )
             return AgentInvocationOutcome(status="ok", result=result)
         reviewing = cast(DeclarativeModuleReviewPreparation, context.review)
-        envelope = cast(TaskEnvelope, reviewing.prepared.envelope)
+        envelope = bind_declared_task(
+            cast(TaskEnvelope, reviewing.prepared.envelope),
+            task,
+        )
         try:
             runner_kwargs = {"session_key": conversation.key.value}
             if recovery_policy is not None:
@@ -1459,7 +1479,7 @@ class _CurrentModuleMainExceptionInvoker:
     async def _invoke(
         self,
         _agent: AgentDefinition,
-        _task: TaskDefinition,
+        task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
@@ -1471,7 +1491,7 @@ class _CurrentModuleMainExceptionInvoker:
         preparation = cast(MainExceptionDecisionPreparation, context.main_preparation)
 
         async def invoke_once() -> Any:
-            envelope = preparation.envelope
+            envelope = bind_declared_task(preparation.envelope, task)
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
             }

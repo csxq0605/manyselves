@@ -3,6 +3,7 @@ from manyselves.kernel.conversations import (
     ConversationMode,
     ConversationRegistry,
 )
+from manyselves.runtime.conversation_store import FileConversationStore
 
 
 def test_run_conversation_reuses_same_agent_and_key() -> None:
@@ -84,3 +85,16 @@ def test_serialized_run_record_can_seed_a_fresh_registry() -> None:
 
     assert restored is not None
     assert restored.conversation_id == first.conversation_id
+
+
+def test_persistent_conversation_survives_a_fresh_registry(tmp_path) -> None:
+    key = ConversationKey(agent_id="agent-a", value="topic", mode="persistent")
+    first_registry = ConversationRegistry(FileConversationStore(tmp_path))
+    first = first_registry.create_or_resolve(key, run_id="run-1")
+
+    second_registry = ConversationRegistry(FileConversationStore(tmp_path))
+    restored = second_registry.resolve(key, run_id="run-2")
+
+    assert restored is not None
+    assert restored.conversation_id == first.conversation_id
+    assert restored.run_id is None

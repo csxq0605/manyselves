@@ -12,10 +12,15 @@ accepts:
 - claim_ledger
 - source_ledger
 - review_findings
+- cross_owner_input
+- declarative_cross_owner_runtime_context
 produces:
 - cross_owner_findings
 - cross_owner_synthesis_inputs
 - resolution_verdicts
+- cross_owner_finding_submission
+- declarative_cross_owner_initial_agent_result
+- declarative_cross_owner_recheck_agent_result
 conversation_mode: task
 limits:
   max_turns: 28
@@ -51,4 +56,3 @@ finding 只能写回当前 owner；related 模块正文不可修改，也不可�
 <deliverables>
 只提交当前 contract 允许的 owner-local finding、synthesis 或 verdict 结果。
 </deliverables>
-

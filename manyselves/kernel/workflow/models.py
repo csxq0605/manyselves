@@ -266,6 +266,7 @@ class EndWorkflowAction(ResolvedActionBase):
     kind: Literal[ActionKind.END_WORKFLOW] = ActionKind.END_WORKFLOW
     output_variable: str = Field(min_length=1)
     output_name: str = Field(default="result", min_length=1)
+    output_contract: str | None = Field(default=None, min_length=1)
 
 
 ResolvedAction = (
@@ -317,6 +318,8 @@ class ResolvedPlan(BaseModel):
     conversation_bindings: dict[str, dict[str, str]] = Field(default_factory=dict)
     control_flow_edges: dict[str, list[str]] = Field(default_factory=dict)
     final_output_contract: str | None = None
+    subworkflow_plans: dict[str, "ResolvedPlan"] = Field(default_factory=dict)
+    definition_snapshots: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class ActionExecutionState(BaseModel):

@@ -1,5 +1,4 @@
 import asyncio
-import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -60,8 +59,10 @@ from manyselves.interfaces.types import (
     AgentResultMessage,
     UserMessage,
 )
-from manyselves.kernel.definitions import DefinitionKind
+from manyselves.kernel.definitions import DefinitionKind, ToolDefinition
 from manyselves.kernel.recovery import RecoveryActionKind, RecoveryEventKind
+from manyselves.kernel.workflow import ResolvedPlan
+from manyselves.runtime.state_store import FileWorkflowStateStore
 
 
 def _write_template_contract(
@@ -1464,7 +1465,10 @@ class TemplateSkillCorrectionProvider(LLMProvider):
             )
         if self.calls == 4:
             root = "Work/runs/run-template-skill/drafts/template-skill-distillation/r0"
-            ref = lambda part_id: {"artifact_refs": [f"{root}/{part_id}.md"]}
+
+            def ref(part_id):
+                return {"artifact_refs": [f"{root}/{part_id}.md"]}
+
             return LLMResponse(
                 content="",
                 tool_calls=[
@@ -3109,6 +3113,128 @@ def _current_reporting_recovery_policy():
     )
 
 
+def _save_reporting_tool_plan(
+    workspace: Path,
+    run_id: str,
+    *definitions: ToolDefinition,
+) -> None:
+    plan = ResolvedPlan(
+        workflow_id="declarative-reporting-tool-test",
+        workflow_version="1.0.0",
+        actions=[],
+        agent_tool_ids=[definition.id for definition in definitions],
+        definition_snapshots={
+            f"tool:{definition.id}": definition.model_dump(mode="json")
+            for definition in definitions
+        },
+    )
+    FileWorkflowStateStore(workspace).save_plan(run_id, plan)
+
+
+@pytest.mark.asyncio
+async def test_saved_declarative_tool_implementation_selects_current_python_tool(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-declarative-tool-implementation"
+    declared = ToolDefinition(
+        id="saved-calculator",
+        version="1.0.0",
+        description="Saved calculator description",
+        instructions="Use the saved calculator instructions.",
+        implementation="capability:distribution-reporting:calculate",
+        input_contract="reporting_tool_input",
+        output_contract="reporting_tool_output",
+        side_effect="pure_read",
+        parallel_safe=True,
+        reuse_result=True,
+    )
+    _save_reporting_tool_plan(tmp_path, run_id, declared)
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    definition = load_packaged_agents()["module-2.1-specialist"].model_copy(
+        update={"tools": [declared.id]}
+    )
+    envelope = TaskEnvelope(
+        task_id="saved-tool-selection",
+        run_id=run_id,
+        agent_id=definition.id,
+        objective="验证保存计划的工具实现绑定",
+        allowed_tools=[declared.id],
+    )
+
+    registry = runner._tools(
+        definition,
+        envelope,
+        "session-saved-tool",
+        "workflow-saved-tool",
+        recovery_policy=_current_reporting_recovery_policy(),
+    )
+
+    tool = registry.get(declared.id)
+    assert tool is not None
+    assert await tool(expression="1 + 2") == {"expression": "1 + 2", "result": 3}
+    assert tool.name == declared.id
+    assert tool.description == declared.instructions
+    assert tool.side_effect == declared.side_effect
+    assert tool.parallel_safe is True
+    assert tool.reuse_result is True
+
+
+def test_saved_declarative_hidden_tool_is_not_model_registered(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-declarative-hidden-tool"
+    hidden = ToolDefinition(
+        id="calculate",
+        version="1.0.0",
+        description="Hidden saved calculator",
+        implementation="capability:distribution-reporting:calculate",
+        input_contract="reporting_tool_input",
+        output_contract="reporting_tool_output",
+        model_visible=False,
+    )
+    _save_reporting_tool_plan(tmp_path, run_id, hidden)
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    definition = load_packaged_agents()["module-2.1-specialist"].model_copy(
+        update={"tools": [hidden.id]}
+    )
+    envelope = TaskEnvelope(
+        task_id="saved-hidden-tool",
+        run_id=run_id,
+        agent_id=definition.id,
+        objective="验证隐藏工具不进入模型 Registry",
+        allowed_tools=[hidden.id],
+    )
+
+    registry = runner._tools(
+        definition,
+        envelope,
+        "session-hidden-tool",
+        "workflow-hidden-tool",
+        recovery_policy=_current_reporting_recovery_policy(),
+    )
+
+    assert registry.get(hidden.id) is None
+    assert hidden.id not in {item["name"] for item in registry.get_definitions()}
+
+    legacy_registry = runner._tools(
+        definition,
+        envelope,
+        "session-legacy-tool",
+        "workflow-legacy-tool",
+    )
+    assert legacy_registry.get(hidden.id) is not None
+
+
 def _install_recovery_controller_spy(
     monkeypatch: pytest.MonkeyPatch,
     calls: list[tuple[str, str]],
@@ -3139,6 +3265,51 @@ def _install_recovery_controller_spy(
         "RecoveryController",
         SpyRecoveryController,
     )
+
+
+@pytest.mark.asyncio
+async def test_reporting_provider_error_uses_declared_recovery_controller(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    observations: list[tuple[bool, str | None]] = []
+    _install_recovery_controller_spy(monkeypatch, calls, observations)
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    runner = ReportingAgentRunner(
+        tmp_path,
+        bus,
+        NonRetryableFailureProvider(),
+        AgentDefaults(max_tool_iterations=1),
+        timeout=5,
+    )
+    envelope = TaskEnvelope(
+        task_id="module-2.1",
+        run_id="run-declarative-provider-recovery",
+        agent_id="module-2.1-specialist",
+        objective="验证 Provider 失败进入声明式恢复策略",
+        allowed_outputs=["module_submission"],
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="数据或参数校验失败"):
+            await runner.run(
+                load_packaged_agents()["module-2.1-specialist"],
+                envelope,
+                [],
+                workflow_id="wf-declarative-provider-recovery",
+                recovery_policy=_current_reporting_recovery_policy(),
+            )
+    finally:
+        await runner.close_workflow("wf-declarative-provider-recovery")
+        bus.shutdown()
+        await bus_task
+
+    assert (
+        RecoveryEventKind.PROVIDER_ERROR.value,
+        RecoveryActionKind.CONTINUE.value,
+    ) in calls
 
 
 @pytest.mark.asyncio
@@ -3488,10 +3659,10 @@ async def test_declarative_recovery_policy_drives_tool_contract_correction(
 
 
 @pytest.mark.asyncio
-async def test_recovery_policy_mismatch_does_not_default_to_continuation(
+async def test_recovery_policy_stop_ends_tool_slice_without_another_provider_call(
     tmp_path: Path,
 ) -> None:
-    """A declared action mismatch fails the path instead of continuing implicitly."""
+    """A declared STOP ends the current recovery instead of continuing implicitly."""
 
     policy = _current_reporting_recovery_policy()
     rules = dict(policy.rules)
@@ -3501,10 +3672,11 @@ async def test_recovery_policy_mismatch_does_not_default_to_continuation(
     mismatched_policy = policy.model_copy(update={"rules": rules})
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
+    provider = ToolSliceContinuationProvider()
     runner = ReportingAgentRunner(
         tmp_path,
         bus,
-        ToolSliceContinuationProvider(),
+        provider,
         AgentDefaults(max_tool_iterations=1),
         timeout=5,
     )
@@ -3517,17 +3689,114 @@ async def test_recovery_policy_mismatch_does_not_default_to_continuation(
         target_submodule_ids=list(REPORT_TAXONOMY["2.1"].submodules),
     )
     try:
-        with pytest.raises(RuntimeError, match="does not match"):
+        result = await runner.run(
+            load_packaged_agents()["module-2.1-specialist"].model_copy(
+                update={"max_turns": 1}
+            ),
+            envelope,
+            [],
+            workflow_id="wf-declarative-recovery-mismatch",
+            recovery_policy=mismatched_policy,
+        )
+    finally:
+        await runner.close_workflow("wf-declarative-recovery-mismatch")
+        bus.shutdown()
+        await bus_task
+
+    assert result.status is AgentRunStatus.INCOMPLETE
+    # The AgentLoop's bounded slice uses two physical turns before publishing
+    # its continuation sentinel; STOP prevents the Reporting adapter's third.
+    assert provider.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_recovery_policy_fail_fails_tool_slice_explicitly(
+    tmp_path: Path,
+) -> None:
+    policy = _current_reporting_recovery_policy()
+    rules = dict(policy.rules)
+    rules[RecoveryEventKind.TOOL_SLICE_BOUNDARY.value] = rules[
+        RecoveryEventKind.TOOL_SLICE_BOUNDARY.value
+    ].model_copy(update={"action": RecoveryActionKind.FAIL.value})
+    failing_policy = policy.model_copy(update={"rules": rules})
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    runner = ReportingAgentRunner(
+        tmp_path,
+        bus,
+        ToolSliceContinuationProvider(),
+        AgentDefaults(max_tool_iterations=1),
+        timeout=5,
+    )
+    envelope = TaskEnvelope(
+        task_id="module-2.1",
+        run_id="run-declarative-recovery-fail",
+        agent_id="module-2.1-specialist",
+        objective="验证 recovery fail",
+        allowed_outputs=["module_submission"],
+        target_submodule_ids=list(REPORT_TAXONOMY["2.1"].submodules),
+    )
+    try:
+        with pytest.raises(RuntimeError, match="failed tool_slice_boundary"):
             await runner.run(
                 load_packaged_agents()["module-2.1-specialist"].model_copy(
                     update={"max_turns": 1}
                 ),
                 envelope,
                 [],
-                workflow_id="wf-declarative-recovery-mismatch",
-                recovery_policy=mismatched_policy,
+                workflow_id="wf-declarative-recovery-fail",
+                recovery_policy=failing_policy,
             )
     finally:
-        await runner.close_workflow("wf-declarative-recovery-mismatch")
+        await runner.close_workflow("wf-declarative-recovery-fail")
         bus.shutdown()
         await bus_task
+
+
+@pytest.mark.asyncio
+async def test_recovery_policy_prompt_is_sent_on_same_conversation_continuation(
+    tmp_path: Path,
+) -> None:
+    policy = _current_reporting_recovery_policy()
+    rules = dict(policy.rules)
+    prompt = "POLICY_PROMPT_CONTINUE_EXACT_TASK"
+    rules[RecoveryEventKind.MAX_TOKENS.value] = rules[
+        RecoveryEventKind.MAX_TOKENS.value
+    ].model_copy(update={"prompt": prompt})
+    prompted_policy = policy.model_copy(update={"rules": rules})
+    provider = MaxTokensThenDirectSubmissionProvider()
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    runner = ReportingAgentRunner(
+        tmp_path,
+        bus,
+        provider,
+        AgentDefaults(max_tool_iterations=5),
+        timeout=5,
+    )
+    envelope = TaskEnvelope(
+        task_id="module-2.1",
+        run_id="run-declarative-recovery-prompt",
+        agent_id="module-2.1-specialist",
+        objective="验证 recovery prompt",
+        allowed_outputs=["module_submission"],
+    )
+    try:
+        result = await runner.run(
+            load_packaged_agents()["module-2.1-specialist"],
+            envelope,
+            [],
+            workflow_id="wf-declarative-recovery-prompt",
+            recovery_policy=prompted_policy,
+        )
+    finally:
+        await runner.close_workflow("wf-declarative-recovery-prompt")
+        bus.shutdown()
+        await bus_task
+
+    assert result.status is AgentRunStatus.COMPLETED
+    assert provider.message_snapshots
+    assert any(
+        prompt in message.content
+        for message in provider.message_snapshots[0]
+    )

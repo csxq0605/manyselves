@@ -77,7 +77,10 @@ class WorkflowProjectionFacade:
                 "description": definition.description,
                 "input_contract": definition.input_contract,
                 "output_contract": definition.output_contract,
-                "runnable": definition.id in capability.entrypoints,
+                "runnable": (
+                    definition.id in capability.entrypoints
+                    and self._runtime_bindings.has(capability.id)
+                ),
             }
             for loaded in self._catalog.all()
             for capability, registry in [(loaded.definition, loaded.registry)]
@@ -113,7 +116,7 @@ class WorkflowProjectionFacade:
         self,
         command_id: UUID,
         workflow_id: str,
-        values: dict[str, Any],
+        values: Any,
     ) -> dict[str, Any]:
         loaded, _workflow = self._find_workflow(workflow_id)
         capability = loaded.definition
@@ -132,7 +135,7 @@ class WorkflowProjectionFacade:
         run_id: str,
         *,
         input_id: str | None,
-        values: dict[str, Any],
+        values: Any,
     ) -> dict[str, Any]:
         binding, projection = self._locate_run(run_id)
         accepted = binding.provide_input(

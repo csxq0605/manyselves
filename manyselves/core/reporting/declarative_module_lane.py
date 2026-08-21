@@ -6,7 +6,7 @@ executes neutral actions and never learns module, auditor, or revision concepts.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Protocol
 
 from manyselves.capabilities.distribution_reporting import (
@@ -17,6 +17,7 @@ from manyselves.kernel.definitions import (
     AgentDefinition,
     DefinitionKind,
     DefinitionRegistry,
+    RecoveryPolicyDefinition,
     TaskDefinition,
     WorkflowDefinition,
     specialize_workflow,
@@ -367,6 +368,29 @@ class _TraceAgentInvoker:
         *,
         task_id: str,
     ) -> AgentInvocationOutcome:
+        return await self._invoke_and_trace(
+            agent,
+            task,
+            conversation,
+            task_id=task_id,
+            invoke=lambda: self._inner.invoke(
+                agent,
+                task,
+                value,
+                conversation,
+                task_id=task_id,
+            ),
+        )
+
+    async def _invoke_and_trace(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        conversation: Any,
+        *,
+        task_id: str,
+        invoke: Callable[[], Awaitable[AgentInvocationOutcome]],
+    ) -> AgentInvocationOutcome:
         self._trace.record(
             SemanticEventKind.ACTION_STARTED,
             workflow_id=self._workflow_id,
@@ -391,13 +415,7 @@ class _TraceAgentInvoker:
             output_contract=task.output_contract,
         )
         try:
-            outcome = await self._inner.invoke(
-                agent,
-                task,
-                value,
-                conversation,
-                task_id=task_id,
-            )
+            outcome = await invoke()
             if outcome.status != "ok":
                 raise DeclarativeModuleLaneError(
                     outcome.error or f"agent {agent.id} returned {outcome.status}"
@@ -431,6 +449,44 @@ class _TraceAgentInvoker:
             status="completed",
         )
         return outcome.model_copy(update={"result": validated})
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: Any,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        invoke_with_recovery = getattr(self._inner, "invoke_with_recovery", None)
+        if callable(invoke_with_recovery):
+            async def invoke() -> AgentInvocationOutcome:
+                return await invoke_with_recovery(
+                    agent,
+                    task,
+                    value,
+                    conversation,
+                    task_id=task_id,
+                    recovery_policy=recovery_policy,
+                )
+        else:
+            async def invoke() -> AgentInvocationOutcome:
+                return await self._inner.invoke(
+                    agent,
+                    task,
+                    value,
+                    conversation,
+                    task_id=task_id,
+                )
+        return await self._invoke_and_trace(
+            agent,
+            task,
+            conversation,
+            task_id=task_id,
+            invoke=invoke,
+        )
 
 
 def _branch_for_output(output_contract: str, value: Any) -> str:

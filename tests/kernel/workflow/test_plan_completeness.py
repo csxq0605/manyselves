@@ -22,6 +22,7 @@ from manyselves.kernel.workflow import (
     WorkflowCompiler,
     WorkflowState,
     WorkflowStatus,
+    restore_plan_definition_registry,
     resume_waiting_input,
 )
 from manyselves.runtime.state_store import FileWorkflowStateStore
@@ -123,6 +124,12 @@ def test_resolved_plan_freezes_recovery_and_conversation_bindings() -> None:
             "output_variable": "conversation",
         }
     }
+    registry._definitions["task"][task.id] = task.model_copy(
+        update={"objective": "Changed after compile"}
+    )
+    restored = restore_plan_definition_registry(plan)
+    assert restored.require("task", task.id).objective == "Return text"
+    assert restored.require("contract", contract.id) == contract
 
 
 def test_compiler_rejects_incompatible_declared_contract_flow() -> None:
@@ -182,6 +189,68 @@ def test_compiler_rejects_incompatible_declared_contract_flow() -> None:
         WorkflowCompiler(build_builtin_executor_registry()).compile(workflow, registry)
 
 
+def test_compiler_rejects_a_reachable_non_terminal_control_flow_exit() -> None:
+    registry = DefinitionRegistry()
+    workflow = WorkflowDefinition(
+        id="missing-terminal-branch",
+        version="1.0.0",
+        description="Every reachable branch must end explicitly",
+        state={"choose_end": False, "result": 1},
+        actions=[
+            {
+                "id": "choose",
+                "kind": "if",
+                "condition": {"variable": "choose_end", "operator": "truthy"},
+                "then": "finish",
+                "otherwise": "fall-off",
+            },
+            {"id": "finish", "kind": "end_workflow", "output_variable": "result"},
+            {
+                "id": "fall-off",
+                "kind": "set_variable",
+                "variable": "result",
+                "value": 2,
+            },
+        ],
+    )
+
+    with pytest.raises(CompilerError, match="reachable action fall-off has no explicit terminal"):
+        WorkflowCompiler(build_builtin_executor_registry()).compile(workflow, registry)
+
+
+@pytest.mark.asyncio
+async def test_end_workflow_validates_the_declared_final_output_contract(tmp_path) -> None:
+    registry = DefinitionRegistry()
+    number = _contract("number", "integer")
+    registry.register(number)
+    workflow = WorkflowDefinition(
+        id="invalid-final-output",
+        version="1.0.0",
+        description="Runtime validates untyped state at the final boundary",
+        output_contract=number.id,
+        state={"result": "not-an-integer"},
+        actions=[
+            {"id": "finish", "kind": "end_workflow", "output_variable": "result"},
+        ],
+    )
+    executors = build_builtin_executor_registry()
+    plan = WorkflowCompiler(executors).compile(workflow, registry)
+
+    with pytest.raises(RuntimeExecutionError, match="final output contract"):
+        await WorkflowRuntimeHost(
+            executors,
+            FileWorkflowStateStore(tmp_path),
+            InMemoryWorkflowEventSink(),
+        ).execute(
+            plan,
+            WorkflowState.for_plan("invalid-final-output-run", plan),
+            RuntimeContext(
+                contracts=build_contract_catalog(registry),
+                definitions=registry,
+            ),
+        )
+
+
 def test_compiler_rejects_a_conversation_bound_to_a_different_agent() -> None:
     registry = DefinitionRegistry()
     contract = _contract("text", "string")
@@ -196,6 +265,8 @@ def test_compiler_rejects_a_conversation_bound_to_a_different_agent() -> None:
         version="1.0.0",
         description="Reviewer",
         instructions="Review.",
+        accepts=[contract.id],
+        produces=[contract.id],
     )
     task = TaskDefinition(
         id="review",
@@ -238,6 +309,157 @@ def test_compiler_rejects_a_conversation_bound_to_a_different_agent() -> None:
     with pytest.raises(
         CompilerError,
         match="conversation for agent writer with agent reviewer",
+    ):
+        WorkflowCompiler(build_builtin_executor_registry()).compile(workflow, registry)
+
+
+@pytest.mark.parametrize(
+    ("agent_accepts", "agent_produces", "agent_tools", "message"),
+    [
+        ([], ["text"], ["lookup"], "does not accept contract text"),
+        (["text"], [], ["lookup"], "does not produce contract text"),
+        (["text"], ["text"], [], "does not declare task tool lookup"),
+    ],
+)
+def test_compiler_rejects_task_capabilities_outside_agent_declaration(
+    agent_accepts: list[str],
+    agent_produces: list[str],
+    agent_tools: list[str],
+    message: str,
+) -> None:
+    registry = DefinitionRegistry()
+    contract = _contract("text", "string")
+    tool = ToolDefinition(
+        id="lookup",
+        version="1.0.0",
+        description="Lookup text",
+        implementation="fixture:lookup",
+        input_contract=contract.id,
+        output_contract=contract.id,
+    )
+    agent = AgentDefinition(
+        id="writer",
+        version="1.0.0",
+        description="Writer",
+        instructions="Write.",
+        accepts=agent_accepts,
+        produces=agent_produces,
+        tools=agent_tools,
+    )
+    task = TaskDefinition(
+        id="write",
+        version="1.0.0",
+        description="Write text",
+        agent=agent.id,
+        objective="Write text",
+        input_contract=contract.id,
+        output_contract=contract.id,
+        tools=[tool.id],
+    )
+    for definition in (contract, tool, agent, task):
+        registry.register(definition)
+    workflow = WorkflowDefinition(
+        id="invalid-agent-task-capability",
+        version="1.0.0",
+        description="Reject undeclared Agent capabilities",
+        state={"input": "hello"},
+        actions=[
+            {
+                "id": "conversation",
+                "kind": "create_conversation",
+                "agent": agent.id,
+                "conversation_key": "writer",
+                "output_variable": "conversation",
+            },
+            {
+                "id": "invoke",
+                "kind": "invoke_agent",
+                "agent": agent.id,
+                "task": task.id,
+                "conversation_variable": "conversation",
+                "input_variable": "input",
+                "output_variable": "result",
+            },
+            {"id": "finish", "kind": "end_workflow", "output_variable": "result"},
+        ],
+    )
+
+    with pytest.raises(CompilerError, match=message):
+        WorkflowCompiler(build_builtin_executor_registry()).compile(workflow, registry)
+
+
+@pytest.mark.parametrize(
+    ("task_tools", "message"),
+    [
+        (["internal-helper"], "task write exposes non-model-visible tool internal-helper"),
+        ([], "agent writer exposes non-model-visible tool internal-helper"),
+    ],
+)
+def test_compiler_rejects_an_agent_tool_that_is_not_model_visible(
+    task_tools: list[str],
+    message: str,
+) -> None:
+    registry = DefinitionRegistry()
+    contract = _contract("text", "string")
+    tool = ToolDefinition(
+        id="internal-helper",
+        version="1.0.0",
+        description="Runtime-only helper",
+        implementation="fixture:internal-helper",
+        input_contract=contract.id,
+        output_contract=contract.id,
+        model_visible=False,
+    )
+    agent = AgentDefinition(
+        id="writer",
+        version="1.0.0",
+        description="Writer",
+        instructions="Write.",
+        accepts=[contract.id],
+        produces=[contract.id],
+        tools=[tool.id],
+    )
+    task = TaskDefinition(
+        id="write",
+        version="1.0.0",
+        description="Write text",
+        agent=agent.id,
+        objective="Write text",
+        input_contract=contract.id,
+        output_contract=contract.id,
+        tools=task_tools,
+    )
+    for definition in (contract, tool, agent, task):
+        registry.register(definition)
+    workflow = WorkflowDefinition(
+        id="invalid-hidden-agent-tool",
+        version="1.0.0",
+        description="Reject runtime-only tools in model-facing tasks",
+        state={"input": "hello"},
+        actions=[
+            {
+                "id": "conversation",
+                "kind": "create_conversation",
+                "agent": agent.id,
+                "conversation_key": "writer",
+                "output_variable": "conversation",
+            },
+            {
+                "id": "invoke",
+                "kind": "invoke_agent",
+                "agent": agent.id,
+                "task": task.id,
+                "conversation_variable": "conversation",
+                "input_variable": "input",
+                "output_variable": "result",
+            },
+            {"id": "finish", "kind": "end_workflow", "output_variable": "result"},
+        ],
+    )
+
+    with pytest.raises(
+        CompilerError,
+        match=message,
     ):
         WorkflowCompiler(build_builtin_executor_registry()).compile(workflow, registry)
 

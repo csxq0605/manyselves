@@ -33,7 +33,7 @@ class CapabilityRuntimeBinding(Protocol):
         self,
         command_id: UUID,
         workflow_id: str,
-        values: dict[str, Any],
+        values: Any,
     ) -> dict[str, Any]: ...
 
     def provide_input(
@@ -42,7 +42,7 @@ class CapabilityRuntimeBinding(Protocol):
         run_id: str,
         *,
         input_id: str | None,
-        values: dict[str, Any],
+        values: Any,
     ) -> dict[str, Any]: ...
 
     def get_run(self, run_id: str) -> dict[str, Any]: ...
@@ -72,6 +72,9 @@ class RuntimeBindingCatalog:
             raise CapabilityBindingError(
                 f"missing runtime binding: {capability_id}"
             ) from exc
+
+    def has(self, capability_id: str) -> bool:
+        return capability_id in self._bindings
 
     def locate_run(
         self,

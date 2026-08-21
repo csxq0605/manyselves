@@ -152,6 +152,80 @@ async def test_runtime_host_executes_effects_persists_events_and_reuses_completi
 
 
 @pytest.mark.asyncio
+async def test_runtime_host_resumes_with_the_run_saved_resolved_plan(
+    tmp_path: Path,
+) -> None:
+    registry = DefinitionRegistry()
+    number = ContractDefinition(
+        id="number-input",
+        version="1.0.0",
+        description="One integer",
+        adapter="json_schema",
+        schema={"type": "integer"},
+    )
+    interaction = InteractionDefinition(
+        id="number-request",
+        version="1.0.0",
+        description="Request one integer",
+        title="Number",
+        input_contract=number.id,
+    )
+    registry.register(number)
+    registry.register(interaction)
+    workflow = WorkflowDefinition(
+        id="saved-plan-resume",
+        version="1.0.0",
+        description="Resume from one fixed compiled plan",
+        actions=[
+            {
+                "id": "ask-number",
+                "kind": "request_input",
+                "interaction": interaction.id,
+                "output_variable": "answer",
+            },
+            {
+                "id": "finish",
+                "kind": "end_workflow",
+                "output_variable": "answer",
+                "output_name": "original",
+            },
+        ],
+    )
+    executors = build_builtin_executor_registry()
+    original_plan = WorkflowCompiler(executors).compile(workflow, registry)
+    store = FileWorkflowStateStore(tmp_path)
+    host = WorkflowRuntimeHost(executors, store, InMemoryWorkflowEventSink())
+    context = RuntimeContext(
+        contracts={number.id: build_contract_adapter(number)},
+        definitions=registry,
+    )
+
+    waiting = await host.execute(
+        original_plan,
+        WorkflowState.for_plan("fixed-plan-run", original_plan),
+        context,
+    )
+    changed_number = number.model_copy(
+        update={"schema_": {"type": "string"}}
+    )
+    resumed = resume_waiting_input(
+        original_plan,
+        waiting,
+        input_id="ask-number",
+        values=7,
+        contracts={number.id: build_contract_adapter(changed_number)},
+    )
+    changed_workflow = workflow.model_copy(deep=True)
+    changed_workflow.actions[-1]["output_name"] = "changed"
+    changed_plan = WorkflowCompiler(executors).compile(changed_workflow, registry)
+
+    completed = await host.execute(changed_plan, resumed, context)
+
+    assert completed.outputs == {"original": 7}
+    assert store.load_plan("fixed-plan-run") == original_plan
+
+
+@pytest.mark.asyncio
 async def test_runtime_host_executes_explicit_exit_loop_without_iteration_cap(
     tmp_path: Path,
 ) -> None:
@@ -397,6 +471,118 @@ async def test_runtime_host_joins_parallel_branches_inside_one_run_state(
         path.name for path in (tmp_path / "Work" / "runs").iterdir()
     ]
     assert run_directories == ["parallel-host-run"]
+
+
+@pytest.mark.asyncio
+async def test_nested_parallel_persists_progress_and_retries_only_failed_branch(
+    tmp_path: Path,
+) -> None:
+    registry, executors, _plan, contracts = _workflow()
+    workflow = WorkflowDefinition(
+        id="recoverable-parallel",
+        version="1.0.0",
+        description="Persist sibling progress across one branch failure",
+        state={"left-input": 1, "right-input": 2},
+        actions=[
+            {
+                "id": "parallel",
+                "kind": "parallel",
+                "branches": {"left": "left", "right": "right"},
+                "join": "join",
+            },
+            {
+                "id": "left",
+                "kind": "invoke_tool",
+                "tool": "double",
+                "input_variable": "left-input",
+                "output_variable": "left-output",
+            },
+            {"id": "left-done", "kind": "goto", "target": "join"},
+            {
+                "id": "right",
+                "kind": "invoke_tool",
+                "tool": "double",
+                "input_variable": "right-input",
+                "output_variable": "right-output",
+            },
+            {"id": "right-done", "kind": "goto", "target": "join"},
+            {
+                "id": "join",
+                "kind": "join",
+                "parallel": "parallel",
+                "inputs": {"left": "left-output", "right": "right-output"},
+                "output_variable": "joined",
+            },
+            {
+                "id": "finish",
+                "kind": "end_workflow",
+                "output_variable": "joined",
+            },
+        ],
+    )
+    parent = WorkflowDefinition(
+        id="recoverable-parallel-parent",
+        version="1.0.0",
+        description="Parent retaining its child's parallel failure state",
+        state={"child-input": {}},
+        actions=[
+            {
+                "id": "call-child",
+                "kind": "subworkflow",
+                "workflow": workflow.id,
+                "input_variable": "child-input",
+                "child_input_variable": "unused",
+                "child_output_name": "result",
+                "output_variable": "child-result",
+            },
+            {
+                "id": "parent-finish",
+                "kind": "end_workflow",
+                "output_variable": "child-result",
+            },
+        ],
+    )
+    registry.register(workflow)
+    registry.register(parent)
+    plan = WorkflowCompiler(executors).compile(parent, registry)
+    calls = {1: 0, 2: 0}
+
+    async def flaky_double(value: int) -> int:
+        calls[value] += 1
+        await asyncio.sleep(0)
+        if value == 2 and calls[value] == 1:
+            raise RuntimeError("injected parallel failure")
+        return value * 2
+
+    store = FileWorkflowStateStore(tmp_path)
+    host = WorkflowRuntimeHost(executors, store, InMemoryWorkflowEventSink())
+    context = RuntimeContext(
+        tools={"double": flaky_double},
+        contracts=contracts,
+        definitions=registry,
+    )
+
+    with pytest.raises(RuntimeError, match="injected parallel failure"):
+        await host.execute(
+            plan,
+            WorkflowState.for_plan("recoverable-parallel-run", plan),
+            context,
+        )
+
+    failed = store.load("recoverable-parallel-run")
+    child_failed = failed.subworkflow_states["call-child"]
+    assert child_failed["parallel_states"]["parallel"]["left"]["status"] == (
+        "completed"
+    )
+    assert child_failed["parallel_states"]["parallel"]["right"]["status"] == (
+        "failed"
+    )
+    assert child_failed["parallel_results"]["parallel"]["left"]["left-output"] == 2
+
+    completed = await host.execute(plan, failed, context)
+
+    assert completed.outputs == {"result": {"left": 2, "right": 4}}
+    assert calls == {1: 1, 2: 2}
 
 
 @pytest.mark.asyncio
@@ -819,6 +1005,91 @@ async def test_runtime_host_waits_and_resumes_input_inside_subworkflow(
         for event in events.events
         if event.kind == "action.started" and event.workflow_id == parent.id
     ].count("before-child") == 1
+
+
+@pytest.mark.asyncio
+async def test_saved_parent_plan_freezes_nested_workflow_for_resume(
+    tmp_path: Path,
+) -> None:
+    registry, executors, _plan, contracts = _workflow()
+    contracts.update(
+        _register_text_interaction(
+            registry,
+            contract_id="frozen-child-answer",
+            interaction_id="frozen-child-interaction",
+        )
+    )
+    child = WorkflowDefinition(
+        id="frozen-waiting-child",
+        version="1.0.0",
+        description="Child definition persisted with its parent plan",
+        actions=[
+            {
+                "id": "ask-frozen-child",
+                "kind": "request_input",
+                "interaction": "frozen-child-interaction",
+                "output_variable": "answer",
+            },
+            {
+                "id": "finish-frozen-child",
+                "kind": "end_workflow",
+                "output_variable": "answer",
+                "output_name": "result",
+            },
+        ],
+    )
+    parent = WorkflowDefinition(
+        id="frozen-waiting-parent",
+        version="1.0.0",
+        description="Parent whose saved plan owns the child plan",
+        state={"seed": "initial"},
+        actions=[
+            {
+                "id": "call-frozen-child",
+                "kind": "subworkflow",
+                "workflow": child.id,
+                "input_variable": "seed",
+                "child_output_name": "result",
+                "output_variable": "child-result",
+            },
+            {
+                "id": "finish-frozen-parent",
+                "kind": "end_workflow",
+                "output_variable": "child-result",
+            },
+        ],
+    )
+    registry.register(child)
+    registry.register(parent)
+    compiler = WorkflowCompiler(executors)
+    original_parent_plan = compiler.compile(parent, registry)
+    store = FileWorkflowStateStore(tmp_path)
+    host = WorkflowRuntimeHost(executors, store, InMemoryWorkflowEventSink())
+    context = RuntimeContext(contracts=contracts, definitions=registry)
+
+    waiting = await host.execute(
+        original_parent_plan,
+        WorkflowState.for_plan("frozen-subworkflow-run", original_parent_plan),
+        context,
+    )
+    saved_parent_plan = store.load_plan("frozen-subworkflow-run")
+
+    changed_child = child.model_copy(deep=True)
+    changed_child.actions[-1]["output_name"] = "changed-result"
+    registry._definitions["workflow"][child.id] = changed_child
+    changed_parent_plan = compiler.compile(parent, registry)
+    resumed = resume_waiting_input(
+        saved_parent_plan,
+        waiting,
+        input_id="ask-frozen-child",
+        values="Ada",
+        contracts=contracts,
+    )
+    completed = await host.execute(changed_parent_plan, resumed, context)
+
+    assert saved_parent_plan.subworkflow_plans[child.id].workflow_version == "1.0.0"
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert completed.outputs == {"result": "Ada"}
 
 
 @pytest.mark.asyncio

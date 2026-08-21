@@ -43,12 +43,12 @@ class WorkflowInputSchemaResponse(_ProjectionModel):
 
 class WorkflowRunStartRequest(_ProjectionModel):
     workflow_id: str = Field(alias="workflowId")
-    input: dict[str, Any]
+    input: Any
 
 
 class WorkflowRunInputRequest(_ProjectionModel):
     input_id: str | None = Field(default=None, alias="inputId")
-    values: dict[str, Any] = Field(default_factory=dict)
+    values: Any = Field(default_factory=dict)
 
 
 class WorkflowRunAcceptedResponse(_ProjectionModel):

@@ -11,9 +11,13 @@ tools:
 accepts:
 - chief_chapter_lane_input
 - review_completions
+- declarative_chief_chapter_context
+- declarative_final_chief_revision_context
 produces:
 - chief_chapter_lane_submission
 - chief_chapter_lane_revision_submission
+- declarative_chief_chapter_agent_result
+- declarative_final_chief_revision_agent_result
 conversation_mode: task
 limits:
   max_turns: 28
@@ -50,4 +54,3 @@ Chapter 3 各 part 是不含自身标题的 section body；如需加粗编号标
 <deliverables>
 只提交当前章节合同允许的正文 parts 与控制字段。
 </deliverables>
-

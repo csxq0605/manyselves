@@ -22,15 +22,23 @@ tools:
 - list_result_parts
 - report_blocked
 - submit_result
+- open_artifact
+- search_text
 accepts:
 - module_tasks
 - evidence_items
 - research_notes
+- declarative_cross_owner_runtime_context
+- declarative_module_runtime_lane_context
+- module_revision_input
 produces:
 - module_drafts
 - research_notes
 - claim_ledger
 - source_ledger
+- declarative_module_authoring_agent_result
+- declarative_module_revision_agent_result
+- module_revision_submission
 conversation_mode: task
 limits:
   max_turns: 14
@@ -66,4 +74,3 @@ Evidence 是客户事实；Knowledge 是有来源的专业参考；模型知识�
 <deliverables>
 只提交当前合同允许的正文 parts 与控制字段。
 </deliverables>
-

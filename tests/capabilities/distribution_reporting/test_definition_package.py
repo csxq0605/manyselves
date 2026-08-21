@@ -16,6 +16,9 @@ from manyselves.core.reporting.config import (
     load_agent_definitions,
     load_packaged_agents,
 )
+from manyselves.core.reporting.declarative_reporting_runner import (
+    _compile_reporting_runtime,
+)
 from manyselves.core.reporting.models import REPORT_MODULE_IDS
 from manyselves.kernel.definitions import DefinitionKind
 from manyselves.kernel.executors import build_builtin_executor_registry
@@ -110,6 +113,31 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
     }
 
 
+def test_distribution_reporting_task_tools_are_model_visible_definitions() -> None:
+    _, registry = load_distribution_reporting_capability()
+    tools = {
+        definition.id: definition
+        for definition in registry.all(DefinitionKind.TOOL)
+    }
+
+    for task in registry.all(DefinitionKind.TASK):
+        for tool_id in task.tools:
+            assert tool_id in tools, f"task {task.id} references unknown tool {tool_id}"
+            assert tools[tool_id].model_visible is True, (
+                f"task {task.id} exposes runtime-only tool {tool_id} to its agent"
+            )
+
+
+def test_pure_read_agent_tools_match_their_python_execution_metadata() -> None:
+    _, registry = load_distribution_reporting_capability()
+
+    for tool_id in ("calculate", "inspect_image"):
+        tool = registry.require(DefinitionKind.TOOL, tool_id)
+        assert tool.side_effect == "pure_read"
+        assert tool.parallel_safe is True
+        assert tool.model_visible is True
+
+
 def test_capability_agents_project_to_the_current_reporting_contract() -> None:
     agents = load_reporting_agents()
 
@@ -131,9 +159,11 @@ def test_capability_agents_project_to_the_current_reporting_contract() -> None:
         "report_gap",
         "write_result_part",
         "list_result_parts",
-        "report_blocked",
-        "submit_result",
-    ]
+            "report_blocked",
+            "submit_result",
+            "open_artifact",
+            "search_text",
+        ]
     assert "<role_and_perspective>" in agents["evidence-auditor"].instructions
 
 
@@ -148,7 +178,7 @@ def test_legacy_packaged_agent_loader_remains_a_compatibility_import() -> None:
         ].model_dump(exclude={"source_path"})
 
 
-def test_capability_agent_projection_matches_the_legacy_template_corpus() -> None:
+def test_capability_agent_projection_preserves_the_legacy_template_corpus() -> None:
     legacy = load_agent_definitions(
         Path(__file__).parents[3] / "manyselves/templates/reporting/agents"
     )
@@ -156,9 +186,16 @@ def test_capability_agent_projection_matches_the_legacy_template_corpus() -> Non
 
     assert legacy.keys() == projected.keys()
     for agent_id in legacy:
-        assert legacy[agent_id].model_dump(exclude={"source_path"}) == projected[
-            agent_id
-        ].model_dump(exclude={"source_path"})
+        legacy_payload = legacy[agent_id].model_dump(
+            exclude={"source_path", "reads", "writes", "tools"}
+        )
+        projected_payload = projected[agent_id].model_dump(
+            exclude={"source_path", "reads", "writes", "tools"}
+        )
+        assert legacy_payload == projected_payload
+        assert set(legacy[agent_id].reads) <= set(projected[agent_id].reads)
+        assert set(legacy[agent_id].writes) <= set(projected[agent_id].writes)
+        assert set(legacy[agent_id].tools) <= set(projected[agent_id].tools)
 
 
 def test_capability_adapters_expose_the_executable_reporting_definitions() -> None:
@@ -204,22 +241,11 @@ def test_capability_adapters_expose_the_executable_reporting_definitions() -> No
 
 
 def test_top_level_reporting_workflow_is_an_executable_capability_definition() -> None:
-    _, registry = load_distribution_reporting_capability()
-    workflow = registry.require(DefinitionKind.WORKFLOW, "distribution-reporting")
-    workflow = workflow.model_copy(
-        deep=True,
-        update={
-            "state": {
-                "reporting-state": {"run_id": "report-characterized"},
-                "full-report": True,
-            }
-        },
+    plan = _compile_reporting_runtime(
+        {"run_id": "report-characterized"},
+        full_report=True,
     )
-
-    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
-        workflow,
-        registry,
-    )
+    plan = plan.plan
 
     assert [action.kind for action in plan.actions] == [
         "subworkflow",
@@ -231,6 +257,7 @@ def test_top_level_reporting_workflow_is_an_executable_capability_definition() -
         "distribution-module-cohort",
         "distribution-reporting-tail",
     ]
+    assert "distribution-module-2.1-runtime-lane" in plan.subworkflow_plans
 
 
 def test_production_delivery_is_a_typed_render_publish_completion_subworkflow() -> None:

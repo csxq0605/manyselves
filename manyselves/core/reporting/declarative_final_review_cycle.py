@@ -36,6 +36,7 @@ from .declarative_final_chapter_cohort import (
     FINAL_CHAPTER_IDS,
     DeclarativeFinalChapterOutcome,
 )
+from .declarative_task_binding import bind_declared_task
 from .final_specialization import final_lane_specialization
 from .input_contracts import (
     ChiefChapterLaneInput,
@@ -200,7 +201,7 @@ class _FinalChiefRevisionInvoker:
     async def _invoke(
         self,
         _agent: AgentDefinition,
-        _task: TaskDefinition,
+        task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
@@ -209,7 +210,7 @@ class _FinalChiefRevisionInvoker:
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeFinalChiefRevisionContext.model_validate(value)
-        envelope = cast(TaskEnvelope, context.envelope)
+        envelope = bind_declared_task(cast(TaskEnvelope, context.envelope), task)
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
@@ -281,7 +282,7 @@ class _FinalRecheckInvoker:
     async def _invoke(
         self,
         _agent: AgentDefinition,
-        _task: TaskDefinition,
+        task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
@@ -290,7 +291,7 @@ class _FinalRecheckInvoker:
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeFinalRecheckContext.model_validate(value)
-        envelope = cast(TaskEnvelope, context.envelope)
+        envelope = bind_declared_task(cast(TaskEnvelope, context.envelope), task)
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,

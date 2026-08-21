@@ -37,6 +37,7 @@ from .agentic_models import (
     TaskEnvelope,
 )
 from .assets import ReportAssetAssembler
+from .declarative_task_binding import bind_declared_task
 from .input_contracts import ChiefChapterLaneInput
 from .models import (
     CHAPTER1_SECTION_IDS,
@@ -138,7 +139,7 @@ class _ChiefChapterInvoker:
     async def _invoke(
         self,
         _agent: AgentDefinition,
-        _task: TaskDefinition,
+        task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
@@ -147,7 +148,7 @@ class _ChiefChapterInvoker:
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeChiefChapterContext.model_validate(value)
-        envelope = cast(TaskEnvelope, context.envelope)
+        envelope = bind_declared_task(cast(TaskEnvelope, context.envelope), task)
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,

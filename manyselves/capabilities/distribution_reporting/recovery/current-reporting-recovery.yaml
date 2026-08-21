@@ -2,23 +2,19 @@ id: current-reporting-recovery
 version: 1.0.0
 description: Current Reporting agent continuation and correction choices
 rules:
+  provider_error:
+    action: continue
   natural_language_without_submission:
     action: correct
-    prompt: Submit the declared structured result.
   invalid_structured_output:
     action: correct
-    prompt: Correct only the reported schema errors.
   max_tokens:
     action: continue
-    prompt: Continue in the same conversation.
   tool_slice_boundary:
     action: continue
-    prompt: Continue unfinished tool work in the same conversation.
   tool_contract_error:
     action: correct
-    prompt: Correct the tool arguments against the declared contract.
   no_progress:
     action: stop
   completed_tool_result:
     action: reuse_result
-

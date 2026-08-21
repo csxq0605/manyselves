@@ -8,6 +8,7 @@ from uuid import UUID
 
 from manyselves.core.usage_ledger import UsageLedger
 from manyselves.kernel.contracts import ContractAdapter, build_contract_adapter
+from manyselves.kernel.conversations import ConversationRegistry
 from manyselves.kernel.definitions import (
     ContractDefinition,
     DefinitionKind,
@@ -30,6 +31,7 @@ from manyselves.runtime.capability_binding import (
     CapabilityRunInputError,
     CapabilityRunNotFoundError,
 )
+from manyselves.runtime.conversation_store import FileConversationStore
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.tool_adapter import (
     CapabilityToolAdapter,
@@ -38,6 +40,8 @@ from manyselves.runtime.tool_adapter import (
 from manyselves.runtime.workflow_host import FileWorkflowEventSink, WorkflowRuntimeHost
 
 from .. import load_parameter_adjustment_capability
+
+_UNSET = object()
 
 
 def _normalize_parameter(arguments: dict[str, Any]) -> int:
@@ -71,7 +75,7 @@ class ParameterAdjustmentRuntimeBinding:
         self,
         command_id: UUID,
         workflow_id: str,
-        values: dict[str, Any],
+        values: Any,
     ) -> dict[str, Any]:
         if workflow_id != self.capability_id:
             raise ValueError(f"workflow is not runnable: {workflow_id}")
@@ -91,7 +95,7 @@ class ParameterAdjustmentRuntimeBinding:
         run_id: str,
         *,
         input_id: str | None,
-        values: dict[str, Any],
+        values: Any,
     ) -> dict[str, Any]:
         del command_id
         if input_id is None:
@@ -154,7 +158,7 @@ class ParameterAdjustmentRuntimeBinding:
 
     def _compiled(
         self,
-        values: dict[str, Any] | None = None,
+        values: Any = _UNSET,
     ) -> tuple[
         Any,
         DefinitionRegistry,
@@ -167,7 +171,7 @@ class ParameterAdjustmentRuntimeBinding:
         if not isinstance(workflow, WorkflowDefinition):
             raise TypeError(f"definition is not a workflow: {self.capability_id}")
         contracts = self._contracts(registry)
-        if values is not None:
+        if values is not _UNSET:
             workflow = workflow.model_copy(deep=True)
             workflow.state = {
                 "parameters": contracts["parameter-input"].validate(values)
@@ -196,6 +200,9 @@ class ParameterAdjustmentRuntimeBinding:
                 contracts=contracts,
                 agents={"parameter-adjuster": _ParameterAdjuster()},
                 definitions=registry,
+                conversations=ConversationRegistry(
+                    FileConversationStore(self.workspace)
+                ),
             ),
         )
 
@@ -225,9 +232,12 @@ class ParameterAdjustmentRuntimeBinding:
 
     def _load_state(self, run_id: str) -> WorkflowState:
         try:
-            return self._store.load(run_id)
+            state = self._store.load(run_id)
         except FileNotFoundError as exc:
             raise CapabilityRunNotFoundError(run_id) from exc
+        if state.workflow_id != self.capability_id:
+            raise CapabilityRunNotFoundError(run_id)
+        return state
 
     @staticmethod
     def _run_coroutine(coroutine):
