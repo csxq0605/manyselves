@@ -67,7 +67,10 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
     assert registry.all(DefinitionKind.GATE) == ()
     assert {
         definition.id for definition in registry.all(DefinitionKind.INTERACTION)
-    } == {"cross-owner-main-exception-decision"}
+    } == {
+        "cross-owner-main-exception-decision",
+        "module-main-exception-decision",
+    }
 
 
 def test_capability_agents_project_to_the_current_reporting_contract() -> None:
@@ -205,6 +208,22 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
     assert [action.kind for action in plan.actions] == [
         "invoke_tool",
         "invoke_tool",
+        "if",
+        "invoke_tool",
+        "invoke_tool",
+        "if",
+        "create_conversation",
+        "invoke_agent",
+        "invoke_tool",
+        "goto",
+        "invoke_tool",
+        "if",
+        "request_input",
+        "invoke_tool",
+        "goto",
+        "invoke_tool",
+        "goto",
+        "invoke_tool",
         "invoke_tool",
         "if",
         "create_conversation",
@@ -227,6 +246,8 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "invoke_tool",
         "if",
         "invoke_tool",
+        "if",
+        "invoke_tool",
         "create_conversation",
         "invoke_agent",
         "invoke_tool",
@@ -237,16 +258,29 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "invoke_tool",
         "invoke_tool",
         "if",
+        "invoke_tool",
+        "invoke_tool",
+        "if",
         "create_conversation",
         "invoke_agent",
         "invoke_tool",
         "goto",
         "invoke_tool",
+        "if",
+        "invoke_tool",
+        "goto",
         "invoke_tool",
         "end_workflow",
     ]
     assert plan.tool_ids == [
         "start-current-module-lane",
+        "module-lane-has-deferred-main-exception",
+        "prepare-current-module-main-exception",
+        "module-main-exception-requires-agent",
+        "accept-current-module-main-exception",
+        "module-main-exception-requests-user",
+        "apply-current-module-main-exception-user-input",
+        "route-current-module-after-main-exception",
         "prepare-current-module-authoring",
         "module-authoring-requires-agent",
         "accept-current-module-authoring",
@@ -256,9 +290,11 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "module-review-requires-agent",
         "resume-current-module-review",
         "accept-current-module-review",
+        "module-review-needs-recheck",
         "module-review-needs-revision",
         "prepare-current-module-revision",
         "accept-current-module-revision",
+        "prepare-current-module-author-exception",
         "prepare-current-module-recheck",
         "module-recheck-requires-agent",
         "resume-current-module-recheck",
@@ -266,18 +302,24 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "continue-current-module-recheck",
         "complete-current-module-lane",
     ]
-    assert plan.agent_ids == ["module-2.1-specialist", "evidence-auditor"]
+    assert plan.agent_ids == [
+        "main-agent",
+        "module-2.1-specialist",
+        "evidence-auditor",
+    ]
     assert plan.task_ids == [
+        "module-runtime-main-exception",
         "module-2.1-authoring",
         "module-runtime-initial-review",
         "module-2.1-runtime-revision",
         "module-runtime-recheck",
     ]
+    assert plan.interaction_ids == ["module-main-exception-decision"]
     assert (
         next(
             action for action in plan.actions if action.id == "continue-after-module-recheck"
         ).target
-        == "module-review-needs-revision"
+        == "module-recheck-exception-is-deferred"
     )
     assert "execute-current-module-lane" not in plan.tool_ids
     assert "review-current-module-lane" not in plan.tool_ids

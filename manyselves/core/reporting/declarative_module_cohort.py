@@ -126,6 +126,13 @@ async def execute_declarative_module_cohort(
         "start-current-module-lane": lambda values: lane_runtime.start_lane(
             str(values["module_id"]),
             values["state"],
+            (
+                DeclarativeModuleLaneOutcome.model_validate(
+                    values["lane_outcomes"][str(values["module_id"])]
+                )
+                if str(values["module_id"]) in values.get("lane_outcomes", {})
+                else None
+            ),
         ),
         "prepare-current-module-authoring": lane_runtime.prepare_author_lane,
         "module-authoring-requires-agent": lane_runtime.author_requires_agent,
@@ -136,14 +143,29 @@ async def execute_declarative_module_cohort(
         "module-review-requires-agent": lane_runtime.review_requires_agent,
         "accept-current-module-review": lane_runtime.accept_review_lane,
         "module-review-needs-revision": lane_runtime.review_needs_revision,
+        "module-review-needs-recheck": lane_runtime.false_lane,
         "prepare-current-module-revision": lane_runtime.prepare_revision_lane,
         "accept-current-module-revision": lane_runtime.accept_revision_lane,
+        "prepare-current-module-author-exception": (
+            lane_runtime.prepare_author_exception_lane
+        ),
         "prepare-current-module-recheck": lane_runtime.prepare_recheck_lane,
         "module-recheck-requires-agent": lane_runtime.recheck_requires_agent,
         "accept-current-module-recheck": lane_runtime.accept_recheck_lane,
         "resume-current-module-review": lane_runtime.resume_review_lane,
         "resume-current-module-recheck": lane_runtime.resume_recheck_lane,
         "continue-current-module-recheck": lane_runtime.continue_recheck_lane,
+        "module-lane-has-deferred-main-exception": (
+            lane_runtime.lane_has_deferred_main_exception
+        ),
+        "prepare-current-module-main-exception": lane_runtime.noop_lane,
+        "module-main-exception-requires-agent": lane_runtime.false_lane,
+        "accept-current-module-main-exception": lane_runtime.accept_passthrough,
+        "module-main-exception-requests-user": lane_runtime.false_lane,
+        "apply-current-module-main-exception-user-input": (
+            lane_runtime.accept_passthrough
+        ),
+        "route-current-module-after-main-exception": lane_runtime.noop_lane,
         "complete-current-module-lane": lane_runtime.complete_lane,
     }
     tools["prepare-module-cohort"] = lambda value: value
@@ -199,7 +221,19 @@ class _StandaloneModuleRuntime:
         self,
         module_id: str,
         module_inputs: Mapping[str, Any],
+        lane_outcome: DeclarativeModuleLaneOutcome | None = None,
     ) -> DeclarativeModuleRuntimeLaneContext:
+        if lane_outcome is not None:
+            return DeclarativeModuleRuntimeLaneContext(
+                module_id=module_id,
+                workflow_id=f"{self._workflow_id}--module-{module_id}",
+                reporting_state=dict(module_inputs),
+                status=(
+                    "completed" if lane_outcome.status == "completed" else "failed"
+                ),
+                module=lane_outcome.module,
+                error=lane_outcome.error,
+            )
         return DeclarativeModuleRuntimeLaneContext(
             module_id=module_id,
             workflow_id=f"{self._workflow_id}--module-{module_id}",
@@ -212,6 +246,8 @@ class _StandaloneModuleRuntime:
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.status != "ready":
+            return context
         return context.model_copy(update={"status": "author_resumed"})
 
     async def author_requires_agent(
@@ -230,6 +266,8 @@ class _StandaloneModuleRuntime:
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.status != "author_resumed":
+            return context
         return context.model_copy(update={"status": "authored"})
 
     async def can_review_lane(
@@ -242,6 +280,8 @@ class _StandaloneModuleRuntime:
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.status != "authored":
+            return context
         return context.model_copy(update={"status": "review_resumed"})
 
     async def review_requires_agent(
@@ -273,6 +313,12 @@ class _StandaloneModuleRuntime:
         values: Mapping[str, Any],
     ) -> DeclarativeModuleRuntimeLaneContext:
         return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+
+    async def prepare_author_exception_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
 
     async def prepare_recheck_lane(
         self,
@@ -335,11 +381,37 @@ class _StandaloneModuleRuntime:
     ) -> DeclarativeModuleRuntimeLaneContext:
         return context
 
+    async def lane_has_deferred_main_exception(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def noop_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
+
+    async def false_lane(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def accept_passthrough(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+
     async def complete_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleLaneOutcome:
-        status = "completed" if context.status == "reviewed" else "failed"
+        status = (
+            "completed" if context.status in {"reviewed", "completed"} else "failed"
+        )
         return DeclarativeModuleLaneOutcome(
             module_id=context.module_id,
             status=status,

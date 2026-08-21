@@ -1,0 +1,10 @@
+id: module-runtime-main-exception
+version: 1.0.0
+description: Decide one prepared module Author or Auditor exception
+agent: main-agent
+objective: Decide only the explicitly prepared module exception findings.
+input_contract: declarative_module_runtime_lane_context
+output_contract: declarative_main_exception_agent_result
+tools:
+- submit_result
+recovery: current-reporting-recovery

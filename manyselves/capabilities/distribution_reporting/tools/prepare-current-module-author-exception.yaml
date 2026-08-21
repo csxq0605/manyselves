@@ -1,0 +1,10 @@
+id: prepare-current-module-author-exception
+version: 1.0.0
+description: Detect the existing explicit Author response exception after revision
+implementation: capability:distribution-reporting:prepare-current-module-author-exception
+input_contract: declarative_module_runtime_lane_context
+output_contract: declarative_module_runtime_lane_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

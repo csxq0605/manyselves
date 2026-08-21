@@ -15,6 +15,7 @@ from manyselves.core.reporting.agentic_models import (
     ResolutionVerdict,
     RevisionResponse,
     TaskEnvelope,
+    WorkflowDecisionSubmission,
 )
 from manyselves.core.reporting.declarative_cross_owner_cohort import (
     compile_cross_owner_workflows,
@@ -197,13 +198,43 @@ class _EmptyLaneRecovery:
         return {}
 
 
-class _CurrentLaneRunner:
+class _TestArtifactStore:
     def __init__(self, workspace: Path) -> None:
-        self.service = SimpleNamespace(workspace=workspace)
+        self.workspace = workspace
+
+    def write_json(self, relative: str, payload: object) -> Path:
+        path = self.workspace / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+
+class _CurrentLaneRunner:
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        author_exception_action: str | None = None,
+        recheck_escalated: bool = False,
+        main_decision: str = "accept_dispute",
+    ) -> None:
+        self.service = SimpleNamespace(
+            workspace=workspace,
+            store=_TestArtifactStore(workspace),
+        )
         self.calls = {module_id: 0 for module_id in REPORT_MODULE_IDS}
         self.lifecycle = {module_id: [] for module_id in REPORT_MODULE_IDS}
         self.fail_once = "2.2"
         self.fail_review_once = ""
+        self.author_exception_action = author_exception_action
+        self.author_exception_calls = 0
+        self.recheck_escalated = recheck_escalated
+        self.recheck_exception_calls = 0
+        self.main_decision = main_decision
+        self.main_exception_calls = 0
+        self.main_exception_module_id = ""
+        self.main_exception_finding_ids: list[str] = []
+        self.execute_module_lane_calls = 0
         self.review_findings: set[str] = set()
         self.initial_review_preparations: dict[
             str, ModuleInitialReviewPreparation
@@ -295,16 +326,38 @@ class _CurrentLaneRunner:
         _workflow_id: str,
         *,
         session_key: str | None = None,
-    ) -> ModuleSubmission | ModuleReviewFindingSubmission | ModuleRevisionSubmission:
+    ) -> (
+        ModuleSubmission
+        | ModuleReviewFindingSubmission
+        | ModuleRevisionSubmission
+        | WorkflowDecisionSubmission
+    ):
+        if agent_id == "main-agent":
+            self.main_exception_calls += 1
+            module_id = self.main_exception_module_id or "2.1"
+            self.lifecycle[module_id].append("main:main-module-exception")
+            return WorkflowDecisionSubmission(
+                decision=self.main_decision,
+                rationale="Main accepts the explicit module exception and continues the declared path.",
+                finding_ids=list(self.main_exception_finding_ids),
+            )
         if agent_id == "evidence-auditor":
             module_id = str(session_key).removeprefix("module-auditor-")
             if "module_review_verdict_submission" in _envelope.allowed_outputs:
                 self.lifecycle[module_id].append(f"rechecker:{session_key}")
-                verdict = (
-                    "open"
-                    if self.recheck_open_once and _envelope.revision == 1
-                    else "resolved"
-                )
+                target = next(iter(REPORT_TAXONOMY[module_id].submodules))
+                finding_id = f"M-{module_id}-initial-r0-1"
+                if self.recheck_escalated and self.recheck_exception_calls == 0:
+                    self.recheck_exception_calls += 1
+                    self.main_exception_module_id = module_id
+                    self.main_exception_finding_ids = [finding_id]
+                    verdict = "escalate"
+                else:
+                    verdict = (
+                        "open"
+                        if self.recheck_open_once and _envelope.revision == 1
+                        else "resolved"
+                    )
                 self.recheck_verdicts[module_id].append(verdict)
                 return ModuleReviewVerdictSubmission(
                     coverage={
@@ -364,13 +417,24 @@ class _CurrentLaneRunner:
             finding_id = f"M-{module_id}-initial-r0-1"
             revision = self.revision_numbers[module_id]
             self.lifecycle[module_id].append(f"revision:{session_key}")
+            self.author_exception_calls += 1
+            exceptional = (
+                self.author_exception_action
+                if self.author_exception_calls == 1
+                else None
+            )
+            if exceptional in {"disputed", "needs_input"}:
+                self.main_exception_module_id = module_id
+                self.main_exception_finding_ids = [finding_id]
             return ModuleRevisionSubmission(
                 module_id=module_id,
                 base_revision=revision - 1,
                 revision=revision,
-                submodule_narratives={
-                    target: f"{target} revised body with operational consequence"
-                },
+                submodule_narratives=(
+                    {}
+                    if exceptional in {"disputed", "needs_input"}
+                    else {target: f"{target} revised body with operational consequence"}
+                ),
                 claims_upsert=[],
                 claim_ids_remove=[],
                 source_ids=[],
@@ -378,12 +442,18 @@ class _CurrentLaneRunner:
                 revision_responses=[
                     RevisionResponse(
                         finding_id=finding_id,
-                        action="implemented",
+                        action=exceptional or "implemented",
                         summary=(
                             "Added the requested operational consequence while preserving "
                             "the existing evidence boundary."
+                            if exceptional not in {"disputed", "needs_input"}
+                            else "The author disputes the requested change at the existing evidence boundary."
                         ),
-                        changed_target_ids=[target],
+                        changed_target_ids=(
+                            [target]
+                            if exceptional not in {"disputed", "needs_input"}
+                            else []
+                        ),
                     )
                 ],
             )
@@ -458,6 +528,10 @@ class _CurrentLaneRunner:
             f"reviews/{module_id}.json"
         )
         return submission
+
+    async def _execute_module_lane(self, *_args, **_kwargs):
+        self.execute_module_lane_calls += 1
+        raise AssertionError("module exception entered full lane replay")
 
     async def _prepare_module_initial_review(
         self,
@@ -1505,6 +1579,110 @@ async def test_file_defined_module_recheck_revises_again_before_completion(
     assert "review" not in runner.lifecycle[module_id]
     assert runner.revision_numbers[module_id] == 2
     assert completed.status is WorkflowStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_file_defined_module_author_exception_main_accepts_then_original_auditor_rechecks_without_lane_replay(
+    tmp_path: Path,
+) -> None:
+    """A disputed Author response enters declared Main, then the same Auditor."""
+
+    run_id = "report-declarative-module-author-exception"
+    module_id = "2.1"
+    workflow_id = f"full-power-distribution-report:{run_id}"
+    state = {"run_id": run_id}
+    runner = _CurrentLaneRunner(
+        tmp_path,
+        author_exception_action="disputed",
+    )
+    runner.fail_once = ""
+    runner.review_findings.add(module_id)
+
+    completed = await execute_declarative_module_stage(
+        requested_modules=(module_id,),
+        state=state,
+        workflow_id=workflow_id,
+        state_store=FileWorkflowStateStore(tmp_path),
+        module_runtime=_CurrentModuleStages(
+            runner,
+            (module_id,),
+            state,
+            workflow_id,
+        ),
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert runner.main_exception_calls == 1
+    assert runner.lifecycle[module_id] == [
+        "start",
+        "prepare",
+        "author:specialist-2.1",
+        "accept",
+        "review-prepare",
+        "reviewer:module-auditor-2.1",
+        "review-accept",
+        "revision:module-2.1",
+        "revision-accept",
+        "main:main-module-exception",
+        "recheck-prepare",
+        "rechecker:module-auditor-2.1",
+        "recheck-accept",
+        "complete",
+    ]
+    assert runner.module_review_loop_calls == 0
+    assert runner.execute_module_lane_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_file_defined_module_recheck_escalation_main_accepts_then_completes_without_lane_replay(
+    tmp_path: Path,
+) -> None:
+    """An escalated module recheck enters declared Main and closes the Lane."""
+
+    run_id = "report-declarative-module-recheck-escalation"
+    module_id = "2.1"
+    workflow_id = f"full-power-distribution-report:{run_id}"
+    state = {"run_id": run_id}
+    runner = _CurrentLaneRunner(
+        tmp_path,
+        recheck_escalated=True,
+    )
+    runner.fail_once = ""
+    runner.review_findings.add(module_id)
+
+    completed = await execute_declarative_module_stage(
+        requested_modules=(module_id,),
+        state=state,
+        workflow_id=workflow_id,
+        state_store=FileWorkflowStateStore(tmp_path),
+        module_runtime=_CurrentModuleStages(
+            runner,
+            (module_id,),
+            state,
+            workflow_id,
+        ),
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert runner.main_exception_calls == 1
+    assert runner.lifecycle[module_id] == [
+        "start",
+        "prepare",
+        "author:specialist-2.1",
+        "accept",
+        "review-prepare",
+        "reviewer:module-auditor-2.1",
+        "review-accept",
+        "revision:module-2.1",
+        "revision-accept",
+        "recheck-prepare",
+        "rechecker:module-auditor-2.1",
+        "recheck-accept",
+        "main:main-module-exception",
+        "complete",
+    ]
+    assert runner.module_review_loop_calls == 0
+    assert runner.execute_module_lane_calls == 0
 
 
 class _TopLevelTailRunner:

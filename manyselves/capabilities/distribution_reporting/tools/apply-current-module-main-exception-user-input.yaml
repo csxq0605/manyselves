@@ -1,0 +1,10 @@
+id: apply-current-module-main-exception-user-input
+version: 1.0.0
+description: Apply validated user input to the prepared module Main exception
+implementation: capability:distribution-reporting:apply-current-module-main-exception-user-input
+input_contract: reporting_tool_input
+output_contract: declarative_module_runtime_lane_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

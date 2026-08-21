@@ -1,0 +1,10 @@
+id: module-main-exception-requests-user
+version: 1.0.0
+description: Route Main's existing request-user module decision to an Interaction
+implementation: capability:distribution-reporting:module-main-exception-requests-user
+input_contract: declarative_module_runtime_lane_context
+output_contract: boolean
+side_effect: none
+parallel_safe: true
+reuse_result: false
+model_visible: false

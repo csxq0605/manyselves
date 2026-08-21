@@ -49,6 +49,7 @@ def retry_parallel_branches(
         action_state.output = None
         action_state.error = None
         resumed.control_frames.pop(action.id, None)
+        resumed.subworkflow_states.pop(action.id, None)
         output_variable = getattr(action, "output_variable", None)
         if output_variable is not None:
             resumed.variables.pop(output_variable, None)

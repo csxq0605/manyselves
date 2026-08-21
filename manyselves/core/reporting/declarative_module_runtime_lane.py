@@ -23,6 +23,8 @@ from .agentic_models import (
 from .models import REPORT_MODULE_IDS
 from .parallel_runtime import LaneCompletion, LaneTaskSpec
 from .review_lifecycle import (
+    MainExceptionDecisionAcceptance,
+    MainExceptionDecisionPreparation,
     ModuleInitialReviewAcceptance,
     ModuleInitialReviewPreparation,
     ModuleRecheckAcceptance,
@@ -121,6 +123,8 @@ class DeclarativeModuleRecheckPreparation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prepared: ModuleRecheckPreparation
+    submission: ModuleReviewVerdictSubmission | None = None
+    acceptance: ModuleRecheckAcceptance | None = None
 
 
 class DeclarativeModuleRuntimeLaneContext(BaseModel):
@@ -142,6 +146,14 @@ class DeclarativeModuleRuntimeLaneContext(BaseModel):
         "revision_ready",
         "recheck_pending",
         "recheck_ready",
+        "author_exception_deferred",
+        "author_exception_ready",
+        "author_exception_resumed",
+        "author_exception_accepted",
+        "reviewer_exception_deferred",
+        "reviewer_exception_ready",
+        "reviewer_exception_resumed",
+        "reviewer_exception_accepted",
         "reviewed",
         "completed",
         "deferred",
@@ -152,6 +164,8 @@ class DeclarativeModuleRuntimeLaneContext(BaseModel):
     review: DeclarativeModuleReviewPreparation | None = None
     revision: DeclarativeModuleRevisionPreparation | None = None
     recheck: DeclarativeModuleRecheckPreparation | None = None
+    main_preparation: MainExceptionDecisionPreparation | None = None
+    main_acceptance: MainExceptionDecisionAcceptance | None = None
     module: ModuleSubmission | None = None
     completion_ref: str | None = None
     completion: LaneCompletion | None = None

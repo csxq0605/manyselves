@@ -1,0 +1,10 @@
+id: accept-current-module-main-exception
+version: 1.0.0
+description: Accept the declared Main result for one module exception
+implementation: capability:distribution-reporting:accept-current-module-main-exception
+input_contract: reporting_tool_input
+output_contract: declarative_module_runtime_lane_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

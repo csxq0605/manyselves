@@ -47,9 +47,11 @@ from manyselves.runtime.workflow_host import (
     WorkflowRuntimeHost,
 )
 
-from .agentic_models import TaskEnvelope
+from .agentic_models import TaskEnvelope, WorkflowDecisionSubmission
 from .declarative_cross_owner_cohort import (
     DeclarativeCrossOwnerRuntime,
+    DeclarativeMainExceptionAgentResult,
+    DeclarativeMainExceptionUserInput,
     compile_cross_owner_workflows,
     register_cross_owner_pipeline_specializations,
     retry_failed_cross_owner_pipelines,
@@ -75,7 +77,12 @@ from .declarative_reporting_tail import _ReportingTailAdapters
 from .distributed_runtime import LocalEventStore
 from .models import REPORT_MODULE_IDS
 from .parallel_runtime import LaneCompletion
-from .review_lifecycle import DeferredMainDecision
+from .review_lifecycle import (
+    DeferredMainDecision,
+    MainExceptionDecisionPreparation,
+    accept_main_exception_decision,
+    prepare_main_exception_decision,
+)
 from .taxonomy import REPORT_TAXONOMY
 from .workflow import (
     AgentWorkflowError,
@@ -99,6 +106,7 @@ class ReportingModuleRuntime(Protocol):
         module_id: str,
         state: dict[str, Any],
         workflow_id: str,
+        lane_outcome: DeclarativeModuleLaneOutcome | None = None,
     ) -> DeclarativeModuleRuntimeLaneContext: ...
 
     async def prepare_author_lane(
@@ -146,6 +154,11 @@ class ReportingModuleRuntime(Protocol):
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> bool: ...
 
+    async def review_needs_recheck(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool: ...
+
     async def prepare_revision_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
@@ -154,6 +167,11 @@ class ReportingModuleRuntime(Protocol):
     async def accept_revision_lane(
         self,
         values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def prepare_author_exception_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext: ...
 
     async def prepare_recheck_lane(
@@ -182,6 +200,41 @@ class ReportingModuleRuntime(Protocol):
     ) -> DeclarativeModuleRuntimeLaneContext: ...
 
     async def continue_recheck_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def lane_has_deferred_main_exception(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool: ...
+
+    async def prepare_main_exception_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def main_exception_requires_agent(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool: ...
+
+    async def accept_main_exception_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def main_exception_requests_user(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool: ...
+
+    async def apply_main_exception_user_input(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def route_after_main_exception(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext: ...
@@ -445,6 +498,13 @@ async def execute_declarative_module_stage(
             str(values["module_id"]),
             values["state"],
             workflow_id,
+            (
+                DeclarativeModuleLaneOutcome.model_validate(
+                    values["lane_outcomes"][str(values["module_id"])]
+                )
+                if str(values["module_id"]) in values.get("lane_outcomes", {})
+                else None
+            ),
         ),
         "prepare-current-module-authoring": module_runtime.prepare_author_lane,
         "module-authoring-requires-agent": module_runtime.author_requires_agent,
@@ -455,14 +515,39 @@ async def execute_declarative_module_stage(
         "module-review-requires-agent": module_runtime.review_requires_agent,
         "accept-current-module-review": module_runtime.accept_review_lane,
         "module-review-needs-revision": module_runtime.review_needs_revision,
+        "module-review-needs-recheck": module_runtime.review_needs_recheck,
         "prepare-current-module-revision": module_runtime.prepare_revision_lane,
         "accept-current-module-revision": module_runtime.accept_revision_lane,
+        "prepare-current-module-author-exception": (
+            module_runtime.prepare_author_exception_lane
+        ),
         "prepare-current-module-recheck": module_runtime.prepare_recheck_lane,
         "module-recheck-requires-agent": module_runtime.recheck_requires_agent,
         "accept-current-module-recheck": module_runtime.accept_recheck_lane,
         "resume-current-module-review": module_runtime.resume_review_lane,
         "resume-current-module-recheck": module_runtime.resume_recheck_lane,
         "continue-current-module-recheck": module_runtime.continue_recheck_lane,
+        "module-lane-has-deferred-main-exception": (
+            module_runtime.lane_has_deferred_main_exception
+        ),
+        "prepare-current-module-main-exception": (
+            module_runtime.prepare_main_exception_lane
+        ),
+        "module-main-exception-requires-agent": (
+            module_runtime.main_exception_requires_agent
+        ),
+        "accept-current-module-main-exception": (
+            module_runtime.accept_main_exception_lane
+        ),
+        "module-main-exception-requests-user": (
+            module_runtime.main_exception_requests_user
+        ),
+        "apply-current-module-main-exception-user-input": (
+            module_runtime.apply_main_exception_user_input
+        ),
+        "route-current-module-after-main-exception": (
+            module_runtime.route_after_main_exception
+        ),
         "complete-current-module-lane": module_runtime.complete_lane,
     }
     module_tools["prepare-module-cohort"] = module_runtime.prepare_lanes
@@ -616,7 +701,9 @@ class _BatchModuleRuntime:
         module_id: str,
         state: dict[str, Any],
         workflow_id: str,
+        lane_outcome: DeclarativeModuleLaneOutcome | None = None,
     ) -> DeclarativeModuleRuntimeLaneContext:
+        del lane_outcome
         return DeclarativeModuleRuntimeLaneContext(
             module_id=module_id,
             workflow_id=workflow_id,
@@ -678,6 +765,12 @@ class _BatchModuleRuntime:
     ) -> bool:
         return False
 
+    async def review_needs_recheck(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
     async def prepare_revision_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
@@ -689,6 +782,12 @@ class _BatchModuleRuntime:
         values: Mapping[str, Any],
     ) -> DeclarativeModuleRuntimeLaneContext:
         return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+
+    async def prepare_author_exception_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
 
     async def prepare_recheck_lane(
         self,
@@ -725,6 +824,49 @@ class _BatchModuleRuntime:
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:
         return context
+
+    async def lane_has_deferred_main_exception(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def prepare_main_exception_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
+
+    async def main_exception_requires_agent(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def accept_main_exception_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+
+    async def main_exception_requests_user(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def apply_main_exception_user_input(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+
+    async def route_after_main_exception(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
+
 
     async def complete_lane(
         self,
@@ -916,6 +1058,62 @@ class _CurrentModuleReviewerInvoker:
         return AgentInvocationOutcome(status="ok", result=result)
 
 
+class _CurrentModuleMainExceptionInvoker:
+    """Invoke the existing serialized module Main exception through the Agent port."""
+
+    def __init__(
+        self,
+        runner: DeclarativeReportWorkflowRunner,
+        capture_failure: Callable[[str, BaseException], None],
+    ) -> None:
+        self._runner = runner
+        self._capture_failure = capture_failure
+
+    async def invoke(
+        self,
+        _agent: AgentDefinition,
+        _task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        del task_id
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
+        preparation = cast(MainExceptionDecisionPreparation, context.main_preparation)
+
+        async def invoke_once() -> Any:
+            envelope = preparation.envelope
+            return await self._runner._agent(
+                "main-agent",
+                envelope,
+                envelope.input_refs,
+                preparation.workflow_id,
+                session_key=conversation.key.value,
+            )
+
+        try:
+            lock = getattr(self._runner, "_main_exception_lock", None)
+            if lock is None:
+                payload = await invoke_once()
+            else:
+                async with lock:
+                    payload = await invoke_once()
+            result = DeclarativeMainExceptionAgentResult(
+                status="completed",
+                submission=payload,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            self._capture_failure(context.module_id, exc)
+            result = DeclarativeMainExceptionAgentResult(
+                status="failed",
+                error=str(exc),
+            )
+        return AgentInvocationOutcome(status="ok", result=result)
+
+
 class _CurrentModuleStages:
     """Bind complete current Lane semantics to file-defined Cohort branches."""
 
@@ -933,6 +1131,7 @@ class _CurrentModuleStages:
         self._failures: dict[str, BaseException] = {}
         self._author_failures: dict[str, BaseException] = {}
         self._review_failures: dict[str, BaseException] = {}
+        self._main_failures: dict[str, BaseException] = {}
         author_invoker = _CurrentModuleAuthorInvoker(
             runner,
             self._capture_author_failure,
@@ -941,9 +1140,14 @@ class _CurrentModuleStages:
             runner,
             self._capture_review_failure,
         )
+        main_invoker = _CurrentModuleMainExceptionInvoker(
+            runner,
+            self._capture_main_failure,
+        )
         self.agent_invokers: Mapping[str, AgentInvoker] = {
             **{f"module-{module_id}-specialist": author_invoker for module_id in REPORT_MODULE_IDS},
             "evidence-auditor": reviewer_invoker,
+            "main-agent": main_invoker,
         }
 
     async def prepare_lanes(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -954,7 +1158,42 @@ class _CurrentModuleStages:
         module_id: str,
         lane_state: dict[str, Any],
         workflow_id: str,
+        lane_outcome: DeclarativeModuleLaneOutcome | None = None,
     ) -> DeclarativeModuleRuntimeLaneContext:
+        if lane_outcome is not None:
+            saved_context = (lane_outcome.lane_state or {}).get("lane_context")
+            if saved_context is not None:
+                restored = DeclarativeModuleRuntimeLaneContext.model_validate(
+                    saved_context
+                )
+                reporting_state = deepcopy(restored.reporting_state)
+                reporting_state["resume"] = True
+                reporting_state["_defer_main_exceptions"] = False
+                return restored.model_copy(
+                    deep=True,
+                    update={"reporting_state": reporting_state},
+                )
+            return DeclarativeModuleRuntimeLaneContext(
+                module_id=module_id,
+                workflow_id=workflow_id,
+                reporting_state=deepcopy(
+                    (lane_outcome.lane_state or {}).get(
+                        "reporting_state",
+                        lane_state,
+                    )
+                ),
+                status=(
+                    "completed" if lane_outcome.status == "completed" else "failed"
+                ),
+                module=lane_outcome.module,
+                completion_ref=lane_outcome.completion_ref,
+                completion=(
+                    LaneCompletion.model_validate(lane_outcome.completion)
+                    if lane_outcome.completion is not None
+                    else None
+                ),
+                error=lane_outcome.error,
+            )
         if module_id not in self._requested_modules:
             return DeclarativeModuleRuntimeLaneContext(
                 module_id=module_id,
@@ -1063,6 +1302,24 @@ class _CurrentModuleStages:
                     checkpoint=preparation.checkpoint,
                 ),
             },
+        )
+
+    async def prepare_author_exception_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.status != "recheck_pending" or context.module is None:
+            return context
+        exceptional = [
+            response
+            for response in context.module.revision_responses
+            if response.action in {"disputed", "needs_input"}
+        ]
+        if not exceptional:
+            return context
+        return context.model_copy(
+            deep=True,
+            update={"status": "author_exception_deferred"},
         )
 
     async def author_requires_agent(
@@ -1356,6 +1613,12 @@ class _CurrentModuleStages:
     ) -> bool:
         return context.status == "revision_pending"
 
+    async def review_needs_recheck(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return context.status == "recheck_pending"
+
     async def prepare_revision_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
@@ -1465,16 +1728,39 @@ class _CurrentModuleStages:
                 AgentWorkflowError(result.error or "module recheck failed"),
             )
             return self._failed_lane_context(context, exc)
+        rechecking = cast(DeclarativeModuleRecheckPreparation, context.recheck)
+        rechecking = rechecking.model_copy(update={"submission": result.submission})
+        context = context.model_copy(deep=True, update={"recheck": rechecking})
+        escalated = bool(
+            result.submission is not None
+            and any(
+                verdict.verdict == "escalate"
+                for verdict in result.submission.verdicts
+            )
+        )
         try:
             accepted = await self._runner._accept_module_recheck(
-                cast(DeclarativeModuleRecheckPreparation, context.recheck).prepared,
+                rechecking.prepared,
                 cast(Any, result.submission),
                 context.reporting_state,
             )
         except asyncio.CancelledError:
             raise
+        except DeferredMainDecision:
+            return context.model_copy(
+                deep=True,
+                update={"status": "reviewer_exception_deferred"},
+            )
         except BaseException as exc:
             return self._failed_lane_context(context, exc)
+        if escalated:
+            return context.model_copy(
+                deep=True,
+                update={
+                    "status": "reviewer_exception_deferred",
+                    "recheck": rechecking.model_copy(update={"acceptance": accepted}),
+                },
+            )
         return context.model_copy(
             deep=True,
             update={
@@ -1489,6 +1775,279 @@ class _CurrentModuleStages:
                 "recheck": None,
             },
         )
+
+    @staticmethod
+    async def lane_has_deferred_main_exception(
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return context.status in {
+            "author_exception_deferred",
+            "reviewer_exception_deferred",
+        }
+
+    async def prepare_main_exception_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.status not in {
+            "author_exception_deferred",
+            "reviewer_exception_deferred",
+        }:
+            return context
+        try:
+            if context.status == "author_exception_deferred":
+                reviewing = cast(
+                    DeclarativeModuleReviewPreparation,
+                    context.review,
+                )
+                acceptance = cast(Any, reviewing.acceptance)
+                preparation = prepare_main_exception_decision(
+                    self._runner,
+                    state=context.reporting_state,
+                    workflow_id=context.workflow_id,
+                    scope="module",
+                    subject_refs=[
+                        f"Work/runs/{context.reporting_state['run_id']}/modules/"
+                        f"{context.module_id}-r{cast(Any, context.module).revision}.json"
+                    ],
+                    finding_refs=list(acceptance.finding_refs),
+                    verdicts=[],
+                    responses=[
+                        response
+                        for response in cast(Any, context.module).revision_responses
+                        if response.action in {"disputed", "needs_input"}
+                    ],
+                    trigger="author_response",
+                )
+                ready_status = "author_exception_ready"
+                resumed_status = "author_exception_resumed"
+            else:
+                rechecking = cast(
+                    DeclarativeModuleRecheckPreparation,
+                    context.recheck,
+                )
+                submission = cast(Any, rechecking.submission)
+                preparation = prepare_main_exception_decision(
+                    self._runner,
+                    state=context.reporting_state,
+                    workflow_id=context.workflow_id,
+                    scope="module",
+                    subject_refs=[cast(str, rechecking.prepared.subject_ref)],
+                    finding_refs=list(rechecking.prepared.finding_refs),
+                    verdicts=[
+                        verdict
+                        for verdict in submission.verdicts
+                        if verdict.verdict == "escalate"
+                    ],
+                    responses=list(rechecking.prepared.responses),
+                )
+                ready_status = "reviewer_exception_ready"
+                resumed_status = "reviewer_exception_resumed"
+            if preparation.mode == "continue_existing":
+                acceptance = accept_main_exception_decision(
+                    self._runner,
+                    state=context.reporting_state,
+                    preparation=preparation,
+                    result=None,
+                    raise_for_terminal_decisions=False,
+                )
+                if acceptance.result.decision == "stop_incomplete":
+                    return context.model_copy(
+                        deep=True,
+                        update={
+                            "status": "failed",
+                            "main_preparation": preparation,
+                            "main_acceptance": acceptance,
+                            "error": acceptance.result.rationale,
+                        },
+                    )
+                return context.model_copy(
+                    deep=True,
+                    update={
+                        "status": resumed_status,
+                        "main_preparation": preparation,
+                        "main_acceptance": acceptance,
+                    },
+                )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": ready_status,
+                "main_preparation": preparation,
+                "main_acceptance": None,
+            },
+        )
+
+    @staticmethod
+    async def main_exception_requires_agent(
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return context.status in {
+            "author_exception_ready",
+            "reviewer_exception_ready",
+        }
+
+    async def accept_main_exception_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+        result = DeclarativeMainExceptionAgentResult.model_validate(values["result"])
+        if result.status == "failed":
+            exc = self._main_failures.pop(
+                context.module_id,
+                AgentWorkflowError(result.error or "module Main exception failed"),
+            )
+            return self._failed_lane_context(context, exc)
+        try:
+            acceptance = accept_main_exception_decision(
+                self._runner,
+                state=context.reporting_state,
+                preparation=cast(
+                    MainExceptionDecisionPreparation,
+                    context.main_preparation,
+                ),
+                result=result.submission,
+                raise_for_terminal_decisions=False,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        if acceptance.result.decision == "stop_incomplete":
+            return context.model_copy(
+                deep=True,
+                update={
+                    "status": "failed",
+                    "main_acceptance": acceptance,
+                    "error": acceptance.result.rationale,
+                },
+            )
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": (
+                    "author_exception_accepted"
+                    if acceptance.trigger == "author_response"
+                    else "reviewer_exception_accepted"
+                ),
+                "main_acceptance": acceptance,
+            },
+        )
+
+    @staticmethod
+    async def main_exception_requests_user(
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return bool(
+            context.status != "failed"
+            and context.main_acceptance is not None
+            and context.main_acceptance.result.decision == "request_user"
+        )
+
+    async def apply_main_exception_user_input(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+        supplied = DeclarativeMainExceptionUserInput.model_validate(values["input"])
+        preparation = cast(
+            MainExceptionDecisionPreparation,
+            context.main_preparation,
+        )
+        try:
+            acceptance = accept_main_exception_decision(
+                self._runner,
+                state=context.reporting_state,
+                preparation=preparation,
+                result=WorkflowDecisionSubmission(
+                    decision=supplied.decision,
+                    rationale=supplied.rationale,
+                    finding_ids=list(preparation.exception_ids),
+                ),
+                raise_for_terminal_decisions=False,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        if acceptance.result.decision == "stop_incomplete":
+            return context.model_copy(
+                deep=True,
+                update={
+                    "status": "failed",
+                    "main_acceptance": acceptance,
+                    "error": acceptance.result.rationale,
+                },
+            )
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": (
+                    "author_exception_accepted"
+                    if preparation.trigger == "author_response"
+                    else "reviewer_exception_accepted"
+                ),
+                "main_acceptance": acceptance,
+            },
+        )
+
+    async def route_after_main_exception(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.status == "failed" or context.main_acceptance is None:
+            return context
+        if context.main_acceptance.trigger == "author_response":
+            return context.model_copy(
+                deep=True,
+                update={
+                    "status": (
+                        "revision_pending"
+                        if context.main_acceptance.result.decision == "return_to_author"
+                        else "recheck_pending"
+                    )
+                },
+            )
+        rechecking = cast(DeclarativeModuleRecheckPreparation, context.recheck)
+        accepted = rechecking.acceptance
+        if accepted is None:
+            context.reporting_state["_defer_main_exceptions"] = False
+            try:
+                accepted = await self._runner._accept_module_recheck(
+                    rechecking.prepared,
+                    cast(Any, rechecking.submission),
+                    context.reporting_state,
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": (
+                    "reviewed" if accepted.next_action == "completed" else "revision_pending"
+                ),
+                "module": accepted.current,
+                "review": cast(
+                    DeclarativeModuleReviewPreparation,
+                    context.review,
+                ).model_copy(update={"acceptance": accepted}),
+                "recheck": None,
+            },
+        )
+
+    def _capture_main_failure(
+        self,
+        module_id: str,
+        exc: BaseException,
+    ) -> None:
+        self._main_failures[module_id] = exc
 
     def _capture_review_failure(
         self,
@@ -1526,7 +2085,12 @@ class _CurrentModuleStages:
                 )
         status = cast(
             Literal["completed", "deferred", "failed"],
-            context.status,
+            (
+                "deferred"
+                if context.status
+                in {"author_exception_deferred", "reviewer_exception_deferred"}
+                else context.status
+            ),
         )
         include_lane_state = status == "deferred" or context.module is not None
         return DeclarativeModuleLaneOutcome(
@@ -1535,7 +2099,16 @@ class _CurrentModuleStages:
             module=context.module,
             error=context.error,
             lane_state=(
-                {"reporting_state": context.reporting_state} if include_lane_state else None
+                {
+                    "reporting_state": context.reporting_state,
+                    **(
+                        {"lane_context": context.model_dump(mode="json")}
+                        if status == "deferred"
+                        else {}
+                    ),
+                }
+                if include_lane_state
+                else None
             ),
             completion_ref=context.completion_ref,
             completion=(

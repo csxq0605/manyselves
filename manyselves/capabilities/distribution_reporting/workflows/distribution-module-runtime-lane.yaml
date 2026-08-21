@@ -9,11 +9,14 @@ tasks:
 - module-2.5-authoring
 - module-runtime-initial-review
 - module-runtime-recheck
+- module-runtime-main-exception
 - module-2.1-runtime-revision
 - module-2.2-runtime-revision
 - module-2.3-runtime-revision
 - module-2.4-runtime-revision
 - module-2.5-runtime-revision
+interactions:
+- module-main-exception-decision
 gates: []
 recovery:
 - current-reporting-recovery
@@ -30,6 +33,7 @@ parameters:
 state:
   reporting-state: {}
   module-id: "{module_id}"
+  lane-outcomes: {}
 actions:
 - id: start-current-module-lane
   kind: invoke_tool
@@ -37,7 +41,94 @@ actions:
   input_variables:
     state: reporting-state
     module_id: module-id
+    lane_outcomes: lane-outcomes
   output_variable: lane-context
+- id: module-lane-has-deferred-main-exception
+  kind: invoke_tool
+  tool: module-lane-has-deferred-main-exception
+  input_variable: lane-context
+  output_variable: should-resume-module-main-exception
+- id: choose-module-lane-entry
+  kind: if
+  condition:
+    variable: should-resume-module-main-exception
+    operator: truthy
+  then: prepare-current-module-main-exception
+  otherwise: prepare-current-module-authoring
+- id: prepare-current-module-main-exception
+  kind: invoke_tool
+  tool: prepare-current-module-main-exception
+  input_variable: lane-context
+  output_variable: lane-context
+- id: module-main-exception-requires-agent
+  kind: invoke_tool
+  tool: module-main-exception-requires-agent
+  input_variable: lane-context
+  output_variable: should-invoke-module-main-exception
+- id: choose-module-main-exception-source
+  kind: if
+  condition:
+    variable: should-invoke-module-main-exception
+    operator: truthy
+  then: create-module-main-exception-conversation
+  otherwise: module-main-exception-requests-user
+- id: create-module-main-exception-conversation
+  kind: create_conversation
+  agent: main-agent
+  conversation_key: main-module-exception
+  mode: run
+  output_variable: module-main-exception-conversation
+- id: invoke-current-module-main-exception
+  kind: invoke_agent
+  agent: main-agent
+  task: module-runtime-main-exception
+  conversation_variable: module-main-exception-conversation
+  input_variable: lane-context
+  output_variable: module-main-exception-agent-result
+- id: accept-current-module-main-exception
+  kind: invoke_tool
+  tool: accept-current-module-main-exception
+  input_variables:
+    context: lane-context
+    result: module-main-exception-agent-result
+  output_variable: lane-context
+- id: continue-after-module-main-exception
+  kind: goto
+  target: module-main-exception-requests-user
+- id: module-main-exception-requests-user
+  kind: invoke_tool
+  tool: module-main-exception-requests-user
+  input_variable: lane-context
+  output_variable: should-request-module-main-input
+- id: choose-module-main-user-input
+  kind: if
+  condition:
+    variable: should-request-module-main-input
+    operator: truthy
+  then: request-module-main-user-input
+  otherwise: route-current-module-after-main-exception
+- id: request-module-main-user-input
+  kind: request_input
+  interaction: module-main-exception-decision
+  output_variable: module-main-exception-user-input
+- id: apply-module-main-user-input
+  kind: invoke_tool
+  tool: apply-current-module-main-exception-user-input
+  input_variables:
+    context: lane-context
+    input: module-main-exception-user-input
+  output_variable: lane-context
+- id: continue-after-module-main-user-input
+  kind: goto
+  target: route-current-module-after-main-exception
+- id: route-current-module-after-main-exception
+  kind: invoke_tool
+  tool: route-current-module-after-main-exception
+  input_variable: lane-context
+  output_variable: lane-context
+- id: continue-after-routing-module-main-exception
+  kind: goto
+  target: module-review-needs-recheck
 - id: prepare-current-module-authoring
   kind: invoke_tool
   tool: prepare-current-module-authoring
@@ -128,7 +219,7 @@ actions:
     variable: should-invoke-resumed-module-reviewer
     operator: truthy
   then: create-module-reviewer-conversation
-  otherwise: module-review-needs-revision
+  otherwise: module-review-needs-recheck
 - id: create-module-reviewer-conversation
   kind: create_conversation
   agent: evidence-auditor
@@ -151,7 +242,19 @@ actions:
   output_variable: lane-context
 - id: continue-after-module-review
   kind: goto
-  target: module-review-needs-revision
+  target: module-review-needs-recheck
+- id: module-review-needs-recheck
+  kind: invoke_tool
+  tool: module-review-needs-recheck
+  input_variable: lane-context
+  output_variable: should-recheck-module
+- id: choose-module-review-recheck
+  kind: if
+  condition:
+    variable: should-recheck-module
+    operator: truthy
+  then: prepare-current-module-recheck
+  otherwise: module-review-needs-revision
 - id: module-review-needs-revision
   kind: invoke_tool
   tool: module-review-needs-revision
@@ -191,7 +294,24 @@ actions:
   output_variable: lane-context
 - id: continue-after-module-revision
   kind: goto
-  target: prepare-current-module-recheck
+  target: prepare-current-module-author-exception
+- id: prepare-current-module-author-exception
+  kind: invoke_tool
+  tool: prepare-current-module-author-exception
+  input_variable: lane-context
+  output_variable: lane-context
+- id: module-author-exception-is-deferred
+  kind: invoke_tool
+  tool: module-lane-has-deferred-main-exception
+  input_variable: lane-context
+  output_variable: should-defer-module-author-exception
+- id: choose-after-module-author-exception
+  kind: if
+  condition:
+    variable: should-defer-module-author-exception
+    operator: truthy
+  then: complete-current-module-lane
+  otherwise: prepare-current-module-recheck
 - id: prepare-current-module-recheck
   kind: invoke_tool
   tool: prepare-current-module-recheck
@@ -248,12 +368,27 @@ actions:
   output_variable: lane-context
 - id: continue-after-module-recheck
   kind: goto
-  target: module-review-needs-revision
+  target: module-recheck-exception-is-deferred
+- id: module-recheck-exception-is-deferred
+  kind: invoke_tool
+  tool: module-lane-has-deferred-main-exception
+  input_variable: lane-context
+  output_variable: should-defer-module-recheck-exception
+- id: choose-after-module-recheck-exception
+  kind: if
+  condition:
+    variable: should-defer-module-recheck-exception
+    operator: truthy
+  then: complete-current-module-lane
+  otherwise: module-review-needs-recheck
 - id: continue-current-module-recheck
   kind: invoke_tool
   tool: continue-current-module-recheck
   input_variable: lane-context
   output_variable: lane-context
+- id: continue-after-current-module-recheck
+  kind: goto
+  target: module-review-needs-recheck
 - id: complete-current-module-lane
   kind: invoke_tool
   tool: complete-current-module-lane

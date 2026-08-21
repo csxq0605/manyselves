@@ -102,10 +102,60 @@ actions:
     "2.4": outcome-2.4
     "2.5": outcome-2.5
   output_variable: module-outcomes
+- id: resume-module-2.1-after-join
+  kind: subworkflow
+  workflow: distribution-module-2.1-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.1
+    lane-outcomes: module-outcomes
+  child_output_name: result
+  output_variable: outcome-2.1
+- id: resume-module-2.2-after-join
+  kind: subworkflow
+  workflow: distribution-module-2.2-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.2
+    lane-outcomes: module-outcomes
+  child_output_name: result
+  output_variable: outcome-2.2
+- id: resume-module-2.3-after-join
+  kind: subworkflow
+  workflow: distribution-module-2.3-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.3
+    lane-outcomes: module-outcomes
+  child_output_name: result
+  output_variable: outcome-2.3
+- id: resume-module-2.4-after-join
+  kind: subworkflow
+  workflow: distribution-module-2.4-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.4
+    lane-outcomes: module-outcomes
+  child_output_name: result
+  output_variable: outcome-2.4
+- id: resume-module-2.5-after-join
+  kind: subworkflow
+  workflow: distribution-module-2.5-runtime-lane
+  input_variables:
+    reporting-state: prepared-module-inputs
+    module-id: module-id-2.5
+    lane-outcomes: module-outcomes
+  child_output_name: result
+  output_variable: outcome-2.5
 - id: reduce-module-cohort
   kind: invoke_tool
   tool: reduce-module-cohort
-  input_variable: module-outcomes
+  input_variables:
+    "2.1": outcome-2.1
+    "2.2": outcome-2.2
+    "2.3": outcome-2.3
+    "2.4": outcome-2.4
+    "2.5": outcome-2.5
   output_variable: completed-modules
 - id: finish-module-cohort
   kind: end_workflow
