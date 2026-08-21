@@ -15,11 +15,11 @@
 ## Current position
 
 - Current work package: `WP-01/WP-11 architecture completion audit reopened`
-- Last completed vertical slice: failed Subworkflow progress is carried back through the Runtime effect boundary and persisted inside the parent WorkflowState, so recovery resumes only the failed child Action
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `e01372e` (`WP-09: compile the reporting tail from files`); the nested failure-recovery slice is this document's commit
+- Last completed vertical slice: the packaged top-level workflow owns module execution, full/partial branching, and the tail Subworkflow in one parent WorkflowState; failed tail recovery does not replay completed module work or child stages
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `722877b` (`WP-06/WP-09: persist failed subworkflow progress`); the one-parent top-level slice is this document's commit
 - Current migration stage: `file-defined Reporting workflow migration`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
-- Next automatic action: replace the coarse top-level module/tail Tool wrappers with the packaged detailed workflows and one authoritative parent state; bind the current Reporting providers/adapters at that single Runtime Host boundary
+- Next automatic action: decompose the remaining coarse `run-reporting-module-work` adapter into file-defined authoring Lane instances plus the packaged module-review Cohort, while retaining the current lane recovery/artifact semantics
 
 ## Reopened architecture completion audit
 
@@ -61,6 +61,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
+- `WP-08/WP-09: run reporting stages in one parent state` — `distribution-reporting.yaml` now branches partial/full work itself and invokes the packaged tail as a recoverable Subworkflow; the selectable declarative runner enters one `WorkflowRuntimeHost`, persists only the exact run identity, removes the coarse tail Tool, and resumes inside a failed tail without replaying completed module work or prior tail stages (this commit)
 - `WP-06/WP-09: persist failed subworkflow progress` — a failed nested effect now returns its child WorkflowState to the parent Runtime Host before the parent failure transition is persisted; a same-Run retry reuses completed child Actions and reruns only the failed Action without creating a child Run directory (this commit)
 - `WP-09: compile the reporting tail from files` — the production Workflow YAML owns the ordered Cross, Chief, Final, and current combined Render/Delivery actions; all four internal Tools are file-declared, the builder only loads the Capability Registry, and execution/recovery moved from the persistence-owning control executor to `WorkflowRuntimeHost` under the parent Run identity (this commit)
 - `WP-07/WP-08: compile reporting modules from files` — the packaged reusable Lane YAML owns every Tool, Conversation, Agent, branch, and End action; the packaged Cohort YAML owns all five Parallel branches and Join; declared typed parameters preserve module/lifecycle/revision IDs, all internal Python Tools are file-declared, and Python now only specializes runtime values and binds implementations (this commit)
@@ -99,6 +100,9 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Top-level file-graph Characterization initially failed because the packaged workflow still used a coarse tail Tool; after implementation its compiled kinds are Tool → If → Subworkflow → End and the declared child Workflow is resolved.
+- One-parent focused cases passed for partial module delivery, failed module retry, complete module→tail execution, and failed-tail nested recovery. The latter proved module work called once, Cross reused, Chief retried, and one Run directory: `5 passed` with the packaged compiler case.
+- Affected declarative Runner/Tail/Lane/Cohort, Capability package, Runtime Host, control flow, service runner selection, and Kernel boundary selection passed: `34 passed` (`46 deselected`); the direct package/runner/tail/host selection passed: `20 passed`. Ruff and `git diff --check` passed. No full regression or real runtime test ran.
 - Failed-Subworkflow Characterization initially failed because the parent contained no child state; after implementation the child first Action remained completed, only the failed second Action retried, and the parent produced the expected output: `1 passed`.
 - Runtime Host plus affected sequential/basic-control selection passed: `22 passed`; Ruff and `git diff --check` passed. No full regression or real runtime test ran.
 - File-defined tail and one-state recovery Characterization initially failed because the packaged tail had no actions and persisted `run_id--reporting-tail`; after migration, exact trace equivalence, completion-marker reuse, failed-stage continuation, one Run directory, and packaged-definition ownership passed: `5 passed`.

@@ -149,7 +149,12 @@ def test_top_level_reporting_workflow_is_an_executable_capability_definition() -
     workflow = registry.require(DefinitionKind.WORKFLOW, "distribution-reporting")
     workflow = workflow.model_copy(
         deep=True,
-        update={"state": {"reporting-state": {"run_id": "report-characterized"}}},
+        update={
+            "state": {
+                "reporting-state": {"run_id": "report-characterized"},
+                "full-report": True,
+            }
+        },
     )
 
     plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
@@ -159,6 +164,8 @@ def test_top_level_reporting_workflow_is_an_executable_capability_definition() -
 
     assert [action.kind for action in plan.actions] == [
         "invoke_tool",
-        "invoke_tool",
+        "if",
+        "subworkflow",
         "end_workflow",
     ]
+    assert plan.workflow_ids == ["distribution-reporting-tail"]

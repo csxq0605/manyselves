@@ -16,18 +16,29 @@ gates: []
 recovery:
 - current-reporting-recovery
 input_contract: distribution_reporting_input
-output_contract: distribution_reporting_output
-state: {}
+output_contract: reporting_tail_state
+state:
+  reporting-state: {}
+  full-report: false
 actions:
 - id: run-module-work
   kind: invoke_tool
   tool: run-reporting-module-work
   input_variable: reporting-state
   output_variable: reporting-state
+- id: select-reporting-tail
+  kind: if
+  condition:
+    variable: full-report
+    operator: truthy
+  then: run-reporting-tail
+  otherwise: finish-reporting
 - id: run-reporting-tail
-  kind: invoke_tool
-  tool: run-reporting-tail
+  kind: subworkflow
+  workflow: distribution-reporting-tail
   input_variable: reporting-state
+  child_input_variable: reporting-state
+  child_output_name: result
   output_variable: reporting-state
 - id: finish-reporting
   kind: end_workflow

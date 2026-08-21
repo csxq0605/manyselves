@@ -25,6 +25,7 @@ from manyselves.runtime.workflow_host import (
     WorkflowRuntimeHost,
 )
 
+from .agentic_models import ModuleSubmission
 from .models import REPORT_MODULE_IDS
 
 
@@ -141,12 +142,14 @@ class _ReportingTailAdapters:
         self.current_state: dict[str, Any] = {}
 
     async def cross(self, state: dict[str, Any]) -> dict[str, Any]:
+        _restore_module_submissions(state)
         self.current_state = state
         if "cross_review_completion_ref" not in state:
             await self._runner._cross_review(state, self._workflow_id)
         return state
 
     async def chief(self, state: dict[str, Any]) -> dict[str, Any]:
+        _restore_module_submissions(state)
         self.current_state = state
         if (
             "final_review_completion_ref" not in state
@@ -156,6 +159,7 @@ class _ReportingTailAdapters:
         return state
 
     async def final(self, state: dict[str, Any]) -> dict[str, Any]:
+        _restore_module_submissions(state)
         self.current_state = state
         if "final_review_completion_ref" in state:
             return state
@@ -175,6 +179,7 @@ class _ReportingTailAdapters:
         return state
 
     def delivery(self, state: dict[str, Any]) -> dict[str, Any]:
+        _restore_module_submissions(state)
         self.current_state = state
         if "delivery_completion_ref" not in state:
             self._runner._deliver(state)
@@ -184,6 +189,16 @@ class _ReportingTailAdapters:
 def _replace_state(target: dict[str, Any], value: Mapping[str, Any]) -> None:
     target.clear()
     target.update(value)
+
+
+def _restore_module_submissions(state: dict[str, Any]) -> None:
+    modules = state.get("module_submissions")
+    if not isinstance(modules, Mapping):
+        return
+    state["module_submissions"] = {
+        module_id: ModuleSubmission.model_validate(value)
+        for module_id, value in modules.items()
+    }
 
 
 def _traced_stage(
