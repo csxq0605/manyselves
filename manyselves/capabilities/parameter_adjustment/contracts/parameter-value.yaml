@@ -1,0 +1,6 @@
+id: parameter-value
+version: 1.0.0
+description: Normalized integer parameter value
+adapter: json_schema
+schema:
+  type: integer

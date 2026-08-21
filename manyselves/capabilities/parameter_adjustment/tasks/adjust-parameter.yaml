@@ -1,0 +1,9 @@
+id: adjust-parameter
+version: 1.0.0
+description: Raise a parameter below the declared minimum
+agent: parameter-adjuster
+objective: Return an object whose value is 10.
+input_contract: parameter-input
+output_contract: parameter-input
+constraints: []
+tools: []

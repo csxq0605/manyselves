@@ -1,8 +1,13 @@
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import pytest
 
+from manyselves.capabilities.parameter_adjustment import CAPABILITY_FILE
+from manyselves.capabilities.parameter_adjustment.adapters.runtime import (
+    ParameterAdjustmentRuntimeBinding,
+)
 from manyselves.kernel.contracts import build_contract_adapter
 from manyselves.kernel.definitions import (
     ContractDefinition,
@@ -19,13 +24,7 @@ from manyselves.runtime.workflow_host import (
     WorkflowRuntimeHost,
 )
 
-FIXTURE = (
-    Path(__file__).parents[2]
-    / "fixtures"
-    / "capabilities"
-    / "parameter_adjustment"
-    / "capability.yaml"
-)
+FIXTURE = CAPABILITY_FILE
 
 
 class _ParameterAdjuster:
@@ -104,3 +103,32 @@ async def test_second_capability_executes_tool_contract_condition_agent_and_goto
     assert state.outputs == {"result": max(value, 10)}
     assert adjuster.calls == expected_agent_calls
     assert state.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_production_binding_projects_generic_run_value_and_cost(
+    tmp_path: Path,
+) -> None:
+    binding = ParameterAdjustmentRuntimeBinding(tmp_path)
+
+    accepted = await binding.start(
+        UUID("40000000-0000-4000-8000-000000000001"),
+        "parameter-adjustment",
+        {"value": 4},
+    )
+    run = binding.get_run(accepted["run_id"])
+    outputs = binding.get_outputs(accepted["run_id"])
+    cost = binding.get_cost(accepted["run_id"])
+
+    assert accepted == {
+        "run_id": "parameter-adjustment-40000000000040008000000000000001",
+        "task_id": None,
+    }
+    assert run["run"]["status"] == "completed"
+    assert run["run"]["capability_id"] == "parameter-adjustment"
+    assert outputs == {
+        "run_id": accepted["run_id"],
+        "outputs": [{"id": "result", "kind": "value", "value": 10}],
+    }
+    assert cost["usage"]["totals"]["provider_attempts"] == 0
+    assert cost["usage"]["totals"]["total_tokens"] == 0

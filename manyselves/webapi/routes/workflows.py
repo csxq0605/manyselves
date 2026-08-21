@@ -11,16 +11,16 @@ from ...application.errors import (
     MaintenanceQuiescedError,
     RuntimeNotReadyError,
 )
-from ...application.reporting_facade import (
-    ReportingInvalidTransitionError,
-    ReportingNotFoundError,
-    ReportingStateInvalidError,
-)
 from ...application.workflow_projection import (
     WorkflowInputError,
     WorkflowNotRunnableError,
     WorkflowProjectionFacade,
     WorkflowProjectionNotFoundError,
+)
+from ...runtime.capability_binding import (
+    CapabilityRunInputError,
+    CapabilityRunNotFoundError,
+    CapabilityRunStateError,
 )
 from ..errors import ApiError
 from ..schemas.workflows import (
@@ -47,7 +47,7 @@ def _projection(request: Request) -> WorkflowProjectionFacade:
 
 
 def _error(error: Exception) -> ApiError:
-    if isinstance(error, (WorkflowProjectionNotFoundError, ReportingNotFoundError)):
+    if isinstance(error, (WorkflowProjectionNotFoundError, CapabilityRunNotFoundError)):
         return ApiError(
             status_code=404,
             code="WORKFLOW_RESOURCE_NOT_FOUND",
@@ -59,7 +59,7 @@ def _error(error: Exception) -> ApiError:
         (
             WorkflowNotRunnableError,
             WorkflowInputError,
-            ReportingInvalidTransitionError,
+            CapabilityRunInputError,
             ValidationError,
             ValueError,
         ),
@@ -70,7 +70,7 @@ def _error(error: Exception) -> ApiError:
             message=str(error),
             retryable=False,
         )
-    if isinstance(error, ReportingStateInvalidError):
+    if isinstance(error, CapabilityRunStateError):
         return ApiError(
             status_code=500,
             code="WORKFLOW_STATE_INVALID",

@@ -4,11 +4,19 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from manyselves.application.reporting_facade import ReportingNotFoundError
+from manyselves.application.reporting_facade import (
+    ReportingInvalidTransitionError,
+    ReportingNotFoundError,
+    ReportingStateInvalidError,
+)
 from manyselves.core.reporting.models import ReportRequest, UserSupplement
 from manyselves.core.usage_ledger import UsageLedger
 from manyselves.kernel.workflow import WorkflowState, WorkflowStatus
-from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
+from manyselves.runtime.capability_binding import (
+    CapabilityRunInputError,
+    CapabilityRunNotFoundError,
+    CapabilityRunStateError,
+)
 from manyselves.runtime.state_store import FileWorkflowStateStore
 
 
@@ -28,7 +36,12 @@ class DistributionReportingRuntimeBinding:
         values: dict[str, Any],
     ) -> dict[str, Any]:
         request = ReportRequest.model_validate(values)
-        return self.reporting_adapter.start_declarative(command_id, request)
+        try:
+            return self.reporting_adapter.start_declarative(command_id, request)
+        except ReportingInvalidTransitionError as exc:
+            raise CapabilityRunInputError(str(exc)) from exc
+        except ReportingStateInvalidError as exc:
+            raise CapabilityRunStateError(str(exc)) from exc
 
     def provide_input(
         self,
@@ -38,36 +51,43 @@ class DistributionReportingRuntimeBinding:
         input_id: str | None,
         values: dict[str, Any],
     ) -> dict[str, Any]:
-        runtime_state = self._runtime_state(run_id)
-        if input_id is not None and runtime_state is not None:
-            if runtime_state.status is WorkflowStatus.WAITING:
-                return self.reporting_adapter.resume_workflow_input(
+        try:
+            runtime_state = self._runtime_state(run_id)
+            if input_id is not None and runtime_state is not None:
+                if runtime_state.status is WorkflowStatus.WAITING:
+                    return self.reporting_adapter.resume_workflow_input(
+                        command_id,
+                        run_id,
+                        input_id,
+                        values,
+                    )
+            supplements = [
+                UserSupplement.model_validate(item)
+                for item in values.get("supplements", [])
+            ]
+            if input_id is not None:
+                action = values.get("action")
+                if not isinstance(action, str) or not action:
+                    raise ValueError("decision input requires action")
+                return self.reporting_adapter.resume_decision(
                     command_id,
-                    run_id,
                     input_id,
-                    values,
+                    action,
+                    supplements,
                 )
-        supplements = [
-            UserSupplement.model_validate(item)
-            for item in values.get("supplements", [])
-        ]
-        if input_id is not None:
-            action = values.get("action")
-            if not isinstance(action, str) or not action:
-                raise ValueError("decision input requires action")
-            return self.reporting_adapter.resume_decision(
+            return self.reporting_adapter.resume_run(
                 command_id,
-                input_id,
-                action,
-                supplements,
+                run_id,
+                max_provider_attempts=values.get("max_provider_attempts"),
+                max_total_tokens=values.get("max_total_tokens"),
+                supplements=supplements,
             )
-        return self.reporting_adapter.resume_run(
-            command_id,
-            run_id,
-            max_provider_attempts=values.get("max_provider_attempts"),
-            max_total_tokens=values.get("max_total_tokens"),
-            supplements=supplements,
-        )
+        except ReportingNotFoundError as exc:
+            raise CapabilityRunNotFoundError(run_id) from exc
+        except ReportingInvalidTransitionError as exc:
+            raise CapabilityRunInputError(str(exc)) from exc
+        except ReportingStateInvalidError as exc:
+            raise CapabilityRunStateError(str(exc)) from exc
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         snapshot = self._snapshot(run_id)
@@ -128,6 +148,8 @@ class DistributionReportingRuntimeBinding:
             return self.reporting_adapter.snapshot(run_id)
         except ReportingNotFoundError as exc:
             raise CapabilityRunNotFoundError(run_id) from exc
+        except ReportingStateInvalidError as exc:
+            raise CapabilityRunStateError(str(exc)) from exc
 
     def _runtime_state(self, run_id: str) -> WorkflowState | None:
         try:

@@ -90,11 +90,12 @@ def test_capability_entrypoints_must_reference_loaded_workflows(tmp_path: Path) 
         CapabilityCatalog.discover([tmp_path])
 
 
-def test_builtin_catalog_exposes_only_the_production_reporting_capability() -> None:
+def test_builtin_catalog_exposes_both_production_capabilities() -> None:
     from manyselves.capabilities import load_builtin_capability_catalog
 
     catalog = load_builtin_capability_catalog()
 
     assert [item.definition.id for item in catalog.all()] == [
-        "distribution-reporting"
+        "distribution-reporting",
+        "parameter-adjustment",
     ]

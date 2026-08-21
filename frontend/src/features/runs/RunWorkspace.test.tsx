@@ -89,6 +89,7 @@ describe("RunWorkspace", () => {
     expect(screen.getByText("Outputs/Reports/report.docx")).toBeVisible();
     expect(screen.getByText("15 tokens")).toBeVisible();
     expect(screen.getByText("1.25")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "提交运行输入" })).not.toBeInTheDocument();
     expect(screen.queryByText(/sha/i)).not.toBeInTheDocument();
   });
 

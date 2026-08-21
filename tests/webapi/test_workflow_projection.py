@@ -6,8 +6,13 @@ import pytest
 from manyselves.application.workflow_projection import WorkflowProjectionFacade
 from manyselves.core.usage_ledger import UsageLedger
 from manyselves.kernel.workflow import ResolvedPlan, WorkflowState, WorkflowStatus
+from manyselves.runtime.capability_binding import (
+    CapabilityRunInputError,
+    CapabilityRunStateError,
+)
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.webapi.main import create_app
+from manyselves.webapi.routes.workflows import _error
 from manyselves.webapi.settings import WebSettings
 
 
@@ -95,22 +100,26 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
     workflows = facade.list_workflows()
     schema = facade.input_schema("distribution-reporting")
 
-    assert capabilities == [
-        {
-            "id": "distribution-reporting",
-            "version": "1.0.0",
-            "description": "Declarative distribution reporting capability",
-            "workflow_ids": [
-                "distribution-cross-owner-cohort",
-                "distribution-cross-owner-pipeline",
-                "distribution-module-cohort",
-                "distribution-module-review-lane",
-                "distribution-module-runtime-lane",
-                "distribution-reporting",
-                "distribution-reporting-tail",
-            ],
-        },
+    assert [item["id"] for item in capabilities] == [
+        "distribution-reporting",
+        "parameter-adjustment",
     ]
+    reporting = capabilities[0]
+    assert reporting["version"] == "1.0.0"
+    assert reporting["description"] == "Declarative distribution reporting capability"
+    assert {
+        "distribution-cross-owner-cohort",
+        "distribution-module-cohort",
+        "distribution-reporting",
+        "distribution-reporting-tail",
+        "distribution-report-delivery",
+    } <= set(reporting["workflow_ids"])
+    assert capabilities[1] == {
+        "id": "parameter-adjustment",
+        "version": "1.0.0",
+        "description": "Neutral declarative parameter adjustment capability",
+        "workflow_ids": ["parameter-adjustment"],
+    }
     assert next(item for item in workflows if item["id"] == "distribution-reporting") == {
         "id": "distribution-reporting",
         "capability_id": "distribution-reporting",
@@ -324,3 +333,17 @@ def test_openapi_exposes_the_generic_workflow_projection_paths(tmp_path: Path) -
         "/api/v1/runs/{run_id}/outputs",
         "/api/v1/runs/{run_id}/cost",
     } <= set(paths)
+
+
+def test_generic_runtime_input_error_maps_without_reporting_exception_types() -> None:
+    error = _error(CapabilityRunInputError("input rejected"))
+
+    assert error.status_code == 422
+    assert error.code == "WORKFLOW_INPUT_INVALID"
+
+
+def test_generic_runtime_state_error_maps_without_reporting_exception_types() -> None:
+    error = _error(CapabilityRunStateError("state unreadable"))
+
+    assert error.status_code == 500
+    assert error.code == "WORKFLOW_STATE_INVALID"

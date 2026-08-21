@@ -3094,7 +3094,7 @@ async def test_generic_workflow_routes_project_the_current_reporting_run(resourc
 
 
 @pytest.mark.asyncio
-async def test_generic_workflow_routes_do_not_expose_test_fixture_capabilities(
+async def test_generic_workflow_routes_execute_the_second_production_capability(
     resources,
 ) -> None:
     client, _, _, _ = resources
@@ -3111,12 +3111,37 @@ async def test_generic_workflow_routes_do_not_expose_test_fixture_capabilities(
             "input": {"value": 4},
         },
     )
+    run_id = started.json()["runId"]
+    snapshot = await client.get(f"/api/v1/runs/{run_id}")
+    outputs = await client.get(f"/api/v1/runs/{run_id}/outputs")
+    cost = await client.get(f"/api/v1/runs/{run_id}/cost")
 
     assert [item["id"] for item in capabilities.json()["capabilities"]] == [
-        "distribution-reporting"
+        "distribution-reporting",
+        "parameter-adjustment",
     ]
-    assert schema.status_code == 404
-    assert started.status_code == 404
+    assert schema.status_code == 200
+    assert schema.json()["contractId"] == "parameter-input"
+    assert "value" in schema.json()["schema"]["properties"]
+    assert started.status_code == 202
+    assert snapshot.status_code == 200
+    assert snapshot.json()["run"]["capabilityId"] == "parameter-adjustment"
+    assert snapshot.json()["run"]["status"] == "completed"
+    assert outputs.json() == {
+        "runId": run_id,
+        "outputs": [
+            {
+                "id": "result",
+                "kind": "value",
+                "value": 10,
+                "path": None,
+                "exists": None,
+                "size": None,
+            }
+        ],
+    }
+    assert cost.json()["usage"]["totals"]["provider_attempts"] == 0
+    assert cost.json()["usage"]["totals"]["total_tokens"] == 0
 
 
 @pytest.mark.asyncio

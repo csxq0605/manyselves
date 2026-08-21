@@ -16,6 +16,14 @@ class CapabilityRunNotFoundError(LookupError):
     """Raised by a binding when it does not own a requested Run."""
 
 
+class CapabilityRunInputError(ValueError):
+    """Raised when a Capability rejects generic Run input."""
+
+
+class CapabilityRunStateError(RuntimeError):
+    """Raised when a Capability cannot project its persisted Run state."""
+
+
 class CapabilityRuntimeBinding(Protocol):
     """Application-facing operations owned by one Capability adapter."""
 
