@@ -3772,9 +3772,7 @@
             "title": "Inputid"
           },
           "values": {
-            "additionalProperties": true,
-            "title": "Values",
-            "type": "object"
+            "title": "Values"
           }
         },
         "title": "WorkflowRunInputRequest",
@@ -3812,9 +3810,7 @@
         "additionalProperties": false,
         "properties": {
           "input": {
-            "additionalProperties": true,
-            "title": "Input",
-            "type": "object"
+            "title": "Input"
           },
           "workflowId": {
             "title": "Workflowid",

@@ -203,6 +203,69 @@ describe("RunWorkspace", () => {
     expect(screen.queryByText(/sha/i)).not.toBeInTheDocument();
   });
 
+  it("starts a workflow with a primitive root input contract", async () => {
+    const start = vi.fn().mockResolvedValue({
+      capabilityId: "primitive-capability",
+      commandId: "primitive-command",
+      runId: "primitive-run",
+      status: "accepted",
+      workflowId: "primitive-workflow",
+    });
+    const api: WorkflowApi = {
+      cost: vi.fn().mockResolvedValue({ runId: "primitive-run", usage: { totals: {} } }),
+      get: vi.fn().mockResolvedValue({
+        run: {
+          active: false,
+          capabilityId: "primitive-capability",
+          runId: "primitive-run",
+          status: "completed",
+          workflowId: "primitive-workflow",
+        },
+        state: {},
+        waitingInput: [],
+      }),
+      inputSchema: vi.fn().mockResolvedValue({
+        contractId: "primitive-input",
+        schema: { type: "integer" },
+        workflowId: "primitive-workflow",
+      }),
+      listCapabilities: vi.fn().mockResolvedValue({
+        capabilities: [{
+          description: "Primitive capability",
+          id: "primitive-capability",
+          version: "1.0.0",
+          workflowIds: ["primitive-workflow"],
+        }],
+      }),
+      listWorkflows: vi.fn().mockResolvedValue({
+        workflows: [{
+          capabilityId: "primitive-capability",
+          description: "Primitive workflow",
+          id: "primitive-workflow",
+          inputContract: "primitive-input",
+          outputContract: "primitive-output",
+          runnable: true,
+          version: "1.0.0",
+        }],
+      }),
+      outputs: vi.fn().mockResolvedValue({ outputs: [], runId: "primitive-run" }),
+      provideInput: vi.fn(),
+      start,
+    };
+    const user = userEvent.setup();
+
+    render(<AppProviders><RunWorkspace api={api} /></AppProviders>);
+    const input = await screen.findByRole("textbox", { name: "运行输入 JSON" });
+    await user.clear(input);
+    await user.type(input, "4");
+    await user.click(screen.getByRole("button", { name: "启动工作流" }));
+
+    await waitFor(() => expect(start).toHaveBeenCalledWith(
+      { input: 4, workflowId: "primitive-workflow" },
+      expect.any(String),
+    ));
+  });
+
   it("renders common schema controls and submits typed values", async () => {
     const api: WorkflowApi = {
       cost: vi.fn().mockResolvedValue({
@@ -387,6 +450,10 @@ describe("RunWorkspace", () => {
               "$ref": "#/$defs/UserSupplement",
               title: "Supplement",
             },
+            ambiguous_value: {
+              anyOf: [{ type: "string" }, { type: "integer" }],
+              title: "Ambiguous value",
+            },
           },
           required: ["instruction", "enabled"],
           type: "object",
@@ -452,6 +519,8 @@ describe("RunWorkspace", () => {
     await user.paste('{"mode":"observe"}');
     await user.click(screen.getByRole("textbox", { name: "Supplement" }));
     await user.paste('{"content":"fact"}');
+    await user.click(screen.getByRole("textbox", { name: "Ambiguous value" }));
+    await user.paste("5");
     await user.click(screen.getByRole("button", { name: "启动工作流" }));
 
     await waitFor(() => expect(api.start).toHaveBeenCalledWith(
@@ -470,6 +539,7 @@ describe("RunWorkspace", () => {
           operation: "full_report",
           supplement: { content: "fact" },
           target_modules: ["2.1", "2.2"],
+          ambiguous_value: 5,
         },
         workflowId: "report-request-form",
       },
@@ -562,6 +632,79 @@ describe("RunWorkspace", () => {
       { inputId: "ask-child", values: { answer: "Ada" } },
       expect.any(String),
     ));
+  });
+
+  it("submits a primitive value for a primitive waiting contract", async () => {
+    const provideInput = vi.fn().mockResolvedValue({
+      capabilityId: "parameter-adjustment",
+      commandId: "command-input",
+      runId: "primitive-waiting",
+      status: "accepted",
+      workflowId: "parameter-adjustment",
+    });
+    const api: WorkflowApi = {
+      cost: vi.fn().mockResolvedValue({ runId: "primitive-waiting", usage: { totals: {} } }),
+      get: vi.fn().mockResolvedValue({
+        run: {
+          active: false,
+          capabilityId: "parameter-adjustment",
+          runId: "primitive-waiting",
+          status: "waiting",
+          workflowId: "parameter-adjustment",
+        },
+        state: {},
+        waitingInput: [{ input_id: "ask-number", schema: { type: "integer" } }],
+      }),
+      inputSchema: vi.fn().mockResolvedValue({
+        contractId: "parameter-input",
+        schema: { type: "object" },
+        workflowId: "parameter-adjustment",
+      }),
+      listCapabilities: vi.fn().mockResolvedValue({
+        capabilities: [{
+          description: "Neutral parameter adjustment",
+          id: "parameter-adjustment",
+          version: "1.0.0",
+          workflowIds: ["parameter-adjustment"],
+        }],
+      }),
+      listWorkflows: vi.fn().mockResolvedValue({
+        workflows: [{
+          capabilityId: "parameter-adjustment",
+          description: "Neutral parameter adjustment",
+          id: "parameter-adjustment",
+          inputContract: "parameter-input",
+          outputContract: "parameter-value",
+          runnable: true,
+          version: "1.0.0",
+        }],
+      }),
+      outputs: vi.fn().mockResolvedValue({ outputs: [], runId: "primitive-waiting" }),
+      provideInput,
+      start: vi.fn().mockResolvedValue({
+        capabilityId: "parameter-adjustment",
+        commandId: "command-start",
+        runId: "primitive-waiting",
+        status: "accepted",
+        workflowId: "parameter-adjustment",
+      }),
+    };
+    const user = userEvent.setup();
+
+    render(<AppProviders><RunWorkspace api={api} /></AppProviders>);
+    await screen.findByText("Neutral parameter adjustment");
+    await user.click(screen.getByRole("button", { name: "启动工作流" }));
+    const continuation = await screen.findByRole("textbox", { name: "继续输入 JSON" });
+    await user.clear(continuation);
+    await user.type(continuation, "7");
+    await user.click(screen.getByRole("button", { name: "提交运行输入" }));
+
+    await waitFor(() => expect(provideInput).toHaveBeenCalledWith(
+      "primitive-waiting",
+      { inputId: "ask-number", values: 7 },
+      expect.any(String),
+    ));
+    expect(screen.getByText("成本未知")).toBeVisible();
   });
 
   it("polls an active run and refreshes its completed output", async () => {

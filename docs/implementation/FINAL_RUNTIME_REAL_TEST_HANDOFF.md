@@ -11,11 +11,19 @@
 
 ## 启动 Demo
 
-如果 Demo 尚未启动，由开发环境启动一次服务：
+如果 Demo 尚未启动，由开发环境先构建当前分支的前端，再启动一次服务：
 
 ```bash
-uv run python run_web.py --host 127.0.0.1 --port 9092
+npm --prefix frontend run build
+uv run python run_web.py \
+  --host 127.0.0.1 \
+  --port 9092 \
+  --data-dir /绝对路径/到/本次真实测试数据目录
 ```
+
+`--data-dir` 必须填写明确的绝对路径，并指向本次测试使用的数据目录；该目录中
+应包含要测试的真实项目。不要依赖启动命令所在目录隐式选择 `.manyselves`，也
+不要指向需要保持只读的已知成功基线。
 
 然后用当前 Chrome 或 Edge 打开：
 

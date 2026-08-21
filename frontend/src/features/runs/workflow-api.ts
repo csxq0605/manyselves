@@ -7,9 +7,15 @@ export type WorkflowInputSchemaResponse = components["schemas"]["WorkflowInputSc
 export type WorkflowListResponse = components["schemas"]["WorkflowListResponse"];
 export type WorkflowOutputListResponse = components["schemas"]["WorkflowOutputListResponse"];
 export type WorkflowRunAcceptedResponse = components["schemas"]["WorkflowRunAcceptedResponse"];
-export type WorkflowRunInputRequest = components["schemas"]["WorkflowRunInputRequest"];
+type GeneratedWorkflowRunInputRequest = components["schemas"]["WorkflowRunInputRequest"];
+type GeneratedWorkflowRunStartRequest = components["schemas"]["WorkflowRunStartRequest"];
+export type WorkflowRunInputRequest = Omit<GeneratedWorkflowRunInputRequest, "values"> & {
+  readonly values?: unknown;
+};
 export type WorkflowRunResponse = components["schemas"]["WorkflowRunResponse"];
-export type WorkflowRunStartRequest = components["schemas"]["WorkflowRunStartRequest"];
+export type WorkflowRunStartRequest = Omit<GeneratedWorkflowRunStartRequest, "input"> & {
+  readonly input: unknown;
+};
 
 export interface WorkflowApi {
   cost(runId: string): Promise<WorkflowCostResponse>;
@@ -62,4 +68,3 @@ export function createWorkflowApi(gateway: ApiGateway): WorkflowApi {
     ),
   };
 }
-

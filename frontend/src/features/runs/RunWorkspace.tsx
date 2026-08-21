@@ -49,12 +49,8 @@ function objectValue(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function parseInput(value: string): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(value);
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error("运行输入必须是 JSON 对象。");
-  }
-  return parsed as Record<string, unknown>;
+function parseJson(value: string): unknown {
+  return JSON.parse(value) as unknown;
 }
 
 function schemaValue(value: unknown): JsonSchema {
@@ -77,9 +73,8 @@ function schemaVariants(schema: JsonSchema): { nullable: boolean; schema: JsonSc
   }
   const nonNull = union.filter((variant) => !schemaTypes(variant).includes("null"));
   const nullable = schema.nullable === true || nonNull.length !== union.length;
-  const [only] = nonNull;
-  if (only !== undefined) return { nullable, schema: only };
   if (nonNull.length === 0) return null;
+  if (nonNull.length === 1) return { nullable, schema: nonNull[0]! };
   return { nullable, schema };
 }
 
@@ -94,6 +89,9 @@ function schemaControlInfo(schema: JsonSchema): SchemaControlInfo | null {
       nullable: variant.nullable || enumValues.includes(null),
       schema: effective,
     };
+  }
+  if ((effective.anyOf ?? effective.oneOf) !== undefined) {
+    return { kind: "json", nullable: variant.nullable, schema: effective };
   }
   const types = schemaTypes(effective);
   if (types.includes("boolean")) return { kind: "boolean", nullable: variant.nullable, schema: effective };
@@ -124,7 +122,6 @@ function encodeEnumValue(value: unknown): string {
 }
 
 function encodeJsonValue(value: unknown): string {
-  if (typeof value === "string") return value;
   const encoded = JSON.stringify(value, null, 2);
   return encoded === undefined ? "" : encoded;
 }
@@ -436,7 +433,7 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
   }, [refetchCost, refetchOutputs, run.data, runId]);
   const start = useMutation({
     mutationFn: () => api.start({
-      input: hasInputControls ? formValuesToObject(inputSchema, inputFormValues) : parseInput(inputText),
+      input: hasInputControls ? formValuesToObject(inputSchema, inputFormValues) : parseJson(inputText),
       workflowId: selectedWorkflowId,
     }, createUuid()),
     onError: (reason) => setError(reason instanceof Error ? reason.message : "启动失败。"),
@@ -454,7 +451,7 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
           ...(inputId ? { inputId } : {}),
           values: hasWaitingControls
             ? formValuesToObject(waitingSchema, continuationFormValues)
-            : parseInput(continuationText),
+            : parseJson(continuationText),
         },
         createUuid(),
       );
@@ -534,7 +531,9 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
         ))}</ul>
         <h3>Cost</h3>
         <p>{String(totals.total_tokens ?? 0)} tokens</p>
-        <p>{String(totals.estimated_cost ?? 0)}</p>
+        <p>{totals.estimated_cost === undefined || totals.estimated_cost === null
+          ? "成本未知"
+          : String(totals.estimated_cost)}</p>
         {run.data.waitingInput.length > 0 ? <form onSubmit={(event) => { event.preventDefault(); provideInput.mutate(); }}>
           {hasWaitingControls ? (
             <fieldset>

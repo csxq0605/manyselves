@@ -243,6 +243,43 @@ describe("generic workflow route", () => {
       "/api/v1/workflows/distribution-reporting/input-schema",
     ));
   }, 15_000);
+
+  it("activates an inactive route project before loading workflow definitions", async () => {
+    let projectActive = false;
+    const requestJson = vi.fn(async (path: string, init?: { readonly method?: string }) => {
+      if (path === "/api/v1/projects") return {
+        projects: [{ active: projectActive, description: "", displayName: "Project 2", id: "project-2", revision: "r1" }],
+      };
+      if (path === "/api/v1/projects/project-2/activate" && init?.method === "POST") {
+        projectActive = true;
+        return { active: true, description: "", displayName: "Project 2", id: "project-2", revision: "r2" };
+      }
+      if (!projectActive) throw new Error(`workflow definitions loaded before activation: ${path}`);
+      if (path === "/api/v1/capabilities") return {
+        capabilities: [{ description: "Neutral Parameter Adjustment", id: "parameter-adjustment", version: "1.0.0", workflowIds: ["parameter-adjustment"] }],
+      };
+      if (path === "/api/v1/workflows") return {
+        workflows: [{ capabilityId: "parameter-adjustment", description: "Parameter adjustment", id: "parameter-adjustment", inputContract: "parameter-input", outputContract: "parameter-value", runnable: true, version: "1.0.0" }],
+      };
+      if (path === "/api/v1/workflows/parameter-adjustment/input-schema") return {
+        contractId: "parameter-input", schema: { type: "object" }, workflowId: "parameter-adjustment",
+      };
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    render(<AppProviders><MemoryRouter initialEntries={["/projects/project-2/workflows"]}><AppRoutes gateway={{ requestJson } as unknown as ApiGateway} /></MemoryRouter></AppProviders>);
+
+    expect(await screen.findByRole("heading", { name: "通用工作流" }, { timeout: 10_000 })).toBeVisible();
+    expect(await screen.findByText("Neutral Parameter Adjustment")).toBeVisible();
+    expect(requestJson).toHaveBeenCalledWith("/api/v1/projects/project-2/activate", {
+      method: "POST",
+      requireLease: true,
+    });
+    const paths = requestJson.mock.calls.map(([path]) => path);
+    expect(paths.indexOf("/api/v1/projects/project-2/activate")).toBeLessThan(
+      paths.indexOf("/api/v1/capabilities"),
+    );
+  }, 15_000);
 });
 
 describe("project conversation routes", () => {

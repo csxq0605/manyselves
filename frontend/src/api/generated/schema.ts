@@ -2665,9 +2665,7 @@ export interface components {
             /** Inputid */
             inputId?: string | null;
             /** Values */
-            values?: {
-                [key: string]: unknown;
-            };
+            values?: unknown;
         };
         /** WorkflowRunResponse */
         WorkflowRunResponse: {
@@ -2684,9 +2682,7 @@ export interface components {
         /** WorkflowRunStartRequest */
         WorkflowRunStartRequest: {
             /** Input */
-            input: {
-                [key: string]: unknown;
-            };
+            input: unknown;
             /** Workflowid */
             workflowId: string;
         };

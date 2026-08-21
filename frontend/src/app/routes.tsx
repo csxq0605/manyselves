@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect } from "react";
-import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 
 import type { ApiGateway, BootstrapSnapshot } from "../api/gateway";
 import { ProjectHomePage } from "../features/projects/ProjectHomePage";
@@ -136,6 +136,32 @@ function ProjectRouteLayout({ accountUsername, onLogout, projectApi }: { readonl
   /></>;
 }
 
+function WorkflowRoutePage({ gateway, projectApi }: { readonly gateway: ApiGateway; readonly projectApi: ProjectApi }) {
+  const { projectId } = useParams();
+  const queryClient = useQueryClient();
+  const projects = useQuery({ queryFn: () => projectApi.list(), queryKey: ["projects"] });
+  const routeProject = projects.data?.find((project) => project.id === projectId);
+  const activation = useQuery({
+    enabled: Boolean(projectId && routeProject && !routeProject.active),
+    queryFn: async () => {
+      const activated = await projectApi.activate(projectId!);
+      queryClient.setQueryData<Awaited<ReturnType<typeof projectApi.list>>>(["projects"], (current) => (
+        current?.map((project) => ({ ...project, active: project.id === activated.id }))
+      ));
+      return activated;
+    },
+    queryKey: ["project-activation", projectId, routeProject?.revision],
+    retry: false,
+  });
+  const projectReady = Boolean(routeProject?.active || activation.isSuccess);
+
+  if (!projectId) return <p role="alert">工作流路由无效</p>;
+  if (projects.isPending) return <p role="status">正在加载项目…</p>;
+  if (projects.isError || !routeProject) return <p role="alert">项目不可用</p>;
+  if (!projectReady) return activation.isError ? <p role="alert">项目切换失败</p> : <p role="status">正在切换项目…</p>;
+  return <RunWorkspace api={createWorkflowApi(gateway)} />;
+}
+
 function NotFound() {
   return <section className="route-placeholder"><h1>页面未找到</h1><p>该地址不是可用的工作台路由。</p><Link to="/">返回项目</Link></section>;
 }
@@ -173,7 +199,7 @@ export function AppRoutes({ accountUsername, gateway, onLogout, platform, settin
     )} />
     <Route path="/projects/:projectId/workflows" element={(
       <Suspense fallback={<Placeholder title="正在加载通用工作流…" />}>
-        <RunWorkspace api={createWorkflowApi(gateway)} />
+        <WorkflowRoutePage gateway={gateway} projectApi={projectApi} />
       </Suspense>
     )} />
     <Route path="/projects/:projectId/:section" element={(
