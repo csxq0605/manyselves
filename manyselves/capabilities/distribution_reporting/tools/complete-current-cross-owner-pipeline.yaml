@@ -1,0 +1,10 @@
+id: complete-current-cross-owner-pipeline
+version: 1.0.0
+description: Promote a Cross owner pipeline whose typed round has no pending finding
+implementation: capability:distribution-reporting:complete-current-cross-owner-pipeline
+input_contract: declarative_cross_owner_runtime_context
+output_contract: declarative_cross_owner_pipeline_outcome
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

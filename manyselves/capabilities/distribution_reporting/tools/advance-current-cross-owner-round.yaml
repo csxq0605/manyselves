@@ -1,0 +1,10 @@
+id: advance-current-cross-owner-round
+version: 1.0.0
+description: Advance the accepted Cross owner verdict into its next typed round state
+implementation: capability:distribution-reporting:advance-current-cross-owner-round
+input_contract: declarative_cross_owner_runtime_context
+output_contract: declarative_cross_owner_runtime_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

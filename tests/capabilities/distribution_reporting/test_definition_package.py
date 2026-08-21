@@ -333,6 +333,9 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
             "prepare-current-cross-owner-recheck",
             "cross-owner-recheck-requires-agent",
             "accept-current-cross-owner-recheck",
+            "advance-current-cross-owner-round",
+            "cross-owner-round-needs-revision",
+            "complete-current-cross-owner-pipeline",
             "continue-current-cross-owner-pipeline",
         ]
         conversation = next(
@@ -546,3 +549,58 @@ def test_cross_owner_21_pipeline_declares_original_reviewer_recheck() -> None:
         action for action in plan.actions if action.id == "choose-cross-owner-local-review-source"
     )
     assert local_review_route.otherwise == "prepare-current-cross-owner-recheck"
+
+
+def test_cross_owner_21_pipeline_declares_repeated_recheck_round_route() -> None:
+    """Characterize a declarative Cross regression-round loop before implementation."""
+
+    _, registry = load_distribution_reporting_capability()
+    from manyselves.core.reporting.declarative_cross_owner_cohort import (
+        register_cross_owner_pipeline_specializations,
+    )
+
+    register_cross_owner_pipeline_specializations(registry)
+    pipeline = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-cross-owner-2.1-pipeline",
+    )
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        pipeline,
+        registry,
+    )
+
+    assert pipeline.gates == []
+    assert plan.max_iterations is None
+    assert all(action.kind != "gate" for action in plan.actions)
+
+    action_ids = [action.id for action in plan.actions]
+    recheck_continue = next(
+        action for action in plan.actions if action.id == "continue-after-cross-owner-recheck"
+    )
+    assert recheck_continue.kind == "goto"
+    assert recheck_continue.target == "advance-current-cross-owner-round"
+
+    round_advance = next(
+        action for action in plan.actions if action.id == "advance-current-cross-owner-round"
+    )
+    assert round_advance.kind == "invoke_tool"
+    assert round_advance.tool == "advance-current-cross-owner-round"
+    round_needs_revision = next(
+        action for action in plan.actions if action.id == "cross-owner-round-needs-revision"
+    )
+    assert round_needs_revision.kind == "invoke_tool"
+    assert round_needs_revision.tool == "cross-owner-round-needs-revision"
+    choose_next_step = next(
+        action for action in plan.actions if action.id == "choose-cross-owner-next-step"
+    )
+    assert choose_next_step.kind == "if"
+    assert choose_next_step.then == "prepare-current-cross-owner-revision"
+    assert choose_next_step.otherwise == "complete-current-cross-owner-pipeline"
+    assert "finish-cross-owner-pipeline" not in {
+        choose_next_step.then,
+        choose_next_step.otherwise,
+    }
+    assert action_ids.index(round_advance.id) < action_ids.index(choose_next_step.id)
+    assert action_ids.index("prepare-current-cross-owner-revision") < action_ids.index(
+        choose_next_step.id
+    )

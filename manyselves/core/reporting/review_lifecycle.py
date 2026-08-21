@@ -3108,6 +3108,30 @@ class CrossOwnerRecheckAcceptance(StrictModel):
     result: CrossOwnerVerdictSubmission
 
 
+class CrossOwnerRoundProgress(StrictModel):
+    """Typed owner state after one accepted Cross reviewer verdict."""
+
+    run_id: str
+    workflow_id: str
+    owner_module_id: str
+    initial_input_ref: str
+    initial_result_ref: str
+    initial_result: CrossOwnerFindingSubmission
+    review_round: int
+    next_review_round: int
+    next_owner_input_ref: str
+    next_action: Literal["revise", "completed"]
+    pending: list[CrossReviewFinding]
+    resolved_ids: list[str]
+    finding_refs: list[str]
+    verdict_refs: list[str]
+    findings: list[CrossReviewFinding]
+    verdicts: list[ResolutionVerdict]
+    lane: _CrossOwnerLaneResult
+    verdict_ref: str
+    verdict: CrossOwnerVerdictSubmission
+
+
 _CROSS_OWNER_MODULE_IDS = tuple(REPORT_TAXONOMY)
 
 
@@ -4775,11 +4799,11 @@ def prepare_cross_owner_recheck(
     initial: CrossOwnerInitialReviewAcceptance,
     lane: _CrossOwnerLaneResult,
     review_round: int,
+    required_findings: list[CrossReviewFinding],
 ) -> CrossOwnerRecheckPreparation:
     """Prepare or recover the original Cross owner reviewer recheck."""
 
     owner_module_id = initial.owner_module_id
-    required_findings = list(initial.result.findings)
     modules_for_recheck = dict(frozen_modules)
     modules_for_recheck[owner_module_id] = lane.module
     recheck_loaded = _load_cross_owner_input(
@@ -4906,6 +4930,156 @@ def accept_cross_owner_recheck(
         required_findings=preparation.required_findings,
         result_ref=result_ref,
         result=accepted,
+    )
+
+
+async def advance_cross_owner_round(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    workflow_id: str,
+    initial_input_ref: str,
+    initial_result_ref: str,
+    initial_result: CrossOwnerFindingSubmission,
+    acceptance: CrossOwnerRecheckAcceptance,
+    previous: CrossOwnerRoundProgress | None = None,
+) -> CrossOwnerRoundProgress:
+    """Advance the existing owner finding/verdict state after one recheck."""
+
+    owner_module_id = acceptance.owner_module_id
+    verdict = acceptance.result
+    lane = acceptance.lane
+    _validate_cross_findings(
+        verdict.new_findings,
+        {owner_module_id: lane.module},
+    )
+    if previous is None:
+        pending = {finding.id: finding for finding in acceptance.required_findings}
+        resolved_ids: set[str] = set()
+        finding_refs = [initial_result_ref]
+        verdict_refs: list[str] = []
+        all_findings = list(initial_result.findings)
+        terminal_verdicts: dict[str, ResolutionVerdict] = {}
+    else:
+        pending = {finding.id: finding for finding in previous.pending}
+        resolved_ids = set(previous.resolved_ids)
+        finding_refs = list(previous.finding_refs)
+        verdict_refs = list(previous.verdict_refs)
+        all_findings = list(previous.findings)
+        terminal_verdicts = {
+            item.finding_id: item for item in previous.verdicts
+        }
+
+    verdict_refs.append(acceptance.result_ref)
+    terminal_verdicts.update(
+        {item.finding_id: item for item in verdict.verdicts}
+    )
+    escalated = [item for item in verdict.verdicts if item.verdict == "escalate"]
+    main_accepts: set[str] = set()
+    if escalated:
+        decision = await _main_exception_decision(
+            runner,
+            state=state,
+            workflow_id=workflow_id,
+            scope="cross",
+            subject_refs=[lane.completion.subject.ref],
+            finding_refs=finding_refs,
+            verdicts=escalated,
+            responses=lane.responses,
+        )
+        if decision.decision == "accept_dispute":
+            main_accepts = set(decision.finding_ids)
+
+    next_pending = {
+        item.finding_id: pending[item.finding_id]
+        for item in verdict.verdicts
+        if item.verdict == "open"
+        or (
+            item.verdict == "escalate"
+            and item.finding_id not in main_accepts
+        )
+    }
+    resolved_ids.update(
+        item.finding_id
+        for item in verdict.verdicts
+        if item.verdict == "resolved" or item.finding_id in main_accepts
+    )
+    for finding in verdict.new_findings:
+        if finding.id in pending or finding.id in resolved_ids:
+            raise ReviewLifecycleError(
+                f"new Cross owner finding reuses an existing id: {finding.id}"
+            )
+        next_pending[finding.id] = finding
+        all_findings.append(finding)
+    if verdict.new_findings:
+        regression_ref = _write_immutable_model(
+            runner,
+            (
+                f"Work/runs/{state['run_id']}/reviews/"
+                f"cross-owner-regression-findings-r{acceptance.review_round}-"
+                f"{owner_module_id}.json"
+            ),
+            CrossOwnerFindingSubmission(
+                owner_module_id=owner_module_id,
+                coverage=verdict.coverage,
+                findings=verdict.new_findings,
+                synthesis_inputs=[],
+            ),
+        )
+        finding_refs.append(regression_ref)
+
+    return CrossOwnerRoundProgress(
+        run_id=acceptance.run_id,
+        workflow_id=workflow_id,
+        owner_module_id=owner_module_id,
+        initial_input_ref=initial_input_ref,
+        initial_result_ref=initial_result_ref,
+        initial_result=initial_result,
+        review_round=acceptance.review_round,
+        next_review_round=acceptance.review_round + 1,
+        next_owner_input_ref=acceptance.result_ref,
+        next_action="revise" if next_pending else "completed",
+        pending=list(next_pending.values()),
+        resolved_ids=sorted(resolved_ids),
+        finding_refs=finding_refs,
+        verdict_refs=verdict_refs,
+        findings=all_findings,
+        verdicts=list(terminal_verdicts.values()),
+        lane=lane,
+        verdict_ref=acceptance.result_ref,
+        verdict=verdict,
+    )
+
+
+def complete_cross_owner_round(
+    runner: "ReportWorkflowRunner",
+    *,
+    progress: CrossOwnerRoundProgress,
+) -> _CrossOwnerPipelineResult:
+    """Promote an owner whose typed round state has no pending finding."""
+
+    if progress.next_action != "completed":
+        raise ReviewLifecycleError(
+            f"Cross owner still requires revision: {progress.owner_module_id}"
+        )
+    lane = _promote_cross_owner_pipeline_completion(
+        runner,
+        lane=progress.lane,
+        initial_result_ref=progress.initial_result_ref,
+        verdict_ref=progress.verdict_ref,
+    )
+    return _CrossOwnerPipelineResult(
+        owner_module_id=progress.owner_module_id,
+        initial_input_ref=progress.initial_input_ref,
+        initial_result_ref=progress.initial_result_ref,
+        initial_result=progress.initial_result,
+        lane=lane,
+        verdict_ref=progress.verdict_ref,
+        verdict=progress.verdict,
+        finding_refs=progress.finding_refs,
+        verdict_refs=progress.verdict_refs,
+        findings=progress.findings,
+        verdicts=progress.verdicts,
     )
 
 
@@ -5458,10 +5632,24 @@ class CrossReviewCoordinator:
     async def prepare_owner_revision(
         self,
         initial: CrossOwnerInitialReviewAcceptance,
+        progress: CrossOwnerRoundProgress | None = None,
     ) -> CrossOwnerRevisionPreparation:
-        """Prepare or recover the first original-Author Cross revision."""
+        """Prepare or recover the current original-Author Cross revision."""
 
         owner_module_id = initial.owner_module_id
+        if progress is not None:
+            return await prepare_cross_owner_revision(
+                self.runner,
+                state=self.state,
+                workflow_id=self.workflow_id,
+                owner_module_id=owner_module_id,
+                review_round=progress.next_review_round,
+                owner_input_ref=progress.next_owner_input_ref,
+                current=progress.lane.module,
+                findings=list(progress.pending),
+                finding_refs=list(progress.finding_refs),
+                prior_completion_ref=progress.lane.local_review_ref,
+            )
         return await prepare_cross_owner_revision(
             self.runner,
             state=self.state,
@@ -5528,13 +5716,14 @@ class CrossReviewCoordinator:
         self.ensure_prepared()
         owner_module_id = initial.owner_module_id
         _validate_cross_owner_synthesis_namespace(owner_module_id, initial.result)
-        findings = list(initial.result.findings)
+        findings = list(revision.findings)
+        review_round = revision.review_round
         lane = _recover_cross_owner_lane(
             self.runner,
             state=self.state,
             owner_module_id=owner_module_id,
-            review_round=1,
-            owner_input_ref=initial.owner_input_ref,
+            review_round=review_round,
+            owner_input_ref=revision.owner_input_ref,
             required_findings=findings,
         )
         if lane is None:
@@ -5543,14 +5732,12 @@ class CrossReviewCoordinator:
                 state=self.state,
                 workflow_id=self.workflow_id,
                 module_id=owner_module_id,
-                current=cast(dict[str, ModuleSubmission], self.frozen_modules)[owner_module_id],
+                current=revision.current,
                 findings=findings,
-                finding_refs=[initial.result_ref],
-                review_round=1,
-                owner_input_ref=initial.owner_input_ref,
-                prior_completion_ref=self.state.get("module_review_completion_refs", {}).get(
-                    owner_module_id
-                ),
+                finding_refs=list(revision.finding_refs),
+                review_round=review_round,
+                owner_input_ref=revision.owner_input_ref,
+                prior_completion_ref=revision.prior_completion_ref,
                 accepted_revision=revision,
                 accepted_local_review=local_review,
             )
@@ -5561,7 +5748,8 @@ class CrossReviewCoordinator:
             frozen_modules=cast(dict[str, ModuleSubmission], self.frozen_modules),
             initial=initial,
             lane=lane,
-            review_round=1,
+            review_round=review_round,
+            required_findings=findings,
         )
 
     def accept_owner_recheck(
@@ -5575,6 +5763,36 @@ class CrossReviewCoordinator:
             self.runner,
             preparation=preparation,
             result=result,
+        )
+
+    async def advance_owner_round(
+        self,
+        initial: CrossOwnerInitialReviewAcceptance,
+        recheck: CrossOwnerRecheckAcceptance,
+        progress: CrossOwnerRoundProgress | None = None,
+    ) -> CrossOwnerRoundProgress:
+        """Advance the shared owner round state after an accepted verdict."""
+
+        return await advance_cross_owner_round(
+            self.runner,
+            state=self.state,
+            workflow_id=self.workflow_id,
+            initial_input_ref=initial.owner_input_ref,
+            initial_result_ref=initial.result_ref,
+            initial_result=initial.result,
+            acceptance=recheck,
+            previous=progress,
+        )
+
+    def complete_owner_round(
+        self,
+        progress: CrossOwnerRoundProgress,
+    ) -> _CrossOwnerPipelineResult:
+        """Promote one completed typed owner round."""
+
+        return complete_cross_owner_round(
+            self.runner,
+            progress=progress,
         )
 
     async def run_owner(
@@ -5721,11 +5939,9 @@ class CrossReviewCoordinator:
 
         _validate_cross_owner_synthesis_namespace(owner_module_id, initial_result)
         pending = {finding.id: finding for finding in initial_result.findings}
-        resolved_ids: set[str] = set()
         finding_refs = [initial_result_ref]
-        verdict_refs: list[str] = []
         all_findings = list(initial_result.findings)
-        terminal_verdicts: dict[str, ResolutionVerdict] = {}
+        round_progress: CrossOwnerRoundProgress | None = None
         current = self.frozen_modules[owner_module_id]
         current_review_completion_ref = self.state.get("module_review_completion_refs", {}).get(
             owner_module_id
@@ -5819,6 +6035,10 @@ class CrossReviewCoordinator:
             )
             modules_for_recheck = dict(self.frozen_modules)
             modules_for_recheck[owner_module_id] = lane.module
+            recheck_input_ref = (
+                f"Work/runs/{self.run_id}/reviews/"
+                f"cross-owner-input-r{review_round}-{owner_module_id}.json"
+            )
             if verdict_loaded is None:
                 recheck_loaded = _load_cross_owner_input(
                     self.runner,
@@ -5867,85 +6087,46 @@ class CrossReviewCoordinator:
             else:
                 verdict, verdict_ref = verdict_loaded
 
-            _validate_cross_findings(verdict.new_findings, modules_for_recheck)
-            verdict_refs.append(verdict_ref)
-            terminal_verdicts.update({item.finding_id: item for item in verdict.verdicts})
-            escalated = [item for item in verdict.verdicts if item.verdict == "escalate"]
-            main_accepts: set[str] = set()
-            if escalated:
-                decision = await _main_exception_decision(
-                    self.runner,
-                    state=self.state,
+            accepted_round = (
+                accepted_recheck
+                if accepted_recheck is not None
+                else CrossOwnerRecheckAcceptance(
+                    run_id=self.run_id,
                     workflow_id=self.workflow_id,
-                    scope="cross",
-                    subject_refs=[lane.completion.subject.ref],
-                    finding_refs=finding_refs,
-                    verdicts=escalated,
-                    responses=lane.responses,
-                )
-                if decision.decision == "accept_dispute":
-                    main_accepts = set(decision.finding_ids)
-
-            next_pending = {
-                item.finding_id: pending[item.finding_id]
-                for item in verdict.verdicts
-                if item.verdict == "open"
-                or (item.verdict == "escalate" and item.finding_id not in main_accepts)
-            }
-            resolved_ids.update(
-                item.finding_id
-                for item in verdict.verdicts
-                if item.verdict == "resolved" or item.finding_id in main_accepts
-            )
-            for finding in verdict.new_findings:
-                if finding.id in pending or finding.id in resolved_ids:
-                    raise ReviewLifecycleError(
-                        f"new Cross owner finding reuses an existing id: {finding.id}"
-                    )
-                next_pending[finding.id] = finding
-                all_findings.append(finding)
-            if verdict.new_findings:
-                regression_ref = _write_immutable_model(
-                    self.runner,
-                    (
-                        f"Work/runs/{self.run_id}/reviews/"
-                        f"cross-owner-regression-findings-r{review_round}-"
-                        f"{owner_module_id}.json"
-                    ),
-                    CrossOwnerFindingSubmission(
-                        owner_module_id=owner_module_id,
-                        coverage=verdict.coverage,
-                        findings=verdict.new_findings,
-                        synthesis_inputs=[],
-                    ),
-                )
-                finding_refs.append(regression_ref)
-
-            if not next_pending:
-                lane = _promote_cross_owner_pipeline_completion(
-                    self.runner,
-                    lane=lane,
-                    initial_result_ref=initial_result_ref,
-                    verdict_ref=verdict_ref,
-                )
-                return _CrossOwnerPipelineResult(
                     owner_module_id=owner_module_id,
-                    initial_input_ref=initial_input_ref,
+                    review_round=review_round,
+                    reviewer_session_key=f"cross-owner-{owner_module_id}",
                     initial_result_ref=initial_result_ref,
                     initial_result=initial_result,
                     lane=lane,
-                    verdict_ref=verdict_ref,
-                    verdict=verdict,
-                    finding_refs=finding_refs,
-                    verdict_refs=verdict_refs,
-                    findings=all_findings,
-                    verdicts=list(terminal_verdicts.values()),
+                    owner_input_ref=recheck_input_ref,
+                    required_findings=findings,
+                    result_ref=verdict_ref,
+                    result=verdict,
+                )
+            )
+            round_progress = await advance_cross_owner_round(
+                self.runner,
+                state=self.state,
+                workflow_id=self.workflow_id,
+                initial_input_ref=initial_input_ref,
+                initial_result_ref=initial_result_ref,
+                initial_result=initial_result,
+                acceptance=accepted_round,
+                previous=round_progress,
+            )
+            if round_progress.next_action == "completed":
+                return complete_cross_owner_round(
+                    self.runner,
+                    progress=round_progress,
                 )
 
-            pending = next_pending
-            current = lane.module
-            owner_input_ref = verdict_ref
-            review_round += 1
+            pending = {finding.id: finding for finding in round_progress.pending}
+            finding_refs = list(round_progress.finding_refs)
+            all_findings = list(round_progress.findings)
+            current = round_progress.lane.module
+            owner_input_ref = round_progress.next_owner_input_ref
+            review_round = round_progress.next_review_round
 
         raise ReviewLifecycleError(f"Cross owner loop ended without completion: {owner_module_id}")
 

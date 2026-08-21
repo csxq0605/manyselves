@@ -199,7 +199,32 @@ actions:
   output_variable: owner-context
 - id: continue-after-cross-owner-recheck
   kind: goto
-  target: continue-current-cross-owner-pipeline
+  target: advance-current-cross-owner-round
+- id: advance-current-cross-owner-round
+  kind: invoke_tool
+  tool: advance-current-cross-owner-round
+  input_variable: owner-context
+  output_variable: owner-context
+- id: cross-owner-round-needs-revision
+  kind: invoke_tool
+  tool: cross-owner-round-needs-revision
+  input_variable: owner-context
+  output_variable: owner-round-needs-revision
+- id: choose-cross-owner-next-step
+  kind: if
+  condition:
+    variable: owner-round-needs-revision
+    operator: truthy
+  then: prepare-current-cross-owner-revision
+  otherwise: complete-current-cross-owner-pipeline
+- id: complete-current-cross-owner-pipeline
+  kind: invoke_tool
+  tool: complete-current-cross-owner-pipeline
+  input_variable: owner-context
+  output_variable: owner-outcome
+- id: finish-after-cross-owner-completion
+  kind: goto
+  target: finish-cross-owner-pipeline
 - id: continue-current-cross-owner-pipeline
   kind: invoke_tool
   tool: continue-current-cross-owner-pipeline

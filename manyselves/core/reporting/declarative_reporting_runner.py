@@ -421,6 +421,13 @@ async def execute_declarative_module_stage(
                     "accept-current-cross-owner-recheck": (
                         cross_runtime.accept_recheck
                     ),
+                    "advance-current-cross-owner-round": cross_runtime.advance_round,
+                    "cross-owner-round-needs-revision": (
+                        cross_runtime.round_needs_revision
+                    ),
+                    "complete-current-cross-owner-pipeline": (
+                        cross_runtime.complete_owner_round
+                    ),
                     "continue-current-cross-owner-pipeline": cross_runtime.continue_owner,
                     "reduce-cross-owner-cohort": cross_runtime.reduce,
                     "run-reporting-chief": tail_adapters.chief,

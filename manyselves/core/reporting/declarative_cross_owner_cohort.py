@@ -50,6 +50,7 @@ from .review_lifecycle import (
     CrossOwnerRecheckPreparation,
     CrossOwnerRevisionAcceptance,
     CrossOwnerRevisionPreparation,
+    CrossOwnerRoundProgress,
     CrossReviewCoordinator,
     ModuleInitialReviewPreparation,
     ModuleRevisionPreparation,
@@ -106,6 +107,8 @@ class DeclarativeCrossOwnerRuntimeContext(BaseModel):
         "recheck_ready",
         "recheck_resumed",
         "recheck_accepted",
+        "round_revision_pending",
+        "round_completed",
         "failed",
     ]
     preparation: CrossOwnerInitialReviewPreparation | None = None
@@ -116,6 +119,7 @@ class DeclarativeCrossOwnerRuntimeContext(BaseModel):
     local_review_acceptance: CrossOwnerLocalReviewAcceptance | None = None
     recheck_preparation: CrossOwnerRecheckPreparation | None = None
     recheck_acceptance: CrossOwnerRecheckAcceptance | None = None
+    round_progress: CrossOwnerRoundProgress | None = None
     error: str | None = None
 
 
@@ -504,14 +508,21 @@ class DeclarativeCrossOwnerRuntime:
         self,
         context: DeclarativeCrossOwnerRuntimeContext,
     ) -> DeclarativeCrossOwnerRuntimeContext:
-        """Prepare or recover the first finding-triggered owner revision."""
+        """Prepare or recover the current finding-triggered owner revision."""
 
         context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
         try:
             preparation = await cast(
                 CrossReviewCoordinator,
                 self._coordinator,
-            ).prepare_owner_revision(cast(CrossOwnerInitialReviewAcceptance, context.acceptance))
+            ).prepare_owner_revision(
+                cast(CrossOwnerInitialReviewAcceptance, context.acceptance),
+                (
+                    context.round_progress
+                    if context.status == "round_revision_pending"
+                    else None
+                ),
+            )
         except BaseException as exc:
             return context.model_copy(update={"status": "failed", "error": str(exc)})
         if preparation.mode == "invoke_agent":
@@ -722,6 +733,71 @@ class DeclarativeCrossOwnerRuntime:
                 "status": "recheck_accepted",
                 "recheck_acceptance": acceptance,
             }
+        )
+
+    async def advance_round(
+        self,
+        context: DeclarativeCrossOwnerRuntimeContext,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Advance the existing pending/resolved owner state after recheck."""
+
+        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
+        if context.status == "failed" or context.recheck_acceptance is None:
+            return context
+        try:
+            progress = await cast(
+                CrossReviewCoordinator,
+                self._coordinator,
+            ).advance_owner_round(
+                cast(CrossOwnerInitialReviewAcceptance, context.acceptance),
+                context.recheck_acceptance,
+                context.round_progress,
+            )
+        except BaseException as exc:
+            return context.model_copy(update={"status": "failed", "error": str(exc)})
+        return context.model_copy(
+            update={
+                "status": (
+                    "round_revision_pending"
+                    if progress.next_action == "revise"
+                    else "round_completed"
+                ),
+                "round_progress": progress,
+            }
+        )
+
+    @staticmethod
+    def round_needs_revision(
+        context: DeclarativeCrossOwnerRuntimeContext,
+    ) -> bool:
+        """Return the existing typed pending-finding loop decision."""
+
+        return context.status == "round_revision_pending"
+
+    async def complete_owner_round(
+        self,
+        context: DeclarativeCrossOwnerRuntimeContext,
+    ) -> DeclarativeCrossOwnerPipelineOutcome:
+        """Promote a closed typed round or retain the compatibility continuation."""
+
+        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
+        if context.status != "round_completed" or context.round_progress is None:
+            return await self.continue_owner(context)
+        try:
+            pipeline = cast(
+                CrossReviewCoordinator,
+                self._coordinator,
+            ).complete_owner_round(context.round_progress)
+        except BaseException as exc:
+            return DeclarativeCrossOwnerPipelineOutcome(
+                owner_module_id=context.owner_module_id,
+                status="failed",
+                error=str(exc),
+            )
+        return DeclarativeCrossOwnerPipelineOutcome(
+            owner_module_id=context.owner_module_id,
+            status="completed",
+            pipeline=pipeline.model_dump(mode="json"),
         )
 
     async def continue_owner(

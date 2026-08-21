@@ -34,6 +34,7 @@ from manyselves.core.reporting.declarative_reporting_tail import (
 )
 from manyselves.core.reporting.input_contracts import (
     CrossOwnerInput,
+    ModuleRevisionInput,
     ReviewCompletionRecord,
     ValidationReport,
 )
@@ -548,6 +549,9 @@ async def _execute_declarative_cross_owner_cohort(
                 "prepare-current-cross-owner-recheck": runtime.prepare_recheck,
                 "cross-owner-recheck-requires-agent": (runtime.recheck_requires_agent),
                 "accept-current-cross-owner-recheck": runtime.accept_recheck,
+                "advance-current-cross-owner-round": runtime.advance_round,
+                "cross-owner-round-needs-revision": runtime.round_needs_revision,
+                "complete-current-cross-owner-pipeline": runtime.complete_owner_round,
                 "continue-current-cross-owner-pipeline": runtime.continue_owner,
                 "reduce-cross-owner-cohort": runtime.reduce,
             },
@@ -600,6 +604,9 @@ async def _execute_declarative_cross_owner_pipeline(
                 "prepare-current-cross-owner-recheck": runtime.prepare_recheck,
                 "cross-owner-recheck-requires-agent": (runtime.recheck_requires_agent),
                 "accept-current-cross-owner-recheck": runtime.accept_recheck,
+                "advance-current-cross-owner-round": runtime.advance_round,
+                "cross-owner-round-needs-revision": runtime.round_needs_revision,
+                "complete-current-cross-owner-pipeline": runtime.complete_owner_round,
                 "continue-current-cross-owner-pipeline": runtime.continue_owner,
             },
             agents=runtime.agent_invokers,
@@ -1277,7 +1284,7 @@ async def test_declarative_cross_owner_initial_reviewer_uses_agent_port_once(
     assert conversation.key.value == "cross-owner-2.1"
     result = DeclarativeCrossOwnerPipelineOutcome.model_validate(completed.outputs["result"])
     assert result.owner_module_id == "2.1"
-    assert result.status == "completed"
+    assert result.status == "completed", result.error
     assert result.pipeline is not None
 
 
@@ -1328,7 +1335,7 @@ async def test_declarative_cross_owner_initial_result_recovery_skips_agent_port(
     assert "cross-owner-conversation" not in completed.conversations
     result = DeclarativeCrossOwnerPipelineOutcome.model_validate(completed.outputs["result"])
     assert result.owner_module_id == "2.1"
-    assert result.status == "completed"
+    assert result.status == "completed", result.error
 
 
 @pytest.mark.asyncio
@@ -1446,6 +1453,166 @@ async def test_declarative_cross_owner_finding_invokes_original_author_once_befo
         "module-2.1",
         "module-auditor-2.1",
     }
+
+
+@pytest.mark.asyncio
+async def test_declarative_cross_owner_recheck_regression_uses_next_declared_revision_round(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A new Cross finding re-enters the declared owner round, not Legacy replay."""
+
+    run_id = "run-cross-declarative-recheck-regression-round"
+    first = _cross_finding("XMR-2.1-001")
+    regression = _cross_finding("XMR-2.1-r1-001")
+
+    class _RepeatedCrossFindingRunner(_CrossFindingRunner):
+        async def _agent(
+            self,
+            agent_id,
+            envelope,
+            artifacts,
+            workflow_id,
+            *,
+            session_key=None,
+        ):
+            del artifacts
+            session = session_key or ""
+            if agent_id == "cross-module-reviewer":
+                self.agent_calls.append((agent_id, envelope.task_id, session))
+                owner_module_id = envelope.task_id.split("-")[2]
+                self.calls.append((owner_module_id, session))
+                if envelope.task_id.endswith("initial"):
+                    return CrossOwnerFindingSubmission(
+                        owner_module_id=owner_module_id,
+                        coverage=CrossReviewCoverageEntry(
+                            module_id=owner_module_id,
+                            checked_dimensions=list(CROSS_REVIEW_DIMENSIONS),
+                        ),
+                        findings=[first],
+                        synthesis_inputs=_synthesis(owner_module_id),
+                    )
+                contract = CrossOwnerInput.model_validate_json(
+                    (self.service.workspace / envelope.input_refs[0]).read_text(encoding="utf-8")
+                )
+                return CrossOwnerVerdictSubmission(
+                    owner_module_id=owner_module_id,
+                    coverage=CrossReviewCoverageEntry(
+                        module_id=owner_module_id,
+                        checked_dimensions=list(CROSS_REVIEW_DIMENSIONS),
+                    ),
+                    verdicts=[
+                        ResolutionVerdict(
+                            finding_id=finding.id,
+                            verdict="resolved",
+                            reason="当前修订满足本轮 Cross owner 的全部检查项。",
+                            evidence_refs=[contract.owner_subject_ref],
+                        )
+                        for finding in contract.required_findings
+                    ],
+                    new_findings=[regression] if contract.review_round == 1 else [],
+                )
+            if agent_id == "module-2.1-specialist":
+                self.agent_calls.append((agent_id, envelope.task_id, session))
+                revision_input = ModuleRevisionInput.model_validate_json(
+                    (self.service.workspace / envelope.input_refs[0]).read_text(encoding="utf-8")
+                )
+                baseline_revision = int(
+                    Path(revision_input.subject_ref).stem.rsplit("-r", 1)[1]
+                )
+                target_ids = list(revision_input.target_submodule_ids)
+                return ModuleRevisionSubmission(
+                    module_id=revision_input.module_id,
+                    base_revision=baseline_revision,
+                    revision=baseline_revision + 1,
+                    submodule_narratives={
+                        target_id: f"{target_id} revised for the Cross owner round"
+                        for target_id in target_ids
+                    },
+                    source_ids=[],
+                    unresolved_questions=[],
+                    revision_responses=[
+                        RevisionResponse(
+                            finding_id=finding.id,
+                            action="implemented",
+                            summary="已补充本轮 Cross finding 要求的接口与联合验证条件。",
+                            changed_target_ids=target_ids,
+                        )
+                        for finding in revision_input.cross_findings
+                    ],
+                )
+            return await super()._agent(
+                agent_id,
+                envelope,
+                [],
+                workflow_id,
+                session_key=session,
+            )
+
+    runner = _RepeatedCrossFindingRunner(tmp_path)
+    _write_modules(runner, run_id)
+    state = _state(run_id)
+    _write_initial_module_completion(runner, state, "2.1")
+    legacy_lane_calls: list[dict[str, object]] = []
+    original_lane = lifecycle._run_cross_owner_lane
+
+    async def _guard_legacy_lane(runner, **kwargs):
+        legacy_lane_calls.append(dict(kwargs))
+        if kwargs.get("accepted_revision") is None or kwargs.get("accepted_local_review") is None:
+            raise AssertionError("Legacy Cross owner lane replayed a later Agent round")
+        return await original_lane(runner, **kwargs)
+
+    monkeypatch.setattr(lifecycle, "_run_cross_owner_lane", _guard_legacy_lane)
+
+    completed = await _execute_declarative_cross_owner_pipeline(
+        runner,
+        state,
+        "workflow-cross-declarative-recheck-regression-round",
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(completed.outputs["result"])
+    assert result.status == "completed", result.error
+    assert result.pipeline is not None
+    assert result.pipeline["lane"]["module"]["revision"] == 2
+    assert runner.agent_calls == [
+        ("cross-module-reviewer", "cross-owner-2.1-r0-initial", "cross-owner-2.1"),
+        ("module-2.1-specialist", "module-revision-r1-2.1", "module-2.1"),
+        (
+            "evidence-auditor",
+            "module-2.1-cross-r1-review-r0",
+            "module-auditor-2.1",
+        ),
+        ("cross-module-reviewer", "cross-owner-2.1-r1-recheck", "cross-owner-2.1"),
+        ("module-2.1-specialist", "module-revision-r2-2.1", "module-2.1"),
+        (
+            "evidence-auditor",
+            "module-2.1-cross-r2-review-r0",
+            "module-auditor-2.1",
+        ),
+        ("cross-module-reviewer", "cross-owner-2.1-r2-recheck", "cross-owner-2.1"),
+    ]
+    assert legacy_lane_calls
+    assert all(
+        call.get("accepted_revision") is not None
+        and call.get("accepted_local_review") is not None
+        for call in legacy_lane_calls
+    )
+    conversation_values = {record.key.value for record in completed.conversations.values()}
+    assert conversation_values >= {
+        "cross-owner-2.1",
+        "module-2.1",
+        "module-auditor-2.1",
+    }
+    assert not any(value.endswith("-r2") for value in conversation_values)
+    review_root = runner.service.workspace / f"Work/runs/{run_id}/reviews"
+    assert (review_root / "cross-owner-input-r2-2.1.json").is_file()
+    assert (review_root / "cross-owner-verdicts-r2-2.1.json").is_file()
+    assert {finding["id"] for finding in result.pipeline["findings"]} == {
+        first.id,
+        regression.id,
+    }
+    assert result.pipeline["lane"]["completion"]["review_round"] == 1
 
 
 @pytest.mark.asyncio
@@ -1704,6 +1871,9 @@ async def test_declarative_cross_owner_stage_failures_retry_only_failed_owner_st
                 "prepare-current-cross-owner-recheck": runtime.prepare_recheck,
                 "cross-owner-recheck-requires-agent": (runtime.recheck_requires_agent),
                 "accept-current-cross-owner-recheck": runtime.accept_recheck,
+                "advance-current-cross-owner-round": runtime.advance_round,
+                "cross-owner-round-needs-revision": runtime.round_needs_revision,
+                "complete-current-cross-owner-pipeline": runtime.complete_owner_round,
                 "continue-current-cross-owner-pipeline": runtime.continue_owner,
                 "reduce-cross-owner-cohort": runtime.reduce,
             },
@@ -1964,6 +2134,9 @@ async def test_declarative_cross_owner_cohort_retries_only_failed_owner_from_fil
                 "prepare-current-cross-owner-recheck": runtime.prepare_recheck,
                 "cross-owner-recheck-requires-agent": (runtime.recheck_requires_agent),
                 "accept-current-cross-owner-recheck": runtime.accept_recheck,
+                "advance-current-cross-owner-round": runtime.advance_round,
+                "cross-owner-round-needs-revision": runtime.round_needs_revision,
+                "complete-current-cross-owner-pipeline": runtime.complete_owner_round,
                 "continue-current-cross-owner-pipeline": runtime.continue_owner,
                 "reduce-cross-owner-cohort": runtime.reduce,
             },
