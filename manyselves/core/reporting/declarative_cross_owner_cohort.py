@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from copy import deepcopy
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
+    AgentDefinition,
     DefinitionKind,
     DefinitionRegistry,
+    TaskDefinition,
     WorkflowDefinition,
     specialize_workflow,
 )
 from manyselves.kernel.executors import ExecutorRegistry
+from manyselves.kernel.ports import AgentInvocationOutcome, AgentInvoker
 from manyselves.kernel.workflow import (
     ResolvedPlan,
     WorkflowCompiler,
@@ -23,9 +28,13 @@ from manyselves.kernel.workflow import (
     retry_parallel_branches,
 )
 
-from .agentic_models import ModuleSubmission
+from .agentic_models import CrossOwnerFindingSubmission, ModuleSubmission
 from .models import REPORT_MODULE_IDS
-from .review_lifecycle import CrossReviewCoordinator
+from .review_lifecycle import (
+    CrossOwnerInitialReviewAcceptance,
+    CrossOwnerInitialReviewPreparation,
+    CrossReviewCoordinator,
+)
 
 
 class DeclarativeCrossOwnerPipelineOutcome(BaseModel):
@@ -37,6 +46,69 @@ class DeclarativeCrossOwnerPipelineOutcome(BaseModel):
     status: Literal["completed", "failed"]
     pipeline: dict[str, Any] | None = None
     error: str | None = None
+
+
+class DeclarativeCrossOwnerInitialAgentResult(BaseModel):
+    """Typed result returned by the declared initial Cross reviewer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["completed", "failed"]
+    submission: CrossOwnerFindingSubmission | None = None
+    error: str | None = None
+
+
+class DeclarativeCrossOwnerRuntimeContext(BaseModel):
+    """Capability-owned state threaded through one Cross owner workflow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    owner_module_id: str
+    status: Literal["initial_ready", "initial_resumed", "initial_accepted", "failed"]
+    preparation: CrossOwnerInitialReviewPreparation | None = None
+    acceptance: CrossOwnerInitialReviewAcceptance | None = None
+    error: str | None = None
+
+
+class _CrossOwnerInitialInvoker:
+    """Invoke one prepared Cross owner through the generic Agent port."""
+
+    def __init__(self, runtime: "DeclarativeCrossOwnerRuntime") -> None:
+        self._runtime = runtime
+
+    async def invoke(
+        self,
+        _agent: AgentDefinition,
+        _task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        del task_id
+        context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
+        preparation = cast(CrossOwnerInitialReviewPreparation, context.preparation)
+        envelope = cast(Any, preparation.envelope)
+        try:
+            payload = await self._runtime._current_runner._agent(
+                "cross-module-reviewer",
+                envelope,
+                envelope.input_refs,
+                preparation.workflow_id,
+                session_key=conversation.key.value,
+            )
+            result = DeclarativeCrossOwnerInitialAgentResult(
+                status="completed",
+                submission=payload,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            result = DeclarativeCrossOwnerInitialAgentResult(
+                status="failed",
+                error=str(exc),
+            )
+        return AgentInvocationOutcome(status="ok", result=result)
 
 
 def register_cross_owner_pipeline_specializations(
@@ -61,7 +133,10 @@ def register_cross_owner_pipeline_specializations(
             continue
         workflow = specialize_workflow(
             template,
-            {"owner_module_id": module_id},
+            {
+                "owner_module_id": module_id,
+                "conversation_key": f"cross-owner-{module_id}",
+            },
             workflow_id=workflow_id,
         )
         definitions.register(workflow)
@@ -120,6 +195,9 @@ class DeclarativeCrossOwnerRuntime:
         )
         self._aggregate_recovered = False
         self._compatibility_invoked = False
+        self.agent_invokers: Mapping[str, AgentInvoker] = {
+            "cross-module-reviewer": _CrossOwnerInitialInvoker(self),
+        }
 
     def prepare(self, state: dict[str, Any]) -> dict[str, Any]:
         """Prepare the frozen owner inputs before the declared Parallel."""
@@ -136,6 +214,91 @@ class DeclarativeCrossOwnerRuntime:
             self._aggregate_recovered = self._coordinator.prepare()
         return deepcopy(self.current_state)
 
+    def prepare_initial(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Prepare or recover one declared Cross owner initial Agent turn."""
+
+        owner_module_id = str(values["owner_module_id"])
+        if self._aggregate_recovered or self._coordinator is None:
+            return DeclarativeCrossOwnerRuntimeContext(
+                owner_module_id=owner_module_id,
+                status="initial_resumed",
+            )
+        try:
+            preparation = self._coordinator.prepare_owner_initial(owner_module_id)
+        except BaseException as exc:
+            return DeclarativeCrossOwnerRuntimeContext(
+                owner_module_id=owner_module_id,
+                status="failed",
+                error=str(exc),
+            )
+        if preparation.mode == "invoke_agent":
+            return DeclarativeCrossOwnerRuntimeContext(
+                owner_module_id=owner_module_id,
+                status="initial_ready",
+                preparation=preparation,
+            )
+        acceptance = self._coordinator.accept_owner_initial(preparation)
+        return DeclarativeCrossOwnerRuntimeContext(
+            owner_module_id=owner_module_id,
+            status="initial_resumed",
+            preparation=preparation,
+            acceptance=acceptance,
+        )
+
+    @staticmethod
+    def initial_requires_agent(context: DeclarativeCrossOwnerRuntimeContext) -> bool:
+        """Return the explicit file-workflow branch decision."""
+
+        return context.status == "initial_ready"
+
+    def accept_initial(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Accept one typed initial Agent result for the compatibility continuation."""
+
+        context = DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
+        result = DeclarativeCrossOwnerInitialAgentResult.model_validate(values["result"])
+        if result.status == "failed":
+            return context.model_copy(
+                update={"status": "failed", "error": result.error}
+            )
+        try:
+            acceptance = cast(CrossReviewCoordinator, self._coordinator).accept_owner_initial(
+                cast(CrossOwnerInitialReviewPreparation, context.preparation),
+                result.submission,
+            )
+        except BaseException as exc:
+            return context.model_copy(
+                update={"status": "failed", "error": str(exc)}
+            )
+        return context.model_copy(
+            update={"status": "initial_accepted", "acceptance": acceptance}
+        )
+
+    async def continue_owner(
+        self,
+        context: DeclarativeCrossOwnerRuntimeContext,
+    ) -> DeclarativeCrossOwnerPipelineOutcome:
+        """Continue the current owner pipeline after its declared initial boundary."""
+
+        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
+        if context.status == "failed":
+            return DeclarativeCrossOwnerPipelineOutcome(
+                owner_module_id=context.owner_module_id,
+                status="failed",
+                error=context.error,
+            )
+        return await self.execute_owner(
+            {
+                "owner_module_id": context.owner_module_id,
+                "initial_acceptance": context.acceptance,
+            }
+        )
+
     async def execute_owner(
         self,
         values: Mapping[str, Any],
@@ -143,6 +306,10 @@ class DeclarativeCrossOwnerRuntime:
         """Execute and drain one owner without mutating sibling branch state."""
 
         owner_module_id = str(values["owner_module_id"])
+        initial_acceptance = cast(
+            CrossOwnerInitialReviewAcceptance | None,
+            values.get("initial_acceptance"),
+        )
         if self._aggregate_recovered:
             return DeclarativeCrossOwnerPipelineOutcome(
                 owner_module_id=owner_module_id,
@@ -177,7 +344,10 @@ class DeclarativeCrossOwnerRuntime:
                 pipeline={"compatibility": True},
             )
         try:
-            pipeline = await self._coordinator.run_owner(owner_module_id)
+            pipeline = await self._coordinator.run_owner(
+                owner_module_id,
+                initial_acceptance=initial_acceptance,
+            )
         except BaseException as exc:
             return DeclarativeCrossOwnerPipelineOutcome(
                 owner_module_id=owner_module_id,

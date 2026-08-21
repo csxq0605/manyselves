@@ -1,0 +1,10 @@
+id: continue-current-cross-owner-pipeline
+version: 1.0.0
+description: Continue the current Cross owner pipeline after initial review
+implementation: capability:distribution-reporting:continue-current-cross-owner-pipeline
+input_contract: declarative_cross_owner_runtime_context
+output_contract: declarative_cross_owner_pipeline_outcome
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

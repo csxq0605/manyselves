@@ -21,6 +21,7 @@ from manyselves.core.reporting.agentic_models import (
     RevisionResponse,
 )
 from manyselves.core.reporting.declarative_cross_owner_cohort import (
+    DeclarativeCrossOwnerInitialAgentResult,
     DeclarativeCrossOwnerPipelineOutcome,
     DeclarativeCrossOwnerRuntime,
     compile_cross_owner_workflows,
@@ -39,6 +40,12 @@ from manyselves.core.reporting.parallel_runtime import (
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
+from manyselves.kernel.conversations import (
+    ConversationKey,
+    ConversationMode,
+    ConversationRegistry,
+)
+from manyselves.kernel.definitions import DefinitionKind
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.workflow import WorkflowState, WorkflowStatus
 from manyselves.runtime.state_store import FileWorkflowStateStore, InMemoryWorkflowStateStore
@@ -393,9 +400,13 @@ async def _execute_declarative_cross_owner_cohort(
         RuntimeContext(
             tools={
                 "prepare-cross-owner-cohort": runtime.prepare,
-                "execute-current-cross-owner-pipeline": runtime.execute_owner,
+                "prepare-current-cross-owner-initial": runtime.prepare_initial,
+                "cross-owner-initial-requires-agent": runtime.initial_requires_agent,
+                "accept-current-cross-owner-initial": runtime.accept_initial,
+                "continue-current-cross-owner-pipeline": runtime.continue_owner,
                 "reduce-cross-owner-cohort": runtime.reduce,
             },
+            agents=runtime.agent_invokers,
             contracts=contracts,
             definitions=definitions,
             subworkflows=pipeline_plans,
@@ -403,6 +414,47 @@ async def _execute_declarative_cross_owner_cohort(
     )
     assert completed.status is WorkflowStatus.COMPLETED
     return completed.outputs["result"], completed
+
+
+async def _execute_declarative_cross_owner_pipeline(
+    runner: _Runner,
+    state: dict,
+    workflow_id: str,
+    *,
+    owner_module_id: str = "2.1",
+) -> WorkflowState:
+    definitions, contracts, _tail = build_reporting_tail_definition()
+    executors = build_builtin_executor_registry()
+    _cohort_plan, pipeline_plans = compile_cross_owner_workflows(
+        definitions,
+        executors,
+    )
+    pipeline_plan = pipeline_plans[
+        f"distribution-cross-owner-{owner_module_id}-pipeline"
+    ]
+    runtime = DeclarativeCrossOwnerRuntime(runner, state, workflow_id)
+    kernel_state = WorkflowState.for_plan(state["run_id"], pipeline_plan)
+    kernel_state.variables["reporting-state"] = state
+    return await WorkflowRuntimeHost(
+        executors,
+        InMemoryWorkflowStateStore(),
+        InMemoryWorkflowEventSink(),
+    ).execute(
+        pipeline_plan,
+        kernel_state,
+        RuntimeContext(
+            tools={
+                "prepare-current-cross-owner-initial": runtime.prepare_initial,
+                "cross-owner-initial-requires-agent": runtime.initial_requires_agent,
+                "accept-current-cross-owner-initial": runtime.accept_initial,
+                "continue-current-cross-owner-pipeline": runtime.continue_owner,
+            },
+            agents=runtime.agent_invokers,
+            contracts=contracts,
+            definitions=definitions,
+            subworkflows=pipeline_plans,
+        ),
+    )
 
 
 def _write_legacy_completed_task_binding(
@@ -1097,6 +1149,165 @@ async def test_declarative_cross_owner_cohort_preserves_independent_pipeline_sem
 
 
 @pytest.mark.asyncio
+async def test_declarative_cross_owner_initial_reviewer_uses_agent_port_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-cross-declarative-initial-agent"
+    runner = _Runner(tmp_path)
+    _write_modules(runner, run_id)
+    monkeypatch.setattr(
+        lifecycle,
+        "_verified_cross_owner_noop",
+        lambda runner, **kwargs: _fake_noop(runner, **kwargs),
+    )
+
+    completed = await _execute_declarative_cross_owner_pipeline(
+        runner,
+        _state(run_id),
+        "workflow-cross-declarative-initial-agent",
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert runner.calls == [("2.1", "cross-owner-2.1")]
+    conversation = completed.conversations["cross-owner-conversation"]
+    assert conversation.key.agent_id == "cross-module-reviewer"
+    assert conversation.key.value == "cross-owner-2.1"
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(
+        completed.outputs["result"]
+    )
+    assert result.owner_module_id == "2.1"
+    assert result.status == "completed"
+    assert result.pipeline is not None
+
+
+@pytest.mark.asyncio
+async def test_declarative_cross_owner_initial_result_recovery_skips_agent_port(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-cross-declarative-initial-recovery"
+    runner = _Runner(tmp_path)
+    _write_modules(runner, run_id)
+    monkeypatch.setattr(
+        lifecycle,
+        "_verified_cross_owner_noop",
+        lambda runner, **kwargs: _fake_noop(runner, **kwargs),
+    )
+    state = _state(run_id)
+    _owner_input, _owner_input_ref = lifecycle._cross_owner_input(
+        runner,
+        state=state,
+        modules=state["module_submissions"],
+        owner_module_id="2.1",
+        phase="initial",
+        review_round=0,
+    )
+    initial_result = CrossOwnerFindingSubmission(
+        owner_module_id="2.1",
+        coverage=CrossReviewCoverageEntry(
+            module_id="2.1",
+            checked_dimensions=list(CROSS_REVIEW_DIMENSIONS),
+        ),
+        findings=[],
+        synthesis_inputs=_synthesis("2.1"),
+    )
+    runner.service.store.write_json(
+        f"Work/runs/{run_id}/reviews/cross-owner-findings-r0-2.1.json",
+        initial_result.model_dump(mode="json"),
+    )
+
+    completed = await _execute_declarative_cross_owner_pipeline(
+        runner,
+        state,
+        "workflow-cross-declarative-initial-recovery",
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert runner.calls == []
+    assert "cross-owner-conversation" not in completed.conversations
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(
+        completed.outputs["result"]
+    )
+    assert result.owner_module_id == "2.1"
+    assert result.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_declarative_cross_owner_accepted_initial_reuses_result_on_resume_without_task_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-cross-declarative-accepted-initial-resume"
+    workflow_id = "workflow-cross-declarative-accepted-initial-resume"
+    runner = _Runner(tmp_path)
+    _write_modules(runner, run_id)
+    monkeypatch.setattr(
+        lifecycle,
+        "_verified_cross_owner_noop",
+        lambda runner, **kwargs: _fake_noop(runner, **kwargs),
+    )
+    state = _state(run_id)
+    runtime = DeclarativeCrossOwnerRuntime(runner, state, workflow_id)
+    runtime.prepare(state)
+    context = runtime.prepare_initial(
+        {
+            "state": state,
+            "owner_module_id": "2.1",
+        }
+    )
+    assert context.status == "initial_ready"
+    definitions, _contracts, _tail = build_reporting_tail_definition()
+    conversation = ConversationRegistry().create(
+        ConversationKey(
+            agent_id="cross-module-reviewer",
+            value="cross-owner-2.1",
+            mode=ConversationMode.RUN,
+        ),
+        run_id=run_id,
+    )
+    agent = definitions.require(DefinitionKind.AGENT, "cross-module-reviewer")
+    task = definitions.require(
+        DefinitionKind.TASK,
+        "cross-owner-runtime-initial-review",
+    )
+    invocation = await runtime.agent_invokers["cross-module-reviewer"].invoke(
+        agent,
+        task,
+        context,
+        conversation,
+        task_id="invoke-current-cross-owner-initial",
+    )
+    typed_result = DeclarativeCrossOwnerInitialAgentResult.model_validate(
+        invocation.result
+    )
+    assert typed_result.status == "completed"
+    accepted = runtime.accept_initial(
+        {
+            "context": context,
+            "result": typed_result,
+        }
+    )
+    assert accepted.status == "initial_accepted"
+    calls_after_accept = list(runner.calls)
+    assert calls_after_accept == [("2.1", "cross-owner-2.1")]
+
+    # The accepted typed result is the declarative continuation boundary.  A
+    # reconstructed state may carry resume=True without a legacy task binding;
+    # continue_owner must use the accepted result and avoid a second Agent turn.
+    state["resume"] = True
+    legacy_binding = (
+        tmp_path
+        / f"Work/runs/{run_id}/task-attempts/cross-owner-2.1-r0-initial/current.json"
+    )
+    assert not legacy_binding.exists()
+    completed = await runtime.continue_owner(accepted)
+
+    assert completed.status == "completed"
+    assert runner.calls == calls_after_accept
+
+
+@pytest.mark.asyncio
 async def test_declarative_cross_owner_cohort_retries_only_failed_owner_from_file_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1124,9 +1335,13 @@ async def test_declarative_cross_owner_cohort_retries_only_failed_owner_from_fil
         return RuntimeContext(
             tools={
                 "prepare-cross-owner-cohort": runtime.prepare,
-                "execute-current-cross-owner-pipeline": runtime.execute_owner,
+                "prepare-current-cross-owner-initial": runtime.prepare_initial,
+                "cross-owner-initial-requires-agent": runtime.initial_requires_agent,
+                "accept-current-cross-owner-initial": runtime.accept_initial,
+                "continue-current-cross-owner-pipeline": runtime.continue_owner,
                 "reduce-cross-owner-cohort": runtime.reduce,
             },
+            agents=runtime.agent_invokers,
             contracts=contracts,
             definitions=definitions,
             subworkflows=pipeline_plans,

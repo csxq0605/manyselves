@@ -136,9 +136,15 @@ async def execute_declarative_reporting_tail(
                         if stage != "cross"
                     },
                     "prepare-cross-owner-cohort": cross_runtime.prepare,
-                    "execute-current-cross-owner-pipeline": (cross_runtime.execute_owner),
+                    "prepare-current-cross-owner-initial": cross_runtime.prepare_initial,
+                    "cross-owner-initial-requires-agent": (
+                        cross_runtime.initial_requires_agent
+                    ),
+                    "accept-current-cross-owner-initial": cross_runtime.accept_initial,
+                    "continue-current-cross-owner-pipeline": cross_runtime.continue_owner,
                     "reduce-cross-owner-cohort": cross_runtime.reduce,
                 },
+                agents=cross_runtime.agent_invokers,
                 contracts=contracts,
                 definitions=definitions,
                 subworkflows={

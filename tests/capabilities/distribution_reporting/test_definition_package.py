@@ -303,12 +303,93 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
     assert join.parallel == parallel.id
     assert set(join.inputs) == set(REPORT_MODULE_IDS)
 
-    # The first Cross slice only owns the existing owner-pipeline compatibility
-    # boundary. Agent/Conversation declarations are characterized separately
-    # when that pipeline is decomposed.
-    for pipeline in branch_workflows.values():
+    for module_id, pipeline in branch_workflows.items():
         pipeline_plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
             pipeline,
             registry,
         )
-        assert pipeline_plan.tool_ids == ["execute-current-cross-owner-pipeline"]
+        assert pipeline_plan.agent_ids == ["cross-module-reviewer"]
+        assert pipeline_plan.task_ids == ["cross-owner-runtime-initial-review"]
+        assert pipeline_plan.tool_ids == [
+            "prepare-current-cross-owner-initial",
+            "cross-owner-initial-requires-agent",
+            "accept-current-cross-owner-initial",
+            "continue-current-cross-owner-pipeline",
+        ]
+        conversation = next(
+            action
+            for action in pipeline_plan.actions
+            if action.id == "create-cross-owner-conversation"
+        )
+        assert conversation.conversation_key == f"cross-owner-{module_id}"
+
+
+def test_cross_owner_21_pipeline_declares_initial_reviewer_agent_boundary() -> None:
+    _, registry = load_distribution_reporting_capability()
+    # The owner specializations are registered by the same loader used by the
+    # production Cross compiler; this keeps the characterization on the
+    # packaged definition rather than a hand-built test workflow.
+    from manyselves.core.reporting.declarative_cross_owner_cohort import (
+        register_cross_owner_pipeline_specializations,
+    )
+
+    register_cross_owner_pipeline_specializations(registry)
+    pipeline = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-cross-owner-2.1-pipeline",
+    )
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        pipeline,
+        registry,
+    )
+
+    assert [action.kind for action in plan.actions] == [
+        "invoke_tool",
+        "invoke_tool",
+        "if",
+        "create_conversation",
+        "invoke_agent",
+        "invoke_tool",
+        "goto",
+        "invoke_tool",
+        "end_workflow",
+    ]
+    assert plan.tool_ids == [
+        "prepare-current-cross-owner-initial",
+        "cross-owner-initial-requires-agent",
+        "accept-current-cross-owner-initial",
+        "continue-current-cross-owner-pipeline",
+    ]
+    assert plan.agent_ids == ["cross-module-reviewer"]
+    assert plan.task_ids == ["cross-owner-runtime-initial-review"]
+    assert "execute-current-cross-owner-pipeline" not in plan.tool_ids
+
+    prepare = plan.actions[0]
+    assert prepare.tool == "prepare-current-cross-owner-initial"
+    assert prepare.input_variables == {
+        "state": "reporting-state",
+        "owner_module_id": "owner-module-id",
+    }
+    route = plan.actions[1]
+    assert route.tool == "cross-owner-initial-requires-agent"
+    choose = plan.actions[2]
+    create = plan.actions[3]
+    assert choose.then == create.id
+    assert choose.otherwise == "continue-current-cross-owner-pipeline"
+    assert create.agent == "cross-module-reviewer"
+    assert create.conversation_key == "cross-owner-2.1"
+
+    invoke = plan.actions[4]
+    assert invoke.agent == "cross-module-reviewer"
+    assert invoke.task == "cross-owner-runtime-initial-review"
+    assert invoke.conversation_variable == "cross-owner-conversation"
+    assert invoke.input_variable == "owner-context"
+    accept = plan.actions[5]
+    assert accept.tool == "accept-current-cross-owner-initial"
+    assert accept.input_variables == {
+        "context": "owner-context",
+        "result": "cross-owner-initial-agent-result",
+    }
+    continue_action = plan.actions[7]
+    assert continue_action.tool == "continue-current-cross-owner-pipeline"
+    assert continue_action.input_variable == "owner-context"

@@ -1,0 +1,10 @@
+id: cross-owner-runtime-initial-review
+version: 1.0.0
+description: Run a prepared Cross owner initial review through the generic Agent port
+agent: cross-module-reviewer
+objective: Return findings and synthesis inputs for the exact prepared Cross owner scope.
+input_contract: declarative_cross_owner_runtime_context
+output_contract: declarative_cross_owner_initial_agent_result
+tools:
+- submit_result
+recovery: current-reporting-recovery

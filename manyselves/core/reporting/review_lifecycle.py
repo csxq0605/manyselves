@@ -2914,6 +2914,41 @@ class _CrossOwnerPipelineResult(StrictModel):
     verdicts: list[ResolutionVerdict] = Field(default_factory=list)
 
 
+class CrossOwnerInitialReviewPreparation(StrictModel):
+    """Typed boundary before one Cross-owner initial Agent turn.
+
+    A declarative runtime can dispatch ``envelope`` when ``mode`` is
+    ``invoke_agent``.  If the typed finding submission is already present,
+    preparation returns ``continue_existing`` with that persisted result so a
+    reconstructed Action does not repeat the reviewer turn.
+    """
+
+    mode: Literal["invoke_agent", "continue_existing"]
+    run_id: str
+    workflow_id: str
+    owner_module_id: str
+    review_round: int
+    reviewer_session_key: str
+    owner_input_ref: str
+    owner_input: CrossOwnerInput
+    envelope: TaskEnvelope | None = None
+    existing_result_ref: str | None = None
+    existing_result: CrossOwnerFindingSubmission | None = None
+
+
+class CrossOwnerInitialReviewAcceptance(StrictModel):
+    """Typed boundary after accepting one Cross-owner initial result."""
+
+    run_id: str
+    workflow_id: str
+    owner_module_id: str
+    reviewer_session_key: str
+    owner_input_ref: str
+    result_ref: str
+    result: CrossOwnerFindingSubmission
+    next_action: Literal["continue_existing"] = "continue_existing"
+
+
 _CROSS_OWNER_MODULE_IDS = tuple(REPORT_TAXONOMY)
 
 
@@ -3846,28 +3881,25 @@ def _promote_cross_owner_pipeline_completion(
     return lane.model_copy(update={"completion_ref": ref, "completion": promoted})
 
 
-async def _run_cross_owner_review(
+def _build_cross_owner_review_envelope(
     runner: "ReportWorkflowRunner",
     *,
     state: dict,
-    workflow_id: str,
-    modules: dict[str, ModuleSubmission],
     owner_module_id: str,
     phase: Literal["initial", "recheck"],
     review_round: int,
     owner_input_ref: str,
-    required_findings: list[CrossReviewFinding] | None = None,
-    revision_responses: list[RevisionResponse] | None = None,
-    local_review_ref: str | None = None,
-    prior_synthesis_inputs: list[CrossSynthesisInput] | None = None,
-) -> tuple[CrossOwnerFindingSubmission | CrossOwnerVerdictSubmission, str]:
-    """Dispatch one fixed Cross-owner reviewer and persist its typed result."""
+) -> TaskEnvelope:
+    """Build the shared typed TaskEnvelope for one Cross-owner turn."""
 
     input_kind = "cross_owner_input"
     output_kind = (
         "cross_owner_finding_submission" if phase == "initial" else "cross_owner_verdict_submission"
     )
-    envelope = TaskEnvelope(
+    owner_input = CrossOwnerInput.model_validate_json(
+        (runner.service.workspace / owner_input_ref).read_text(encoding="utf-8")
+    )
+    return TaskEnvelope(
         task_id=f"cross-owner-{owner_module_id}-r{review_round}-{phase}",
         run_id=state["run_id"],
         # One packaged reviewer definition is reused with five durable session
@@ -3904,24 +3936,27 @@ async def _run_cross_owner_review(
             else None
         ),
         artifact_delivery_modes={owner_input_ref: "inline"},
-        target_submodule_ids=list(
-            CrossOwnerInput.model_validate_json(
-                (runner.service.workspace / owner_input_ref).read_text(encoding="utf-8")
-            ).owner_scope_submodule_ids
-        ),
+        target_submodule_ids=list(owner_input.owner_scope_submodule_ids),
         input_contract_kind=input_kind,
         input_contract_ref=owner_input_ref,
         # Owner-specific review questions already live in CrossOwnerInput.
         # Keeping one source avoids duplicating the focus in task context.
         inline_context="",
     )
-    result = await runner._agent(
-        "cross-module-reviewer",
-        envelope,
-        envelope.input_refs,
-        workflow_id,
-        session_key=f"cross-owner-{owner_module_id}",
-    )
+
+
+def _accept_cross_owner_review_result(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    owner_module_id: str,
+    phase: Literal["initial", "recheck"],
+    review_round: int,
+    result: CrossOwnerFindingSubmission | CrossOwnerVerdictSubmission,
+    required_findings: list[CrossReviewFinding] | None = None,
+) -> tuple[CrossOwnerFindingSubmission | CrossOwnerVerdictSubmission, str]:
+    """Validate and persist one typed Cross-owner reviewer result."""
+
     if phase == "initial":
         if not isinstance(result, CrossOwnerFindingSubmission):
             raise ReviewLifecycleError(
@@ -3950,6 +3985,91 @@ async def _run_cross_owner_review(
             result,
         )
     return result, artifact_ref
+
+
+def _accept_cross_owner_initial_review(
+    runner: "ReportWorkflowRunner",
+    *,
+    preparation: CrossOwnerInitialReviewPreparation,
+    result: CrossOwnerFindingSubmission | None,
+) -> CrossOwnerInitialReviewAcceptance:
+    """Accept a fresh or already-persisted Cross-owner initial result."""
+
+    if preparation.mode == "continue_existing":
+        if result is not None:
+            raise ReviewLifecycleError(
+                "cannot accept a Cross owner initial result after persisted continuation"
+            )
+        if preparation.existing_result is None or preparation.existing_result_ref is None:
+            raise ReviewLifecycleError(
+                "Cross owner initial continuation lacks its persisted result"
+            )
+        accepted = preparation.existing_result
+        result_ref = preparation.existing_result_ref
+    else:
+        if result is None:
+            raise ReviewLifecycleError("Cross owner initial Agent result is missing")
+        accepted, result_ref = _accept_cross_owner_review_result(
+            runner,
+            state={"run_id": preparation.run_id},
+            owner_module_id=preparation.owner_module_id,
+            phase="initial",
+            review_round=preparation.review_round,
+            result=result,
+        )
+        assert isinstance(accepted, CrossOwnerFindingSubmission)
+    return CrossOwnerInitialReviewAcceptance(
+        run_id=preparation.run_id,
+        workflow_id=preparation.workflow_id,
+        owner_module_id=preparation.owner_module_id,
+        reviewer_session_key=preparation.reviewer_session_key,
+        owner_input_ref=preparation.owner_input_ref,
+        result_ref=result_ref,
+        result=accepted,
+    )
+
+
+async def _run_cross_owner_review(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    workflow_id: str,
+    modules: dict[str, ModuleSubmission],
+    owner_module_id: str,
+    phase: Literal["initial", "recheck"],
+    review_round: int,
+    owner_input_ref: str,
+    required_findings: list[CrossReviewFinding] | None = None,
+    revision_responses: list[RevisionResponse] | None = None,
+    local_review_ref: str | None = None,
+    prior_synthesis_inputs: list[CrossSynthesisInput] | None = None,
+) -> tuple[CrossOwnerFindingSubmission | CrossOwnerVerdictSubmission, str]:
+    """Dispatch one fixed Cross-owner reviewer and persist its typed result."""
+
+    envelope = _build_cross_owner_review_envelope(
+        runner,
+        state=state,
+        owner_module_id=owner_module_id,
+        phase=phase,
+        review_round=review_round,
+        owner_input_ref=owner_input_ref,
+    )
+    result = await runner._agent(
+        "cross-module-reviewer",
+        envelope,
+        envelope.input_refs,
+        workflow_id,
+        session_key=f"cross-owner-{owner_module_id}",
+    )
+    return _accept_cross_owner_review_result(
+        runner,
+        state=state,
+        owner_module_id=owner_module_id,
+        phase=phase,
+        review_round=review_round,
+        result=result,
+        required_findings=required_findings,
+    )
 
 
 def _verified_cross_owner_noop(
@@ -4633,7 +4753,103 @@ class CrossReviewCoordinator:
             return False
         return self.prepare()
 
-    async def run_owner(self, owner_module_id: str) -> _CrossOwnerPipelineResult:
+    def prepare_owner_initial(
+        self,
+        owner_module_id: str,
+    ) -> CrossOwnerInitialReviewPreparation:
+        """Prepare one owner initial reviewer turn for a generic runtime.
+
+        The common frozen input is prepared first.  A durable typed initial
+        result is returned as ``continue_existing``; otherwise the caller can
+        invoke the returned Agent ``envelope`` and pass the result to
+        :meth:`accept_owner_initial`.
+        """
+
+        aggregate_recovered = self.ensure_prepared()
+        if aggregate_recovered:
+            loaded_input = _load_cross_owner_input(
+                self.runner,
+                run_id=self.run_id,
+                owner_module_id=owner_module_id,
+                review_round=0,
+                phase="initial",
+            )
+            if loaded_input is None:
+                raise ReviewLifecycleError(
+                    f"Cross owner initial input is missing after aggregate recovery: "
+                    f"{owner_module_id}"
+                )
+            owner_input, owner_input_ref = loaded_input
+        else:
+            owner_input, owner_input_ref = self.initial_inputs[owner_module_id]
+
+        pipeline_completion_path = (
+            self.runner.service.workspace / f"Work/runs/{self.run_id}/lanes/cross-r1/"
+            f"module-{owner_module_id}/pipeline-completion.json"
+        )
+        require_legacy_task_binding = (
+            bool(self.state.get("resume")) and not pipeline_completion_path.is_file()
+        )
+        initial_loaded = _load_cross_owner_initial_result(
+            self.runner,
+            run_id=self.run_id,
+            owner_module_id=owner_module_id,
+            require_task_binding=require_legacy_task_binding,
+        )
+        reviewer_session_key = f"cross-owner-{owner_module_id}"
+        if initial_loaded is not None:
+            existing_result, existing_result_ref = initial_loaded
+            return CrossOwnerInitialReviewPreparation(
+                mode="continue_existing",
+                run_id=self.run_id,
+                workflow_id=self.workflow_id,
+                owner_module_id=owner_module_id,
+                review_round=0,
+                reviewer_session_key=reviewer_session_key,
+                owner_input_ref=owner_input_ref,
+                owner_input=owner_input,
+                existing_result_ref=existing_result_ref,
+                existing_result=existing_result,
+            )
+        envelope = _build_cross_owner_review_envelope(
+            self.runner,
+            state=self.state,
+            owner_module_id=owner_module_id,
+            phase="initial",
+            review_round=0,
+            owner_input_ref=owner_input_ref,
+        )
+        return CrossOwnerInitialReviewPreparation(
+            mode="invoke_agent",
+            run_id=self.run_id,
+            workflow_id=self.workflow_id,
+            owner_module_id=owner_module_id,
+            review_round=0,
+            reviewer_session_key=reviewer_session_key,
+            owner_input_ref=owner_input_ref,
+            owner_input=owner_input,
+            envelope=envelope,
+        )
+
+    def accept_owner_initial(
+        self,
+        preparation: CrossOwnerInitialReviewPreparation,
+        result: CrossOwnerFindingSubmission | None = None,
+    ) -> CrossOwnerInitialReviewAcceptance:
+        """Accept one generic-runtime Cross-owner initial reviewer result."""
+
+        return _accept_cross_owner_initial_review(
+            self.runner,
+            preparation=preparation,
+            result=result,
+        )
+
+    async def run_owner(
+        self,
+        owner_module_id: str,
+        *,
+        initial_acceptance: CrossOwnerInitialReviewAcceptance | None = None,
+    ) -> _CrossOwnerPipelineResult:
         if self.ensure_prepared():
             raise ReviewLifecycleError(
                 f"Cross aggregate is already complete; owner dispatch is not required: {owner_module_id}"
@@ -4742,11 +4958,15 @@ class CrossReviewCoordinator:
         require_legacy_task_binding = (
             bool(self.state.get("resume")) and not pipeline_completion_path.is_file()
         )
-        initial_loaded = _load_cross_owner_initial_result(
-            self.runner,
-            run_id=self.run_id,
-            owner_module_id=owner_module_id,
-            require_task_binding=require_legacy_task_binding,
+        initial_loaded = (
+            (initial_acceptance.result, initial_acceptance.result_ref)
+            if initial_acceptance is not None
+            else _load_cross_owner_initial_result(
+                self.runner,
+                run_id=self.run_id,
+                owner_module_id=owner_module_id,
+                require_task_binding=require_legacy_task_binding,
+            )
         )
         if initial_loaded is None:
             initial_result, initial_result_ref = await _run_cross_owner_review(
