@@ -1134,8 +1134,16 @@ class _CurrentModuleStages:
         return context.model_copy(
             deep=True,
             update={
-                "status": "review_resumed",
+                "status": (
+                    "reviewed"
+                    if accepted.next_action == "completed"
+                    else "revision_pending"
+                ),
                 "module": accepted.current,
+                "review": cast(
+                    DeclarativeModuleReviewPreparation,
+                    context.review,
+                ).model_copy(update={"acceptance": accepted}),
                 "recheck": None,
             },
         )

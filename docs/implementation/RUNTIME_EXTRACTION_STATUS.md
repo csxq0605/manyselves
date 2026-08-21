@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-06/WP-07 explicit-exit loops and production module Lane decomposition`
-- Last completed vertical slice: the generic Compiler now accepts a natural back-edge without `max_iterations` only when that exact loop contains an explicit `If`/`ConditionGroup` exit; the Stateless Kernel and Runtime Host execute the condition-controlled loop unchanged, while self-loops, unrelated external conditions, and non-natural cycles remain rejected
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `40da8c7` (`WP-07: invoke first module rechecks as declared agents`); the explicit-exit Compiler slice is this document's commit
+- Current work package: `WP-07/WP-08 production review decomposition`
+- Last completed vertical slice: an open or newly introduced module finding now drives the file-defined Lane back through the same original-Author revision and original-Auditor recheck actions until the existing typed review result reports completion; resolved reviews exit explicitly, while preflight and exceptional compatibility paths remain unchanged
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `ec44a61` (`WP-06: compile loops with explicit exit conditions`); the repeated module correction slice is this document's commit
 - Current migration stage: `file-defined Reporting workflow migration`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
-- Next automatic action: express repeated Author-correction/Auditor-recheck rounds with the same declared actions and an explicit business exit condition, without introducing a new iteration cap; retain preflight correction, disputed/needs-input handling, and Deferred Main at Capability boundaries
+- Next automatic action: decompose each Cross owner pipeline in dependency order—initial owner review, original Author revision, original module Auditor local regression, original Cross reviewer recheck, owner completion, and five-owner Join—while preserving current concurrency and original Conversations
 
 ## Reopened architecture completion audit
 
@@ -32,8 +32,9 @@ architecture:
   its lifecycle boundaries; initial authors now execute as file-declared Agents,
   initial Auditors, the first finding-triggered Author correction, and its first
   original-Auditor semantic recheck now execute as file-declared Agents, but
-  subsequent open/new-finding correction rounds still use a compatibility Tool
-  rather than repeating those declared actions;
+  subsequent open/new-finding correction rounds now repeat those same declared
+  actions through an explicit exit loop; only preflight and exceptional paths
+  retain the compatibility Tool;
 - the packaged detailed review Lane is file-owned and executable, but the full
   production authoring/preflight/review lifecycle is not yet decomposed into it;
 - `RecoveryController` is not yet part of the production generic Agent execution
@@ -62,6 +63,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
+- `WP-07: repeat module correction as declared Agents` — the production Lane routes an open/new recheck finding back through its existing file-declared original-Author revision and original-Auditor recheck actions, updates typed Capability state between rounds, and exits on the existing completed result; tests prove two revisions and two rechecks reuse `module-{module_id}` and `module-auditor-{module_id}` Conversations without invoking the Legacy review Tool, while no cap, hash, CAS, or new gate is introduced (this commit)
 - `WP-06: compile loops with explicit exit conditions` — the business-neutral Compiler builds a CFG, validates each back-edge as a natural loop, and accepts an omitted iteration cap only when that loop owns an explicit `If`/`ConditionGroup` edge to the outside; existing `max_iterations` execution remains unchanged, no public Definition field or runtime gate is added, and the Runtime Host executes the exiting loop through the stateless reducer (this commit)
 - `WP-07: invoke first module rechecks as declared Agents` — the first persisted Author candidate is prepared through the exact current preflight and compact-delta input, invokes the original `module-auditor-{module_id}` Conversation through a file-declared recheck Task, and accepts typed verdicts into the existing progress/completion artifacts; exceptional Author responses, failed preflight, open/new findings, Main, and Deferred Main retain the current Capability continuation (this commit)
 - `WP-07: invoke first module revisions as declared Agents` — an initial finding routes through Capability-owned typed preparation into one of five module-specialized file Tasks, the original `module-{module_id}` Author Conversation, and the generic Agent port; typed acceptance applies and persists the exact existing patch/diff/barrier behavior once, and the existing review continuation consumes that persisted candidate without replaying the Author (this commit)
@@ -110,6 +112,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Repeated-module-correction Characterization first asserted that recheck continuation must return to `module-review-needs-revision`; the focused execution then proved an initial finding, first revision, open recheck, second revision, resolved recheck, and completion through the same original Author/Auditor Conversation keys with no Legacy `review` event: `2 passed`. Affected Capability package, production runner, standalone Lane/Cohort/tail, semantic trace, and Runtime Host passed: `34 passed`; exact module review/revision/recheck lifecycle boundaries passed: `10 passed`; protected Max Token continuation, Tool Slice continuation, productive slices, No-progress stop, Schema correction, persisted Tool result reuse, original Agent session reuse, and finding-progress resume passed: `8 passed`. Focused Ruff, compileall, and `git diff --check` passed. No full regression, Provider, browser, or server test ran.
 - Explicit-exit-loop Characterization first failed on the blanket `workflow with a back edge requires max_iterations` rule; after implementation `If` and `ConditionGroup` natural loops execute without a cap, while a loop with no exit and an unrelated external condition remain rejected. Compiler/ControlFlow/Stateless Runtime Host and Kernel import-boundary selection passed: `19 passed`. Focused Ruff, compileall, and `git diff --check` passed. No full regression, Provider, browser, or server test ran.
 - First-recheck Characterization initially failed because the production Lane jumped from revision acceptance directly to the compatibility review Tool; after implementation the specialization declares recheck preparation/routing, the original `module-auditor-2.1` Conversation, generic Auditor Agent invocation, typed verdict acceptance, and continuation: `1 passed`. The focused fresh-finding path proves initial Author → initial Auditor → original Author revision → original Auditor recheck exactly once before completion: `1 passed`.
 - Exact module lifecycle plus typed recheck prepare/accept boundaries passed: `54 passed`; combined Capability package, production runner, standalone Lane/Cohort, semantic trace, module-Auditor concurrency, and Runtime Host selection passed: `31 passed`. Protected Max Token continuation, Tool Slice continuation, productive slices, No-progress stop, Schema correction, persisted Provider result reuse, original Auditor session reuse, and finding-progress resume passed: `8 passed`. Focused Ruff/import ordering, compileall, `git diff --check`, and wheel build passed; the wheel contains the recheck Task, three recheck boundary Tools, and typed recheck Agent-result contract. No full regression, Provider, browser, or server test ran.
@@ -222,6 +225,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - The production-initial-Auditor split mechanically reuses the existing preflight, `ModuleReviewInput`, TaskEnvelope, finding/completion, and `ModuleReviewProgress` shapes. It introduces no digest/hash/CAS calculation or comparison; resume routing depends on the existing typed progress action and the same `module-auditor-{module_id}` identity, while the historical recheck delivery metadata remains untouched inside the current continuation.
 - The first production Author-revision split mechanically factors the existing `request_module_revision` operation into typed prepare and accept boundaries. The original Author identity, `module-{module_id}` Conversation, TaskEnvelope, patch application, diff, and pre-existing compatibility barrier are preserved; the historical SHA-256 write remains in one accept implementation and was moved once without copying, expanding, or adding hash/CAS logic.
 - The first production Auditor-recheck split mechanically extracts one shared compact-delta input/TaskEnvelope builder used by both declarative and Legacy rechecks. Existing unchanged-content metadata and `hash_retained` delivery descriptions remain single shared expressions; `hash_retained`, `subject_sha256`, and `hashlib` occurrence counts do not increase, and no hash/CAS algorithm or comparison was added.
+- Repeated module correction reuses the same typed acceptance data and the same declared revision/recheck actions; the only graph change is a `Goto` to the existing finding condition. It adds no iteration cap, validation gate, hash, CAS, or new retry decision, and exceptional/preflight behavior continues through the existing Capability boundary.
 - WP-10 keeps the Capability `gates/` index intentionally empty because the migrated path has no new acceptance or decision Gate. Existing Reporting recovery behavior is indexed without new attempt limits, hashes, CAS, or validation chains.
 - The explicit Reporting engine selection is routing, not a new acceptance or safety Gate: existing Reporting starts omit the parameter and remain `legacy`; only the generic declarative Capability start passes `declarative`. The readable run prefix preserves the same selection across resume without a new metadata verifier, digest, or CAS record.
 

@@ -123,6 +123,12 @@ class _CurrentLaneRunner:
         self.fail_once = "2.2"
         self.fail_review_once = ""
         self.review_findings: set[str] = set()
+        self.recheck_open_once = False
+        self.recheck_rounds = {module_id: 0 for module_id in REPORT_MODULE_IDS}
+        self.revision_numbers = {module_id: 0 for module_id in REPORT_MODULE_IDS}
+        self.recheck_verdicts: dict[str, list[str]] = {
+            module_id: [] for module_id in REPORT_MODULE_IDS
+        }
 
     def _raise_if_cancel_requested(self, _run_id: str) -> None:
         return None
@@ -207,6 +213,12 @@ class _CurrentLaneRunner:
             module_id = str(session_key).removeprefix("module-auditor-")
             if "module_review_verdict_submission" in _envelope.allowed_outputs:
                 self.lifecycle[module_id].append(f"rechecker:{session_key}")
+                verdict = (
+                    "open"
+                    if self.recheck_open_once and _envelope.revision == 1
+                    else "resolved"
+                )
+                self.recheck_verdicts[module_id].append(verdict)
                 return ModuleReviewVerdictSubmission(
                     coverage={
                         "submodule_ids": [
@@ -216,7 +228,7 @@ class _CurrentLaneRunner:
                     verdicts=[
                         ResolutionVerdict(
                             finding_id=f"M-{module_id}-initial-r0-1",
-                            verdict="resolved",
+                            verdict=verdict,
                             reason=(
                                 "The revised narrative now states the requested operational "
                                 "consequence within the assigned scope."
@@ -263,11 +275,12 @@ class _CurrentLaneRunner:
             module_id = str(session_key).removeprefix("module-")
             target = next(iter(REPORT_TAXONOMY[module_id].submodules))
             finding_id = f"M-{module_id}-initial-r0-1"
+            revision = self.revision_numbers[module_id]
             self.lifecycle[module_id].append(f"revision:{session_key}")
             return ModuleRevisionSubmission(
                 module_id=module_id,
-                base_revision=0,
-                revision=1,
+                base_revision=revision - 1,
+                revision=revision,
                 submodule_narratives={
                     target: f"{target} revised body with operational consequence"
                 },
@@ -442,10 +455,12 @@ class _CurrentLaneRunner:
     ) -> ModuleRevisionPreparation:
         module_id = subject.module_id
         targets = sorted({finding.target_submodule_id for finding in findings})
+        revision = subject.revision + 1
+        self.revision_numbers[module_id] = revision
         revision_input = ModuleRevisionInput(
             run_id=state["run_id"],
             module_id=module_id,
-            subject_ref=f"modules/{module_id}.json",
+            subject_ref=f"modules/{module_id}-r{subject.revision}.json",
             subject=module_content_view(subject, set(targets)),
             target_submodule_ids=targets,
             module_findings=findings,
@@ -459,12 +474,12 @@ class _CurrentLaneRunner:
             subject=subject,
             revision_input=revision_input,
             input_ref=f"reviews/{module_id}/revision-input.json",
-            subject_ref=f"modules/{module_id}.json",
-            revision=1,
+            subject_ref=f"modules/{module_id}-r{subject.revision}.json",
+            revision=revision,
             target_submodule_ids=targets,
             required_finding_ids=[finding.id for finding in findings],
             envelope=TaskEnvelope(
-                task_id=f"module-revision-r1-{module_id}",
+                task_id=f"module-revision-r{revision}-{module_id}",
                 run_id=state["run_id"],
                 agent_id=f"module-{module_id}-specialist",
                 objective=f"revise module {module_id}",
@@ -501,6 +516,8 @@ class _CurrentLaneRunner:
         lifecycle_id: str = "initial",
     ) -> ModuleRecheckPreparation:
         self.lifecycle[module_id].append("recheck-prepare")
+        review_round = self.recheck_rounds[module_id] + 1
+        self.recheck_rounds[module_id] = review_round
         target = next(iter(REPORT_TAXONOMY[module_id].submodules))
         finding = ModuleReviewFinding(
             id=f"M-{module_id}-initial-r0-1",
@@ -529,19 +546,20 @@ class _CurrentLaneRunner:
             reviewer_session_key=f"module-auditor-{module_id}",
             review_root=f"reviews/{module_id}",
             progress_ref=f"reviews/{module_id}/progress.json",
-            review_round=1,
+            review_round=review_round,
             scope=[target],
             current=current,
             pending=[finding],
             responses=current.revision_responses,
             finding_refs=[f"reviews/{module_id}/findings-r0.json"],
-            subject_ref=f"modules/{module_id}-r1.json",
+            subject_ref=f"modules/{module_id}-r{current.revision}.json",
             envelope=TaskEnvelope(
-                task_id=f"module-{module_id}-initial-review-r1",
+                task_id=f"module-{module_id}-initial-review-r{review_round}",
                 run_id=state["run_id"],
                 agent_id="evidence-auditor",
                 objective=f"recheck module {module_id}",
                 allowed_outputs=["module_review_verdict_submission"],
+                revision=review_round,
             ),
         )
 
@@ -553,6 +571,21 @@ class _CurrentLaneRunner:
     ) -> ModuleRecheckAcceptance:
         module_id = preparation.module_id
         self.lifecycle[module_id].append("recheck-accept")
+        if self.recheck_open_once and preparation.review_round == 1:
+            return ModuleRecheckAcceptance(
+                run_id=preparation.run_id,
+                module_id=module_id,
+                lifecycle_id=preparation.lifecycle_id,
+                reviewer_session_key=preparation.reviewer_session_key,
+                subject_ref=str(preparation.subject_ref),
+                current=preparation.current,
+                findings=list(preparation.pending),
+                finding_refs=preparation.finding_refs,
+                verdict_refs=[f"reviews/{module_id}/verdicts-r1.json"],
+                resolved_ids=[],
+                next_action="continue_existing",
+                progress_ref=preparation.progress_ref,
+            )
         return ModuleRecheckAcceptance(
             run_id=preparation.run_id,
             module_id=module_id,
@@ -562,7 +595,9 @@ class _CurrentLaneRunner:
             current=preparation.current,
             findings=[],
             finding_refs=preparation.finding_refs,
-            verdict_refs=[f"reviews/{module_id}/verdicts-r1.json"],
+            verdict_refs=[
+                f"reviews/{module_id}/verdicts-r{preparation.review_round}.json"
+            ],
             resolved_ids=[f"M-{module_id}-initial-r0-1"],
             next_action="completed",
             progress_ref=preparation.progress_ref,
@@ -813,10 +848,64 @@ async def test_file_defined_initial_finding_invokes_original_author_revision_onc
         "recheck-prepare",
         "rechecker:module-auditor-2.1",
         "recheck-accept",
-        "review",
         "complete",
     ]
-    assert state["module_submissions"][module_id].revision == 1
+    assert runner.revision_numbers[module_id] == 1
+    assert completed.status is WorkflowStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_file_defined_module_recheck_revises_again_before_completion(
+    tmp_path: Path,
+) -> None:
+    run_id = "report-declarative-recheck-revision"
+    module_id = "2.1"
+    workflow_id = f"full-power-distribution-report:{run_id}"
+    state = {"run_id": run_id}
+    runner = _CurrentLaneRunner(tmp_path)
+    runner.fail_once = ""
+    runner.review_findings.add(module_id)
+    runner.recheck_open_once = True
+
+    completed = await execute_declarative_module_stage(
+        requested_modules=(module_id,),
+        state=state,
+        workflow_id=workflow_id,
+        state_store=FileWorkflowStateStore(tmp_path),
+        module_runtime=_CurrentModuleStages(
+            runner,
+            (module_id,),
+            state,
+            workflow_id,
+        ),
+    )
+
+    assert runner.lifecycle[module_id] == [
+        "start",
+        "prepare",
+        "author:specialist-2.1",
+        "accept",
+        "review-prepare",
+        "reviewer:module-auditor-2.1",
+        "review-accept",
+        "revision:module-2.1",
+        "revision-accept",
+        "recheck-prepare",
+        "rechecker:module-auditor-2.1",
+        "recheck-accept",
+        "revision:module-2.1",
+        "revision-accept",
+        "recheck-prepare",
+        "rechecker:module-auditor-2.1",
+        "recheck-accept",
+        "complete",
+    ]
+    assert runner.lifecycle[module_id].count("revision:module-2.1") == 2
+    assert runner.lifecycle[module_id].count("rechecker:module-auditor-2.1") == 2
+    assert runner.lifecycle[module_id].count("reviewer:module-auditor-2.1") == 1
+    assert runner.recheck_verdicts[module_id] == ["open", "resolved"]
+    assert "review" not in runner.lifecycle[module_id]
+    assert runner.revision_numbers[module_id] == 2
     assert completed.status is WorkflowStatus.COMPLETED
 
 

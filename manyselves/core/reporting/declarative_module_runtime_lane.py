@@ -25,6 +25,7 @@ from .parallel_runtime import LaneCompletion, LaneTaskSpec
 from .review_lifecycle import (
     ModuleInitialReviewAcceptance,
     ModuleInitialReviewPreparation,
+    ModuleRecheckAcceptance,
     ModuleRecheckPreparation,
     ModuleRevisionPreparation,
 )
@@ -73,7 +74,7 @@ class DeclarativeModuleReviewPreparation(BaseModel):
     envelope: TaskEnvelope
     reviewer_session_key: str
     prepared: ModuleInitialReviewPreparation
-    acceptance: ModuleInitialReviewAcceptance | None = None
+    acceptance: ModuleInitialReviewAcceptance | ModuleRecheckAcceptance | None = None
 
 
 class DeclarativeModuleReviewAgentResult(BaseModel):

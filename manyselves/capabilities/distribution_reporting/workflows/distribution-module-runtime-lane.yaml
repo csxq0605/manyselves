@@ -214,7 +214,7 @@ actions:
   output_variable: lane-context
 - id: continue-after-module-recheck
   kind: goto
-  target: continue-current-module-review
+  target: module-review-needs-revision
 - id: continue-current-module-review
   kind: invoke_tool
   tool: continue-current-module-review
