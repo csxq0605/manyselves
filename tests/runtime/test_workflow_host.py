@@ -323,3 +323,114 @@ async def test_runtime_host_nests_subworkflow_state_in_the_parent_run(
     assert [path.name for path in (tmp_path / "Work" / "runs").iterdir()] == [
         "subworkflow-host-run"
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_host_resumes_only_the_failed_subworkflow_action(
+    tmp_path: Path,
+) -> None:
+    registry, executors, _plan, contracts = _workflow()
+    for tool_id in ("first-step", "flaky-step"):
+        registry.register(
+            ToolDefinition(
+                id=tool_id,
+                version="1.0.0",
+                description=tool_id,
+                implementation=f"fixture:{tool_id}",
+                input_contract="number",
+                output_contract="number",
+            )
+        )
+    child = WorkflowDefinition(
+        id="recoverable-child",
+        version="1.0.0",
+        description="Child with one recoverable failure",
+        state={"input": 1},
+        actions=[
+            {
+                "id": "first",
+                "kind": "invoke_tool",
+                "tool": "first-step",
+                "input_variable": "input",
+                "output_variable": "first-result",
+            },
+            {
+                "id": "flaky",
+                "kind": "invoke_tool",
+                "tool": "flaky-step",
+                "input_variable": "first-result",
+                "output_variable": "final-result",
+            },
+            {
+                "id": "child-finish",
+                "kind": "end_workflow",
+                "output_variable": "final-result",
+            },
+        ],
+    )
+    parent = WorkflowDefinition(
+        id="recoverable-parent",
+        version="1.0.0",
+        description="Parent preserving child progress",
+        state={"value": 1},
+        actions=[
+            {
+                "id": "call-child",
+                "kind": "subworkflow",
+                "workflow": child.id,
+                "input_variable": "value",
+                "child_input_variable": "input",
+                "child_output_name": "result",
+                "output_variable": "child-result",
+            },
+            {
+                "id": "parent-finish",
+                "kind": "end_workflow",
+                "output_variable": "child-result",
+            },
+        ],
+    )
+    registry.register(child)
+    registry.register(parent)
+    child_plan = WorkflowCompiler(executors).compile(child, registry)
+    parent_plan = WorkflowCompiler(executors).compile(parent, registry)
+    calls = {"first": 0, "flaky": 0}
+
+    def first(value: int) -> int:
+        calls["first"] += 1
+        return value + 1
+
+    def flaky(value: int) -> int:
+        calls["flaky"] += 1
+        if calls["flaky"] == 1:
+            raise RuntimeError("injected child failure")
+        return value * 2
+
+    store = FileWorkflowStateStore(tmp_path)
+    host = WorkflowRuntimeHost(executors, store, InMemoryWorkflowEventSink())
+    context = RuntimeContext(
+        tools={"first-step": first, "flaky-step": flaky},
+        contracts=contracts,
+        definitions=registry,
+        subworkflows={child.id: child_plan},
+    )
+
+    with pytest.raises(RuntimeError, match="injected child failure"):
+        await host.execute(
+            parent_plan,
+            WorkflowState.for_plan("recoverable-run", parent_plan),
+            context,
+        )
+
+    failed = store.load("recoverable-run")
+    assert failed.subworkflow_states["call-child"]["actions"]["first"]["status"] == (
+        "completed"
+    )
+    assert failed.subworkflow_states["call-child"]["actions"]["flaky"]["status"] == (
+        "failed"
+    )
+
+    completed = await host.execute(parent_plan, failed, context)
+
+    assert completed.outputs == {"result": 4}
+    assert calls == {"first": 1, "flaky": 2}

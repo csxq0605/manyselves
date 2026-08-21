@@ -122,9 +122,15 @@ class WorkflowRuntimeHost:
             try:
                 result = await self._execute_action(plan, action, state, context)
             except Exception as exc:
+                failed_input = state
+                if isinstance(exc, _NestedWorkflowExecutionError):
+                    failed_input = state.model_copy(deep=True)
+                    failed_input.subworkflow_states[action.id] = exc.state.model_dump(
+                        mode="json"
+                    )
                 failed = self._kernel.transition(
                     plan,
-                    state,
+                    failed_input,
                     ActionFailed(action.id, str(exc)),
                 )
                 self._state_store.save(failed.state)
@@ -289,7 +295,21 @@ class WorkflowRuntimeHost:
                 state.next_action_id = None
                 return state
             action = actions[effect.action_id]
-            result = await self._execute_action(plan, action, state, context)
+            try:
+                result = await self._execute_action(plan, action, state, context)
+            except Exception as exc:
+                failed_input = state
+                if isinstance(exc, _NestedWorkflowExecutionError):
+                    failed_input = state.model_copy(deep=True)
+                    failed_input.subworkflow_states[action.id] = exc.state.model_dump(
+                        mode="json"
+                    )
+                failed = self._kernel.transition(
+                    plan,
+                    failed_input,
+                    ActionFailed(action.id, str(exc)),
+                )
+                raise _NestedWorkflowExecutionError(str(exc), failed.state) from exc
             event = ActionSucceeded(action.id, result)
 
     def _emit(
@@ -309,3 +329,11 @@ class WorkflowRuntimeHost:
                 error=error,
             )
         )
+
+
+class _NestedWorkflowExecutionError(RuntimeError):
+    """Carry a failed child state back to its parent Runtime effect."""
+
+    def __init__(self, message: str, state: WorkflowState) -> None:
+        super().__init__(message)
+        self.state = state
