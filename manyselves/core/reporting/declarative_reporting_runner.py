@@ -176,6 +176,11 @@ class ReportingModuleRuntime(Protocol):
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext: ...
 
+    async def resume_recheck_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
     async def continue_recheck_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
@@ -456,6 +461,7 @@ async def execute_declarative_module_stage(
         "module-recheck-requires-agent": module_runtime.recheck_requires_agent,
         "accept-current-module-recheck": module_runtime.accept_recheck_lane,
         "resume-current-module-review": module_runtime.resume_review_lane,
+        "resume-current-module-recheck": module_runtime.resume_recheck_lane,
         "continue-current-module-recheck": module_runtime.continue_recheck_lane,
         "complete-current-module-lane": module_runtime.complete_lane,
     }
@@ -703,6 +709,12 @@ class _BatchModuleRuntime:
         return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
 
     async def resume_review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
+
+    async def resume_recheck_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:
@@ -1254,6 +1266,61 @@ class _CurrentModuleStages:
             },
         )
 
+    async def resume_recheck_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.status != "review_resumed":
+            return context
+        rechecking = cast(DeclarativeModuleRecheckPreparation, context.recheck)
+        progress = rechecking.prepared.progress
+        if (
+            progress is not None
+            and progress.next_action == "review"
+            and progress.phase == "recheck"
+            and rechecking.prepared.envelope is not None
+        ):
+            return context.model_copy(
+                deep=True,
+                update={
+                    "status": "recheck_ready",
+                    "module": progress.current,
+                    "recheck": rechecking.model_copy(
+                        update={
+                            "prepared": rechecking.prepared.model_copy(
+                                update={
+                                    "mode": "invoke_agent",
+                                    "current": progress.current,
+                                }
+                            )
+                        }
+                    ),
+                },
+            )
+        if progress is not None and progress.next_action == "completed":
+            try:
+                accepted = self._runner._resume_module_recheck(
+                    rechecking.prepared,
+                    context.reporting_state,
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                return self._failed_lane_context(context, exc)
+            return context.model_copy(
+                deep=True,
+                update={
+                    "status": "reviewed",
+                    "module": accepted.current,
+                    "review": cast(
+                        DeclarativeModuleReviewPreparation,
+                        context.review,
+                    ).model_copy(update={"acceptance": accepted}),
+                    "recheck": rechecking,
+                },
+            )
+        return context
+
     async def continue_recheck_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
@@ -1373,6 +1440,7 @@ class _CurrentModuleStages:
                 "status": (
                     "recheck_ready" if preparation.mode == "invoke_agent" else "review_resumed"
                 ),
+                "module": preparation.current,
                 "recheck": DeclarativeModuleRecheckPreparation(
                     prepared=preparation,
                 ),

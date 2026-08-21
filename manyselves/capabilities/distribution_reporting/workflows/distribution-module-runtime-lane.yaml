@@ -208,6 +208,23 @@ actions:
     variable: should-invoke-module-recheck
     operator: truthy
   then: create-module-recheck-conversation
+  otherwise: resume-current-module-recheck
+- id: resume-current-module-recheck
+  kind: invoke_tool
+  tool: resume-current-module-recheck
+  input_variable: lane-context
+  output_variable: lane-context
+- id: resumed-module-recheck-requires-agent
+  kind: invoke_tool
+  tool: module-recheck-requires-agent
+  input_variable: lane-context
+  output_variable: should-invoke-resumed-module-recheck
+- id: choose-resumed-module-recheck-source
+  kind: if
+  condition:
+    variable: should-invoke-resumed-module-recheck
+    operator: truthy
+  then: create-module-recheck-conversation
   otherwise: continue-current-module-recheck
 - id: create-module-recheck-conversation
   kind: create_conversation

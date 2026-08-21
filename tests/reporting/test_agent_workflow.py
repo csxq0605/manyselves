@@ -72,6 +72,7 @@ from manyselves.core.reporting.review_lifecycle import (
     prepare_module_revision,
     request_module_revision,
     resume_module_initial_review,
+    resume_module_recheck,
     run_cross_review,
     run_final_review,
     run_module_review,
@@ -1387,9 +1388,21 @@ async def test_module_recheck_boundary_prepares_and_accepts_without_provider(
     assert preparation.envelope.allowed_outputs == ["module_review_verdict_submission"]
     assert runner.calls == []
 
+    resumed_preparation = await prepare_module_recheck(
+        runner,
+        module_id="2.1",
+        current=revised,
+        state=state,
+        workflow_id="workflow-module-recheck-boundary",
+        initial_scope={target},
+    )
+    assert resumed_preparation.mode == "invoke_agent"
+    assert resumed_preparation.review_round == preparation.review_round
+    assert resumed_preparation.reviewer_session_key == preparation.reviewer_session_key
+
     accepted = await accept_module_recheck(
         runner,
-        preparation=preparation,
+        preparation=resumed_preparation,
         result=ModuleReviewVerdictSubmission(
             coverage={"submodule_ids": [target]},
             verdicts=[
@@ -1413,6 +1426,22 @@ async def test_module_recheck_boundary_prepares_and_accepts_without_provider(
     assert progress["next_action"] == "completed"
     assert progress["current"]["revision"] == 1
     assert runner.calls == []
+
+    completed_preparation = await prepare_module_recheck(
+        runner,
+        module_id="2.1",
+        current=revised,
+        state=state,
+        workflow_id="workflow-module-recheck-boundary",
+        initial_scope={target},
+    )
+    resumed_completion = resume_module_recheck(
+        preparation=completed_preparation,
+        state=state,
+    )
+    assert resumed_completion.next_action == "completed"
+    assert resumed_completion.current == revised
+    assert resumed_completion.completion_ref == accepted.completion_ref
 
 
 @pytest.mark.asyncio

@@ -1847,6 +1847,7 @@ async def prepare_module_recheck(
 
     def continuation(
         *,
+        current_value: ModuleSubmission | None = None,
         review_round: int = 0,
         scope: set[str] | None = None,
         pending: list[ModuleReviewFinding] | None = None,
@@ -1868,7 +1869,7 @@ async def prepare_module_recheck(
             progress_ref=progress_ref,
             review_round=review_round,
             scope=sorted(scope or set(initial_scope)),
-            current=current,
+            current=current_value or current,
             pending=list(pending or []),
             responses=list(responses or []),
             finding_refs=list(finding_refs or []),
@@ -1886,8 +1887,40 @@ async def prepare_module_recheck(
         return continuation()
     if progress.run_id != run_id or progress.module_id != module_id:
         raise ReviewLifecycleError("module review progress identity mismatch")
-    if progress.next_action != "revise":
+    if progress.next_action == "completed":
+        completion_ref = _restore_completed_module_review(
+            runner,
+            state=state,
+            module_id=module_id,
+            progress=progress,
+            review_root=review_root,
+            reviewer_session_key=reviewer_session_key,
+        )
+        if completion_ref is not None:
+            return continuation(
+                current_value=progress.current,
+                review_round=progress.review_round,
+                scope=set(progress.scope),
+                pending=list(progress.pending),
+                responses=list(progress.responses),
+                finding_refs=list(progress.finding_refs),
+                verdict_refs=list(progress.verdict_refs),
+                resolved_ids=set(progress.resolved_ids),
+            )
+    if progress.next_action not in {"revise", "review"}:
         return continuation(
+            current_value=progress.current,
+            review_round=progress.review_round,
+            scope=set(progress.scope),
+            pending=list(progress.pending),
+            responses=list(progress.responses),
+            finding_refs=list(progress.finding_refs),
+            verdict_refs=list(progress.verdict_refs),
+            resolved_ids=set(progress.resolved_ids),
+        )
+    if progress.next_action == "review" and progress.phase != "recheck":
+        return continuation(
+            current_value=progress.current,
             review_round=progress.review_round,
             scope=set(progress.scope),
             pending=list(progress.pending),
@@ -1907,13 +1940,16 @@ async def prepare_module_recheck(
             resolved_ids=set(progress.resolved_ids),
         )
 
-    candidate_ref = f"Work/runs/{run_id}/modules/{module_id}-r{current.revision}.json"
+    is_persisted_review = progress.next_action == "review" and progress.phase == "recheck"
+    candidate = progress.current if is_persisted_review else current
+    candidate_ref = f"Work/runs/{run_id}/modules/{module_id}-r{candidate.revision}.json"
     if not (runner.service.workspace / candidate_ref).is_file():
         return continuation(
             review_round=progress.review_round,
             scope={finding.target_submodule_id for finding in pending},
             pending=pending,
-            responses=list(current.revision_responses),
+            current_value=candidate,
+            responses=list(candidate.revision_responses),
             finding_refs=list(progress.finding_refs),
             verdict_refs=list(progress.verdict_refs),
             resolved_ids=set(progress.resolved_ids),
@@ -1923,7 +1959,7 @@ async def prepare_module_recheck(
     scope = {finding.target_submodule_id for finding in pending}
     try:
         _validate_responses(
-            current.revision_responses,
+            candidate.revision_responses,
             {finding.id for finding in pending},
             scope,
         )
@@ -1932,32 +1968,37 @@ async def prepare_module_recheck(
             review_round=progress.review_round,
             scope=scope,
             pending=pending,
-            responses=list(current.revision_responses),
+            current_value=candidate,
+            responses=list(candidate.revision_responses),
             finding_refs=list(progress.finding_refs),
             verdict_refs=list(progress.verdict_refs),
             resolved_ids=set(progress.resolved_ids),
             subject_ref=candidate_ref,
         )
-    if any(
-        response.action in {"disputed", "needs_input"} for response in current.revision_responses
+    if not is_persisted_review and any(
+        response.action in {"disputed", "needs_input"}
+        for response in candidate.revision_responses
     ):
         return continuation(
+            current_value=candidate,
             review_round=progress.review_round,
             scope=scope,
             pending=pending,
-            responses=list(current.revision_responses),
+            responses=list(candidate.revision_responses),
             finding_refs=list(progress.finding_refs),
             verdict_refs=list(progress.verdict_refs),
             resolved_ids=set(progress.resolved_ids),
             subject_ref=candidate_ref,
         )
 
-    review_round = progress.review_round + 1
+    review_round = (
+        progress.review_round if is_persisted_review else progress.review_round + 1
+    )
     structure_ref: str
     try:
         structure_ref = runner._validate_module_structure(
             state,
-            current,
+            candidate,
             f"review-r{review_round}",
         )
         structure_report = ValidationReport.model_validate_json(
@@ -1967,12 +2008,12 @@ async def prepare_module_recheck(
             runner,
             structure_report,
             subject_ref=candidate_ref,
-            subject_revision=current.revision,
+            subject_revision=candidate.revision,
         )
         preflight = evaluate_module_review_preflight(
             runner.service.workspace,
             run_id=run_id,
-            subject=current,
+            subject=candidate,
             subject_ref=candidate_ref,
             upstream_report=structure_report,
         )
@@ -1981,7 +2022,8 @@ async def prepare_module_recheck(
             review_round=progress.review_round,
             scope=scope,
             pending=pending,
-            responses=list(current.revision_responses),
+            current_value=candidate,
+            responses=list(candidate.revision_responses),
             finding_refs=list(progress.finding_refs),
             verdict_refs=list(progress.verdict_refs),
             resolved_ids=set(progress.resolved_ids),
@@ -1990,7 +2032,7 @@ async def prepare_module_recheck(
 
     signal_ref = _write_model(
         runner,
-        f"{review_root}/preflight-subject-r{current.revision}-review-r{review_round}.json",
+        f"{review_root}/preflight-subject-r{candidate.revision}-review-r{review_round}.json",
         preflight.report,
     )
     if not preflight.report.passed:
@@ -1998,7 +2040,8 @@ async def prepare_module_recheck(
             review_round=progress.review_round,
             scope=scope,
             pending=pending,
-            responses=list(current.revision_responses),
+            current_value=candidate,
+            responses=list(candidate.revision_responses),
             finding_refs=list(progress.finding_refs),
             verdict_refs=list(progress.verdict_refs),
             resolved_ids=set(progress.resolved_ids),
@@ -2017,7 +2060,7 @@ async def prepare_module_recheck(
             runner,
             state=state,
             module_id=module_id,
-            current=current,
+            current=candidate,
             pending=pending,
             scope=scope,
             lifecycle_id=lifecycle_id,
@@ -2025,7 +2068,7 @@ async def prepare_module_recheck(
             review_root=review_root,
             subject_ref=candidate_ref,
             last_reviewed_subject_ref=progress.last_reviewed_subject_ref,
-            responses=list(current.revision_responses),
+            responses=list(candidate.revision_responses),
             finding_refs=list(progress.finding_refs),
             signal_ref=signal_ref,
             validation_report=preflight.report,
@@ -2035,7 +2078,8 @@ async def prepare_module_recheck(
             review_round=progress.review_round,
             scope=scope,
             pending=pending,
-            responses=list(current.revision_responses),
+            current_value=candidate,
+            responses=list(candidate.revision_responses),
             finding_refs=list(progress.finding_refs),
             verdict_refs=list(progress.verdict_refs),
             resolved_ids=set(progress.resolved_ids),
@@ -2048,9 +2092,9 @@ async def prepare_module_recheck(
         progress_ref=progress_ref,
         module_id=module_id,
         next_action="review",
-        current=current,
+        current=candidate,
         pending=pending,
-        responses=list(current.revision_responses),
+        responses=list(candidate.revision_responses),
         finding_refs=list(progress.finding_refs),
         verdict_refs=list(progress.verdict_refs),
         resolved_ids=set(progress.resolved_ids),
@@ -2071,9 +2115,9 @@ async def prepare_module_recheck(
         progress_ref=progress_ref,
         review_round=review_round,
         scope=sorted(scope),
-        current=current,
+        current=candidate,
         pending=pending,
-        responses=list(current.revision_responses),
+        responses=list(candidate.revision_responses),
         finding_refs=list(progress.finding_refs),
         verdict_refs=list(progress.verdict_refs),
         resolved_ids=sorted(progress.resolved_ids),
@@ -2084,6 +2128,48 @@ async def prepare_module_recheck(
         envelope=envelope,
         progress=progress,
         preflight_ref=signal_ref,
+    )
+
+
+def resume_module_recheck(
+    *,
+    preparation: ModuleRecheckPreparation,
+    state: dict,
+) -> ModuleRecheckAcceptance:
+    """Restore a durable terminal module recheck without an Agent call."""
+
+    progress = preparation.progress
+    if (
+        preparation.mode != "continue_existing"
+        or progress is None
+        or progress.next_action != "completed"
+    ):
+        raise ReviewLifecycleError("module recheck has no completed progress to resume")
+    completion_ref = state.get("module_review_completion_refs", {}).get(
+        preparation.module_id
+    )
+    if completion_ref is None:
+        raise ReviewLifecycleError(
+            "persisted module recheck completion was not restored during preparation"
+        )
+    return ModuleRecheckAcceptance(
+        run_id=preparation.run_id,
+        module_id=preparation.module_id,
+        lifecycle_id=preparation.lifecycle_id,
+        reviewer_session_key=preparation.reviewer_session_key,
+        subject_ref=(
+            preparation.subject_ref
+            or f"Work/runs/{state['run_id']}/modules/"
+            f"{preparation.module_id}-r{progress.current.revision}.json"
+        ),
+        current=progress.current,
+        findings=[],
+        finding_refs=list(progress.finding_refs),
+        verdict_refs=list(progress.verdict_refs),
+        resolved_ids=list(progress.resolved_ids),
+        next_action="completed",
+        progress_ref=preparation.progress_ref,
+        completion_ref=completion_ref,
     )
 
 

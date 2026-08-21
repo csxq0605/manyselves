@@ -142,6 +142,7 @@ async def execute_declarative_module_cohort(
         "module-recheck-requires-agent": lane_runtime.recheck_requires_agent,
         "accept-current-module-recheck": lane_runtime.accept_recheck_lane,
         "resume-current-module-review": lane_runtime.resume_review_lane,
+        "resume-current-module-recheck": lane_runtime.resume_recheck_lane,
         "continue-current-module-recheck": lane_runtime.continue_recheck_lane,
         "complete-current-module-lane": lane_runtime.complete_lane,
     }
@@ -295,12 +296,6 @@ class _StandaloneModuleRuntime:
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:
-        return context.model_copy(update={"status": "reviewed"})
-
-    async def continue_recheck_lane(
-        self,
-        context: DeclarativeModuleRuntimeLaneContext,
-    ) -> DeclarativeModuleRuntimeLaneContext:
         try:
             lane_result = await execute_declarative_module_lane(
                 run_id=self._run_id,
@@ -327,6 +322,18 @@ class _StandaloneModuleRuntime:
                 "reporting_state": lane_state.model_dump(mode="json"),
             }
         )
+
+    async def resume_recheck_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
+
+    async def continue_recheck_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
 
     async def complete_lane(
         self,
