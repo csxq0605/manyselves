@@ -1,0 +1,10 @@
+id: cross-owner-runtime-recheck
+version: 1.0.0
+description: Run the prepared owner revision recheck through the original Cross reviewer
+agent: cross-module-reviewer
+objective: Return verdicts for the exact prepared Cross owner findings and revision.
+input_contract: declarative_cross_owner_runtime_context
+output_contract: declarative_cross_owner_recheck_agent_result
+tools:
+- submit_result
+recovery: current-reporting-recovery

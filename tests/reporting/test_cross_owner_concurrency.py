@@ -196,9 +196,7 @@ class _CrossFindingRunner(_Runner):
             self.calls.append((owner_module_id, session))
             if not envelope.task_id.endswith("initial"):
                 contract = CrossOwnerInput.model_validate_json(
-                    (self.service.workspace / envelope.input_refs[0]).read_text(
-                        encoding="utf-8"
-                    )
+                    (self.service.workspace / envelope.input_refs[0]).read_text(encoding="utf-8")
                 )
                 return CrossOwnerVerdictSubmission(
                     owner_module_id=owner_module_id,
@@ -224,9 +222,7 @@ class _CrossFindingRunner(_Runner):
                     checked_dimensions=list(CROSS_REVIEW_DIMENSIONS),
                 ),
                 findings=(
-                    [_cross_finding("XMR-2.1-001")]
-                    if envelope.task_id.endswith("initial")
-                    else []
+                    [_cross_finding("XMR-2.1-001")] if envelope.task_id.endswith("initial") else []
                 ),
                 synthesis_inputs=_synthesis(owner_module_id),
             )
@@ -244,18 +240,14 @@ class _CrossFindingRunner(_Runner):
                     RevisionResponse(
                         finding_id="XMR-2.1-001",
                         action="implemented",
-                        summary=(
-                            "补充 Cross owner finding 要求的模块接口与联合验证条件。"
-                        ),
+                        summary=("补充 Cross owner finding 要求的模块接口与联合验证条件。"),
                         changed_target_ids=[target],
                     )
                 ],
             )
         if agent_id == "evidence-auditor":
             review_input = lifecycle.ModuleReviewInput.model_validate_json(
-                (self.service.workspace / envelope.input_refs[0]).read_text(
-                    encoding="utf-8"
-                )
+                (self.service.workspace / envelope.input_refs[0]).read_text(encoding="utf-8")
             )
             self.local_review_inputs.append(review_input)
             self.calls.append((review_input.module_id, session))
@@ -267,8 +259,7 @@ class _CrossFindingRunner(_Runner):
 
     def _validate_module_structure(self, state, module, phase):
         subject_ref = (
-            f"Work/runs/{state['run_id']}/modules/"
-            f"{module.module_id}-r{module.revision}.json"
+            f"Work/runs/{state['run_id']}/modules/{module.module_id}-r{module.revision}.json"
         )
         ref = (
             f"Work/runs/{state['run_id']}/reviews/"
@@ -315,8 +306,7 @@ def _fake_noop(
     run_id = state["run_id"]
     subject_ref = f"Work/runs/{run_id}/modules/{owner_module_id}-r{module.revision}.json"
     local_ref = (
-        f"Work/runs/{run_id}/reviews/module/cross-r{review_round}/"
-        f"{owner_module_id}/completion.json"
+        f"Work/runs/{run_id}/reviews/module/cross-r{review_round}/{owner_module_id}/completion.json"
     )
     runner.service.store.write_json(
         local_ref,
@@ -435,15 +425,10 @@ async def _fake_revision_lane(
             "revision_responses": responses,
         }
     )
-    subject_ref = (
-        f"Work/runs/{run_id}/modules/{module_id}-r{revised.revision}.json"
-    )
-    runner.service.store.write_json(
-        subject_ref, revised.model_dump(mode="json")
-    )
+    subject_ref = f"Work/runs/{run_id}/modules/{module_id}-r{revised.revision}.json"
+    runner.service.store.write_json(subject_ref, revised.model_dump(mode="json"))
     local_ref = (
-        f"Work/runs/{run_id}/reviews/module/cross-r{review_round}/"
-        f"{module_id}/completion.json"
+        f"Work/runs/{run_id}/reviews/module/cross-r{review_round}/{module_id}/completion.json"
     )
     runner.service.store.write_json(
         local_ref,
@@ -463,9 +448,7 @@ async def _fake_revision_lane(
         run_id=run_id,
         review_round=review_round,
         module_id=module_id,
-        semantic_key=hashlib.sha256(
-            f"{module_id}:{review_round}".encode()
-        ).hexdigest(),
+        semantic_key=hashlib.sha256(f"{module_id}:{review_round}".encode()).hexdigest(),
         subject_revision=revised.revision,
         owner_input=_artifact_ref(runner, owner_input_ref),
         subject=_artifact_ref(runner, subject_ref),
@@ -478,9 +461,7 @@ async def _fake_revision_lane(
         f"Work/runs/{run_id}/lanes/cross-r{review_round}/"
         f"module-{module_id}/completion-r{revised.revision}.json"
     )
-    runner.service.store.write_json(
-        completion_ref, completion.model_dump(mode="json")
-    )
+    runner.service.store.write_json(completion_ref, completion.model_dump(mode="json"))
     return lifecycle._CrossOwnerLaneResult(
         module=revised,
         responses=responses,
@@ -493,9 +474,7 @@ async def _fake_revision_lane(
 def _state(run_id: str) -> dict:
     return {
         "run_id": run_id,
-        "module_submissions": {
-            module_id: _module(module_id) for module_id in REPORT_TAXONOMY
-        },
+        "module_submissions": {module_id: _module(module_id) for module_id in REPORT_TAXONOMY},
         "module_review_completion_refs": {},
     }
 
@@ -561,19 +540,14 @@ async def _execute_declarative_cross_owner_cohort(
                 "accept-current-cross-owner-initial": runtime.accept_initial,
                 "cross-owner-initial-has-findings": runtime.initial_has_findings,
                 "prepare-current-cross-owner-revision": runtime.prepare_revision,
-                "cross-owner-revision-requires-agent": (
-                    runtime.revision_requires_agent
-                ),
+                "cross-owner-revision-requires-agent": (runtime.revision_requires_agent),
                 "accept-current-cross-owner-revision": runtime.accept_revision,
-                "prepare-current-cross-owner-local-review": (
-                    runtime.prepare_local_review
-                ),
-                "cross-owner-local-review-requires-agent": (
-                    runtime.local_review_requires_agent
-                ),
-                "accept-current-cross-owner-local-review": (
-                    runtime.accept_local_review
-                ),
+                "prepare-current-cross-owner-local-review": (runtime.prepare_local_review),
+                "cross-owner-local-review-requires-agent": (runtime.local_review_requires_agent),
+                "accept-current-cross-owner-local-review": (runtime.accept_local_review),
+                "prepare-current-cross-owner-recheck": runtime.prepare_recheck,
+                "cross-owner-recheck-requires-agent": (runtime.recheck_requires_agent),
+                "accept-current-cross-owner-recheck": runtime.accept_recheck,
                 "continue-current-cross-owner-pipeline": runtime.continue_owner,
                 "reduce-cross-owner-cohort": runtime.reduce,
             },
@@ -600,9 +574,7 @@ async def _execute_declarative_cross_owner_pipeline(
         definitions,
         executors,
     )
-    pipeline_plan = pipeline_plans[
-        f"distribution-cross-owner-{owner_module_id}-pipeline"
-    ]
+    pipeline_plan = pipeline_plans[f"distribution-cross-owner-{owner_module_id}-pipeline"]
     runtime = DeclarativeCrossOwnerRuntime(runner, state, workflow_id)
     kernel_state = WorkflowState.for_plan(state["run_id"], pipeline_plan)
     kernel_state.variables["reporting-state"] = state
@@ -620,19 +592,14 @@ async def _execute_declarative_cross_owner_pipeline(
                 "accept-current-cross-owner-initial": runtime.accept_initial,
                 "cross-owner-initial-has-findings": runtime.initial_has_findings,
                 "prepare-current-cross-owner-revision": runtime.prepare_revision,
-                "cross-owner-revision-requires-agent": (
-                    runtime.revision_requires_agent
-                ),
+                "cross-owner-revision-requires-agent": (runtime.revision_requires_agent),
                 "accept-current-cross-owner-revision": runtime.accept_revision,
-                "prepare-current-cross-owner-local-review": (
-                    runtime.prepare_local_review
-                ),
-                "cross-owner-local-review-requires-agent": (
-                    runtime.local_review_requires_agent
-                ),
-                "accept-current-cross-owner-local-review": (
-                    runtime.accept_local_review
-                ),
+                "prepare-current-cross-owner-local-review": (runtime.prepare_local_review),
+                "cross-owner-local-review-requires-agent": (runtime.local_review_requires_agent),
+                "accept-current-cross-owner-local-review": (runtime.accept_local_review),
+                "prepare-current-cross-owner-recheck": runtime.prepare_recheck,
+                "cross-owner-recheck-requires-agent": (runtime.recheck_requires_agent),
+                "accept-current-cross-owner-recheck": runtime.accept_recheck,
                 "continue-current-cross-owner-pipeline": runtime.continue_owner,
             },
             agents=runtime.agent_invokers,
@@ -675,9 +642,7 @@ def _write_legacy_completed_task_binding(
         "status": "completed",
         "payload": payload.model_dump(mode="json"),
     }
-    result_ref = (
-        f"Work/runs/{run_id}/results/attempts/{task_id}/{attempt_id}.json"
-    )
+    result_ref = f"Work/runs/{run_id}/results/attempts/{task_id}/{attempt_id}.json"
     result_path = runner.service.store.write_json(result_ref, result)
     result_bytes = result_path.read_bytes()
     canonical = json.dumps(
@@ -716,10 +681,7 @@ def test_legacy_cross_owner_promotion_requires_matching_completed_task_payload(
         findings=[],
         synthesis_inputs=_synthesis(owner_module_id),
     )
-    ref = (
-        f"Work/runs/{run_id}/reviews/"
-        f"cross-owner-findings-r0-{owner_module_id}.json"
-    )
+    ref = f"Work/runs/{run_id}/reviews/cross-owner-findings-r0-{owner_module_id}.json"
     runner.service.store.write_json(ref, payload.model_dump(mode="json"))
     _write_legacy_completed_task_binding(
         runner,
@@ -737,9 +699,7 @@ def test_legacy_cross_owner_promotion_requires_matching_completed_task_payload(
     assert loaded == payload
     assert loaded_ref == ref
 
-    tampered = payload.model_copy(
-        update={"synthesis_inputs": _synthesis("2.2")}
-    )
+    tampered = payload.model_copy(update={"synthesis_inputs": _synthesis("2.2")})
     runner.service.store.write_json(ref, tampered.model_dump(mode="json"))
     with pytest.raises(
         lifecycle.ReviewLifecycleError,
@@ -777,8 +737,7 @@ async def test_fixed_five_owner_wave_has_full_owner_views_distinct_sessions_and_
     }
     for owner_module_id in owner_ids:
         input_path = (
-            tmp_path
-            / f"Work/runs/{run_id}/reviews/cross-owner-input-r0-{owner_module_id}.json"
+            tmp_path / f"Work/runs/{run_id}/reviews/cross-owner-input-r0-{owner_module_id}.json"
         )
         payload = json.loads(input_path.read_text(encoding="utf-8"))
         assert payload["owner_subject"]["module_id"] == owner_module_id
@@ -788,9 +747,7 @@ async def test_fixed_five_owner_wave_has_full_owner_views_distinct_sessions_and_
         assert set(payload["related_module_views"]) == set(owner_ids) - {owner_module_id}
         assert owner_module_id not in payload["related_module_views"]
 
-    barrier = json.loads(
-        (tmp_path / state["cross_owner_barrier_ref"]).read_text(encoding="utf-8")
-    )
+    barrier = json.loads((tmp_path / state["cross_owner_barrier_ref"]).read_text(encoding="utf-8"))
     assert barrier["target_modules"] == list(owner_ids)
     assert set(barrier["completion_refs"]) == set(owner_ids)
     assert barrier["completion_revisions"] == {module_id: 0 for module_id in owner_ids}
@@ -805,10 +762,7 @@ async def test_fixed_five_owner_wave_has_full_owner_views_distinct_sessions_and_
 
     # Recovery is business-state based.  A byte-only formatting change that
     # leaves the typed JSON readable and in-scope must not replay paid lanes.
-    initial_result_path = (
-        tmp_path
-        / f"Work/runs/{run_id}/reviews/cross-owner-findings-r0-2.1.json"
-    )
+    initial_result_path = tmp_path / f"Work/runs/{run_id}/reviews/cross-owner-findings-r0-2.1.json"
     initial_result_path.write_text(
         initial_result_path.read_text(encoding="utf-8") + "\n",
         encoding="utf-8",
@@ -867,9 +821,7 @@ async def test_cross_owner_business_barrier_rejects_corrupt_or_wrong_identity_ar
     metadata_only_subject = original_completion.subject.model_copy(
         update={"sha256": "0" * 64, "size": 0}
     )
-    metadata_only = original_completion.model_copy(
-        update={"subject": metadata_only_subject}
-    )
+    metadata_only = original_completion.model_copy(update={"subject": metadata_only_subject})
     runner.service.store.write_json(
         completion_ref,
         metadata_only.model_dump(mode="json"),
@@ -907,9 +859,7 @@ async def test_cross_owner_business_barrier_rejects_corrupt_or_wrong_identity_ar
     wrong_owner_subject = original_completion.subject.model_copy(
         update={"ref": f"Work/runs/{run_id}/modules/2.2-r0.json"}
     )
-    wrong_owner = original_completion.model_copy(
-        update={"subject": wrong_owner_subject}
-    )
+    wrong_owner = original_completion.model_copy(update={"subject": wrong_owner_subject})
     runner.service.store.write_json(completion_ref, wrong_owner.model_dump(mode="json"))
     with pytest.raises(lifecycle.ReviewLifecycleError, match="ownership mismatch"):
         lifecycle.verify_cross_owner_barrier(
@@ -928,9 +878,7 @@ async def test_cross_owner_business_barrier_rejects_corrupt_or_wrong_identity_ar
     wrong_revision_subject = original_completion.subject.model_copy(
         update={"ref": f"Work/runs/{run_id}/modules/{owner_id}-r99.json"}
     )
-    wrong_revision = original_completion.model_copy(
-        update={"subject": wrong_revision_subject}
-    )
+    wrong_revision = original_completion.model_copy(update={"subject": wrong_revision_subject})
     runner.service.store.write_json(
         completion_ref,
         wrong_revision.model_dump(mode="json"),
@@ -978,9 +926,7 @@ async def test_cross_owner_recheck_regression_enters_next_revision_round(
                     synthesis_inputs=_synthesis(owner_module_id),
                 )
             contract = CrossOwnerInput.model_validate_json(
-                (self.service.workspace / envelope.input_refs[0]).read_text(
-                    encoding="utf-8"
-                )
+                (self.service.workspace / envelope.input_refs[0]).read_text(encoding="utf-8")
             )
             return CrossOwnerVerdictSubmission(
                 owner_module_id=owner_module_id,
@@ -998,9 +944,7 @@ async def test_cross_owner_recheck_regression_enters_next_revision_round(
                     for finding in contract.required_findings
                 ],
                 new_findings=(
-                    [regression]
-                    if owner_module_id == "2.1" and contract.review_round == 1
-                    else []
+                    [regression] if owner_module_id == "2.1" and contract.review_round == 1 else []
                 ),
             )
 
@@ -1009,9 +953,7 @@ async def test_cross_owner_recheck_regression_enters_next_revision_round(
     prior_completion_refs: list[tuple[int, str | None]] = []
 
     async def tracked_revision_lane(*args, **kwargs):
-        prior_completion_refs.append(
-            (kwargs["review_round"], kwargs.get("prior_completion_ref"))
-        )
+        prior_completion_refs.append((kwargs["review_round"], kwargs.get("prior_completion_ref")))
         return await _fake_revision_lane(*args, **kwargs)
 
     monkeypatch.setattr(
@@ -1022,31 +964,23 @@ async def test_cross_owner_recheck_regression_enters_next_revision_round(
     monkeypatch.setattr(lifecycle, "_run_cross_owner_lane", tracked_revision_lane)
     state = _state(run_id)
 
-    await lifecycle.run_cross_review(
-        runner, state, "workflow-cross-regression-loop"
-    )
+    await lifecycle.run_cross_review(runner, state, "workflow-cross-regression-loop")
 
-    assert (
-        tmp_path
-        / f"Work/runs/{run_id}/reviews/cross-owner-input-r2-2.1.json"
-    ).is_file()
-    assert (
-        tmp_path
-        / f"Work/runs/{run_id}/reviews/cross-owner-verdicts-r2-2.1.json"
-    ).is_file()
+    assert (tmp_path / f"Work/runs/{run_id}/reviews/cross-owner-input-r2-2.1.json").is_file()
+    assert (tmp_path / f"Work/runs/{run_id}/reviews/cross-owner-verdicts-r2-2.1.json").is_file()
     aggregate_findings = json.loads(
-        (
-            tmp_path / f"Work/runs/{run_id}/reviews/cross-findings-r0.json"
-        ).read_text(encoding="utf-8")
+        (tmp_path / f"Work/runs/{run_id}/reviews/cross-findings-r0.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert {item["id"] for item in aggregate_findings["findings"]} == {
         first.id,
         regression.id,
     }
     aggregate_verdicts = json.loads(
-        (
-            tmp_path / f"Work/runs/{run_id}/reviews/cross-verdicts-r1.json"
-        ).read_text(encoding="utf-8")
+        (tmp_path / f"Work/runs/{run_id}/reviews/cross-verdicts-r1.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert {item["finding_id"] for item in aggregate_verdicts["verdicts"]} == {
         first.id,
@@ -1061,9 +995,7 @@ async def test_cross_owner_recheck_regression_enters_next_revision_round(
         ),
     ]
     assert [
-        task_id
-        for task_id, session_key in runner.calls
-        if session_key == "cross-owner-2.1"
+        task_id for task_id, session_key in runner.calls if session_key == "cross-owner-2.1"
     ] == [
         "cross-owner-2.1-r0-initial",
         "cross-owner-2.1-r1-recheck",
@@ -1077,9 +1009,7 @@ async def test_cross_owner_recheck_regression_enters_next_revision_round(
     calls_before_resume = len(runner.calls)
     resumed_state = _state(run_id)
     resumed_state["resume"] = True
-    await lifecycle.run_cross_review(
-        runner, resumed_state, "workflow-cross-regression-resume"
-    )
+    await lifecycle.run_cross_review(runner, resumed_state, "workflow-cross-regression-resume")
 
     assert len(runner.calls) == calls_before_resume
     assert resumed_state["module_submissions"]["2.1"].revision == 2
@@ -1087,15 +1017,11 @@ async def test_cross_owner_recheck_regression_enters_next_revision_round(
         f"Work/runs/{run_id}/reviews/cross-completion.json"
     )
 
-    pipeline_ref = (
-        f"Work/runs/{run_id}/lanes/cross-r1/module-2.1/pipeline-completion.json"
-    )
+    pipeline_ref = f"Work/runs/{run_id}/lanes/cross-r1/module-2.1/pipeline-completion.json"
     pipeline = CrossOwnerCompletion.model_validate_json(
         (tmp_path / pipeline_ref).read_text(encoding="utf-8")
     )
-    final_verdict_ref = (
-        f"Work/runs/{run_id}/reviews/cross-owner-verdicts-r2-2.1.json"
-    )
+    final_verdict_ref = f"Work/runs/{run_id}/reviews/cross-owner-verdicts-r2-2.1.json"
     mismatched_trigger = pipeline.model_copy(
         update={"owner_input": _artifact_ref(runner, final_verdict_ref)}
     )
@@ -1132,9 +1058,7 @@ async def test_cross_owner_initial_failure_drains_all_five_and_writes_no_barrier
 
     owner_ids = tuple(REPORT_TAXONOMY)
     assert {owner for owner, _session in runner.calls} == set(owner_ids)
-    terminal_path = (
-        tmp_path / f"Work/runs/{run_id}/lanes/cross-r1/owner-terminal.json"
-    )
+    terminal_path = tmp_path / f"Work/runs/{run_id}/lanes/cross-r1/owner-terminal.json"
     terminal = json.loads(terminal_path.read_text(encoding="utf-8"))
     assert terminal["target_modules"] == list(owner_ids)
     assert terminal["status"] == "failed"
@@ -1146,9 +1070,7 @@ async def test_cross_owner_initial_failure_drains_all_five_and_writes_no_barrier
     } == {module_id: "completed" for module_id in owner_ids if module_id != "2.3"}
     assert terminal["retry_scope"] == ["2.3"]
     assert set(terminal["completion_refs"]) == set(owner_ids) - {"2.3"}
-    assert not (
-        tmp_path / f"Work/runs/{run_id}/lanes/cross-r1/owner-barrier.json"
-    ).exists()
+    assert not (tmp_path / f"Work/runs/{run_id}/lanes/cross-r1/owner-barrier.json").exists()
 
     workflow_runner = object.__new__(ReportWorkflowRunner)
     workflow_runner.service = runner.service
@@ -1166,15 +1088,12 @@ async def test_cross_owner_initial_failure_drains_all_five_and_writes_no_barrier
 
     assert runner.calls[calls_before_resume:] == [("2.3", "cross-owner-2.3")]
     barrier = json.loads(
-        (
-            tmp_path
-            / f"Work/runs/{run_id}/lanes/cross-r1/owner-barrier.json"
-        ).read_text(encoding="utf-8")
+        (tmp_path / f"Work/runs/{run_id}/lanes/cross-r1/owner-barrier.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert set(barrier["completion_refs"]) == set(owner_ids)
-    assert (
-        tmp_path / f"Work/runs/{run_id}/reviews/cross-completion.json"
-    ).is_file()
+    assert (tmp_path / f"Work/runs/{run_id}/reviews/cross-completion.json").is_file()
 
 
 @pytest.mark.asyncio
@@ -1293,12 +1212,8 @@ async def test_declarative_cross_owner_cohort_preserves_independent_pipeline_sem
         for owner_module_id in owner_ids
     )
     assert {
-        (owner_module_id, session_key)
-        for owner_module_id, session_key in declarative_runner.calls
-    } == {
-        (owner_module_id, f"cross-owner-{owner_module_id}")
-        for owner_module_id in owner_ids
-    }
+        (owner_module_id, session_key) for owner_module_id, session_key in declarative_runner.calls
+    } == {(owner_module_id, f"cross-owner-{owner_module_id}") for owner_module_id in owner_ids}
 
     legacy_root = tmp_path / "legacy-cross"
     legacy_runner = _Runner(legacy_root)
@@ -1316,11 +1231,12 @@ async def test_declarative_cross_owner_cohort_preserves_independent_pipeline_sem
             for module_id, module in value.items()
         }
 
-    assert declarative_result["cross_review_completion_ref"] == (
-        legacy_state["cross_review_completion_ref"]
+    assert (
+        declarative_result["cross_review_completion_ref"]
+        == (legacy_state["cross_review_completion_ref"])
     )
-    assert declarative_result["cross_owner_barrier_ref"] == (
-        legacy_state["cross_owner_barrier_ref"]
+    assert (
+        declarative_result["cross_owner_barrier_ref"] == (legacy_state["cross_owner_barrier_ref"])
     )
     assert _module_projection(declarative_result["module_submissions"]) == (
         _module_projection(legacy_state["module_submissions"])
@@ -1359,9 +1275,7 @@ async def test_declarative_cross_owner_initial_reviewer_uses_agent_port_once(
     conversation = completed.conversations["cross-owner-conversation"]
     assert conversation.key.agent_id == "cross-module-reviewer"
     assert conversation.key.value == "cross-owner-2.1"
-    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(
-        completed.outputs["result"]
-    )
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(completed.outputs["result"])
     assert result.owner_module_id == "2.1"
     assert result.status == "completed"
     assert result.pipeline is not None
@@ -1412,9 +1326,7 @@ async def test_declarative_cross_owner_initial_result_recovery_skips_agent_port(
     assert completed.status is WorkflowStatus.COMPLETED
     assert runner.calls == []
     assert "cross-owner-conversation" not in completed.conversations
-    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(
-        completed.outputs["result"]
-    )
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(completed.outputs["result"])
     assert result.owner_module_id == "2.1"
     assert result.status == "completed"
 
@@ -1435,13 +1347,18 @@ async def test_declarative_cross_owner_finding_invokes_original_author_once_befo
 
     async def _record_compatibility_lane(runner, **kwargs):
         compatibility.update(kwargs)
-        return _fake_noop(
+        result = _fake_noop(
             runner,
             state=kwargs["state"],
             owner_module_id=kwargs["module_id"],
             module=kwargs["accepted_local_review"].review.current,
             owner_input_ref=kwargs["owner_input_ref"],
             review_round=kwargs["review_round"],
+        )
+        return result.model_copy(
+            update={
+                "responses": kwargs["accepted_local_review"].cross_responses,
+            }
         )
 
     async def _resolved_recheck(
@@ -1499,6 +1416,11 @@ async def test_declarative_cross_owner_finding_invokes_original_author_once_befo
             "module-2.1-cross-r1-review-r0",
             "module-auditor-2.1",
         ),
+        (
+            "cross-module-reviewer",
+            "cross-owner-2.1-r1-recheck",
+            "cross-owner-2.1",
+        ),
     ]
     assert compatibility["accepted_revision"].revised.revision == 1
     local_acceptance = compatibility["accepted_local_review"]
@@ -1516,9 +1438,9 @@ async def test_declarative_cross_owner_finding_invokes_original_author_once_befo
     assert persisted_input.trigger_revision_responses[0].finding_id == "XMR-2.1-001"
     assert persisted_input.revision_diff.from_revision == 0
     assert persisted_input.revision_diff.to_revision == 1
-    conversation_values = {
-        record.key.value for record in completed.conversations.values()
-    }
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(completed.outputs["result"])
+    assert result.status == "completed"
+    conversation_values = {record.key.value for record in completed.conversations.values()}
     assert conversation_values >= {
         "cross-owner-2.1",
         "module-2.1",
@@ -1616,13 +1538,9 @@ async def test_declarative_cross_owner_persisted_revision_skips_author_and_reuse
         "module-2.1-cross-r1-review-r0",
         "module-auditor-2.1",
     )
-    assert all(
-        record.key.value != "module-2.1"
-        for record in completed.conversations.values()
-    )
+    assert all(record.key.value != "module-2.1" for record in completed.conversations.values())
     assert any(
-        record.key.value == "module-auditor-2.1"
-        for record in completed.conversations.values()
+        record.key.value == "module-auditor-2.1" for record in completed.conversations.values()
     )
     pipeline = DeclarativeCrossOwnerPipelineOutcome.model_validate(
         completed.outputs["result"]
@@ -1634,7 +1552,7 @@ async def test_declarative_cross_owner_persisted_revision_skips_author_and_reuse
 
 
 @pytest.mark.asyncio
-async def test_declarative_cross_owner_revision_failure_retries_only_failed_owner_author(
+async def test_declarative_cross_owner_stage_failures_retry_only_failed_owner_stage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1649,6 +1567,7 @@ async def test_declarative_cross_owner_revision_failure_retries_only_failed_owne
             super().__init__(workspace)
             self.fail_author = True
             self.fail_local_auditor = True
+            self.fail_recheck = True
             self.agent_calls: list[tuple[str, str, str]] = []
 
         async def _agent(
@@ -1674,10 +1593,10 @@ async def test_declarative_cross_owner_revision_failure_retries_only_failed_owne
                         findings=[finding] if owner_module_id == "2.3" else [],
                         synthesis_inputs=_synthesis(owner_module_id),
                     )
+                if self.fail_recheck:
+                    raise RuntimeError("injected Cross owner reviewer recheck failure: 2.3")
                 contract = CrossOwnerInput.model_validate_json(
-                    (self.service.workspace / envelope.input_refs[0]).read_text(
-                        encoding="utf-8"
-                    )
+                    (self.service.workspace / envelope.input_refs[0]).read_text(encoding="utf-8")
                 )
                 return CrossOwnerVerdictSubmission(
                     owner_module_id=owner_module_id,
@@ -1703,31 +1622,23 @@ async def test_declarative_cross_owner_revision_failure_retries_only_failed_owne
                     module_id="2.3",
                     base_revision=0,
                     revision=1,
-                    submodule_narratives={
-                        "2.3.1": "2.3.1 revised for the Cross owner finding"
-                    },
+                    submodule_narratives={"2.3.1": "2.3.1 revised for the Cross owner finding"},
                     source_ids=[],
                     unresolved_questions=[],
                     revision_responses=[
                         RevisionResponse(
                             finding_id=finding.id,
                             action="implemented",
-                            summary=(
-                                "已补充模块接口责任、实施顺序、联合验证步骤和明确关闭条件。"
-                            ),
+                            summary=("已补充模块接口责任、实施顺序、联合验证步骤和明确关闭条件。"),
                             changed_target_ids=["2.3.1"],
                         )
                     ],
                 )
             if agent_id == "evidence-auditor":
                 if self.fail_local_auditor:
-                    raise RuntimeError(
-                        "injected Cross owner local Auditor failure: 2.3"
-                    )
+                    raise RuntimeError("injected Cross owner local Auditor failure: 2.3")
                 review_input = lifecycle.ModuleReviewInput.model_validate_json(
-                    (self.service.workspace / envelope.input_refs[0]).read_text(
-                        encoding="utf-8"
-                    )
+                    (self.service.workspace / envelope.input_refs[0]).read_text(encoding="utf-8")
                 )
                 return ModuleReviewFindingSubmission(
                     coverage={"submodule_ids": review_input.required_submodule_ids},
@@ -1760,9 +1671,7 @@ async def test_declarative_cross_owner_revision_failure_retries_only_failed_owne
             owner_input_ref=kwargs["owner_input_ref"],
             review_round=kwargs["review_round"],
         )
-        return result.model_copy(
-            update={"responses": accepted.revised.revision_responses}
-        )
+        return result.model_copy(update={"responses": accepted.revised.revision_responses})
 
     monkeypatch.setattr(lifecycle, "_run_cross_owner_lane", _accepted_revision_lane)
     monkeypatch.setattr(
@@ -1789,15 +1698,12 @@ async def test_declarative_cross_owner_revision_failure_retries_only_failed_owne
                 "prepare-current-cross-owner-revision": runtime.prepare_revision,
                 "cross-owner-revision-requires-agent": runtime.revision_requires_agent,
                 "accept-current-cross-owner-revision": runtime.accept_revision,
-                "prepare-current-cross-owner-local-review": (
-                    runtime.prepare_local_review
-                ),
-                "cross-owner-local-review-requires-agent": (
-                    runtime.local_review_requires_agent
-                ),
-                "accept-current-cross-owner-local-review": (
-                    runtime.accept_local_review
-                ),
+                "prepare-current-cross-owner-local-review": (runtime.prepare_local_review),
+                "cross-owner-local-review-requires-agent": (runtime.local_review_requires_agent),
+                "accept-current-cross-owner-local-review": (runtime.accept_local_review),
+                "prepare-current-cross-owner-recheck": runtime.prepare_recheck,
+                "cross-owner-recheck-requires-agent": (runtime.recheck_requires_agent),
+                "accept-current-cross-owner-recheck": runtime.accept_recheck,
                 "continue-current-cross-owner-pipeline": runtime.continue_owner,
                 "reduce-cross-owner-cohort": runtime.reduce,
             },
@@ -1857,9 +1763,9 @@ async def test_declarative_cross_owner_revision_failure_retries_only_failed_owne
     local_failed_state = state_store.load(run_id)
     local_outcomes = {
         owner_module_id: DeclarativeCrossOwnerPipelineOutcome.model_validate(
-            local_failed_state.parallel_results["cross-owner-cohort"][
-                owner_module_id
-            ][f"outcome-{owner_module_id}"]
+            local_failed_state.parallel_results["cross-owner-cohort"][owner_module_id][
+                f"outcome-{owner_module_id}"
+            ]
         )
         for owner_module_id in REPORT_TAXONOMY
     }
@@ -1892,28 +1798,58 @@ async def test_declarative_cross_owner_revision_failure_retries_only_failed_owne
         local_retry_state.variables["prepared-cross-state"],
         workflow_id,
     )
+    with pytest.raises(RuntimeError, match="reviewer recheck failure"):
+        await host.execute(
+            cohort_plan,
+            local_retry_state,
+            _context(local_retry_runtime),
+        )
+
+    retry_calls = runner.agent_calls[len(calls_before_local_retry) :]
+    assert retry_calls == [
+        (
+            "evidence-auditor",
+            "module-2.3-cross-r1-review-r0",
+            "module-auditor-2.3",
+        ),
+        (
+            "cross-module-reviewer",
+            "cross-owner-2.3-r1-recheck",
+            "cross-owner-2.3",
+        ),
+    ]
+
+    recheck_failed_state = state_store.load(run_id)
+    calls_before_recheck_retry = list(runner.agent_calls)
+    runner.fail_recheck = False
+    recheck_retry_state = retry_failed_cross_owner_pipelines(
+        cohort_plan,
+        recheck_failed_state,
+    )
+    recheck_retry_runtime = DeclarativeCrossOwnerRuntime(
+        runner,
+        recheck_retry_state.variables["prepared-cross-state"],
+        workflow_id,
+    )
     recovered = await host.execute(
         cohort_plan,
-        local_retry_state,
-        _context(local_retry_runtime),
+        recheck_retry_state,
+        _context(recheck_retry_runtime),
     )
 
     assert recovered.status is WorkflowStatus.COMPLETED
-    retry_calls = runner.agent_calls[len(calls_before_local_retry) :]
-    assert retry_calls[0] == (
-        "evidence-auditor",
-        "module-2.3-cross-r1-review-r0",
-        "module-auditor-2.3",
-    )
-    assert all(
-        agent_id in {"evidence-auditor", "cross-module-reviewer"}
-        for agent_id, _task_id, _session in retry_calls
-    )
+    assert runner.agent_calls[len(calls_before_recheck_retry) :] == [
+        (
+            "cross-module-reviewer",
+            "cross-owner-2.3-r1-recheck",
+            "cross-owner-2.3",
+        )
+    ]
     assert sum(task_id == initial_task_id for _agent, task_id, _session in runner.agent_calls) == 1
-    assert sum(
-        task_id == "module-revision-r1-2.3"
-        for _agent, task_id, _session in runner.agent_calls
-    ) == 2
+    assert (
+        sum(task_id == "module-revision-r1-2.3" for _agent, task_id, _session in runner.agent_calls)
+        == 2
+    )
 
 
 @pytest.mark.asyncio
@@ -1961,9 +1897,7 @@ async def test_declarative_cross_owner_accepted_initial_reuses_result_on_resume_
         conversation,
         task_id="invoke-current-cross-owner-initial",
     )
-    typed_result = DeclarativeCrossOwnerInitialAgentResult.model_validate(
-        invocation.result
-    )
+    typed_result = DeclarativeCrossOwnerInitialAgentResult.model_validate(invocation.result)
     assert typed_result.status == "completed"
     accepted = runtime.accept_initial(
         {
@@ -1980,8 +1914,7 @@ async def test_declarative_cross_owner_accepted_initial_reuses_result_on_resume_
     # continue_owner must use the accepted result and avoid a second Agent turn.
     state["resume"] = True
     legacy_binding = (
-        tmp_path
-        / f"Work/runs/{run_id}/task-attempts/cross-owner-2.1-r0-initial/current.json"
+        tmp_path / f"Work/runs/{run_id}/task-attempts/cross-owner-2.1-r0-initial/current.json"
     )
     assert not legacy_binding.exists()
     completed = await runtime.continue_owner(accepted)
@@ -2023,19 +1956,14 @@ async def test_declarative_cross_owner_cohort_retries_only_failed_owner_from_fil
                 "accept-current-cross-owner-initial": runtime.accept_initial,
                 "cross-owner-initial-has-findings": runtime.initial_has_findings,
                 "prepare-current-cross-owner-revision": runtime.prepare_revision,
-                "cross-owner-revision-requires-agent": (
-                    runtime.revision_requires_agent
-                ),
+                "cross-owner-revision-requires-agent": (runtime.revision_requires_agent),
                 "accept-current-cross-owner-revision": runtime.accept_revision,
-                "prepare-current-cross-owner-local-review": (
-                    runtime.prepare_local_review
-                ),
-                "cross-owner-local-review-requires-agent": (
-                    runtime.local_review_requires_agent
-                ),
-                "accept-current-cross-owner-local-review": (
-                    runtime.accept_local_review
-                ),
+                "prepare-current-cross-owner-local-review": (runtime.prepare_local_review),
+                "cross-owner-local-review-requires-agent": (runtime.local_review_requires_agent),
+                "accept-current-cross-owner-local-review": (runtime.accept_local_review),
+                "prepare-current-cross-owner-recheck": runtime.prepare_recheck,
+                "cross-owner-recheck-requires-agent": (runtime.recheck_requires_agent),
+                "accept-current-cross-owner-recheck": runtime.accept_recheck,
                 "continue-current-cross-owner-pipeline": runtime.continue_owner,
                 "reduce-cross-owner-cohort": runtime.reduce,
             },
@@ -2094,9 +2022,7 @@ async def test_declarative_cross_owner_cohort_retries_only_failed_owner_from_fil
     runner.failed_owner = None
     retry_state = retry_failed_cross_owner_pipelines(cohort_plan, failed_state)
     assert retry_state.status is WorkflowStatus.PENDING
-    assert set(retry_state.parallel_results["cross-owner-cohort"]) == set(owner_ids) - {
-        "2.3"
-    }
+    assert set(retry_state.parallel_results["cross-owner-cohort"]) == set(owner_ids) - {"2.3"}
     retry_reporting_state = retry_state.variables["prepared-cross-state"]
     retry_runtime = DeclarativeCrossOwnerRuntime(
         runner,
@@ -2110,9 +2036,7 @@ async def test_declarative_cross_owner_cohort_retries_only_failed_owner_from_fil
     )
 
     assert recovered.status is WorkflowStatus.COMPLETED
-    assert runner.calls[len(calls_before_retry) :] == [
-        ("2.3", "cross-owner-2.3")
-    ]
+    assert runner.calls[len(calls_before_retry) :] == [("2.3", "cross-owner-2.3")]
     assert set(recovered.parallel_results["cross-owner-cohort"]) == set(owner_ids)
     aggregate = recovered.outputs["result"]
     assert aggregate["cross_review_completion_ref"] == (

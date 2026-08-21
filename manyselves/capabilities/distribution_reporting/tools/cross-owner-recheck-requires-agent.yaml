@@ -1,0 +1,10 @@
+id: cross-owner-recheck-requires-agent
+version: 1.0.0
+description: Route a fresh Cross owner recheck to its original reviewer
+implementation: capability:distribution-reporting:cross-owner-recheck-requires-agent
+input_contract: declarative_cross_owner_runtime_context
+output_contract: boolean
+side_effect: pure_read
+parallel_safe: true
+reuse_result: false
+model_visible: false

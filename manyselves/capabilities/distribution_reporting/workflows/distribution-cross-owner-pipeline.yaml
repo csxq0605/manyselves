@@ -9,6 +9,7 @@ tasks:
 - cross-owner-module-2.4-revision-r1
 - cross-owner-module-2.5-revision-r1
 - cross-owner-runtime-local-review
+- cross-owner-runtime-recheck
 gates: []
 recovery:
 - current-reporting-recovery
@@ -135,7 +136,7 @@ actions:
     variable: should-invoke-cross-owner-local-review
     operator: truthy
   then: create-cross-owner-local-review-conversation
-  otherwise: continue-current-cross-owner-pipeline
+  otherwise: prepare-current-cross-owner-recheck
 - id: create-cross-owner-local-review-conversation
   kind: create_conversation
   agent: evidence-auditor
@@ -157,6 +158,46 @@ actions:
     result: cross-owner-local-review-agent-result
   output_variable: owner-context
 - id: continue-after-cross-owner-local-review
+  kind: goto
+  target: prepare-current-cross-owner-recheck
+- id: prepare-current-cross-owner-recheck
+  kind: invoke_tool
+  tool: prepare-current-cross-owner-recheck
+  input_variable: owner-context
+  output_variable: owner-context
+- id: cross-owner-recheck-requires-agent
+  kind: invoke_tool
+  tool: cross-owner-recheck-requires-agent
+  input_variable: owner-context
+  output_variable: should-invoke-cross-owner-recheck
+- id: choose-cross-owner-recheck-source
+  kind: if
+  condition:
+    variable: should-invoke-cross-owner-recheck
+    operator: truthy
+  then: create-cross-owner-recheck-conversation
+  otherwise: continue-current-cross-owner-pipeline
+- id: create-cross-owner-recheck-conversation
+  kind: create_conversation
+  agent: cross-module-reviewer
+  conversation_key: "{conversation_key}"
+  mode: run
+  output_variable: cross-owner-recheck-conversation
+- id: invoke-current-cross-owner-recheck
+  kind: invoke_agent
+  agent: cross-module-reviewer
+  task: cross-owner-runtime-recheck
+  conversation_variable: cross-owner-recheck-conversation
+  input_variable: owner-context
+  output_variable: cross-owner-recheck-agent-result
+- id: accept-current-cross-owner-recheck
+  kind: invoke_tool
+  tool: accept-current-cross-owner-recheck
+  input_variables:
+    context: owner-context
+    result: cross-owner-recheck-agent-result
+  output_variable: owner-context
+- id: continue-after-cross-owner-recheck
   kind: goto
   target: continue-current-cross-owner-pipeline
 - id: continue-current-cross-owner-pipeline

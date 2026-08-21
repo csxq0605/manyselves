@@ -30,6 +30,7 @@ from manyselves.kernel.workflow import (
 
 from .agentic_models import (
     CrossOwnerFindingSubmission,
+    CrossOwnerVerdictSubmission,
     ModuleReviewFindingSubmission,
     ModuleRevisionSubmission,
     ModuleSubmission,
@@ -45,6 +46,8 @@ from .review_lifecycle import (
     CrossOwnerInitialReviewPreparation,
     CrossOwnerLocalReviewAcceptance,
     CrossOwnerLocalReviewPreparation,
+    CrossOwnerRecheckAcceptance,
+    CrossOwnerRecheckPreparation,
     CrossOwnerRevisionAcceptance,
     CrossOwnerRevisionPreparation,
     CrossReviewCoordinator,
@@ -74,6 +77,16 @@ class DeclarativeCrossOwnerInitialAgentResult(BaseModel):
     error: str | None = None
 
 
+class DeclarativeCrossOwnerRecheckAgentResult(BaseModel):
+    """Typed result returned by the original Cross owner reviewer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["completed", "failed"]
+    submission: CrossOwnerVerdictSubmission | None = None
+    error: str | None = None
+
+
 class DeclarativeCrossOwnerRuntimeContext(BaseModel):
     """Capability-owned state threaded through one Cross owner workflow."""
 
@@ -90,6 +103,9 @@ class DeclarativeCrossOwnerRuntimeContext(BaseModel):
         "local_review_ready",
         "local_review_resumed",
         "local_review_accepted",
+        "recheck_ready",
+        "recheck_resumed",
+        "recheck_accepted",
         "failed",
     ]
     preparation: CrossOwnerInitialReviewPreparation | None = None
@@ -98,6 +114,8 @@ class DeclarativeCrossOwnerRuntimeContext(BaseModel):
     revision_acceptance: CrossOwnerRevisionAcceptance | None = None
     local_review_preparation: CrossOwnerLocalReviewPreparation | None = None
     local_review_acceptance: CrossOwnerLocalReviewAcceptance | None = None
+    recheck_preparation: CrossOwnerRecheckPreparation | None = None
+    recheck_acceptance: CrossOwnerRecheckAcceptance | None = None
     error: str | None = None
 
 
@@ -231,6 +249,77 @@ class _CrossOwnerLocalReviewInvoker:
         return AgentInvocationOutcome(status="ok", result=result)
 
 
+class _CrossOwnerRecheckInvoker:
+    """Invoke the original Cross owner reviewer for its first recheck."""
+
+    def __init__(self, runtime: "DeclarativeCrossOwnerRuntime") -> None:
+        self._runtime = runtime
+
+    async def invoke(
+        self,
+        _agent: AgentDefinition,
+        _task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        del task_id
+        context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
+        preparation = cast(
+            CrossOwnerRecheckPreparation,
+            context.recheck_preparation,
+        )
+        envelope = cast(TaskEnvelope, preparation.envelope)
+        try:
+            payload = await self._runtime._current_runner._agent(
+                "cross-module-reviewer",
+                envelope,
+                envelope.input_refs,
+                preparation.workflow_id,
+                session_key=conversation.key.value,
+            )
+            result = DeclarativeCrossOwnerRecheckAgentResult(
+                status="completed",
+                submission=payload,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            result = DeclarativeCrossOwnerRecheckAgentResult(
+                status="failed",
+                error=str(exc),
+            )
+        return AgentInvocationOutcome(status="ok", result=result)
+
+
+class _CrossOwnerReviewerInvoker:
+    """Route the shared Cross reviewer identity by its declared Task."""
+
+    def __init__(self, runtime: "DeclarativeCrossOwnerRuntime") -> None:
+        self._routes: Mapping[str, AgentInvoker] = {
+            "cross-owner-runtime-initial-review": _CrossOwnerInitialInvoker(runtime),
+            "cross-owner-runtime-recheck": _CrossOwnerRecheckInvoker(runtime),
+        }
+
+    async def invoke(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        return await self._routes[task.id].invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+        )
+
+
 def register_cross_owner_pipeline_specializations(
     definitions: DefinitionRegistry,
 ) -> dict[str, WorkflowDefinition]:
@@ -319,11 +408,11 @@ class DeclarativeCrossOwnerRuntime:
         )
         self._aggregate_recovered = False
         self._compatibility_invoked = False
-        initial_invoker = _CrossOwnerInitialInvoker(self)
+        reviewer_invoker = _CrossOwnerReviewerInvoker(self)
         revision_invoker = _CrossOwnerRevisionInvoker(self)
         local_review_invoker = _CrossOwnerLocalReviewInvoker(self)
         self.agent_invokers: Mapping[str, AgentInvoker] = {
-            "cross-module-reviewer": initial_invoker,
+            "cross-module-reviewer": reviewer_invoker,
             "evidence-auditor": local_review_invoker,
             **{
                 f"module-{module_id}-specialist": revision_invoker
@@ -401,21 +490,15 @@ class DeclarativeCrossOwnerRuntime:
         context = DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
         result = DeclarativeCrossOwnerInitialAgentResult.model_validate(values["result"])
         if result.status == "failed":
-            return context.model_copy(
-                update={"status": "failed", "error": result.error}
-            )
+            return context.model_copy(update={"status": "failed", "error": result.error})
         try:
             acceptance = cast(CrossReviewCoordinator, self._coordinator).accept_owner_initial(
                 cast(CrossOwnerInitialReviewPreparation, context.preparation),
                 result.submission,
             )
         except BaseException as exc:
-            return context.model_copy(
-                update={"status": "failed", "error": str(exc)}
-            )
-        return context.model_copy(
-            update={"status": "initial_accepted", "acceptance": acceptance}
-        )
+            return context.model_copy(update={"status": "failed", "error": str(exc)})
+        return context.model_copy(update={"status": "initial_accepted", "acceptance": acceptance})
 
     async def prepare_revision(
         self,
@@ -428,13 +511,9 @@ class DeclarativeCrossOwnerRuntime:
             preparation = await cast(
                 CrossReviewCoordinator,
                 self._coordinator,
-            ).prepare_owner_revision(
-                cast(CrossOwnerInitialReviewAcceptance, context.acceptance)
-            )
+            ).prepare_owner_revision(cast(CrossOwnerInitialReviewAcceptance, context.acceptance))
         except BaseException as exc:
-            return context.model_copy(
-                update={"status": "failed", "error": str(exc)}
-            )
+            return context.model_copy(update={"status": "failed", "error": str(exc)})
         if preparation.mode == "invoke_agent":
             return context.model_copy(
                 update={
@@ -469,9 +548,7 @@ class DeclarativeCrossOwnerRuntime:
         context = DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
         result = DeclarativeModuleRevisionAgentResult.model_validate(values["result"])
         if result.status == "failed":
-            return context.model_copy(
-                update={"status": "failed", "error": result.error}
-            )
+            return context.model_copy(update={"status": "failed", "error": result.error})
         try:
             acceptance = cast(
                 CrossReviewCoordinator,
@@ -481,9 +558,7 @@ class DeclarativeCrossOwnerRuntime:
                 cast(ModuleRevisionSubmission, result.submission),
             )
         except BaseException as exc:
-            return context.model_copy(
-                update={"status": "failed", "error": str(exc)}
-            )
+            return context.model_copy(update={"status": "failed", "error": str(exc)})
         return context.model_copy(
             update={
                 "status": "revision_accepted",
@@ -508,8 +583,18 @@ class DeclarativeCrossOwnerRuntime:
                 cast(CrossOwnerRevisionAcceptance, context.revision_acceptance)
             )
         except BaseException as exc:
+            return context.model_copy(update={"status": "failed", "error": str(exc)})
+        if preparation.existing_review is not None:
+            acceptance = cast(
+                CrossReviewCoordinator,
+                self._coordinator,
+            ).accept_owner_local_review(preparation)
             return context.model_copy(
-                update={"status": "failed", "error": str(exc)}
+                update={
+                    "status": "local_review_accepted",
+                    "local_review_preparation": preparation,
+                    "local_review_acceptance": acceptance,
+                }
             )
         return context.model_copy(
             update={
@@ -539,9 +624,7 @@ class DeclarativeCrossOwnerRuntime:
         context = DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
         result = DeclarativeModuleReviewAgentResult.model_validate(values["result"])
         if result.status == "failed":
-            return context.model_copy(
-                update={"status": "failed", "error": result.error}
-            )
+            return context.model_copy(update={"status": "failed", "error": result.error})
         try:
             acceptance = cast(
                 CrossReviewCoordinator,
@@ -554,13 +637,90 @@ class DeclarativeCrossOwnerRuntime:
                 cast(ModuleReviewFindingSubmission, result.submission),
             )
         except BaseException as exc:
-            return context.model_copy(
-                update={"status": "failed", "error": str(exc)}
-            )
+            return context.model_copy(update={"status": "failed", "error": str(exc)})
         return context.model_copy(
             update={
                 "status": "local_review_accepted",
                 "local_review_acceptance": acceptance,
+            }
+        )
+
+    async def prepare_recheck(
+        self,
+        context: DeclarativeCrossOwnerRuntimeContext,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Prepare or recover the first original Cross owner recheck."""
+
+        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
+        if context.status == "failed":
+            return context
+        if context.local_review_acceptance is None:
+            return context
+        try:
+            preparation = await cast(
+                CrossReviewCoordinator,
+                self._coordinator,
+            ).prepare_owner_recheck(
+                cast(CrossOwnerInitialReviewAcceptance, context.acceptance),
+                cast(CrossOwnerRevisionAcceptance, context.revision_acceptance),
+                cast(
+                    CrossOwnerLocalReviewAcceptance,
+                    context.local_review_acceptance,
+                ),
+            )
+        except BaseException as exc:
+            return context.model_copy(update={"status": "failed", "error": str(exc)})
+        if preparation.mode == "invoke_agent":
+            return context.model_copy(
+                update={
+                    "status": "recheck_ready",
+                    "recheck_preparation": preparation,
+                }
+            )
+        acceptance = cast(
+            CrossReviewCoordinator,
+            self._coordinator,
+        ).accept_owner_recheck(preparation)
+        return context.model_copy(
+            update={
+                "status": "recheck_resumed",
+                "recheck_preparation": preparation,
+                "recheck_acceptance": acceptance,
+            }
+        )
+
+    @staticmethod
+    def recheck_requires_agent(
+        context: DeclarativeCrossOwnerRuntimeContext,
+    ) -> bool:
+        """Return the explicit original Cross reviewer branch decision."""
+
+        return context.status == "recheck_ready"
+
+    def accept_recheck(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Accept one typed original Cross owner verdict."""
+
+        context = DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
+        result = DeclarativeCrossOwnerRecheckAgentResult.model_validate(values["result"])
+        if result.status == "failed":
+            return context.model_copy(update={"status": "failed", "error": result.error})
+        try:
+            acceptance = cast(
+                CrossReviewCoordinator,
+                self._coordinator,
+            ).accept_owner_recheck(
+                cast(CrossOwnerRecheckPreparation, context.recheck_preparation),
+                cast(CrossOwnerVerdictSubmission, result.submission),
+            )
+        except BaseException as exc:
+            return context.model_copy(update={"status": "failed", "error": str(exc)})
+        return context.model_copy(
+            update={
+                "status": "recheck_accepted",
+                "recheck_acceptance": acceptance,
             }
         )
 
@@ -583,6 +743,7 @@ class DeclarativeCrossOwnerRuntime:
                 "initial_acceptance": context.acceptance,
                 "revision_acceptance": context.revision_acceptance,
                 "local_review_acceptance": context.local_review_acceptance,
+                "recheck_acceptance": context.recheck_acceptance,
             }
         )
 
@@ -604,6 +765,10 @@ class DeclarativeCrossOwnerRuntime:
         local_review_acceptance = cast(
             CrossOwnerLocalReviewAcceptance | None,
             values.get("local_review_acceptance"),
+        )
+        recheck_acceptance = cast(
+            CrossOwnerRecheckAcceptance | None,
+            values.get("recheck_acceptance"),
         )
         if self._aggregate_recovered:
             return DeclarativeCrossOwnerPipelineOutcome(
@@ -644,6 +809,7 @@ class DeclarativeCrossOwnerRuntime:
                 initial_acceptance=initial_acceptance,
                 revision_acceptance=revision_acceptance,
                 local_review_acceptance=local_review_acceptance,
+                recheck_acceptance=recheck_acceptance,
             )
         except BaseException as exc:
             return DeclarativeCrossOwnerPipelineOutcome(

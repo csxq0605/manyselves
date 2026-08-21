@@ -412,6 +412,15 @@ async def execute_declarative_module_stage(
                     "accept-current-cross-owner-local-review": (
                         cross_runtime.accept_local_review
                     ),
+                    "prepare-current-cross-owner-recheck": (
+                        cross_runtime.prepare_recheck
+                    ),
+                    "cross-owner-recheck-requires-agent": (
+                        cross_runtime.recheck_requires_agent
+                    ),
+                    "accept-current-cross-owner-recheck": (
+                        cross_runtime.accept_recheck
+                    ),
                     "continue-current-cross-owner-pipeline": cross_runtime.continue_owner,
                     "reduce-cross-owner-cohort": cross_runtime.reduce,
                     "run-reporting-chief": tail_adapters.chief,

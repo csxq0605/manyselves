@@ -1,0 +1,10 @@
+id: prepare-current-cross-owner-recheck
+version: 1.0.0
+description: Prepare or recover the original Cross owner reviewer recheck
+implementation: capability:distribution-reporting:prepare-current-cross-owner-recheck
+input_contract: declarative_cross_owner_runtime_context
+output_contract: declarative_cross_owner_runtime_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

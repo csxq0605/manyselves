@@ -317,6 +317,7 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
             "cross-owner-runtime-initial-review",
             f"cross-owner-module-{module_id}-revision-r1",
             "cross-owner-runtime-local-review",
+            "cross-owner-runtime-recheck",
         ]
         assert pipeline_plan.tool_ids == [
             "prepare-current-cross-owner-initial",
@@ -329,6 +330,9 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
             "prepare-current-cross-owner-local-review",
             "cross-owner-local-review-requires-agent",
             "accept-current-cross-owner-local-review",
+            "prepare-current-cross-owner-recheck",
+            "cross-owner-recheck-requires-agent",
+            "accept-current-cross-owner-recheck",
             "continue-current-cross-owner-pipeline",
         ]
         conversation = next(
@@ -403,9 +407,7 @@ def test_cross_owner_21_pipeline_declares_initial_reviewer_agent_boundary() -> N
         "result": "cross-owner-initial-agent-result",
     }
     continue_action = next(
-        action
-        for action in plan.actions
-        if action.id == "continue-current-cross-owner-pipeline"
+        action for action in plan.actions if action.id == "continue-current-cross-owner-pipeline"
     )
     assert continue_action.tool == "continue-current-cross-owner-pipeline"
     assert continue_action.input_variable == "owner-context"
@@ -460,8 +462,7 @@ def test_cross_owner_21_pipeline_declares_owner_finding_revision_boundary() -> N
     revision_conversation = next(
         action
         for action in plan.actions
-        if action.kind == "create_conversation"
-        and action.agent == "module-2.1-specialist"
+        if action.kind == "create_conversation" and action.agent == "module-2.1-specialist"
     )
     assert revision_conversation.conversation_key == "module-2.1"
     assert revision_agent.conversation_variable == revision_conversation.output_variable
@@ -501,11 +502,47 @@ def test_cross_owner_21_pipeline_declares_original_auditor_local_regression() ->
     local_review_conversation = next(
         action
         for action in plan.actions
-        if action.kind == "create_conversation"
-        and action.agent == "evidence-auditor"
+        if action.kind == "create_conversation" and action.agent == "evidence-auditor"
     )
     assert local_review_conversation.conversation_key == "module-auditor-2.1"
-    assert (
-        local_review_agents[0].conversation_variable
-        == local_review_conversation.output_variable
+    assert local_review_agents[0].conversation_variable == local_review_conversation.output_variable
+
+
+def test_cross_owner_21_pipeline_declares_original_reviewer_recheck() -> None:
+    """Characterize the first Cross owner recheck Agent boundary."""
+
+    _, registry = load_distribution_reporting_capability()
+    from manyselves.core.reporting.declarative_cross_owner_cohort import (
+        register_cross_owner_pipeline_specializations,
     )
+
+    register_cross_owner_pipeline_specializations(registry)
+    pipeline = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-cross-owner-2.1-pipeline",
+    )
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        pipeline,
+        registry,
+    )
+
+    action_ids = [action.id for action in plan.actions]
+    assert "prepare-current-cross-owner-recheck" in action_ids
+    assert "accept-current-cross-owner-recheck" in action_ids
+    recheck_agents = [
+        action
+        for action in plan.actions
+        if action.kind == "invoke_agent"
+        and action.agent == "cross-module-reviewer"
+        and action.task == "cross-owner-runtime-recheck"
+    ]
+    assert len(recheck_agents) == 1
+    recheck_conversation = next(
+        action for action in plan.actions if action.id == "create-cross-owner-recheck-conversation"
+    )
+    assert recheck_conversation.conversation_key == "cross-owner-2.1"
+    assert recheck_agents[0].conversation_variable == (recheck_conversation.output_variable)
+    local_review_route = next(
+        action for action in plan.actions if action.id == "choose-cross-owner-local-review-source"
+    )
+    assert local_review_route.otherwise == "prepare-current-cross-owner-recheck"
