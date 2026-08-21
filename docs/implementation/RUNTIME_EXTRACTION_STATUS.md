@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-00 through WP-12 complete; reopened five-gap architecture reconciliation in final focused verification`
+- Current work package: `WP-00 through WP-12 and the reopened five-gap architecture reconciliation complete`
 - Last completed vertical slice: the generic Compiler/ResolvedPlan, Capability Tool assembly, declared Agent Recovery port, Schema/WAITING UI, and browser-only handoff now correspond to the target architecture rather than only indexing definitions
-- Current branch and pre-reconciliation baseline: `agent/declarative-runtime-implementation`; `6bc376d` (`Final: publish declarative runtime real-test handoff`)
-- Current migration stage: `all four implementation stages complete; final architecture-difference remediation implemented; focused affected verification in progress`
-- Final real-test status: `not yet requested`; an isolated local browser/server Demo has verified the neutral Capability without a Provider, while the real Provider and real project Reporting run remain the single final user test
-- Next action: finish the remaining focused Reporting Recovery checks, commit and push the reconciliation slices, then use the simplified [`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md); preserve all evidence on failure and do not switch the Legacy default path
+- Current branch and latest implementation slice: `agent/declarative-runtime-implementation`; `2c90c20` (`Final: reconcile runtime status and web demo handoff`); this status closure follows it as a documentation-only commit
+- Current migration stage: `all four implementation stages and final architecture-difference remediation complete; focused affected verification passed`
+- Final real-test status: `ready`; an isolated local browser/server Demo verified the neutral Capability without a Provider, while the real Provider and real project Reporting run remain the single final user test
+- Next action: the user may now use the simplified [`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md); preserve the same Run on failure, provide its Run ID, and do not switch the Legacy default path
 
 ## Five-gap architecture reconciliation
 
