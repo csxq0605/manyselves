@@ -1,0 +1,10 @@
+id: complete-final-review
+version: 1.0.0
+description: Complete the typed Final review cycle after no pending findings remain
+implementation: capability:distribution-reporting:complete-final-review
+input_contract: declarative_final_review_cycle_context
+output_contract: reporting_tail_state
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

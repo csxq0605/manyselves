@@ -28,6 +28,7 @@ from .agentic_models import (
     TEMPLATE_ROLE_SKILL_IDS,
     AgentResult,
     AgentRunStatus,
+    ChapterScopedFinalReviewFinding,
     ChiefChapterLaneRevisionSubmission,
     ChiefChapterLaneSubmission,
     CrossDecisionPack,
@@ -43,6 +44,7 @@ from .agentic_models import (
     ModuleReviewVerdictSubmission,
     ModuleRevisionSubmission,
     ModuleSubmission,
+    RevisionResponse,
     StrictModel,
     TaskEnvelope,
     TemplateSkillBoundaryManifest,
@@ -6911,6 +6913,74 @@ class ReportWorkflowRunner:
         sections = CHAPTER1_SECTION_IDS if chapter_id == "1" else CHAPTER3_SECTION_IDS
         return {section_id: values[section_id] for section_id in sections}
 
+    @staticmethod
+    def _final_recheck_section_projection(
+        current_bodies: dict[str, str],
+        findings: list[ChapterScopedFinalReviewFinding],
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Project the existing changed-body and unchanged-digest recheck contract."""
+
+        changed_ids = {
+            section_id
+            for finding in findings
+            for section_id in finding.target_section_ids
+        }
+        return (
+            {
+                section_id: body
+                for section_id, body in current_bodies.items()
+                if section_id in changed_ids
+            },
+            {
+                section_id: hashlib.sha256(body.encode("utf-8")).hexdigest()
+                for section_id, body in current_bodies.items()
+                if section_id not in changed_ids
+            },
+        )
+
+    def _restore_final_review_completion(self, state: dict) -> bool:
+        """Restore the existing completed Final aggregate without Provider replay."""
+
+        run_id = str(state["run_id"])
+        recovered_aggregate = self._recovery_store(state).load_aggregate("final")
+        if recovered_aggregate is None or recovered_aggregate.status != "completed":
+            return False
+        aggregate_ref = recovered_aggregate.result_ref
+        if not aggregate_ref:
+            return False
+        try:
+            completion = ReviewCompletionRecord.model_validate_json(
+                (self.service.workspace / aggregate_ref).read_text(encoding="utf-8")
+            )
+            restored_ref = completion.subject_refs[0]
+            if len(completion.subject_refs) != 1:
+                raise ValueError("final completion must bind exactly one subject")
+            self._load_current_review_completion(
+                run_id=run_id,
+                completion_ref=aggregate_ref,
+                lifecycle="final",
+                reviewer_agent_id="chief-editor-auditor",
+                reviewer_session_key="final-chapter-wave",
+                subject_refs=[restored_ref],
+            )
+            restored = EditedReportSubmission.model_validate_json(
+                (self.service.workspace / restored_ref).read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError, IndexError):
+            return False
+        state["edited_report"] = restored
+        state["chief_candidate_ref"] = restored_ref
+        state["final_review_completion_ref"] = aggregate_ref
+        state["final_audit_snapshot_ref"] = (
+            f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
+        )
+        state["aggregate_refs"] = {
+            **dict(state.get("aggregate_refs", {})),
+            "final": aggregate_ref,
+        }
+        self._validated_final_audit_subject(state)
+        return True
+
     async def _run_final_chapter_lanes(
         self,
         state: dict,
@@ -6941,49 +7011,13 @@ class ReportWorkflowRunner:
             or f"Work/runs/{run_id}/edited-revisions/chief-r0.json"
         )
         recovery = self._recovery_store(state)
+        if self._restore_final_review_completion(state):
+            return
         # Initial findings and later verdicts are separate recovery stages.
         # Never let a terminal verdict overwrite an initial finding lane.
         recovered_lanes = recovery.load_completed_lanes(
             "final-initial", list(active_chapters)
         )
-        recovered_aggregate = recovery.load_aggregate("final")
-        if recovered_aggregate is not None and recovered_aggregate.status == "completed":
-            aggregate_ref = recovered_aggregate.result_ref
-            if aggregate_ref:
-                try:
-                    completion = ReviewCompletionRecord.model_validate_json(
-                        (self.service.workspace / aggregate_ref).read_text(encoding="utf-8")
-                    )
-                    restored_ref = completion.subject_refs[0]
-                    if len(completion.subject_refs) != 1:
-                        raise ValueError("final completion must bind exactly one subject")
-                    self._load_current_review_completion(
-                        run_id=run_id,
-                        completion_ref=aggregate_ref,
-                        lifecycle="final",
-                        reviewer_agent_id="chief-editor-auditor",
-                        reviewer_session_key="final-chapter-wave",
-                        subject_refs=[restored_ref],
-                    )
-                    restored = EditedReportSubmission.model_validate_json(
-                        (self.service.workspace / restored_ref).read_text(encoding="utf-8")
-                    )
-                except (OSError, ValueError, IndexError):
-                    restored = None
-                    restored_ref = None
-                if restored is not None and restored_ref is not None:
-                    state["edited_report"] = restored
-                    state["chief_candidate_ref"] = restored_ref
-                    state["final_review_completion_ref"] = aggregate_ref
-                    state["final_audit_snapshot_ref"] = (
-                        f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
-                    )
-                    state["aggregate_refs"] = {
-                        **dict(state.get("aggregate_refs", {})),
-                        "final": aggregate_ref,
-                    }
-                    self._validated_final_audit_subject(state)
-                    return
         recovered_initial: dict[str, tuple[FinalChapterLaneFindingSubmission, str]] = {}
         for chapter_id, lane_state in recovered_lanes.items():
             result_ref = getattr(lane_state, "result_ref", None)
@@ -7386,11 +7420,9 @@ class ReportWorkflowRunner:
                 if not findings:
                     return chapter_id, None, None
                 current_bodies = self._final_chapter_section_bodies(current, chapter_id)
-                changed_ids = {
-                    section_id
-                    for finding in findings
-                    for section_id in finding.target_section_ids
-                }
+                changed_bodies, unchanged_digests = (
+                    self._final_recheck_section_projection(current_bodies, findings)
+                )
                 contract = FinalChapterLaneInput(
                     phase="recheck",
                     run_id=run_id,
@@ -7398,16 +7430,8 @@ class ReportWorkflowRunner:
                     chapter_id=chapter_id,
                     review_focus=list(final_lane_specialization(chapter_id).review_focus),
                     section_ids=list(chapter_sections[chapter_id]),
-                    section_bodies={
-                        section_id: body
-                        for section_id, body in current_bodies.items()
-                        if section_id in changed_ids
-                    },
-                    unchanged_section_sha256={
-                        section_id: hashlib.sha256(body.encode("utf-8")).hexdigest()
-                        for section_id, body in current_bodies.items()
-                        if section_id not in changed_ids
-                    },
+                    section_bodies=changed_bodies,
+                    unchanged_section_sha256=unchanged_digests,
                     required_findings=findings,
                     revision_responses=revision_responses[chapter_id],
                     special_topic_plan=plan,
@@ -7828,11 +7852,10 @@ class ReportWorkflowRunner:
         async def dispatch_recheck(chapter_id: str):
             findings = pending_by_chapter[chapter_id]
             current_bodies = self._final_chapter_section_bodies(current, chapter_id)
-            changed_ids = {
-                section_id
-                for finding in findings
-                for section_id in finding.target_section_ids
-            }
+            changed_bodies, unchanged_digests = self._final_recheck_section_projection(
+                current_bodies,
+                findings,
+            )
             contract = FinalChapterLaneInput(
                 phase="recheck",
                 run_id=run_id,
@@ -7840,16 +7863,8 @@ class ReportWorkflowRunner:
                 chapter_id=chapter_id,
                 review_focus=list(final_lane_specialization(chapter_id).review_focus),
                 section_ids=list(chapter_sections[chapter_id]),
-                section_bodies={
-                    section_id: body
-                    for section_id, body in current_bodies.items()
-                    if section_id in changed_ids
-                },
-                unchanged_section_sha256={
-                    section_id: hashlib.sha256(body.encode("utf-8")).hexdigest()
-                    for section_id, body in current_bodies.items()
-                    if section_id not in changed_ids
-                },
+                section_bodies=changed_bodies,
+                unchanged_section_sha256=unchanged_digests,
                 required_findings=findings,
                 revision_responses=revision_responses[chapter_id],
                 special_topic_plan=plan,

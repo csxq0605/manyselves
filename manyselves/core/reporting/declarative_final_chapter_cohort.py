@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from copy import deepcopy
-from inspect import isawaitable
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict
@@ -22,7 +21,10 @@ from manyselves.kernel.definitions import (
 from manyselves.kernel.executors import ExecutorRegistry
 from manyselves.kernel.ports import AgentInvocationOutcome, AgentInvoker
 from manyselves.kernel.workflow import (
+    ActionExecutionStatus,
+    ParallelAction,
     ResolvedPlan,
+    SubworkflowAction,
     WorkflowCompiler,
     WorkflowState,
     WorkflowStatus,
@@ -184,13 +186,10 @@ class DeclarativeFinalChapterRuntime:
         runner: Any,
         state: dict[str, Any],
         workflow_id: str,
-        *,
-        continue_final: Any,
     ) -> None:
         self.current_state = state
         self._current_runner = getattr(runner, "_runner", runner)
         self._workflow_id = workflow_id
-        self._continue_final = continue_final
         self._production = hasattr(self._current_runner, "service") and callable(
             getattr(self._current_runner, "_agent", None)
         )
@@ -200,6 +199,8 @@ class DeclarativeFinalChapterRuntime:
 
     def prepare(self, state: dict[str, Any]) -> dict[str, Any]:
         _restore_state(state)
+        if self._production and "final_review_completion_ref" not in state:
+            self._current_runner._restore_final_review_completion(state)
         self.current_state = state
         return deepcopy(state)
 
@@ -425,16 +426,6 @@ class DeclarativeFinalChapterRuntime:
         self.current_state = state
         return deepcopy(state)
 
-    async def continue_review(self, state: dict[str, Any]) -> dict[str, Any]:
-        """Continue current revision/recheck behavior after the declared initial wave."""
-
-        _restore_state(state)
-        self.current_state = state
-        result = self._continue_final(state)
-        if isawaitable(result):
-            await result
-        return state
-
     def _recover_lane(
         self,
         *,
@@ -478,7 +469,14 @@ def retry_failed_final_chapter_lanes(
     plan: ResolvedPlan,
     state: WorkflowState,
 ) -> WorkflowState:
-    """Retry only initial Final branches whose typed outcome failed."""
+    """Retry failed initial Final lanes or a failed nested Final review lane.
+
+    The outer Final cohort owns the initial chapter parallel action and the
+    review-cycle subworkflow.  A review-cycle failure is persisted recursively
+    through the cycle and its Chief/Recheck cohort.  Retry the failed inner
+    branches with the Kernel's existing branch helper, then retain that
+    runnable child state while resetting each containing subworkflow action.
+    """
 
     if state.status is not WorkflowStatus.FAILED:
         return state
@@ -493,13 +491,175 @@ def retry_failed_final_chapter_lanes(
         == "failed"
     }
     if not failed:
-        return state
+        return _retry_failed_nested_final_review_lane(plan, state)
     return retry_parallel_branches(
         plan,
         state,
         parallel_action_id="final-chapter-cohort",
         branch_ids=failed,
     )
+
+
+_NESTED_FINAL_REVIEW_RETRY_TARGETS = (
+    (
+        "run-final-chief-revision-cohort",
+        "distribution-final-chief-revision-cohort",
+        "final-chief-revision-cohort",
+    ),
+    (
+        "run-final-recheck-cohort",
+        "distribution-final-recheck-cohort",
+        "final-recheck-cohort",
+    ),
+)
+
+
+def _retry_failed_nested_final_review_lane(
+    plan: ResolvedPlan,
+    state: WorkflowState,
+) -> WorkflowState:
+    """Resume one failed Chief/Recheck branch below the Final review cycle."""
+
+    cycle_action = next(
+        (action for action in plan.actions if action.id == "run-final-review-cycle"),
+        None,
+    )
+    if not isinstance(cycle_action, SubworkflowAction):
+        return state
+    cycle_payload = state.subworkflow_states.get(cycle_action.id)
+    if cycle_payload is None:
+        return state
+    cycle_state = WorkflowState.model_validate(cycle_payload)
+    cycle_plan = _compile_final_review_subworkflow("distribution-final-review-cycle")
+    if cycle_plan is None:
+        return state
+
+    for (
+        action_id,
+        workflow_id,
+        parallel_action_id,
+    ) in _NESTED_FINAL_REVIEW_RETRY_TARGETS:
+        nested_payload = cycle_state.subworkflow_states.get(action_id)
+        if nested_payload is None:
+            continue
+        nested_state = WorkflowState.model_validate(nested_payload)
+        nested_action = cycle_state.actions.get(action_id)
+        if (
+            nested_action is not None
+            and nested_action.status is not ActionExecutionStatus.FAILED
+            and nested_state.status is not WorkflowStatus.FAILED
+        ):
+            continue
+        nested_plan = _compile_final_review_subworkflow(workflow_id)
+        if nested_plan is None:
+            continue
+        parallel = next(
+            (action for action in nested_plan.actions if action.id == parallel_action_id),
+            None,
+        )
+        if not isinstance(parallel, ParallelAction):
+            continue
+        failed_branches = _failed_parallel_branch_ids(
+            nested_state,
+            parallel,
+        )
+        if not failed_branches:
+            continue
+        resumed_nested = retry_parallel_branches(
+            nested_plan,
+            nested_state,
+            parallel_action_id=parallel_action_id,
+            branch_ids=failed_branches,
+        )
+        resumed_cycle = _reset_subworkflow_action(
+            cycle_plan,
+            cycle_state,
+            action_id=action_id,
+            child_state=resumed_nested,
+        )
+        return _reset_subworkflow_action(
+            plan,
+            state,
+            action_id=cycle_action.id,
+            child_state=resumed_cycle,
+        )
+    return state
+
+
+def _compile_final_review_subworkflow(workflow_id: str) -> ResolvedPlan | None:
+    """Compile the packaged Final review child plan when nested recovery needs it."""
+
+    from manyselves.core.reporting.declarative_final_review_cycle import (
+        compile_final_review_workflows,
+    )
+    from manyselves.core.reporting.declarative_reporting_tail import (
+        build_reporting_tail_definition,
+    )
+    from manyselves.kernel.executors import build_builtin_executor_registry
+
+    definitions, _contracts, _workflow = build_reporting_tail_definition()
+    plans = compile_final_review_workflows(
+        definitions,
+        build_builtin_executor_registry(),
+    )
+    return plans.get(workflow_id)
+
+
+def _failed_parallel_branch_ids(
+    state: WorkflowState,
+    parallel: ParallelAction,
+) -> set[str]:
+    """Find typed failures and raw failed branch states without new validation."""
+
+    failed: set[str] = set()
+    results = state.parallel_results.get(parallel.id, {})
+    branch_states = state.parallel_states.get(parallel.id, {})
+    for branch_id in parallel.branches:
+        if _contains_failed_status(results.get(branch_id)):
+            failed.add(branch_id)
+        branch_payload = branch_states.get(branch_id)
+        if branch_payload is None:
+            continue
+        branch_state = WorkflowState.model_validate(branch_payload)
+        if branch_state.status is WorkflowStatus.FAILED:
+            failed.add(branch_id)
+    return failed
+
+
+def _contains_failed_status(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        if value.get("status") == "failed":
+            return True
+        return any(_contains_failed_status(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_failed_status(item) for item in value)
+    return False
+
+
+def _reset_subworkflow_action(
+    plan: ResolvedPlan,
+    state: WorkflowState,
+    *,
+    action_id: str,
+    child_state: WorkflowState,
+) -> WorkflowState:
+    """Make a failed subworkflow action runnable while retaining child progress."""
+
+    resumed = state.model_copy(deep=True)
+    action_index = next(
+        index for index, action in enumerate(plan.actions) if action.id == action_id
+    )
+    action_state = resumed.actions[action_id]
+    action_state.status = ActionExecutionStatus.PENDING
+    action_state.output = None
+    action_state.error = None
+    resumed.control_frames.pop(action_id, None)
+    resumed.subworkflow_states[action_id] = child_state.model_dump(mode="json")
+    resumed.status = WorkflowStatus.PENDING
+    resumed.waiting_input = None
+    resumed.next_action_index = action_index
+    resumed.next_action_id = action_id
+    return resumed
 
 
 def _restore_state(state: dict[str, Any]) -> None:

@@ -1,0 +1,5 @@
+id: declarative_final_chief_revision_agent_result
+version: 1.0.0
+description: Typed result returned by one Final Chief revision Agent invocation
+adapter: pydantic
+model: manyselves.core.reporting.declarative_final_review_cycle:DeclarativeFinalChiefRevisionAgentResult

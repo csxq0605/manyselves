@@ -288,7 +288,10 @@ class WorkflowRuntimeHost:
                 f"missing compiled subworkflow: {action.workflow}"
             ) from exc
         saved = state.subworkflow_states.get(action.id)
-        if saved is None:
+        child_state = (
+            WorkflowState.model_validate(saved) if saved is not None else None
+        )
+        if child_state is None or child_state.status is WorkflowStatus.COMPLETED:
             child_state = WorkflowState.for_plan(state.run_id, child_plan)
             if action.input_variable is not None:
                 child_state.variables[action.child_input_variable] = state.variables[
@@ -301,8 +304,6 @@ class WorkflowRuntimeHost:
                         for child_variable, parent_variable in action.input_variables.items()
                     }
                 )
-        else:
-            child_state = WorkflowState.model_validate(saved)
         completed = await self._execute_nested(
             child_plan,
             child_state,

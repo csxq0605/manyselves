@@ -78,10 +78,13 @@ actions:
     state: prepared-final-state
     outcomes: final-chapter-outcomes
   output_variable: completed-final-state
-- id: continue-final-review
-  kind: invoke_tool
-  tool: continue-current-final-review
-  input_variable: completed-final-state
+- id: run-final-review-cycle
+  kind: subworkflow
+  workflow: distribution-final-review-cycle
+  input_variables:
+    reporting-state: completed-final-state
+    initial-outcomes: final-chapter-outcomes
+  child_output_name: result
   output_variable: completed-final-state
 - id: finish-final-chapter-cohort
   kind: end_workflow

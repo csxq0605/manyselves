@@ -12,7 +12,10 @@ from manyselves.capabilities.distribution_reporting.adapters import (
 from manyselves.core.reporting.config import (
     AgentDefinition as ReportingAgentDefinition,
 )
-from manyselves.core.reporting.config import load_agent_definitions, load_packaged_agents
+from manyselves.core.reporting.config import (
+    load_agent_definitions,
+    load_packaged_agents,
+)
 from manyselves.core.reporting.models import REPORT_MODULE_IDS
 from manyselves.kernel.definitions import DefinitionKind
 from manyselves.kernel.executors import build_builtin_executor_registry
@@ -61,6 +64,17 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
         "distribution-final-chapter-4-lane",
         "distribution-final-chapter-cohort",
         "distribution-final-chapter-lane",
+        "distribution-final-chief-revision-1-lane",
+        "distribution-final-chief-revision-3-lane",
+        "distribution-final-chief-revision-4-lane",
+        "distribution-final-chief-revision-cohort",
+        "distribution-final-chief-revision-lane",
+        "distribution-final-recheck-1-lane",
+        "distribution-final-recheck-3-lane",
+        "distribution-final-recheck-4-lane",
+        "distribution-final-recheck-cohort",
+        "distribution-final-recheck-lane",
+        "distribution-final-review-cycle",
         "distribution-module-review-lane",
         "distribution-module-runtime-lane",
         "distribution-module-cohort",
@@ -71,6 +85,9 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
     assert registry.all(DefinitionKind.CONTRACT)
     assert registry.all(DefinitionKind.TOOL)
     assert "continue-current-cross-owner-pipeline" not in {
+        definition.id for definition in registry.all(DefinitionKind.TOOL)
+    }
+    assert "continue-current-final-review" not in {
         definition.id for definition in registry.all(DefinitionKind.TOOL)
     }
     assert registry.all(DefinitionKind.RECOVERY)
@@ -460,6 +477,101 @@ def test_production_final_is_a_chapter_auditor_cohort_subworkflow() -> None:
         assert invoke.agent == "chief-editor-auditor"
         assert invoke.task == "final-chapter-review"
         assert "run-reporting-final" not in lane_plan.tool_ids
+
+    cycle = next(action for action in cohort_plan.actions if action.id == "run-final-review-cycle")
+    assert cycle.kind == "subworkflow"
+    assert cycle.workflow == "distribution-final-review-cycle"
+    assert cycle.input_variables == {
+        "reporting-state": "completed-final-state",
+        "initial-outcomes": "final-chapter-outcomes",
+    }
+    assert all(
+        action.kind != "invoke_tool" or action.tool != "continue-current-final-review"
+        for action in cohort_plan.actions
+    )
+
+
+def test_production_final_review_is_an_affected_only_revision_recheck_cycle() -> None:
+    """Characterize the file-owned Final revision and recheck loop."""
+
+    registry, _, _ = build_reporting_tail_definition()
+    compiler = WorkflowCompiler(build_builtin_executor_registry())
+    cycle = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-final-review-cycle",
+    )
+    cycle_plan = compiler.compile(cycle, registry)
+
+    assert cycle.gates == []
+    assert cycle.max_iterations is None
+    assert cycle_plan.workflow_ids == [
+        "distribution-final-chief-revision-cohort",
+        "distribution-final-recheck-cohort",
+    ]
+    assert cycle_plan.tool_ids == [
+        "start-final-review-cycle",
+        "final-review-needs-round",
+        "advance-final-review-round",
+        "complete-final-review",
+    ]
+    entry = next(
+        action for action in cycle_plan.actions if action.id == "choose-final-review-entry"
+    )
+    assert entry.then == "advance-final-review-round"
+    assert entry.otherwise == "complete-final-review"
+    after_recheck = next(
+        action for action in cycle_plan.actions if action.id == "choose-final-review-next-step"
+    )
+    assert after_recheck.then == "advance-final-review-round"
+    assert after_recheck.otherwise == "complete-final-review"
+
+    for cohort_id, parallel_id, lane_prefix, expected_task, expected_agent in [
+        (
+            "distribution-final-chief-revision-cohort",
+            "final-chief-revision-cohort",
+            "distribution-final-chief-revision-",
+            "final-chief-chapter-revision",
+            "chief-editor",
+        ),
+        (
+            "distribution-final-recheck-cohort",
+            "final-recheck-cohort",
+            "distribution-final-recheck-",
+            "final-chapter-recheck",
+            "chief-editor-auditor",
+        ),
+    ]:
+        cohort = registry.require(DefinitionKind.WORKFLOW, cohort_id)
+        cohort_plan = compiler.compile(cohort, registry)
+        parallel = next(action for action in cohort_plan.actions if action.kind == "parallel")
+        assert parallel.id == parallel_id
+        assert set(parallel.branches) == {"1", "3", "4"}
+        join = next(action for action in cohort_plan.actions if action.kind == "join")
+        assert join.parallel == parallel.id
+        assert set(join.inputs) == {"1", "3", "4"}
+        for chapter_id, branch_id in parallel.branches.items():
+            branch = next(action for action in cohort_plan.actions if action.id == branch_id)
+            assert branch.workflow == f"{lane_prefix}{chapter_id}-lane"
+            lane = registry.require(DefinitionKind.WORKFLOW, branch.workflow)
+            lane_plan = compiler.compile(lane, registry)
+            assert lane_plan.agent_ids == [expected_agent]
+            assert lane_plan.task_ids == [expected_task]
+            conversation = next(
+                action for action in lane_plan.actions if action.kind == "create_conversation"
+            )
+            expected_conversation = (
+                f"chief-chapter-{chapter_id}"
+                if expected_agent == "chief-editor"
+                else f"final-chapter-{chapter_id}"
+            )
+            assert conversation.conversation_key == expected_conversation
+            assert conversation.agent == expected_agent
+
+        reducer = next(action for action in cohort_plan.actions if action.kind == "invoke_tool")
+        assert reducer.tool in {
+            "reduce-final-chief-revision-cohort",
+            "reduce-final-recheck-cohort",
+        }
 
 
 def test_cross_owner_21_pipeline_declares_initial_reviewer_agent_boundary() -> None:

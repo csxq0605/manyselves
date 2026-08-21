@@ -44,7 +44,12 @@ from .declarative_final_chapter_cohort import (
     register_final_chapter_lane_specializations,
     retry_failed_final_chapter_lanes,
 )
-from .models import REPORT_MODULE_IDS
+from .declarative_final_review_cycle import (
+    DeclarativeFinalReviewRuntime,
+    compile_final_review_workflows,
+    compose_final_review_agent_invokers,
+    register_final_review_lane_specializations,
+)
 
 
 class DeclarativeReportingTailError(RuntimeError):
@@ -60,6 +65,7 @@ def build_reporting_tail_definition() -> tuple[
     register_cross_owner_pipeline_specializations(registry)
     register_chief_chapter_lane_specializations(registry)
     register_final_chapter_lane_specializations(registry)
+    register_final_review_lane_specializations(registry)
     workflow = registry.require(
         DefinitionKind.WORKFLOW,
         "distribution-reporting-tail",
@@ -95,6 +101,7 @@ async def execute_declarative_reporting_tail(
         definitions,
         executors,
     )
+    final_review_plans = compile_final_review_workflows(definitions, executors)
     kernel_run_id = str(state["run_id"])
     try:
         kernel_state = state_store.load(kernel_run_id)
@@ -138,7 +145,6 @@ async def execute_declarative_reporting_tail(
     stage_tools = {
         "cross": adapters.cross,
         "chief": adapters.chief,
-        "final": adapters.final,
         "delivery": adapters.delivery,
     }
     if trace is not None:
@@ -172,7 +178,15 @@ async def execute_declarative_reporting_tail(
         runner,
         state,
         workflow_id,
-        continue_final=stage_tools["final"],
+    )
+    final_review_runtime = DeclarativeFinalReviewRuntime(runner, state, workflow_id)
+    final_agents = compose_final_review_agent_invokers(
+        {
+            **cross_runtime.agent_invokers,
+            **chief_runtime.agent_invokers,
+            **final_runtime.agent_invokers,
+        },
+        final_review_runtime,
     )
     try:
         completed = await WorkflowRuntimeHost(
@@ -187,7 +201,7 @@ async def execute_declarative_reporting_tail(
                     **{
                         f"run-reporting-{stage}": invoke
                         for stage, invoke in stage_tools.items()
-                        if stage not in {"cross", "chief", "final"}
+                        if stage not in {"cross", "chief"}
                     },
                     "prepare-chief-chapter-cohort": chief_runtime.prepare,
                     "prepare-current-chief-chapter": chief_runtime.prepare_lane,
@@ -201,7 +215,30 @@ async def execute_declarative_reporting_tail(
                     "accept-current-final-chapter-initial": final_runtime.accept_lane,
                     "complete-current-final-chapter": final_runtime.complete_lane,
                     "reduce-final-chapter-cohort": final_runtime.reduce,
-                    "continue-current-final-review": final_runtime.continue_review,
+                    "start-final-review-cycle": final_review_runtime.start_cycle,
+                    "final-review-needs-round": final_review_runtime.needs_round,
+                    "advance-final-review-round": final_review_runtime.advance_round,
+                    "prepare-current-final-chief-revision": (
+                        final_review_runtime.prepare_chief_revision
+                    ),
+                    "final-chief-revision-requires-agent": (
+                        final_review_runtime.chief_revision_requires_agent
+                    ),
+                    "accept-current-final-chief-revision": (
+                        final_review_runtime.accept_chief_revision
+                    ),
+                    "complete-current-final-chief-revision": (
+                        final_review_runtime.complete_chief_revision
+                    ),
+                    "reduce-final-chief-revision-cohort": (
+                        final_review_runtime.reduce_chief_revisions
+                    ),
+                    "prepare-current-final-recheck": (final_review_runtime.prepare_recheck),
+                    "final-recheck-requires-agent": (final_review_runtime.recheck_requires_agent),
+                    "accept-current-final-recheck": (final_review_runtime.accept_recheck),
+                    "complete-current-final-recheck": (final_review_runtime.complete_recheck),
+                    "reduce-final-recheck-cohort": (final_review_runtime.reduce_rechecks),
+                    "complete-final-review": final_review_runtime.complete_review,
                     "prepare-cross-owner-cohort": cross_runtime.prepare,
                     "prepare-current-cross-owner-initial": cross_runtime.prepare_initial,
                     "cross-owner-initial-requires-agent": (cross_runtime.initial_requires_agent),
@@ -249,11 +286,7 @@ async def execute_declarative_reporting_tail(
                     ),
                     "reduce-cross-owner-cohort": cross_runtime.reduce,
                 },
-                agents={
-                    **cross_runtime.agent_invokers,
-                    **chief_runtime.agent_invokers,
-                    **final_runtime.agent_invokers,
-                },
+                agents=final_agents,
                 contracts=contracts,
                 definitions=definitions,
                 subworkflows={
@@ -263,6 +296,7 @@ async def execute_declarative_reporting_tail(
                     **chief_lane_plans,
                     "distribution-final-chapter-cohort": final_cohort_plan,
                     **final_lane_plans,
+                    **final_review_plans,
                 },
             ),
         )
@@ -270,6 +304,7 @@ async def execute_declarative_reporting_tail(
         _replace_state(
             state,
             adapters.current_state
+            or final_review_runtime.current_state
             or final_runtime.current_state
             or chief_runtime.current_state
             or cross_runtime.current_state,
@@ -313,26 +348,6 @@ class _ReportingTailAdapters:
         self.current_state = state
         if "final_review_completion_ref" not in state and "chief_candidate_ref" not in state:
             await self._runner._chief_edit(state, self._workflow_id)
-        return state
-
-    async def final(self, state: dict[str, Any]) -> dict[str, Any]:
-        _restore_module_submissions(state)
-        self.current_state = state
-        if "final_review_completion_ref" in state:
-            return state
-        claims = [
-            claim
-            for module_id in REPORT_MODULE_IDS
-            for claim in state["module_submissions"][module_id].claims
-        ]
-        await self._runner._final_review_loop(
-            state,
-            self._workflow_id,
-            chief_envelope=state.get("chief_editor_envelope"),
-            chief_session_key=state["chief_editor_session_key"],
-            approved_module_text=state["approved_module_text"],
-            claims=claims,
-        )
         return state
 
     def delivery(self, state: dict[str, Any]) -> dict[str, Any]:

@@ -68,6 +68,12 @@ from .declarative_final_chapter_cohort import (
     register_final_chapter_lane_specializations,
     retry_failed_final_chapter_lanes,
 )
+from .declarative_final_review_cycle import (
+    DeclarativeFinalReviewRuntime,
+    compile_final_review_workflows,
+    compose_final_review_agent_invokers,
+    register_final_review_lane_specializations,
+)
 from .declarative_module_cohort import (
     DeclarativeModuleLaneOutcome,
     _retry_failed_module_lanes,
@@ -349,6 +355,7 @@ def build_reporting_module_stage_definition() -> tuple[DefinitionRegistry, Workf
     register_cross_owner_pipeline_specializations(registry)
     register_chief_chapter_lane_specializations(registry)
     register_final_chapter_lane_specializations(registry)
+    register_final_review_lane_specializations(registry)
     workflow = registry.require(
         DefinitionKind.WORKFLOW,
         "distribution-reporting",
@@ -407,6 +414,7 @@ def _compile_reporting_runtime(
         definitions,
         executors,
     )
+    final_review_plans = compile_final_review_workflows(definitions, executors)
     cohort = definitions.require(
         DefinitionKind.WORKFLOW,
         "distribution-module-cohort",
@@ -441,6 +449,7 @@ def _compile_reporting_runtime(
             **chief_lane_plans,
             "distribution-final-chapter-cohort": final_cohort_plan,
             **final_lane_plans,
+            **final_review_plans,
         },
     )
 
@@ -580,7 +589,11 @@ async def execute_declarative_module_stage(
         tail_runner,
         state,
         workflow_id,
-        continue_final=tail_adapters.final,
+    )
+    final_review_runtime = DeclarativeFinalReviewRuntime(
+        tail_runner,
+        state,
+        workflow_id,
     )
     module_tools = {
         "start-current-module-lane": lambda values: module_runtime.start_lane(
@@ -706,14 +719,40 @@ async def execute_declarative_module_stage(
                     "accept-current-final-chapter-initial": final_runtime.accept_lane,
                     "complete-current-final-chapter": final_runtime.complete_lane,
                     "reduce-final-chapter-cohort": final_runtime.reduce,
-                    "continue-current-final-review": final_runtime.continue_review,
+                    "start-final-review-cycle": final_review_runtime.start_cycle,
+                    "final-review-needs-round": final_review_runtime.needs_round,
+                    "advance-final-review-round": final_review_runtime.advance_round,
+                    "prepare-current-final-chief-revision": (
+                        final_review_runtime.prepare_chief_revision
+                    ),
+                    "final-chief-revision-requires-agent": (
+                        final_review_runtime.chief_revision_requires_agent
+                    ),
+                    "accept-current-final-chief-revision": (
+                        final_review_runtime.accept_chief_revision
+                    ),
+                    "complete-current-final-chief-revision": (
+                        final_review_runtime.complete_chief_revision
+                    ),
+                    "reduce-final-chief-revision-cohort": (
+                        final_review_runtime.reduce_chief_revisions
+                    ),
+                    "prepare-current-final-recheck": (final_review_runtime.prepare_recheck),
+                    "final-recheck-requires-agent": (final_review_runtime.recheck_requires_agent),
+                    "accept-current-final-recheck": (final_review_runtime.accept_recheck),
+                    "complete-current-final-recheck": (final_review_runtime.complete_recheck),
+                    "reduce-final-recheck-cohort": (final_review_runtime.reduce_rechecks),
+                    "complete-final-review": final_review_runtime.complete_review,
                     "run-reporting-delivery": tail_adapters.delivery,
                 },
-                agents=_reporting_agent_invokers(
-                    module_runtime.agent_invokers,
-                    cross_runtime.agent_invokers,
-                    chief_runtime.agent_invokers,
-                    final_runtime.agent_invokers,
+                agents=compose_final_review_agent_invokers(
+                    _reporting_agent_invokers(
+                        module_runtime.agent_invokers,
+                        cross_runtime.agent_invokers,
+                        chief_runtime.agent_invokers,
+                        final_runtime.agent_invokers,
+                    ),
+                    final_review_runtime,
                 ),
                 contracts=compiled.contracts,
                 definitions=definitions,
@@ -723,6 +762,7 @@ async def execute_declarative_module_stage(
     except BaseException:
         current = (
             tail_adapters.current_state
+            or final_review_runtime.current_state
             or final_runtime.current_state
             or chief_runtime.current_state
             or cross_runtime.current_state
@@ -736,6 +776,7 @@ async def execute_declarative_module_stage(
     if completed.status is WorkflowStatus.WAITING:
         current = (
             tail_adapters.current_state
+            or final_review_runtime.current_state
             or final_runtime.current_state
             or chief_runtime.current_state
             or cross_runtime.current_state

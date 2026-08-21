@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from manyselves.core.reporting.agentic_models import ModuleSubmission
+from manyselves.core.reporting.agentic_models import EditedReportSubmission, ModuleSubmission
 from manyselves.core.reporting.declarative_reporting_tail import (
     execute_declarative_reporting_tail,
 )
@@ -33,14 +33,6 @@ class _TailRunner:
         state["chief_editor_session_key"] = "chief-editor"
         state["approved_module_text"] = {"2.1": "approved"}
 
-    async def _final_review_loop(self, state: dict, workflow_id: str, **kwargs) -> None:
-        self.calls.append("final")
-        assert kwargs["chief_session_key"] == "chief-editor"
-        assert kwargs["approved_module_text"] == {"2.1": "approved"}
-        assert kwargs["claims"] == []
-        self._fail("final")
-        state["final_review_completion_ref"] = f"{workflow_id}/final.json"
-
     def _deliver(self, state: dict) -> None:
         self.calls.append("delivery")
         self._fail("delivery")
@@ -51,6 +43,20 @@ class _TailRunner:
 def _state(run_id: str) -> dict:
     return {
         "run_id": run_id,
+        "edited_report": EditedReportSubmission(
+            title="Report",
+            assessment_background="background",
+            findings_overview="overview",
+            regional_executive_summary="summary",
+            module_narratives={
+                module_id: f"module {module_id}"
+                for module_id in REPORT_TAXONOMY
+            },
+            risk_panorama="panorama",
+            dimension_risk_analysis="risk analysis",
+            data_gap_analysis="gaps",
+            improvement_action_plan="actions",
+        ),
         "module_submissions": {
             module_id: ModuleSubmission(
                 module_id=module_id,
@@ -83,7 +89,6 @@ async def _capture_current_tail_trace(
     stages = [
         ("cross", runner._cross_review),
         ("chief", runner._chief_edit),
-        ("final", runner._final_review_loop),
         ("delivery", runner._deliver),
     ]
     for stage, invoke in stages:
@@ -102,15 +107,6 @@ async def _capture_current_tail_trace(
         )
         if stage in {"cross", "chief"}:
             await invoke(state, workflow_id)
-        elif stage == "final":
-            await invoke(
-                state,
-                workflow_id,
-                chief_envelope=None,
-                chief_session_key=state["chief_editor_session_key"],
-                approved_module_text=state["approved_module_text"],
-                claims=[],
-            )
         else:
             invoke(state)
         trace.record(
@@ -150,7 +146,7 @@ async def test_declarative_reporting_tail_runs_current_stages_in_order(
         state_store=store,
     )
 
-    assert runner.calls == ["cross", "chief", "final", "delivery"]
+    assert runner.calls == ["cross", "chief", "delivery"]
     assert state["delivery_status"] == "delivered"
     assert completed.status is WorkflowStatus.COMPLETED
     assert completed.outputs["result"]["delivery_completion_ref"] == "delivery.json"
@@ -202,7 +198,7 @@ async def test_declarative_reporting_tail_skips_current_completion_markers(
         state_store=FileWorkflowStateStore(tmp_path),
     )
 
-    assert runner.calls == ["final", "delivery"]
+    assert runner.calls == ["delivery"]
     assert state["cross_review_completion_ref"] == "existing-cross.json"
     assert state["chief_candidate_ref"] == "existing-chief.json"
 
@@ -237,7 +233,7 @@ async def test_declarative_reporting_tail_resumes_failed_stage_from_saved_state(
         state_store=store,
     )
 
-    assert resumed.calls == ["chief", "final", "delivery"]
+    assert resumed.calls == ["chief", "delivery"]
     assert completed.status is WorkflowStatus.COMPLETED
     assert [path.name for path in (tmp_path / "Work" / "runs").iterdir()] == [
         run_id

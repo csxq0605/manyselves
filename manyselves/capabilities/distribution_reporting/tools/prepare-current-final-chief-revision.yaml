@@ -1,0 +1,10 @@
+id: prepare-current-final-chief-revision
+version: 1.0.0
+description: Prepare one affected Final chapter Chief revision lane
+implementation: capability:distribution-reporting:prepare-current-final-chief-revision
+input_contract: reporting_tool_input
+output_contract: declarative_final_chief_revision_context
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

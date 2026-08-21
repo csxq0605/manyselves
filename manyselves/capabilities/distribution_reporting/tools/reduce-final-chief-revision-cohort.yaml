@@ -1,0 +1,10 @@
+id: reduce-final-chief-revision-cohort
+version: 1.0.0
+description: Reduce affected Final Chief revision outcomes into the common subject
+implementation: capability:distribution-reporting:reduce-final-chief-revision-cohort
+input_contract: reporting_tool_input
+output_contract: declarative_final_review_cycle_context
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: false

@@ -1,0 +1,5 @@
+id: declarative_final_review_cycle_context
+version: 1.0.0
+description: Typed state carried through one affected-only Final revision and recheck round
+adapter: pydantic
+model: manyselves.core.reporting.declarative_final_review_cycle:DeclarativeFinalReviewContext

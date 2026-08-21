@@ -1,0 +1,10 @@
+id: final-review-needs-round
+version: 1.0.0
+description: Determine whether the typed Final review cycle has pending findings
+implementation: capability:distribution-reporting:final-review-needs-round
+input_contract: declarative_final_review_cycle_context
+output_contract: boolean
+side_effect: pure
+parallel_safe: true
+reuse_result: false
+model_visible: false

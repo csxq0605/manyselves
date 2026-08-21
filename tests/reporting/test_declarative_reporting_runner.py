@@ -7,6 +7,7 @@ import pytest
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.agentic_models import (
+    EditedReportSubmission,
     ModuleReviewFinding,
     ModuleReviewFindingSubmission,
     ModuleReviewVerdictSubmission,
@@ -2148,11 +2149,20 @@ class _TopLevelTailRunner:
         state["chief_candidate_ref"] = f"{workflow_id}/chief.json"
         state["chief_editor_session_key"] = "chief-editor"
         state["approved_module_text"] = {"2.1": "approved"}
-
-    async def _final_review_loop(self, state: dict, workflow_id: str, **kwargs) -> None:
-        self.calls.append("final")
-        self._fail("final")
-        state["final_review_completion_ref"] = f"{workflow_id}/final.json"
+        state["edited_report"] = EditedReportSubmission(
+            title="Report",
+            assessment_background="background",
+            findings_overview="overview",
+            regional_executive_summary="summary",
+            module_narratives={
+                module_id: f"module {module_id}"
+                for module_id in REPORT_TAXONOMY
+            },
+            risk_panorama="panorama",
+            dimension_risk_analysis="risk analysis",
+            data_gap_analysis="gaps",
+            improvement_action_plan="actions",
+        )
 
     def _deliver(self, state: dict) -> None:
         self.calls.append("delivery")
@@ -2194,7 +2204,7 @@ async def test_top_level_runtime_nests_the_file_defined_tail_in_one_run(
         event_sink=FileWorkflowEventSink(tmp_path),
     )
 
-    assert tail.calls == ["cross", "chief", "final", "delivery"]
+    assert tail.calls == ["cross", "chief", "delivery"]
     assert state["delivery_completion_ref"] == "delivery.json"
     assert completed.status is WorkflowStatus.COMPLETED
     assert completed.subworkflow_states["run-reporting-tail"]["status"] == "completed"
@@ -2280,7 +2290,7 @@ async def test_top_level_runtime_resumes_inside_the_failed_tail_subworkflow(
 
     assert module_calls == 1
     assert failing_tail.calls == ["cross", "chief"]
-    assert resumed_tail.calls == ["chief", "final", "delivery"]
+    assert resumed_tail.calls == ["chief", "delivery"]
     assert completed.status is WorkflowStatus.COMPLETED
 
 

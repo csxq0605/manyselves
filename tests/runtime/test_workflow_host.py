@@ -203,6 +203,99 @@ async def test_runtime_host_executes_explicit_exit_loop_without_iteration_cap(
 
 
 @pytest.mark.asyncio
+async def test_runtime_host_reexecutes_completed_subworkflow_on_loop_reentry(
+    tmp_path: Path,
+) -> None:
+    registry, executors, _plan, contracts = _workflow()
+    child = WorkflowDefinition(
+        id="loop-child",
+        version="1.0.0",
+        description="One reusable loop body",
+        state={"input": 0},
+        actions=[
+            {
+                "id": "child-double",
+                "kind": "invoke_tool",
+                "tool": "double",
+                "input_variable": "input",
+                "output_variable": "doubled",
+            },
+            {
+                "id": "finish-child",
+                "kind": "end_workflow",
+                "output_variable": "doubled",
+            },
+        ],
+    )
+    parent = WorkflowDefinition(
+        id="loop-parent",
+        version="1.0.0",
+        description="Loop over a completed child with the prior result as input",
+        max_iterations=12,
+        state={"value": 1},
+        actions=[
+            {
+                "id": "call-child",
+                "kind": "subworkflow",
+                "workflow": child.id,
+                "input_variable": "value",
+                "child_input_variable": "input",
+                "child_output_name": "result",
+                "output_variable": "value",
+            },
+            {
+                "id": "continue-loop",
+                "kind": "if",
+                "condition": {
+                    "variable": "value",
+                    "operator": "lt",
+                    "value": 4,
+                },
+                "then": "repeat",
+                "otherwise": "finish-parent",
+            },
+            {"id": "repeat", "kind": "goto", "target": "call-child"},
+            {
+                "id": "finish-parent",
+                "kind": "end_workflow",
+                "output_variable": "value",
+            },
+        ],
+    )
+    registry.register(child)
+    registry.register(parent)
+    compiler = WorkflowCompiler(executors)
+    child_plan = compiler.compile(child, registry)
+    parent_plan = compiler.compile(parent, registry)
+    calls = 0
+
+    def double(value: int) -> int:
+        nonlocal calls
+        calls += 1
+        return value * 2
+
+    completed = await WorkflowRuntimeHost(
+        executors,
+        FileWorkflowStateStore(tmp_path),
+        InMemoryWorkflowEventSink(),
+    ).execute(
+        parent_plan,
+        WorkflowState.for_plan("loop-subworkflow-run", parent_plan),
+        RuntimeContext(
+            tools={"double": double},
+            contracts=contracts,
+            definitions=registry,
+            subworkflows={child.id: child_plan},
+        ),
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert completed.outputs == {"result": 4}
+    assert calls == 2
+    assert completed.subworkflow_states["call-child"]["variables"]["input"] == 2
+
+
+@pytest.mark.asyncio
 async def test_runtime_host_joins_parallel_branches_inside_one_run_state(
     tmp_path: Path,
 ) -> None:
