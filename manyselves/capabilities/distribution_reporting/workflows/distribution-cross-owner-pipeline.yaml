@@ -176,7 +176,7 @@ actions:
     variable: should-invoke-cross-owner-recheck
     operator: truthy
   then: create-cross-owner-recheck-conversation
-  otherwise: continue-current-cross-owner-pipeline
+  otherwise: advance-current-cross-owner-round
 - id: create-cross-owner-recheck-conversation
   kind: create_conversation
   agent: cross-module-reviewer

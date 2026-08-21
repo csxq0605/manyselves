@@ -1669,6 +1669,53 @@ async def test_declarative_cross_owner_without_findings_completes_without_compat
 
 
 @pytest.mark.asyncio
+async def test_declarative_cross_owner_recovered_recheck_advances_without_compatibility(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A persisted recheck verdict advances without replay or whole-owner closure."""
+
+    run_id = "run-cross-declarative-recovered-recheck"
+    runner = _CrossFindingRunner(tmp_path)
+    _write_modules(runner, run_id)
+    state = _state(run_id)
+    _write_initial_module_completion(runner, state, "2.1")
+
+    first = await _execute_declarative_cross_owner_pipeline(
+        runner,
+        state,
+        "workflow-cross-declarative-recovered-recheck",
+    )
+    assert first.status is WorkflowStatus.COMPLETED
+    calls_after_first = list(runner.agent_calls)
+
+    async def _unexpected_compatibility(*_args, **_kwargs):
+        raise AssertionError("persisted recheck entered compatibility run_owner")
+
+    monkeypatch.setattr(
+        lifecycle.CrossReviewCoordinator,
+        "run_owner",
+        _unexpected_compatibility,
+    )
+    state["resume"] = True
+    recovered = await _execute_declarative_cross_owner_pipeline(
+        runner,
+        state,
+        "workflow-cross-declarative-recovered-recheck",
+    )
+
+    assert recovered.status is WorkflowStatus.COMPLETED
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(
+        recovered.outputs["result"]
+    )
+    assert result.status == "completed"
+    assert result.pipeline is not None
+    assert result.pipeline["lane"]["module"]["revision"] == 1
+    assert runner.agent_calls == calls_after_first
+    assert recovered.conversations == {}
+
+
+@pytest.mark.asyncio
 async def test_declarative_cross_owner_persisted_revision_skips_author_and_reuses_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

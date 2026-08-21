@@ -638,3 +638,30 @@ def test_cross_owner_21_pipeline_declares_no_finding_completion() -> None:
     assert completion.tool == "complete-current-cross-owner-without-findings"
     assert completion.output_variable == "owner-outcome"
     assert all(action.kind != "gate" for action in plan.actions)
+
+
+def test_cross_owner_21_pipeline_advances_recovered_recheck_verdict() -> None:
+    """A persisted verdict must rejoin typed round advancement."""
+
+    _, registry = load_distribution_reporting_capability()
+    from manyselves.core.reporting.declarative_cross_owner_cohort import (
+        register_cross_owner_pipeline_specializations,
+    )
+
+    register_cross_owner_pipeline_specializations(registry)
+    pipeline = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-cross-owner-2.1-pipeline",
+    )
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        pipeline,
+        registry,
+    )
+
+    choose_recheck = next(
+        action
+        for action in plan.actions
+        if action.id == "choose-cross-owner-recheck-source"
+    )
+    assert choose_recheck.otherwise == "advance-current-cross-owner-round"
+    assert all(action.kind != "gate" for action in plan.actions)
