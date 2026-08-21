@@ -45,13 +45,14 @@ uv run python run_web.py \
 1. 打开侧边栏的 **工作流** 页面。
 2. 选择 Workflow `parameter-adjustment`。
 3. 在通用表单的数值字段填写 `4`，点击 **启动工作流**。
-4. 观察同一页面的状态、输出和成本。
+4. 观察同一页面的状态、事件、输出和成本。
 
-预期结果：状态为 `completed`，输出值为 `10`，成本为零且没有 Provider
-消耗。
+预期结果：状态为 `completed`，输出值为 `10`，没有 Provider 调用，tokens
+为 `0`。如果当前环境没有配置模型定价，金额会显示“成本未知”，这是定价状态
+的明确投影，不代表该工作流调用了 Provider。
 
 可将数值改为 `12` 再启动一次；预期输出为 `12`，同样不产生 Provider
-消耗。
+调用；tokens 仍为 `0`，金额显示规则与上面相同。
 
 ### 3. 测试 `distribution-reporting`
 
@@ -64,11 +65,12 @@ uv run python run_web.py \
    - **max_provider_attempts**：保持默认值或按实际测试预算填写
    - **max_total_tokens**：保持默认值或按实际测试预算填写
 3. 点击 **启动工作流**，记下页面显示的 Run ID。
-4. 保持页面打开，观察状态、输出和成本，不要另起一个替代 Run。
+4. 保持页面打开，观察状态、事件、输出和成本，不要另起一个替代 Run。
 
 预期结果：
 
 - 状态持续更新，并最终显示 `completed`；
+- Events 区域持续显示当前 Run 的工作流与 Action 生命周期；
 - 输出列表出现当前 Run 生成的报告产物；
 - 成本区域显示本次真实 Provider 使用情况；
 - 页面没有出现未处理错误。
@@ -79,7 +81,7 @@ uv run python run_web.py \
 
 1. 在页面显示的继续输入表单中填写所要求的值；
 2. 点击 **提交运行输入**；
-3. 继续观察同一个 Run 的状态、输出和成本。
+3. 继续观察同一个 Run 的状态、事件、输出和成本。
 
 不要刷新后另起 Run，也不要绕过页面提交输入。
 
@@ -87,9 +89,10 @@ uv run python run_web.py \
 
 本次网页版真实测试在以下结果都出现时完成：
 
-- `parameter-adjustment` 能通过通用表单完成，并得到预期输出与零 Provider 成本；
+- `parameter-adjustment` 能通过通用表单完成并得到预期输出，没有 Provider 调用且
+  tokens 为 `0`；未配置定价时允许金额显示“成本未知”；
 - `distribution-reporting` 能通过通用 Schema 表单启动；
-- Reporting Run 的状态、输出、成本能够在页面中持续投影；
+- Reporting Run 的状态、事件、输出、成本能够在页面中持续投影；
 - 若出现 WAITING，可以在同一页面继续并保留同一个 Run；
 - 完成结果对应当前页面显示的 Run，而不是用户手动选择的旧结果。
 

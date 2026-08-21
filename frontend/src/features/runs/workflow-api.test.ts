@@ -4,7 +4,7 @@ import type { ApiGateway } from "../../api/gateway";
 import { createWorkflowApi } from "./workflow-api";
 
 describe("WorkflowApi", () => {
-  it("uses every generic Capability, Workflow, Run, Output, and Cost path", async () => {
+  it("uses every generic Capability, Workflow, Run, Output, Cost, and Event path", async () => {
     const requestJson = vi.fn().mockResolvedValue({});
     const api = createWorkflowApi({ requestJson } as unknown as ApiGateway);
 
@@ -19,6 +19,7 @@ describe("WorkflowApi", () => {
     await api.provideInput("run 1", { values: { supplements: [] } }, "command-input");
     await api.outputs("run 1");
     await api.cost("run 1");
+    await api.events!("run 1");
 
     expect(requestJson).toHaveBeenNthCalledWith(1, "/api/v1/capabilities");
     expect(requestJson).toHaveBeenNthCalledWith(2, "/api/v1/workflows");
@@ -41,6 +42,6 @@ describe("WorkflowApi", () => {
     });
     expect(requestJson).toHaveBeenNthCalledWith(7, "/api/v1/runs/run%201/outputs");
     expect(requestJson).toHaveBeenNthCalledWith(8, "/api/v1/runs/run%201/cost");
+    expect(requestJson).toHaveBeenNthCalledWith(9, "/api/v1/runs/run%201/events");
   });
 });
-

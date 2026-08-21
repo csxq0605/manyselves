@@ -11,7 +11,18 @@ describe("RunWorkspace", () => {
     const api: WorkflowApi = {
       cost: vi.fn().mockResolvedValue({
         runId: "run-1",
-        usage: { totals: { estimated_cost: 1.25, total_tokens: 15 } },
+        usage: { totals: { estimated_cost: 1.25, pricing_status: "configured", total_tokens: 15 } },
+      }),
+      events: vi.fn().mockResolvedValue({
+        events: [{
+          actionId: null,
+          data: {},
+          error: null,
+          kind: "workflow.completed",
+          runId: "run-1",
+          workflowId: "distribution-reporting",
+        }],
+        runId: "run-1",
       }),
       get: vi.fn().mockResolvedValue({
         run: {
@@ -92,7 +103,9 @@ describe("RunWorkspace", () => {
     expect(await screen.findByText("completed")).toBeVisible();
     expect(screen.getByText("Outputs/Reports/report.docx")).toBeVisible();
     expect(screen.getByText("15 tokens")).toBeVisible();
+    expect(screen.getByText("定价状态：configured")).toBeVisible();
     expect(screen.getByText("1.25")).toBeVisible();
+    expect(await screen.findByText("workflow.completed")).toBeVisible();
     expect(screen.queryByRole("button", { name: "提交运行输入" })).not.toBeInTheDocument();
     expect(screen.queryByText(/sha/i)).not.toBeInTheDocument();
   });
@@ -547,7 +560,7 @@ describe("RunWorkspace", () => {
     ));
   });
 
-  it("submits the Kernel input id for a nested waiting workflow", async () => {
+  it("isolates nested waiting values by path and displays the input context", async () => {
     const provideInput = vi.fn().mockResolvedValue({
       capabilityId: "distribution-reporting",
       commandId: "command-input",
@@ -561,22 +574,51 @@ describe("RunWorkspace", () => {
         runId: "report-declarative-waiting",
         usage: { totals: { estimated_cost: 1, total_tokens: 20 } },
       }),
-      get: vi.fn().mockResolvedValue({
-        run: {
-          active: true,
-          capabilityId: "distribution-reporting",
-          runId: "report-declarative-waiting",
-          status: "waiting",
-          taskId: "task-input",
-          workflowId: "distribution-reporting",
-        },
-        state: {},
-        waitingInput: [{
-          input_id: "ask-child",
-          path: [{ action_id: "run-child", kind: "subworkflow" }],
-          schema: { type: "object" },
-        }],
-      }),
+      get: vi.fn()
+        .mockResolvedValueOnce({
+          run: {
+            active: false,
+            capabilityId: "distribution-reporting",
+            runId: "report-declarative-waiting",
+            status: "waiting",
+            taskId: "task-input",
+            workflowId: "distribution-reporting",
+          },
+          state: {},
+          waitingInput: [{
+            contract_id: "supplement-contract",
+            description: "请填写当前子流程所需资料。",
+            input_id: "ask-child",
+            path: [
+              { action_id: "run-parent", kind: "subworkflow" },
+              { action_id: "run-child-a", kind: "subworkflow" },
+            ],
+            schema: { type: "object" },
+            title: "子流程补充资料",
+          }],
+        })
+        .mockResolvedValue({
+          run: {
+            active: false,
+            capabilityId: "distribution-reporting",
+            runId: "report-declarative-waiting",
+            status: "waiting",
+            taskId: "task-input",
+            workflowId: "distribution-reporting",
+          },
+          state: {},
+          waitingInput: [{
+            contract_id: "supplement-contract",
+            description: "请填写当前子流程所需资料。",
+            input_id: "ask-child",
+            path: [
+              { action_id: "run-parent", kind: "subworkflow" },
+              { action_id: "run-child-b", kind: "subworkflow" },
+            ],
+            schema: { type: "object" },
+            title: "子流程补充资料",
+          }],
+        }),
       inputSchema: vi.fn().mockResolvedValue({
         contractId: "distribution_reporting_input",
         schema: { type: "object" },
@@ -621,6 +663,9 @@ describe("RunWorkspace", () => {
     await screen.findByText("Declarative distribution reporting capability");
     await user.click(screen.getByRole("button", { name: "启动工作流" }));
 
+    expect(await screen.findByRole("heading", { name: "子流程补充资料" })).toBeVisible();
+    expect(screen.getByText("请填写当前子流程所需资料。")).toBeVisible();
+    expect(screen.getByText("路径：run-parent → run-child-a")).toBeVisible();
     const continuation = await screen.findByRole("textbox", { name: "继续输入 JSON" });
     await user.clear(continuation);
     await user.click(continuation);
@@ -632,6 +677,8 @@ describe("RunWorkspace", () => {
       { inputId: "ask-child", values: { answer: "Ada" } },
       expect.any(String),
     ));
+    expect(await screen.findByText("路径：run-parent → run-child-b")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "继续输入 JSON" })).toHaveValue("{}");
   });
 
   it("submits a primitive value for a primitive waiting contract", async () => {
@@ -643,7 +690,10 @@ describe("RunWorkspace", () => {
       workflowId: "parameter-adjustment",
     });
     const api: WorkflowApi = {
-      cost: vi.fn().mockResolvedValue({ runId: "primitive-waiting", usage: { totals: {} } }),
+      cost: vi.fn().mockResolvedValue({
+        runId: "primitive-waiting",
+        usage: { totals: { pricing_status: "unconfigured", total_tokens: 0 } },
+      }),
       get: vi.fn().mockResolvedValue({
         run: {
           active: false,
@@ -704,7 +754,74 @@ describe("RunWorkspace", () => {
       { inputId: "ask-number", values: 7 },
       expect.any(String),
     ));
+    expect(screen.getByText("0 tokens")).toBeVisible();
+    expect(screen.getByText("定价状态：unconfigured")).toBeVisible();
     expect(screen.getByText("成本未知")).toBeVisible();
+  });
+
+  it("distinguishes cost loading and API failure from an unpriced result", async () => {
+    let rejectCost!: (reason: Error) => void;
+    const cost = vi.fn().mockImplementation(() => new Promise((_resolve, reject) => {
+      rejectCost = reject;
+    }));
+    const api: WorkflowApi = {
+      cost,
+      get: vi.fn().mockResolvedValue({
+        run: {
+          active: false,
+          capabilityId: "parameter-adjustment",
+          runId: "cost-failure",
+          status: "completed",
+          workflowId: "parameter-adjustment",
+        },
+        state: {},
+        waitingInput: [],
+      }),
+      inputSchema: vi.fn().mockResolvedValue({
+        contractId: "parameter-input",
+        schema: { type: "object" },
+        workflowId: "parameter-adjustment",
+      }),
+      listCapabilities: vi.fn().mockResolvedValue({
+        capabilities: [{
+          description: "Neutral parameter adjustment",
+          id: "parameter-adjustment",
+          version: "1.0.0",
+          workflowIds: ["parameter-adjustment"],
+        }],
+      }),
+      listWorkflows: vi.fn().mockResolvedValue({
+        workflows: [{
+          capabilityId: "parameter-adjustment",
+          description: "Neutral parameter adjustment",
+          id: "parameter-adjustment",
+          inputContract: "parameter-input",
+          outputContract: "parameter-value",
+          runnable: true,
+          version: "1.0.0",
+        }],
+      }),
+      outputs: vi.fn().mockResolvedValue({ outputs: [], runId: "cost-failure" }),
+      provideInput: vi.fn(),
+      start: vi.fn().mockResolvedValue({
+        capabilityId: "parameter-adjustment",
+        commandId: "cost-failure-command",
+        runId: "cost-failure",
+        status: "accepted",
+        workflowId: "parameter-adjustment",
+      }),
+    };
+    const user = userEvent.setup();
+
+    render(<AppProviders><RunWorkspace api={api} /></AppProviders>);
+    await screen.findByText("Neutral parameter adjustment");
+    await user.click(screen.getByRole("button", { name: "启动工作流" }));
+
+    expect(await screen.findByText("正在加载成本…")).toHaveAttribute("role", "status");
+    expect(screen.queryByText("成本未知")).not.toBeInTheDocument();
+    rejectCost(new Error("cost unavailable"));
+    expect(await screen.findByText("成本加载失败。")).toHaveAttribute("role", "alert");
+    expect(screen.queryByText("成本未知")).not.toBeInTheDocument();
   });
 
   it("polls an active run and refreshes its completed output", async () => {

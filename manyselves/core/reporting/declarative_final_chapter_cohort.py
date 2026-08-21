@@ -9,6 +9,9 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from manyselves.capabilities.distribution_reporting.adapters import (
+    project_reporting_agent,
+)
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -130,7 +133,7 @@ class _FinalChapterInvoker:
 
     async def _invoke(
         self,
-        _agent: AgentDefinition,
+        agent: AgentDefinition,
         task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
@@ -144,6 +147,7 @@ class _FinalChapterInvoker:
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
+                "definition_override": project_reporting_agent(agent),
             }
             if recovery_policy is not None:
                 runner_kwargs["recovery_policy"] = recovery_policy
@@ -513,6 +517,8 @@ class DeclarativeFinalChapterRuntime:
 def retry_failed_final_chapter_lanes(
     plan: ResolvedPlan,
     state: WorkflowState,
+    *,
+    subworkflows: Mapping[str, ResolvedPlan] | None = None,
 ) -> WorkflowState:
     """Retry failed initial Final lanes or a failed nested Final review lane.
 
@@ -536,7 +542,11 @@ def retry_failed_final_chapter_lanes(
         == "failed"
     }
     if not failed:
-        return _retry_failed_nested_final_review_lane(plan, state)
+        return _retry_failed_nested_final_review_lane(
+            plan,
+            state,
+            subworkflows=subworkflows,
+        )
     return retry_parallel_branches(
         plan,
         state,
@@ -562,6 +572,8 @@ _NESTED_FINAL_REVIEW_RETRY_TARGETS = (
 def _retry_failed_nested_final_review_lane(
     plan: ResolvedPlan,
     state: WorkflowState,
+    *,
+    subworkflows: Mapping[str, ResolvedPlan] | None,
 ) -> WorkflowState:
     """Resume one failed Chief/Recheck branch below the Final review cycle."""
 
@@ -575,7 +587,10 @@ def _retry_failed_nested_final_review_lane(
     if cycle_payload is None:
         return state
     cycle_state = WorkflowState.model_validate(cycle_payload)
-    cycle_plan = _compile_final_review_subworkflow("distribution-final-review-cycle")
+    cycle_plan = _final_review_subworkflow_plan(
+        "distribution-final-review-cycle",
+        subworkflows,
+    )
     if cycle_plan is None:
         return state
 
@@ -595,7 +610,7 @@ def _retry_failed_nested_final_review_lane(
             and nested_state.status is not WorkflowStatus.FAILED
         ):
             continue
-        nested_plan = _compile_final_review_subworkflow(workflow_id)
+        nested_plan = _final_review_subworkflow_plan(workflow_id, subworkflows)
         if nested_plan is None:
             continue
         parallel = next(
@@ -629,6 +644,15 @@ def _retry_failed_nested_final_review_lane(
             child_state=resumed_cycle,
         )
     return state
+
+
+def _final_review_subworkflow_plan(
+    workflow_id: str,
+    subworkflows: Mapping[str, ResolvedPlan] | None,
+) -> ResolvedPlan | None:
+    if subworkflows is not None:
+        return subworkflows.get(workflow_id)
+    return _compile_final_review_subworkflow(workflow_id)
 
 
 def _compile_final_review_subworkflow(workflow_id: str) -> ResolvedPlan | None:

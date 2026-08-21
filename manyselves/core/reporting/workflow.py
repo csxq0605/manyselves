@@ -65,6 +65,7 @@ from .assets import (
 )
 from .chapter_parallel import CHAPTER_SECTION_IDS, active_chapters
 from .claim_ledger import ClaimLedger
+from .config import AgentDefinition as ReportingAgentDefinition
 from .cost_control import StageCostController
 from .delivery import MaterializedDeliveryReceipt
 from .distributed_runtime import LocalEventStore
@@ -836,6 +837,7 @@ class ReportWorkflowRunner:
         *,
         session_key: str | None = None,
         recovery_policy: RecoveryPolicyDefinition | None = None,
+        definition_override: ReportingAgentDefinition | None = None,
     ):
         self._raise_if_cancel_requested(envelope.run_id)
         if self._budget is not None:
@@ -862,7 +864,7 @@ class ReportWorkflowRunner:
             )
             try:
                 result = await self.agent_runner.run(
-                    self.agents[agent_id],
+                    definition_override or self.agents[agent_id],
                     envelope,
                     artifacts,
                     workflow_id=workflow_id,

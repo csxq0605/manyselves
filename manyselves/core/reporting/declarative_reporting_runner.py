@@ -12,6 +12,9 @@ from typing import Any, Literal, Protocol, cast
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
+from manyselves.capabilities.distribution_reporting.adapters import (
+    project_reporting_agent,
+)
 from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
 from manyselves.kernel.conversations import ConversationRecord, ConversationRegistry
 from manyselves.kernel.definitions import (
@@ -24,6 +27,7 @@ from manyselves.kernel.definitions import (
     specialize_workflow,
 )
 from manyselves.kernel.executors import (
+    ActionResult,
     ExecutorRegistry,
     RuntimeContext,
     build_builtin_executor_registry,
@@ -38,6 +42,7 @@ from manyselves.kernel.workflow import (
     WorkflowCompiler,
     WorkflowState,
     WorkflowStatus,
+    apply_action_result,
     restore_plan_definition_registry,
     resume_waiting_input,
 )
@@ -528,24 +533,25 @@ def resume_declarative_reporting_input(
 
     state_store = FileWorkflowStateStore(workspace)
     state = state_store.load(run_id)
-    reporting_state = state.variables.get("reporting-state", {})
-    compiled = _compile_reporting_runtime(
-        reporting_state if isinstance(reporting_state, Mapping) else {},
-        full_report=bool(state.variables.get("full-report", False)),
-    )
     saved_plan = state_store.load_plan(run_id)
-    definitions = (
-        restore_plan_definition_registry(saved_plan)
-        if saved_plan.definition_snapshots
-        else compiled.definitions
-    )
+    if saved_plan.definition_snapshots:
+        definitions = restore_plan_definition_registry(saved_plan)
+        subworkflows = saved_plan.subworkflow_plans
+    else:
+        reporting_state = state.variables.get("reporting-state", {})
+        compiled = _compile_reporting_runtime(
+            reporting_state if isinstance(reporting_state, Mapping) else {},
+            full_report=bool(state.variables.get("full-report", False)),
+        )
+        definitions = compiled.definitions
+        subworkflows = saved_plan.subworkflow_plans or compiled.subworkflows
     resumed = resume_waiting_input(
         saved_plan,
         state,
         input_id=input_id,
         values=values,
         contracts=build_contract_catalog(definitions),
-        subworkflows=saved_plan.subworkflow_plans or compiled.subworkflows,
+        subworkflows=subworkflows,
     )
     state_store.save(resumed)
     return resumed
@@ -564,18 +570,45 @@ async def execute_declarative_module_stage(
         Callable[[tuple[str, ...], dict[str, Any], str], Awaitable[None]] | None
     ) = None,
     workspace: Path | None = None,
+    stage_boundary: (
+        Callable[[dict[str, Any], str, str], Awaitable[None]] | None
+    ) = None,
 ) -> WorkflowState:
     """Run current modules and the file-defined tail in one parent state."""
 
     full_report = set(requested_modules) == set(REPORT_MODULE_IDS)
-    compiled = _compile_reporting_runtime(state, full_report=full_report)
-    definitions = compiled.definitions
-    executors = compiled.executors
-    plan = compiled.plan
-    cohort_plan = compiled.cohort_plan
-    cross_cohort_plan = compiled.cross_cohort_plan
-    chief_cohort_plan = compiled.chief_cohort_plan
-    final_cohort_plan = compiled.final_cohort_plan
+    kernel_run_id = str(state["run_id"])
+    saved_plan: ResolvedPlan | None = None
+    load_plan = getattr(state_store, "load_plan", None)
+    if callable(load_plan):
+        try:
+            state_store.load(kernel_run_id)
+            saved_plan = load_plan(kernel_run_id)
+        except FileNotFoundError:
+            pass
+    if (
+        saved_plan is not None
+        and saved_plan.definition_snapshots
+        and saved_plan.subworkflow_plans
+    ):
+        compiled = None
+        plan = saved_plan
+        definitions = restore_plan_definition_registry(plan)
+        executors = build_builtin_executor_registry()
+        subworkflows = plan.subworkflow_plans
+        cohort_plan = subworkflows["distribution-module-cohort"]
+        cross_cohort_plan = subworkflows["distribution-cross-owner-cohort"]
+        chief_cohort_plan = subworkflows["distribution-chief-chapter-cohort"]
+        final_cohort_plan = subworkflows["distribution-final-chapter-cohort"]
+    else:
+        compiled = _compile_reporting_runtime(state, full_report=full_report)
+        definitions = compiled.definitions
+        executors = compiled.executors
+        plan = compiled.plan
+        cohort_plan = compiled.cohort_plan
+        cross_cohort_plan = compiled.cross_cohort_plan
+        chief_cohort_plan = compiled.chief_cohort_plan
+        final_cohort_plan = compiled.final_cohort_plan
     if module_runtime is None:
         if execute_current is None:
             raise TypeError("module runtime is required")
@@ -585,7 +618,6 @@ async def execute_declarative_module_stage(
             state,
             workflow_id,
         )
-    kernel_run_id = str(state["run_id"])
     try:
         kernel_state = state_store.load(kernel_run_id)
         load_plan = getattr(state_store, "load_plan", None)
@@ -596,7 +628,9 @@ async def execute_declarative_module_stage(
                 save_plan = getattr(state_store, "save_plan", None)
                 if callable(save_plan):
                     save_plan(kernel_run_id, plan)
-        subworkflows = plan.subworkflow_plans or compiled.subworkflows
+        subworkflows = plan.subworkflow_plans or (
+            compiled.subworkflows if compiled is not None else {}
+        )
         cohort_plan = subworkflows.get(
             "distribution-module-cohort",
             cohort_plan,
@@ -613,65 +647,138 @@ async def execute_declarative_module_stage(
             "distribution-final-chapter-cohort",
             final_cohort_plan,
         )
-        kernel_state.variables["reporting-state"] = deepcopy(state)
-        kernel_state.variables["full-report"] = full_report
+        kernel_state = apply_action_result(
+            kernel_state,
+            ActionResult(
+                variable_updates={
+                    "reporting-state": deepcopy(state),
+                    "full-report": full_report,
+                }
+            ),
+        )
         saved_tail = kernel_state.subworkflow_states.get("run-reporting-tail")
         if saved_tail is not None:
-            child = WorkflowState.model_validate(saved_tail)
-            child.variables["reporting-state"] = deepcopy(state)
+            child = apply_action_result(
+                WorkflowState.model_validate(saved_tail),
+                ActionResult(
+                    variable_updates={"reporting-state": deepcopy(state)}
+                ),
+            )
             saved_cross = child.subworkflow_states.get("run-cross")
             if saved_cross is not None:
-                cross_state = WorkflowState.model_validate(saved_cross)
-                cross_state.variables["reporting-state"] = deepcopy(state)
-                cross_state.variables["prepared-cross-state"] = deepcopy(state)
+                cross_state = apply_action_result(
+                    WorkflowState.model_validate(saved_cross),
+                    ActionResult(
+                        variable_updates={
+                            "reporting-state": deepcopy(state),
+                            "prepared-cross-state": deepcopy(state),
+                        }
+                    ),
+                )
                 cross_state = retry_failed_cross_owner_pipelines(
                     cross_cohort_plan,
                     cross_state,
                 )
-                child.subworkflow_states["run-cross"] = cross_state.model_dump(mode="json")
+                child = apply_action_result(
+                    child,
+                    ActionResult(
+                        subworkflow_state_updates={
+                            "run-cross": cross_state.model_dump(mode="json")
+                        }
+                    ),
+                )
             saved_chief = child.subworkflow_states.get("run-chief")
             if saved_chief is not None:
-                chief_state = WorkflowState.model_validate(saved_chief)
-                chief_state.variables["reporting-state"] = deepcopy(state)
-                chief_state.variables["prepared-chief-state"] = deepcopy(state)
+                chief_state = apply_action_result(
+                    WorkflowState.model_validate(saved_chief),
+                    ActionResult(
+                        variable_updates={
+                            "reporting-state": deepcopy(state),
+                            "prepared-chief-state": deepcopy(state),
+                        }
+                    ),
+                )
                 chief_state = retry_failed_chief_chapter_lanes(
                     chief_cohort_plan,
                     chief_state,
                 )
-                child.subworkflow_states["run-chief"] = chief_state.model_dump(mode="json")
+                child = apply_action_result(
+                    child,
+                    ActionResult(
+                        subworkflow_state_updates={
+                            "run-chief": chief_state.model_dump(mode="json")
+                        }
+                    ),
+                )
             saved_final = child.subworkflow_states.get("run-final")
             if saved_final is not None:
-                final_state = WorkflowState.model_validate(saved_final)
-                final_state.variables["reporting-state"] = deepcopy(state)
-                final_state.variables["prepared-final-state"] = deepcopy(state)
+                final_state = apply_action_result(
+                    WorkflowState.model_validate(saved_final),
+                    ActionResult(
+                        variable_updates={
+                            "reporting-state": deepcopy(state),
+                            "prepared-final-state": deepcopy(state),
+                        }
+                    ),
+                )
                 final_state = retry_failed_final_chapter_lanes(
                     final_cohort_plan,
                     final_state,
+                    subworkflows=subworkflows,
                 )
-                child.subworkflow_states["run-final"] = final_state.model_dump(mode="json")
-            kernel_state.subworkflow_states["run-reporting-tail"] = child.model_dump(mode="json")
+                child = apply_action_result(
+                    child,
+                    ActionResult(
+                        subworkflow_state_updates={
+                            "run-final": final_state.model_dump(mode="json")
+                        }
+                    ),
+                )
+            kernel_state = apply_action_result(
+                kernel_state,
+                ActionResult(
+                    subworkflow_state_updates={
+                        "run-reporting-tail": child.model_dump(mode="json")
+                    }
+                ),
+            )
         saved_cohort = kernel_state.subworkflow_states.get("run-module-cohort")
         if saved_cohort is not None:
-            child = WorkflowState.model_validate(saved_cohort)
-            child.variables["module-inputs"] = deepcopy(state)
-            child.variables["prepared-module-inputs"] = deepcopy(state)
+            child = apply_action_result(
+                WorkflowState.model_validate(saved_cohort),
+                ActionResult(
+                    variable_updates={
+                        "module-inputs": deepcopy(state),
+                        "prepared-module-inputs": deepcopy(state),
+                    }
+                ),
+            )
             child = _retry_failed_module_lanes(
                 cohort_plan,
                 child,
                 tuple(REPORT_MODULE_IDS),
             )
-            kernel_state.subworkflow_states["run-module-cohort"] = child.model_dump(mode="json")
+            kernel_state = apply_action_result(
+                kernel_state,
+                ActionResult(
+                    subworkflow_state_updates={
+                        "run-module-cohort": child.model_dump(mode="json")
+                    }
+                ),
+            )
     except FileNotFoundError:
         kernel_state = WorkflowState.for_plan(kernel_run_id, plan)
         save_plan = getattr(state_store, "save_plan", None)
         if callable(save_plan):
             save_plan(kernel_run_id, plan)
-        subworkflows = plan.subworkflow_plans or compiled.subworkflows
+        subworkflows = plan.subworkflow_plans or (
+            compiled.subworkflows if compiled is not None else {}
+        )
 
     definitions = (
         restore_plan_definition_registry(plan)
         if plan.definition_snapshots
-        else compiled.definitions
+        else cast(_CompiledReportingRuntime, compiled).definitions
     )
     contracts = build_contract_catalog(definitions)
 
@@ -699,6 +806,50 @@ async def execute_declarative_module_stage(
         workflow_id,
     )
     delivery_runtime = DeclarativeDeliveryRuntime(tail_runner)
+
+    async def prepare_cross_with_boundary(
+        current_state: dict[str, Any],
+    ) -> dict[str, Any]:
+        if stage_boundary is not None:
+            await stage_boundary(
+                current_state,
+                "module-work",
+                "cross-module-review",
+            )
+        return cross_runtime.prepare(current_state)
+
+    async def prepare_chief_with_boundary(
+        current_state: dict[str, Any],
+    ) -> dict[str, Any]:
+        if stage_boundary is not None:
+            await stage_boundary(
+                current_state,
+                "cross-module-review",
+                "chief-edit",
+            )
+        return chief_runtime.prepare(current_state)
+
+    async def prepare_final_with_boundary(
+        current_state: dict[str, Any],
+    ) -> dict[str, Any]:
+        if stage_boundary is not None:
+            await stage_boundary(
+                current_state,
+                "chief-edit",
+                "chief-editor-audit",
+            )
+        return final_runtime.prepare(current_state)
+
+    async def prepare_delivery_with_boundary(
+        current_state: dict[str, Any],
+    ) -> dict[str, Any]:
+        if stage_boundary is not None:
+            await stage_boundary(
+                current_state,
+                "chief-editor-audit",
+                "delivery",
+            )
+        return delivery_runtime.prepare(current_state)
     module_tools = {
         "start-current-module-lane": lambda values: module_runtime.start_lane(
             str(values["module_id"]),
@@ -756,7 +907,7 @@ async def execute_declarative_module_stage(
     module_tools["reduce-module-cohort"] = module_runtime.reduce_lanes
     runtime_tools = {
         **module_tools,
-        "prepare-cross-owner-cohort": cross_runtime.prepare,
+        "prepare-cross-owner-cohort": prepare_cross_with_boundary,
         "prepare-current-cross-owner-initial": cross_runtime.prepare_initial,
         "cross-owner-initial-requires-agent": (cross_runtime.initial_requires_agent),
         "accept-current-cross-owner-initial": cross_runtime.accept_initial,
@@ -790,13 +941,13 @@ async def execute_declarative_module_stage(
             cross_runtime.complete_owner_without_findings
         ),
         "reduce-cross-owner-cohort": cross_runtime.reduce,
-        "prepare-chief-chapter-cohort": chief_runtime.prepare,
+        "prepare-chief-chapter-cohort": prepare_chief_with_boundary,
         "prepare-current-chief-chapter": chief_runtime.prepare_lane,
         "chief-chapter-requires-agent": chief_runtime.requires_agent,
         "accept-current-chief-chapter": chief_runtime.accept_lane,
         "complete-current-chief-chapter": chief_runtime.complete_lane,
         "reduce-chief-chapter-cohort": chief_runtime.reduce,
-        "prepare-final-chapter-cohort": final_runtime.prepare,
+        "prepare-final-chapter-cohort": prepare_final_with_boundary,
         "prepare-current-final-chapter": final_runtime.prepare_lane,
         "final-chapter-initial-requires-agent": (final_runtime.requires_agent),
         "accept-current-final-chapter-initial": final_runtime.accept_lane,
@@ -816,7 +967,7 @@ async def execute_declarative_module_stage(
         "complete-current-final-recheck": (final_review_runtime.complete_recheck),
         "reduce-final-recheck-cohort": (final_review_runtime.reduce_rechecks),
         "complete-final-review": final_review_runtime.complete_review,
-        "prepare-render-delivery": delivery_runtime.prepare,
+        "prepare-render-delivery": prepare_delivery_with_boundary,
         "publish-materialize-delivery": delivery_runtime.publish,
         "complete-delivery": delivery_runtime.complete,
     }
@@ -1139,6 +1290,8 @@ class _BatchModuleRuntime:
 class DeclarativeReportWorkflowRunner(ReportWorkflowRunner):
     """Select declarative stage orchestration without replacing current semantics."""
 
+    _BOUNDARIES_KEY = "_declarative_cost_boundaries"
+
     def __init__(self, service, agent_runner) -> None:
         super().__init__(service, agent_runner)
 
@@ -1151,6 +1304,7 @@ class DeclarativeReportWorkflowRunner(ReportWorkflowRunner):
         *,
         session_key: str | None = None,
         recovery_policy: RecoveryPolicyDefinition | None = None,
+        definition_override=None,
     ):
         return await super()._agent(
             agent_id,
@@ -1159,6 +1313,7 @@ class DeclarativeReportWorkflowRunner(ReportWorkflowRunner):
             workflow_id,
             session_key=session_key,
             recovery_policy=recovery_policy,
+            definition_override=definition_override,
         )
 
     async def _run_module_lanes(
@@ -1167,6 +1322,19 @@ class DeclarativeReportWorkflowRunner(ReportWorkflowRunner):
         state: dict,
         workflow_id: str,
     ) -> None:
+        async def stage_boundary(
+            current_state: dict[str, Any],
+            completed_stage: str,
+            next_stage: str,
+        ) -> None:
+            state.clear()
+            state.update(deepcopy(current_state))
+            await self._declarative_stage_boundary(
+                state,
+                completed_stage,
+                next_stage,
+            )
+
         await execute_declarative_module_stage(
             requested_modules=requested_modules,
             state=state,
@@ -1181,6 +1349,52 @@ class DeclarativeReportWorkflowRunner(ReportWorkflowRunner):
                 workflow_id,
             ),
             workspace=self.service.workspace,
+            stage_boundary=stage_boundary,
+        )
+
+    @classmethod
+    def _boundary_marker(cls, completed_stage: str, next_stage: str | None) -> str:
+        return f"{completed_stage}->{next_stage or ''}"
+
+    async def _declarative_stage_boundary(
+        self,
+        state: dict[str, Any],
+        completed_stage: str,
+        next_stage: str,
+    ) -> None:
+        marker = self._boundary_marker(completed_stage, next_stage)
+        completed = list(state.get(self._BOUNDARIES_KEY, ()))
+        if marker in completed:
+            return
+        state[self._BOUNDARIES_KEY] = [*completed, marker]
+        await super()._checkpoint_then_cost_boundary(
+            state,
+            completed_stage,
+            "completed",
+            completed_stage,
+            next_stage,
+        )
+
+    async def _checkpoint_then_cost_boundary(
+        self,
+        state: dict,
+        activity: str,
+        status: str,
+        completed_stage: str,
+        next_stage: str | None,
+        *,
+        checkpoint_kind: str = "full",
+    ) -> None:
+        marker = self._boundary_marker(completed_stage, next_stage)
+        if marker in state.get(self._BOUNDARIES_KEY, ()):
+            return
+        await super()._checkpoint_then_cost_boundary(
+            state,
+            activity,
+            status,
+            completed_stage,
+            next_stage,
+            checkpoint_kind=checkpoint_kind,
         )
 
 
@@ -1234,7 +1448,7 @@ class _CurrentModuleAuthorInvoker:
 
     async def _invoke(
         self,
-        _agent: AgentDefinition,
+        agent: AgentDefinition,
         task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
@@ -1249,6 +1463,7 @@ class _CurrentModuleAuthorInvoker:
             try:
                 runner_kwargs: dict[str, Any] = {
                     "session_key": conversation.key.value,
+                    "definition_override": project_reporting_agent(agent),
                 }
                 if recovery_policy is not None:
                     runner_kwargs["recovery_policy"] = recovery_policy
@@ -1279,7 +1494,10 @@ class _CurrentModuleAuthorInvoker:
         )
         envelope = bind_declared_task(authoring.envelope, task)
         try:
-            runner_kwargs = {"session_key": conversation.key.value}
+            runner_kwargs = {
+                "session_key": conversation.key.value,
+                "definition_override": project_reporting_agent(agent),
+            }
             if recovery_policy is not None:
                 runner_kwargs["recovery_policy"] = recovery_policy
             payload = await self._runner._agent(
@@ -1355,7 +1573,7 @@ class _CurrentModuleReviewerInvoker:
 
     async def _invoke(
         self,
-        _agent: AgentDefinition,
+        agent: AgentDefinition,
         task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
@@ -1374,6 +1592,7 @@ class _CurrentModuleReviewerInvoker:
             try:
                 runner_kwargs: dict[str, Any] = {
                     "session_key": conversation.key.value,
+                    "definition_override": project_reporting_agent(agent),
                 }
                 if recovery_policy is not None:
                     runner_kwargs["recovery_policy"] = recovery_policy
@@ -1403,7 +1622,10 @@ class _CurrentModuleReviewerInvoker:
             task,
         )
         try:
-            runner_kwargs = {"session_key": conversation.key.value}
+            runner_kwargs = {
+                "session_key": conversation.key.value,
+                "definition_override": project_reporting_agent(agent),
+            }
             if recovery_policy is not None:
                 runner_kwargs["recovery_policy"] = recovery_policy
             payload = await self._runner._agent(
@@ -1478,7 +1700,7 @@ class _CurrentModuleMainExceptionInvoker:
 
     async def _invoke(
         self,
-        _agent: AgentDefinition,
+        agent: AgentDefinition,
         task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
@@ -1494,6 +1716,7 @@ class _CurrentModuleMainExceptionInvoker:
             envelope = bind_declared_task(preparation.envelope, task)
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
+                "definition_override": project_reporting_agent(agent),
             }
             if recovery_policy is not None:
                 runner_kwargs["recovery_policy"] = recovery_policy

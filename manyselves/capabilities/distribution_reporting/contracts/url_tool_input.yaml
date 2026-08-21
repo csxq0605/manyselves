@@ -1,0 +1,10 @@
+id: url_tool_input
+version: 1.0.0
+description: Provider input for opening one previously returned URL
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    url: {type: string}
+  required: [url]
+  additionalProperties: false

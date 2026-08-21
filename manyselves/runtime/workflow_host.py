@@ -4,17 +4,19 @@ import asyncio
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from manyselves.kernel.contracts import build_contract_catalog
+from manyselves.kernel.definitions import ToolDefinition
 from manyselves.kernel.executors import ActionResult, ExecutorRegistry, RuntimeContext
 from manyselves.kernel.ports import WorkflowStateStore
 from manyselves.kernel.workflow import (
     ActionFailed,
     ActionKind,
     ActionSucceeded,
+    CompleteNestedExecution,
     JoinAction,
     ParallelAction,
     ResolvedPlan,
@@ -37,6 +39,7 @@ class WorkflowRuntimeEvent(BaseModel):
     workflow_id: str
     action_id: str | None = None
     error: str | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkflowEventSink(Protocol):
@@ -101,10 +104,20 @@ class WorkflowRuntimeHost:
             self._state_store.save_plan(state.run_id, plan)
         if plan.definition_snapshots:
             definitions = restore_plan_definition_registry(plan)
+            contracts = build_contract_catalog(definitions)
+            tools = dict(context.tools)
+            if context.plan_tool_factory is not None:
+                for tool_id in _plan_tool_ids(plan):
+                    definition: ToolDefinition = definitions.require("tool", tool_id)
+                    tools[tool_id] = context.plan_tool_factory(
+                        definition,
+                        contracts,
+                    )
             context = replace(
                 context,
                 definitions=definitions,
-                contracts=build_contract_catalog(definitions),
+                contracts=contracts,
+                tools=tools,
             )
         actions = {action.id: action for action in plan.actions}
         self._emit("workflow.started", state)
@@ -115,12 +128,14 @@ class WorkflowRuntimeHost:
             self._state_store.save(state)
             if isinstance(event, ActionSucceeded):
                 action = actions[event.action_id]
+                self._emit_action_events(state, action.id, event.result)
                 if action.kind is ActionKind.PUBLISH_RESULT:
                     self._emit("output.published", state, action_id=action.id)
                 if state.status is WorkflowStatus.WAITING:
                     self._emit("action.waiting", state, action_id=action.id)
                 else:
                     self._emit("action.completed", state, action_id=action.id)
+            self._emit_control_events(state, transition.events)
             if not transition.effects:
                 if state.status is WorkflowStatus.WAITING:
                     self._emit("workflow.waiting", state)
@@ -142,20 +157,22 @@ class WorkflowRuntimeHost:
                     plan_bundle=plan.subworkflow_plans,
                 )
             except Exception as exc:
-                failed_input = state
+                failure_result = None
                 if isinstance(exc, _ParallelWorkflowExecutionError):
-                    failed_input = state.model_copy(deep=True)
-                    failed_input.parallel_results[action.id] = exc.results
-                    failed_input.parallel_states[action.id] = exc.states
+                    failure_result = ActionResult(
+                        parallel_result_updates={action.id: exc.results},
+                        parallel_state_updates={action.id: exc.states},
+                    )
                 elif isinstance(exc, _NestedWorkflowExecutionError):
-                    failed_input = state.model_copy(deep=True)
-                    failed_input.subworkflow_states[action.id] = exc.state.model_dump(
-                        mode="json"
+                    failure_result = ActionResult(
+                        subworkflow_state_updates={
+                            action.id: exc.state.model_dump(mode="json")
+                        }
                     )
                 failed = self._kernel.transition(
                     plan,
-                    failed_input,
-                    ActionFailed(action.id, str(exc)),
+                    state,
+                    ActionFailed(action.id, str(exc), failure_result),
                 )
                 self._state_store.save(failed.state)
                 self._emit("action.failed", failed.state, action_id=action.id, error=str(exc))
@@ -217,7 +234,11 @@ class WorkflowRuntimeHost:
         *,
         plan_bundle: dict[str, ResolvedPlan],
     ) -> ActionResult:
-        semaphore = asyncio.Semaphore(action.max_concurrency or len(action.branches))
+        concurrency = plan.parallel_concurrency.get(
+            action.id,
+            action.max_concurrency or len(action.branches),
+        )
+        semaphore = asyncio.Semaphore(concurrency)
         existing_results = state.parallel_results.get(action.id, {})
         existing_states = state.parallel_states.get(action.id, {})
 
@@ -422,12 +443,14 @@ class WorkflowRuntimeHost:
             state = transition.state
             if isinstance(event, ActionSucceeded):
                 action = actions[event.action_id]
+                self._emit_action_events(state, action.id, event.result)
                 if action.kind is ActionKind.PUBLISH_RESULT:
                     self._emit("output.published", state, action_id=action.id)
                 if state.status is WorkflowStatus.WAITING:
                     self._emit("action.waiting", state, action_id=action.id)
                 else:
                     self._emit("action.completed", state, action_id=action.id)
+            self._emit_control_events(state, transition.events)
             if not transition.effects:
                 if emit_workflow_events:
                     if state.status is WorkflowStatus.WAITING:
@@ -439,10 +462,11 @@ class WorkflowRuntimeHost:
                 return state
             effect = transition.effects[0]
             if effect.action_id == stop_at:
-                state = state.model_copy(deep=True)
-                state.status = WorkflowStatus.COMPLETED
-                state.next_action_id = None
-                return state
+                return self._kernel.transition(
+                    plan,
+                    state,
+                    CompleteNestedExecution(),
+                ).state
             action = actions[effect.action_id]
             self._emit("action.started", state, action_id=action.id)
             try:
@@ -454,20 +478,22 @@ class WorkflowRuntimeHost:
                     plan_bundle=plan_bundle,
                 )
             except Exception as exc:
-                failed_input = state
+                failure_result = None
                 if isinstance(exc, _ParallelWorkflowExecutionError):
-                    failed_input = state.model_copy(deep=True)
-                    failed_input.parallel_results[action.id] = exc.results
-                    failed_input.parallel_states[action.id] = exc.states
+                    failure_result = ActionResult(
+                        parallel_result_updates={action.id: exc.results},
+                        parallel_state_updates={action.id: exc.states},
+                    )
                 elif isinstance(exc, _NestedWorkflowExecutionError):
-                    failed_input = state.model_copy(deep=True)
-                    failed_input.subworkflow_states[action.id] = exc.state.model_dump(
-                        mode="json"
+                    failure_result = ActionResult(
+                        subworkflow_state_updates={
+                            action.id: exc.state.model_dump(mode="json")
+                        }
                     )
                 failed = self._kernel.transition(
                     plan,
-                    failed_input,
-                    ActionFailed(action.id, str(exc)),
+                    state,
+                    ActionFailed(action.id, str(exc), failure_result),
                 )
                 self._emit(
                     "action.failed",
@@ -487,6 +513,7 @@ class WorkflowRuntimeHost:
         *,
         action_id: str | None = None,
         error: str | None = None,
+        data: dict[str, Any] | None = None,
     ) -> None:
         self._events.append(
             WorkflowRuntimeEvent(
@@ -495,8 +522,50 @@ class WorkflowRuntimeHost:
                 workflow_id=state.workflow_id,
                 action_id=action_id,
                 error=error,
+                data=data or {},
             )
         )
+
+    def _emit_action_events(
+        self,
+        state: WorkflowState,
+        action_id: str,
+        result: ActionResult,
+    ) -> None:
+        for event in result.events:
+            self._emit(
+                event.kind,
+                state,
+                action_id=action_id,
+                data=event.data,
+            )
+
+    def _emit_control_events(
+        self,
+        state: WorkflowState,
+        events: tuple[Any, ...],
+    ) -> None:
+        for event in events:
+            self._emit(
+                event.kind,
+                state,
+                action_id=event.action_id,
+                data=event.data,
+            )
+
+
+def _plan_tool_ids(plan: ResolvedPlan) -> tuple[str, ...]:
+    """Return the direct Tool closure frozen into a root and its child plans."""
+
+    tool_ids: list[str] = []
+    pending = [plan]
+    while pending:
+        current = pending.pop()
+        for tool_id in current.tool_ids:
+            if tool_id not in tool_ids:
+                tool_ids.append(tool_id)
+        pending.extend(current.subworkflow_plans.values())
+    return tuple(tool_ids)
 
 
 class _NestedWorkflowExecutionError(RuntimeError):

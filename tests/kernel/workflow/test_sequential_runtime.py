@@ -11,20 +11,25 @@ from manyselves.kernel.definitions import (
     WorkflowDefinition,
 )
 from manyselves.kernel.executors import (
+    ActionResult,
     RuntimeContext,
     SequentialWorkflowExecutor,
     build_builtin_executor_registry,
 )
 from manyselves.kernel.workflow import (
     ActionExecutionStatus,
+    ActionFailed,
     CompilerError,
     EndWorkflowAction,
     InvokeToolAction,
     SetVariableAction,
+    StartWorkflow,
+    StatelessWorkflowKernel,
     ValidateContractAction,
     WorkflowCompiler,
     WorkflowState,
     WorkflowStatus,
+    apply_action_result,
 )
 from manyselves.runtime.state_store import FileWorkflowStateStore
 
@@ -94,6 +99,80 @@ def _workflow() -> WorkflowDefinition:
             },
         ],
     )
+
+
+def test_apply_action_result_returns_updated_copy_without_mutating_source() -> None:
+    definitions, _contract = _definitions()
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        _workflow(),
+        definitions,
+    )
+    source = WorkflowState.for_plan("pure-action-result", plan)
+    source.waiting_input = {"input_id": "old-input"}
+    source_snapshot = source.model_dump(mode="json")
+    payload = {"value": 2}
+    waiting = {"input_id": "next-input"}
+
+    updated = apply_action_result(
+        source,
+        ActionResult(
+            variable_updates={"payload": payload},
+            output_updates={"result": payload},
+            conversation_updates={"conversation": {"session": "saved"}},
+            parallel_result_updates={"fan-out": {"left": {"value": 2}}},
+            parallel_state_updates={"fan-out": {"left": {"status": "completed"}}},
+            subworkflow_state_updates={"child": {"status": "completed"}},
+            waiting_input=waiting,
+            clear_waiting_input=True,
+            workflow_status=WorkflowStatus.WAITING,
+        ),
+    )
+
+    assert source.model_dump(mode="json") == source_snapshot
+    assert updated is not source
+    assert updated.variables == {"payload": {"value": 2}}
+    assert updated.outputs == {"result": {"value": 2}}
+    assert updated.conversations == {"conversation": {"session": "saved"}}
+    payload["value"] = 9
+    waiting["input_id"] = "mutated-outside-kernel"
+    assert updated.variables["payload"] == {"value": 2}
+    assert updated.outputs["result"] == {"value": 2}
+    assert updated.waiting_input == {"input_id": "next-input"}
+    assert updated.parallel_results == {"fan-out": {"left": {"value": 2}}}
+    assert updated.parallel_states == {
+        "fan-out": {"left": {"status": "completed"}}
+    }
+    assert updated.subworkflow_states == {"child": {"status": "completed"}}
+    assert updated.status is WorkflowStatus.WAITING
+
+
+def test_action_failed_reduces_runtime_progress_patch_inside_kernel() -> None:
+    definitions, _contract = _definitions()
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        _workflow(),
+        definitions,
+    )
+    kernel = StatelessWorkflowKernel()
+    started = kernel.transition(
+        plan,
+        WorkflowState.for_plan("failed-progress", plan),
+        StartWorkflow(),
+    ).state
+
+    failed = kernel.transition(
+        plan,
+        started,
+        ActionFailed(
+            "set-input",
+            "boom",
+            ActionResult(
+                subworkflow_state_updates={"child": {"status": "failed"}}
+            ),
+        ),
+    ).state
+
+    assert failed.status is WorkflowStatus.FAILED
+    assert failed.subworkflow_states == {"child": {"status": "failed"}}
 
 
 def test_minimal_compiler_resolves_registered_sequential_actions() -> None:

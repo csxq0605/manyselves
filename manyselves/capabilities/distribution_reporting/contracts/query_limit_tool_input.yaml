@@ -1,0 +1,11 @@
+id: query_limit_tool_input
+version: 1.0.0
+description: Provider input for bounded search
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    query: {type: string}
+    limit: {type: integer, minimum: 1}
+  required: [query]
+  additionalProperties: false

@@ -11,6 +11,7 @@ from manyselves.runtime.capability_binding import (
     CapabilityRunStateError,
 )
 from manyselves.runtime.state_store import FileWorkflowStateStore
+from manyselves.runtime.workflow_host import FileWorkflowEventSink, WorkflowRuntimeEvent
 from manyselves.webapi.main import create_app
 from manyselves.webapi.routes.workflows import _error
 from manyselves.webapi.schemas.workflows import (
@@ -130,7 +131,7 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
         "version": "1.0.0",
         "description": "Declarative top-level Reporting stage orchestration",
         "input_contract": "distribution_reporting_input",
-        "output_contract": "reporting_tail_state",
+        "output_contract": "distribution_reporting_output",
         "runnable": True,
     }
     assert schema["workflow_id"] == "distribution-reporting"
@@ -141,6 +142,17 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
 def test_run_outputs_and_cost_reuse_current_reporting_state_without_new_hashes(
     tmp_path: Path,
 ) -> None:
+    runtime_plan = ResolvedPlan(
+        workflow_id="distribution-reporting",
+        workflow_version="1.0.0",
+        actions=[],
+    )
+    runtime_state = WorkflowState.for_plan("report-1", runtime_plan)
+    runtime_state.status = WorkflowStatus.COMPLETED
+    runtime_state.outputs = {
+        "result": {"run_id": "report-1", "summary": "structured result"},
+    }
+    FileWorkflowStateStore(tmp_path).save(runtime_state)
     UsageLedger(tmp_path, "report-1").record_attempt(
         provider="openai",
         model="test-model",
@@ -166,6 +178,11 @@ def test_run_outputs_and_cost_reuse_current_reporting_state_without_new_hashes(
     assert outputs == {
         "run_id": "report-1",
         "outputs": [
+            {
+                "id": "result",
+                "kind": "value",
+                "value": {"run_id": "report-1", "summary": "structured result"},
+            },
             {
                 "id": "Outputs/Reports/report.docx",
                 "kind": "artifact",
@@ -299,6 +316,41 @@ def test_existing_decision_input_without_kernel_waiting_state_uses_resume_decisi
     assert [name for name, _ in adapter.calls] == ["decision"]
 
 
+def test_run_events_project_file_sink_for_current_run_only(tmp_path: Path) -> None:
+    sink = FileWorkflowEventSink(tmp_path)
+    sink.append(
+        WorkflowRuntimeEvent(
+            kind="workflow.started",
+            run_id="report-1",
+            workflow_id="distribution-reporting",
+            data={"source": "runtime-host"},
+        )
+    )
+    sink.append(
+        WorkflowRuntimeEvent(
+            kind="workflow.completed",
+            run_id="other-run",
+            workflow_id="distribution-reporting",
+        )
+    )
+
+    facade = WorkflowProjectionFacade(tmp_path, _ReportingAdapter())
+
+    assert facade.get_events("report-1") == {
+        "run_id": "report-1",
+        "events": [
+            {
+                "kind": "workflow.started",
+                "run_id": "report-1",
+                "workflow_id": "distribution-reporting",
+                "action_id": None,
+                "error": None,
+                "data": {"source": "runtime-host"},
+            }
+        ],
+    }
+
+
 @pytest.mark.asyncio
 async def test_run_start_and_input_delegate_to_the_current_reporting_adapter(
     tmp_path: Path,
@@ -353,6 +405,7 @@ def test_openapi_exposes_the_generic_workflow_projection_paths(tmp_path: Path) -
         "/api/v1/runs/{run_id}/input",
         "/api/v1/runs/{run_id}/outputs",
         "/api/v1/runs/{run_id}/cost",
+        "/api/v1/runs/{run_id}/events",
     } <= set(paths)
 
 

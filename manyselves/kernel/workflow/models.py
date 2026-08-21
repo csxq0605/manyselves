@@ -302,6 +302,8 @@ class ResolvedPlan(BaseModel):
     workflow_version: str
     actions: list[ResolvedAction]
     initial_state: dict[str, Any] = Field(default_factory=dict)
+    input_variable: str | None = None
+    input_contract: str | None = None
     entry_action_id: str | None = None
     max_iterations: int | None = Field(default=None, ge=1)
     tool_ids: list[str] = Field(default_factory=list)
@@ -317,6 +319,7 @@ class ResolvedPlan(BaseModel):
     recovery_ids: list[str] = Field(default_factory=list)
     conversation_bindings: dict[str, dict[str, str]] = Field(default_factory=dict)
     control_flow_edges: dict[str, list[str]] = Field(default_factory=dict)
+    parallel_concurrency: dict[str, int] = Field(default_factory=dict)
     final_output_contract: str | None = None
     subworkflow_plans: dict[str, "ResolvedPlan"] = Field(default_factory=dict)
     definition_snapshots: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -348,11 +351,20 @@ class WorkflowState(BaseModel):
     subworkflow_states: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     @classmethod
-    def for_plan(cls, run_id: str, plan: ResolvedPlan) -> "WorkflowState":
+    def for_plan(
+        cls,
+        run_id: str,
+        plan: ResolvedPlan,
+        *,
+        initial_variables: dict[str, Any] | None = None,
+    ) -> "WorkflowState":
+        variables = deepcopy(plan.initial_state)
+        if initial_variables is not None:
+            variables.update(deepcopy(initial_variables))
         return cls(
             run_id=run_id,
             workflow_id=plan.workflow_id,
-            variables=deepcopy(plan.initial_state),
+            variables=variables,
             actions={action.id: ActionExecutionState() for action in plan.actions},
             next_action_id=plan.entry_action_id,
         )

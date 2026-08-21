@@ -6,6 +6,37 @@ from manyselves.core.reporting.config import AgentDefinition as ReportingAgentDe
 from manyselves.kernel.definitions import AgentDefinition, DefinitionKind, load_capability
 
 
+def project_reporting_agent(
+    definition: AgentDefinition,
+    *,
+    source_path: Path | None = None,
+) -> ReportingAgentDefinition:
+    """Project one Kernel Agent snapshot to the existing Reporting runner model."""
+
+    limits = definition.limits
+    capability_root = Path(__file__).resolve().parents[1]
+    return ReportingAgentDefinition(
+        name=definition.id,
+        description=definition.description,
+        model=definition.model,
+        tools=list(definition.tools),
+        disallowedTools=list(limits.get("disallowed_tools", ())),
+        maxTurns=int(limits.get("max_turns", 8)),
+        maxTokens=limits.get("max_tokens"),
+        effort=str(limits.get("effort", "medium")),
+        memory=definition.conversation_mode,
+        background=bool(limits.get("background", True)),
+        reads=list(definition.accepts),
+        writes=list(definition.produces),
+        instructions=definition.instructions,
+        source_path=(
+            source_path
+            if source_path is not None
+            else capability_root / "agents" / f"{definition.id}.md"
+        ),
+    )
+
+
 def load_reporting_agents() -> dict[str, ReportingAgentDefinition]:
     """Project packaged neutral Agent definitions to the current runtime model."""
 
@@ -15,21 +46,8 @@ def load_reporting_agents() -> dict[str, ReportingAgentDefinition]:
     for definition in registry.all(DefinitionKind.AGENT):
         if not isinstance(definition, AgentDefinition):
             continue
-        limits = definition.limits
-        agents[definition.id] = ReportingAgentDefinition(
-            name=definition.id,
-            description=definition.description,
-            model=definition.model,
-            tools=list(definition.tools),
-            disallowedTools=list(limits.get("disallowed_tools", ())),
-            maxTurns=int(limits.get("max_turns", 8)),
-            maxTokens=limits.get("max_tokens"),
-            effort=str(limits.get("effort", "medium")),
-            memory=definition.conversation_mode,
-            background=bool(limits.get("background", True)),
-            reads=list(definition.accepts),
-            writes=list(definition.produces),
-            instructions=definition.instructions,
+        agents[definition.id] = project_reporting_agent(
+            definition,
             source_path=capability_root / "agents" / f"{definition.id}.md",
         )
     return agents
@@ -70,4 +88,5 @@ __all__ = [
     "build_module_lane_definitions",
     "build_reporting_tail_definition",
     "load_reporting_agents",
+    "project_reporting_agent",
 ]

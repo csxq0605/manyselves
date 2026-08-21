@@ -2,10 +2,9 @@ id: report_gap
 version: 1.0.0
 description: Current Reporting tool declaration for report_gap
 implementation: capability:distribution-reporting:report_gap
-input_contract: reporting_tool_input
+input_contract: report_gap_tool_input
 output_contract: reporting_tool_output
 side_effect: ordered_state
 parallel_safe: false
 reuse_result: false
 model_visible: true
-

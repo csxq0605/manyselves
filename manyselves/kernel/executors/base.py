@@ -22,6 +22,7 @@ from manyselves.kernel.definitions import (
     OutputDefinition,
     RecoveryPolicyDefinition,
     TaskDefinition,
+    ToolDefinition,
 )
 from manyselves.kernel.ports.agent import AgentInvocationOutcome
 from manyselves.kernel.ports.tool import ToolInvocationOutcome
@@ -52,6 +53,16 @@ class RuntimeExecutionError(RuntimeError):
     """Raised when a resolved action cannot execute in its runtime context."""
 
 
+class PlanToolFactory(Protocol):
+    """Build one runtime Tool adapter from a Run-frozen definition."""
+
+    def __call__(
+        self,
+        definition: ToolDefinition,
+        contracts: Mapping[str, ContractAdapter],
+    ) -> Any: ...
+
+
 @dataclass(slots=True)
 class RuntimeContext:
     tools: Mapping[str, Callable[[Any], Any]] = field(default_factory=dict)
@@ -60,6 +71,15 @@ class RuntimeContext:
     definitions: DefinitionRegistry | None = None
     conversations: ConversationRegistry = field(default_factory=ConversationRegistry)
     subworkflows: Mapping[str, ResolvedPlan] = field(default_factory=dict)
+    plan_tool_factory: PlanToolFactory | None = None
+
+
+@dataclass(slots=True)
+class ActionEvent:
+    """Business-neutral semantic event returned with one Action effect."""
+
+    kind: str
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -79,6 +99,7 @@ class ActionResult:
     waiting_input: dict[str, Any] | None = None
     clear_waiting_input: bool = False
     workflow_status: WorkflowStatus | None = None
+    events: tuple[ActionEvent, ...] = ()
 
 
 class ActionExecutor(Protocol):
@@ -190,7 +211,7 @@ class InvokeToolExecutor:
             tool = context.tools[resolved.tool]
         except KeyError as exc:
             raise RuntimeExecutionError(f"missing tool adapter: {resolved.tool}") from exc
-        arguments = (
+        arguments = deepcopy(
             state.variables[resolved.input_variable]
             if resolved.input_variable is not None
             else {
@@ -219,6 +240,12 @@ class InvokeToolExecutor:
         return ActionResult(
             output=outcome.model_dump(mode="json"),
             variable_updates={resolved.output_variable: outcome.result},
+            events=(
+                ActionEvent(
+                    kind="tool.invoked",
+                    data={"tool_id": resolved.tool, "reused": outcome.reused},
+                ),
+            ),
         )
 
 
@@ -240,6 +267,12 @@ class ValidateContractExecutor:
         return ActionResult(
             output=output,
             variable_updates={resolved.output_variable: output},
+            events=(
+                ActionEvent(
+                    kind="contract.validated",
+                    data={"contract_id": resolved.contract},
+                ),
+            ),
         )
 
 
@@ -266,6 +299,15 @@ class CreateConversationExecutor:
             output=record,
             variable_updates={resolved.output_variable: record},
             conversation_updates={resolved.output_variable: record},
+            events=(
+                ActionEvent(
+                    kind="conversation.created",
+                    data={
+                        "agent_id": resolved.agent,
+                        "conversation_id": record.conversation_id,
+                    },
+                ),
+            ),
         )
 
 
@@ -296,6 +338,15 @@ class ResolveConversationExecutor:
             output=record,
             variable_updates={resolved.output_variable: record},
             conversation_updates={resolved.output_variable: record},
+            events=(
+                ActionEvent(
+                    kind="conversation.resolved",
+                    data={
+                        "agent_id": resolved.agent,
+                        "conversation_id": record.conversation_id,
+                    },
+                ),
+            ),
         )
 
 
@@ -322,6 +373,15 @@ class ResetConversationExecutor:
             output=record,
             variable_updates={resolved.output_variable: record},
             conversation_updates={resolved.output_variable: record},
+            events=(
+                ActionEvent(
+                    kind="conversation.reset",
+                    data={
+                        "agent_id": resolved.agent,
+                        "conversation_id": record.conversation_id,
+                    },
+                ),
+            ),
         )
 
 
@@ -369,7 +429,7 @@ class InvokeAgentExecutor:
             output_contract = context.contracts[task.output_contract]
         except KeyError as exc:
             raise RuntimeExecutionError(f"missing agent contract adapter: {exc.args[0]}") from exc
-        validated_input = input_contract.validate(value)
+        validated_input = deepcopy(input_contract.validate(value))
         recovery_invoke = getattr(invoker, "invoke_with_recovery", None)
         if recovery_policy is not None:
             if not callable(recovery_invoke):
@@ -401,10 +461,24 @@ class InvokeAgentExecutor:
                 outcome.error or f"agent {agent.id} returned {outcome.status}"
             )
         validated_output = output_contract.validate(outcome.result)
+        context.conversations.remember(conversation)
         return ActionResult(
             output=outcome.model_dump(mode="json"),
-            variable_updates={resolved.output_variable: validated_output},
+            variable_updates={
+                resolved.conversation_variable: conversation,
+                resolved.output_variable: validated_output,
+            },
             conversation_updates={resolved.conversation_variable: conversation},
+            events=(
+                ActionEvent(
+                    kind="agent.invoked",
+                    data={
+                        "agent_id": agent.id,
+                        "task_id": task.id,
+                        "conversation_id": conversation.conversation_id,
+                    },
+                ),
+            ),
         )
 
 
@@ -513,6 +587,12 @@ class EvaluateGateExecutor:
             output=result,
             variable_updates={resolved.output_variable: result},
             next_action_id=target,
+            events=(
+                ActionEvent(
+                    kind="branch.selected",
+                    data={"gate_id": resolved.gate, "status": status, "target": target},
+                ),
+            ),
         )
 
 

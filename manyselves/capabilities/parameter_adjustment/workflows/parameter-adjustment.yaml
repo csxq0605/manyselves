@@ -6,6 +6,7 @@ tasks:
 gates: []
 recovery: []
 input_contract: parameter-input
+input_variable: parameters
 output_contract: parameter-value
 max_iterations: 20
 state: {}

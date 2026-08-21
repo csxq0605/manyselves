@@ -72,7 +72,14 @@ class ToolDefinition(DefinitionBase):
     input_contract: str = Field(min_length=1)
     output_contract: str = Field(min_length=1)
     error_contract: str | None = None
-    side_effect: str = "ordered_state"
+    side_effect: Literal[
+        "pure_read",
+        "run_local_write",
+        "shared_write",
+        "external_network",
+        "terminal",
+        "ordered_state",
+    ] = "ordered_state"
     parallel_safe: bool = False
     reuse_result: bool = False
     model_visible: bool = True
@@ -167,6 +174,7 @@ class WorkflowDefinition(DefinitionBase):
     recovery: list[str] = Field(default_factory=list)
     interactions: list[str] = Field(default_factory=list)
     outputs: list[str] = Field(default_factory=list)
+    input_variable: str | None = Field(default=None, min_length=1)
     input_contract: str | None = None
     output_contract: str | None = None
     parameters: list[str] = Field(default_factory=list)

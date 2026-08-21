@@ -4,7 +4,7 @@ description: Route a prepared module Main exception to its declared Agent
 implementation: capability:distribution-reporting:module-main-exception-requires-agent
 input_contract: declarative_module_runtime_lane_context
 output_contract: boolean
-side_effect: none
+side_effect: pure_read
 parallel_safe: true
 reuse_result: false
 model_visible: false

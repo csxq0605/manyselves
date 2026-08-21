@@ -127,18 +127,29 @@ class DistributionReportingRuntimeBinding:
 
     def get_outputs(self, run_id: str) -> dict[str, Any]:
         snapshot = self._snapshot(run_id)
+        runtime_state = self._runtime_state(run_id)
+        outputs: list[dict[str, Any]] = []
+        if runtime_state is not None and "result" in runtime_state.outputs:
+            outputs.append(
+                {
+                    "id": "result",
+                    "kind": "value",
+                    "value": runtime_state.outputs["result"],
+                }
+            )
+        outputs.extend(
+            {
+                "id": output.get("path", ""),
+                "kind": "artifact",
+                "path": output.get("path", ""),
+                "exists": bool(output.get("exists", False)),
+                "size": int(output.get("size", 0) or 0),
+            }
+            for output in snapshot.get("outputs", [])
+        )
         return {
             "run_id": run_id,
-            "outputs": [
-                {
-                    "id": output.get("path", ""),
-                    "kind": "artifact",
-                    "path": output.get("path", ""),
-                    "exists": bool(output.get("exists", False)),
-                    "size": int(output.get("size", 0) or 0),
-                }
-                for output in snapshot.get("outputs", [])
-            ],
+            "outputs": outputs,
         }
 
     def get_cost(self, run_id: str) -> dict[str, Any]:

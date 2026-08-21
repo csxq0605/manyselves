@@ -92,3 +92,17 @@ class WorkflowOutputListResponse(_ProjectionModel):
 class WorkflowCostResponse(_ProjectionModel):
     run_id: str = Field(alias="runId")
     usage: dict[str, Any]
+
+
+class WorkflowEvent(_ProjectionModel):
+    kind: str
+    run_id: str = Field(alias="runId")
+    workflow_id: str = Field(alias="workflowId")
+    action_id: str | None = Field(default=None, alias="actionId")
+    error: str | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowEventListResponse(_ProjectionModel):
+    run_id: str = Field(alias="runId")
+    events: list[WorkflowEvent]

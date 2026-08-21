@@ -9,7 +9,7 @@ import json
 import operator
 import os
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
@@ -23,8 +23,14 @@ from ...interfaces.types import (
     Error,
     UserMessage,
 )
+from ...kernel.contracts import (
+    ContractAdapter,
+    ContractValidationError,
+    build_contract_catalog,
+)
 from ...kernel.definitions import (
     DefinitionKind,
+    DefinitionRegistry,
     RecoveryPolicyDefinition,
     ToolDefinition,
 )
@@ -49,6 +55,7 @@ from ..providers.base import LLMProvider
 from ..providers.base import Message as LLMMessage
 from ..tools.artifact_tools import OpenArtifactTool, OpenToolResultTool, SearchTextTool
 from ..tools.document_tool import InspectDocumentTool
+from ..tools.outcomes import ToolOutcome
 from ..tools.registry import Tool, ToolRegistry
 from ..tools.reporting_collaboration_tools import (
     ListResultPartsTool,
@@ -329,18 +336,28 @@ class _IndexedOpenArtifactTool(OpenArtifactTool):
         self, ref: str, offset: int = 0, limit: int | None = None
     ) -> dict:
         arguments = {"ref": ref, "offset": offset, "limit": limit}
-        existing = self.result_index.lookup(self.task_id, self.name, arguments)
+        existing = (
+            self.result_index.lookup(
+                self.task_id,
+                self.name,
+                arguments,
+                ref=ref,
+            )
+            if getattr(self, "reuse_result", True)
+            else None
+        )
         if existing is not None and existing.get("status") == "completed":
             return existing.get("result")
         result = await super().__call__(ref=ref, offset=offset, limit=limit)
-        self.result_index.record(
-            self.task_id,
-            self.name,
-            arguments,
-            result,
-            status="completed",
-            ref=ref,
-        )
+        if getattr(self, "reuse_result", True):
+            self.result_index.record(
+                self.task_id,
+                self.name,
+                arguments,
+                result,
+                status="completed",
+                ref=ref,
+            )
         return result
 
 
@@ -363,7 +380,16 @@ class _IndexedSearchTextTool(SearchTextTool):
             "max_matches": max_matches,
             "context_lines": context_lines,
         }
-        existing = self.result_index.lookup(self.task_id, self.name, arguments)
+        existing = (
+            self.result_index.lookup(
+                self.task_id,
+                self.name,
+                arguments,
+                ref=ref,
+            )
+            if getattr(self, "reuse_result", True)
+            else None
+        )
         if existing is not None and existing.get("status") == "completed":
             return existing.get("result")
         result = await super().__call__(
@@ -372,14 +398,15 @@ class _IndexedSearchTextTool(SearchTextTool):
             max_matches=max_matches,
             context_lines=context_lines,
         )
-        self.result_index.record(
-            self.task_id,
-            self.name,
-            arguments,
-            result,
-            status="completed",
-            ref=ref,
-        )
+        if getattr(self, "reuse_result", True):
+            self.result_index.record(
+                self.task_id,
+                self.name,
+                arguments,
+                result,
+                status="completed",
+                ref=ref,
+            )
         return result
 
 
@@ -391,18 +418,28 @@ class _IndexedOpenToolResultTool(OpenToolResultTool):
 
     async def __call__(self, ref: str, offset: int = 0, limit: int = 8000) -> dict:
         arguments = {"ref": ref, "offset": offset, "limit": limit}
-        existing = self.result_index.lookup(self.task_id, self.name, arguments)
+        existing = (
+            self.result_index.lookup(
+                self.task_id,
+                self.name,
+                arguments,
+                ref=ref,
+            )
+            if getattr(self, "reuse_result", True)
+            else None
+        )
         if existing is not None and existing.get("status") == "completed":
             return existing.get("result")
         result = await super().__call__(ref=ref, offset=offset, limit=limit)
-        self.result_index.record(
-            self.task_id,
-            self.name,
-            arguments,
-            result,
-            status="completed",
-            ref=ref,
-        )
+        if getattr(self, "reuse_result", True):
+            self.result_index.record(
+                self.task_id,
+                self.name,
+                arguments,
+                result,
+                status="completed",
+                ref=ref,
+            )
         return result
 
 
@@ -414,19 +451,29 @@ class _IndexedInspectImageTool(InspectImageTool):
 
     async def __call__(self, path: str | None = None, ref: str | None = None) -> dict:
         arguments = {"path": path, "ref": ref}
-        existing = self.result_index.lookup(self.task_id, self.name, arguments)
+        selected = ref if ref is not None else path
+        existing = (
+            self.result_index.lookup(
+                self.task_id,
+                self.name,
+                arguments,
+                ref=selected,
+            )
+            if getattr(self, "reuse_result", True)
+            else None
+        )
         if existing is not None and existing.get("status") == "completed":
             return existing.get("result")
         result = await super().__call__(path=path, ref=ref)
-        selected = ref if ref is not None else path
-        self.result_index.record(
-            self.task_id,
-            self.name,
-            arguments,
-            result,
-            status="completed",
-            ref=selected,
-        )
+        if getattr(self, "reuse_result", True):
+            self.result_index.record(
+                self.task_id,
+                self.name,
+                arguments,
+                result,
+                status="completed",
+                ref=selected,
+            )
         return result
 
 
@@ -486,38 +533,51 @@ class _RecoveryAwareReportingTool:
         try:
             return await self._delegate(**kwargs)
         except ToolContractError as exc:
-            await self._callback(
+            decision = await self._callback(
                 RecoveryEventKind.TOOL_CONTRACT_ERROR.value,
                 {
                     "tool": self._delegate.name,
                     "error": str(exc),
                 },
             )
+            if (
+                decision is not None
+                and decision.action is RecoveryActionKind.STOP
+            ):
+                error = (
+                    "recovery policy stopped after Tool contract failure: "
+                    f"{self._delegate.name}"
+                )
+                return ToolOutcome(
+                    status="blocked",
+                    terminal=True,
+                    result={
+                        "status": "blocked",
+                        "reason": "recovery_policy_stop",
+                        "tool": self._delegate.name,
+                    },
+                    error=error,
+                )
             raise
 
 
-def _saved_reporting_tool_definitions(
+def _saved_reporting_definition_registry(
     workspace: Path,
     run_id: str,
     *,
     declarative: bool,
-) -> dict[str, ToolDefinition]:
+) -> DefinitionRegistry | None:
     """Restore Agent-visible Tool definitions captured by one declarative Run."""
 
     if not declarative:
-        return {}
+        return None
     plan_path = workspace / "Work" / "runs" / run_id / "resolved-plan.json"
     if not plan_path.is_file():
-        return {}
+        return None
     plan = ResolvedPlan.model_validate_json(plan_path.read_text(encoding="utf-8"))
     if not plan.definition_snapshots:
-        return {}
-    definitions = restore_plan_definition_registry(plan)
-    return {
-        definition.id: definition
-        for definition in definitions.all(DefinitionKind.TOOL)
-        if isinstance(definition, ToolDefinition)
-    }
+        return None
+    return restore_plan_definition_registry(plan)
 
 
 def _reporting_tool_implementation_id(definition: ToolDefinition) -> str:
@@ -548,6 +608,64 @@ def _apply_saved_reporting_tool_definition(
     tool.parallel_safe = definition.parallel_safe
     tool.reuse_result = definition.reuse_result  # type: ignore[attr-defined]
     return tool
+
+
+class _ContractBoundReportingTool:
+    """Validate one Agent-visible Tool with its Run-frozen contracts."""
+
+    def __init__(
+        self,
+        delegate: Tool,
+        input_contract: ContractAdapter,
+        output_contract: ContractAdapter,
+    ) -> None:
+        self._delegate = delegate
+        self._input_contract = input_contract
+        self._output_contract = output_contract
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+    @property
+    def result_index(self) -> Any:
+        return getattr(self._delegate, "result_index")
+
+    @result_index.setter
+    def result_index(self, value: Any) -> None:
+        self._delegate.result_index = value  # type: ignore[attr-defined]
+
+    @property
+    def task_id(self) -> str:
+        return str(getattr(self._delegate, "task_id"))
+
+    @task_id.setter
+    def task_id(self, value: str) -> None:
+        self._delegate.task_id = value  # type: ignore[attr-defined]
+
+    async def __call__(self, **kwargs: Any) -> Any:
+        try:
+            validated = self._input_contract.validate(dict(kwargs))
+        except ContractValidationError as exc:
+            raise ToolContractError(
+                f"{self.name} input contract: {exc}",
+                code="declared_tool_input_contract",
+            ) from exc
+        if hasattr(validated, "model_dump"):
+            validated = validated.model_dump(mode="python")
+        if not isinstance(validated, Mapping):
+            raise ToolContractError(
+                f"{self.name} input contract must produce an object",
+                code="declared_tool_input_contract",
+            )
+        result = await self._delegate(**dict(validated))
+        try:
+            self._output_contract.validate(result)
+        except ContractValidationError as exc:
+            raise ToolContractError(
+                f"{self.name} output contract: {exc}",
+                code="declared_tool_output_contract",
+            ) from exc
+        return result
 
 
 class ReportingAgentRunner:
@@ -2401,14 +2519,16 @@ class ReportingAgentRunner:
                     else None
                 ),
             ),
-            "inspect_image": InspectImageTool(
+            "inspect_image": _IndexedInspectImageTool(
                 self.workspace,
                 gateway=gateway,
                 capabilities=access.capabilities,
                 allowed_refs=access.readable_refs,
                 photo_refs=access.photo_map(),
+                result_index=result_index,
+                task_id=envelope.task_id,
             ),
-            "open_artifact": OpenArtifactTool(
+            "open_artifact": _IndexedOpenArtifactTool(
                 gateway,
                 default_limit=(
                     160_000
@@ -2442,12 +2562,20 @@ class ReportingAgentRunner:
                     else 8000
                 ),
                 allowed_refs=access.readable_refs,
+                result_index=result_index,
+                task_id=envelope.task_id,
             ),
-            "open_tool_result": OpenToolResultTool(gateway),
-            "search_text": SearchTextTool(
+            "open_tool_result": _IndexedOpenToolResultTool(
+                gateway,
+                result_index=result_index,
+                task_id=envelope.task_id,
+            ),
+            "search_text": _IndexedSearchTextTool(
                 gateway,
                 research_guard,
                 allowed_refs=access.readable_refs,
+                result_index=result_index,
+                task_id=envelope.task_id,
             ),
             "calculate": CalculateTool(),
             "publish_research_note": PublishResearchNoteTool(
@@ -2523,10 +2651,24 @@ class ReportingAgentRunner:
             available["product_skill_evolution"] = ProductSkillEvolutionTool(
                 self.product_skill_root.parents[1]
             )
-        saved_tool_definitions = _saved_reporting_tool_definitions(
+        saved_definition_registry = _saved_reporting_definition_registry(
             self.workspace,
             envelope.run_id,
             declarative=recovery_policy is not None,
+        )
+        saved_tool_definitions = (
+            {
+                item.id: item
+                for item in saved_definition_registry.all(DefinitionKind.TOOL)
+                if isinstance(item, ToolDefinition)
+            }
+            if saved_definition_registry is not None
+            else {}
+        )
+        saved_contracts = (
+            build_contract_catalog(saved_definition_registry)
+            if saved_definition_registry is not None
+            else {}
         )
         for name in access.tool_names:
             saved_definition = saved_tool_definitions.get(name)
@@ -2542,6 +2684,19 @@ class ReportingAgentRunner:
             tool = available[implementation_id]
             if saved_definition is not None:
                 tool = _apply_saved_reporting_tool_definition(tool, saved_definition)
+                input_contract = saved_contracts.get(saved_definition.input_contract)
+                output_contract = saved_contracts.get(saved_definition.output_contract)
+                if (
+                    name not in {"submit_result", "write_result_part"}
+                    and input_contract is not None
+                    and output_contract is not None
+                    and input_contract.json_schema()
+                ):
+                    tool = _ContractBoundReportingTool(
+                        tool,
+                        input_contract,
+                        output_contract,
+                    )
             registry.register(tool)
         for name in (
             "open_artifact",
@@ -2624,6 +2779,14 @@ class ReportingAgentRunner:
                 }
             )
             registry._schema_cache["submit_result"] = submission_tool_schema
+        for name, saved_definition in saved_tool_definitions.items():
+            if name in {"submit_result", "write_result_part"}:
+                continue
+            input_contract = saved_contracts.get(saved_definition.input_contract)
+            if registry.get(name) is not None and input_contract is not None:
+                schema = input_contract.json_schema()
+                if schema:
+                    registry._schema_cache[name] = schema
         if recovery_event_callback is not None:
             # Registration above already captured each concrete Tool schema.
             # Replace only the private executable map so declarative Reporting
@@ -3120,6 +3283,7 @@ class ReportingAgentRunner:
         *,
         envelope: TaskEnvelope,
         runtime_id: str,
+        recovery_state: RecoveryState | None = None,
     ) -> bool:
         """Restore one identity from bounded business restart state.
 
@@ -3127,29 +3291,62 @@ class ReportingAgentRunner:
         Malformed or unrelated state starts the identity with empty history.
         """
 
-        safe_runtime_id = re.sub(r"[^A-Za-z0-9_.-]", "_", runtime_id)
-        manifest_path = (
-            self.workspace
-            / f"Work/runs/{envelope.run_id}/agent-conversations/{safe_runtime_id}.json"
+        payload = self._load_persisted_identity_state(
+            envelope=envelope,
+            runtime_id=runtime_id,
         )
-        if not manifest_path.is_file():
-            return False
-        try:
-            payload = load_conversation_trace(self.workspace, manifest_path)
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
-            return False
-        if payload.get("run_id") not in {None, envelope.run_id}:
-            return False
-        if payload.get("agent_id") not in {None, envelope.agent_id}:
+        if payload is None:
             return False
         messages = payload.get("messages")
         if not isinstance(messages, list):
+            return False
+        if recovery_state is not None and not self._restore_recovery_state(
+            payload,
+            recovery_state,
+        ):
             return False
         loop.restore_conversation(
             messages,
             task_boundaries=[{"current": payload["identity_state"], "sequence": 1}],
             handoff_summary=None,
         )
+        return True
+
+    def _load_persisted_identity_state(
+        self,
+        *,
+        envelope: TaskEnvelope,
+        runtime_id: str,
+    ) -> dict[str, Any] | None:
+        safe_runtime_id = re.sub(r"[^A-Za-z0-9_.-]", "_", runtime_id)
+        manifest_path = (
+            self.workspace
+            / f"Work/runs/{envelope.run_id}/agent-conversations/{safe_runtime_id}.json"
+        )
+        if not manifest_path.is_file():
+            return None
+        try:
+            payload = load_conversation_trace(self.workspace, manifest_path)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return None
+        if payload.get("run_id") not in {None, envelope.run_id}:
+            return None
+        if payload.get("agent_id") not in {None, envelope.agent_id}:
+            return None
+        return payload
+
+    @staticmethod
+    def _restore_recovery_state(
+        payload: dict[str, Any],
+        recovery_state: RecoveryState,
+    ) -> bool:
+        try:
+            restored_recovery = RecoveryState.model_validate(
+                {"attempts": payload.get("recovery_attempts", {})}
+            )
+        except (TypeError, ValueError):
+            return False
+        recovery_state.attempts = dict(restored_recovery.attempts)
         return True
 
     async def run(
@@ -3275,8 +3472,8 @@ class ReportingAgentRunner:
         async def recovery_event_callback(
             event_kind: str,
             detail: dict[str, Any],
-        ) -> None:
-            apply_recovery_policy(
+        ) -> Any:
+            return apply_recovery_policy(
                 RecoveryEventKind(event_kind),
                 RecoveryActionKind.CORRECT,
                 detail,
@@ -3549,6 +3746,7 @@ class ReportingAgentRunner:
                 loop,
                 envelope=envelope,
                 runtime_id=runtime_id,
+                recovery_state=recovery_state,
             )
             self._sessions[cache_key] = (loop, session_id, runtime_id)
             self._session_route_bindings[cache_key] = route_binding
@@ -3557,6 +3755,15 @@ class ReportingAgentRunner:
             await loop.start()
         else:
             loop, session_id, runtime_id = cached
+            persisted_identity = self._load_persisted_identity_state(
+                envelope=envelope,
+                runtime_id=runtime_id,
+            )
+            if persisted_identity is not None:
+                self._restore_recovery_state(
+                    persisted_identity,
+                    recovery_state,
+                )
             task_correlation = self._task_correlation(
                 envelope,
                 workflow_id=workflow_id,
@@ -4346,6 +4553,7 @@ class ReportingAgentRunner:
                 loop, envelope, runtime_id, session_id,
                 shared_artifacts=shared_artifacts,
                 status="cancelled",
+                recovery_state=recovery_state,
             )
             raise
         except Exception:
@@ -4360,6 +4568,7 @@ class ReportingAgentRunner:
                 session_id,
                 shared_artifacts=shared_artifacts,
                 status="failed",
+                recovery_state=recovery_state,
             )
             raise
         await loop.wait_until_turn_complete()
@@ -4372,6 +4581,7 @@ class ReportingAgentRunner:
             loop, envelope, runtime_id, session_id,
             shared_artifacts=shared_artifacts,
             status=result.status.value,
+            recovery_state=recovery_state,
         )
         self._save_session_summary(
             loop,
@@ -4399,6 +4609,7 @@ class ReportingAgentRunner:
         *,
         shared_artifacts: list[str] | None = None,
         status: str,
+        recovery_state: RecoveryState | None = None,
     ) -> Path:
         """Persist only durable identity and canonical business references."""
 
@@ -4461,6 +4672,14 @@ class ReportingAgentRunner:
                 "status": status,
                 "encoding": "identity+refs",
                 "transcript_semantics": "durable_identity_reference_state_v1",
+                "recovery_attempts": {
+                    kind.value: attempt
+                    for kind, attempt in (
+                        recovery_state.attempts.items()
+                        if recovery_state is not None
+                        else ()
+                    )
+                },
                 "identity_state": identity_state,
                 "business_refs": {
                     "input_contract_ref": envelope.input_contract_ref,

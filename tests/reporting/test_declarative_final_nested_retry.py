@@ -110,3 +110,50 @@ def test_retry_nested_final_review_preserves_completed_siblings(
         for branch_id in ("1", "4")
     )
     assert resumed_cohort.variables["review"] == {"revision_number": 1}
+
+
+def test_retry_nested_final_review_uses_saved_subworkflow_plans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    definitions, _contracts, _tail = build_reporting_tail_definition()
+    executors = build_builtin_executor_registry()
+    outer_plan, _lane_plans = compile_final_chapter_workflows(definitions, executors)
+    review_plans = compile_final_review_workflows(definitions, executors)
+    cycle_plan = review_plans["distribution-final-review-cycle"]
+    cohort_plan = review_plans["distribution-final-chief-revision-cohort"]
+
+    outer = WorkflowState.for_plan("run-saved-final-retry", outer_plan)
+    outer.status = WorkflowStatus.FAILED
+    outer.actions["run-final-review-cycle"].status = ActionExecutionStatus.FAILED
+
+    cycle = WorkflowState.for_plan("run-saved-final-retry", cycle_plan)
+    cycle.status = WorkflowStatus.FAILED
+    nested_action_id = "run-final-chief-revision-cohort"
+    cycle.actions[nested_action_id].status = ActionExecutionStatus.FAILED
+
+    cohort = WorkflowState.for_plan("run-saved-final-retry", cohort_plan)
+    cohort.status = WorkflowStatus.FAILED
+    parallel_action_id = "final-chief-revision-cohort"
+    cohort.parallel_results[parallel_action_id] = {
+        "1": {"revision-outcome-1": {"status": "failed"}}
+    }
+    cohort.parallel_states[parallel_action_id] = {}
+    cycle.subworkflow_states[nested_action_id] = cohort.model_dump(mode="json")
+    outer.subworkflow_states["run-final-review-cycle"] = cycle.model_dump(mode="json")
+
+    monkeypatch.setattr(
+        "manyselves.core.reporting.declarative_final_chapter_cohort."
+        "_compile_final_review_subworkflow",
+        lambda _workflow_id: (_ for _ in ()).throw(
+            AssertionError("saved Final recovery must not compile current definitions")
+        ),
+    )
+
+    resumed = retry_failed_final_chapter_lanes(
+        outer_plan,
+        outer,
+        subworkflows=review_plans,
+    )
+
+    assert resumed.status is WorkflowStatus.PENDING
+    assert resumed.next_action_id == "run-final-review-cycle"

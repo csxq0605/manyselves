@@ -25,6 +25,23 @@ from manyselves.interfaces.types import (
     SystemNotice,
     UserMessage,
 )
+from manyselves.kernel.contracts import build_contract_adapter
+from manyselves.kernel.definitions import (
+    ContractDefinition,
+    DefinitionRegistry,
+    InteractionDefinition,
+    ToolDefinition,
+    WorkflowDefinition,
+)
+from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
+from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
+from manyselves.runtime.state_store import FileWorkflowStateStore
+from manyselves.runtime.workflow_host import (
+    FileWorkflowEventSink,
+    InMemoryWorkflowEventSink,
+    WorkflowRuntimeEvent,
+    WorkflowRuntimeHost,
+)
 from manyselves.webapi.dependencies import get_runtime_host
 from manyselves.webapi.main import create_app
 from manyselves.webapi.settings import WebSettings
@@ -3142,6 +3159,270 @@ async def test_generic_workflow_routes_execute_the_second_production_capability(
     }
     assert cost.json()["usage"]["totals"]["provider_attempts"] == 0
     assert cost.json()["usage"]["totals"]["total_tokens"] == 0
+
+
+@pytest.mark.asyncio
+async def test_generic_workflow_run_is_visible_only_in_its_active_project(
+    resources,
+) -> None:
+    client, _, project_one, _ = resources
+    data_root = project_one.parent
+    created = await client.post(
+        "/api/v1/projects",
+        json={"projectId": "p2", "displayName": "p2", "description": ""},
+    )
+    activated_p2 = await client.post("/api/v1/projects/p2/activate")
+    started = await client.post(
+        "/api/v1/runs",
+        headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000013"},
+        json={
+            "workflowId": "parameter-adjustment",
+            "input": {"value": 4},
+        },
+    )
+    run_id = started.json()["runId"]
+    visible_in_p2 = await client.get(f"/api/v1/runs/{run_id}")
+    FileWorkflowEventSink(data_root / "p2").append(
+        WorkflowRuntimeEvent(
+            kind="workflow.completed",
+            run_id=run_id,
+            workflow_id="parameter-adjustment",
+        )
+    )
+    events_in_p2 = await client.get(f"/api/v1/runs/{run_id}/events")
+
+    assert created.status_code == 201
+    assert activated_p2.status_code == 200
+    assert started.status_code == 202
+    assert visible_in_p2.status_code == 200
+    assert events_in_p2.status_code == 200
+    assert events_in_p2.json()["events"][-1] == {
+        "kind": "workflow.completed",
+        "runId": run_id,
+        "workflowId": "parameter-adjustment",
+        "actionId": None,
+        "error": None,
+        "data": {},
+    }
+    assert (data_root / "p2/Work/runs" / run_id / "runtime-state.json").is_file()
+    assert not (project_one / "Work/runs" / run_id).exists()
+
+    activated_p1 = await client.post("/api/v1/projects/project-1/activate")
+    hidden_in_p1 = await client.get(f"/api/v1/runs/{run_id}")
+    hidden_events_in_p1 = await client.get(f"/api/v1/runs/{run_id}/events")
+
+    assert activated_p1.status_code == 200
+    assert hidden_in_p1.status_code == 404
+    assert hidden_in_p1.json()["error"]["code"] == "WORKFLOW_RESOURCE_NOT_FOUND"
+    assert hidden_events_in_p1.status_code == 404
+    assert hidden_events_in_p1.json()["error"]["code"] == "WORKFLOW_RESOURCE_NOT_FOUND"
+    assert (data_root / "p2/Work/runs" / run_id / "runtime-state.json").is_file()
+    assert not (project_one / "Work/runs" / run_id).exists()
+
+
+@pytest.mark.asyncio
+async def test_generic_http_resumes_nested_waiting_run_without_replaying_sibling(
+    resources,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, host, workspace, _ = resources
+    definitions = DefinitionRegistry()
+    answer_contract = ContractDefinition(
+        id="http-nested-answer",
+        version="1.0.0",
+        description="One nested text answer",
+        adapter="json_schema",
+        schema={"type": "string"},
+    )
+    number_contract = ContractDefinition(
+        id="http-nested-number",
+        version="1.0.0",
+        description="One integer",
+        adapter="json_schema",
+        schema={"type": "integer"},
+    )
+    definitions.register(answer_contract)
+    definitions.register(number_contract)
+    definitions.register(
+        InteractionDefinition(
+            id="http-nested-interaction",
+            version="1.0.0",
+            description="Collect one nested answer",
+            input_contract=answer_contract.id,
+            title="Nested answer",
+        )
+    )
+    definitions.register(
+        ToolDefinition(
+            id="http-double",
+            version="1.0.0",
+            description="Double one integer",
+            implementation="fixture:http-double",
+            input_contract=number_contract.id,
+            output_contract=number_contract.id,
+        )
+    )
+    child = WorkflowDefinition(
+        id="http-waiting-child",
+        version="1.0.0",
+        description="Nested child waiting through the generic HTTP projection",
+        interactions=["http-nested-interaction"],
+        state={"input": "seed"},
+        actions=[
+            {
+                "id": "ask-http-child",
+                "kind": "request_input",
+                "interaction": "http-nested-interaction",
+                "output_variable": "answer",
+            },
+            {
+                "id": "finish-http-child",
+                "kind": "end_workflow",
+                "output_variable": "answer",
+            },
+        ],
+    )
+    parent = WorkflowDefinition(
+        id="http-parallel-waiting-parent",
+        version="1.0.0",
+        description="Parallel parent used by the real generic HTTP routes",
+        state={"left-input": "left-seed", "right-input": 5},
+        actions=[
+            {
+                "id": "http-parallel",
+                "kind": "parallel",
+                "branches": {"left": "http-left", "right": "http-right"},
+                "join": "http-join",
+            },
+            {
+                "id": "http-left",
+                "kind": "subworkflow",
+                "workflow": child.id,
+                "input_variable": "left-input",
+                "child_input_variable": "input",
+                "child_output_name": "result",
+                "output_variable": "left-output",
+            },
+            {"id": "http-left-done", "kind": "goto", "target": "http-join"},
+            {
+                "id": "http-right",
+                "kind": "invoke_tool",
+                "tool": "http-double",
+                "input_variable": "right-input",
+                "output_variable": "right-output",
+            },
+            {"id": "http-right-done", "kind": "goto", "target": "http-join"},
+            {
+                "id": "http-join",
+                "kind": "join",
+                "parallel": "http-parallel",
+                "inputs": {"left": "left-output", "right": "right-output"},
+                "output_variable": "joined",
+            },
+            {
+                "id": "http-finish",
+                "kind": "end_workflow",
+                "output_variable": "joined",
+            },
+        ],
+    )
+    definitions.register(child)
+    definitions.register(parent)
+    executors = build_builtin_executor_registry()
+    plan = WorkflowCompiler(executors).compile(parent, definitions)
+    contracts = {
+        definition.id: build_contract_adapter(definition)
+        for definition in (answer_contract, number_contract)
+    }
+    right_calls = 0
+
+    def double(value: int) -> int:
+        nonlocal right_calls
+        right_calls += 1
+        return value * 2
+
+    store = FileWorkflowStateStore(workspace)
+    events = InMemoryWorkflowEventSink()
+    runtime_host = WorkflowRuntimeHost(executors, store, events)
+    context = RuntimeContext(
+        tools={"http-double": double},
+        contracts=contracts,
+        definitions=definitions,
+        subworkflows=plan.subworkflow_plans,
+    )
+    run_id = "report-declarative-http-nested"
+    waiting = await runtime_host.execute(
+        plan,
+        WorkflowState.for_plan(run_id, plan),
+        context,
+    )
+    run_root = workspace / "Work/runs" / run_id
+    (run_root / "request.json").write_text("{}", encoding="utf-8")
+    controller = host.reporting_controller
+    assert controller is not None
+
+    def resume_run(current_run_id: str, **_values: object) -> dict[str, object]:
+        failures: list[BaseException] = []
+
+        def execute_resumed() -> None:
+            try:
+                asyncio.run(
+                    runtime_host.execute(
+                        store.load_plan(current_run_id),
+                        store.load(current_run_id),
+                        context,
+                    )
+                )
+            except BaseException as error:
+                failures.append(error)
+
+        thread = threading.Thread(target=execute_resumed)
+        thread.start()
+        thread.join()
+        if failures:
+            raise failures[0]
+        return {"run_id": current_run_id, "task_id": "nested-resume"}
+
+    monkeypatch.setattr(controller, "resume_run", resume_run)
+
+    projected_waiting = await client.get(f"/api/v1/runs/{run_id}")
+    submitted = await client.post(
+        f"/api/v1/runs/{run_id}/input",
+        headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000014"},
+        json={"inputId": "ask-http-child", "values": "Ada"},
+    )
+    projected_completed = await client.get(f"/api/v1/runs/{run_id}")
+    completed = store.load(run_id)
+
+    assert waiting.status is WorkflowStatus.WAITING
+    assert projected_waiting.status_code == 200
+    assert projected_waiting.json()["waitingInput"][0]["path"] == [
+        {
+            "kind": "parallel",
+            "action_id": "http-parallel",
+            "branch_id": "left",
+        },
+        {
+            "kind": "subworkflow",
+            "action_id": "http-left",
+            "workflow_id": child.id,
+        },
+    ]
+    assert submitted.status_code == 202
+    assert submitted.json()["runId"] == run_id
+    assert projected_completed.status_code == 200
+    assert projected_completed.json()["run"]["runId"] == run_id
+    assert projected_completed.json()["run"]["status"] == "completed"
+    assert completed.outputs == {"result": {"left": "Ada", "right": 10}}
+    assert completed.parallel_states["http-parallel"]["right"]["status"] == "completed"
+    assert right_calls == 1
+    assert len(
+        [
+            event
+            for event in events.events
+            if event.kind == "action.started" and event.action_id == "http-right"
+        ]
+    ) == 1
 
 
 @pytest.mark.asyncio

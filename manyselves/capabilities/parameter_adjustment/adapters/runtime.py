@@ -1,6 +1,7 @@
 """Generic runtime binding for the parameter-adjustment Capability."""
 
 import asyncio
+from collections.abc import Mapping
 from pathlib import Path
 from threading import Thread
 from typing import Any
@@ -25,6 +26,7 @@ from manyselves.kernel.workflow import (
     WorkflowCompiler,
     WorkflowState,
     WorkflowStatus,
+    restore_plan_definition_registry,
     resume_waiting_input,
 )
 from manyselves.runtime.capability_binding import (
@@ -41,11 +43,12 @@ from manyselves.runtime.workflow_host import FileWorkflowEventSink, WorkflowRunt
 
 from .. import load_parameter_adjustment_capability
 
-_UNSET = object()
-
 
 def _normalize_parameter(arguments: dict[str, Any]) -> int:
     return arguments["value"]
+
+
+_TOOL_IMPLEMENTATIONS = {"normalize-parameter": _normalize_parameter}
 
 
 class _ParameterAdjuster:
@@ -79,12 +82,19 @@ class ParameterAdjustmentRuntimeBinding:
     ) -> dict[str, Any]:
         if workflow_id != self.capability_id:
             raise ValueError(f"workflow is not runnable: {workflow_id}")
-        _capability, registry, contracts, tools, plan = self._compiled(values)
+        _capability, registry, contracts, tools, plan = self._compiled()
+        if plan.input_contract is None or plan.input_variable is None:
+            raise TypeError("parameter-adjustment workflow has no declared input binding")
+        validated_values = contracts[plan.input_contract].validate(values)
         run_id = f"{workflow_id}-{command_id.hex}"
         try:
             state = self._store.load(run_id)
         except FileNotFoundError:
-            state = WorkflowState.for_plan(run_id, plan)
+            state = WorkflowState.for_plan(
+                run_id,
+                plan,
+                initial_variables={plan.input_variable: validated_values},
+            )
             self._store.save_plan(run_id, plan)
         await self._execute(plan, state, registry, contracts, tools)
         return {"run_id": run_id, "task_id": None}
@@ -105,7 +115,7 @@ class ParameterAdjustmentRuntimeBinding:
             plan = self._store.load_plan(run_id)
         except FileNotFoundError as exc:
             raise CapabilityRunNotFoundError(run_id) from exc
-        _capability, registry = load_parameter_adjustment_capability()
+        registry = restore_plan_definition_registry(plan)
         contracts = self._contracts(registry)
         tools = self._tools(registry, contracts)
         resumed = resume_waiting_input(
@@ -156,10 +166,7 @@ class ParameterAdjustmentRuntimeBinding:
             "usage": UsageLedger(self.workspace, run_id).summarize(group_by="stage"),
         }
 
-    def _compiled(
-        self,
-        values: Any = _UNSET,
-    ) -> tuple[
+    def _compiled(self) -> tuple[
         Any,
         DefinitionRegistry,
         dict[str, ContractAdapter],
@@ -171,11 +178,6 @@ class ParameterAdjustmentRuntimeBinding:
         if not isinstance(workflow, WorkflowDefinition):
             raise TypeError(f"definition is not a workflow: {self.capability_id}")
         contracts = self._contracts(registry)
-        if values is not _UNSET:
-            workflow = workflow.model_copy(deep=True)
-            workflow.state = {
-                "parameters": contracts["parameter-input"].validate(values)
-            }
         tools = self._tools(registry, contracts)
         plan = WorkflowCompiler(self._executors).compile(workflow, registry)
         return capability, registry, contracts, tools, plan
@@ -203,6 +205,7 @@ class ParameterAdjustmentRuntimeBinding:
                 conversations=ConversationRegistry(
                     FileConversationStore(self.workspace)
                 ),
+                plan_tool_factory=self._bind_plan_tool,
             ),
         )
 
@@ -221,7 +224,7 @@ class ParameterAdjustmentRuntimeBinding:
     ) -> dict[str, CapabilityToolAdapter]:
         factory = CapabilityToolAdapterFactory(
             self.capability_id,
-            {"normalize-parameter": _normalize_parameter},
+            _TOOL_IMPLEMENTATIONS,
             contracts,
         )
         return {
@@ -229,6 +232,17 @@ class ParameterAdjustmentRuntimeBinding:
             for definition in registry.all(DefinitionKind.TOOL)
             if isinstance(definition, ToolDefinition)
         }
+
+    def _bind_plan_tool(
+        self,
+        definition: ToolDefinition,
+        contracts: Mapping[str, ContractAdapter],
+    ) -> CapabilityToolAdapter:
+        return CapabilityToolAdapterFactory(
+            self.capability_id,
+            _TOOL_IMPLEMENTATIONS,
+            contracts,
+        ).build(definition)
 
     def _load_state(self, run_id: str) -> WorkflowState:
         try:

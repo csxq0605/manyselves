@@ -1,5 +1,6 @@
 """Pure workflow state transitions and external effect requests."""
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,9 +36,15 @@ class ActionFailed:
 
     action_id: str
     error: str
+    result: Any = None
 
 
-WorkflowEvent = StartWorkflow | ActionSucceeded | ActionFailed
+@dataclass(frozen=True, slots=True)
+class CompleteNestedExecution:
+    """Close one isolated branch before its parent Join executes."""
+
+
+WorkflowEvent = StartWorkflow | ActionSucceeded | ActionFailed | CompleteNestedExecution
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,11 +55,40 @@ class ExecuteAction:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkflowControlEvent:
+    """Business-neutral semantic event produced by pure control flow."""
+
+    kind: str
+    action_id: str
+    data: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class WorkflowTransition:
     """A new authoritative state plus effects for the Runtime Host."""
 
     state: WorkflowState
     effects: tuple[ExecuteAction, ...] = ()
+    events: tuple[WorkflowControlEvent, ...] = ()
+
+
+def apply_action_result(state: WorkflowState, result: Any) -> WorkflowState:
+    """Return a deep-copied State with one executor result patch applied."""
+
+    next_state = state.model_copy(deep=True)
+    next_state.variables.update(deepcopy(result.variable_updates))
+    next_state.outputs.update(deepcopy(result.output_updates))
+    next_state.conversations.update(deepcopy(result.conversation_updates))
+    next_state.parallel_results.update(deepcopy(result.parallel_result_updates))
+    next_state.parallel_states.update(deepcopy(result.parallel_state_updates))
+    next_state.subworkflow_states.update(deepcopy(result.subworkflow_state_updates))
+    if result.clear_waiting_input:
+        next_state.waiting_input = None
+    if result.waiting_input is not None:
+        next_state.waiting_input = deepcopy(result.waiting_input)
+    if result.workflow_status is not None:
+        next_state.status = result.workflow_status
+    return next_state
 
 
 class StatelessWorkflowKernel:
@@ -75,29 +111,24 @@ class StatelessWorkflowKernel:
                 next_state.next_action_index,
                 reuse_completed=True,
             )
+        if isinstance(event, CompleteNestedExecution):
+            next_state.status = WorkflowStatus.COMPLETED
+            next_state.next_action_id = None
+            return WorkflowTransition(next_state)
         if isinstance(event, ActionFailed):
+            if event.result is not None:
+                next_state = apply_action_result(state, event.result)
             action_state = next_state.actions[event.action_id]
             action_state.status = ActionExecutionStatus.FAILED
             action_state.error = event.error
             next_state.status = WorkflowStatus.FAILED
             return WorkflowTransition(next_state)
 
-        action_state = next_state.actions[event.action_id]
         result = event.result
-        next_state.variables.update(result.variable_updates)
-        next_state.outputs.update(result.output_updates)
-        next_state.conversations.update(result.conversation_updates)
-        next_state.parallel_results.update(result.parallel_result_updates)
-        next_state.parallel_states.update(result.parallel_state_updates)
-        next_state.subworkflow_states.update(result.subworkflow_state_updates)
-        if result.clear_waiting_input:
-            next_state.waiting_input = None
-        if result.waiting_input is not None:
-            next_state.waiting_input = result.waiting_input
-        action_state.output = result.output
+        next_state = apply_action_result(state, result)
+        action_state = next_state.actions[event.action_id]
+        action_state.output = deepcopy(result.output)
         action_state.error = None
-        if result.workflow_status is not None:
-            next_state.status = result.workflow_status
         if next_state.status is WorkflowStatus.WAITING:
             action_state.status = ActionExecutionStatus.WAITING
             return WorkflowTransition(next_state)
@@ -135,6 +166,7 @@ class StatelessWorkflowKernel:
     ) -> WorkflowTransition:
         positions = {action.id: index for index, action in enumerate(plan.actions)}
         index = start_index
+        events: list[WorkflowControlEvent] = []
         while index < len(plan.actions):
             action = plan.actions[index]
             action_state = state.actions[action.id]
@@ -165,12 +197,23 @@ class StatelessWorkflowKernel:
                 target, output = _control_target(action, state)
                 action_state.output = output
                 action_state.status = ActionExecutionStatus.COMPLETED
+                events.append(
+                    WorkflowControlEvent(
+                        kind="branch.selected",
+                        action_id=action.id,
+                        data={"target": target},
+                    )
+                )
                 index = positions[target]
                 continue
-            return WorkflowTransition(state, (ExecuteAction(action.id),))
+            return WorkflowTransition(
+                state,
+                (ExecuteAction(action.id),),
+                tuple(events),
+            )
         state.next_action_index = len(plan.actions)
         state.next_action_id = None
-        return WorkflowTransition(state)
+        return WorkflowTransition(state, events=tuple(events))
 
 
 def _control_target(

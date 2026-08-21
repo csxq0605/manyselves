@@ -48,6 +48,8 @@ def _workflow():
             implementation="fixture:double",
             input_contract="number",
             output_contract="number",
+            side_effect="pure_read",
+            parallel_safe=True,
         )
     )
     registry.register(
@@ -141,6 +143,7 @@ async def test_runtime_host_executes_effects_persists_events_and_reuses_completi
     assert [event.kind for event in events.events] == [
         "workflow.started",
         "action.started",
+        "tool.invoked",
         "action.completed",
         "action.started",
         "output.published",
@@ -149,6 +152,79 @@ async def test_runtime_host_executes_effects_persists_events_and_reuses_completi
         "action.completed",
         "workflow.completed",
     ]
+    assert events.events[2].data == {"tool_id": "double", "reused": False}
+
+
+@pytest.mark.asyncio
+async def test_failed_tool_cannot_mutate_authoritative_workflow_input(
+    tmp_path: Path,
+) -> None:
+    registry = DefinitionRegistry()
+    payload_contract = ContractDefinition(
+        id="payload",
+        version="1.0.0",
+        description="Mutable payload",
+        adapter="json_schema",
+        schema={"type": "object"},
+    )
+    registry.register(payload_contract)
+    registry.register(
+        ToolDefinition(
+            id="mutating-failure",
+            version="1.0.0",
+            description="Mutate then fail",
+            implementation="fixture:mutating-failure",
+            input_contract=payload_contract.id,
+            output_contract=payload_contract.id,
+        )
+    )
+    workflow = WorkflowDefinition(
+        id="failed-tool-state-isolation",
+        version="1.0.0",
+        description="Only ActionResult may update state",
+        state={"payload": {"value": 1}},
+        actions=[
+            {
+                "id": "mutate",
+                "kind": "invoke_tool",
+                "tool": "mutating-failure",
+                "input_variable": "payload",
+                "output_variable": "result",
+            },
+            {
+                "id": "finish",
+                "kind": "end_workflow",
+                "output_variable": "result",
+            },
+        ],
+    )
+    registry.register(workflow)
+    executors = build_builtin_executor_registry()
+    plan = WorkflowCompiler(executors).compile(workflow, registry)
+    store = FileWorkflowStateStore(tmp_path)
+
+    def mutate_then_fail(value: dict[str, int]) -> None:
+        value["value"] = 99
+        raise RuntimeError("injected tool failure")
+
+    with pytest.raises(RuntimeError, match="injected tool failure"):
+        await WorkflowRuntimeHost(
+            executors,
+            store,
+            InMemoryWorkflowEventSink(),
+        ).execute(
+            plan,
+            WorkflowState.for_plan("failed-tool-run", plan),
+            RuntimeContext(
+                tools={"mutating-failure": mutate_then_fail},
+                contracts={
+                    payload_contract.id: build_contract_adapter(payload_contract),
+                },
+                definitions=registry,
+            ),
+        )
+
+    assert store.load("failed-tool-run").variables["payload"] == {"value": 1}
 
 
 @pytest.mark.asyncio
@@ -176,6 +252,7 @@ async def test_runtime_host_resumes_with_the_run_saved_resolved_plan(
         id="saved-plan-resume",
         version="1.0.0",
         description="Resume from one fixed compiled plan",
+        interactions=[interaction.id],
         actions=[
             {
                 "id": "ask-number",
@@ -223,6 +300,51 @@ async def test_runtime_host_resumes_with_the_run_saved_resolved_plan(
 
     assert completed.outputs == {"original": 7}
     assert store.load_plan("fixed-plan-run") == original_plan
+
+
+@pytest.mark.asyncio
+async def test_runtime_host_rebinds_tools_from_the_run_saved_definition(
+    tmp_path: Path,
+) -> None:
+    registry, executors, original_plan, contracts = _workflow()
+    original_tool = registry.require("tool", "double")
+    assert isinstance(original_tool, ToolDefinition)
+    registry._definitions["tool"]["double"] = original_tool.model_copy(
+        update={"implementation": "fixture:old-double"}
+    )
+    original_workflow = registry.require("workflow", original_plan.workflow_id)
+    assert isinstance(original_workflow, WorkflowDefinition)
+    saved_plan = WorkflowCompiler(executors).compile(original_workflow, registry)
+    registry._definitions["tool"]["double"] = original_tool.model_copy(
+        update={"implementation": "fixture:new-double"}
+    )
+    current_plan = WorkflowCompiler(executors).compile(original_workflow, registry)
+    store = FileWorkflowStateStore(tmp_path)
+    store.save_plan("saved-tool-run", saved_plan)
+
+    def bind_saved_tool(definition: ToolDefinition, _contracts):
+        implementations = {
+            "fixture:old-double": lambda value: value * 2,
+            "fixture:new-double": lambda value: value * 3,
+        }
+        return implementations[definition.implementation]
+
+    completed = await WorkflowRuntimeHost(
+        executors,
+        store,
+        InMemoryWorkflowEventSink(),
+    ).execute(
+        current_plan,
+        WorkflowState.for_plan("saved-tool-run", saved_plan),
+        RuntimeContext(
+            tools={"double": lambda value: value * 3},
+            contracts=contracts,
+            definitions=registry,
+            plan_tool_factory=bind_saved_tool,
+        ),
+    )
+
+    assert completed.outputs == {"result": 8}
 
 
 @pytest.mark.asyncio
@@ -274,6 +396,11 @@ async def test_runtime_host_executes_explicit_exit_loop_without_iteration_cap(
 
     assert completed.status is WorkflowStatus.COMPLETED
     assert completed.outputs == {"result": 8}
+    assert [
+        event.data["target"]
+        for event in events.events
+        if event.kind == "branch.selected"
+    ] == ["repeat", "double", "repeat", "double", "finish"]
     assert events.events[-1].kind == "workflow.completed"
 
 
@@ -474,6 +601,96 @@ async def test_runtime_host_joins_parallel_branches_inside_one_run_state(
 
 
 @pytest.mark.asyncio
+async def test_runtime_host_serializes_direct_parallel_tools_not_declared_safe(
+    tmp_path: Path,
+) -> None:
+    registry, executors, _plan, contracts = _workflow()
+    registry.register(
+        ToolDefinition(
+            id="unsafe-double",
+            version="1.0.0",
+            description="Double through an ordered stateful implementation",
+            implementation="fixture:unsafe-double",
+            input_contract="number",
+            output_contract="number",
+            side_effect="ordered_state",
+            parallel_safe=False,
+        )
+    )
+    workflow = WorkflowDefinition(
+        id="host-unsafe-parallel",
+        version="1.0.0",
+        description="Serialize direct branches using an unsafe Tool",
+        state={"left-input": 1, "right-input": 2},
+        actions=[
+            {
+                "id": "parallel",
+                "kind": "parallel",
+                "branches": {"left": "left", "right": "right"},
+                "join": "join",
+            },
+            {
+                "id": "left",
+                "kind": "invoke_tool",
+                "tool": "unsafe-double",
+                "input_variable": "left-input",
+                "output_variable": "left-output",
+            },
+            {"id": "left-done", "kind": "goto", "target": "join"},
+            {
+                "id": "right",
+                "kind": "invoke_tool",
+                "tool": "unsafe-double",
+                "input_variable": "right-input",
+                "output_variable": "right-output",
+            },
+            {"id": "right-done", "kind": "goto", "target": "join"},
+            {
+                "id": "join",
+                "kind": "join",
+                "parallel": "parallel",
+                "inputs": {"left": "left-output", "right": "right-output"},
+                "output_variable": "joined",
+            },
+            {
+                "id": "finish",
+                "kind": "end_workflow",
+                "output_variable": "joined",
+            },
+        ],
+    )
+    registry.register(workflow)
+    plan = WorkflowCompiler(executors).compile(workflow, registry)
+    active = 0
+    maximum_active = 0
+
+    async def unsafe_double(value: int) -> int:
+        nonlocal active, maximum_active
+        active += 1
+        maximum_active = max(maximum_active, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return value * 2
+
+    completed = await WorkflowRuntimeHost(
+        executors,
+        FileWorkflowStateStore(tmp_path),
+        InMemoryWorkflowEventSink(),
+    ).execute(
+        plan,
+        WorkflowState.for_plan("unsafe-parallel-host-run", plan),
+        RuntimeContext(
+            tools={"unsafe-double": unsafe_double},
+            contracts=contracts,
+            definitions=registry,
+        ),
+    )
+
+    assert maximum_active == 1
+    assert completed.outputs == {"result": {"left": 2, "right": 4}}
+
+
+@pytest.mark.asyncio
 async def test_nested_parallel_persists_progress_and_retries_only_failed_branch(
     tmp_path: Path,
 ) -> None:
@@ -663,6 +880,7 @@ async def test_runtime_host_nests_subworkflow_state_in_the_parent_run(
     ] == [
         ("workflow.started", "host-child", None),
         ("action.started", "host-child", "child-double"),
+        ("tool.invoked", "host-child", "child-double"),
         ("action.completed", "host-child", "child-double"),
         ("action.started", "host-child", "child-finish"),
         ("action.completed", "host-child", "child-finish"),
@@ -898,6 +1116,7 @@ async def test_runtime_host_waits_and_resumes_input_inside_subworkflow(
         id="waiting-child",
         version="1.0.0",
         description="Child that asks for one response",
+        interactions=["child-interaction"],
         state={"input": "seed"},
         actions=[
             {
@@ -1023,6 +1242,7 @@ async def test_saved_parent_plan_freezes_nested_workflow_for_resume(
         id="frozen-waiting-child",
         version="1.0.0",
         description="Child definition persisted with its parent plan",
+        interactions=["frozen-child-interaction"],
         actions=[
             {
                 "id": "ask-frozen-child",
@@ -1108,6 +1328,7 @@ async def test_runtime_host_waits_inside_parallel_child_and_reuses_completed_sib
         id="parallel-waiting-child",
         version="1.0.0",
         description="Nested branch child that asks for one response",
+        interactions=["branch-interaction"],
         state={"input": "seed"},
         actions=[
             {

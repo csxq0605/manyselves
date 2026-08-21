@@ -4,7 +4,7 @@ description: Select whether the prepared Chief chapter lane needs its Agent turn
 implementation: capability:distribution-reporting:chief-chapter-requires-agent
 input_contract: declarative_chief_chapter_context
 output_contract: boolean
-side_effect: none
+side_effect: pure_read
 parallel_safe: true
 reuse_result: false
 model_visible: false

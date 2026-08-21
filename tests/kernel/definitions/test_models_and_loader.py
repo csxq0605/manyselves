@@ -118,6 +118,19 @@ def test_definition_models_cover_the_wp01_vocabulary() -> None:
     assert [definition.kind for definition in definitions] == list(DefinitionKind)
 
 
+def test_tool_definition_rejects_non_runtime_side_effect_vocabulary() -> None:
+    with pytest.raises(ValueError, match="side_effect"):
+        ToolDefinition(
+            id="invalid-effect",
+            version="1.0.0",
+            description="Invalid effect vocabulary",
+            implementation="example.tools:invalid",
+            input_contract="adjustment-input",
+            output_contract="adjustment-output",
+            side_effect="none",
+        )
+
+
 def test_file_workflow_parameters_specialize_without_mutating_the_template() -> None:
     template = WorkflowDefinition(
         id="reusable",

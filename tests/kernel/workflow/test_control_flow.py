@@ -268,7 +268,7 @@ async def test_foreach_repeats_neutral_body_and_resumes_after_collection(
         id="neutral-foreach",
         version="1.0.0",
         description="Double each item",
-        state={"items": [1, 2, 3]},
+        state={"items": [1, 2, 3], "doubled": 0},
         max_iterations=20,
         actions=[
             {
@@ -319,7 +319,7 @@ async def test_loaded_foreach_state_continues_after_completed_iteration(
         id="resume-foreach",
         version="1.0.0",
         description="Resume a finite collection",
-        state={"items": [1, 2, 3]},
+        state={"items": [1, 2, 3], "doubled": 0},
         max_iterations=20,
         actions=[
             {

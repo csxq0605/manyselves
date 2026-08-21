@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -22,7 +22,6 @@ from ..artifacts.gateway import ArtifactGateway, ArtifactGrant
 from ..artifacts.types import ArtifactDescriptor
 from .agentic_models import TaskEnvelope
 from .config import AgentDefinition, ConfigurationError
-
 
 DeliveryMode = Literal["inline", "reference", "hash_retained"]
 _OPAQUE_PREFIX = "artifact:v1:"
@@ -605,8 +604,11 @@ def compile_agent_access(
         declared_tools.remove("open_artifact")
     if "search_text" in declared_tools and "search_text" not in operation_refs:
         declared_tools.remove("search_text")
-    # ``open_tool_result`` is a lossless continuation reader, always available
-    # as the run-level read-only result boundary for backwards compatibility.
+    # ``open_tool_result`` is a Runtime-owned lossless continuation reader, not
+    # a Capability ToolDefinition: it can only read opaque references minted by
+    # this run's tool-result truncation boundary.  Keep it always available for
+    # backwards compatibility without making those internal refs part of a
+    # Capability's static Agent/Task scopes.
     if "open_tool_result" not in declared_tools:
         declared_tools.append("open_tool_result")
     for operation in ("search_text",):

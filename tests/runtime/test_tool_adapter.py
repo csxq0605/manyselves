@@ -346,7 +346,13 @@ async def test_current_tool_adapter_executes_through_invoke_tool_action(
     ).execute(
         plan,
         state,
-        RuntimeContext(tools={definition.id: factory.build(definition)}),
+            RuntimeContext(
+                tools={definition.id: factory.build(definition)},
+                contracts={
+                    input_contract.id: build_contract_adapter(input_contract),
+                    output_contract.id: build_contract_adapter(output_contract),
+                },
+            ),
     )
 
     assert completed.outputs == {"result": {"value": 2}}

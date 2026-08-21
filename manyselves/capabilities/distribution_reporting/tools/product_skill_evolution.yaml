@@ -2,10 +2,9 @@ id: product_skill_evolution
 version: 1.0.0
 description: Current Reporting tool declaration for product_skill_evolution
 implementation: capability:distribution-reporting:product_skill_evolution
-input_contract: reporting_tool_input
+input_contract: product_skill_evolution_tool_input
 output_contract: reporting_tool_output
 side_effect: ordered_state
 parallel_safe: false
 reuse_result: false
 model_visible: true
-

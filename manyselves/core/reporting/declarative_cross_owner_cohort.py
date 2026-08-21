@@ -9,6 +9,9 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from manyselves.capabilities.distribution_reporting.adapters import (
+    project_reporting_agent,
+)
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -206,7 +209,7 @@ class _CrossOwnerInitialInvoker:
 
     async def _invoke(
         self,
-        _agent: AgentDefinition,
+        agent: AgentDefinition,
         task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
@@ -224,6 +227,7 @@ class _CrossOwnerInitialInvoker:
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
+                "definition_override": project_reporting_agent(agent),
             }
             if recovery_policy is not None:
                 runner_kwargs["recovery_policy"] = recovery_policy
@@ -293,7 +297,7 @@ class _CrossOwnerRevisionInvoker:
 
     async def _invoke(
         self,
-        _agent: AgentDefinition,
+        agent: AgentDefinition,
         task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
@@ -312,6 +316,7 @@ class _CrossOwnerRevisionInvoker:
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
+                "definition_override": project_reporting_agent(agent),
             }
             if recovery_policy is not None:
                 runner_kwargs["recovery_policy"] = recovery_policy
@@ -381,7 +386,7 @@ class _CrossOwnerLocalReviewInvoker:
 
     async def _invoke(
         self,
-        _agent: AgentDefinition,
+        agent: AgentDefinition,
         task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
@@ -403,6 +408,7 @@ class _CrossOwnerLocalReviewInvoker:
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
+                "definition_override": project_reporting_agent(agent),
             }
             if recovery_policy is not None:
                 runner_kwargs["recovery_policy"] = recovery_policy
@@ -472,7 +478,7 @@ class _CrossOwnerRecheckInvoker:
 
     async def _invoke(
         self,
-        _agent: AgentDefinition,
+        agent: AgentDefinition,
         task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
@@ -493,6 +499,7 @@ class _CrossOwnerRecheckInvoker:
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
+                "definition_override": project_reporting_agent(agent),
             }
             if recovery_policy is not None:
                 runner_kwargs["recovery_policy"] = recovery_policy
@@ -562,7 +569,7 @@ class _CrossOwnerMainExceptionInvoker:
 
     async def _invoke(
         self,
-        _agent: AgentDefinition,
+        agent: AgentDefinition,
         task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
@@ -578,6 +585,7 @@ class _CrossOwnerMainExceptionInvoker:
         async def invoke_once() -> Any:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
+                "definition_override": project_reporting_agent(agent),
             }
             if recovery_policy is not None:
                 runner_kwargs["recovery_policy"] = recovery_policy

@@ -162,6 +162,19 @@ class WorkflowCompiler:
         variable_contracts: dict[str, str] = {}
         end_actions: list[EndWorkflowAction] = []
 
+        if workflow.input_variable is not None:
+            defined_variables.add(workflow.input_variable)
+            if workflow.input_contract is not None:
+                variable_contracts[workflow.input_variable] = workflow.input_contract
+        if workflow.input_contract is not None:
+            self._require(
+                definitions,
+                DefinitionKind.CONTRACT,
+                workflow.input_contract,
+                workflow.id,
+            )
+            _append_unique(contract_ids, workflow.input_contract)
+
         for recovery_id in workflow.recovery:
             recovery = self._require(
                 definitions,
@@ -191,6 +204,7 @@ class WorkflowCompiler:
             if action.id in action_ids:
                 raise CompilerError(f"duplicate action id: {action.id}")
             action_ids.add(action.id)
+            self._validate_action_scope(action, workflow)
             self._resolve_action(
                 action,
                 definitions,
@@ -228,6 +242,19 @@ class WorkflowCompiler:
             workflow.max_iterations,
             definitions,
         )
+        parallel_concurrency = self._resolve_parallel_concurrency(
+            actions,
+            control_flow_edges,
+            definitions,
+        )
+        self._validate_definite_assignment(
+            actions,
+            control_flow_edges,
+            initial_variables={
+                *workflow.state,
+                *([workflow.input_variable] if workflow.input_variable else []),
+            },
+        )
         if workflow.output_contract:
             self._require(
                 definitions,
@@ -249,6 +276,8 @@ class WorkflowCompiler:
             workflow_version=workflow.version,
             actions=actions,
             initial_state=workflow.state,
+            input_variable=workflow.input_variable,
+            input_contract=workflow.input_contract,
             entry_action_id=actions[0].id,
             max_iterations=workflow.max_iterations,
             tool_ids=tool_ids,
@@ -264,6 +293,7 @@ class WorkflowCompiler:
             recovery_ids=recovery_ids,
             conversation_bindings=conversation_bindings,
             control_flow_edges=control_flow_edges,
+            parallel_concurrency=parallel_concurrency,
             final_output_contract=workflow.output_contract,
         )
         compiled[workflow.id] = plan
@@ -283,6 +313,159 @@ class WorkflowCompiler:
                 compiled=compiled,
             )
         return plan
+
+    @staticmethod
+    def _resolve_parallel_concurrency(
+        actions: list[ResolvedAction],
+        control_flow_edges: dict[str, list[str]],
+        definitions: DefinitionRegistry,
+    ) -> dict[str, int]:
+        """Resolve direct Tool scheduling without crossing subworkflow isolation."""
+
+        action_by_id = {action.id: action for action in actions}
+        resolved: dict[str, int] = {}
+        for parallel in (
+            action for action in actions if isinstance(action, ParallelAction)
+        ):
+            branch_action_ids: set[str] = set()
+            pending = list(parallel.branches.values())
+            while pending:
+                action_id = pending.pop()
+                if action_id == parallel.join or action_id in branch_action_ids:
+                    continue
+                branch_action_ids.add(action_id)
+                branch_action = action_by_id[action_id]
+                if isinstance(branch_action, SubworkflowAction):
+                    continue
+                pending.extend(control_flow_edges[action_id])
+
+            direct_tool_ids = {
+                branch_action.tool
+                for action_id in branch_action_ids
+                if isinstance(
+                    branch_action := action_by_id[action_id],
+                    InvokeToolAction,
+                )
+            }
+            direct_tool_ids.update(
+                gate.validator_tool
+                for action_id in branch_action_ids
+                if isinstance(
+                    branch_action := action_by_id[action_id],
+                    EvaluateGateAction,
+                )
+                and isinstance(
+                    gate := definitions.require(
+                        DefinitionKind.GATE,
+                        branch_action.gate,
+                    ),
+                    GateDefinition,
+                )
+                and gate.validator_tool is not None
+            )
+            safe = all(
+                isinstance(
+                    tool := definitions.require(DefinitionKind.TOOL, tool_id),
+                    ToolDefinition,
+                )
+                and tool.parallel_safe
+                and tool.side_effect == "pure_read"
+                for tool_id in direct_tool_ids
+            )
+            requested = parallel.max_concurrency or len(parallel.branches)
+            resolved[parallel.id] = requested if safe else 1
+        return resolved
+
+    @staticmethod
+    def _validate_action_scope(
+        action: ResolvedAction,
+        workflow: WorkflowDefinition,
+    ) -> None:
+        scoped_reference: tuple[str, str, list[str]] | None = None
+        if isinstance(action, InvokeAgentAction):
+            scoped_reference = ("task", action.task, workflow.tasks)
+        elif isinstance(action, (RequestInputAction, WaitInputAction)):
+            scoped_reference = (
+                "interaction",
+                action.interaction,
+                workflow.interactions,
+            )
+        elif isinstance(action, PublishResultAction):
+            scoped_reference = ("output", action.output, workflow.outputs)
+        if scoped_reference is None:
+            return
+        kind, definition_id, scope = scoped_reference
+        if definition_id not in scope:
+            raise CompilerError(
+                f"action {action.id} references {kind} outside workflow scope: "
+                f"{definition_id}"
+            )
+
+    @staticmethod
+    def _validate_definite_assignment(
+        actions: list[ResolvedAction],
+        control_flow_edges: dict[str, list[str]],
+        *,
+        initial_variables: set[str],
+    ) -> None:
+        """Require every reachable variable read to be defined on every path."""
+
+        action_by_id = {action.id: action for action in actions}
+        entry = actions[0].id
+        reachable = {entry}
+        pending = [entry]
+        while pending:
+            owner = pending.pop()
+            for target in control_flow_edges[owner]:
+                if target not in reachable:
+                    reachable.add(target)
+                    pending.append(target)
+
+        predecessors = {action_id: set() for action_id in reachable}
+        for owner in reachable:
+            for target in control_flow_edges[owner]:
+                if target in reachable:
+                    predecessors[target].add(owner)
+
+        all_variables = set(initial_variables)
+        for action_id in reachable:
+            all_variables.update(_defined_variables(action_by_id[action_id]))
+        incoming = {
+            action_id: (
+                set(initial_variables) if action_id == entry else set(all_variables)
+            )
+            for action_id in reachable
+        }
+        changed = True
+        while changed:
+            changed = False
+            for action in actions:
+                if action.id not in reachable or action.id == entry:
+                    continue
+                candidates = [
+                    incoming[predecessor]
+                    | _defined_variables(
+                        action_by_id[predecessor],
+                        successor=action.id,
+                    )
+                    for predecessor in predecessors[action.id]
+                ]
+                candidate = (
+                    set.intersection(*candidates) if candidates else set(initial_variables)
+                )
+                if candidate != incoming[action.id]:
+                    incoming[action.id] = candidate
+                    changed = True
+
+        for action in actions:
+            if action.id not in reachable:
+                continue
+            for variable in _read_variables(action):
+                if variable not in incoming[action.id]:
+                    raise CompilerError(
+                        f"action {action.id} reads variable not defined on every "
+                        f"reachable path: {variable}"
+                    )
 
     def _resolve_action(
         self,
@@ -479,6 +662,20 @@ class WorkflowCompiler:
             for tool in resolved_task_tools:
                 _append_unique(agent_tool_ids, tool.id)
                 tool_implementations[tool.id] = tool.implementation
+                for contract_id in (
+                    tool.input_contract,
+                    tool.output_contract,
+                    tool.error_contract,
+                ):
+                    if contract_id is None:
+                        continue
+                    self._require(
+                        definitions,
+                        DefinitionKind.CONTRACT,
+                        contract_id,
+                        action.id,
+                    )
+                    _append_unique(contract_ids, contract_id)
             _append_unique(agent_ids, agent.id)
             _append_unique(task_ids, task.id)
             if task.recovery is not None:
@@ -799,6 +996,81 @@ class WorkflowCompiler:
 def _append_unique(values: list[str], value: str) -> None:
     if value not in values:
         values.append(value)
+
+
+def _read_variables(action: ResolvedAction) -> set[str]:
+    if isinstance(action, (AppendVariableAction, MergeVariableAction)):
+        return {
+            action.variable,
+            *([action.value_variable] if action.value_variable is not None else []),
+        }
+    if isinstance(action, InvokeToolAction):
+        return (
+            {action.input_variable}
+            if action.input_variable is not None
+            else set(action.input_variables.values())
+        )
+    if isinstance(action, InvokeAgentAction):
+        return {action.conversation_variable, action.input_variable}
+    if isinstance(action, IfAction):
+        return {action.condition.variable}
+    if isinstance(action, ConditionGroupAction):
+        return {branch.condition.variable for branch in action.branches}
+    if isinstance(action, ForEachAction):
+        return {action.items_variable}
+    if isinstance(action, JoinAction):
+        # Join reads each branch's isolated result map, not the parent variable map.
+        return set()
+    if isinstance(action, SubworkflowAction):
+        return (
+            {action.input_variable}
+            if action.input_variable is not None
+            else set(action.input_variables.values())
+        )
+    if isinstance(action, (ValidateContractAction, EvaluateGateAction)):
+        return {action.input_variable}
+    if isinstance(action, PublishResultAction):
+        return {action.input_variable}
+    if isinstance(action, FailWorkflowAction):
+        return (
+            set()
+            if action.error_variable is None
+            else {action.error_variable}
+        )
+    if isinstance(action, EndWorkflowAction):
+        return {action.output_variable}
+    return set()
+
+
+def _defined_variables(
+    action: ResolvedAction,
+    *,
+    successor: str | None = None,
+) -> set[str]:
+    if isinstance(action, SetVariableAction):
+        return {action.variable}
+    if isinstance(action, (AppendVariableAction, MergeVariableAction)):
+        return {action.variable}
+    if isinstance(
+        action,
+        (
+            InvokeToolAction,
+            CreateConversationAction,
+            ResolveConversationAction,
+            ResetConversationAction,
+            InvokeAgentAction,
+            JoinAction,
+            SubworkflowAction,
+            ValidateContractAction,
+            EvaluateGateAction,
+            RequestInputAction,
+            WaitInputAction,
+        ),
+    ):
+        return {action.output_variable}
+    if isinstance(action, ForEachAction) and successor == action.body:
+        return {action.item_variable}
+    return set()
 
 
 def restore_plan_definition_registry(plan: ResolvedPlan) -> DefinitionRegistry:

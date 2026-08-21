@@ -242,6 +242,45 @@ function waitingInputId(waiting: Record<string, unknown> | undefined): string | 
   return typeof inputId === "string" ? inputId : undefined;
 }
 
+function waitingContractId(waiting: Record<string, unknown> | undefined): string | undefined {
+  const contractId = waiting?.contract_id ?? waiting?.contractId
+    ?? waiting?.input_contract ?? waiting?.inputContract;
+  return typeof contractId === "string" ? contractId : undefined;
+}
+
+function waitingText(
+  waiting: Record<string, unknown> | undefined,
+  name: "description" | "title",
+): string | undefined {
+  const value = waiting?.[name];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function waitingPathText(waiting: Record<string, unknown> | undefined): string | undefined {
+  const path = waiting?.path;
+  if (!Array.isArray(path) || path.length === 0) return undefined;
+  const segments = path.map((segment) => {
+    if (typeof segment === "string") return segment;
+    const item = objectValue(segment);
+    const label = item.action_id ?? item.actionId ?? item.workflow_id ?? item.workflowId
+      ?? item.input_id ?? item.inputId ?? item.id ?? item.name ?? item.kind;
+    return typeof label === "string" ? label : JSON.stringify(segment);
+  });
+  return segments.join(" → ");
+}
+
+function waitingFormIdentity(
+  waiting: Record<string, unknown> | undefined,
+  schema: unknown,
+): string {
+  return JSON.stringify([
+    waitingInputId(waiting) ?? null,
+    waitingContractId(waiting) ?? null,
+    waiting?.path ?? null,
+    schema ?? null,
+  ]);
+}
+
 interface SchemaFieldsProps {
   readonly onChange: (name: string, value: boolean | string) => void;
   readonly schema: JsonSchema;
@@ -403,14 +442,16 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
     refetchInterval: (query) => query.state.data?.run.active ? 1000 : false,
   });
   const waiting = run.data?.waitingInput[0];
-  const waitingId = waitingInputId(waiting);
   const waitingSchemaRaw = waiting?.schema;
   const waitingSchema = schemaValue(waitingSchemaRaw);
+  const waitingTitle = waitingText(waiting, "title") ?? waitingSchema.title;
+  const waitingDescription = waitingText(waiting, "description") ?? waitingSchema.description;
+  const waitingPath = waitingPathText(waiting);
   const hasWaitingControls = supportsSchemaControls(waitingSchema);
   const inputSchema = schemaValue(schema.data?.schema);
   const hasInputControls = supportsSchemaControls(inputSchema);
   const inputFormValues = { ...initialFormValues(inputSchema), ...inputValues };
-  const waitingFormKey = waitingId ?? (waitingSchemaRaw === undefined ? "" : JSON.stringify(waitingSchemaRaw) ?? "");
+  const waitingFormKey = waitingFormIdentity(waiting, waitingSchemaRaw);
   const continuationValues = continuationState.key === waitingFormKey ? continuationState.values : {};
   const continuationText = continuationState.key === waitingFormKey ? continuationState.text : "{}";
   const continuationFormValues = { ...initialFormValues(waitingSchema), ...continuationValues };
@@ -423,6 +464,12 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
     enabled: Boolean(runId),
     queryFn: () => api.cost(runId),
     queryKey: ["runs", runId, "cost"],
+  });
+  const events = useQuery({
+    enabled: Boolean(runId && api.events),
+    queryFn: () => api.events!(runId),
+    queryKey: ["runs", runId, "events"],
+    refetchInterval: () => run.data?.run.active ? 1000 : false,
   });
   const refetchOutputs = outputs.refetch;
   const refetchCost = cost.refetch;
@@ -467,6 +514,10 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
   });
 
   const totals = objectValue(cost.data?.usage.totals);
+  const estimatedCost = totals.estimated_cost;
+  const pricingStatus = typeof totals.pricing_status === "string"
+    ? totals.pricing_status
+    : estimatedCost === undefined || estimatedCost === null ? "unknown" : "configured";
   return (
     <section className="run-workspace" aria-label="通用工作流">
       <header><p>CAPABILITY RUNTIME</p><h1>通用工作流</h1></header>
@@ -529,12 +580,32 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
             {typeof output.size === "number" ? <small>{output.size} B</small> : null}
           </li>
         ))}</ul>
+        {api.events ? <>
+          <h3>Events</h3>
+          {events.isError ? <p role="alert">事件加载失败。</p> : null}
+          <ol>
+            {events.data?.events.map((event, index) => (
+              <li key={`${event.kind}-${index}`}>
+                <span>{event.kind}</span>
+                {event.actionId ? <small> · {event.actionId}</small> : null}
+              </li>
+            ))}
+          </ol>
+        </> : null}
         <h3>Cost</h3>
-        <p>{String(totals.total_tokens ?? 0)} tokens</p>
-        <p>{totals.estimated_cost === undefined || totals.estimated_cost === null
-          ? "成本未知"
-          : String(totals.estimated_cost)}</p>
+        {cost.isPending && cost.data === undefined ? <p role="status">正在加载成本…</p> : null}
+        {cost.isError ? <p role="alert">成本加载失败。</p> : null}
+        {cost.data !== undefined ? <>
+          <p>{String(totals.total_tokens ?? 0)} tokens</p>
+          <p>定价状态：{pricingStatus}</p>
+          <p>{estimatedCost === undefined || estimatedCost === null
+            ? "成本未知"
+            : String(estimatedCost)}</p>
+        </> : null}
         {run.data.waitingInput.length > 0 ? <form onSubmit={(event) => { event.preventDefault(); provideInput.mutate(); }}>
+          {waitingTitle ? <h4>{waitingTitle}</h4> : null}
+          {waitingDescription ? <p>{waitingDescription}</p> : null}
+          {waitingPath ? <p>路径：{waitingPath}</p> : null}
           {hasWaitingControls ? (
             <fieldset>
               <legend>继续输入</legend>

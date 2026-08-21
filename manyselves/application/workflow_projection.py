@@ -1,5 +1,6 @@
-"""Generic Capability, Workflow, Run, Output, and Cost projections."""
+"""Generic Capability, Workflow, Run, Output, Cost, and Event projections."""
 
+import json
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -162,6 +163,22 @@ class WorkflowProjectionFacade:
     def get_cost(self, run_id: str) -> dict[str, Any]:
         binding, _projection = self._locate_run(run_id)
         return binding.get_cost(run_id)
+
+    def get_events(self, run_id: str) -> dict[str, Any]:
+        """Project the Runtime Host trace persisted for this Run."""
+
+        self._locate_run(run_id)
+        path = self.workspace / "Work" / "runs" / run_id / "workflow-events.jsonl"
+        if not path.exists():
+            return {"run_id": run_id, "events": []}
+        events = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            if event.get("run_id") == run_id:
+                events.append(event)
+        return {"run_id": run_id, "events": events}
 
     def _find_workflow(
         self,

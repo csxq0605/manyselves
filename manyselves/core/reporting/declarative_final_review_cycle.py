@@ -9,6 +9,9 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from manyselves.capabilities.distribution_reporting.adapters import (
+    project_reporting_agent,
+)
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -200,7 +203,7 @@ class _FinalChiefRevisionInvoker:
 
     async def _invoke(
         self,
-        _agent: AgentDefinition,
+        agent: AgentDefinition,
         task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
@@ -214,6 +217,7 @@ class _FinalChiefRevisionInvoker:
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
+                "definition_override": project_reporting_agent(agent),
             }
             if recovery_policy is not None:
                 runner_kwargs["recovery_policy"] = recovery_policy
@@ -281,7 +285,7 @@ class _FinalRecheckInvoker:
 
     async def _invoke(
         self,
-        _agent: AgentDefinition,
+        agent: AgentDefinition,
         task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
@@ -295,6 +299,7 @@ class _FinalRecheckInvoker:
         try:
             runner_kwargs: dict[str, Any] = {
                 "session_key": conversation.key.value,
+                "definition_override": project_reporting_agent(agent),
             }
             if recovery_policy is not None:
                 runner_kwargs["recovery_policy"] = recovery_policy

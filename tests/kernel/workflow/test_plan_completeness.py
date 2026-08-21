@@ -7,6 +7,7 @@ from manyselves.kernel.definitions import (
     DefinitionRegistry,
     GateDefinition,
     InteractionDefinition,
+    OutputDefinition,
     RecoveryPolicyDefinition,
     TaskDefinition,
     ToolDefinition,
@@ -42,6 +43,8 @@ def _contract(contract_id: str, schema_type: str) -> ContractDefinition:
 def test_resolved_plan_freezes_recovery_and_conversation_bindings() -> None:
     registry = DefinitionRegistry()
     contract = _contract("text", "string")
+    tool_input = _contract("lookup-input", "object")
+    tool_output = _contract("lookup-output", "object")
     recovery = RecoveryPolicyDefinition(
         id="standard-recovery",
         version="1.0.0",
@@ -73,16 +76,17 @@ def test_resolved_plan_freezes_recovery_and_conversation_bindings() -> None:
         version="1.0.0",
         description="Neutral lookup",
         implementation="capability:neutral:lookup",
-        input_contract=contract.id,
-        output_contract=contract.id,
+        input_contract=tool_input.id,
+        output_contract=tool_output.id,
     )
-    for definition in (contract, recovery, tool, agent, task):
+    for definition in (contract, tool_input, tool_output, recovery, tool, agent, task):
         registry.register(definition)
     workflow = WorkflowDefinition(
         id="conversation-plan",
         version="1.0.0",
         description="Freeze runtime references",
         recovery=[recovery.id],
+        tasks=[task.id],
         state={"input": "hello"},
         actions=[
             {
@@ -110,6 +114,7 @@ def test_resolved_plan_freezes_recovery_and_conversation_bindings() -> None:
 
     assert plan.recovery_ids == [recovery.id]
     assert plan.agent_tool_ids == [tool.id]
+    assert plan.contract_ids == [contract.id, tool_input.id, tool_output.id]
     assert plan.tool_implementations == {tool.id: tool.implementation}
     assert plan.control_flow_edges == {
         "conversation": ["invoke"],
@@ -130,6 +135,8 @@ def test_resolved_plan_freezes_recovery_and_conversation_bindings() -> None:
     restored = restore_plan_definition_registry(plan)
     assert restored.require("task", task.id).objective == "Return text"
     assert restored.require("contract", contract.id) == contract
+    assert restored.require("contract", tool_input.id) == tool_input
+    assert restored.require("contract", tool_output.id) == tool_output
 
 
 def test_compiler_rejects_incompatible_declared_contract_flow() -> None:
@@ -218,6 +225,180 @@ def test_compiler_rejects_a_reachable_non_terminal_control_flow_exit() -> None:
         WorkflowCompiler(build_builtin_executor_registry()).compile(workflow, registry)
 
 
+def test_compiler_rejects_a_variable_not_defined_on_every_reachable_path() -> None:
+    workflow = WorkflowDefinition(
+        id="branch-skips-definition",
+        version="1.0.0",
+        description="Do not defer a skipped definition failure to runtime",
+        state={"choose_definition": False},
+        actions=[
+            {
+                "id": "choose",
+                "kind": "if",
+                "condition": {
+                    "variable": "choose_definition",
+                    "operator": "truthy",
+                },
+                "then": "define-result",
+                "otherwise": "finish",
+            },
+            {
+                "id": "define-result",
+                "kind": "set_variable",
+                "variable": "result",
+                "value": 1,
+            },
+            {"id": "finish", "kind": "end_workflow", "output_variable": "result"},
+        ],
+    )
+
+    with pytest.raises(
+        CompilerError,
+        match="action finish reads variable not defined on every reachable path: result",
+    ):
+        WorkflowCompiler(build_builtin_executor_registry()).compile(
+            workflow,
+            DefinitionRegistry(),
+        )
+
+
+@pytest.mark.parametrize("declared_scope", [False, True])
+def test_compiler_enforces_task_scope_even_when_the_list_is_empty(
+    declared_scope: bool,
+) -> None:
+    registry = DefinitionRegistry()
+    contract = _contract("text", "string")
+    agent = AgentDefinition(
+        id="writer",
+        version="1.0.0",
+        description="Writer",
+        instructions="Return text.",
+        accepts=[contract.id],
+        produces=[contract.id],
+    )
+    declared = TaskDefinition(
+        id="declared-task",
+        version="1.0.0",
+        description="Declared task",
+        agent=agent.id,
+        objective="Return text",
+        input_contract=contract.id,
+        output_contract=contract.id,
+    )
+    outside = declared.model_copy(
+        update={"id": "outside-task", "description": "Outside task"}
+    )
+    for definition in (contract, agent, declared, outside):
+        registry.register(definition)
+    workflow = WorkflowDefinition(
+        id="task-scope",
+        version="1.0.0",
+        description="Keep invocation inside the declared task scope",
+        tasks=[declared.id] if declared_scope else [],
+        state={"input": "hello"},
+        actions=[
+            {
+                "id": "conversation",
+                "kind": "create_conversation",
+                "agent": agent.id,
+                "conversation_key": "writer",
+                "output_variable": "conversation",
+            },
+            {
+                "id": "invoke",
+                "kind": "invoke_agent",
+                "agent": agent.id,
+                "task": outside.id,
+                "conversation_variable": "conversation",
+                "input_variable": "input",
+                "output_variable": "result",
+            },
+            {"id": "finish", "kind": "end_workflow", "output_variable": "result"},
+        ],
+    )
+
+    with pytest.raises(
+        CompilerError,
+        match="action invoke references task outside workflow scope: outside-task",
+    ):
+        WorkflowCompiler(build_builtin_executor_registry()).compile(workflow, registry)
+
+
+@pytest.mark.parametrize("kind", ["interaction", "output"])
+def test_compiler_enforces_non_empty_interaction_and_output_scopes(kind: str) -> None:
+    registry = DefinitionRegistry()
+    contract = _contract("text", "string")
+    registry.register(contract)
+    if kind == "interaction":
+        declared = InteractionDefinition(
+            id="declared-input",
+            version="1.0.0",
+            description="Declared input",
+            input_contract=contract.id,
+            title="Input",
+        )
+        outside = declared.model_copy(
+            update={"id": "outside-input", "description": "Outside input"}
+        )
+        workflow = WorkflowDefinition(
+            id="interaction-scope",
+            version="1.0.0",
+            description="Keep input inside the declared interaction scope",
+            interactions=[declared.id],
+            actions=[
+                {
+                    "id": "request",
+                    "kind": "request_input",
+                    "interaction": outside.id,
+                    "output_variable": "result",
+                },
+                {
+                    "id": "finish",
+                    "kind": "end_workflow",
+                    "output_variable": "result",
+                },
+            ],
+        )
+        message = "action request references interaction outside workflow scope: outside-input"
+    else:
+        declared = OutputDefinition(
+            id="declared-output",
+            version="1.0.0",
+            description="Declared output",
+            label="Result",
+        )
+        outside = declared.model_copy(
+            update={"id": "outside-output", "description": "Outside output"}
+        )
+        workflow = WorkflowDefinition(
+            id="output-scope",
+            version="1.0.0",
+            description="Keep publication inside the declared output scope",
+            outputs=[declared.id],
+            state={"result": "done"},
+            actions=[
+                {
+                    "id": "publish",
+                    "kind": "publish_result",
+                    "output": outside.id,
+                    "input_variable": "result",
+                    "output_name": "result",
+                },
+                {
+                    "id": "finish",
+                    "kind": "end_workflow",
+                    "output_variable": "result",
+                },
+            ],
+        )
+        message = "action publish references output outside workflow scope: outside-output"
+    registry.register(declared)
+    registry.register(outside)
+
+    with pytest.raises(CompilerError, match=message):
+        WorkflowCompiler(build_builtin_executor_registry()).compile(workflow, registry)
+
+
 @pytest.mark.asyncio
 async def test_end_workflow_validates_the_declared_final_output_contract(tmp_path) -> None:
     registry = DefinitionRegistry()
@@ -283,6 +464,7 @@ def test_compiler_rejects_a_conversation_bound_to_a_different_agent() -> None:
         id="invalid-conversation-agent",
         version="1.0.0",
         description="Do not cross agent conversation identities",
+        tasks=[task.id],
         state={"input": "hello"},
         actions=[
             {
@@ -362,6 +544,7 @@ def test_compiler_rejects_task_capabilities_outside_agent_declaration(
         id="invalid-agent-task-capability",
         version="1.0.0",
         description="Reject undeclared Agent capabilities",
+        tasks=[task.id],
         state={"input": "hello"},
         actions=[
             {
@@ -435,6 +618,7 @@ def test_compiler_rejects_an_agent_tool_that_is_not_model_visible(
         id="invalid-hidden-agent-tool",
         version="1.0.0",
         description="Reject runtime-only tools in model-facing tasks",
+        tasks=[task.id],
         state={"input": "hello"},
         actions=[
             {

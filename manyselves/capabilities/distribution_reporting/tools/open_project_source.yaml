@@ -2,10 +2,9 @@ id: open_project_source
 version: 1.0.0
 description: Current Reporting tool declaration for open_project_source
 implementation: capability:distribution-reporting:open_project_source
-input_contract: reporting_tool_input
+input_contract: source_id_tool_input
 output_contract: reporting_tool_output
 side_effect: ordered_state
 parallel_safe: false
 reuse_result: false
 model_visible: true
-

@@ -38,11 +38,13 @@ from .models import (
 from .transitions import (
     ActionFailed,
     ActionSucceeded,
+    CompleteNestedExecution,
     ExecuteAction,
     StartWorkflow,
     StatelessWorkflowKernel,
     WorkflowEvent,
     WorkflowTransition,
+    apply_action_result,
 )
 
 __all__ = [
@@ -50,6 +52,8 @@ __all__ = [
     "ActionExecutionStatus",
     "ActionFailed",
     "ActionSucceeded",
+    "CompleteNestedExecution",
+    "apply_action_result",
     "ActionKind",
     "AppendVariableAction",
     "ConditionBranch",

@@ -6,6 +6,7 @@ from pathlib import Path
 from manyselves.core.reporting.declarative_delivery import (
     DeclarativeDeliveryRuntime,
 )
+from manyselves.core.reporting.models import OutputArtifact
 from manyselves.core.reporting.workflow import _DeliveryContext
 
 
@@ -53,6 +54,12 @@ class _DeliveryRunner:
     def _complete_delivery(self, context: _DeliveryContext) -> None:
         self.calls.append("complete")
         context.state["delivery_completion_ref"] = "delivery-completion.json"
+        context.state["output_artifacts"] = [
+            OutputArtifact(
+                kind="report",
+                path=Path("Outputs/Reports/report.docx"),
+            )
+        ]
 
 
 def test_delivery_runtime_persists_context_between_declared_actions() -> None:
@@ -69,6 +76,9 @@ def test_delivery_runtime_persists_context_between_declared_actions() -> None:
     assert completed == {
         "run_id": "run-delivery",
         "delivery_completion_ref": "delivery-completion.json",
+        "output_artifacts": [
+            {"kind": "report", "path": "Outputs/Reports/report.docx", "module_id": None}
+        ],
     }
 
 

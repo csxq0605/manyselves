@@ -26,6 +26,7 @@ from ..errors import ApiError
 from ..schemas.workflows import (
     CapabilityListResponse,
     WorkflowCostResponse,
+    WorkflowEventListResponse,
     WorkflowInputSchemaResponse,
     WorkflowListResponse,
     WorkflowOutputListResponse,
@@ -222,6 +223,18 @@ async def get_run_cost(run_id: str, request: Request):
         async with state.runtime_facade.read_transaction():
             return WorkflowCostResponse.model_validate(
                 _projection(request).get_cost(run_id)
+            )
+    except Exception as error:
+        raise _error(error) from error
+
+
+@router.get("/runs/{run_id}/events", response_model=WorkflowEventListResponse)
+async def get_run_events(run_id: str, request: Request):
+    state = request_runtime_state(request)
+    try:
+        async with state.runtime_facade.read_transaction():
+            return WorkflowEventListResponse.model_validate(
+                _projection(request).get_events(run_id)
             )
     except Exception as error:
         raise _error(error) from error

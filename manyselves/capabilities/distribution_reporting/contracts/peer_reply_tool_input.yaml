@@ -1,0 +1,16 @@
+id: peer_reply_tool_input
+version: 1.0.0
+description: Provider input for one peer reply
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    task_id: {type: string}
+    query_id: {type: string}
+    target_agent: {type: string}
+    target_session_id: {type: string}
+    answer: {type: string}
+    source_ids: {type: array, items: {type: string}}
+    artifact_refs: {type: array, items: {type: string}}
+  required: [task_id, query_id, target_agent, target_session_id, answer]
+  additionalProperties: false

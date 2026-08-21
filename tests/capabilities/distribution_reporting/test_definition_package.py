@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
     load_reporting_agents,
@@ -20,9 +22,10 @@ from manyselves.core.reporting.declarative_reporting_runner import (
     _compile_reporting_runtime,
 )
 from manyselves.core.reporting.models import REPORT_MODULE_IDS
+from manyselves.kernel.contracts import ContractValidationError, build_contract_catalog
 from manyselves.kernel.definitions import DefinitionKind
 from manyselves.kernel.executors import build_builtin_executor_registry
-from manyselves.kernel.workflow import WorkflowCompiler
+from manyselves.kernel.workflow import EndWorkflowAction, WorkflowCompiler
 
 
 def test_distribution_reporting_capability_loads_all_definition_indexes() -> None:
@@ -115,6 +118,7 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
 
 def test_distribution_reporting_task_tools_are_model_visible_definitions() -> None:
     _, registry = load_distribution_reporting_capability()
+    contracts = build_contract_catalog(registry)
     tools = {
         definition.id: definition
         for definition in registry.all(DefinitionKind.TOOL)
@@ -126,16 +130,30 @@ def test_distribution_reporting_task_tools_are_model_visible_definitions() -> No
             assert tools[tool_id].model_visible is True, (
                 f"task {task.id} exposes runtime-only tool {tool_id} to its agent"
             )
+            if tool_id not in {"submit_result", "write_result_part"}:
+                assert contracts[tools[tool_id].input_contract].json_schema() not in (
+                    {},
+                    {"type": "object"},
+                ), f"model-visible tool {tool_id} requires a concrete input contract"
 
 
 def test_pure_read_agent_tools_match_their_python_execution_metadata() -> None:
     _, registry = load_distribution_reporting_capability()
 
-    for tool_id in ("calculate", "inspect_image"):
+    for tool_id in ("calculate", "inspect_image", "open_artifact", "search_text"):
         tool = registry.require(DefinitionKind.TOOL, tool_id)
         assert tool.side_effect == "pure_read"
         assert tool.parallel_safe is True
         assert tool.model_visible is True
+
+    for tool_id in ("inspect_image", "open_artifact", "search_text"):
+        assert registry.require(DefinitionKind.TOOL, tool_id).reuse_result is True
+
+    # open_tool_result reads only opaque references minted by the Runtime's
+    # truncation boundary, so it deliberately has no Capability definition.
+    assert "open_tool_result" not in {
+        definition.id for definition in registry.all(DefinitionKind.TOOL)
+    }
 
 
 def test_capability_agents_project_to_the_current_reporting_contract() -> None:
@@ -258,6 +276,73 @@ def test_top_level_reporting_workflow_is_an_executable_capability_definition() -
         "distribution-reporting-tail",
     ]
     assert "distribution-module-2.1-runtime-lane" in plan.subworkflow_plans
+
+
+def test_top_level_reporting_output_contract_is_typed_and_partial_safe() -> None:
+    compiled = _compile_reporting_runtime(
+        {"run_id": "report-contract-characterization"},
+        full_report=False,
+    )
+    registry = compiled.definitions
+    workflow = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-reporting",
+    )
+    plan = compiled.plan
+    finish = next(
+        action for action in plan.actions if isinstance(action, EndWorkflowAction)
+    )
+
+    assert workflow.output_contract == "distribution_reporting_output"
+    assert workflow.input_variable == "reporting-state"
+    assert plan.input_variable == "reporting-state"
+    assert plan.final_output_contract == "distribution_reporting_output"
+    assert finish.output_contract == "distribution_reporting_output"
+
+    output_contract = build_contract_catalog(registry)[
+        "distribution_reporting_output"
+    ]
+    assert output_contract.validate({"run_id": "report-partial"}) == {
+        "run_id": "report-partial"
+    }
+    completed = {
+        "run_id": "report-complete",
+        "delivery_completion_ref": "Work/runs/report-complete/delivery.json",
+        "delivery_status": "delivered",
+        "output_artifacts": [
+            {
+                "kind": "module",
+                "path": "Outputs/Modules/2.1.md",
+                "module_id": "2.1",
+            },
+            {
+                "kind": "report",
+                "path": "Outputs/Reports/report.docx",
+            },
+        ],
+        "existing_reporting_state": {"remains": "compatible"},
+    }
+    assert output_contract.validate(completed) is completed
+    with pytest.raises(ContractValidationError):
+        output_contract.validate({"delivery_status": "delivered"})
+    with pytest.raises(ContractValidationError):
+        output_contract.validate(
+            {
+                "run_id": "report-invalid-artifact",
+                "output_artifacts": [{"kind": "report"}],
+            }
+        )
+
+
+def test_reporting_tail_state_requires_only_the_run_identity() -> None:
+    _, registry = load_distribution_reporting_capability()
+    tail_contract = build_contract_catalog(registry)["reporting_tail_state"]
+
+    assert tail_contract.validate({"run_id": "report-tail-partial"}) == {
+        "run_id": "report-tail-partial"
+    }
+    with pytest.raises(ContractValidationError):
+        tail_contract.validate({"module_submissions": {}})
 
 
 def test_production_delivery_is_a_typed_render_publish_completion_subworkflow() -> None:

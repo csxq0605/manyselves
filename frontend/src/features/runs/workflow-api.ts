@@ -7,6 +7,8 @@ export type WorkflowInputSchemaResponse = components["schemas"]["WorkflowInputSc
 export type WorkflowListResponse = components["schemas"]["WorkflowListResponse"];
 export type WorkflowOutputListResponse = components["schemas"]["WorkflowOutputListResponse"];
 export type WorkflowRunAcceptedResponse = components["schemas"]["WorkflowRunAcceptedResponse"];
+export type WorkflowEvent = components["schemas"]["WorkflowEvent"];
+export type WorkflowEventsResponse = components["schemas"]["WorkflowEventListResponse"];
 type GeneratedWorkflowRunInputRequest = components["schemas"]["WorkflowRunInputRequest"];
 type GeneratedWorkflowRunStartRequest = components["schemas"]["WorkflowRunStartRequest"];
 export type WorkflowRunInputRequest = Omit<GeneratedWorkflowRunInputRequest, "values"> & {
@@ -19,6 +21,7 @@ export type WorkflowRunStartRequest = Omit<GeneratedWorkflowRunStartRequest, "in
 
 export interface WorkflowApi {
   cost(runId: string): Promise<WorkflowCostResponse>;
+  events?(runId: string): Promise<WorkflowEventsResponse>;
   get(runId: string): Promise<WorkflowRunResponse>;
   inputSchema(workflowId: string): Promise<WorkflowInputSchemaResponse>;
   listCapabilities(): Promise<CapabilityListResponse>;
@@ -48,6 +51,9 @@ export function createWorkflowApi(gateway: ApiGateway): WorkflowApi {
   return {
     cost: (runId) => gateway.requestJson(
       `/api/v1/runs/${encodeURIComponent(runId)}/cost`,
+    ),
+    events: (runId) => gateway.requestJson(
+      `/api/v1/runs/${encodeURIComponent(runId)}/events`,
     ),
     get: (runId) => gateway.requestJson(`/api/v1/runs/${encodeURIComponent(runId)}`),
     inputSchema: (workflowId) => gateway.requestJson(

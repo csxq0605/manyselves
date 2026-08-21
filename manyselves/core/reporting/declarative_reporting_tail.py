@@ -139,6 +139,7 @@ async def execute_declarative_reporting_tail(
             final_state = retry_failed_final_chapter_lanes(
                 final_cohort_plan,
                 final_state,
+                subworkflows=final_review_plans,
             )
             kernel_state.subworkflow_states["run-final"] = final_state.model_dump(mode="json")
     except FileNotFoundError:

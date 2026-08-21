@@ -1,0 +1,33 @@
+id: product_skill_evolution_tool_input
+version: 1.0.0
+description: Provider input for governed product Skill evolution
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    action:
+      type: string
+      enum: [record_feedback, propose, evaluate, publish, rollback]
+    skill_id: {type: [string, 'null']}
+    module_id: {type: [string, 'null'], enum: ['2.1', '2.2', '2.3', '2.4', '2.5', all, null]}
+    submodules: {type: [array, 'null'], items: {type: string}}
+    feedback: {type: [string, 'null']}
+    report_version_id: {type: [string, 'null']}
+    explicit_promotion_requested: {type: boolean}
+    artifact_refs: {type: [array, 'null'], items: {type: string}}
+    feedback_id: {type: [string, 'null']}
+    title: {type: [string, 'null']}
+    proposed_content: {type: [string, 'null']}
+    reason: {type: [string, 'null']}
+    candidate_id: {type: [string, 'null']}
+    baseline: {type: [number, 'null']}
+    candidate_score: {type: [number, 'null']}
+    model: {type: [string, 'null']}
+    configuration: {type: [object, 'null'], additionalProperties: {type: string}}
+    sample_refs: {type: [array, 'null'], items: {type: string}}
+    regressions: {type: [array, 'null'], items: {type: string}}
+    evaluation_id: {type: [string, 'null']}
+    user_confirmed: {type: boolean}
+    version_id: {type: [string, 'null']}
+  required: [action]
+  additionalProperties: false

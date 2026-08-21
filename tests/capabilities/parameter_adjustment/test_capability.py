@@ -13,6 +13,7 @@ from manyselves.kernel.definitions import (
     ContractDefinition,
     DefinitionKind,
     DefinitionRegistry,
+    InteractionDefinition,
     ToolDefinition,
     WorkflowDefinition,
     load_capability,
@@ -77,8 +78,6 @@ async def test_second_capability_executes_tool_contract_condition_agent_and_goto
     _capability, registry = load_capability(FIXTURE)
     workflow = registry.require(DefinitionKind.WORKFLOW, "parameter-adjustment")
     assert isinstance(workflow, WorkflowDefinition)
-    workflow = workflow.model_copy(deep=True)
-    workflow.state = {"parameters": {"value": value}}
     contracts = {
         definition.id: build_contract_adapter(definition)
         for definition in registry.all(DefinitionKind.CONTRACT)
@@ -95,7 +94,11 @@ async def test_second_capability_executes_tool_contract_condition_agent_and_goto
         InMemoryWorkflowEventSink(),
     ).execute(
         plan,
-        WorkflowState.for_plan(f"parameter-{value}", plan),
+        WorkflowState.for_plan(
+            f"parameter-{value}",
+            plan,
+            initial_variables={"parameters": {"value": value}},
+        ),
         RuntimeContext(
             tools={"normalize-parameter": lambda values: values["value"]},
             contracts=contracts,
@@ -107,6 +110,24 @@ async def test_second_capability_executes_tool_contract_condition_agent_and_goto
     assert state.outputs == {"result": max(value, 10)}
     assert adjuster.calls == expected_agent_calls
     assert state.status == "completed"
+
+
+def test_parameter_input_binding_is_fully_declared_in_the_resolved_plan() -> None:
+    _capability, registry = load_capability(FIXTURE)
+    workflow = registry.require(DefinitionKind.WORKFLOW, "parameter-adjustment")
+    assert isinstance(workflow, WorkflowDefinition)
+
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        workflow,
+        registry,
+    )
+
+    assert workflow.state == {}
+    assert workflow.input_variable == "parameters"
+    assert plan.initial_state == {}
+    assert plan.input_variable == "parameters"
+    assert plan.input_contract == "parameter-input"
+    assert "parameter-input" in plan.contract_ids
 
 
 @pytest.mark.asyncio
@@ -136,6 +157,88 @@ async def test_production_binding_projects_generic_run_value_and_cost(
     }
     assert cost["usage"]["totals"]["provider_attempts"] == 0
     assert cost["usage"]["totals"]["total_tokens"] == 0
+
+
+@pytest.mark.asyncio
+async def test_provide_input_restores_definitions_and_tools_from_the_saved_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _capability, loaded = load_capability(FIXTURE)
+    registry = DefinitionRegistry()
+    for definition in loaded.all():
+        if not isinstance(definition, WorkflowDefinition):
+            registry.register(definition)
+    interaction = InteractionDefinition(
+        id="parameter-request",
+        version="1.0.0",
+        description="Request one parameter object",
+        input_contract="parameter-input",
+        title="Parameter",
+    )
+    workflow = WorkflowDefinition(
+        id="parameter-adjustment",
+        version="1.0.0",
+        description="Resume one saved parameter request",
+        interactions=[interaction.id],
+        output_contract="parameter-value",
+        actions=[
+            {
+                "id": "ask-parameter",
+                "kind": "request_input",
+                "interaction": interaction.id,
+                "output_variable": "parameters",
+            },
+            {
+                "id": "normalize",
+                "kind": "invoke_tool",
+                "tool": "normalize-parameter",
+                "input_variable": "parameters",
+                "output_variable": "normalized",
+            },
+            {
+                "id": "finish",
+                "kind": "end_workflow",
+                "output_variable": "normalized",
+            },
+        ],
+    )
+    registry.register(interaction)
+    registry.register(workflow)
+    binding = ParameterAdjustmentRuntimeBinding(tmp_path)
+    contracts = binding._contracts(registry)
+    tools = binding._tools(registry, contracts)
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        workflow,
+        registry,
+    )
+    run_id = "parameter-adjustment-saved-input"
+
+    waiting = await binding._execute(
+        plan,
+        WorkflowState.for_plan(run_id, plan),
+        registry,
+        contracts,
+        tools,
+    )
+    monkeypatch.setattr(
+        "manyselves.capabilities.parameter_adjustment.adapters.runtime."
+        "load_parameter_adjustment_capability",
+        lambda: (_ for _ in ()).throw(AssertionError("read current definitions")),
+    )
+
+    resumed = binding.provide_input(
+        UUID("40000000-0000-4000-8000-000000000002"),
+        run_id,
+        input_id="ask-parameter",
+        values={"value": 7},
+    )
+
+    assert waiting.status is WorkflowStatus.WAITING
+    assert resumed == {"run_id": run_id, "task_id": None}
+    assert binding.get_outputs(run_id)["outputs"] == [
+        {"id": "result", "kind": "value", "value": 7}
+    ]
 
 
 def test_generic_waiting_run_is_inactive_so_the_ui_can_request_input(

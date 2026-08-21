@@ -1,0 +1,13 @@
+id: inspect_image_tool_input
+version: 1.0.0
+description: Provider input for current-run image inspection
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    path: {type: string, description: Authorized image path or current-run P-ID.}
+    ref: {type: string, description: Authorized current-run image reference.}
+  anyOf:
+  - required: [path]
+  - required: [ref]
+  additionalProperties: false

@@ -16,7 +16,8 @@ gates: []
 recovery:
 - current-reporting-recovery
 input_contract: distribution_reporting_input
-output_contract: reporting_tail_state
+input_variable: reporting-state
+output_contract: distribution_reporting_output
 state:
   reporting-state: {}
   full-report: false
@@ -46,3 +47,4 @@ actions:
   kind: end_workflow
   output_variable: reporting-state
   output_name: result
+  output_contract: distribution_reporting_output

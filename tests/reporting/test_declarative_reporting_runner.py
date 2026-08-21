@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -43,6 +44,7 @@ from manyselves.core.reporting.declarative_reporting_runner import (
 from manyselves.core.reporting.declarative_reporting_tail import (
     build_reporting_tail_definition,
 )
+from manyselves.core.reporting.declarative_task_binding import bind_declared_task
 from manyselves.core.reporting.input_contracts import (
     ModuleRevisionInput,
     ValidationFailure,
@@ -62,12 +64,19 @@ from manyselves.core.reporting.review_lifecycle import (
 )
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
-from manyselves.core.reporting.workflow import ReportWorkflowRunner, _DeliveryContext
+from manyselves.core.reporting.workflow import (
+    ReportingNeedsDecisionError,
+    ReportingRunBudget,
+    ReportWorkflowRunner,
+    _DeliveryContext,
+)
 from manyselves.core.tools.task_board import TaskBoard
 from manyselves.kernel.contracts import ContractValidationError, build_contract_catalog
 from manyselves.kernel.definitions import (
+    AgentDefinition,
     DefinitionKind,
     RecoveryPolicyDefinition,
+    TaskDefinition,
     WorkflowDefinition,
 )
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
@@ -76,6 +85,9 @@ from manyselves.kernel.workflow import (
     WorkflowCompiler,
     WorkflowState,
     WorkflowStatus,
+)
+from manyselves.kernel.workflow import (
+    apply_action_result as apply_kernel_action_result,
 )
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.tool_adapter import CapabilityToolAdapter
@@ -300,6 +312,7 @@ async def test_production_module_agent_wrapper_forwards_recovery_and_session(
             *,
             session_key: str | None = None,
             recovery_policy=None,
+            definition_override=None,
         ) -> dict[str, object]:
             self.calls.append(
                 {
@@ -309,6 +322,7 @@ async def test_production_module_agent_wrapper_forwards_recovery_and_session(
                     "workflow_id": workflow_id,
                     "session_key": session_key,
                     "recovery_policy": recovery_policy,
+                    "definition_override": definition_override,
                 }
             )
             return {"accepted": True}
@@ -374,7 +388,8 @@ async def test_production_module_agent_wrapper_forwards_recovery_and_session(
     assert spy_runner.calls[0]["agent_id"] == agent.id
     assert spy_runner.calls[0]["workflow_id"] == lane_context.workflow_id
     assert spy_runner.calls[0]["session_key"] == "module-auditor-2.1"
-    assert spy_runner.calls[0]["recovery_policy"] is recovery
+    assert spy_runner.calls[0]["recovery_policy"] == recovery
+    assert spy_runner.calls[0]["definition_override"].instructions == agent.instructions
     bound_envelope = spy_runner.calls[0]["envelope"]
     assert isinstance(bound_envelope, TaskEnvelope)
     assert bound_envelope.objective == envelope.objective
@@ -384,6 +399,7 @@ async def test_production_module_agent_wrapper_forwards_recovery_and_session(
 
 def test_generic_reporting_input_resumes_persisted_plan_without_overwriting_projection(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     definitions, _contracts, _tail = build_reporting_tail_definition()
     _cohort, pipelines = compile_cross_owner_workflows(
@@ -409,6 +425,12 @@ def test_generic_reporting_input_resumes_persisted_plan_without_overwriting_proj
         json.dumps({"run_id": run_id, "status": "waiting_user"}),
         encoding="utf-8",
     )
+    monkeypatch.setattr(
+        "manyselves.core.reporting.declarative_reporting_runner._compile_reporting_runtime",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("saved input resume must not compile current definitions")
+        ),
+    )
 
     resumed = resume_declarative_reporting_input(
         workspace=tmp_path,
@@ -432,6 +454,114 @@ def test_generic_reporting_input_resumes_persisted_plan_without_overwriting_proj
         "run_id": run_id,
         "status": "waiting_user",
     }
+
+
+def test_declared_task_policy_supplements_dynamic_envelope() -> None:
+    envelope = TaskEnvelope(
+        task_id="dynamic-task",
+        run_id="run-task-policy",
+        agent_id="module-2.1-specialist",
+        objective="Keep the runtime-computed module and revision objective.",
+        constraints=["dynamic constraint"],
+        allowed_outputs=["module_submission"],
+        allowed_tools=["legacy-tool"],
+    )
+    task = TaskDefinition(
+        id="saved-task",
+        version="1.0.0",
+        description="Saved declarative Task policy.",
+        agent="module-2.1-specialist",
+        objective="Follow the file-declared authoring policy.",
+        input_contract="declarative_module_runtime_lane_context",
+        output_contract="declarative_module_authoring_agent_result",
+        constraints=["declared constraint"],
+        tools=["search_text"],
+        completion={"required_fields": ["module_id", "submodule_narratives"]},
+    )
+
+    bound = bind_declared_task(envelope, task)
+
+    assert bound.objective == envelope.objective
+    assert bound.allowed_tools == ["search_text"]
+    assert bound.constraints == [
+        "Declared task objective: Follow the file-declared authoring policy.",
+        (
+            "Declared completion contract: "
+            '{"required_fields":["module_id","submodule_narratives"]}'
+        ),
+        "declared constraint",
+        "dynamic constraint",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_module_invoker_forwards_saved_agent_definition_override() -> None:
+    _capability, definitions = load_distribution_reporting_capability()
+    current_agent = definitions.require(
+        DefinitionKind.AGENT,
+        "module-2.1-specialist",
+    )
+    assert isinstance(current_agent, AgentDefinition)
+    saved_agent = current_agent.model_copy(
+        update={
+            "instructions": "Instructions frozen in the saved plan.",
+            "model": "saved-model",
+            "limits": {
+                **current_agent.limits,
+                "max_turns": 13,
+                "max_tokens": 4096,
+                "effort": "high",
+            },
+        }
+    )
+    task = definitions.require(DefinitionKind.TASK, "module-2.1-authoring")
+    assert isinstance(task, TaskDefinition)
+    envelope = TaskEnvelope(
+        task_id=task.id,
+        run_id="run-saved-agent",
+        agent_id=saved_agent.id,
+        objective="Dynamic authoring objective.",
+        allowed_outputs=["module_submission"],
+    )
+    lane_context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.1",
+        workflow_id="workflow-saved-agent",
+        reporting_state={},
+        status="author_ready",
+        authoring=DeclarativeModuleAuthoringPreparation(
+            specialist_id=saved_agent.id,
+            envelope=envelope,
+            revision=0,
+            review=False,
+            checkpoint=False,
+        ),
+    )
+
+    class SpyDeclarativeRunner:
+        def __init__(self) -> None:
+            self.definition_override = None
+
+        async def _agent(self, *_args, definition_override=None, **_kwargs):
+            self.definition_override = definition_override
+            return {"accepted": True}
+
+    runner = SpyDeclarativeRunner()
+    outcome = await _CurrentModuleAuthorInvoker(runner, lambda *_args: None).invoke(
+        saved_agent,
+        task,
+        lane_context,
+        SimpleNamespace(key=SimpleNamespace(value="module-2.1")),
+        task_id=task.id,
+    )
+
+    assert outcome.status == "ok"
+    override = runner.definition_override
+    assert override is not None
+    assert override.instructions == "Instructions frozen in the saved plan."
+    assert override.model == "saved-model"
+    assert override.max_turns == 13
+    assert override.max_tokens == 4096
+    assert override.effort == "high"
 
 
 @pytest.mark.asyncio
@@ -462,6 +592,44 @@ async def test_declarative_module_stage_runs_the_current_complete_cohort_as_an_a
     assert [path.name for path in (tmp_path / "Work" / "runs").iterdir()] == [
         "report-declarative-module"
     ]
+
+
+@pytest.mark.asyncio
+async def test_declarative_module_stage_restores_saved_plan_without_fresh_compile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {"run_id": "report-saved-definition-closure", "completed": []}
+
+    async def execute_current(requested_modules, current_state, _workflow_id) -> None:
+        current_state["completed"] = list(requested_modules)
+
+    store = FileWorkflowStateStore(tmp_path)
+    first = await execute_declarative_module_stage(
+        execute_current=execute_current,
+        requested_modules=("2.1",),
+        state=state,
+        workflow_id="workflow-saved-definition-closure",
+        state_store=store,
+    )
+    assert first.status is WorkflowStatus.COMPLETED
+    monkeypatch.setattr(
+        "manyselves.core.reporting.declarative_reporting_runner._compile_reporting_runtime",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("saved run must not compile current definitions")
+        ),
+    )
+
+    resumed = await execute_declarative_module_stage(
+        execute_current=execute_current,
+        requested_modules=("2.1",),
+        state=state,
+        workflow_id="workflow-saved-definition-closure",
+        state_store=store,
+    )
+
+    assert resumed.status is WorkflowStatus.COMPLETED
+    assert resumed.run_id == first.run_id
 
 
 @pytest.mark.asyncio
@@ -646,6 +814,7 @@ class _CurrentLaneRunner:
         *,
         session_key: str | None = None,
         recovery_policy: RecoveryPolicyDefinition | None = None,
+        definition_override=None,
     ) -> (
         ModuleSubmission
         | ModuleReviewFindingSubmission
@@ -2434,9 +2603,19 @@ async def test_file_defined_machine_preflight_correction_retry_reuses_initial_au
 
 
 class _TopLevelTailRunner:
-    def __init__(self, *, fail_stage: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        fail_stage: str | None = None,
+        trace: list[str] | None = None,
+    ) -> None:
         self.calls: list[str] = []
         self.fail_stage = fail_stage
+        self.trace = trace
+
+    def _trace(self, event: str) -> None:
+        if self.trace is not None:
+            self.trace.append(event)
 
     def _fail(self, stage: str) -> None:
         if self.fail_stage == stage:
@@ -2444,11 +2623,13 @@ class _TopLevelTailRunner:
 
     async def _cross_review(self, state: dict, workflow_id: str) -> None:
         self.calls.append("cross")
+        self._trace("cross-effect")
         self._fail("cross")
         state["cross_review_completion_ref"] = f"{workflow_id}/cross.json"
 
     async def _chief_edit(self, state: dict, workflow_id: str) -> None:
         self.calls.append("chief")
+        self._trace("chief-effect")
         self._fail("chief")
         state["chief_candidate_ref"] = f"{workflow_id}/chief.json"
         state["chief_editor_session_key"] = "chief-editor"
@@ -2470,6 +2651,7 @@ class _TopLevelTailRunner:
 
     def _prepare_and_render_delivery(self, state: dict) -> _DeliveryContext:
         self.calls.append("prepare")
+        self._trace("delivery-prepare")
         self._fail("prepare")
         return _top_level_delivery_context(state)
 
@@ -2478,11 +2660,13 @@ class _TopLevelTailRunner:
         context: _DeliveryContext,
     ) -> _DeliveryContext:
         self.calls.append("publish")
+        self._trace("delivery-publish")
         self._fail("publish")
         return context
 
     def _complete_delivery(self, context: _DeliveryContext) -> None:
         self.calls.append("complete")
+        self._trace("delivery-complete")
         self._fail("complete")
         context.state["delivery_completion_ref"] = "delivery.json"
 
@@ -2582,10 +2766,13 @@ async def test_top_level_runtime_nests_the_file_defined_tail_in_one_run(
     ] == [
         ("workflow.started", None),
         ("action.started", "prepare-render-delivery"),
+        ("tool.invoked", "prepare-render-delivery"),
         ("action.completed", "prepare-render-delivery"),
         ("action.started", "publish-materialize-delivery"),
+        ("tool.invoked", "publish-materialize-delivery"),
         ("action.completed", "publish-materialize-delivery"),
         ("action.started", "complete-delivery"),
+        ("tool.invoked", "complete-delivery"),
         ("action.completed", "complete-delivery"),
         ("action.started", "finish-report-delivery"),
         ("action.completed", "finish-report-delivery"),
@@ -2594,8 +2781,201 @@ async def test_top_level_runtime_nests_the_file_defined_tail_in_one_run(
 
 
 @pytest.mark.asyncio
+async def test_declarative_stage_boundaries_precede_next_stage_effects(
+    tmp_path: Path,
+) -> None:
+    run_id = "report-declarative-stage-boundaries"
+    trace: list[str] = []
+    state = {"run_id": run_id}
+    tail = _TopLevelTailRunner(trace=trace)
+
+    async def execute_current(_modules, current_state, _workflow_id) -> None:
+        trace.append("module-effect")
+        current_state["module_submissions"] = {
+            module_id: ModuleSubmission(
+                module_id=module_id,
+                submodule_narratives={
+                    submodule_id: f"{submodule_id} body"
+                    for submodule_id in REPORT_TAXONOMY[module_id].submodules
+                },
+                claims=[],
+                source_ids=[],
+                unresolved_questions=[],
+                revision=0,
+            )
+            for module_id in REPORT_MODULE_IDS
+        }
+
+    async def stage_boundary(
+        _current_state: dict,
+        completed_stage: str,
+        next_stage: str,
+    ) -> None:
+        trace.append(f"boundary:{completed_stage}->{next_stage}")
+
+    completed = await execute_declarative_module_stage(
+        execute_current=execute_current,
+        requested_modules=tuple(REPORT_MODULE_IDS),
+        state=state,
+        workflow_id=f"full-power-distribution-report:{run_id}",
+        state_store=FileWorkflowStateStore(tmp_path),
+        tail_runner=tail,
+        stage_boundary=stage_boundary,
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert trace == [
+        "module-effect",
+        "boundary:module-work->cross-module-review",
+        "cross-effect",
+        "boundary:cross-module-review->chief-edit",
+        "chief-effect",
+        "boundary:chief-edit->chief-editor-audit",
+        "boundary:chief-editor-audit->delivery",
+        "delivery-prepare",
+        "delivery-publish",
+        "delivery-complete",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_declarative_stage_failure_does_not_emit_future_boundaries(
+    tmp_path: Path,
+) -> None:
+    run_id = "report-declarative-boundary-failure"
+    trace: list[str] = []
+    state = {"run_id": run_id}
+    tail = _TopLevelTailRunner(fail_stage="cross", trace=trace)
+
+    async def execute_current(_modules, current_state, _workflow_id) -> None:
+        trace.append("module-effect")
+        current_state["module_submissions"] = {
+            module_id: ModuleSubmission(
+                module_id=module_id,
+                submodule_narratives={
+                    submodule_id: f"{submodule_id} body"
+                    for submodule_id in REPORT_TAXONOMY[module_id].submodules
+                },
+                claims=[],
+                source_ids=[],
+                unresolved_questions=[],
+                revision=0,
+            )
+            for module_id in REPORT_MODULE_IDS
+        }
+
+    async def stage_boundary(
+        _current_state: dict,
+        completed_stage: str,
+        next_stage: str,
+    ) -> None:
+        trace.append(f"boundary:{completed_stage}->{next_stage}")
+
+    with pytest.raises(RuntimeError, match="injected cross failure"):
+        await execute_declarative_module_stage(
+            execute_current=execute_current,
+            requested_modules=tuple(REPORT_MODULE_IDS),
+            state=state,
+            workflow_id=f"full-power-distribution-report:{run_id}",
+            state_store=FileWorkflowStateStore(tmp_path),
+            tail_runner=tail,
+            stage_boundary=stage_boundary,
+        )
+
+    assert trace == [
+        "module-effect",
+        "boundary:module-work->cross-module-review",
+        "cross-effect",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_declarative_runner_deduplicates_parent_stage_boundary() -> None:
+    runner = DeclarativeReportWorkflowRunner.__new__(DeclarativeReportWorkflowRunner)
+    runner._budget = None
+    checkpoints: list[tuple[str, str]] = []
+    runner._checkpoint = lambda _state, activity, status: checkpoints.append(
+        (activity, status)
+    )
+    runner._raise_if_cancel_requested = lambda _run_id: None
+    state = {"run_id": "report-declarative-boundary-dedup"}
+
+    await runner._declarative_stage_boundary(
+        state,
+        "module-work",
+        "cross-module-review",
+    )
+    await runner._checkpoint_then_cost_boundary(
+        state,
+        "module-work",
+        "completed",
+        "module-work",
+        "cross-module-review",
+    )
+
+    assert checkpoints == [("module-work", "completed")]
+    assert state[runner._BOUNDARIES_KEY] == [
+        "module-work->cross-module-review"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_declarative_boundary_pause_keeps_durable_marker_for_same_run_resume(
+    tmp_path: Path,
+) -> None:
+    run_id = "report-declarative-boundary-pause"
+    runner = DeclarativeReportWorkflowRunner.__new__(DeclarativeReportWorkflowRunner)
+    runner._budget = ReportingRunBudget(
+        tmp_path,
+        run_id,
+        max_attempts=0,
+        max_tokens=0,
+        mode="pause_at_boundary",
+    )
+    checkpoints: list[dict] = []
+    runner._checkpoint = lambda current, *_args: checkpoints.append(
+        deepcopy(current)
+    )
+    runner._raise_if_cancel_requested = lambda _run_id: None
+    state = {"run_id": run_id}
+
+    with pytest.raises(ReportingNeedsDecisionError):
+        await runner._declarative_stage_boundary(
+            state,
+            "module-work",
+            "cross-module-review",
+        )
+
+    marker = "module-work->cross-module-review"
+    assert checkpoints[0][runner._BOUNDARIES_KEY] == [marker]
+    assert checkpoints[0]["pending_cost_boundary_id"]
+    assert runner._budget.pending_boundary() is None
+    assert runner._budget.snapshot()["cost_control"]["pending_decision"][
+        "completed_stage"
+    ] == "module-work"
+
+    resumed_budget = ReportingRunBudget(
+        tmp_path,
+        run_id,
+        max_attempts=1,
+        max_tokens=1,
+        mode="pause_at_boundary",
+    )
+    assert resumed_budget.resolve_resume() is True
+    runner._budget = resumed_budget
+    await runner._declarative_stage_boundary(
+        checkpoints[0],
+        "module-work",
+        "cross-module-review",
+    )
+
+    assert len(checkpoints) == 1
+
+
+@pytest.mark.asyncio
 async def test_top_level_runtime_resumes_inside_the_failed_tail_subworkflow(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run_id = "report-declarative-tail-resume"
     state = {"run_id": run_id}
@@ -2636,6 +3016,17 @@ async def test_top_level_runtime_resumes_inside_the_failed_tail_subworkflow(
     assert child["actions"]["run-cross"]["status"] == "completed"
     assert child["actions"]["run-chief"]["status"] == "failed"
 
+    patched_sources: list[tuple[WorkflowState, dict]] = []
+
+    def apply_action_result_spy(current: WorkflowState, result) -> WorkflowState:
+        patched_sources.append((current, current.model_dump(mode="json")))
+        return apply_kernel_action_result(current, result)
+
+    monkeypatch.setattr(
+        "manyselves.core.reporting.declarative_reporting_runner.apply_action_result",
+        apply_action_result_spy,
+    )
+
     resumed_tail = _TopLevelTailRunner()
     completed = await execute_declarative_module_stage(
         execute_current=execute_current,
@@ -2650,6 +3041,11 @@ async def test_top_level_runtime_resumes_inside_the_failed_tail_subworkflow(
     assert failing_tail.calls == ["cross", "chief"]
     assert resumed_tail.calls == ["chief", "prepare", "publish", "complete"]
     assert completed.status is WorkflowStatus.COMPLETED
+    assert patched_sources
+    assert all(
+        source.model_dump(mode="json") == snapshot
+        for source, snapshot in patched_sources
+    )
 
 
 class _NoCallProvider(LLMProvider):

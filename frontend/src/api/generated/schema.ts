@@ -1012,6 +1012,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run Events */
+        get: operations["get_api_v1_runs_run_id_events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{run_id}/input": {
         parameters: {
             query?: never;
@@ -2596,6 +2613,30 @@ export interface components {
             usage: {
                 [key: string]: unknown;
             };
+        };
+        /** WorkflowEvent */
+        WorkflowEvent: {
+            /** Actionid */
+            actionId?: string | null;
+            /** Data */
+            data?: {
+                [key: string]: unknown;
+            };
+            /** Error */
+            error?: string | null;
+            /** Kind */
+            kind: string;
+            /** Runid */
+            runId: string;
+            /** Workflowid */
+            workflowId: string;
+        };
+        /** WorkflowEventListResponse */
+        WorkflowEventListResponse: {
+            /** Events */
+            events: components["schemas"]["WorkflowEvent"][];
+            /** Runid */
+            runId: string;
         };
         /** WorkflowInputSchemaResponse */
         WorkflowInputSchemaResponse: {
@@ -5460,6 +5501,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowCostResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description API error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_api_v1_runs_run_id_events: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowEventListResponse"];
                 };
             };
             /** @description Request validation failed */

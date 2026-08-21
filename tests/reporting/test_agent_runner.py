@@ -59,8 +59,16 @@ from manyselves.interfaces.types import (
     AgentResultMessage,
     UserMessage,
 )
-from manyselves.kernel.definitions import DefinitionKind, ToolDefinition
-from manyselves.kernel.recovery import RecoveryActionKind, RecoveryEventKind
+from manyselves.kernel.definitions import (
+    ContractDefinition,
+    DefinitionKind,
+    ToolDefinition,
+)
+from manyselves.kernel.recovery import (
+    RecoveryActionKind,
+    RecoveryEventKind,
+    RecoveryState,
+)
 from manyselves.kernel.workflow import ResolvedPlan
 from manyselves.runtime.state_store import FileWorkflowStateStore
 
@@ -3001,6 +3009,9 @@ def test_conversation_trace_persists_only_bounded_restart_state(
             LLMMessage(role="assistant", content="已处理。"),
         ]
     )
+    recovery_state = RecoveryState(
+        attempts={RecoveryEventKind.TOOL_CONTRACT_ERROR: 2}
+    )
 
     manifest_path = runner._save_conversation_trace(
         loop,
@@ -3008,6 +3019,7 @@ def test_conversation_trace_persists_only_bounded_restart_state(
         "module-2.1-specialist--session-test",
         "session-test",
         status="waiting",
+        recovery_state=recovery_state,
     )
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -3030,11 +3042,23 @@ def test_conversation_trace_persists_only_bounded_restart_state(
     assert manifest["identity_state"]["attention_scope_ref"] == (
         "Work/runs/run-compressed-trace/reviews/audit-2.1.json"
     )
+    assert manifest["recovery_attempts"] == {"tool_contract_error": 2}
     assert "target_submodule_ids" not in manifest["identity_state"]
     decoded = load_conversation_trace(tmp_path, manifest_path)
     assert decoded["messages"] == []
     assert decoded["status"] == "waiting"
     assert long_content not in manifest_path.read_text(encoding="utf-8")
+    restored_recovery = RecoveryState()
+    restored_loop = SimpleNamespace(restore_conversation=lambda *_args, **_kwargs: None)
+    assert runner._restore_persisted_session(
+        restored_loop,
+        envelope=envelope,
+        runtime_id="module-2.1-specialist--session-test",
+        recovery_state=restored_recovery,
+    )
+    assert restored_recovery.attempts == {
+        RecoveryEventKind.TOOL_CONTRACT_ERROR: 2
+    }
 
     unsupported = tmp_path / "Work/runs/run-compressed-trace/unsupported.json"
     unsupported.write_text(
@@ -3131,6 +3155,214 @@ def _save_reporting_tool_plan(
     FileWorkflowStateStore(workspace).save_plan(run_id, plan)
 
 
+class _ForbiddenResultIndex:
+    def lookup(self, *args, **kwargs):
+        raise AssertionError("reuse_result=false must not query the run result index")
+
+    def record(self, *args, **kwargs):
+        raise AssertionError("reuse_result=false must not record in the run result index")
+
+
+class _CompletedResultIndex:
+    def __init__(self, result: dict) -> None:
+        self.result = result
+        self.lookups = 0
+
+    def lookup(self, *args, **kwargs):
+        self.lookups += 1
+        return {"status": "completed", "result": self.result}
+
+    def record(self, *args, **kwargs):
+        raise AssertionError("a completed indexed result must be reused without recording")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reuse_result", [False, True])
+async def test_saved_reader_reuse_result_controls_durable_index_access(
+    tmp_path: Path,
+    reuse_result: bool,
+) -> None:
+    artifact_ref = "Work/evidence.txt"
+    artifact = tmp_path / artifact_ref
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("current evidence", encoding="utf-8")
+    image_ref = "Work/evidence.png"
+    Image.new("RGB", (2, 2), color="white").save(tmp_path / image_ref)
+    cached = {"source": "durable-index"}
+
+    for tool_id, arguments in (
+        (
+            "open_artifact",
+            {"ref": artifact_ref},
+        ),
+        (
+            "search_text",
+            {"ref": artifact_ref, "query": "evidence"},
+        ),
+        (
+            "inspect_image",
+            {"ref": image_ref},
+        ),
+    ):
+        run_id = f"run-saved-{tool_id}-{reuse_result}"
+        saved = ToolDefinition(
+            id=tool_id,
+            version="1.0.0",
+            description=f"Saved {tool_id}",
+            implementation=f"capability:distribution-reporting:{tool_id}",
+            input_contract="reporting_tool_input",
+            output_contract="reporting_tool_output",
+            side_effect="pure_read",
+            parallel_safe=True,
+            reuse_result=reuse_result,
+        )
+        _save_reporting_tool_plan(tmp_path, run_id, saved)
+        runner = ReportingAgentRunner(
+            tmp_path,
+            MessageBus(),
+            DirectSubmissionProvider(),
+            AgentDefaults(),
+        )
+        definition = load_packaged_agents()["module-2.1-specialist"].model_copy(
+            update={"tools": [tool_id]}
+        )
+        refs = [image_ref] if tool_id == "inspect_image" else [artifact_ref]
+        envelope = TaskEnvelope(
+            task_id="task",
+            run_id=run_id,
+            agent_id=definition.id,
+            objective="验证保存计划的 durable reader 复用语义",
+            input_refs=refs,
+            artifact_delivery_modes={ref: "reference" for ref in refs},
+            allowed_tools=[tool_id],
+        )
+        registry = runner._tools(
+            definition,
+            envelope,
+            "session",
+            "workflow",
+            recovery_policy=_current_reporting_recovery_policy(),
+        )
+        tool = registry.get(tool_id)
+        assert tool is not None
+        index = (
+            _CompletedResultIndex(cached)
+            if reuse_result
+            else _ForbiddenResultIndex()
+        )
+        tool.result_index = index
+
+        result = await tool(**arguments)
+
+        if reuse_result:
+            assert result == cached
+            assert index.lookups == 1
+        else:
+            assert result != cached
+
+
+@pytest.mark.asyncio
+async def test_legacy_reader_and_runtime_continuation_keep_durable_reuse(
+    tmp_path: Path,
+) -> None:
+    artifact_ref = "Work/legacy-evidence.txt"
+    artifact = tmp_path / artifact_ref
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("current evidence", encoding="utf-8")
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    definition = load_packaged_agents()["module-2.1-specialist"].model_copy(
+        update={"tools": ["open_artifact"]}
+    )
+    envelope = TaskEnvelope(
+        task_id="legacy-task",
+        run_id="run-legacy-reader",
+        agent_id=definition.id,
+        objective="验证 Legacy 与 Runtime continuation 保留 durable reuse",
+        input_refs=[artifact_ref],
+        artifact_delivery_modes={artifact_ref: "reference"},
+    )
+    registry = runner._tools(
+        definition,
+        envelope,
+        "session",
+        "workflow",
+    )
+
+    for tool_id in ("open_artifact", "open_tool_result"):
+        tool = registry.get(tool_id)
+        assert tool is not None
+        cached = {"source": tool_id}
+        index = _CompletedResultIndex(cached)
+        tool.result_index = index
+
+        assert await tool(ref="opaque-or-public-ref") == cached
+        assert index.lookups == 1
+
+
+@pytest.mark.asyncio
+async def test_saved_reader_reuses_completed_result_across_registry_rebuild(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-saved-reader-rebuild"
+    artifact_ref = "Work/rebuild-evidence.txt"
+    artifact = tmp_path / artifact_ref
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("evidence before rebuild", encoding="utf-8")
+    saved = ToolDefinition(
+        id="open_artifact",
+        version="1.0.0",
+        description="Saved durable artifact reader",
+        implementation="capability:distribution-reporting:open_artifact",
+        input_contract="reporting_tool_input",
+        output_contract="reporting_tool_output",
+        side_effect="pure_read",
+        parallel_safe=True,
+        reuse_result=True,
+    )
+    _save_reporting_tool_plan(tmp_path, run_id, saved)
+    definition = load_packaged_agents()["module-2.1-specialist"].model_copy(
+        update={"tools": [saved.id]}
+    )
+    envelope = TaskEnvelope(
+        task_id="task",
+        run_id=run_id,
+        agent_id=definition.id,
+        objective="验证 reader Registry 重建后复用已完成结果",
+        input_refs=[artifact_ref],
+        artifact_delivery_modes={artifact_ref: "reference"},
+        allowed_tools=[saved.id],
+    )
+
+    def build_reader():
+        runner = ReportingAgentRunner(
+            tmp_path,
+            MessageBus(),
+            DirectSubmissionProvider(),
+            AgentDefaults(),
+        )
+        reader = runner._tools(
+            definition,
+            envelope,
+            "session",
+            "workflow",
+            recovery_policy=_current_reporting_recovery_policy(),
+        ).get(saved.id)
+        assert reader is not None
+        return reader
+
+    first = await build_reader()(ref=artifact_ref)
+    artifact.write_text("evidence after rebuild", encoding="utf-8")
+    reused = await build_reader()(ref=artifact_ref)
+
+    assert first["content"] == "evidence before rebuild"
+    assert reused == first
+
+
 @pytest.mark.asyncio
 async def test_saved_declarative_tool_implementation_selects_current_python_tool(
     tmp_path: Path,
@@ -3182,6 +3414,93 @@ async def test_saved_declarative_tool_implementation_selects_current_python_tool
     assert tool.side_effect == declared.side_effect
     assert tool.parallel_safe is True
     assert tool.reuse_result is True
+
+
+@pytest.mark.asyncio
+async def test_saved_agent_tool_contract_drives_provider_schema_and_execution(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-saved-tool-contract"
+    input_contract = ContractDefinition(
+        id="saved-calculator-input",
+        version="1.0.0",
+        description="Frozen calculator input",
+        adapter="json_schema",
+        schema={
+            "type": "object",
+            "properties": {"expression": {"const": "1 + 2"}},
+            "required": ["expression"],
+            "additionalProperties": False,
+        },
+    )
+    output_contract = ContractDefinition(
+        id="saved-calculator-output",
+        version="1.0.0",
+        description="Frozen calculator output",
+        adapter="json_schema",
+        schema={"type": "object"},
+    )
+    declared = ToolDefinition(
+        id="saved-calculator",
+        version="1.0.0",
+        description="Saved calculator",
+        implementation="capability:distribution-reporting:calculate",
+        input_contract=input_contract.id,
+        output_contract=output_contract.id,
+        side_effect="pure_read",
+        parallel_safe=True,
+    )
+    FileWorkflowStateStore(tmp_path).save_plan(
+        run_id,
+        ResolvedPlan(
+            workflow_id="saved-tool-contract-workflow",
+            workflow_version="1.0.0",
+            actions=[],
+            agent_tool_ids=[declared.id],
+            definition_snapshots={
+                f"tool:{declared.id}": declared.model_dump(mode="json"),
+                f"contract:{input_contract.id}": input_contract.model_dump(
+                    mode="json", by_alias=True
+                ),
+                f"contract:{output_contract.id}": output_contract.model_dump(
+                    mode="json", by_alias=True
+                ),
+            },
+        ),
+    )
+    runner = ReportingAgentRunner(
+        tmp_path,
+        MessageBus(),
+        DirectSubmissionProvider(),
+        AgentDefaults(),
+    )
+    definition = load_packaged_agents()["module-2.1-specialist"].model_copy(
+        update={"tools": [declared.id]}
+    )
+    envelope = TaskEnvelope(
+        task_id="saved-tool-contract",
+        run_id=run_id,
+        agent_id=definition.id,
+        objective="验证保存的 Tool Contract",
+        allowed_tools=[declared.id],
+    )
+    registry = runner._tools(
+        definition,
+        envelope,
+        "session",
+        "workflow",
+        recovery_policy=_current_reporting_recovery_policy(),
+    )
+
+    provider_definition = next(
+        item for item in registry.get_definitions() if item["name"] == declared.id
+    )
+    assert provider_definition["input_schema"] == input_contract.schema_
+    tool = registry.get(declared.id)
+    assert tool is not None
+    assert await tool(expression="1 + 2") == {"expression": "1 + 2", "result": 3}
+    with pytest.raises(ToolContractError, match="saved-calculator input"):
+        await tool(expression="2 + 2")
 
 
 def test_saved_declarative_hidden_tool_is_not_model_registered(
@@ -3656,6 +3975,145 @@ async def test_declarative_recovery_policy_drives_tool_contract_correction(
         if item["name"] == "inspect_image"
     )
     assert inspect_schema["anyOf"] == [{"required": ["path"]}, {"required": ["ref"]}]
+
+
+@pytest.mark.asyncio
+async def test_recovery_policy_stop_ends_tool_contract_error_without_retry(
+    tmp_path: Path,
+) -> None:
+    class InvalidImageProvider(LLMProvider):
+        def __init__(self) -> None:
+            super().__init__("test", model="scripted")
+            self.calls = 0
+
+        async def chat(self, *_args, **_kwargs):
+            self.calls += 1
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    LLMToolCall(
+                        id="inspect-invalid-photo",
+                        name="inspect_image",
+                        arguments={"path": "P-999"},
+                    )
+                ],
+            )
+
+    policy = _current_reporting_recovery_policy()
+    rules = dict(policy.rules)
+    rules[RecoveryEventKind.TOOL_CONTRACT_ERROR.value] = rules[
+        RecoveryEventKind.TOOL_CONTRACT_ERROR.value
+    ].model_copy(update={"action": RecoveryActionKind.STOP.value})
+    stopping_policy = policy.model_copy(update={"rules": rules})
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    provider = InvalidImageProvider()
+    runner = ReportingAgentRunner(
+        tmp_path,
+        bus,
+        provider,
+        AgentDefaults(max_tool_iterations=5),
+        timeout=5,
+    )
+    envelope = TaskEnvelope(
+        task_id="tool-contract-stop",
+        run_id="run-declarative-recovery-tool-contract-stop",
+        agent_id="module-2.1-specialist",
+        objective="验证 tool contract STOP",
+    )
+    try:
+        result = await runner.run(
+            load_packaged_agents()["module-2.1-specialist"].model_copy(
+                update={"tools": ["inspect_image"]}
+            ),
+            envelope,
+            [],
+            workflow_id="wf-declarative-recovery-tool-contract-stop",
+            recovery_policy=stopping_policy,
+        )
+    finally:
+        await runner.close_workflow("wf-declarative-recovery-tool-contract-stop")
+        bus.shutdown()
+        await bus_task
+
+    assert result.status is AgentRunStatus.INCOMPLETE
+    assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_cached_session_preserves_recovery_attempts_across_dispatches(
+    tmp_path: Path,
+) -> None:
+    class InvalidImageProvider(LLMProvider):
+        def __init__(self) -> None:
+            super().__init__("test", model="scripted")
+            self.calls = 0
+
+        async def chat(self, *_args, **_kwargs):
+            self.calls += 1
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    LLMToolCall(
+                        id=f"inspect-invalid-photo-{self.calls}",
+                        name="inspect_image",
+                        arguments={"path": "P-999"},
+                    )
+                ],
+            )
+
+    policy = _current_reporting_recovery_policy()
+    rules = dict(policy.rules)
+    rules[RecoveryEventKind.TOOL_CONTRACT_ERROR.value] = rules[
+        RecoveryEventKind.TOOL_CONTRACT_ERROR.value
+    ].model_copy(update={"max_attempts": 1})
+    bounded_policy = policy.model_copy(update={"rules": rules})
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    provider = InvalidImageProvider()
+    runner = ReportingAgentRunner(
+        tmp_path,
+        bus,
+        provider,
+        AgentDefaults(max_tool_iterations=5),
+        timeout=5,
+    )
+    definition = load_packaged_agents()["module-2.1-specialist"].model_copy(
+        update={"tools": ["inspect_image"]}
+    )
+    envelope = TaskEnvelope(
+        task_id="tool-contract-bounded",
+        run_id="run-declarative-recovery-tool-contract-bounded",
+        agent_id="module-2.1-specialist",
+        objective="验证 cached session recovery attempts",
+    )
+    try:
+        first = await runner.run(
+            definition,
+            envelope,
+            [],
+            workflow_id="wf-declarative-recovery-tool-contract-bounded",
+            recovery_policy=bounded_policy,
+        )
+        calls_after_first = provider.calls
+        second = await runner.run(
+            definition,
+            envelope,
+            [],
+            workflow_id="wf-declarative-recovery-tool-contract-bounded",
+            recovery_policy=bounded_policy,
+        )
+    finally:
+        await runner.close_workflow(
+            "wf-declarative-recovery-tool-contract-bounded"
+        )
+        bus.shutdown()
+        await bus_task
+
+    assert first.status is AgentRunStatus.INCOMPLETE
+    assert second.status is AgentRunStatus.INCOMPLETE
+    assert calls_after_first == 2
+    assert provider.calls == 3
 
 
 @pytest.mark.asyncio

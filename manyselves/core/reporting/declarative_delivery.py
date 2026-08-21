@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from pydantic import BaseModel
+
 from manyselves.kernel.definitions import (
     DefinitionKind,
     DefinitionRegistry,
@@ -65,10 +67,24 @@ class DeclarativeDeliveryRuntime:
         self._restore_module_submissions(state)
         self.current_state = state
         if "delivery_completion_ref" in state:
+            self._serialize_output_artifacts(state)
             return state
         self._runner._complete_delivery(self._load_context(state))
         state.pop(_DELIVERY_CONTEXT_KEY)
+        self._serialize_output_artifacts(state)
         return state
+
+    @staticmethod
+    def _serialize_output_artifacts(state: dict[str, Any]) -> None:
+        artifacts = state.get("output_artifacts")
+        if not isinstance(artifacts, list):
+            return
+        state["output_artifacts"] = [
+            artifact.model_dump(mode="json")
+            if isinstance(artifact, BaseModel)
+            else artifact
+            for artifact in artifacts
+        ]
 
     @staticmethod
     def _save_context(

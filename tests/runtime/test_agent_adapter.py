@@ -30,6 +30,7 @@ from manyselves.kernel.recovery import (
 )
 from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState
 from manyselves.runtime.agent_adapter import LegacyReportingAgentAdapter
+from manyselves.runtime.conversation_store import FileConversationStore
 from manyselves.runtime.state_store import FileWorkflowStateStore
 
 
@@ -296,6 +297,90 @@ async def test_invoke_agent_action_runs_through_legacy_adapter(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_invoke_agent_persists_the_provider_session_on_the_conversation(
+    tmp_path: Path,
+) -> None:
+    input_contract = _contract("number-input")
+    output_contract = _contract("number-output")
+    agent = _agent("agent-a")
+    task = _task("task-a", agent.id)
+    definitions = DefinitionRegistry()
+    for definition in (input_contract, output_contract, agent, task):
+        definitions.register(definition)
+    workflow = WorkflowDefinition(
+        id="persist-agent-session",
+        version="1.0.0",
+        description="Persist the external session returned by an Agent invocation",
+        tasks=[task.id],
+        output_contract=output_contract.id,
+        actions=[
+            {
+                "id": "set-input",
+                "kind": "set_variable",
+                "variable": "input",
+                "value": {"value": 1},
+            },
+            {
+                "id": "create-conversation",
+                "kind": "create_conversation",
+                "agent": agent.id,
+                "conversation_key": "topic",
+                "mode": "persistent",
+                "output_variable": "conversation",
+            },
+            {
+                "id": "invoke-agent",
+                "kind": "invoke_agent",
+                "agent": agent.id,
+                "task": task.id,
+                "conversation_variable": "conversation",
+                "input_variable": "input",
+                "output_variable": "agent-output",
+            },
+            {
+                "id": "finish",
+                "kind": "end_workflow",
+                "output_variable": "agent-output",
+                "output_name": "result",
+            },
+        ],
+    )
+    runner = FakeReportingRunner()
+    store = FileConversationStore(tmp_path)
+    conversations = ConversationRegistry(store)
+    executors = build_builtin_executor_registry()
+    plan = WorkflowCompiler(executors).compile(workflow, definitions)
+    completed = await SequentialWorkflowExecutor(
+        executors,
+        FileWorkflowStateStore(tmp_path),
+    ).execute(
+        plan,
+        WorkflowState.for_plan("run-1", plan),
+        RuntimeContext(
+            agents={agent.id: _adapter(tmp_path, runner, [agent.id])},
+            definitions=definitions,
+            contracts={
+                input_contract.id: build_contract_adapter(input_contract),
+                output_contract.id: build_contract_adapter(output_contract),
+            },
+            conversations=conversations,
+        ),
+    )
+
+    restored = ConversationRegistry(store).resolve(
+        ConversationKey(agent_id=agent.id, value="topic", mode="persistent"),
+        run_id="another-run",
+    )
+
+    assert restored is not None
+    assert restored.external_session_id == "session-1"
+    assert (
+        completed.variables["conversation"].external_session_id
+        == "session-1"
+    )
+
+
+@pytest.mark.asyncio
 async def test_invoke_agent_rejects_a_persisted_conversation_for_another_agent(
     tmp_path: Path,
 ) -> None:
@@ -314,6 +399,7 @@ async def test_invoke_agent_rejects_a_persisted_conversation_for_another_agent(
         id="reject-cross-agent-conversation",
         version="1.0.0",
         description="Preserve the declared Agent conversation identity",
+        tasks=[task.id],
         state={
             "input": {"value": 1},
             "conversation": conversation.model_dump(mode="json"),

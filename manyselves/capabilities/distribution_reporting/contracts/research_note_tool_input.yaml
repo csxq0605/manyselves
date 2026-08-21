@@ -1,0 +1,13 @@
+id: research_note_tool_input
+version: 1.0.0
+description: Provider input for one durable research note
+adapter: json_schema
+schema:
+  type: object
+  properties:
+    question: {type: string}
+    synthesis: {type: string}
+    source_ids: {type: array, items: {type: string}}
+    applicability: {type: string}
+  required: [question, synthesis, source_ids, applicability]
+  additionalProperties: false

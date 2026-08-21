@@ -1,0 +1,8 @@
+id: empty_tool_input
+version: 1.0.0
+description: Provider input for a no-argument Reporting Tool
+adapter: json_schema
+schema:
+  type: object
+  properties: {}
+  additionalProperties: false

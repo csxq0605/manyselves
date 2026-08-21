@@ -114,6 +114,7 @@ async def test_cross_reviewer_wrapper_forwards_declared_recovery_policy_and_sess
     assert spy_runner.calls[0]["workflow_id"] == preparation.workflow_id
     assert spy_runner.calls[0]["session_key"] == "cross-owner-2.1"
     assert spy_runner.calls[0]["recovery_policy"] is recovery
+    assert spy_runner.calls[0]["definition_override"].instructions == agent.instructions
     bound_envelope = spy_runner.calls[0]["envelope"]
     assert isinstance(bound_envelope, TaskEnvelope)
     assert bound_envelope.objective == envelope.objective
