@@ -148,6 +148,58 @@ async def test_runtime_host_executes_effects_persists_events_and_reuses_completi
 
 
 @pytest.mark.asyncio
+async def test_runtime_host_executes_explicit_exit_loop_without_iteration_cap(
+    tmp_path: Path,
+) -> None:
+    registry, executors, _plan, contracts = _workflow()
+    workflow = WorkflowDefinition(
+        id="host-exit-loop",
+        version="1.0.0",
+        description="Runtime Host exits a condition-controlled loop",
+        state={"count": 1},
+        actions=[
+            {
+                "id": "double",
+                "kind": "invoke_tool",
+                "tool": "double",
+                "input_variable": "count",
+                "output_variable": "count",
+            },
+            {
+                "id": "check",
+                "kind": "if",
+                "condition": {"variable": "count", "operator": "lt", "value": 8},
+                "then": "repeat",
+                "otherwise": "finish",
+            },
+            {"id": "repeat", "kind": "goto", "target": "double"},
+            {"id": "finish", "kind": "end_workflow", "output_variable": "count"},
+        ],
+    )
+    registry.register(workflow)
+    plan = WorkflowCompiler(executors).compile(workflow, registry)
+    events = InMemoryWorkflowEventSink()
+
+    completed = await WorkflowRuntimeHost(
+        executors,
+        FileWorkflowStateStore(tmp_path),
+        events,
+    ).execute(
+        plan,
+        WorkflowState.for_plan("host-exit-loop-run", plan),
+        RuntimeContext(
+            tools={"double": lambda value: value * 2},
+            contracts=contracts,
+            definitions=registry,
+        ),
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert completed.outputs == {"result": 8}
+    assert events.events[-1].kind == "workflow.completed"
+
+
+@pytest.mark.asyncio
 async def test_runtime_host_joins_parallel_branches_inside_one_run_state(
     tmp_path: Path,
 ) -> None:

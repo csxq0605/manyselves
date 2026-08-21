@@ -98,6 +98,106 @@ async def test_if_and_goto_execute_a_declared_finite_loop(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_if_exit_condition_allows_a_loop_without_an_iteration_cap(
+    tmp_path: Path,
+) -> None:
+    workflow = WorkflowDefinition(
+        id="neutral-exit-loop",
+        version="1.0.0",
+        description="Increment until the declared condition exits",
+        state={"count": 0},
+        actions=[
+            {
+                "id": "increment",
+                "kind": "invoke_tool",
+                "tool": "increment",
+                "input_variable": "count",
+                "output_variable": "count",
+            },
+            {
+                "id": "check",
+                "kind": "if",
+                "condition": {"variable": "count", "operator": "lt", "value": 3},
+                "then": "repeat",
+                "otherwise": "finish",
+            },
+            {"id": "repeat", "kind": "goto", "target": "increment"},
+            {
+                "id": "finish",
+                "kind": "end_workflow",
+                "output_variable": "count",
+            },
+        ],
+    )
+    executors, plan = _compile(workflow)
+
+    completed = await ControlFlowWorkflowExecutor(
+        executors,
+        FileWorkflowStateStore(tmp_path),
+    ).execute(
+        plan,
+        WorkflowState.for_plan("run-exit-loop", plan),
+        RuntimeContext(tools={"increment": lambda value: value + 1}),
+    )
+
+    assert completed.outputs == {"result": 3}
+
+
+@pytest.mark.asyncio
+async def test_condition_group_exit_condition_allows_a_loop_without_an_iteration_cap(
+    tmp_path: Path,
+) -> None:
+    workflow = WorkflowDefinition(
+        id="neutral-condition-group-loop",
+        version="1.0.0",
+        description="Increment until the declared condition group exits",
+        state={"count": 0},
+        actions=[
+            {
+                "id": "increment",
+                "kind": "invoke_tool",
+                "tool": "increment",
+                "input_variable": "count",
+                "output_variable": "count",
+            },
+            {
+                "id": "check",
+                "kind": "condition_group",
+                "branches": [
+                    {
+                        "condition": {
+                            "variable": "count",
+                            "operator": "lt",
+                            "value": 3,
+                        },
+                        "target": "repeat",
+                    }
+                ],
+                "default": "finish",
+            },
+            {"id": "repeat", "kind": "goto", "target": "increment"},
+            {
+                "id": "finish",
+                "kind": "end_workflow",
+                "output_variable": "count",
+            },
+        ],
+    )
+    executors, plan = _compile(workflow)
+
+    completed = await ControlFlowWorkflowExecutor(
+        executors,
+        FileWorkflowStateStore(tmp_path),
+    ).execute(
+        plan,
+        WorkflowState.for_plan("run-condition-group-loop", plan),
+        RuntimeContext(tools={"increment": lambda value: value + 1}),
+    )
+
+    assert completed.outputs == {"result": 3}
+
+
+@pytest.mark.asyncio
 async def test_condition_group_uses_first_matching_branch(tmp_path: Path) -> None:
     workflow = WorkflowDefinition(
         id="neutral-condition-group",
@@ -529,3 +629,26 @@ def test_compiler_rejects_missing_target_and_unbounded_back_edge() -> None:
         _compile(missing)
     with pytest.raises(CompilerError, match="max_iterations"):
         _compile(cycle)
+
+
+def test_compiler_rejects_loop_without_local_exit_even_with_an_external_if() -> None:
+    workflow = WorkflowDefinition(
+        id="external-if-unbounded-loop",
+        version="1.0.0",
+        description="An unrelated branch must not bless an unbounded loop",
+        state={"flag": True, "result": "done"},
+        actions=[
+            {
+                "id": "choose-entry",
+                "kind": "if",
+                "condition": {"variable": "flag", "operator": "truthy"},
+                "then": "loop",
+                "otherwise": "finish",
+            },
+            {"id": "loop", "kind": "goto", "target": "loop"},
+            {"id": "finish", "kind": "end_workflow", "output_variable": "result"},
+        ],
+    )
+
+    with pytest.raises(CompilerError, match="max_iterations"):
+        _compile(workflow)

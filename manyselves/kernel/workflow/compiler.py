@@ -371,11 +371,11 @@ class WorkflowCompiler:
     ) -> None:
         positions = {action.id: index for index, action in enumerate(actions)}
         targets: list[tuple[str, str]] = []
-        back_edge = False
+        successors = {action.id: set[str]() for action in actions}
         parallel_ids = {
             action.id: action for action in actions if isinstance(action, ParallelAction)
         }
-        for action in actions:
+        for index, action in enumerate(actions):
             action_targets: list[str] = []
             if isinstance(action, IfAction):
                 action_targets.extend([action.then, action.otherwise])
@@ -399,13 +399,48 @@ class WorkflowCompiler:
                     raise CompilerError(f"join {action.id} inputs do not match parallel branches")
             for target in action_targets:
                 targets.append((action.id, target))
-                if target in positions and positions[target] <= positions[action.id]:
-                    back_edge = True
+                successors[action.id].add(target)
+            if (
+                not action_targets
+                and not isinstance(action, EndWorkflowAction)
+                and index + 1 < len(actions)
+            ):
+                successors[action.id].add(actions[index + 1].id)
         for owner, target in targets:
             if target not in positions:
                 raise CompilerError(f"action {owner} references missing action target: {target}")
-        if back_edge and max_iterations is None:
-            raise CompilerError("workflow with a back edge requires max_iterations")
+        back_edges = [
+            (owner, target)
+            for owner, target in targets
+            if positions[target] <= positions[owner]
+        ]
+        if back_edges and max_iterations is None:
+            predecessors = {action.id: set[str]() for action in actions}
+            for owner, action_targets in successors.items():
+                for target in action_targets:
+                    predecessors[target].add(owner)
+            dominators = _compute_dominators(actions, predecessors)
+            action_by_id = {action.id: action for action in actions}
+            explicit_targets = _explicit_targets(actions)
+            for owner, target in back_edges:
+                if target not in dominators.get(owner, set()):
+                    raise CompilerError(
+                        "workflow with a back edge requires max_iterations unless "
+                        "the back edge forms a natural loop"
+                    )
+                natural_loop = _natural_loop(target, owner, predecessors)
+                if not any(
+                    isinstance(action_by_id[action_id], (IfAction, ConditionGroupAction))
+                    and any(
+                        exit_target not in natural_loop
+                        for exit_target in explicit_targets[action_id]
+                    )
+                    for action_id in natural_loop
+                ):
+                    raise CompilerError(
+                        "workflow with a back edge requires max_iterations unless "
+                        "its natural loop has an explicit If/ConditionGroup exit"
+                    )
 
     @staticmethod
     def _require(
@@ -434,3 +469,76 @@ class WorkflowCompiler:
 def _append_unique(values: list[str], value: str) -> None:
     if value not in values:
         values.append(value)
+
+
+def _explicit_targets(
+    actions: list[ResolvedAction],
+) -> dict[str, list[str]]:
+    """Return declared control-flow targets without inferring domain behavior."""
+
+    targets = {action.id: [] for action in actions}
+    for action in actions:
+        action_targets = targets[action.id]
+        if isinstance(action, IfAction):
+            action_targets.extend([action.then, action.otherwise])
+        elif isinstance(action, ConditionGroupAction):
+            action_targets.extend(branch.target for branch in action.branches)
+            action_targets.append(action.default)
+        elif isinstance(action, GotoAction):
+            action_targets.append(action.target)
+        elif isinstance(action, ForEachAction):
+            action_targets.extend([action.body, action.after])
+        elif isinstance(action, ParallelAction):
+            action_targets.extend(action.branches.values())
+            action_targets.append(action.join)
+    return targets
+
+
+def _compute_dominators(
+    actions: list[ResolvedAction],
+    predecessors: dict[str, set[str]],
+) -> dict[str, set[str]]:
+    """Compute CFG dominators for natural-loop back-edge validation."""
+
+    action_ids = {action.id for action in actions}
+    entry = actions[0].id
+    dominators = {action_id: set(action_ids) for action_id in action_ids}
+    dominators[entry] = {entry}
+    changed = True
+    while changed:
+        changed = False
+        for action in actions[1:]:
+            incoming = predecessors[action.id]
+            if not incoming:
+                candidate = {action.id}
+            else:
+                common = set(action_ids)
+                for predecessor in incoming:
+                    common.intersection_update(dominators[predecessor])
+                candidate = {action.id, *common}
+            if candidate != dominators[action.id]:
+                dominators[action.id] = candidate
+                changed = True
+    return dominators
+
+
+def _natural_loop(
+    header: str,
+    latch: str,
+    predecessors: dict[str, set[str]],
+) -> set[str]:
+    """Return the natural loop induced by one validated CFG back edge."""
+
+    loop = {header, latch}
+    if header == latch:
+        return loop
+    pending = [latch]
+    while pending:
+        node = pending.pop()
+        for predecessor in predecessors[node]:
+            if predecessor in loop:
+                continue
+            loop.add(predecessor)
+            if predecessor != header:
+                pending.append(predecessor)
+    return loop
