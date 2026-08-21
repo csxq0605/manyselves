@@ -20,7 +20,9 @@ from manyselves.kernel.ports import WorkflowStateStore
 from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.workflow_host import (
+    FileWorkflowEventSink,
     InMemoryWorkflowEventSink,
+    WorkflowEventSink,
     WorkflowRuntimeHost,
 )
 
@@ -51,6 +53,7 @@ async def execute_declarative_module_stage(
     workflow_id: str,
     state_store: WorkflowStateStore,
     tail_runner: Any | None = None,
+    event_sink: WorkflowEventSink | None = None,
 ) -> WorkflowState:
     """Run current modules and the file-defined tail in one parent state."""
 
@@ -100,7 +103,7 @@ async def execute_declarative_module_stage(
         completed = await WorkflowRuntimeHost(
             executors,
             state_store,
-            InMemoryWorkflowEventSink(),
+            event_sink if event_sink is not None else InMemoryWorkflowEventSink(),
         ).execute(
             plan,
             kernel_state,
@@ -155,6 +158,7 @@ class DeclarativeReportWorkflowRunner(ReportWorkflowRunner):
             workflow_id=workflow_id,
             state_store=FileWorkflowStateStore(self.service.workspace),
             tail_runner=_CurrentTailStages(self),
+            event_sink=FileWorkflowEventSink(self.service.workspace),
         )
 
 

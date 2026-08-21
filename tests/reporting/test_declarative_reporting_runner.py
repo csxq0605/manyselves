@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.core.tools.task_board import TaskBoard
 from manyselves.kernel.workflow import WorkflowStatus
 from manyselves.runtime.state_store import FileWorkflowStateStore
+from manyselves.runtime.workflow_host import FileWorkflowEventSink
 
 
 @pytest.mark.asyncio
@@ -148,6 +150,7 @@ async def test_top_level_runtime_nests_the_file_defined_tail_in_one_run(
         workflow_id=f"full-power-distribution-report:{run_id}",
         state_store=FileWorkflowStateStore(tmp_path),
         tail_runner=tail,
+        event_sink=FileWorkflowEventSink(tmp_path),
     )
 
     assert tail.calls == ["cross", "chief", "final", "delivery"]
@@ -155,6 +158,30 @@ async def test_top_level_runtime_nests_the_file_defined_tail_in_one_run(
     assert completed.status is WorkflowStatus.COMPLETED
     assert completed.subworkflow_states["run-reporting-tail"]["status"] == "completed"
     assert [path.name for path in (tmp_path / "Work" / "runs").iterdir()] == [run_id]
+    events = [
+        json.loads(line)
+        for line in (
+            tmp_path / "Work" / "runs" / run_id / "workflow-events.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    assert [
+        (event["kind"], event["action_id"])
+        for event in events
+        if event["workflow_id"] == "distribution-reporting-tail"
+    ] == [
+        ("workflow.started", None),
+        ("action.started", "run-cross"),
+        ("action.completed", "run-cross"),
+        ("action.started", "run-chief"),
+        ("action.completed", "run-chief"),
+        ("action.started", "run-final"),
+        ("action.completed", "run-final"),
+        ("action.started", "run-delivery"),
+        ("action.completed", "run-delivery"),
+        ("action.started", "finish-reporting-tail"),
+        ("action.completed", "finish-reporting-tail"),
+        ("workflow.completed", None),
+    ]
 
 
 @pytest.mark.asyncio

@@ -15,8 +15,8 @@
 ## Current position
 
 - Current work package: `WP-01/WP-11 architecture completion audit reopened`
-- Last completed vertical slice: the packaged top-level workflow owns module execution, full/partial branching, and the tail Subworkflow in one parent WorkflowState; failed tail recovery does not replay completed module work or child stages
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `722877b` (`WP-06/WP-09: persist failed subworkflow progress`); the one-parent top-level slice is this document's commit
+- Last completed vertical slice: nested Subworkflows emit their own standard workflow/action/output lifecycle into the parent Run event sink, and the selectable production path persists the combined trace as `workflow-events.jsonl`
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `afd0d1a` (`WP-08/WP-09: run reporting stages in one parent state`); the nested-event slice is this document's commit
 - Current migration stage: `file-defined Reporting workflow migration`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
 - Next automatic action: decompose the remaining coarse `run-reporting-module-work` adapter into file-defined authoring Lane instances plus the packaged module-review Cohort, while retaining the current lane recovery/artifact semantics
@@ -28,19 +28,15 @@ several useful vertical slices but did not prove the requested target
 architecture:
 
 - the selectable Reporting runner still subclasses `ReportWorkflowRunner` and
-  wraps the unchanged module and tail implementations in coarse Tool actions;
-- the packaged top-level workflow still contains only module-work, reporting-tail,
-  and end actions, while the detailed Lane and Cohort definitions are assembled
-  programmatically and are not the production entry path;
-- module-stage and tail orchestration create separate shadow `WorkflowState`
-  directories instead of one authoritative Run state;
+  wraps unchanged module work in one coarse Tool action;
+- the packaged detailed Lane and Cohort definitions are file-owned and executable,
+  but are not yet the production module entry path;
 - `RecoveryController` is not yet part of the production generic Agent execution
   chain;
-- interaction/wait/publish actions and file definitions are still absent;
-- application and React projections still contain Reporting-specific dispatch or
-  presentation decisions;
-- `parameter_adjustment` was installed and exposed as a product Capability even
-  though it is only a deterministic cross-domain test fixture.
+- the current Cross implementation and combined Render/Delivery implementation
+  remain coarse Capability Tools rather than fully file-defined action graphs;
+- application and React projections require a final audit for remaining
+  Reporting-specific dispatch or presentation decisions.
 
 Therefore all prior “complete” entries below are retained as historical commit
 and test evidence, not as a current architecture-completion assertion. Legacy
@@ -61,6 +57,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
+- `WP-02/WP-09: persist nested runtime events` — nested Subworkflows now emit standard workflow/action/output lifecycle events through the parent Runtime Host sink; the selectable Reporting runner persists top-level and tail events in the exact Run directory, without a child state directory (this commit)
 - `WP-08/WP-09: run reporting stages in one parent state` — `distribution-reporting.yaml` now branches partial/full work itself and invokes the packaged tail as a recoverable Subworkflow; the selectable declarative runner enters one `WorkflowRuntimeHost`, persists only the exact run identity, removes the coarse tail Tool, and resumes inside a failed tail without replaying completed module work or prior tail stages (this commit)
 - `WP-06/WP-09: persist failed subworkflow progress` — a failed nested effect now returns its child WorkflowState to the parent Runtime Host before the parent failure transition is persisted; a same-Run retry reuses completed child Actions and reruns only the failed Action without creating a child Run directory (this commit)
 - `WP-09: compile the reporting tail from files` — the production Workflow YAML owns the ordered Cross, Chief, Final, and current combined Render/Delivery actions; all four internal Tools are file-declared, the builder only loads the Capability Registry, and execution/recovery moved from the persistence-owning control executor to `WorkflowRuntimeHost` under the parent Run identity (this commit)
@@ -100,6 +97,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Nested-event Characterization first failed because the child workflow had no events; after implementation the generic Host emitted the complete child lifecycle and the production Reporting entry persisted the ordered tail lifecycle beside the one authoritative state: `2 passed` focused, `10 passed` affected. Ruff and `git diff --check` passed. No full regression or real runtime test ran.
 - Top-level file-graph Characterization initially failed because the packaged workflow still used a coarse tail Tool; after implementation its compiled kinds are Tool → If → Subworkflow → End and the declared child Workflow is resolved.
 - One-parent focused cases passed for partial module delivery, failed module retry, complete module→tail execution, and failed-tail nested recovery. The latter proved module work called once, Cross reused, Chief retried, and one Run directory: `5 passed` with the packaged compiler case.
 - Affected declarative Runner/Tail/Lane/Cohort, Capability package, Runtime Host, control flow, service runner selection, and Kernel boundary selection passed: `34 passed` (`46 deselected`); the direct package/runner/tail/host selection passed: `20 passed`. Ruff and `git diff --check` passed. No full regression or real runtime test ran.

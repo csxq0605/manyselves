@@ -302,11 +302,12 @@ async def test_runtime_host_nests_subworkflow_state_in_the_parent_run(
     child_plan = WorkflowCompiler(executors).compile(child, registry)
     parent_plan = WorkflowCompiler(executors).compile(parent, registry)
     store = FileWorkflowStateStore(tmp_path)
+    events = InMemoryWorkflowEventSink()
 
     completed = await WorkflowRuntimeHost(
         executors,
         store,
-        InMemoryWorkflowEventSink(),
+        events,
     ).execute(
         parent_plan,
         WorkflowState.for_plan("subworkflow-host-run", parent_plan),
@@ -320,6 +321,18 @@ async def test_runtime_host_nests_subworkflow_state_in_the_parent_run(
 
     assert completed.outputs == {"result": 8}
     assert completed.subworkflow_states["call-child"]["status"] == "completed"
+    assert [
+        (event.kind, event.workflow_id, event.action_id)
+        for event in events.events
+        if event.workflow_id == "host-child"
+    ] == [
+        ("workflow.started", "host-child", None),
+        ("action.started", "host-child", "child-double"),
+        ("action.completed", "host-child", "child-double"),
+        ("action.started", "host-child", "child-finish"),
+        ("action.completed", "host-child", "child-finish"),
+        ("workflow.completed", "host-child", None),
+    ]
     assert [path.name for path in (tmp_path / "Work" / "runs").iterdir()] == [
         "subworkflow-host-run"
     ]

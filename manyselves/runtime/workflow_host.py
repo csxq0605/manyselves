@@ -258,6 +258,7 @@ class WorkflowRuntimeHost:
             child_plan,
             child_state,
             context,
+            emit_workflow_events=True,
         )
         try:
             child_output = completed.outputs[action.child_output_name]
@@ -280,13 +281,31 @@ class WorkflowRuntimeHost:
         context: RuntimeContext,
         *,
         stop_at: str | None = None,
+        emit_workflow_events: bool = False,
     ) -> WorkflowState:
         actions = {action.id: action for action in plan.actions}
+        if emit_workflow_events:
+            self._emit("workflow.started", state)
         event = StartWorkflow()
         while True:
             transition = self._kernel.transition(plan, state, event)
             state = transition.state
+            if isinstance(event, ActionSucceeded):
+                action = actions[event.action_id]
+                if action.kind is ActionKind.PUBLISH_RESULT:
+                    self._emit("output.published", state, action_id=action.id)
+                if state.status is WorkflowStatus.WAITING:
+                    self._emit("action.waiting", state, action_id=action.id)
+                else:
+                    self._emit("action.completed", state, action_id=action.id)
             if not transition.effects:
+                if emit_workflow_events:
+                    if state.status is WorkflowStatus.WAITING:
+                        self._emit("workflow.waiting", state)
+                    elif state.status is WorkflowStatus.COMPLETED:
+                        self._emit("workflow.completed", state)
+                    elif state.status is WorkflowStatus.FAILED:
+                        self._emit("workflow.failed", state)
                 return state
             effect = transition.effects[0]
             if effect.action_id == stop_at:
@@ -295,6 +314,7 @@ class WorkflowRuntimeHost:
                 state.next_action_id = None
                 return state
             action = actions[effect.action_id]
+            self._emit("action.started", state, action_id=action.id)
             try:
                 result = await self._execute_action(plan, action, state, context)
             except Exception as exc:
@@ -309,6 +329,14 @@ class WorkflowRuntimeHost:
                     failed_input,
                     ActionFailed(action.id, str(exc)),
                 )
+                self._emit(
+                    "action.failed",
+                    failed.state,
+                    action_id=action.id,
+                    error=str(exc),
+                )
+                if emit_workflow_events:
+                    self._emit("workflow.failed", failed.state, error=str(exc))
                 raise _NestedWorkflowExecutionError(str(exc), failed.state) from exc
             event = ActionSucceeded(action.id, result)
 
