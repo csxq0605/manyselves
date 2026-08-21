@@ -9,8 +9,10 @@ from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.agentic_models import (
     ModuleReviewFinding,
     ModuleReviewFindingSubmission,
+    ModuleReviewVerdictSubmission,
     ModuleRevisionSubmission,
     ModuleSubmission,
+    ResolutionVerdict,
     RevisionResponse,
     TaskEnvelope,
 )
@@ -28,6 +30,8 @@ from manyselves.core.reporting.parallel_runtime import LaneCompletion, LaneTaskS
 from manyselves.core.reporting.review_lifecycle import (
     ModuleInitialReviewAcceptance,
     ModuleInitialReviewPreparation,
+    ModuleRecheckAcceptance,
+    ModuleRecheckPreparation,
     ModuleRevisionPreparation,
 )
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
@@ -201,6 +205,27 @@ class _CurrentLaneRunner:
     ) -> ModuleSubmission | ModuleReviewFindingSubmission | ModuleRevisionSubmission:
         if agent_id == "evidence-auditor":
             module_id = str(session_key).removeprefix("module-auditor-")
+            if "module_review_verdict_submission" in _envelope.allowed_outputs:
+                self.lifecycle[module_id].append(f"rechecker:{session_key}")
+                return ModuleReviewVerdictSubmission(
+                    coverage={
+                        "submodule_ids": [
+                            next(iter(REPORT_TAXONOMY[module_id].submodules))
+                        ]
+                    },
+                    verdicts=[
+                        ResolutionVerdict(
+                            finding_id=f"M-{module_id}-initial-r0-1",
+                            verdict="resolved",
+                            reason=(
+                                "The revised narrative now states the requested operational "
+                                "consequence within the assigned scope."
+                            ),
+                            evidence_refs=[f"modules/{module_id}-r1.json"],
+                        )
+                    ],
+                    new_findings=[],
+                )
             self.lifecycle[module_id].append(f"reviewer:{session_key}")
             if module_id == self.fail_review_once:
                 self.fail_review_once = ""
@@ -465,6 +490,85 @@ class _CurrentLaneRunner:
         )
         return revised, f"modules/{module_id}-r{result.revision}.json"
 
+    async def _prepare_module_recheck(
+        self,
+        module_id: str,
+        current: ModuleSubmission,
+        state: dict,
+        workflow_id: str,
+        *,
+        initial_scope: set[str],
+        lifecycle_id: str = "initial",
+    ) -> ModuleRecheckPreparation:
+        self.lifecycle[module_id].append("recheck-prepare")
+        target = next(iter(REPORT_TAXONOMY[module_id].submodules))
+        finding = ModuleReviewFinding(
+            id=f"M-{module_id}-initial-r0-1",
+            target_submodule_id=target,
+            category="analysis_depth",
+            impact="advisory",
+            observation=(
+                "The current narrative does not explain the operational "
+                "consequence of the observed condition."
+            ),
+            evidence_refs=[f"modules/{module_id}.json"],
+            required_change=(
+                "Add a concise operational consequence within the assigned "
+                "submodule and keep the evidence boundary explicit."
+            ),
+            reviewer_checks=[
+                "The revised submodule states the operational consequence."
+            ],
+        )
+        return ModuleRecheckPreparation(
+            mode="invoke_agent",
+            run_id=state["run_id"],
+            module_id=module_id,
+            lifecycle_id=lifecycle_id,
+            workflow_id=workflow_id,
+            reviewer_session_key=f"module-auditor-{module_id}",
+            review_root=f"reviews/{module_id}",
+            progress_ref=f"reviews/{module_id}/progress.json",
+            review_round=1,
+            scope=[target],
+            current=current,
+            pending=[finding],
+            responses=current.revision_responses,
+            finding_refs=[f"reviews/{module_id}/findings-r0.json"],
+            subject_ref=f"modules/{module_id}-r1.json",
+            envelope=TaskEnvelope(
+                task_id=f"module-{module_id}-initial-review-r1",
+                run_id=state["run_id"],
+                agent_id="evidence-auditor",
+                objective=f"recheck module {module_id}",
+                allowed_outputs=["module_review_verdict_submission"],
+            ),
+        )
+
+    async def _accept_module_recheck(
+        self,
+        preparation: ModuleRecheckPreparation,
+        _result: ModuleReviewVerdictSubmission,
+        _state: dict,
+    ) -> ModuleRecheckAcceptance:
+        module_id = preparation.module_id
+        self.lifecycle[module_id].append("recheck-accept")
+        return ModuleRecheckAcceptance(
+            run_id=preparation.run_id,
+            module_id=module_id,
+            lifecycle_id=preparation.lifecycle_id,
+            reviewer_session_key=preparation.reviewer_session_key,
+            subject_ref=str(preparation.subject_ref),
+            current=preparation.current,
+            findings=[],
+            finding_refs=preparation.finding_refs,
+            verdict_refs=[f"reviews/{module_id}/verdicts-r1.json"],
+            resolved_ids=[f"M-{module_id}-initial-r0-1"],
+            next_action="completed",
+            progress_ref=preparation.progress_ref,
+            completion_ref=f"reviews/{module_id}/completion-r1.json",
+        )
+
     def _complete_module_lane_attempt(
         self,
         context,
@@ -706,6 +810,9 @@ async def test_file_defined_initial_finding_invokes_original_author_revision_onc
         "review-accept",
         "revision:module-2.1",
         "revision-accept",
+        "recheck-prepare",
+        "rechecker:module-auditor-2.1",
+        "recheck-accept",
         "review",
         "complete",
     ]

@@ -8,6 +8,7 @@ tasks:
 - module-2.4-authoring
 - module-2.5-authoring
 - module-runtime-initial-review
+- module-runtime-recheck
 - module-2.1-runtime-revision
 - module-2.2-runtime-revision
 - module-2.3-runtime-revision
@@ -172,6 +173,46 @@ actions:
     result: module-revision-agent-result
   output_variable: lane-context
 - id: continue-after-module-revision
+  kind: goto
+  target: prepare-current-module-recheck
+- id: prepare-current-module-recheck
+  kind: invoke_tool
+  tool: prepare-current-module-recheck
+  input_variable: lane-context
+  output_variable: lane-context
+- id: module-recheck-requires-agent
+  kind: invoke_tool
+  tool: module-recheck-requires-agent
+  input_variable: lane-context
+  output_variable: should-invoke-module-recheck
+- id: choose-module-recheck-source
+  kind: if
+  condition:
+    variable: should-invoke-module-recheck
+    operator: truthy
+  then: create-module-recheck-conversation
+  otherwise: continue-current-module-review
+- id: create-module-recheck-conversation
+  kind: create_conversation
+  agent: evidence-auditor
+  conversation_key: "{auditor_conversation_key}"
+  mode: run
+  output_variable: module-recheck-conversation
+- id: invoke-current-module-recheck
+  kind: invoke_agent
+  agent: evidence-auditor
+  task: module-runtime-recheck
+  conversation_variable: module-recheck-conversation
+  input_variable: lane-context
+  output_variable: module-recheck-agent-result
+- id: accept-current-module-recheck
+  kind: invoke_tool
+  tool: accept-current-module-recheck
+  input_variables:
+    context: lane-context
+    result: module-recheck-agent-result
+  output_variable: lane-context
+- id: continue-after-module-recheck
   kind: goto
   target: continue-current-module-review
 - id: continue-current-module-review

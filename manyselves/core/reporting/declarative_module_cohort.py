@@ -138,6 +138,9 @@ async def execute_declarative_module_cohort(
         "module-review-needs-revision": lane_runtime.review_needs_revision,
         "prepare-current-module-revision": lane_runtime.prepare_revision_lane,
         "accept-current-module-revision": lane_runtime.accept_revision_lane,
+        "prepare-current-module-recheck": lane_runtime.prepare_recheck_lane,
+        "module-recheck-requires-agent": lane_runtime.recheck_requires_agent,
+        "accept-current-module-recheck": lane_runtime.accept_recheck_lane,
         "continue-current-module-review": lane_runtime.continue_review_lane,
         "complete-current-module-lane": lane_runtime.complete_lane,
     }
@@ -264,6 +267,24 @@ class _StandaloneModuleRuntime:
         return context
 
     async def accept_revision_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+
+    async def prepare_recheck_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
+
+    async def recheck_requires_agent(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def accept_recheck_lane(
         self,
         values: Mapping[str, Any],
     ) -> DeclarativeModuleRuntimeLaneContext:

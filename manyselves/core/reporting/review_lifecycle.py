@@ -213,6 +213,52 @@ class ModuleRevisionPreparation(StrictModel):
     envelope: TaskEnvelope
 
 
+class ModuleRecheckPreparation(StrictModel):
+    """Typed boundary before the first recheck of an accepted module finding."""
+
+    mode: Literal["invoke_agent", "continue_existing"]
+    run_id: str
+    module_id: str
+    lifecycle_id: str
+    workflow_id: str
+    reviewer_session_key: str
+    review_root: str
+    progress_ref: str
+    review_round: int
+    scope: list[str]
+    current: ModuleSubmission
+    pending: list[ModuleReviewFinding] = Field(default_factory=list)
+    responses: list[RevisionResponse] = Field(default_factory=list)
+    finding_refs: list[str] = Field(default_factory=list)
+    verdict_refs: list[str] = Field(default_factory=list)
+    resolved_ids: list[str] = Field(default_factory=list)
+    last_reviewed_subject_ref: str | None = None
+    subject_ref: str | None = None
+    review_input_ref: str | None = None
+    review_input: ModuleReviewInput | None = None
+    envelope: TaskEnvelope | None = None
+    progress: ModuleReviewProgress | None = None
+    preflight_ref: str | None = None
+
+
+class ModuleRecheckAcceptance(StrictModel):
+    """Typed result after accepting one module Auditor recheck."""
+
+    run_id: str
+    module_id: str
+    lifecycle_id: str
+    reviewer_session_key: str
+    subject_ref: str
+    current: ModuleSubmission
+    findings: list[ModuleReviewFinding] = Field(default_factory=list)
+    finding_refs: list[str] = Field(default_factory=list)
+    verdict_refs: list[str] = Field(default_factory=list)
+    resolved_ids: list[str] = Field(default_factory=list)
+    next_action: Literal["continue_existing", "completed"]
+    progress_ref: str
+    completion_ref: str | None = None
+
+
 class ModuleLocalRegressionContext(StrictModel):
     """Cross-triggered context needed for a scoped local regression review."""
 
@@ -681,6 +727,175 @@ def _module_review_knowledge_packet(
             selected.append(line)
     complete_selected_context = "\n".join(selected).strip()
     return knowledge_ref, complete_selected_context
+
+
+def _build_module_recheck_input_and_envelope(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    module_id: str,
+    current: ModuleSubmission,
+    pending: Iterable[ModuleReviewFinding],
+    scope: set[str],
+    lifecycle_id: str,
+    review_round: int,
+    review_root: str,
+    subject_ref: str,
+    last_reviewed_subject_ref: str | None,
+    responses: list[RevisionResponse],
+    finding_refs: list[str],
+    signal_ref: str,
+    validation_report: ValidationReport,
+) -> tuple[ModuleReviewInput, TaskEnvelope, str, str, str]:
+    """Build the one shared module recheck input/envelope boundary.
+
+    The delta projections, unchanged semantic metadata, prior-result delivery
+    mode, and exact recheck TaskEnvelope are kept here so the declarative
+    boundary and the legacy lifecycle consume the same contract.
+    """
+
+    pending_items = list(pending)
+    baseline_subject_ref = last_reviewed_subject_ref
+    if baseline_subject_ref is None:
+        legacy_candidate = (
+            f"Work/runs/{state['run_id']}/modules/"
+            f"{module_id}-r{current.revision - 1}.json"
+        )
+        if current.revision > 0 and (
+            runner.service.workspace / legacy_candidate
+        ).is_file():
+            baseline_subject_ref = legacy_candidate
+        else:
+            raise ReviewLifecycleError(
+                "module recheck lacks the last subject seen by its reviewer"
+            )
+    try:
+        baseline = ModuleSubmission.model_validate_json(
+            (runner.service.workspace / baseline_subject_ref).read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise ReviewLifecycleError(
+            "module recheck last-reviewed baseline is unreadable: "
+            f"{baseline_subject_ref}"
+        ) from exc
+    delta = _module_recheck_delta(baseline, current, scope)
+    relevant_evidence_ids = set(delta["relevant_evidence_ids"])
+    relevant_evidence_ids.update(
+        evidence_ref
+        for finding in pending_items
+        for evidence_ref in finding.evidence_refs
+        if evidence_ref.startswith("E-")
+    )
+    revision_diff_ref = _write_model(
+        runner,
+        f"{review_root}/recheck-diff-r{review_round}.json",
+        delta["revision_diff"],
+    )
+    knowledge_ref, _knowledge_context = _module_review_knowledge_packet(
+        runner,
+        state,
+        module_id,
+        scope,
+    )
+    review_input = ModuleReviewInput(
+        phase="recheck",
+        run_id=state["run_id"],
+        module_id=module_id,
+        lifecycle_id=lifecycle_id,
+        review_round=review_round,
+        subject_ref=subject_ref,
+        subject_revision=current.revision,
+        subject=delta["subject"],
+        claim_statements=delta["claim_statements"],
+        prior_claim_statements=delta["prior_claim_statements"],
+        unchanged_submodule_sha256=delta["unchanged_submodule_sha256"],
+        unchanged_statement_sha256=delta["unchanged_statement_sha256"],
+        knowledge_ref=knowledge_ref,
+        knowledge_context="",
+        evidence=_module_review_evidence_packet(
+            runner,
+            current,
+            state["run_id"],
+            scope,
+            evidence_ids=relevant_evidence_ids,
+        ),
+        required_submodule_ids=sorted(scope),
+        required_findings=pending_items,
+        revision_responses=responses,
+        baseline_subject_ref=baseline_subject_ref,
+        revision_diff_ref=revision_diff_ref,
+        revision_diff=delta["revision_diff"],
+        validation_report_ref=signal_ref,
+        validation_report=validation_report,
+    )
+    input_ref = _write_model(
+        runner,
+        f"{review_root}/input-r{review_round}.json",
+        review_input,
+    )
+    envelope = TaskEnvelope(
+        task_id=f"module-{module_id}-{lifecycle_id}-review-r{review_round}",
+        run_id=state["run_id"],
+        agent_id="evidence-auditor",
+        objective=(
+            f"只对模块 {module_id} 的 required_findings 返回逐项 verdict，"
+            "并检查修改回归。"
+        ),
+        input_refs=[input_ref],
+        constraints=[
+            "coverage 记录实际检查范围，不是批准状态",
+            "一次返回整个模块检查范围的 findings/verdicts；小节 id 只用于定位问题，"
+            "不得拆成独立小节级审查任务或会话",
+            "finding 首次提出后不可改写；复审不得复述旧 finding",
+            "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
+            "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
+            "verdicts 必须逐项且仅覆盖 required_findings；new_findings 只允许真实回归",
+            *runner._user_supplement_constraints(
+                state,
+                stage="module_review",
+                target_ids={
+                    module_id,
+                    *scope,
+                    *(claim.id for claim in current.claims),
+                },
+            ),
+        ],
+        allowed_outputs=["module_review_verdict_submission"],
+        revision=review_round,
+        prior_result_ref=finding_refs[-1] if finding_refs else None,
+        artifact_delivery_modes=_module_review_artifact_delivery_modes(
+            input_ref,
+            finding_refs,
+        ),
+        target_submodule_ids=sorted(scope),
+        input_contract_kind="module_review_input",
+        input_contract_ref=input_ref,
+        inline_context=runner._template_skill_context(state, f"auditor-{module_id}"),
+        allowed_tools=["submit_result"],
+    )
+    return (
+        review_input,
+        envelope,
+        input_ref,
+        baseline_subject_ref,
+        revision_diff_ref,
+    )
+
+
+def _module_review_artifact_delivery_modes(
+    input_ref: str,
+    finding_refs: list[str],
+) -> dict[str, str]:
+    """Reuse the existing module-review artifact delivery projection."""
+
+    return {
+        input_ref: "inline",
+        **(
+            {finding_refs[-1]: "hash_retained"}
+            if finding_refs
+            else {}
+        ),
+    }
 
 
 def _module_reviewer_session_key(
@@ -1449,6 +1664,440 @@ def accept_module_revision(
     return revised, subject_ref
 
 
+async def prepare_module_recheck(
+    runner: "ReportWorkflowRunner",
+    *,
+    module_id: str,
+    current: ModuleSubmission,
+    state: dict,
+    workflow_id: str,
+    initial_scope: set[str],
+    lifecycle_id: str = "initial",
+) -> ModuleRecheckPreparation:
+    """Prepare the first original-Auditor recheck from persisted revision state.
+
+    The accepted initial finding and the author's revision are already durable at
+    this boundary.  A valid candidate therefore only needs the reviewer preflight,
+    the bounded delta input, and the original Auditor envelope.  Missing or
+    exceptional state deliberately returns ``continue_existing`` so the legacy
+    lifecycle remains the recovery path; this helper never invokes an author.
+    """
+
+    if current.module_id != module_id:
+        raise ReviewLifecycleError("module recheck payload belongs to a different module")
+    if not re.fullmatch(r"[a-z0-9-]+", lifecycle_id):
+        raise ReviewLifecycleError("module review lifecycle_id is not a safe component")
+
+    run_id = str(state["run_id"])
+    review_root = f"Work/runs/{run_id}/reviews/module/{lifecycle_id}/{module_id}"
+    progress_ref = f"{review_root}/progress.json"
+    progress = _load_progress(runner, progress_ref, ModuleReviewProgress)
+    reviewer_session_key = _module_reviewer_session_key(
+        runner,
+        state=state,
+        module_id=module_id,
+        lifecycle_id=lifecycle_id,
+        progress=progress,
+        regression_context=None,
+    )
+
+    def continuation(
+        *,
+        review_round: int = 0,
+        scope: set[str] | None = None,
+        pending: list[ModuleReviewFinding] | None = None,
+        responses: list[RevisionResponse] | None = None,
+        finding_refs: list[str] | None = None,
+        verdict_refs: list[str] | None = None,
+        resolved_ids: set[str] | None = None,
+        subject_ref: str | None = None,
+        preflight_ref: str | None = None,
+    ) -> ModuleRecheckPreparation:
+        return ModuleRecheckPreparation(
+            mode="continue_existing",
+            run_id=run_id,
+            module_id=module_id,
+            lifecycle_id=lifecycle_id,
+            workflow_id=workflow_id,
+            reviewer_session_key=reviewer_session_key,
+            review_root=review_root,
+            progress_ref=progress_ref,
+            review_round=review_round,
+            scope=sorted(scope or set(initial_scope)),
+            current=current,
+            pending=list(pending or []),
+            responses=list(responses or []),
+            finding_refs=list(finding_refs or []),
+            verdict_refs=list(verdict_refs or []),
+            resolved_ids=sorted(resolved_ids or set()),
+            last_reviewed_subject_ref=(
+                progress.last_reviewed_subject_ref if progress is not None else None
+            ),
+            subject_ref=subject_ref,
+            progress=progress,
+            preflight_ref=preflight_ref,
+        )
+
+    if progress is None:
+        return continuation()
+    if progress.run_id != run_id or progress.module_id != module_id:
+        raise ReviewLifecycleError("module review progress identity mismatch")
+    if progress.next_action != "revise":
+        return continuation(
+            review_round=progress.review_round,
+            scope=set(progress.scope),
+            pending=list(progress.pending),
+            responses=list(progress.responses),
+            finding_refs=list(progress.finding_refs),
+            verdict_refs=list(progress.verdict_refs),
+            resolved_ids=set(progress.resolved_ids),
+        )
+
+    pending = list(progress.pending)
+    if not pending:
+        return continuation(
+            review_round=progress.review_round,
+            scope=set(progress.scope),
+            finding_refs=list(progress.finding_refs),
+            verdict_refs=list(progress.verdict_refs),
+            resolved_ids=set(progress.resolved_ids),
+        )
+
+    candidate_ref = (
+        f"Work/runs/{run_id}/modules/{module_id}-r{current.revision}.json"
+    )
+    if not (runner.service.workspace / candidate_ref).is_file():
+        return continuation(
+            review_round=progress.review_round,
+            scope={finding.target_submodule_id for finding in pending},
+            pending=pending,
+            responses=list(current.revision_responses),
+            finding_refs=list(progress.finding_refs),
+            verdict_refs=list(progress.verdict_refs),
+            resolved_ids=set(progress.resolved_ids),
+            subject_ref=candidate_ref,
+        )
+
+    scope = {finding.target_submodule_id for finding in pending}
+    try:
+        _validate_responses(
+            current.revision_responses,
+            {finding.id for finding in pending},
+            scope,
+        )
+    except ReviewLifecycleError:
+        return continuation(
+            review_round=progress.review_round,
+            scope=scope,
+            pending=pending,
+            responses=list(current.revision_responses),
+            finding_refs=list(progress.finding_refs),
+            verdict_refs=list(progress.verdict_refs),
+            resolved_ids=set(progress.resolved_ids),
+            subject_ref=candidate_ref,
+        )
+    if any(
+        response.action in {"disputed", "needs_input"}
+        for response in current.revision_responses
+    ):
+        return continuation(
+            review_round=progress.review_round,
+            scope=scope,
+            pending=pending,
+            responses=list(current.revision_responses),
+            finding_refs=list(progress.finding_refs),
+            verdict_refs=list(progress.verdict_refs),
+            resolved_ids=set(progress.resolved_ids),
+            subject_ref=candidate_ref,
+        )
+
+    review_round = progress.review_round + 1
+    structure_ref: str
+    try:
+        structure_ref = runner._validate_module_structure(
+            state,
+            current,
+            f"review-r{review_round}",
+        )
+        structure_report = ValidationReport.model_validate_json(
+            (runner.service.workspace / structure_ref).read_text(encoding="utf-8")
+        )
+        _require_validation_binding(
+            runner,
+            structure_report,
+            subject_ref=candidate_ref,
+            subject_revision=current.revision,
+        )
+        preflight = evaluate_module_review_preflight(
+            runner.service.workspace,
+            run_id=run_id,
+            subject=current,
+            subject_ref=candidate_ref,
+            upstream_report=structure_report,
+        )
+    except (OSError, ValueError, ReviewLifecycleError):
+        return continuation(
+            review_round=progress.review_round,
+            scope=scope,
+            pending=pending,
+            responses=list(current.revision_responses),
+            finding_refs=list(progress.finding_refs),
+            verdict_refs=list(progress.verdict_refs),
+            resolved_ids=set(progress.resolved_ids),
+            subject_ref=candidate_ref,
+        )
+
+    signal_ref = _write_model(
+        runner,
+        f"{review_root}/preflight-subject-r{current.revision}-review-r{review_round}.json",
+        preflight.report,
+    )
+    if not preflight.report.passed:
+        return continuation(
+            review_round=progress.review_round,
+            scope=scope,
+            pending=pending,
+            responses=list(current.revision_responses),
+            finding_refs=list(progress.finding_refs),
+            verdict_refs=list(progress.verdict_refs),
+            resolved_ids=set(progress.resolved_ids),
+            subject_ref=candidate_ref,
+            preflight_ref=signal_ref,
+        )
+
+    try:
+        (
+            review_input,
+            envelope,
+            input_ref,
+            baseline_subject_ref,
+            _review_diff_ref,
+        ) = _build_module_recheck_input_and_envelope(
+            runner,
+            state=state,
+            module_id=module_id,
+            current=current,
+            pending=pending,
+            scope=scope,
+            lifecycle_id=lifecycle_id,
+            review_round=review_round,
+            review_root=review_root,
+            subject_ref=candidate_ref,
+            last_reviewed_subject_ref=progress.last_reviewed_subject_ref,
+            responses=list(current.revision_responses),
+            finding_refs=list(progress.finding_refs),
+            signal_ref=signal_ref,
+            validation_report=preflight.report,
+        )
+    except (OSError, ValueError, ReviewLifecycleError):
+        return continuation(
+            review_round=progress.review_round,
+            scope=scope,
+            pending=pending,
+            responses=list(current.revision_responses),
+            finding_refs=list(progress.finding_refs),
+            verdict_refs=list(progress.verdict_refs),
+            resolved_ids=set(progress.resolved_ids),
+            subject_ref=candidate_ref,
+            preflight_ref=signal_ref,
+        )
+    _save_module_review_progress(
+        runner,
+        state=state,
+        progress_ref=progress_ref,
+        module_id=module_id,
+        next_action="review",
+        current=current,
+        pending=pending,
+        responses=list(current.revision_responses),
+        finding_refs=list(progress.finding_refs),
+        verdict_refs=list(progress.verdict_refs),
+        resolved_ids=set(progress.resolved_ids),
+        review_round=review_round,
+        phase="recheck",
+        scope=scope,
+        reviewer_session_key=reviewer_session_key,
+        last_reviewed_subject_ref=baseline_subject_ref,
+    )
+    return ModuleRecheckPreparation(
+        mode="invoke_agent",
+        run_id=run_id,
+        module_id=module_id,
+        lifecycle_id=lifecycle_id,
+        workflow_id=workflow_id,
+        reviewer_session_key=reviewer_session_key,
+        review_root=review_root,
+        progress_ref=progress_ref,
+        review_round=review_round,
+        scope=sorted(scope),
+        current=current,
+        pending=pending,
+        responses=list(current.revision_responses),
+        finding_refs=list(progress.finding_refs),
+        verdict_refs=list(progress.verdict_refs),
+        resolved_ids=sorted(progress.resolved_ids),
+        last_reviewed_subject_ref=baseline_subject_ref,
+        subject_ref=candidate_ref,
+        review_input_ref=input_ref,
+        review_input=review_input,
+        envelope=envelope,
+        progress=progress,
+        preflight_ref=signal_ref,
+    )
+
+
+async def accept_module_recheck(
+    runner: "ReportWorkflowRunner",
+    *,
+    preparation: ModuleRecheckPreparation,
+    result: ModuleReviewVerdictSubmission,
+    state: dict,
+) -> ModuleRecheckAcceptance:
+    """Accept one prepared recheck and persist verdicts or continuation state."""
+
+    if preparation.mode != "invoke_agent":
+        raise ReviewLifecycleError(
+            "cannot accept a module recheck without an Agent invocation"
+        )
+    if preparation.subject_ref is None:
+        raise ReviewLifecycleError("module recheck lacks a subject ref")
+    if not isinstance(result, ModuleReviewVerdictSubmission):
+        raise ReviewLifecycleError("module auditor returned the wrong recheck type")
+
+    required_ids = {finding.id for finding in preparation.pending}
+    _validate_verdicts(result.verdicts, required_ids)
+    _validate_module_findings(
+        result.new_findings,
+        preparation.current,
+        set(preparation.scope),
+        id_prefix=(
+            f"M-{preparation.module_id}-{preparation.lifecycle_id}-"
+            f"r{preparation.review_round}-"
+        ),
+    )
+    verdict_ref = _write_immutable_model(
+        runner,
+        f"{preparation.review_root}/verdicts-r{preparation.review_round}.json",
+        result,
+    )
+    verdict_refs = [*preparation.verdict_refs, verdict_ref]
+    finding_refs = list(preparation.finding_refs)
+    resolved_ids = set(preparation.resolved_ids)
+    pending_by_id = {finding.id: finding for finding in preparation.pending}
+    escalated = [
+        verdict for verdict in result.verdicts if verdict.verdict == "escalate"
+    ]
+    main_accepts: set[str] = set()
+    if escalated:
+        decision = await _main_exception_decision(
+            runner,
+            state=state,
+            workflow_id=preparation.workflow_id,
+            scope="module",
+            subject_refs=[preparation.subject_ref],
+            finding_refs=finding_refs,
+            verdicts=escalated,
+            responses=preparation.responses,
+        )
+        if decision.decision == "accept_dispute":
+            main_accepts = set(decision.finding_ids)
+    next_pending = {
+        verdict.finding_id: pending_by_id[verdict.finding_id]
+        for verdict in result.verdicts
+        if verdict.verdict == "open"
+        or (verdict.verdict == "escalate" and verdict.finding_id not in main_accepts)
+    }
+    resolved_ids.update(
+        verdict.finding_id
+        for verdict in result.verdicts
+        if verdict.verdict == "resolved" or verdict.finding_id in main_accepts
+    )
+    for finding in result.new_findings:
+        if finding.id in required_ids or finding.id in resolved_ids:
+            raise ReviewLifecycleError(
+                f"new module finding reuses an existing id: {finding.id}"
+            )
+        next_pending[finding.id] = finding
+    if result.new_findings:
+        finding_ref = _write_immutable_model(
+            runner,
+            f"{preparation.review_root}/regression-findings-r{preparation.review_round}.json",
+            ModuleReviewFindingSubmission(
+                coverage=result.coverage,
+                findings=result.new_findings,
+            ),
+        )
+        finding_refs.append(finding_ref)
+
+    if next_pending:
+        _save_module_review_progress(
+            runner,
+            state=state,
+            progress_ref=preparation.progress_ref,
+            module_id=preparation.module_id,
+            next_action="revise",
+            current=preparation.current,
+            pending=next_pending.values(),
+            responses=preparation.responses,
+            finding_refs=finding_refs,
+            verdict_refs=verdict_refs,
+            resolved_ids=resolved_ids,
+            review_round=preparation.review_round,
+            phase="recheck",
+            scope=set(preparation.scope),
+            reviewer_session_key=preparation.reviewer_session_key,
+            last_reviewed_subject_ref=preparation.subject_ref,
+        )
+        next_action: Literal["continue_existing", "completed"] = "continue_existing"
+        completion_ref = None
+    else:
+        completion_ref = _module_review_completion(
+            runner,
+            state=state,
+            module=preparation.current,
+            reviewer_session_key=preparation.reviewer_session_key,
+            subject_ref=preparation.subject_ref,
+            finding_refs=finding_refs,
+            verdict_refs=verdict_refs,
+            resolved_ids=resolved_ids,
+            lifecycle_id=preparation.lifecycle_id,
+        )
+        _save_module_review_progress(
+            runner,
+            state=state,
+            progress_ref=preparation.progress_ref,
+            module_id=preparation.module_id,
+            next_action="completed",
+            current=preparation.current,
+            pending=[],
+            responses=preparation.responses,
+            finding_refs=finding_refs,
+            verdict_refs=verdict_refs,
+            resolved_ids=resolved_ids,
+            review_round=preparation.review_round,
+            phase="recheck",
+            scope=set(preparation.scope),
+            reviewer_session_key=preparation.reviewer_session_key,
+            last_reviewed_subject_ref=preparation.subject_ref,
+        )
+        next_action = "completed"
+    return ModuleRecheckAcceptance(
+        run_id=preparation.run_id,
+        module_id=preparation.module_id,
+        lifecycle_id=preparation.lifecycle_id,
+        reviewer_session_key=preparation.reviewer_session_key,
+        subject_ref=preparation.subject_ref,
+        current=preparation.current,
+        findings=list(next_pending.values()),
+        finding_refs=finding_refs,
+        verdict_refs=verdict_refs,
+        resolved_ids=sorted(resolved_ids),
+        next_action=next_action,
+        progress_ref=preparation.progress_ref,
+        completion_ref=completion_ref,
+    )
+
+
 async def request_module_revision(
     runner: "ReportWorkflowRunner",
     *,
@@ -1888,216 +2537,172 @@ async def _run_module_review_lifecycle(
                 responses = current.revision_responses
             save_progress("review")
 
-        review_subject = module_content_view(current, scope)
-        review_claim_statements = [
-            _review_claim_statement(claim)
-            for claim in current.claims
-            if claim.submodule_id in scope
-        ]
-        prior_claim_statements: list[ReviewClaimStatement] = []
-        unchanged_submodule_sha256: dict[str, str] = {}
-        unchanged_statement_sha256: dict[str, str] = {}
-        baseline_subject_ref: str | None = None
-        revision_diff_ref: str | None = None
-        revision_diff: ModuleRevisionDiff | None = None
-        relevant_evidence_ids: set[str] | None = None
         if phase == "recheck":
-            baseline_subject_ref = last_reviewed_subject_ref
-            if baseline_subject_ref is None:
-                legacy_candidate = (
-                    f"Work/runs/{state['run_id']}/modules/"
-                    f"{module_id}-r{current.revision - 1}.json"
-                )
-                if current.revision > 0 and (
-                    runner.service.workspace / legacy_candidate
-                ).is_file():
-                    baseline_subject_ref = legacy_candidate
-                else:
-                    raise ReviewLifecycleError(
-                        "module recheck lacks the last subject seen by its reviewer"
-                    )
-            try:
-                baseline = ModuleSubmission.model_validate_json(
-                    (
-                        runner.service.workspace / baseline_subject_ref
-                    ).read_text(encoding="utf-8")
-                )
-            except (OSError, ValueError) as exc:
-                raise ReviewLifecycleError(
-                    "module recheck last-reviewed baseline is unreadable: "
-                    f"{baseline_subject_ref}"
-                ) from exc
-            delta = _module_recheck_delta(baseline, current, scope)
-            review_subject = delta["subject"]
-            review_claim_statements = delta["claim_statements"]
-            prior_claim_statements = delta["prior_claim_statements"]
-            unchanged_submodule_sha256 = delta["unchanged_submodule_sha256"]
-            unchanged_statement_sha256 = delta["unchanged_statement_sha256"]
-            revision_diff = delta["revision_diff"]
-            relevant_evidence_ids = set(delta["relevant_evidence_ids"])
-            relevant_evidence_ids.update(
-                evidence_ref
-                for finding in pending.values()
-                for evidence_ref in finding.evidence_refs
-                if evidence_ref.startswith("E-")
-            )
-            revision_diff_ref = _write_model(
+            (
+                review_input,
+                envelope,
+                input_ref,
+                baseline_subject_ref,
+                revision_diff_ref,
+            ) = _build_module_recheck_input_and_envelope(
                 runner,
-                f"{review_root}/recheck-diff-r{review_round}.json",
-                revision_diff,
+                state=state,
+                module_id=module_id,
+                current=current,
+                pending=pending.values(),
+                scope=scope,
+                lifecycle_id=lifecycle_id,
+                review_round=review_round,
+                review_root=review_root,
+                subject_ref=subject_ref,
+                last_reviewed_subject_ref=last_reviewed_subject_ref,
+                responses=responses,
+                finding_refs=finding_refs,
+                signal_ref=signal_ref,
+                validation_report=validation_report,
             )
-        # One module owns one persistent auditor identity.  Supply the bounded
-        # Knowledge body only on that identity's first review; later rechecks
-        # retain it in the restored transcript and carry only the provenance
-        # ref plus changed business evidence.
-        knowledge_ref, knowledge_context = _module_review_knowledge_packet(
-            runner,
-            state,
-            module_id,
-            scope,
-        )
-        if phase != "initial":
-            knowledge_context = ""
-        review_input = ModuleReviewInput(
-            phase=phase,
-            run_id=state["run_id"],
-            module_id=module_id,
-            lifecycle_id=lifecycle_id,
-            review_round=review_round,
-            subject_ref=subject_ref,
-            subject_revision=current.revision,
-            subject=review_subject,
-            claim_statements=review_claim_statements,
-            prior_claim_statements=prior_claim_statements,
-            unchanged_submodule_sha256=unchanged_submodule_sha256,
-            unchanged_statement_sha256=unchanged_statement_sha256,
-            knowledge_ref=knowledge_ref,
-            knowledge_context=knowledge_context,
-            evidence=_module_review_evidence_packet(
+        else:
+            review_subject = module_content_view(current, scope)
+            review_claim_statements = [
+                _review_claim_statement(claim)
+                for claim in current.claims
+                if claim.submodule_id in scope
+            ]
+            knowledge_ref, knowledge_context = _module_review_knowledge_packet(
                 runner,
-                current,
-                state["run_id"],
+                state,
+                module_id,
                 scope,
-                evidence_ids=relevant_evidence_ids,
-            ),
-            required_submodule_ids=sorted(scope),
-            required_findings=list(pending.values()) if phase == "recheck" else [],
-            revision_responses=responses if phase == "recheck" else [],
-            prior_review_completion_ref=(
-                regression_context.prior_review_completion_ref
-                if phase == "local_regression" and regression_context is not None
-                else None
-            ),
-            prior_review_completion=(
-                regression_context.prior_review_completion
-                if phase == "local_regression" and regression_context is not None
-                else None
-            ),
-            baseline_subject_ref=(
-                regression_context.baseline_subject_ref
-                if phase == "local_regression" and regression_context is not None
-                else baseline_subject_ref
-            ),
-            trigger_cross_findings=(
-                regression_context.trigger_cross_findings
-                if phase == "local_regression" and regression_context is not None
-                else []
-            ),
-            trigger_revision_responses=(
-                regression_context.trigger_revision_responses
-                if phase == "local_regression" and regression_context is not None
-                else []
-            ),
-            revision_diff_ref=(
-                regression_context.revision_diff_ref
-                if phase == "local_regression" and regression_context is not None
-                else revision_diff_ref
-            ),
-            revision_diff=(
-                regression_context.revision_diff
-                if phase == "local_regression" and regression_context is not None
-                else revision_diff
-            ),
-            validation_report_ref=signal_ref,
-            validation_report=validation_report,
-        )
-        input_ref = _write_model(
-            runner,
-            f"{review_root}/input-r{review_round}.json",
-            review_input,
-        )
-        output_kind = (
-            "module_review_finding_submission"
-            if phase in {"initial", "local_regression"}
-            else "module_review_verdict_submission"
-        )
-        envelope = TaskEnvelope(
-            task_id=f"module-{module_id}-{lifecycle_id}-review-r{review_round}",
-            run_id=state["run_id"],
-            agent_id="evidence-auditor",
-            objective=(
-                f"审查模块 {module_id} 的当前正文、Claim 与证据边界。"
-                if phase == "initial"
-                else (
-                    f"由模块 {module_id} 的原审查者仅检查 Cross 回改范围、diff、"
-                    "Claim 与证据回归。"
-                    if phase == "local_regression"
-                    else (
-                        f"只对模块 {module_id} 的 required_findings 返回逐项 verdict，"
-                        "并检查修改回归。"
-                    )
-                )
-            ),
-            input_refs=[input_ref],
-            constraints=[
-                "coverage 记录实际检查范围，不是批准状态",
-                "一次返回整个模块检查范围的 findings/verdicts；小节 id 只用于定位问题，"
-                "不得拆成独立小节级审查任务或会话",
-                "finding 首次提出后不可改写；复审不得复述旧 finding",
-                "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
-                "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
-                (
-                    "首轮必须覆盖 input 中全部 required_submodule_ids"
-                    if phase in {"initial", "local_regression"}
-                    else "verdicts 必须逐项且仅覆盖 required_findings；new_findings 只允许真实回归"
+            )
+            if phase != "initial":
+                knowledge_context = ""
+            review_input = ModuleReviewInput(
+                phase=phase,
+                run_id=state["run_id"],
+                module_id=module_id,
+                lifecycle_id=lifecycle_id,
+                review_round=review_round,
+                subject_ref=subject_ref,
+                subject_revision=current.revision,
+                subject=review_subject,
+                claim_statements=review_claim_statements,
+                prior_claim_statements=[],
+                unchanged_submodule_sha256={},
+                unchanged_statement_sha256={},
+                knowledge_ref=knowledge_ref,
+                knowledge_context=knowledge_context,
+                evidence=_module_review_evidence_packet(
+                    runner,
+                    current,
+                    state["run_id"],
+                    scope,
+                    evidence_ids=None,
                 ),
-                *(
-                    [
-                        "这是原模块审查者的 local_regression，不得重新审查未修改小节",
-                        "只根据 prior completion、Cross finding/作者响应、revision diff、目标 Claim/证据和当前 validation 提出真实回归 finding",
-                    ]
-                    if phase == "local_regression"
+                required_submodule_ids=sorted(scope),
+                required_findings=[],
+                revision_responses=[],
+                prior_review_completion_ref=(
+                    regression_context.prior_review_completion_ref
+                    if phase == "local_regression" and regression_context is not None
+                    else None
+                ),
+                prior_review_completion=(
+                    regression_context.prior_review_completion
+                    if phase == "local_regression" and regression_context is not None
+                    else None
+                ),
+                baseline_subject_ref=(
+                    regression_context.baseline_subject_ref
+                    if phase == "local_regression" and regression_context is not None
+                    else None
+                ),
+                trigger_cross_findings=(
+                    regression_context.trigger_cross_findings
+                    if phase == "local_regression" and regression_context is not None
                     else []
                 ),
-                *runner._user_supplement_constraints(
-                    state,
-                    stage="module_review",
-                    target_ids={
-                        module_id,
-                        *scope,
-                        *(claim.id for claim in current.claims),
-                    },
+                trigger_revision_responses=(
+                    regression_context.trigger_revision_responses
+                    if phase == "local_regression" and regression_context is not None
+                    else []
                 ),
-            ],
-            allowed_outputs=[output_kind],
-            revision=review_round,
-            prior_result_ref=finding_refs[-1] if finding_refs else None,
-            artifact_delivery_modes={
-                input_ref: "inline",
-                **(
-                    {finding_refs[-1]: "hash_retained"}
-                    if finding_refs
-                    else {}
+                revision_diff_ref=(
+                    regression_context.revision_diff_ref
+                    if phase == "local_regression" and regression_context is not None
+                    else None
                 ),
-            },
-            target_submodule_ids=sorted(scope),
-            input_contract_kind="module_review_input",
-            input_contract_ref=input_ref,
-            inline_context=runner._template_skill_context(
-                state, f"auditor-{module_id}"
-            ),
-            allowed_tools=["submit_result"],
-        )
+                revision_diff=(
+                    regression_context.revision_diff
+                    if phase == "local_regression" and regression_context is not None
+                    else None
+                ),
+                validation_report_ref=signal_ref,
+                validation_report=validation_report,
+            )
+            input_ref = _write_model(
+                runner,
+                f"{review_root}/input-r{review_round}.json",
+                review_input,
+            )
+            output_kind = "module_review_finding_submission"
+            envelope = TaskEnvelope(
+                task_id=f"module-{module_id}-{lifecycle_id}-review-r{review_round}",
+                run_id=state["run_id"],
+                agent_id="evidence-auditor",
+                objective=(
+                    f"审查模块 {module_id} 的当前正文、Claim 与证据边界。"
+                    if phase == "initial"
+                    else (
+                        f"由模块 {module_id} 的原审查者仅检查 Cross 回改范围、diff、"
+                        "Claim 与证据回归。"
+                    )
+                ),
+                input_refs=[input_ref],
+                constraints=[
+                    "coverage 记录实际检查范围，不是批准状态",
+                    "一次返回整个模块检查范围的 findings/verdicts；小节 id 只用于定位问题，"
+                    "不得拆成独立小节级审查任务或会话",
+                    "finding 首次提出后不可改写；复审不得复述旧 finding",
+                    "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
+                    "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
+                    (
+                        "首轮必须覆盖 input 中全部 required_submodule_ids"
+                        if phase in {"initial", "local_regression"}
+                        else "verdicts 必须逐项且仅覆盖 required_findings；new_findings 只允许真实回归"
+                    ),
+                    *(
+                        [
+                            "这是原模块审查者的 local_regression，不得重新审查未修改小节",
+                            "只根据 prior completion、Cross finding/作者响应、revision diff、目标 Claim/证据和当前 validation 提出真实回归 finding",
+                        ]
+                        if phase == "local_regression"
+                        else []
+                    ),
+                    *runner._user_supplement_constraints(
+                        state,
+                        stage="module_review",
+                        target_ids={
+                            module_id,
+                            *scope,
+                            *(claim.id for claim in current.claims),
+                        },
+                    ),
+                ],
+                allowed_outputs=[output_kind],
+                revision=review_round,
+                prior_result_ref=finding_refs[-1] if finding_refs else None,
+                artifact_delivery_modes=_module_review_artifact_delivery_modes(
+                    input_ref,
+                    finding_refs,
+                ),
+                target_submodule_ids=sorted(scope),
+                input_contract_kind="module_review_input",
+                input_contract_ref=input_ref,
+                inline_context=runner._template_skill_context(
+                    state, f"auditor-{module_id}"
+                ),
+                allowed_tools=["submit_result"],
+            )
         result = await runner._agent(
             "evidence-auditor",
             envelope,

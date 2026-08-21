@@ -220,6 +220,13 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "goto",
         "invoke_tool",
         "invoke_tool",
+        "if",
+        "create_conversation",
+        "invoke_agent",
+        "invoke_tool",
+        "goto",
+        "invoke_tool",
+        "invoke_tool",
         "end_workflow",
     ]
     assert plan.tool_ids == [
@@ -235,6 +242,9 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "module-review-needs-revision",
         "prepare-current-module-revision",
         "accept-current-module-revision",
+        "prepare-current-module-recheck",
+        "module-recheck-requires-agent",
+        "accept-current-module-recheck",
         "continue-current-module-review",
         "complete-current-module-lane",
     ]
@@ -243,6 +253,7 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "module-2.1-authoring",
         "module-runtime-initial-review",
         "module-2.1-runtime-revision",
+        "module-runtime-recheck",
     ]
     assert "execute-current-module-lane" not in plan.tool_ids
     assert "review-current-module-lane" not in plan.tool_ids

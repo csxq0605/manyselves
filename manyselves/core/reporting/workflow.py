@@ -40,6 +40,7 @@ from .agentic_models import (
     ModuleDispatchPlan,
     ModuleReviewFinding,
     ModuleReviewFindingSubmission,
+    ModuleReviewVerdictSubmission,
     ModuleRevisionSubmission,
     ModuleSubmission,
     StrictModel,
@@ -129,10 +130,14 @@ from .review_lifecycle import (
     DeferredMainDecision,
     ModuleInitialReviewAcceptance,
     ModuleInitialReviewPreparation,
+    ModuleRecheckAcceptance,
+    ModuleRecheckPreparation,
     ModuleRevisionPreparation,
     accept_module_initial_review,
+    accept_module_recheck,
     accept_module_revision,
     prepare_module_initial_review,
+    prepare_module_recheck,
     prepare_module_revision,
     request_module_revision,
     run_cross_review,
@@ -6146,6 +6151,39 @@ class ReportWorkflowRunner:
             self,
             preparation=preparation,
             result=result,
+        )
+
+    async def _prepare_module_recheck(
+        self,
+        module_id: str,
+        current: ModuleSubmission,
+        state: dict,
+        workflow_id: str,
+        *,
+        initial_scope: set[str],
+        lifecycle_id: str = "initial",
+    ) -> ModuleRecheckPreparation:
+        return await prepare_module_recheck(
+            self,
+            module_id=module_id,
+            current=current,
+            state=state,
+            workflow_id=workflow_id,
+            initial_scope=initial_scope,
+            lifecycle_id=lifecycle_id,
+        )
+
+    async def _accept_module_recheck(
+        self,
+        preparation: ModuleRecheckPreparation,
+        result: ModuleReviewVerdictSubmission,
+        state: dict,
+    ) -> ModuleRecheckAcceptance:
+        return await accept_module_recheck(
+            self,
+            preparation=preparation,
+            result=result,
+            state=state,
         )
 
     async def _cross_review(self, state: dict, workflow_id: str) -> None:

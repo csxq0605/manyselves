@@ -1,0 +1,10 @@
+id: accept-current-module-recheck
+version: 1.0.0
+description: Persist the original module Auditor's recheck verdicts
+implementation: capability:distribution-reporting:accept-current-module-recheck
+input_contract: reporting_tool_input
+output_contract: declarative_module_runtime_lane_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

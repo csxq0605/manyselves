@@ -44,6 +44,8 @@ from .declarative_module_runtime_lane import (
     DeclarativeModuleAuthoringAgentResult,
     DeclarativeModuleAuthoringPreparation,
     DeclarativeModuleLaneAttempt,
+    DeclarativeModuleRecheckAgentResult,
+    DeclarativeModuleRecheckPreparation,
     DeclarativeModuleReviewAgentResult,
     DeclarativeModuleReviewPreparation,
     DeclarativeModuleRevisionAgentResult,
@@ -131,6 +133,21 @@ class ReportingModuleRuntime(Protocol):
     ) -> DeclarativeModuleRuntimeLaneContext: ...
 
     async def accept_revision_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def prepare_recheck_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def recheck_requires_agent(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool: ...
+
+    async def accept_recheck_lane(
         self,
         values: Mapping[str, Any],
     ) -> DeclarativeModuleRuntimeLaneContext: ...
@@ -269,6 +286,9 @@ async def execute_declarative_module_stage(
         "module-review-needs-revision": module_runtime.review_needs_revision,
         "prepare-current-module-revision": module_runtime.prepare_revision_lane,
         "accept-current-module-revision": module_runtime.accept_revision_lane,
+        "prepare-current-module-recheck": module_runtime.prepare_recheck_lane,
+        "module-recheck-requires-agent": module_runtime.recheck_requires_agent,
+        "accept-current-module-recheck": module_runtime.accept_recheck_lane,
         "continue-current-module-review": module_runtime.continue_review_lane,
         "complete-current-module-lane": module_runtime.complete_lane,
     }
@@ -409,6 +429,24 @@ class _BatchModuleRuntime:
         return context
 
     async def accept_revision_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+
+    async def prepare_recheck_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
+
+    async def recheck_requires_agent(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def accept_recheck_lane(
         self,
         values: Mapping[str, Any],
     ) -> DeclarativeModuleRuntimeLaneContext:
@@ -561,6 +599,30 @@ class _CurrentModuleReviewerInvoker:
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
+        if context.recheck is not None:
+            preparation = context.recheck.prepared
+            envelope = cast(TaskEnvelope, preparation.envelope)
+            try:
+                payload = await self._runner._agent(
+                    "evidence-auditor",
+                    envelope,
+                    envelope.input_refs,
+                    context.workflow_id,
+                    session_key=conversation.key.value,
+                )
+                result = DeclarativeModuleRecheckAgentResult(
+                    status="completed",
+                    submission=payload,
+                )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                self._capture_failure(context.module_id, exc)
+                result = DeclarativeModuleRecheckAgentResult(
+                    status="failed",
+                    error=str(exc),
+                )
+            return AgentInvocationOutcome(status="ok", result=result)
         reviewing = cast(DeclarativeModuleReviewPreparation, context.review)
         envelope = cast(TaskEnvelope, reviewing.prepared.envelope)
         try:
@@ -927,7 +989,12 @@ class _CurrentModuleStages:
             return self._failed_lane_context(context, exc)
         return context.model_copy(
             deep=True,
-            update={"status": "reviewed", "module": reviewed, "review": None},
+            update={
+                "status": "reviewed",
+                "module": reviewed,
+                "review": None,
+                "recheck": None,
+            },
         )
 
     async def review_needs_revision(
@@ -993,9 +1060,83 @@ class _CurrentModuleStages:
         return context.model_copy(
             deep=True,
             update={
-                "status": "review_resumed",
+                "status": "recheck_pending",
                 "module": revised,
                 "revision": None,
+            },
+        )
+
+    async def prepare_recheck_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.status != "recheck_pending":
+            return context
+        try:
+            preparation = await self._runner._prepare_module_recheck(
+                context.module_id,
+                cast(Any, context.module),
+                context.reporting_state,
+                context.workflow_id,
+                initial_scope=set(REPORT_TAXONOMY[context.module_id].submodules),
+                lifecycle_id="initial",
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": (
+                    "recheck_ready"
+                    if preparation.mode == "invoke_agent"
+                    else "review_resumed"
+                ),
+                "recheck": DeclarativeModuleRecheckPreparation(
+                    prepared=preparation,
+                ),
+            },
+        )
+
+    async def recheck_requires_agent(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return context.status == "recheck_ready"
+
+    async def accept_recheck_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(
+            values["context"]
+        )
+        result = DeclarativeModuleRecheckAgentResult.model_validate(
+            values["result"]
+        )
+        if result.status == "failed":
+            exc = self._review_failures.pop(
+                context.module_id,
+                AgentWorkflowError(result.error or "module recheck failed"),
+            )
+            return self._failed_lane_context(context, exc)
+        try:
+            accepted = await self._runner._accept_module_recheck(
+                cast(DeclarativeModuleRecheckPreparation, context.recheck).prepared,
+                cast(Any, result.submission),
+                context.reporting_state,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": "review_resumed",
+                "module": accepted.current,
+                "recheck": None,
             },
         )
 

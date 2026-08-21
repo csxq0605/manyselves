@@ -1,0 +1,5 @@
+id: declarative_module_recheck_agent_result
+version: 1.0.0
+description: Typed current module recheck Auditor invocation result
+adapter: pydantic
+model: manyselves.core.reporting.declarative_module_runtime_lane:DeclarativeModuleRecheckAgentResult

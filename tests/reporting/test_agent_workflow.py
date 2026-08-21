@@ -58,13 +58,17 @@ from manyselves.core.reporting.parallel_runtime import (
 from manyselves.core.reporting.prompts import PromptAssembler
 from manyselves.core.reporting.review_lifecycle import (
     ModuleInitialReviewPreparation,
+    ModuleRecheckAcceptance,
+    ModuleRecheckPreparation,
     ModuleRevisionPreparation,
     ReviewLifecycleError,
     _apply_chief_patch,
     _require_validation_binding,
     accept_module_initial_review,
+    accept_module_recheck,
     accept_module_revision,
     prepare_module_initial_review,
+    prepare_module_recheck,
     prepare_module_revision,
     request_module_revision,
     run_cross_review,
@@ -1272,6 +1276,135 @@ async def test_module_preflight_machine_correction_precedes_paid_review(
     )
     assert paid_review_input["subject_revision"] == 1
     assert paid_review_input["validation_report"]["passed"] is True
+
+
+@pytest.mark.asyncio
+async def test_module_recheck_boundary_prepares_and_accepts_without_provider(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-module-recheck-boundary"
+    module = _module("2.1")
+    target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
+    finding = ModuleReviewFindingSubmission(
+        coverage={"submodule_ids": [target]},
+        findings=[
+            {
+                "id": "M-2.1-initial-r0-RECHECK",
+                "target_submodule_id": target,
+                "category": "analysis_depth",
+                "impact": "advisory",
+                "observation": "当前建议缺少责任接口和可由原审查者复核的验收方法。",
+                "evidence_refs": ["Work/runs/run-module-recheck-boundary/modules/2.1-r0.json"],
+                "required_change": "在目标小节补充责任接口、执行动作和可验证验收方法。",
+                "reviewer_checks": ["责任、动作和验收方法已经形成闭环"],
+            }
+        ],
+    )
+    runner = _ScriptedRunner(tmp_path, [])
+    state = {"run_id": run_id}
+    initial = await prepare_module_initial_review(
+        runner,
+        module_id="2.1",
+        payload=module,
+        state=state,
+        workflow_id="workflow-module-recheck-boundary",
+        initial_scope={target},
+        lifecycle_id="initial",
+    )
+    accepted_initial = accept_module_initial_review(
+        runner,
+        preparation=initial,
+        result=finding,
+        state=state,
+    )
+    assert accepted_initial.next_action == "revise"
+
+    revision = await prepare_module_revision(
+        runner,
+        state=state,
+        workflow_id="workflow-module-recheck-boundary",
+        subject=module,
+        module_findings=accepted_initial.findings,
+    )
+    revised, subject_ref = accept_module_revision(
+        runner,
+        preparation=revision,
+        result=ModuleRevisionSubmission(
+            module_id="2.1",
+            base_revision=0,
+            revision=1,
+            submodule_narratives={
+                target: "### 修订后正文\n\n已补充责任接口和可验证验收方法。",
+            },
+            claims_upsert=[],
+            claim_ids_remove=[],
+            source_ids=[],
+            unresolved_questions=[],
+            revision_responses=[
+                {
+                    "finding_id": "M-2.1-initial-r0-RECHECK",
+                    "action": "implemented",
+                    "summary": "已在目标小节补充责任接口、执行动作和可复核的验收方法。",
+                    "changed_target_ids": [target],
+                }
+            ],
+        ),
+    )
+    assert subject_ref.endswith("/modules/2.1-r1.json")
+
+    preparation = await prepare_module_recheck(
+        runner,
+        module_id="2.1",
+        current=revised,
+        state=state,
+        workflow_id="workflow-module-recheck-boundary",
+        initial_scope={target},
+    )
+    assert isinstance(preparation, ModuleRecheckPreparation)
+    assert (
+        ModuleRecheckPreparation.model_validate_json(preparation.model_dump_json())
+        == preparation
+    )
+    assert preparation.mode == "invoke_agent"
+    assert preparation.reviewer_session_key == "module-auditor-2.1"
+    assert preparation.review_round == 1
+    assert preparation.subject_ref == subject_ref
+    assert preparation.review_input is not None
+    assert preparation.review_input.phase == "recheck"
+    assert preparation.review_input.baseline_subject_ref.endswith("/modules/2.1-r0.json")
+    assert preparation.review_input.required_findings[0].id == (
+        "M-2.1-initial-r0-RECHECK"
+    )
+    assert preparation.envelope is not None
+    assert preparation.envelope.allowed_outputs == ["module_review_verdict_submission"]
+    assert runner.calls == []
+
+    accepted = await accept_module_recheck(
+        runner,
+        preparation=preparation,
+        result=ModuleReviewVerdictSubmission(
+            coverage={"submodule_ids": [target]},
+            verdicts=[
+                {
+                    "finding_id": "M-2.1-initial-r0-RECHECK",
+                    "verdict": "resolved",
+                    "reason": "当前修订已经补充责任、执行动作和验收方法，可以关闭。",
+                    "evidence_refs": [subject_ref],
+                }
+            ],
+            new_findings=[],
+        ),
+        state=state,
+    )
+    assert isinstance(accepted, ModuleRecheckAcceptance)
+    assert accepted.next_action == "completed"
+    assert accepted.resolved_ids == ["M-2.1-initial-r0-RECHECK"]
+    assert accepted.completion_ref is not None
+    assert (tmp_path / accepted.verdict_refs[-1]).is_file()
+    progress = json.loads((tmp_path / preparation.progress_ref).read_text(encoding="utf-8"))
+    assert progress["next_action"] == "completed"
+    assert progress["current"]["revision"] == 1
+    assert runner.calls == []
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from manyselves.kernel.definitions import (
 
 from .agentic_models import (
     ModuleReviewFindingSubmission,
+    ModuleReviewVerdictSubmission,
     ModuleRevisionSubmission,
     ModuleSubmission,
     TaskEnvelope,
@@ -24,6 +25,7 @@ from .parallel_runtime import LaneCompletion, LaneTaskSpec
 from .review_lifecycle import (
     ModuleInitialReviewAcceptance,
     ModuleInitialReviewPreparation,
+    ModuleRecheckPreparation,
     ModuleRevisionPreparation,
 )
 
@@ -94,12 +96,30 @@ class DeclarativeModuleRevisionAgentResult(BaseModel):
     error: str | None = None
 
 
+class DeclarativeModuleRecheckAgentResult(BaseModel):
+    """Typed business result returned by the original module Auditor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["completed", "failed"]
+    submission: ModuleReviewVerdictSubmission | None = None
+    error: str | None = None
+
+
 class DeclarativeModuleRevisionPreparation(BaseModel):
     """Serializable exact original-Author revision prepared by Reporting."""
 
     model_config = ConfigDict(extra="forbid")
 
     prepared: ModuleRevisionPreparation
+
+
+class DeclarativeModuleRecheckPreparation(BaseModel):
+    """Serializable exact original-Auditor recheck prepared by Reporting."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prepared: ModuleRecheckPreparation
 
 
 class DeclarativeModuleRuntimeLaneContext(BaseModel):
@@ -119,6 +139,8 @@ class DeclarativeModuleRuntimeLaneContext(BaseModel):
         "review_resumed",
         "revision_pending",
         "revision_ready",
+        "recheck_pending",
+        "recheck_ready",
         "reviewed",
         "completed",
         "deferred",
@@ -128,6 +150,7 @@ class DeclarativeModuleRuntimeLaneContext(BaseModel):
     authoring: DeclarativeModuleAuthoringPreparation | None = None
     review: DeclarativeModuleReviewPreparation | None = None
     revision: DeclarativeModuleRevisionPreparation | None = None
+    recheck: DeclarativeModuleRecheckPreparation | None = None
     module: ModuleSubmission | None = None
     completion_ref: str | None = None
     completion: LaneCompletion | None = None
@@ -172,6 +195,8 @@ __all__ = [
     "DeclarativeModuleLaneAttempt",
     "DeclarativeModuleReviewAgentResult",
     "DeclarativeModuleReviewPreparation",
+    "DeclarativeModuleRecheckAgentResult",
+    "DeclarativeModuleRecheckPreparation",
     "DeclarativeModuleRevisionAgentResult",
     "DeclarativeModuleRevisionPreparation",
     "DeclarativeModuleRuntimeLaneContext",

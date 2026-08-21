@@ -1,0 +1,10 @@
+id: prepare-current-module-recheck
+version: 1.0.0
+description: Prepare the original module Auditor's exact recheck TaskEnvelope
+implementation: capability:distribution-reporting:prepare-current-module-recheck
+input_contract: declarative_module_runtime_lane_context
+output_contract: declarative_module_runtime_lane_context
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false
