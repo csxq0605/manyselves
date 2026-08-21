@@ -16,10 +16,10 @@
 
 - Current work package: `WP-00 through WP-12 plus the reopened architecture reconciliation implemented`
 - Last completed vertical slice: Run-frozen parent/child plans and definition snapshots, declared Agent Tool assembly, Provider Error Recovery dispatch, persistent Conversation storage, generic arbitrary-JSON input, and project-scoped Run UI
-- Current branch: `agent/declarative-runtime-implementation`; the current reconciliation changes are pending their focused implementation commit
+- Current branch: `agent/declarative-runtime-implementation`; reconciliation slices: `e84101e` (Runtime plan/definition/recovery closure) and `424cac1` (generic UI and browser handoff)
 - Current migration stage: `all four implementation stages are code-complete; focused affected verification passed; the single final user-operated real test is still pending`
 - Final real-test status: the isolated local server and login page are verified; submitting the local Demo login and running `parameter-adjustment`, then the real Provider/project Reporting Run, remain pending and are not claimed as passed
-- Next action: finish the local browser smoke check, push the focused reconciliation commit, then hand the user only the browser workflow in [`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md); preserve the same Run on failure and do not switch the Legacy default path
+- Next action: finish the local browser smoke check, then hand the user only the browser workflow in [`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md); preserve the same Run on failure and do not switch the Legacy default path
 
 ## Five-gap architecture reconciliation
 
