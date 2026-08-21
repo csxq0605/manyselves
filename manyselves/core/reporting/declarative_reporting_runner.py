@@ -36,6 +36,12 @@ from manyselves.runtime.workflow_host import (
 )
 
 from .agentic_models import TaskEnvelope
+from .declarative_cross_owner_cohort import (
+    DeclarativeCrossOwnerRuntime,
+    compile_cross_owner_workflows,
+    register_cross_owner_pipeline_specializations,
+    retry_failed_cross_owner_pipelines,
+)
 from .declarative_module_cohort import (
     DeclarativeModuleLaneOutcome,
     _retry_failed_module_lanes,
@@ -165,11 +171,11 @@ class ReportingModuleRuntime(Protocol):
     async def reduce_lanes(self, outcomes: Mapping[str, Any]) -> dict[str, Any]: ...
 
 
-def build_reporting_module_stage_definition(
-) -> tuple[DefinitionRegistry, WorkflowDefinition]:
+def build_reporting_module_stage_definition() -> tuple[DefinitionRegistry, WorkflowDefinition]:
     """Compatibility loader for the packaged top-level Reporting workflow."""
 
     _capability, registry = load_distribution_reporting_capability()
+    register_cross_owner_pipeline_specializations(registry)
     workflow = registry.require(
         DefinitionKind.WORKFLOW,
         "distribution-reporting",
@@ -210,6 +216,10 @@ async def execute_declarative_module_stage(
     if not isinstance(tail, WorkflowDefinition):
         raise TypeError("distribution-reporting-tail is not a workflow")
     tail_plan = WorkflowCompiler(executors).compile(tail, definitions)
+    cross_cohort_plan, cross_pipeline_plans = compile_cross_owner_workflows(
+        definitions,
+        executors,
+    )
     cohort = definitions.require(
         DefinitionKind.WORKFLOW,
         "distribution-module-cohort",
@@ -246,9 +256,17 @@ async def execute_declarative_module_stage(
         if saved_tail is not None:
             child = WorkflowState.model_validate(saved_tail)
             child.variables["reporting-state"] = deepcopy(state)
-            kernel_state.subworkflow_states["run-reporting-tail"] = child.model_dump(
-                mode="json"
-            )
+            saved_cross = child.subworkflow_states.get("run-cross")
+            if saved_cross is not None:
+                cross_state = WorkflowState.model_validate(saved_cross)
+                cross_state.variables["reporting-state"] = deepcopy(state)
+                cross_state.variables["prepared-cross-state"] = deepcopy(state)
+                cross_state = retry_failed_cross_owner_pipelines(
+                    cross_cohort_plan,
+                    cross_state,
+                )
+                child.subworkflow_states["run-cross"] = cross_state.model_dump(mode="json")
+            kernel_state.subworkflow_states["run-reporting-tail"] = child.model_dump(mode="json")
         saved_cohort = kernel_state.subworkflow_states.get("run-module-cohort")
         if saved_cohort is not None:
             child = WorkflowState.model_validate(saved_cohort)
@@ -259,9 +277,7 @@ async def execute_declarative_module_stage(
                 child,
                 tuple(REPORT_MODULE_IDS),
             )
-            kernel_state.subworkflow_states["run-module-cohort"] = child.model_dump(
-                mode="json"
-            )
+            kernel_state.subworkflow_states["run-module-cohort"] = child.model_dump(mode="json")
     except FileNotFoundError:
         kernel_state = WorkflowState.for_plan(kernel_run_id, plan)
         save_plan = getattr(state_store, "save_plan", None)
@@ -269,6 +285,12 @@ async def execute_declarative_module_stage(
             save_plan(kernel_run_id, plan)
 
     tail_adapters = _ReportingTailAdapters(tail_runner, workflow_id)
+    cross_runtime = DeclarativeCrossOwnerRuntime(
+        tail_runner,
+        state,
+        workflow_id,
+        compatibility_cross=tail_adapters.cross,
+    )
     module_tools = {
         "start-current-module-lane": lambda values: module_runtime.start_lane(
             str(values["module_id"]),
@@ -305,7 +327,9 @@ async def execute_declarative_module_stage(
             RuntimeContext(
                 tools={
                     **module_tools,
-                    "run-reporting-cross": tail_adapters.cross,
+                    "prepare-cross-owner-cohort": cross_runtime.prepare,
+                    "execute-current-cross-owner-pipeline": (cross_runtime.execute_owner),
+                    "reduce-cross-owner-cohort": cross_runtime.reduce,
                     "run-reporting-chief": tail_adapters.chief,
                     "run-reporting-final": tail_adapters.final,
                     "run-reporting-delivery": tail_adapters.delivery,
@@ -317,20 +341,25 @@ async def execute_declarative_module_stage(
                     cohort.id: cohort_plan,
                     **runtime_lane_plans,
                     tail.id: tail_plan,
+                    "distribution-cross-owner-cohort": cross_cohort_plan,
+                    **cross_pipeline_plans,
                 },
             ),
         )
     except BaseException:
         current = (
             tail_adapters.current_state
+            or cross_runtime.current_state
             or module_runtime.current_state
             or state
         )
+        current = deepcopy(current)
         state.clear()
         state.update(current)
         raise
+    result = deepcopy(completed.outputs["result"])
     state.clear()
-    state.update(completed.outputs["result"])
+    state.update(result)
     return completed
 
 
@@ -339,9 +368,7 @@ class _BatchModuleRuntime:
 
     def __init__(
         self,
-        execute_current: Callable[
-            [tuple[str, ...], dict[str, Any], str], Awaitable[None]
-        ],
+        execute_current: Callable[[tuple[str, ...], dict[str, Any], str], Awaitable[None]],
         requested_modules: tuple[str, ...],
         state: dict[str, Any],
         workflow_id: str,
@@ -674,10 +701,7 @@ class _CurrentModuleStages:
             self._capture_review_failure,
         )
         self.agent_invokers: Mapping[str, AgentInvoker] = {
-            **{
-                f"module-{module_id}-specialist": author_invoker
-                for module_id in REPORT_MODULE_IDS
-            },
+            **{f"module-{module_id}-specialist": author_invoker for module_id in REPORT_MODULE_IDS},
             "evidence-auditor": reviewer_invoker,
         }
 
@@ -699,9 +723,7 @@ class _CurrentModuleStages:
             )
         try:
             self._runner._raise_if_cancel_requested(lane_state["run_id"])
-            recovered_lanes = self._runner._recovery_store(
-                lane_state
-            ).load_completed_lanes(
+            recovered_lanes = self._runner._recovery_store(lane_state).load_completed_lanes(
                 self._runner._recovery_stage_name("module"),
                 [module_id],
             )
@@ -789,9 +811,7 @@ class _CurrentModuleStages:
             deep=True,
             update={
                 "status": (
-                    "author_resumed"
-                    if preparation.resumed_payload is not None
-                    else "author_ready"
+                    "author_resumed" if preparation.resumed_payload is not None else "author_ready"
                 ),
                 "authoring": DeclarativeModuleAuthoringPreparation(
                     specialist_id=preparation.specialist_id,
@@ -814,12 +834,8 @@ class _CurrentModuleStages:
         self,
         values: Mapping[str, Any],
     ) -> DeclarativeModuleRuntimeLaneContext:
-        context = DeclarativeModuleRuntimeLaneContext.model_validate(
-            values["context"]
-        )
-        result = DeclarativeModuleAuthoringAgentResult.model_validate(
-            values["result"]
-        )
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+        result = DeclarativeModuleAuthoringAgentResult.model_validate(values["result"])
         if result.status == "failed":
             exc = self._author_failures.pop(
                 context.module_id,
@@ -902,9 +918,7 @@ class _CurrentModuleStages:
             deep=True,
             update={
                 "status": (
-                    "review_ready"
-                    if preparation.mode == "invoke_agent"
-                    else "review_resumed"
+                    "review_ready" if preparation.mode == "invoke_agent" else "review_resumed"
                 ),
                 "module": preparation.current,
                 "review": DeclarativeModuleReviewPreparation(
@@ -925,12 +939,8 @@ class _CurrentModuleStages:
         self,
         values: Mapping[str, Any],
     ) -> DeclarativeModuleRuntimeLaneContext:
-        context = DeclarativeModuleRuntimeLaneContext.model_validate(
-            values["context"]
-        )
-        result = DeclarativeModuleReviewAgentResult.model_validate(
-            values["result"]
-        )
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+        result = DeclarativeModuleReviewAgentResult.model_validate(values["result"])
         if result.status == "failed":
             exc = self._review_failures.pop(
                 context.module_id,
@@ -954,9 +964,7 @@ class _CurrentModuleStages:
             deep=True,
             update={
                 "status": (
-                    "reviewed"
-                    if accepted.next_action == "completed"
-                    else "revision_pending"
+                    "reviewed" if accepted.next_action == "completed" else "revision_pending"
                 ),
                 "module": accepted.current,
                 "review": cast(
@@ -1036,12 +1044,8 @@ class _CurrentModuleStages:
         self,
         values: Mapping[str, Any],
     ) -> DeclarativeModuleRuntimeLaneContext:
-        context = DeclarativeModuleRuntimeLaneContext.model_validate(
-            values["context"]
-        )
-        result = DeclarativeModuleRevisionAgentResult.model_validate(
-            values["result"]
-        )
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+        result = DeclarativeModuleRevisionAgentResult.model_validate(values["result"])
         if result.status == "failed":
             exc = self._author_failures.pop(
                 context.module_id,
@@ -1089,9 +1093,7 @@ class _CurrentModuleStages:
             deep=True,
             update={
                 "status": (
-                    "recheck_ready"
-                    if preparation.mode == "invoke_agent"
-                    else "review_resumed"
+                    "recheck_ready" if preparation.mode == "invoke_agent" else "review_resumed"
                 ),
                 "recheck": DeclarativeModuleRecheckPreparation(
                     prepared=preparation,
@@ -1109,12 +1111,8 @@ class _CurrentModuleStages:
         self,
         values: Mapping[str, Any],
     ) -> DeclarativeModuleRuntimeLaneContext:
-        context = DeclarativeModuleRuntimeLaneContext.model_validate(
-            values["context"]
-        )
-        result = DeclarativeModuleRecheckAgentResult.model_validate(
-            values["result"]
-        )
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+        result = DeclarativeModuleRecheckAgentResult.model_validate(values["result"])
         if result.status == "failed":
             exc = self._review_failures.pop(
                 context.module_id,
@@ -1135,9 +1133,7 @@ class _CurrentModuleStages:
             deep=True,
             update={
                 "status": (
-                    "reviewed"
-                    if accepted.next_action == "completed"
-                    else "revision_pending"
+                    "reviewed" if accepted.next_action == "completed" else "revision_pending"
                 ),
                 "module": accepted.current,
                 "review": cast(
@@ -1193,9 +1189,7 @@ class _CurrentModuleStages:
             module=context.module,
             error=context.error,
             lane_state=(
-                {"reporting_state": context.reporting_state}
-                if include_lane_state
-                else None
+                {"reporting_state": context.reporting_state} if include_lane_state else None
             ),
             completion_ref=context.completion_ref,
             completion=(
@@ -1283,9 +1277,7 @@ class _CurrentModuleStages:
             module_id: DeclarativeModuleLaneOutcome.model_validate(values[module_id])
             for module_id in REPORT_MODULE_IDS
         }
-        results: dict[
-            str, tuple[Any, str, LaneCompletion, dict[str, Any]]
-        ] = {}
+        results: dict[str, tuple[Any, str, LaneCompletion, dict[str, Any]]] = {}
         for module_id in self._requested_modules:
             outcome = outcomes[module_id]
             if outcome.status == "deferred":
@@ -1293,14 +1285,17 @@ class _CurrentModuleStages:
                 if isinstance(resumed, dict):
                     resumed["resume"] = True
                 try:
-                    submission, completion_ref, completion, lane_state = (
-                        await self._runner._execute_module_lane(
-                            module_id,
-                            self.current_state,
-                            self._workflow_id,
-                            defer_main_exceptions=False,
-                            lane_state_override=resumed,
-                        )
+                    (
+                        submission,
+                        completion_ref,
+                        completion,
+                        lane_state,
+                    ) = await self._runner._execute_module_lane(
+                        module_id,
+                        self.current_state,
+                        self._workflow_id,
+                        defer_main_exceptions=False,
+                        lane_state_override=resumed,
                     )
                 except BaseException as exc:
                     self._failures[module_id] = exc
@@ -1325,14 +1320,10 @@ class _CurrentModuleStages:
                 ):
                     if key in lane_state:
                         if isinstance(lane_state[key], dict):
-                            self.current_state.setdefault(key, {}).update(
-                                lane_state[key]
-                            )
+                            self.current_state.setdefault(key, {}).update(lane_state[key])
                         elif isinstance(lane_state[key], list):
                             current = self.current_state.setdefault(key, [])
-                            current.extend(
-                                item for item in lane_state[key] if item not in current
-                            )
+                            current.extend(item for item in lane_state[key] if item not in current)
             if (
                 outcome.module is not None
                 and outcome.completion_ref is not None
@@ -1349,8 +1340,7 @@ class _CurrentModuleStages:
             module_id: self._failures.get(module_id)
             or AgentWorkflowError(outcomes[module_id].error or "module lane failed")
             for module_id in self._requested_modules
-            if outcomes[module_id].status == "failed"
-            or module_id in self._failures
+            if outcomes[module_id].status == "failed" or module_id in self._failures
         }
         failures = [
             failures_by_module[module_id]

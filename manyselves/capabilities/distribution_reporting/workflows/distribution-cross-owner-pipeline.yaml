@@ -1,0 +1,27 @@
+id: distribution-cross-owner-pipeline
+version: 1.0.0
+description: Reusable current Cross owner pipeline bound to Reporting behavior
+tasks:
+- cross-owner-review
+gates: []
+recovery:
+- current-reporting-recovery
+input_contract: reporting_tail_state
+output_contract: declarative_cross_owner_pipeline_outcome
+parameters:
+- owner_module_id
+state:
+  reporting-state: {}
+  owner-module-id: "{owner_module_id}"
+actions:
+- id: execute-current-cross-owner-pipeline
+  kind: invoke_tool
+  tool: execute-current-cross-owner-pipeline
+  input_variables:
+    state: reporting-state
+    owner_module_id: owner-module-id
+  output_variable: owner-outcome
+- id: finish-cross-owner-pipeline
+  kind: end_workflow
+  output_variable: owner-outcome
+  output_name: result

@@ -20,6 +20,15 @@ from manyselves.core.reporting.agentic_models import (
     ResolutionVerdict,
     RevisionResponse,
 )
+from manyselves.core.reporting.declarative_cross_owner_cohort import (
+    DeclarativeCrossOwnerPipelineOutcome,
+    DeclarativeCrossOwnerRuntime,
+    compile_cross_owner_workflows,
+    retry_failed_cross_owner_pipelines,
+)
+from manyselves.core.reporting.declarative_reporting_tail import (
+    build_reporting_tail_definition,
+)
 from manyselves.core.reporting.input_contracts import CrossOwnerInput, ReviewCompletionRecord
 from manyselves.core.reporting.parallel_runtime import (
     ArtifactRef,
@@ -30,6 +39,10 @@ from manyselves.core.reporting.parallel_runtime import (
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
+from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
+from manyselves.kernel.workflow import WorkflowState, WorkflowStatus
+from manyselves.runtime.state_store import FileWorkflowStateStore, InMemoryWorkflowStateStore
+from manyselves.runtime.workflow_host import InMemoryWorkflowEventSink, WorkflowRuntimeHost
 
 
 def _module(module_id: str, revision: int = 0) -> ModuleSubmission:
@@ -354,6 +367,42 @@ def _write_modules(runner: _Runner, run_id: str) -> None:
             f"Work/runs/{run_id}/modules/{module_id}-r0.json",
             _module(module_id).model_dump(mode="json"),
         )
+
+
+async def _execute_declarative_cross_owner_cohort(
+    runner: _Runner,
+    state: dict,
+    workflow_id: str,
+) -> tuple[dict, WorkflowState]:
+    definitions, contracts, _tail = build_reporting_tail_definition()
+    executors = build_builtin_executor_registry()
+    cohort_plan, pipeline_plans = compile_cross_owner_workflows(
+        definitions,
+        executors,
+    )
+    runtime = DeclarativeCrossOwnerRuntime(runner, state, workflow_id)
+    kernel_state = WorkflowState.for_plan(state["run_id"], cohort_plan)
+    kernel_state.variables["reporting-state"] = state
+    completed = await WorkflowRuntimeHost(
+        executors,
+        InMemoryWorkflowStateStore(),
+        InMemoryWorkflowEventSink(),
+    ).execute(
+        cohort_plan,
+        kernel_state,
+        RuntimeContext(
+            tools={
+                "prepare-cross-owner-cohort": runtime.prepare,
+                "execute-current-cross-owner-pipeline": runtime.execute_owner,
+                "reduce-cross-owner-cohort": runtime.reduce,
+            },
+            contracts=contracts,
+            definitions=definitions,
+            subworkflows=pipeline_plans,
+        ),
+    )
+    assert completed.status is WorkflowStatus.COMPLETED
+    return completed.outputs["result"], completed
 
 
 def _write_legacy_completed_task_binding(
@@ -940,3 +989,224 @@ async def test_fast_cross_owner_enters_local_pipeline_without_waiting_for_slow_i
     assert not task.done()
     slow_release.set()
     await task
+
+
+@pytest.mark.asyncio
+async def test_declarative_cross_owner_cohort_preserves_independent_pipeline_semantics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-cross-declarative-cohort"
+    slow_release = asyncio.Event()
+    fast_promoted = asyncio.Event()
+
+    class _StaggeredRunner(_Runner):
+        async def _agent(
+            self,
+            _agent_id,
+            envelope,
+            _artifacts,
+            _workflow_id,
+            *,
+            session_key=None,
+        ):
+            owner_module_id = envelope.task_id.split("-")[2]
+            self.calls.append((owner_module_id, session_key or ""))
+            if owner_module_id == "2.5":
+                await slow_release.wait()
+            return CrossOwnerFindingSubmission(
+                owner_module_id=owner_module_id,
+                coverage=CrossReviewCoverageEntry(
+                    module_id=owner_module_id,
+                    checked_dimensions=list(CROSS_REVIEW_DIMENSIONS),
+                ),
+                findings=[],
+                synthesis_inputs=_synthesis(owner_module_id),
+            )
+
+    declarative_root = tmp_path / "declarative-cross"
+    declarative_runner = _StaggeredRunner(declarative_root)
+    _write_modules(declarative_runner, run_id)
+
+    def _recording_noop(runner, **kwargs):
+        result = _fake_noop(runner, **kwargs)
+        if kwargs["owner_module_id"] == "2.1":
+            fast_promoted.set()
+        return result
+
+    monkeypatch.setattr(lifecycle, "_verified_cross_owner_noop", _recording_noop)
+    declarative_task = asyncio.create_task(
+        _execute_declarative_cross_owner_cohort(
+            declarative_runner,
+            _state(run_id),
+            "workflow-cross-declarative-cohort",
+        )
+    )
+    await asyncio.wait_for(fast_promoted.wait(), timeout=1)
+    assert not declarative_task.done()
+    slow_release.set()
+    declarative_result, declarative_state = await declarative_task
+
+    owner_ids = tuple(REPORT_TAXONOMY)
+    branch_results = declarative_state.parallel_results["cross-owner-cohort"]
+    assert set(branch_results) == set(owner_ids)
+    assert all(
+        f"outcome-{owner_module_id}" in branch_results[owner_module_id]
+        for owner_module_id in owner_ids
+    )
+    assert {
+        (owner_module_id, session_key)
+        for owner_module_id, session_key in declarative_runner.calls
+    } == {
+        (owner_module_id, f"cross-owner-{owner_module_id}")
+        for owner_module_id in owner_ids
+    }
+
+    legacy_root = tmp_path / "legacy-cross"
+    legacy_runner = _Runner(legacy_root)
+    _write_modules(legacy_runner, run_id)
+    legacy_state = _state(run_id)
+    await lifecycle.run_cross_review(
+        legacy_runner,
+        legacy_state,
+        "workflow-cross-legacy-comparison",
+    )
+
+    def _module_projection(value: dict) -> dict[str, dict]:
+        return {
+            module_id: ModuleSubmission.model_validate(module).model_dump(mode="json")
+            for module_id, module in value.items()
+        }
+
+    assert declarative_result["cross_review_completion_ref"] == (
+        legacy_state["cross_review_completion_ref"]
+    )
+    assert declarative_result["cross_owner_barrier_ref"] == (
+        legacy_state["cross_owner_barrier_ref"]
+    )
+    assert _module_projection(declarative_result["module_submissions"]) == (
+        _module_projection(legacy_state["module_submissions"])
+    )
+    assert [
+        CrossSynthesisInput.model_validate(item).model_dump(mode="json")
+        for item in declarative_result["cross_synthesis_inputs"]
+    ] == [
+        CrossSynthesisInput.model_validate(item).model_dump(mode="json")
+        for item in legacy_state["cross_synthesis_inputs"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_declarative_cross_owner_cohort_retries_only_failed_owner_from_file_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-cross-declarative-retry"
+    workflow_id = "workflow-cross-declarative-retry"
+    owner_ids = tuple(REPORT_TAXONOMY)
+    runner = _Runner(tmp_path, failed_owner="2.3")
+    _write_modules(runner, run_id)
+    monkeypatch.setattr(
+        lifecycle,
+        "_verified_cross_owner_noop",
+        lambda runner, **kwargs: _fake_noop(runner, **kwargs),
+    )
+
+    definitions, contracts, _tail = build_reporting_tail_definition()
+    executors = build_builtin_executor_registry()
+    cohort_plan, pipeline_plans = compile_cross_owner_workflows(
+        definitions,
+        executors,
+    )
+    state_store = FileWorkflowStateStore(tmp_path)
+
+    def _context(runtime: DeclarativeCrossOwnerRuntime) -> RuntimeContext:
+        return RuntimeContext(
+            tools={
+                "prepare-cross-owner-cohort": runtime.prepare,
+                "execute-current-cross-owner-pipeline": runtime.execute_owner,
+                "reduce-cross-owner-cohort": runtime.reduce,
+            },
+            contracts=contracts,
+            definitions=definitions,
+            subworkflows=pipeline_plans,
+        )
+
+    initial_reporting_state = _state(run_id)
+    initial_runtime = DeclarativeCrossOwnerRuntime(
+        runner,
+        initial_reporting_state,
+        workflow_id,
+    )
+    initial_kernel_state = WorkflowState.for_plan(run_id, cohort_plan)
+    initial_kernel_state.variables["reporting-state"] = initial_reporting_state
+    host = WorkflowRuntimeHost(
+        executors,
+        state_store,
+        InMemoryWorkflowEventSink(),
+    )
+
+    with pytest.raises(RuntimeError, match="injected owner failure: 2.3"):
+        await host.execute(
+            cohort_plan,
+            initial_kernel_state,
+            _context(initial_runtime),
+        )
+
+    failed_state = state_store.load(run_id)
+    assert failed_state.status is WorkflowStatus.FAILED
+    assert set(failed_state.parallel_results["cross-owner-cohort"]) == set(owner_ids)
+    assert set(failed_state.parallel_states["cross-owner-cohort"]) == set(owner_ids)
+    assert all(
+        branch_state["status"] == WorkflowStatus.COMPLETED
+        for branch_state in failed_state.parallel_states["cross-owner-cohort"].values()
+    )
+    outcomes = {
+        owner_module_id: DeclarativeCrossOwnerPipelineOutcome.model_validate(
+            failed_state.parallel_results["cross-owner-cohort"][owner_module_id][
+                f"outcome-{owner_module_id}"
+            ]
+        )
+        for owner_module_id in owner_ids
+    }
+    assert outcomes["2.3"].status == "failed"
+    assert {
+        owner_module_id
+        for owner_module_id, outcome in outcomes.items()
+        if outcome.status == "completed"
+    } == set(owner_ids) - {"2.3"}
+    assert runner.calls.count(("2.3", "cross-owner-2.3")) == 1
+    calls_before_retry = list(runner.calls)
+
+    runner.failed_owner = None
+    retry_state = retry_failed_cross_owner_pipelines(cohort_plan, failed_state)
+    assert retry_state.status is WorkflowStatus.PENDING
+    assert set(retry_state.parallel_results["cross-owner-cohort"]) == set(owner_ids) - {
+        "2.3"
+    }
+    retry_reporting_state = retry_state.variables["prepared-cross-state"]
+    retry_runtime = DeclarativeCrossOwnerRuntime(
+        runner,
+        retry_reporting_state,
+        workflow_id,
+    )
+    recovered = await host.execute(
+        cohort_plan,
+        retry_state,
+        _context(retry_runtime),
+    )
+
+    assert recovered.status is WorkflowStatus.COMPLETED
+    assert runner.calls[len(calls_before_retry) :] == [
+        ("2.3", "cross-owner-2.3")
+    ]
+    assert set(recovered.parallel_results["cross-owner-cohort"]) == set(owner_ids)
+    aggregate = recovered.outputs["result"]
+    assert aggregate["cross_review_completion_ref"] == (
+        f"Work/runs/{run_id}/reviews/cross-completion.json"
+    )
+    assert aggregate["cross_owner_barrier_ref"] == (
+        f"Work/runs/{run_id}/lanes/cross-r1/owner-barrier.json"
+    )
+    persisted = state_store.load(run_id)
+    assert persisted.status is WorkflowStatus.COMPLETED

@@ -13,6 +13,7 @@ from manyselves.core.reporting.config import (
     AgentDefinition as ReportingAgentDefinition,
 )
 from manyselves.core.reporting.config import load_agent_definitions, load_packaged_agents
+from manyselves.core.reporting.models import REPORT_MODULE_IDS
 from manyselves.kernel.definitions import DefinitionKind
 from manyselves.kernel.executors import build_builtin_executor_registry
 from manyselves.kernel.workflow import WorkflowCompiler
@@ -24,8 +25,7 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
     assert capability.id == "distribution-reporting"
     assert capability.entrypoints == ["distribution-reporting"]
     assert capability.runtime == (
-        "manyselves.capabilities.distribution_reporting.adapters.runtime:"
-        "build_runtime_binding"
+        "manyselves.capabilities.distribution_reporting.adapters.runtime:build_runtime_binding"
     )
     assert {definition.id for definition in registry.all(DefinitionKind.AGENT)} == {
         "chief-editor-auditor",
@@ -48,9 +48,9 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
         "project-delivery",
         "template-distiller",
     }
-    assert {
-        definition.id for definition in registry.all(DefinitionKind.WORKFLOW)
-    } == {
+    assert {definition.id for definition in registry.all(DefinitionKind.WORKFLOW)} == {
+        "distribution-cross-owner-cohort",
+        "distribution-cross-owner-pipeline",
         "distribution-module-review-lane",
         "distribution-module-runtime-lane",
         "distribution-module-cohort",
@@ -140,12 +140,16 @@ def test_capability_adapters_expose_the_executable_reporting_definitions() -> No
     assert lane.actions[0]["tool"] == "build-module-initial-review-input"
     assert lane.actions[2]["id"] == "module-2.1-initial-review-r0"
     assert cohort.id == "distribution-module-cohort"
-    assert next(
-        action for action in cohort.actions if action["id"] == "module-cohort"
-    )["max_concurrency"] == 2
-    assert next(
-        action for action in cohort.actions if action["id"] == "execute-module-2.1"
-    )["kind"] == "subworkflow"
+    assert (
+        next(action for action in cohort.actions if action["id"] == "module-cohort")[
+            "max_concurrency"
+        ]
+        == 2
+    )
+    assert (
+        next(action for action in cohort.actions if action["id"] == "execute-module-2.1")["kind"]
+        == "subworkflow"
+    )
     assert tail.id == "distribution-reporting-tail"
     assert tail.actions == packaged_tail.actions
 
@@ -255,10 +259,56 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "module-2.1-runtime-revision",
         "module-runtime-recheck",
     ]
-    assert next(
-        action
-        for action in plan.actions
-        if action.id == "continue-after-module-recheck"
-    ).target == "module-review-needs-revision"
+    assert (
+        next(
+            action for action in plan.actions if action.id == "continue-after-module-recheck"
+        ).target
+        == "module-review-needs-revision"
+    )
     assert "execute-current-module-lane" not in plan.tool_ids
     assert "review-current-module-lane" not in plan.tool_ids
+
+
+def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
+    """Characterize the next Cross boundary before its implementation exists."""
+
+    registry, _, tail = build_reporting_tail_definition()
+    run_cross = next(action for action in tail.actions if action["id"] == "run-cross")
+    assert run_cross["kind"] == "subworkflow"
+    assert run_cross["workflow"] == "distribution-cross-owner-cohort"
+
+    cohort = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-cross-owner-cohort",
+    )
+    cohort_plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        cohort,
+        registry,
+    )
+    parallel = next(action for action in cohort_plan.actions if action.kind == "parallel")
+    assert set(parallel.branches) == set(REPORT_MODULE_IDS)
+
+    branch_workflows = {}
+    for module_id, branch_id in parallel.branches.items():
+        branch = next(action for action in cohort_plan.actions if action.id == branch_id)
+        assert branch.kind == "subworkflow"
+        expected_workflow_id = f"distribution-cross-owner-{module_id}-pipeline"
+        assert branch.workflow == expected_workflow_id
+        branch_workflows[module_id] = registry.require(
+            DefinitionKind.WORKFLOW,
+            expected_workflow_id,
+        )
+
+    join = next(action for action in cohort_plan.actions if action.kind == "join")
+    assert join.parallel == parallel.id
+    assert set(join.inputs) == set(REPORT_MODULE_IDS)
+
+    # The first Cross slice only owns the existing owner-pipeline compatibility
+    # boundary. Agent/Conversation declarations are characterized separately
+    # when that pipeline is decomposed.
+    for pipeline in branch_workflows.values():
+        pipeline_plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+            pipeline,
+            registry,
+        )
+        assert pipeline_plan.tool_ids == ["execute-current-cross-owner-pipeline"]
