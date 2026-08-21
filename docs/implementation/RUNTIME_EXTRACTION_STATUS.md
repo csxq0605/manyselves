@@ -15,11 +15,11 @@
 ## Current position
 
 - Current work package: `WP-01/WP-11 architecture completion audit reopened`
-- Last completed vertical slice: the production Capability YAML now owns the complete parameterized module Lane and five-branch Cohort action graphs; Python loads, specializes, compiles, and binds those files instead of reconstructing definitions
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `f5e27f5` (`WP-07/WP-08: recover module lanes in one runtime state`); the file-defined module workflow slice is this document's commit
+- Last completed vertical slice: the Capability YAML owns the Cross/Chief/Final/combined Render-Delivery tail sequence, which now runs through `WorkflowRuntimeHost` and persists under the parent run identity
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `8fbbff9` (`WP-07/WP-08: compile reporting modules from files`); the file-defined tail slice is this document's commit
 - Current migration stage: `file-defined Reporting workflow migration`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
-- Next automatic action: move the detailed Cross/Chief/Final/Render/Delivery tail definition out of its programmatic builder, run it through `WorkflowRuntimeHost`, and nest continuation state in the same parent Run
+- Next automatic action: replace the coarse top-level module/tail Tool wrappers with the packaged detailed workflows and one authoritative parent state; bind the current Reporting providers/adapters at that single Runtime Host boundary
 
 ## Reopened architecture completion audit
 
@@ -61,6 +61,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
+- `WP-09: compile the reporting tail from files` — the production Workflow YAML owns the ordered Cross, Chief, Final, and current combined Render/Delivery actions; all four internal Tools are file-declared, the builder only loads the Capability Registry, and execution/recovery moved from the persistence-owning control executor to `WorkflowRuntimeHost` under the parent Run identity (this commit)
 - `WP-07/WP-08: compile reporting modules from files` — the packaged reusable Lane YAML owns every Tool, Conversation, Agent, branch, and End action; the packaged Cohort YAML owns all five Parallel branches and Join; declared typed parameters preserve module/lifecycle/revision IDs, all internal Python Tools are file-declared, and Python now only specializes runtime values and binds implementations (this commit)
 - `WP-07/WP-08: recover module lanes in one runtime state` — both detailed Reporting paths execute effects through `WorkflowRuntimeHost`; Lane states are embedded in parent Parallel branch state, only the parent Run is persisted, and a failed Cohort retry uses a generic pure branch-reset transform so completed sibling branches are not replayed (this commit)
 - `WP-06: keep parallel and child state in one runtime run` — Runtime Host executes Parallel/Join/Subworkflow effects, honors declared concurrency, and stores branch/child WorkflowState snapshots inside the parent state; tests prove no branch or child Run directories are created (this commit)
@@ -97,6 +98,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- File-defined tail and one-state recovery Characterization initially failed because the packaged tail had no actions and persisted `run_id--reporting-tail`; after migration, exact trace equivalence, completion-marker reuse, failed-stage continuation, one Run directory, and packaged-definition ownership passed: `5 passed`.
+- Tail/runner/package, Runtime Host, sequential Runtime, and Kernel import-boundary affected selection passed: `27 passed`; Ruff and `git diff --check` passed. No full regression or real runtime test ran.
 - File-defined Lane/Cohort Characterization initially failed because both packaged workflow files had empty action lists; after migration the focused packaged definitions plus live Lane/Cohort execution selection passed: `11 passed`.
 - File-definition/Registry/Compiler, Runtime Host, packaged Reporting, Lane/Cohort semantic behavior, generic Workflow projection, and Kernel import-boundary affected selection passed: `54 passed`; Ruff and `git diff --check` passed. The wheel rebuilt and contains both executable Workflow YAML files and the new internal Tool declarations. No full regression or real runtime test ran.
 - Reporting one-state recovery Characterization replaced the old shadow-directory assertion and initially failed because the parent branch snapshot stopped at Join as `running`; after implementation, a same-Run retry invoked only failed module `2.2`, reused the other four completed branches, completed the parent Run, and left exactly one Run directory: `1 passed`.

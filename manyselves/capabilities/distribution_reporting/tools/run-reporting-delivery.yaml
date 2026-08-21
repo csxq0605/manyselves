@@ -1,0 +1,9 @@
+id: run-reporting-delivery
+version: 1.0.0
+description: Execute or reuse current rendering and delivery
+implementation: capability:distribution-reporting:delivery
+input_contract: reporting_tail_state
+output_contract: reporting_tail_state
+side_effect: ordered_state
+parallel_safe: false
+model_visible: false

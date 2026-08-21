@@ -1,0 +1,9 @@
+id: run-reporting-cross
+version: 1.0.0
+description: Execute or reuse the current Cross review stage
+implementation: capability:distribution-reporting:cross
+input_contract: reporting_tail_state
+output_contract: reporting_tail_state
+side_effect: ordered_state
+parallel_safe: false
+model_visible: false

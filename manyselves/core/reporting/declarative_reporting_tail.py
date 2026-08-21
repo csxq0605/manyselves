@@ -7,21 +7,23 @@ from copy import deepcopy
 from inspect import isawaitable
 from typing import Any
 
-from manyselves.kernel.contracts import ContractAdapter, build_contract_adapter
+from manyselves.capabilities.distribution_reporting import (
+    load_distribution_reporting_capability,
+)
+from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
 from manyselves.kernel.definitions import (
-    ContractDefinition,
+    DefinitionKind,
     DefinitionRegistry,
-    ToolDefinition,
     WorkflowDefinition,
 )
-from manyselves.kernel.executors import (
-    ControlFlowWorkflowExecutor,
-    RuntimeContext,
-    build_builtin_executor_registry,
-)
+from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.ports import WorkflowStateStore
 from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState, WorkflowStatus
 from manyselves.runtime.semantic_trace import SemanticEventKind, SemanticTraceRecorder
+from manyselves.runtime.workflow_host import (
+    InMemoryWorkflowEventSink,
+    WorkflowRuntimeHost,
+)
 
 from .models import REPORT_MODULE_IDS
 
@@ -32,58 +34,16 @@ class DeclarativeReportingTailError(RuntimeError):
 
 def build_reporting_tail_definition(
 ) -> tuple[DefinitionRegistry, dict[str, ContractAdapter], WorkflowDefinition]:
-    """Build the Reporting-owned Cross through Delivery stage sequence."""
+    """Load the Reporting-owned Cross through Delivery workflow file."""
 
-    registry = DefinitionRegistry()
-    state_contract = ContractDefinition(
-        id="reporting_tail_state",
-        version="1.0.0",
-        description="Current typed Reporting state carried between tail stages",
-        adapter="json_schema",
-        schema={"type": "object"},
+    _capability, registry = load_distribution_reporting_capability()
+    workflow = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-reporting-tail",
     )
-    registry.register(state_contract)
-    contracts = {state_contract.id: build_contract_adapter(state_contract)}
-    stages = ("cross", "chief", "final", "delivery")
-    for stage in stages:
-        registry.register(
-            ToolDefinition(
-                id=f"run-reporting-{stage}",
-                version="1.0.0",
-                description=f"Bind the current Reporting {stage} stage",
-                implementation=f"capability:reporting-{stage}",
-                input_contract=state_contract.id,
-                output_contract=state_contract.id,
-                side_effect="ordered_state",
-                parallel_safe=False,
-            )
-        )
-    workflow = WorkflowDefinition(
-        id="distribution-reporting-tail",
-        version="1.0.0",
-        description="Cross, Chief, Final, Render and Delivery in current order",
-        output_contract=state_contract.id,
-        state={},
-        actions=[
-            *(
-                {
-                    "id": f"run-{stage}",
-                    "kind": "invoke_tool",
-                    "tool": f"run-reporting-{stage}",
-                    "input_variable": "reporting-state",
-                    "output_variable": "reporting-state",
-                }
-                for stage in stages
-            ),
-            {
-                "id": "finish-reporting-tail",
-                "kind": "end_workflow",
-                "output_variable": "reporting-state",
-                "output_name": "result",
-            },
-        ],
-    )
-    return registry, contracts, workflow
+    if not isinstance(workflow, WorkflowDefinition):
+        raise TypeError("distribution-reporting-tail is not a workflow")
+    return registry, build_contract_catalog(registry), workflow.model_copy(deep=True)
 
 
 async def execute_declarative_reporting_tail(
@@ -100,7 +60,7 @@ async def execute_declarative_reporting_tail(
     workflow.state = {"reporting-state": deepcopy(state)}
     executors = build_builtin_executor_registry()
     plan = WorkflowCompiler(executors).compile(workflow, definitions)
-    kernel_run_id = f"{state['run_id']}--reporting-tail"
+    kernel_run_id = str(state["run_id"])
     try:
         kernel_state = state_store.load(kernel_run_id)
         kernel_state.variables["reporting-state"] = deepcopy(state)
@@ -132,7 +92,11 @@ async def execute_declarative_reporting_tail(
             for stage, invoke in stage_tools.items()
         }
     try:
-        completed = await ControlFlowWorkflowExecutor(executors, state_store).execute(
+        completed = await WorkflowRuntimeHost(
+            executors,
+            state_store,
+            InMemoryWorkflowEventSink(),
+        ).execute(
             plan,
             kernel_state,
             RuntimeContext(
@@ -145,7 +109,7 @@ async def execute_declarative_reporting_tail(
             ),
         )
     except BaseException:
-        _replace_state(state, kernel_state.variables["reporting-state"])
+        _replace_state(state, adapters.current_state)
         raise
     _replace_state(state, completed.outputs["result"])
     if (
@@ -174,13 +138,16 @@ class _ReportingTailAdapters:
     def __init__(self, runner: Any, workflow_id: str) -> None:
         self._runner = runner
         self._workflow_id = workflow_id
+        self.current_state: dict[str, Any] = {}
 
     async def cross(self, state: dict[str, Any]) -> dict[str, Any]:
+        self.current_state = state
         if "cross_review_completion_ref" not in state:
             await self._runner._cross_review(state, self._workflow_id)
         return state
 
     async def chief(self, state: dict[str, Any]) -> dict[str, Any]:
+        self.current_state = state
         if (
             "final_review_completion_ref" not in state
             and "chief_candidate_ref" not in state
@@ -189,6 +156,7 @@ class _ReportingTailAdapters:
         return state
 
     async def final(self, state: dict[str, Any]) -> dict[str, Any]:
+        self.current_state = state
         if "final_review_completion_ref" in state:
             return state
         claims = [
@@ -207,6 +175,7 @@ class _ReportingTailAdapters:
         return state
 
     def delivery(self, state: dict[str, Any]) -> dict[str, Any]:
+        self.current_state = state
         if "delivery_completion_ref" not in state:
             self._runner._deliver(state)
         return state

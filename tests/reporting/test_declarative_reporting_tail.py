@@ -226,7 +226,7 @@ async def test_declarative_reporting_tail_resumes_failed_stage_from_saved_state(
 
     assert failing.calls == ["cross", "chief"]
     assert state["cross_review_completion_ref"].endswith("/cross.json")
-    saved = store.load(f"{run_id}--reporting-tail")
+    saved = store.load(run_id)
     assert saved.status is WorkflowStatus.FAILED
 
     resumed = _TailRunner()
@@ -239,3 +239,6 @@ async def test_declarative_reporting_tail_resumes_failed_stage_from_saved_state(
 
     assert resumed.calls == ["chief", "final", "delivery"]
     assert completed.status is WorkflowStatus.COMPLETED
+    assert [path.name for path in (tmp_path / "Work" / "runs").iterdir()] == [
+        run_id
+    ]

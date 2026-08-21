@@ -1,0 +1,9 @@
+id: run-reporting-final
+version: 1.0.0
+description: Execute or reuse the current final review stage
+implementation: capability:distribution-reporting:final
+input_contract: reporting_tail_state
+output_contract: reporting_tail_state
+side_effect: ordered_state
+parallel_safe: false
+model_visible: false
