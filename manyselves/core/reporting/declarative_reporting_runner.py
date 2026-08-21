@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
 from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
-from manyselves.kernel.contracts import build_contract_catalog
+from manyselves.kernel.contracts import ContractAdapter, build_contract_catalog
 from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
     AgentDefinition,
@@ -20,13 +22,23 @@ from manyselves.kernel.definitions import (
     WorkflowDefinition,
     specialize_workflow,
 )
-from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
+from manyselves.kernel.executors import (
+    ExecutorRegistry,
+    RuntimeContext,
+    build_builtin_executor_registry,
+)
 from manyselves.kernel.ports import (
     AgentInvocationOutcome,
     AgentInvoker,
     WorkflowStateStore,
 )
-from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState
+from manyselves.kernel.workflow import (
+    ResolvedPlan,
+    WorkflowCompiler,
+    WorkflowState,
+    WorkflowStatus,
+    resume_waiting_input,
+)
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.workflow_host import (
     FileWorkflowEventSink,
@@ -67,6 +79,7 @@ from .review_lifecycle import DeferredMainDecision
 from .taxonomy import REPORT_TAXONOMY
 from .workflow import (
     AgentWorkflowError,
+    ReportingNeedsDecisionError,
     ReportWorkflowRunner,
     _ModuleAuthoringPreparationContext,
     _ModuleLaneAttemptContext,
@@ -243,6 +256,105 @@ def build_reporting_module_stage_definition() -> tuple[DefinitionRegistry, Workf
     return registry, workflow.model_copy(deep=True)
 
 
+@dataclass(frozen=True)
+class _CompiledReportingRuntime:
+    definitions: DefinitionRegistry
+    contracts: dict[str, ContractAdapter]
+    executors: ExecutorRegistry
+    plan: ResolvedPlan
+    cohort_plan: ResolvedPlan
+    cross_cohort_plan: ResolvedPlan
+    subworkflows: dict[str, ResolvedPlan]
+
+
+def _compile_reporting_runtime(
+    reporting_state: Mapping[str, Any],
+    *,
+    full_report: bool,
+) -> _CompiledReportingRuntime:
+    """Compile the top-level plan and every file-defined nested workflow."""
+
+    definitions, workflow = build_reporting_module_stage_definition()
+    runtime_lanes = register_module_runtime_lane_specializations(definitions)
+    workflow.state = {
+        "reporting-state": deepcopy(dict(reporting_state)),
+        "full-report": full_report,
+    }
+    executors = build_builtin_executor_registry()
+    compiler = WorkflowCompiler(executors)
+    plan = compiler.compile(workflow, definitions)
+
+    tail = definitions.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-reporting-tail",
+    )
+    if not isinstance(tail, WorkflowDefinition):
+        raise TypeError("distribution-reporting-tail is not a workflow")
+    tail_plan = compiler.compile(tail, definitions)
+    cross_cohort_plan, cross_pipeline_plans = compile_cross_owner_workflows(
+        definitions,
+        executors,
+    )
+    cohort = definitions.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-module-cohort",
+    )
+    if not isinstance(cohort, WorkflowDefinition):
+        raise TypeError("distribution-module-cohort is not a workflow")
+    cohort = specialize_workflow(
+        cohort,
+        {"max_concurrency": len(REPORT_MODULE_IDS)},
+    )
+    cohort_plan = compiler.compile(cohort, definitions)
+    runtime_lane_plans = {
+        workflow_id: compiler.compile(runtime_lane, definitions)
+        for workflow_id, runtime_lane in runtime_lanes.items()
+    }
+    return _CompiledReportingRuntime(
+        definitions=definitions,
+        contracts=build_contract_catalog(definitions),
+        executors=executors,
+        plan=plan,
+        cohort_plan=cohort_plan,
+        cross_cohort_plan=cross_cohort_plan,
+        subworkflows={
+            cohort.id: cohort_plan,
+            **runtime_lane_plans,
+            tail.id: tail_plan,
+            "distribution-cross-owner-cohort": cross_cohort_plan,
+            **cross_pipeline_plans,
+        },
+    )
+
+
+def resume_declarative_reporting_input(
+    *,
+    workspace: Path,
+    run_id: str,
+    input_id: str,
+    values: object,
+) -> WorkflowState:
+    """Validate and apply one generic Interaction input to its persisted Run."""
+
+    state_store = FileWorkflowStateStore(workspace)
+    state = state_store.load(run_id)
+    reporting_state = state.variables.get("reporting-state", {})
+    compiled = _compile_reporting_runtime(
+        reporting_state if isinstance(reporting_state, Mapping) else {},
+        full_report=bool(state.variables.get("full-report", False)),
+    )
+    resumed = resume_waiting_input(
+        state_store.load_plan(run_id),
+        state,
+        input_id=input_id,
+        values=values,
+        contracts=compiled.contracts,
+        subworkflows=compiled.subworkflows,
+    )
+    state_store.save(resumed)
+    return resumed
+
+
 async def execute_declarative_module_stage(
     *,
     requested_modules: tuple[str, ...],
@@ -258,44 +370,13 @@ async def execute_declarative_module_stage(
 ) -> WorkflowState:
     """Run current modules and the file-defined tail in one parent state."""
 
-    definitions, workflow = build_reporting_module_stage_definition()
-    runtime_lanes = register_module_runtime_lane_specializations(definitions)
     full_report = set(requested_modules) == set(REPORT_MODULE_IDS)
-    workflow.state = {
-        "reporting-state": deepcopy(state),
-        "full-report": full_report,
-    }
-    executors = build_builtin_executor_registry()
-    plan = WorkflowCompiler(executors).compile(workflow, definitions)
-    tail = definitions.require(
-        DefinitionKind.WORKFLOW,
-        "distribution-reporting-tail",
-    )
-    if not isinstance(tail, WorkflowDefinition):
-        raise TypeError("distribution-reporting-tail is not a workflow")
-    tail_plan = WorkflowCompiler(executors).compile(tail, definitions)
-    cross_cohort_plan, cross_pipeline_plans = compile_cross_owner_workflows(
-        definitions,
-        executors,
-    )
-    cohort = definitions.require(
-        DefinitionKind.WORKFLOW,
-        "distribution-module-cohort",
-    )
-    if not isinstance(cohort, WorkflowDefinition):
-        raise TypeError("distribution-module-cohort is not a workflow")
-    cohort = specialize_workflow(
-        cohort,
-        {"max_concurrency": len(REPORT_MODULE_IDS)},
-    )
-    cohort_plan = WorkflowCompiler(executors).compile(cohort, definitions)
-    runtime_lane_plans = {
-        workflow_id: WorkflowCompiler(executors).compile(
-            runtime_lane,
-            definitions,
-        )
-        for workflow_id, runtime_lane in runtime_lanes.items()
-    }
+    compiled = _compile_reporting_runtime(state, full_report=full_report)
+    definitions = compiled.definitions
+    executors = compiled.executors
+    plan = compiled.plan
+    cohort_plan = compiled.cohort_plan
+    cross_cohort_plan = compiled.cross_cohort_plan
     if module_runtime is None:
         if execute_current is None:
             raise TypeError("module runtime is required")
@@ -415,6 +496,12 @@ async def execute_declarative_module_stage(
                     "accept-current-cross-owner-main-exception": (
                         cross_runtime.accept_main_exception
                     ),
+                    "cross-owner-main-exception-requests-user": (
+                        cross_runtime.main_exception_requests_user
+                    ),
+                    "apply-current-cross-owner-main-exception-user-input": (
+                        cross_runtime.apply_main_exception_user_input
+                    ),
                     "cross-owner-author-exception-returns-to-author": (
                         cross_runtime.author_exception_returns_to_author
                     ),
@@ -455,15 +542,9 @@ async def execute_declarative_module_stage(
                     module_runtime.agent_invokers,
                     cross_runtime.agent_invokers,
                 ),
-                contracts=build_contract_catalog(definitions),
+                contracts=compiled.contracts,
                 definitions=definitions,
-                subworkflows={
-                    cohort.id: cohort_plan,
-                    **runtime_lane_plans,
-                    tail.id: tail_plan,
-                    "distribution-cross-owner-cohort": cross_cohort_plan,
-                    **cross_pipeline_plans,
-                },
+                subworkflows=compiled.subworkflows,
             ),
         )
     except BaseException:
@@ -477,6 +558,22 @@ async def execute_declarative_module_stage(
         state.clear()
         state.update(current)
         raise
+    if completed.status is WorkflowStatus.WAITING:
+        current = (
+            tail_adapters.current_state
+            or cross_runtime.current_state
+            or module_runtime.current_state
+            or state
+        )
+        current = deepcopy(current)
+        state.clear()
+        state.update(current)
+        waiting = completed.waiting_input or {}
+        reason = str(
+            waiting.get("description")
+            or f"workflow is waiting for input: {waiting.get('input_id', 'unknown')}"
+        )
+        raise ReportingNeedsDecisionError(reason)
     result = deepcopy(completed.outputs["result"])
     state.clear()
     state.update(result)
@@ -1506,4 +1603,5 @@ __all__ = [
     "DeclarativeReportWorkflowRunner",
     "build_reporting_module_stage_definition",
     "execute_declarative_module_stage",
+    "resume_declarative_reporting_input",
 ]

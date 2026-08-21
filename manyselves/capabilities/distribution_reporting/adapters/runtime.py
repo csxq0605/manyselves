@@ -7,7 +7,9 @@ from uuid import UUID
 from manyselves.application.reporting_facade import ReportingNotFoundError
 from manyselves.core.reporting.models import ReportRequest, UserSupplement
 from manyselves.core.usage_ledger import UsageLedger
+from manyselves.kernel.workflow import WorkflowState, WorkflowStatus
 from manyselves.runtime.capability_binding import CapabilityRunNotFoundError
+from manyselves.runtime.state_store import FileWorkflowStateStore
 
 
 class DistributionReportingRuntimeBinding:
@@ -36,6 +38,15 @@ class DistributionReportingRuntimeBinding:
         input_id: str | None,
         values: dict[str, Any],
     ) -> dict[str, Any]:
+        runtime_state = self._runtime_state(run_id)
+        if input_id is not None and runtime_state is not None:
+            if runtime_state.status is WorkflowStatus.WAITING:
+                return self.reporting_adapter.resume_workflow_input(
+                    command_id,
+                    run_id,
+                    input_id,
+                    values,
+                )
         supplements = [
             UserSupplement.model_validate(item)
             for item in values.get("supplements", [])
@@ -61,18 +72,32 @@ class DistributionReportingRuntimeBinding:
     def get_run(self, run_id: str) -> dict[str, Any]:
         snapshot = self._snapshot(run_id)
         current = snapshot.get("run", {})
-        state = snapshot.get("state", {})
+        runtime_state = self._runtime_state(run_id)
+        state = (
+            runtime_state.model_dump(mode="json")
+            if runtime_state is not None
+            else snapshot.get("state", {})
+        )
+        waiting_input = (
+            [runtime_state.waiting_input]
+            if runtime_state is not None and runtime_state.waiting_input is not None
+            else snapshot.get("waitingInput", [])
+        )
         return {
             "run": {
                 "run_id": run_id,
                 "capability_id": self.capability_id,
-                "workflow_id": "distribution-reporting",
-                "status": current.get("status") or state.get("status") or "unknown",
+                "workflow_id": (
+                    runtime_state.workflow_id
+                    if runtime_state is not None
+                    else "distribution-reporting"
+                ),
+                "status": state.get("status") or current.get("status") or "unknown",
                 "active": bool(current.get("active", False)),
                 "task_id": current.get("task_id"),
             },
             "state": state,
-            "waiting_input": snapshot.get("waitingInput", []),
+            "waiting_input": waiting_input,
         }
 
     def get_outputs(self, run_id: str) -> dict[str, Any]:
@@ -103,6 +128,12 @@ class DistributionReportingRuntimeBinding:
             return self.reporting_adapter.snapshot(run_id)
         except ReportingNotFoundError as exc:
             raise CapabilityRunNotFoundError(run_id) from exc
+
+    def _runtime_state(self, run_id: str) -> WorkflowState | None:
+        try:
+            return FileWorkflowStateStore(self.workspace).load(run_id)
+        except FileNotFoundError:
+            return None
 
 
 def build_runtime_binding(

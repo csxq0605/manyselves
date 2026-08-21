@@ -14,12 +14,12 @@
 
 ## Current position
 
-- Current work package: `WP-08 production Cross owner decomposition`
-- Last completed vertical slice: explicit Cross Author `disputed`/`needs_input` responses and reviewer `escalate` verdicts now invoke the existing `main-agent` through a declared Task and the original `main-cross-exception` Conversation, then either continue to the original Auditor, return to the same Author Conversation, enter another typed owner round, or close without `run_owner`
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `8a45ddb` (`WP-08: recover Cross rechecks into typed rounds`); the declared Main exception slice is this document's commit
+- Current work package: `WP-07/WP-08 remaining Reporting compatibility boundaries`
+- Last completed vertical slice: explicit Cross Main `request_user` now enters a file-declared Interaction, projects its contract/schema and nested outer-to-inner path through the generic Run API, validates and resumes the same persisted Run without replaying completed siblings or prior Agents, and removes the obsolete whole-owner continuation Tool
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `431ee89` (`WP-08: declare Cross Main exception routes`); the generic Interaction/resume slice is this document's commit
 - Current migration stage: `file-defined Reporting workflow migration`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
-- Next automatic action: finish generic user-interaction projection for explicit Main `request_user`, then decompose the remaining module preflight/exception compatibility branches before entering Chief/Final/Render/Delivery decomposition
+- Next automatic action: decompose the remaining module preflight/exception compatibility branches, then enter Chief/Final/Render/Delivery decomposition
 
 ## Reopened architecture completion audit
 
@@ -48,9 +48,10 @@ architecture:
   finding/completion acceptance, every repeated original-owner recheck, typed
   round advancement, finding-path owner promotion, exceptional Author/reviewer
   preparation, `main-agent` invocation, decision acceptance, and return/continue
-  routes are file-owned; no owner branch retains a reachable whole-owner
-  compatibility Tool, while explicit user-wait projection and combined
-  Render/Delivery remain to be decomposed;
+  routes and explicit user waits are file-owned; nested WAITING state, contract
+  projection, generic input submission, and same-Run resume are Runtime-owned;
+  no owner branch or Capability definition retains the obsolete whole-owner
+  continuation Tool, while combined Render/Delivery remains to be decomposed;
 - application and React projections require a final audit for remaining
   Reporting-specific dispatch or presentation decisions.
 
@@ -73,6 +74,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
+- `WP-02/WP-08/WP-11: resume nested Cross interactions` — Subworkflow and Parallel actions project a generic outer-to-inner `waiting_input.path`; pure input application recursively resumes the exact leaf, resets only its ancestor actions, preserves completed Parallel siblings, and resumes without replay. Cross Main `request_user` uses a packaged Interaction and Pydantic contract, then accepts the supplied decision through the existing Main lifecycle. The generic Run adapter exposes and accepts the raw contract values, while Kernel authority is persisted as `runtime-state.json` separately from the existing Reporting UI projection; the unused whole-owner continuation Tool and adapter are removed (this commit)
 - `WP-08: declare Cross Main exception routes` — Author `disputed`/`needs_input` and reviewer `escalate` paths share the exact existing Main exception input/envelope/acceptance implementation with Legacy, invoke the packaged `main-agent` through one declared Task and the original `main-cross-exception` Conversation, and route `accept_dispute`/`return_to_author` through the original Auditor or repeated typed owner rounds; the file graph contains no whole-owner compatibility action, while the existing Main serialization lock is reused rather than replaced or expanded (this commit)
 - `WP-08: recover Cross rechecks into typed rounds` — a recovered recheck acceptance now enters the same declared verdict-state advancement as a fresh Agent result; a fresh-then-resume characterization proves zero new Conversations, zero Agent replay, revision 1 completion, and success even when whole-owner `run_owner` is replaced by a hard failure (this commit)
 - `WP-08: declare Cross no-finding completion` — the existing no-finding owner no-op, prior module-audit binding, and outer r1 promotion are shared by Legacy and a dedicated file-declared completion action; a production characterization proves the ordinary path never calls the compatibility `run_owner`, while fresh and recovered initial results retain the original reviewer Conversation and completion semantics (this commit)
@@ -131,6 +133,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Nested-Interaction Characterizations cover Subworkflow WAITING/path/parent output and Parallel nested WAITING/path/completed-sibling preservation/no replay/Join. Cross `request_user` then resumes with `accept_dispute` and invokes only the not-yet-completed original Auditor/Cross turns; the generic Run projection exposes Kernel status/schema and delegates raw values to `resume_workflow_input`, while the legacy decision route remains unchanged. Runtime/Cross/Runner/Capability/API/neutral-fixture affected selection passed: `71 passed`; protected Max Token, Tool Slice, productive slices, No-progress, Schema correction, persisted Provider result, original session, finding-progress resume, and Kernel boundary passed: `9 passed`. Focused Ruff, compileall, `git diff --check`, and wheel build passed. No full regression, Provider, browser, or server test ran.
 - Cross-Main-exception Characterizations first failed because Author exceptions and reviewer escalations still fell into the whole-owner continuation. The declared paths now prove Author dispute → Main accept → original Auditor/Cross, Author dispute → Main return → the same Author Conversation at r2, reviewer escalation → Main accept → typed completion, and reviewer escalation → Main return → r2 Author/Auditor/Cross; all four replace `CrossReviewCoordinator.run_owner` with a hard failure. Cross/Definition/Tail/Runner affected selection passed: `45 passed`; protected Max Token, Tool Slice, productive slices, No-progress, Schema correction, persisted Provider result, original session, finding-progress resume, and Kernel boundary passed: `9 passed`. Focused Ruff, compileall, `git diff --check`, and wheel build passed; no added diff line contains a hash, SHA-256, or CAS token. No full regression, Provider, browser, or server test ran.
 - Recovered-Cross-recheck Characterizations first failed because the persisted-verdict branch still targeted the compatibility closure. The branch now rejoins the existing `advance-current-cross-owner-round` action; a fresh run followed by artifact-based resume completes with no new Agent calls or Conversations while a patched `run_owner` would fail. Cross/Definition/Tail/Runner affected collections passed: `48 passed`; protected continuation/correction/reuse and Kernel boundary: `9 passed`. Focused Ruff, `git diff --check`, and wheel build passed; the packaged workflow has zero hash/CAS tokens and routes recovered verdicts into typed advancement. No full regression, Provider, browser, or server test ran.
 - Cross-no-finding Characterization first failed because `choose-cross-owner-revision.otherwise` still targeted the compatibility closure. The dedicated file action now reuses the exact existing no-op/recovery/promotion implementation; a production characterization replaces `CrossReviewCoordinator.run_owner` with a hard failure and still completes revision 0 with outer round 1 and only the original Cross reviewer Conversation. Cross/Definition/Tail/Runner affected collections passed: `46 passed`; protected continuation/correction/reuse and Kernel boundary: `9 passed`. Focused Ruff, compileall, `git diff --check`, hash/CAS token comparison (`56` unchanged), and wheel build passed; the wheel contains the no-finding completion Tool and updated owner workflow. No full regression, Provider, browser, or server test ran.

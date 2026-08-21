@@ -6,8 +6,6 @@ import asyncio
 import hashlib
 import json
 import re
-import time
-from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Literal, cast
@@ -54,7 +52,6 @@ from .input_contracts import (
     CrossDecisionPackView,
     CrossOwnerInput,
     CrossOwnerRelatedModuleView,
-    CrossReviewInput,
     FinalAuditSnapshot,
     FinalReviewInput,
     ModuleReviewInput,
@@ -79,18 +76,12 @@ from .parallel_runtime import (
     ArtifactRef,
     CrossOwnerBarrier,
     CrossOwnerCompletion,
-    LaneExceptionCandidate,
     RecoveryStateStore,
     TaskAttemptStore,
     WorkflowReducer,
 )
 from .review_preflight import evaluate_module_review_preflight
 from .revision_diff import build_revision_diff
-from .scheduling import (
-    AdaptiveTaskScheduler,
-    SchedulingCandidate,
-    TaskTimingHistory,
-)
 from .source_ledger import SourceLedger
 from .taxonomy import REPORT_TAXONOMY
 
@@ -102,7 +93,7 @@ class ReviewLifecycleError(RuntimeError):
     """A deterministic review-protocol failure that requires code or model correction."""
 
 
-class DeferredMainDecision(ReviewLifecycleError):
+class DeferredMainDecision(ReviewLifecycleError):  # noqa: N818 - compatibility name
     """A private lane reached Main work that must wait for cohort drain."""
 
 
@@ -1525,6 +1516,7 @@ def accept_main_exception_decision(
     state: dict,
     preparation: "MainExceptionDecisionPreparation",
     result: WorkflowDecisionSubmission | None,
+    raise_for_terminal_decisions: bool = True,
 ) -> "MainExceptionDecisionAcceptance":
     """Accept the same Main decision used by Legacy and declarative runtimes."""
 
@@ -1539,11 +1531,11 @@ def accept_main_exception_decision(
     exception_refs = state.setdefault("review_exception_refs", [])
     if decision_ref not in exception_refs:
         exception_refs.append(decision_ref)
-    if accepted.decision == "request_user":
+    if raise_for_terminal_decisions and accepted.decision == "request_user":
         from .workflow import ReportingNeedsDecisionError
 
         raise ReportingNeedsDecisionError(accepted.rationale)
-    if accepted.decision == "stop_incomplete":
+    if raise_for_terminal_decisions and accepted.decision == "stop_incomplete":
         from .workflow import ReportingNeedsDecisionError
 
         raise ReportingNeedsDecisionError(accepted.rationale, keep_agents_alive=False)
@@ -5921,6 +5913,8 @@ class CrossReviewCoordinator:
         self,
         preparation: MainExceptionDecisionPreparation,
         result: WorkflowDecisionSubmission | None = None,
+        *,
+        raise_for_terminal_decisions: bool = True,
     ) -> MainExceptionDecisionAcceptance:
         """Accept one prepared Main exception decision."""
 
@@ -5929,6 +5923,7 @@ class CrossReviewCoordinator:
             state=self.state,
             preparation=preparation,
             result=result,
+            raise_for_terminal_decisions=raise_for_terminal_decisions,
         )
 
     async def prepare_owner_local_review(

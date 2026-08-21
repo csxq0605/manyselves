@@ -16,11 +16,18 @@ from manyselves.core.reporting.agentic_models import (
     RevisionResponse,
     TaskEnvelope,
 )
+from manyselves.core.reporting.declarative_cross_owner_cohort import (
+    compile_cross_owner_workflows,
+)
 from manyselves.core.reporting.declarative_reporting_runner import (
     DeclarativeReportWorkflowRunner,
     _CurrentModuleStages,
     _reporting_agent_invokers,
     execute_declarative_module_stage,
+    resume_declarative_reporting_input,
+)
+from manyselves.core.reporting.declarative_reporting_tail import (
+    build_reporting_tail_definition,
 )
 from manyselves.core.reporting.input_contracts import (
     ModuleRevisionInput,
@@ -39,7 +46,12 @@ from manyselves.core.reporting.service import ReportingRunResult, ReportingServi
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
 from manyselves.core.tools.task_board import TaskBoard
-from manyselves.kernel.workflow import WorkflowStatus
+from manyselves.kernel.executors import build_builtin_executor_registry
+from manyselves.kernel.workflow import (
+    ActionExecutionStatus,
+    WorkflowState,
+    WorkflowStatus,
+)
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.workflow_host import FileWorkflowEventSink
 
@@ -57,6 +69,58 @@ def test_one_parent_runtime_routes_cross_local_review_by_declared_task() -> None
     assert routed._default is module_auditor
     assert routed._task_routes == {
         "cross-owner-runtime-local-review": cross_local_auditor,
+    }
+
+
+def test_generic_reporting_input_resumes_persisted_plan_without_overwriting_projection(
+    tmp_path: Path,
+) -> None:
+    definitions, _contracts, _tail = build_reporting_tail_definition()
+    _cohort, pipelines = compile_cross_owner_workflows(
+        definitions,
+        build_builtin_executor_registry(),
+    )
+    plan = pipelines["distribution-cross-owner-2.1-pipeline"]
+    run_id = "report-declarative-generic-input"
+    input_id = "request-cross-owner-author-user-input"
+    waiting = WorkflowState.for_plan(run_id, plan)
+    waiting.status = WorkflowStatus.WAITING
+    waiting.actions[input_id].status = ActionExecutionStatus.WAITING
+    waiting.waiting_input = {
+        "input_id": input_id,
+        "interaction_id": "cross-owner-main-exception-decision",
+        "contract_id": "declarative_main_exception_user_input",
+    }
+    store = FileWorkflowStateStore(tmp_path)
+    store.save_plan(run_id, plan)
+    store.save(waiting)
+    projection_path = tmp_path / "Work" / "runs" / run_id / "workflow-state.json"
+    projection_path.write_text(
+        json.dumps({"run_id": run_id, "status": "waiting_user"}),
+        encoding="utf-8",
+    )
+
+    resumed = resume_declarative_reporting_input(
+        workspace=tmp_path,
+        run_id=run_id,
+        input_id=input_id,
+        values={
+            "decision": "accept_dispute",
+            "rationale": "User accepted the explicit Cross dispute.",
+        },
+    )
+
+    assert resumed.status is WorkflowStatus.RUNNING
+    assert resumed.next_action_id == input_id
+    assert resumed.variables["cross-owner-main-exception-user-input"].decision == (
+        "accept_dispute"
+    )
+    assert FileWorkflowStateStore(tmp_path).load(run_id).model_dump(mode="json") == (
+        resumed.model_dump(mode="json")
+    )
+    assert json.loads(projection_path.read_text(encoding="utf-8")) == {
+        "run_id": run_id,
+        "status": "waiting_user",
     }
 
 

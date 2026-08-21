@@ -56,7 +56,7 @@ class FileWorkflowStateStore:
         )
 
     def _state_path(self, run_id: str) -> Path:
-        return self._workspace / "Work" / "runs" / run_id / "workflow-state.json"
+        return self._workspace / "Work" / "runs" / run_id / "runtime-state.json"
 
     def _plan_path(self, run_id: str) -> Path:
         return self._workspace / "Work" / "runs" / run_id / "resolved-plan.json"

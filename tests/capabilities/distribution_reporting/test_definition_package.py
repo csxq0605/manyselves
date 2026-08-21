@@ -60,8 +60,14 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
     assert registry.all(DefinitionKind.TASK)
     assert registry.all(DefinitionKind.CONTRACT)
     assert registry.all(DefinitionKind.TOOL)
+    assert "continue-current-cross-owner-pipeline" not in {
+        definition.id for definition in registry.all(DefinitionKind.TOOL)
+    }
     assert registry.all(DefinitionKind.RECOVERY)
     assert registry.all(DefinitionKind.GATE) == ()
+    assert {
+        definition.id for definition in registry.all(DefinitionKind.INTERACTION)
+    } == {"cross-owner-main-exception-decision"}
 
 
 def test_capability_agents_project_to_the_current_reporting_contract() -> None:
@@ -332,6 +338,8 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
             "prepare-current-cross-owner-author-exception",
             "cross-owner-main-exception-requires-agent",
             "accept-current-cross-owner-main-exception",
+            "cross-owner-main-exception-requests-user",
+            "apply-current-cross-owner-main-exception-user-input",
             "cross-owner-author-exception-returns-to-author",
             "prepare-current-cross-owner-local-review",
             "cross-owner-local-review-requires-agent",

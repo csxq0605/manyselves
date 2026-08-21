@@ -188,15 +188,19 @@ class WorkflowRuntimeHost:
                     existing_states[branch_id]
                 )
             async with semaphore:
-                branch_state = WorkflowState.for_plan(state.run_id, plan)
-                branch_state.variables = deepcopy(state.variables)
-                branch_state.conversations = deepcopy(state.conversations)
-                branch_state.next_action_index = next(
-                    index
-                    for index, candidate in enumerate(plan.actions)
-                    if candidate.id == start_action_id
-                )
-                branch_state.next_action_id = start_action_id
+                saved_branch = existing_states.get(branch_id)
+                if saved_branch is None:
+                    branch_state = WorkflowState.for_plan(state.run_id, plan)
+                    branch_state.variables = deepcopy(state.variables)
+                    branch_state.conversations = deepcopy(state.conversations)
+                    branch_state.next_action_index = next(
+                        index
+                        for index, candidate in enumerate(plan.actions)
+                        if candidate.id == start_action_id
+                    )
+                    branch_state.next_action_id = start_action_id
+                else:
+                    branch_state = WorkflowState.model_validate(saved_branch)
                 completed = await self._execute_nested(
                     plan,
                     branch_state,
@@ -211,6 +215,43 @@ class WorkflowRuntimeHost:
                 for branch_id, start_action_id in action.branches.items()
             )
         )
+        branch_states = {
+            branch_id: branch_state.model_dump(mode="json")
+            for branch_id, branch_state in completed_branches
+        }
+        completed_results = {
+            branch_id: branch_state.variables
+            for branch_id, branch_state in completed_branches
+            if branch_state.status is WorkflowStatus.COMPLETED
+        }
+        waiting_branches = sorted(
+            (
+                (branch_id, branch_state)
+                for branch_id, branch_state in completed_branches
+                if branch_state.status is WorkflowStatus.WAITING
+            ),
+            key=lambda item: item[0],
+        )
+        if waiting_branches:
+            branch_id, branch_state = waiting_branches[0]
+            return ActionResult(
+                output=sorted(action.branches),
+                waiting_input=_prepend_waiting_path(
+                    branch_state.waiting_input,
+                    {
+                        "kind": "parallel",
+                        "action_id": action.id,
+                        "branch_id": branch_id,
+                    },
+                ),
+                workflow_status=WorkflowStatus.WAITING,
+                parallel_result_updates={
+                    action.id: {**existing_results, **completed_results}
+                },
+                parallel_state_updates={
+                    action.id: {**existing_states, **branch_states}
+                },
+            )
         return ActionResult(
             output=sorted(action.branches),
             next_action_id=action.join,
@@ -268,6 +309,21 @@ class WorkflowRuntimeHost:
             context,
             emit_workflow_events=True,
         )
+        if completed.status is WorkflowStatus.WAITING:
+            return ActionResult(
+                waiting_input=_prepend_waiting_path(
+                    completed.waiting_input,
+                    {
+                        "kind": "subworkflow",
+                        "action_id": action.id,
+                        "workflow_id": action.workflow,
+                    },
+                ),
+                workflow_status=WorkflowStatus.WAITING,
+                subworkflow_state_updates={
+                    action.id: completed.model_dump(mode="json")
+                },
+            )
         try:
             child_output = completed.outputs[action.child_output_name]
         except KeyError as exc:
@@ -373,3 +429,14 @@ class _NestedWorkflowExecutionError(RuntimeError):
     def __init__(self, message: str, state: WorkflowState) -> None:
         super().__init__(message)
         self.state = state
+
+
+def _prepend_waiting_path(
+    waiting_input: dict | None,
+    segment: dict[str, str],
+) -> dict:
+    """Project one nested waiting input through its parent action."""
+
+    waiting = deepcopy(waiting_input or {})
+    waiting["path"] = [segment, *waiting.get("path", [])]
+    return waiting

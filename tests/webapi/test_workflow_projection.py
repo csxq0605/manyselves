@@ -5,6 +5,8 @@ import pytest
 
 from manyselves.application.workflow_projection import WorkflowProjectionFacade
 from manyselves.core.usage_ledger import UsageLedger
+from manyselves.kernel.workflow import ResolvedPlan, WorkflowState, WorkflowStatus
+from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.webapi.main import create_app
 from manyselves.webapi.settings import WebSettings
 
@@ -45,6 +47,25 @@ class _ReportingAdapter:
         self.calls.append(("resume", {"run_id": run_id, **values}))
         return {"run_id": run_id, "task_id": "task-resume"}
 
+    def resume_workflow_input(
+        self,
+        command_id: UUID,
+        run_id: str,
+        input_id: str,
+        values: object,
+    ) -> dict:
+        self.calls.append(
+            (
+                "workflow_input",
+                {
+                    "run_id": run_id,
+                    "input_id": input_id,
+                    "values": values,
+                },
+            )
+        )
+        return {"run_id": run_id, "task_id": "task-workflow-input"}
+
     def resume_decision(
         self,
         command_id: UUID,
@@ -80,8 +101,11 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
             "version": "1.0.0",
             "description": "Declarative distribution reporting capability",
             "workflow_ids": [
+                "distribution-cross-owner-cohort",
+                "distribution-cross-owner-pipeline",
                 "distribution-module-cohort",
                 "distribution-module-review-lane",
+                "distribution-module-runtime-lane",
                 "distribution-reporting",
                 "distribution-reporting-tail",
             ],
@@ -93,7 +117,7 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
         "version": "1.0.0",
         "description": "Declarative top-level Reporting stage orchestration",
         "input_contract": "distribution_reporting_input",
-        "output_contract": "distribution_reporting_output",
+        "output_contract": "reporting_tail_state",
         "runnable": True,
     }
     assert schema["workflow_id"] == "distribution-reporting"
@@ -141,6 +165,108 @@ def test_run_outputs_and_cost_reuse_current_reporting_state_without_new_hashes(
     assert "sha256" not in outputs["outputs"][0]
     assert cost["run_id"] == "report-1"
     assert cost["usage"]["totals"]["total_tokens"] == 15
+
+
+def _save_waiting_kernel_state(
+    workspace: Path,
+    run_id: str,
+    waiting_input: dict[str, object],
+) -> WorkflowState:
+    plan = ResolvedPlan(
+        workflow_id="distribution-reporting",
+        workflow_version="1.0.0",
+        actions=[],
+    )
+    state = WorkflowState.for_plan(run_id, plan)
+    state.status = WorkflowStatus.WAITING
+    state.waiting_input = waiting_input
+    FileWorkflowStateStore(workspace).save(state)
+    return state
+
+
+def test_waiting_declarative_kernel_state_is_projected_as_run_input(
+    tmp_path: Path,
+) -> None:
+    waiting_input = {
+        "input_id": "ask-clarification",
+        "interaction_id": "clarification",
+        "contract_id": "clarification-input",
+        "title": "Clarification",
+        "description": "Collect one clarification",
+        "schema": {
+            "type": "object",
+            "properties": {"answer": {"type": "string"}},
+            "required": ["answer"],
+        },
+    }
+    state = _save_waiting_kernel_state(
+        tmp_path,
+        "report-declarative-waiting",
+        waiting_input,
+    )
+    facade = WorkflowProjectionFacade(tmp_path, _ReportingAdapter())
+
+    projection = facade.get_run("report-declarative-waiting")
+
+    assert projection["run"]["status"] == "waiting"
+    assert projection["state"] == state.model_dump(mode="json")
+    assert projection["waiting_input"] == [waiting_input]
+
+
+def test_waiting_declarative_input_uses_workflow_resume_contract_for_generic_values(
+    tmp_path: Path,
+) -> None:
+    run_id = "report-declarative-input"
+    waiting_input = {
+        "input_id": "ask-clarification",
+        "interaction_id": "clarification",
+        "contract_id": "clarification-input",
+        "title": "Clarification",
+        "description": "Collect one clarification",
+        "schema": {"type": "object"},
+    }
+    _save_waiting_kernel_state(tmp_path, run_id, waiting_input)
+    adapter = _ReportingAdapter()
+    facade = WorkflowProjectionFacade(tmp_path, adapter)
+    values: dict[str, object] = {
+        "answer": "Ada",
+        "arbitrary": [1, True, {"nested": "value"}],
+    }
+
+    accepted = facade.provide_input(
+        UUID("30000000-0000-4000-8000-000000000002"),
+        run_id,
+        input_id="ask-clarification",
+        values=values,
+    )
+
+    assert accepted["run_id"] == run_id
+    assert [name for name, _ in adapter.calls] == ["workflow_input"]
+    assert adapter.calls[0] == (
+        "workflow_input",
+        {
+            "run_id": run_id,
+            "input_id": "ask-clarification",
+            "values": values,
+        },
+    )
+
+
+def test_existing_decision_input_without_kernel_waiting_state_uses_resume_decision(
+    tmp_path: Path,
+) -> None:
+    adapter = _ReportingAdapter()
+    facade = WorkflowProjectionFacade(tmp_path, adapter)
+
+    accepted = facade.provide_input(
+        UUID("30000000-0000-4000-8000-000000000003"),
+        "report-1",
+        input_id="decision-1",
+        values={"action": "draft", "supplements": []},
+    )
+
+    assert accepted["run_id"] == "report-1"
+    assert [name for name, _ in adapter.calls] == ["decision"]
 
 
 @pytest.mark.asyncio

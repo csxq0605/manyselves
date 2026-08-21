@@ -101,6 +101,15 @@ class DeclarativeMainExceptionAgentResult(BaseModel):
     error: str | None = None
 
 
+class DeclarativeMainExceptionUserInput(BaseModel):
+    """Capability-owned decision supplied through the generic Interaction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["accept_dispute", "return_to_author", "stop_incomplete"]
+    rationale: str
+
+
 class DeclarativeCrossOwnerRuntimeContext(BaseModel):
     """Capability-owned state threaded through one Cross owner workflow."""
 
@@ -657,7 +666,19 @@ class DeclarativeCrossOwnerRuntime:
                 acceptance = cast(
                     CrossReviewCoordinator,
                     self._coordinator,
-                ).accept_main_exception(preparation)
+                ).accept_main_exception(
+                    preparation,
+                    raise_for_terminal_decisions=False,
+                )
+                if acceptance.result.decision == "stop_incomplete":
+                    return context.model_copy(
+                        update={
+                            "status": "failed",
+                            "main_preparation": preparation,
+                            "main_acceptance": acceptance,
+                            "error": acceptance.result.rationale,
+                        }
+                    )
                 return context.model_copy(
                     update={
                         "status": "author_exception_resumed",
@@ -701,9 +722,76 @@ class DeclarativeCrossOwnerRuntime:
             acceptance = cast(
                 CrossReviewCoordinator,
                 self._coordinator,
-            ).accept_main_exception(preparation, result.submission)
+            ).accept_main_exception(
+                preparation,
+                result.submission,
+                raise_for_terminal_decisions=False,
+            )
         except BaseException as exc:
             return context.model_copy(update={"status": "failed", "error": str(exc)})
+        if acceptance.result.decision == "stop_incomplete":
+            return context.model_copy(
+                update={
+                    "status": "failed",
+                    "main_acceptance": acceptance,
+                    "error": acceptance.result.rationale,
+                }
+            )
+        return context.model_copy(
+            update={
+                "status": (
+                    "author_exception_accepted"
+                    if preparation.trigger == "author_response"
+                    else "reviewer_exception_accepted"
+                ),
+                "main_acceptance": acceptance,
+            }
+        )
+
+    @staticmethod
+    def main_exception_requests_user(
+        context: DeclarativeCrossOwnerRuntimeContext,
+    ) -> bool:
+        """Route Main's explicit user request to a generic Interaction."""
+
+        return bool(
+            context.status != "failed"
+            and context.main_acceptance is not None
+            and context.main_acceptance.result.decision == "request_user"
+        )
+
+    def apply_main_exception_user_input(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Apply validated Interaction input to the prepared exception."""
+
+        context = DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
+        supplied = DeclarativeMainExceptionUserInput.model_validate(values["input"])
+        preparation = cast(MainExceptionDecisionPreparation, context.main_preparation)
+        try:
+            acceptance = cast(
+                CrossReviewCoordinator,
+                self._coordinator,
+            ).accept_main_exception(
+                preparation,
+                WorkflowDecisionSubmission(
+                    decision=supplied.decision,
+                    rationale=supplied.rationale,
+                    finding_ids=list(preparation.exception_ids),
+                ),
+                raise_for_terminal_decisions=False,
+            )
+        except BaseException as exc:
+            return context.model_copy(update={"status": "failed", "error": str(exc)})
+        if acceptance.result.decision == "stop_incomplete":
+            return context.model_copy(
+                update={
+                    "status": "failed",
+                    "main_acceptance": acceptance,
+                    "error": acceptance.result.rationale,
+                }
+            )
         return context.model_copy(
             update={
                 "status": (
@@ -958,7 +1046,19 @@ class DeclarativeCrossOwnerRuntime:
                 acceptance = cast(
                     CrossReviewCoordinator,
                     self._coordinator,
-                ).accept_main_exception(preparation)
+                ).accept_main_exception(
+                    preparation,
+                    raise_for_terminal_decisions=False,
+                )
+                if acceptance.result.decision == "stop_incomplete":
+                    return context.model_copy(
+                        update={
+                            "status": "failed",
+                            "main_preparation": preparation,
+                            "main_acceptance": acceptance,
+                            "error": acceptance.result.rationale,
+                        }
+                    )
                 return context.model_copy(
                     update={
                         "status": "reviewer_exception_resumed",
@@ -1088,29 +1188,6 @@ class DeclarativeCrossOwnerRuntime:
             owner_module_id=context.owner_module_id,
             status="completed",
             pipeline=pipeline.model_dump(mode="json"),
-        )
-
-    async def continue_owner(
-        self,
-        context: DeclarativeCrossOwnerRuntimeContext,
-    ) -> DeclarativeCrossOwnerPipelineOutcome:
-        """Continue the current owner pipeline after its declared initial boundary."""
-
-        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
-        if context.status == "failed":
-            return DeclarativeCrossOwnerPipelineOutcome(
-                owner_module_id=context.owner_module_id,
-                status="failed",
-                error=context.error,
-            )
-        return await self.execute_owner(
-            {
-                "owner_module_id": context.owner_module_id,
-                "initial_acceptance": context.acceptance,
-                "revision_acceptance": context.revision_acceptance,
-                "local_review_acceptance": context.local_review_acceptance,
-                "recheck_acceptance": context.recheck_acceptance,
-            }
         )
 
     async def execute_owner(

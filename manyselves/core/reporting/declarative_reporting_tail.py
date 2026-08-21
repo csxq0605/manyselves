@@ -165,6 +165,12 @@ async def execute_declarative_reporting_tail(
                     "accept-current-cross-owner-main-exception": (
                         cross_runtime.accept_main_exception
                     ),
+                    "cross-owner-main-exception-requests-user": (
+                        cross_runtime.main_exception_requests_user
+                    ),
+                    "apply-current-cross-owner-main-exception-user-input": (
+                        cross_runtime.apply_main_exception_user_input
+                    ),
                     "cross-owner-author-exception-returns-to-author": (
                         cross_runtime.author_exception_returns_to_author
                     ),

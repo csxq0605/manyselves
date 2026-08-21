@@ -7,17 +7,20 @@ from manyselves.kernel.contracts import build_contract_adapter
 from manyselves.kernel.definitions import (
     ContractDefinition,
     DefinitionRegistry,
+    InteractionDefinition,
     OutputDefinition,
     ToolDefinition,
     WorkflowDefinition,
 )
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.workflow import (
+    ActionExecutionStatus,
     StartWorkflow,
     StatelessWorkflowKernel,
     WorkflowCompiler,
     WorkflowState,
     WorkflowStatus,
+    resume_waiting_input,
     retry_parallel_branches,
 )
 from manyselves.runtime.state_store import FileWorkflowStateStore
@@ -570,3 +573,297 @@ async def test_runtime_host_resumes_only_the_failed_subworkflow_action(
 
     assert completed.outputs == {"result": 4}
     assert calls == {"first": 1, "flaky": 2}
+
+
+def _register_text_interaction(
+    registry: DefinitionRegistry,
+    *,
+    contract_id: str,
+    interaction_id: str,
+) -> dict[str, object]:
+    registry.register(
+        ContractDefinition(
+            id=contract_id,
+            version="1.0.0",
+            description="One text response",
+            adapter="json_schema",
+            schema={"type": "string"},
+        )
+    )
+    registry.register(
+        InteractionDefinition(
+            id=interaction_id,
+            version="1.0.0",
+            description="Collect one text response",
+            input_contract=contract_id,
+            title="Text response",
+        )
+    )
+    return {contract_id: build_contract_adapter(registry.require("contract", contract_id))}
+
+
+@pytest.mark.asyncio
+async def test_runtime_host_waits_and_resumes_input_inside_subworkflow(
+    tmp_path: Path,
+) -> None:
+    registry, executors, _plan, contracts = _workflow()
+    contracts.update(
+        _register_text_interaction(
+            registry,
+            contract_id="child-answer",
+            interaction_id="child-interaction",
+        )
+    )
+    child = WorkflowDefinition(
+        id="waiting-child",
+        version="1.0.0",
+        description="Child that asks for one response",
+        state={"input": "seed"},
+        actions=[
+            {
+                "id": "ask-child",
+                "kind": "request_input",
+                "interaction": "child-interaction",
+                "output_variable": "answer",
+            },
+            {
+                "id": "finish-child",
+                "kind": "end_workflow",
+                "output_variable": "answer",
+            },
+        ],
+    )
+    parent = WorkflowDefinition(
+        id="waiting-parent",
+        version="1.0.0",
+        description="Parent containing a waiting child",
+        state={"seed": 2},
+        actions=[
+            {
+                "id": "before-child",
+                "kind": "invoke_tool",
+                "tool": "double",
+                "input_variable": "seed",
+                "output_variable": "observed",
+            },
+            {
+                "id": "call-child",
+                "kind": "subworkflow",
+                "workflow": child.id,
+                "input_variable": "observed",
+                "child_input_variable": "input",
+                "child_output_name": "result",
+                "output_variable": "child-result",
+            },
+            {
+                "id": "finish-parent",
+                "kind": "end_workflow",
+                "output_variable": "child-result",
+            },
+        ],
+    )
+    registry.register(child)
+    registry.register(parent)
+    child_plan = WorkflowCompiler(executors).compile(child, registry)
+    parent_plan = WorkflowCompiler(executors).compile(parent, registry)
+    calls = 0
+
+    def double(value: int) -> int:
+        nonlocal calls
+        calls += 1
+        return value * 2
+
+    events = InMemoryWorkflowEventSink()
+    store = FileWorkflowStateStore(tmp_path)
+    host = WorkflowRuntimeHost(executors, store, events)
+    context = RuntimeContext(
+        tools={"double": double},
+        contracts=contracts,
+        definitions=registry,
+        subworkflows={child.id: child_plan},
+    )
+
+    waiting = await host.execute(
+        parent_plan,
+        WorkflowState.for_plan("nested-input-run", parent_plan),
+        context,
+    )
+
+    assert waiting.status is WorkflowStatus.WAITING
+    assert waiting.waiting_input is not None
+    assert waiting.waiting_input["input_id"] == "ask-child"
+    assert waiting.waiting_input["path"] == [
+        {
+            "kind": "subworkflow",
+            "action_id": "call-child",
+            "workflow_id": child.id,
+        }
+    ]
+    assert waiting.subworkflow_states["call-child"]["status"] == "waiting"
+    assert waiting.subworkflow_states["call-child"]["actions"]["ask-child"][
+        "status"
+    ] == ActionExecutionStatus.WAITING
+    assert calls == 1
+
+    resumed = resume_waiting_input(
+        parent_plan,
+        waiting,
+        input_id="ask-child",
+        values="Ada",
+        contracts=contracts,
+        subworkflows={child.id: child_plan},
+    )
+    completed = await host.execute(parent_plan, resumed, context)
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert completed.outputs == {"result": "Ada"}
+    assert completed.waiting_input is None
+    assert calls == 1
+    assert completed.subworkflow_states["call-child"]["variables"]["answer"] == "Ada"
+    assert [
+        event.action_id
+        for event in events.events
+        if event.kind == "action.started" and event.workflow_id == parent.id
+    ].count("before-child") == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_host_waits_inside_parallel_child_and_reuses_completed_sibling(
+    tmp_path: Path,
+) -> None:
+    registry, executors, _plan, contracts = _workflow()
+    contracts.update(
+        _register_text_interaction(
+            registry,
+            contract_id="branch-answer",
+            interaction_id="branch-interaction",
+        )
+    )
+    child = WorkflowDefinition(
+        id="parallel-waiting-child",
+        version="1.0.0",
+        description="Nested branch child that asks for one response",
+        state={"input": "seed"},
+        actions=[
+            {
+                "id": "ask-branch",
+                "kind": "request_input",
+                "interaction": "branch-interaction",
+                "output_variable": "answer",
+            },
+            {
+                "id": "finish-branch-child",
+                "kind": "end_workflow",
+                "output_variable": "answer",
+            },
+        ],
+    )
+    parent = WorkflowDefinition(
+        id="parallel-waiting-parent",
+        version="1.0.0",
+        description="Parallel parent with one waiting nested branch",
+        state={"left-input": "left-seed", "right-input": 5},
+        actions=[
+            {
+                "id": "parallel",
+                "kind": "parallel",
+                "branches": {"left": "left", "right": "right"},
+                "join": "join",
+            },
+            {
+                "id": "left",
+                "kind": "subworkflow",
+                "workflow": child.id,
+                "input_variable": "left-input",
+                "child_input_variable": "input",
+                "child_output_name": "result",
+                "output_variable": "left-output",
+            },
+            {"id": "left-done", "kind": "goto", "target": "join"},
+            {
+                "id": "right",
+                "kind": "invoke_tool",
+                "tool": "double",
+                "input_variable": "right-input",
+                "output_variable": "right-output",
+            },
+            {"id": "right-done", "kind": "goto", "target": "join"},
+            {
+                "id": "join",
+                "kind": "join",
+                "parallel": "parallel",
+                "inputs": {"left": "left-output", "right": "right-output"},
+                "output_variable": "joined",
+            },
+            {
+                "id": "finish",
+                "kind": "end_workflow",
+                "output_variable": "joined",
+            },
+        ],
+    )
+    registry.register(child)
+    registry.register(parent)
+    child_plan = WorkflowCompiler(executors).compile(child, registry)
+    parent_plan = WorkflowCompiler(executors).compile(parent, registry)
+    right_calls = 0
+
+    def double(value: int) -> int:
+        nonlocal right_calls
+        right_calls += 1
+        return value * 2
+
+    events = InMemoryWorkflowEventSink()
+    store = FileWorkflowStateStore(tmp_path)
+    host = WorkflowRuntimeHost(executors, store, events)
+    context = RuntimeContext(
+        tools={"double": double},
+        contracts=contracts,
+        definitions=registry,
+        subworkflows={child.id: child_plan},
+    )
+
+    waiting = await host.execute(
+        parent_plan,
+        WorkflowState.for_plan("parallel-nested-input-run", parent_plan),
+        context,
+    )
+
+    assert waiting.status is WorkflowStatus.WAITING
+    assert waiting.waiting_input is not None
+    assert waiting.waiting_input["input_id"] == "ask-branch"
+    assert waiting.waiting_input["path"] == [
+        {"kind": "parallel", "action_id": "parallel", "branch_id": "left"},
+        {
+            "kind": "subworkflow",
+            "action_id": "left",
+            "workflow_id": child.id,
+        },
+    ]
+    assert waiting.parallel_results["parallel"]["right"]["right-output"] == 10
+    assert waiting.parallel_states["parallel"]["right"]["status"] == "completed"
+    assert waiting.parallel_states["parallel"]["left"]["status"] == "waiting"
+    assert right_calls == 1
+
+    resumed = resume_waiting_input(
+        parent_plan,
+        waiting,
+        input_id="ask-branch",
+        values="Ada",
+        contracts=contracts,
+        subworkflows={child.id: child_plan},
+    )
+    completed = await host.execute(parent_plan, resumed, context)
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert completed.outputs == {"result": {"left": "Ada", "right": 10}}
+    assert completed.parallel_results["parallel"]["right"]["right-output"] == 10
+    assert completed.parallel_states["parallel"]["right"]["status"] == "completed"
+    assert right_calls == 1
+    assert [
+        event.action_id
+        for event in events.events
+        if event.kind == "action.started"
+        and event.workflow_id == parent.id
+        and event.action_id == "right"
+    ].__len__() == 1

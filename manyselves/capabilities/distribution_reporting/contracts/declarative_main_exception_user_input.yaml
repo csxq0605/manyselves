@@ -1,0 +1,5 @@
+id: declarative_main_exception_user_input
+version: 1.0.0
+description: User decision for one explicit Reporting Main exception
+adapter: pydantic
+model: manyselves.core.reporting.declarative_cross_owner_cohort:DeclarativeMainExceptionUserInput

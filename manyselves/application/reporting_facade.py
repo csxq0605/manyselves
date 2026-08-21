@@ -250,6 +250,43 @@ class ReportingFacade:
             lambda: self._require().resume_decision(decision_id, action, supplements),
         )
 
+    def resume_workflow_input(
+        self,
+        command_id: UUID,
+        run_id: str,
+        input_id: str,
+        values: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Apply a generic declarative Interaction input, then resume the same Run."""
+
+        self._safe_id(run_id)
+        payload = (
+            "resume_workflow_input",
+            run_id,
+            input_id,
+            json.dumps(values, ensure_ascii=False, sort_keys=True),
+        )
+
+        def invoke() -> dict[str, Any]:
+            from ..core.reporting.declarative_reporting_runner import (
+                resume_declarative_reporting_input,
+            )
+
+            resume_declarative_reporting_input(
+                workspace=self.workspace,
+                run_id=run_id,
+                input_id=input_id,
+                values=values,
+            )
+            return self._require().resume_run(
+                run_id,
+                max_provider_attempts=None,
+                max_total_tokens=None,
+                supplements=[],
+            )
+
+        return self._command(command_id, payload, invoke)
+
     def revise(self, command_id: UUID, request: RevisionRequest) -> dict[str, Any]:
         return self._command(
             command_id,

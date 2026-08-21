@@ -24,7 +24,6 @@ from manyselves.core.reporting.agentic_models import (
     WorkflowDecisionSubmission,
 )
 from manyselves.core.reporting.declarative_cross_owner_cohort import (
-    DeclarativeCrossOwnerInitialAgentResult,
     DeclarativeCrossOwnerPipelineOutcome,
     DeclarativeCrossOwnerRuntime,
     compile_cross_owner_workflows,
@@ -49,14 +48,8 @@ from manyselves.core.reporting.parallel_runtime import (
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
-from manyselves.kernel.conversations import (
-    ConversationKey,
-    ConversationMode,
-    ConversationRegistry,
-)
-from manyselves.kernel.definitions import DefinitionKind
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
-from manyselves.kernel.workflow import WorkflowState, WorkflowStatus
+from manyselves.kernel.workflow import WorkflowState, WorkflowStatus, resume_waiting_input
 from manyselves.runtime.state_store import FileWorkflowStateStore, InMemoryWorkflowStateStore
 from manyselves.runtime.workflow_host import InMemoryWorkflowEventSink, WorkflowRuntimeHost
 
@@ -672,6 +665,12 @@ async def _execute_declarative_cross_owner_cohort(
                 "prepare-current-cross-owner-reviewer-exception": runtime.prepare_reviewer_exception,
                 "cross-owner-main-exception-requires-agent": runtime.main_exception_requires_agent,
                 "accept-current-cross-owner-main-exception": runtime.accept_main_exception,
+                "cross-owner-main-exception-requests-user": (
+                    runtime.main_exception_requests_user
+                ),
+                "apply-current-cross-owner-main-exception-user-input": (
+                    runtime.apply_main_exception_user_input
+                ),
                 "cross-owner-author-exception-returns-to-author": (
                     runtime.author_exception_returns_to_author
                 ),
@@ -687,7 +686,6 @@ async def _execute_declarative_cross_owner_cohort(
                 "complete-current-cross-owner-without-findings": (
                     runtime.complete_owner_without_findings
                 ),
-                "continue-current-cross-owner-pipeline": runtime.continue_owner,
                 "reduce-cross-owner-cohort": runtime.reduce,
             },
             agents=runtime.agent_invokers,
@@ -706,6 +704,8 @@ async def _execute_declarative_cross_owner_pipeline(
     workflow_id: str,
     *,
     owner_module_id: str = "2.1",
+    kernel_state: WorkflowState | None = None,
+    resume_values: dict[str, str] | None = None,
 ) -> WorkflowState:
     definitions, contracts, _tail = build_reporting_tail_definition()
     executors = build_builtin_executor_registry()
@@ -715,8 +715,19 @@ async def _execute_declarative_cross_owner_pipeline(
     )
     pipeline_plan = pipeline_plans[f"distribution-cross-owner-{owner_module_id}-pipeline"]
     runtime = DeclarativeCrossOwnerRuntime(runner, state, workflow_id)
-    kernel_state = WorkflowState.for_plan(state["run_id"], pipeline_plan)
-    kernel_state.variables["reporting-state"] = state
+    if kernel_state is None:
+        kernel_state = WorkflowState.for_plan(state["run_id"], pipeline_plan)
+        kernel_state.variables["reporting-state"] = state
+    if resume_values is not None:
+        waiting_input = kernel_state.waiting_input or {}
+        kernel_state = resume_waiting_input(
+            pipeline_plan,
+            kernel_state,
+            input_id=str(waiting_input.get("input_id", "")),
+            values=resume_values,
+            contracts=contracts,
+            subworkflows=pipeline_plans,
+        )
     return await WorkflowRuntimeHost(
         executors,
         InMemoryWorkflowStateStore(),
@@ -737,6 +748,12 @@ async def _execute_declarative_cross_owner_pipeline(
                 "prepare-current-cross-owner-reviewer-exception": runtime.prepare_reviewer_exception,
                 "cross-owner-main-exception-requires-agent": runtime.main_exception_requires_agent,
                 "accept-current-cross-owner-main-exception": runtime.accept_main_exception,
+                "cross-owner-main-exception-requests-user": (
+                    runtime.main_exception_requests_user
+                ),
+                "apply-current-cross-owner-main-exception-user-input": (
+                    runtime.apply_main_exception_user_input
+                ),
                 "cross-owner-author-exception-returns-to-author": (
                     runtime.author_exception_returns_to_author
                 ),
@@ -752,7 +769,6 @@ async def _execute_declarative_cross_owner_pipeline(
                 "complete-current-cross-owner-without-findings": (
                     runtime.complete_owner_without_findings
                 ),
-                "continue-current-cross-owner-pipeline": runtime.continue_owner,
             },
             agents=runtime.agent_invokers,
             contracts=contracts,
@@ -2110,6 +2126,12 @@ async def test_declarative_cross_owner_stage_failures_retry_only_failed_owner_st
                 "prepare-current-cross-owner-reviewer-exception": runtime.prepare_reviewer_exception,
                 "cross-owner-main-exception-requires-agent": runtime.main_exception_requires_agent,
                 "accept-current-cross-owner-main-exception": runtime.accept_main_exception,
+                "cross-owner-main-exception-requests-user": (
+                    runtime.main_exception_requests_user
+                ),
+                "apply-current-cross-owner-main-exception-user-input": (
+                    runtime.apply_main_exception_user_input
+                ),
                 "cross-owner-author-exception-returns-to-author": (
                     runtime.author_exception_returns_to_author
                 ),
@@ -2125,7 +2147,6 @@ async def test_declarative_cross_owner_stage_failures_retry_only_failed_owner_st
                 "complete-current-cross-owner-without-findings": (
                     runtime.complete_owner_without_findings
                 ),
-                "continue-current-cross-owner-pipeline": runtime.continue_owner,
                 "reduce-cross-owner-cohort": runtime.reduce,
             },
             agents=runtime.agent_invokers,
@@ -2274,77 +2295,6 @@ async def test_declarative_cross_owner_stage_failures_retry_only_failed_owner_st
 
 
 @pytest.mark.asyncio
-async def test_declarative_cross_owner_accepted_initial_reuses_result_on_resume_without_task_binding(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run_id = "run-cross-declarative-accepted-initial-resume"
-    workflow_id = "workflow-cross-declarative-accepted-initial-resume"
-    runner = _Runner(tmp_path)
-    _write_modules(runner, run_id)
-    monkeypatch.setattr(
-        lifecycle,
-        "_verified_cross_owner_noop",
-        lambda runner, **kwargs: _fake_noop(runner, **kwargs),
-    )
-    state = _state(run_id)
-    runtime = DeclarativeCrossOwnerRuntime(runner, state, workflow_id)
-    runtime.prepare(state)
-    context = runtime.prepare_initial(
-        {
-            "state": state,
-            "owner_module_id": "2.1",
-        }
-    )
-    assert context.status == "initial_ready"
-    definitions, _contracts, _tail = build_reporting_tail_definition()
-    conversation = ConversationRegistry().create(
-        ConversationKey(
-            agent_id="cross-module-reviewer",
-            value="cross-owner-2.1",
-            mode=ConversationMode.RUN,
-        ),
-        run_id=run_id,
-    )
-    agent = definitions.require(DefinitionKind.AGENT, "cross-module-reviewer")
-    task = definitions.require(
-        DefinitionKind.TASK,
-        "cross-owner-runtime-initial-review",
-    )
-    invocation = await runtime.agent_invokers["cross-module-reviewer"].invoke(
-        agent,
-        task,
-        context,
-        conversation,
-        task_id="invoke-current-cross-owner-initial",
-    )
-    typed_result = DeclarativeCrossOwnerInitialAgentResult.model_validate(invocation.result)
-    assert typed_result.status == "completed"
-    accepted = runtime.accept_initial(
-        {
-            "context": context,
-            "result": typed_result,
-        }
-    )
-    assert accepted.status == "initial_accepted"
-    calls_after_accept = list(runner.calls)
-    assert calls_after_accept == [("2.1", "cross-owner-2.1")]
-
-    # The accepted typed result is the declarative continuation boundary.  A
-    # reconstructed state may carry resume=True without a legacy task binding;
-    # continue_owner must use the accepted result and avoid a second Agent turn.
-    state["resume"] = True
-    legacy_binding = (
-        tmp_path / f"Work/runs/{run_id}/task-attempts/cross-owner-2.1-r0-initial/current.json"
-    )
-    assert not legacy_binding.exists()
-    completed = await runtime.continue_owner(accepted)
-
-    assert completed.status == "completed"
-    assert runner.calls == calls_after_accept
-
-
-@pytest.mark.asyncio
 async def test_declarative_cross_owner_cohort_retries_only_failed_owner_from_file_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2383,6 +2333,12 @@ async def test_declarative_cross_owner_cohort_retries_only_failed_owner_from_fil
                 "prepare-current-cross-owner-reviewer-exception": runtime.prepare_reviewer_exception,
                 "cross-owner-main-exception-requires-agent": runtime.main_exception_requires_agent,
                 "accept-current-cross-owner-main-exception": runtime.accept_main_exception,
+                "cross-owner-main-exception-requests-user": (
+                    runtime.main_exception_requests_user
+                ),
+                "apply-current-cross-owner-main-exception-user-input": (
+                    runtime.apply_main_exception_user_input
+                ),
                 "cross-owner-author-exception-returns-to-author": (
                     runtime.author_exception_returns_to_author
                 ),
@@ -2398,7 +2354,6 @@ async def test_declarative_cross_owner_cohort_retries_only_failed_owner_from_fil
                 "complete-current-cross-owner-without-findings": (
                     runtime.complete_owner_without_findings
                 ),
-                "continue-current-cross-owner-pipeline": runtime.continue_owner,
                 "reduce-cross-owner-cohort": runtime.reduce,
             },
             agents=runtime.agent_invokers,
@@ -2591,6 +2546,85 @@ async def test_declarative_cross_owner_main_returns_dispute_to_same_author_conve
     } == {"module-2.1"}
     assert result.pipeline is not None
     assert result.pipeline["lane"]["module"]["revision"] == 2
+
+
+@pytest.mark.asyncio
+async def test_declarative_cross_owner_main_request_projects_generic_interaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Main request_user waits through the file-declared Interaction action."""
+
+    run_id = "run-cross-declarative-author-request-user"
+    runner = _CrossExceptionRunner(
+        tmp_path,
+        author_disputed=True,
+        main_decision="request_user",
+    )
+    _write_modules(runner, run_id)
+    state = _state(run_id)
+    _write_initial_module_completion(runner, state, "2.1")
+
+    async def _unexpected_compatibility(*_args, **_kwargs):
+        raise AssertionError("Cross user request entered compatibility run_owner")
+
+    monkeypatch.setattr(
+        lifecycle.CrossReviewCoordinator,
+        "run_owner",
+        _unexpected_compatibility,
+    )
+
+    waiting = await _execute_declarative_cross_owner_pipeline(
+        runner,
+        state,
+        "workflow-cross-declarative-author-request-user",
+    )
+
+    assert waiting.status is WorkflowStatus.WAITING
+    assert waiting.waiting_input is not None
+    assert waiting.waiting_input["input_id"] == "request-cross-owner-author-user-input"
+    assert waiting.waiting_input["interaction_id"] == (
+        "cross-owner-main-exception-decision"
+    )
+    assert waiting.waiting_input["contract_id"] == (
+        "declarative_main_exception_user_input"
+    )
+    assert waiting.waiting_input["schema"]["properties"]["decision"]["enum"] == [
+        "accept_dispute",
+        "return_to_author",
+        "stop_incomplete",
+    ]
+    assert [agent_id for agent_id, _task_id, _session in runner.agent_calls] == [
+        "cross-module-reviewer",
+        "module-2.1-specialist",
+        "main-agent",
+    ]
+
+    completed = await _execute_declarative_cross_owner_pipeline(
+        runner,
+        state,
+        "workflow-cross-declarative-author-request-user",
+        kernel_state=waiting,
+        resume_values={
+            "decision": "accept_dispute",
+            "rationale": "User accepts the explicit dispute and continues Cross.",
+        },
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert [agent_id for agent_id, _task_id, _session in runner.agent_calls] == [
+        "cross-module-reviewer",
+        "module-2.1-specialist",
+        "main-agent",
+        "evidence-auditor",
+        "cross-module-reviewer",
+    ]
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(
+        completed.outputs["result"]
+    )
+    assert result.status == "completed", result.error
+    assert result.pipeline is not None
+    assert result.pipeline["lane"]["module"]["revision"] == 1
 
 
 @pytest.mark.asyncio
