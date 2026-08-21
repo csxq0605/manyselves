@@ -17,6 +17,8 @@ class DefinitionKind(StrEnum):
     GATE = "gate"
     RECOVERY = "recovery"
     WORKFLOW = "workflow"
+    INTERACTION = "interaction"
+    OUTPUT = "output"
 
 
 class DefinitionBase(BaseModel):
@@ -40,6 +42,8 @@ class CapabilityDefinition(DefinitionBase):
     tools: str
     gates: str
     recovery: str
+    interactions: str | None = None
+    outputs: str | None = None
     entrypoints: list[str] = Field(default_factory=list)
     runtime: str | None = Field(default=None, min_length=1)
 
@@ -135,6 +139,25 @@ class RecoveryPolicyDefinition(DefinitionBase):
     rules: dict[str, RecoveryRule] = Field(default_factory=dict)
 
 
+class InteractionDefinition(DefinitionBase):
+    """File-defined user or external input requested by a workflow."""
+
+    kind: Literal[DefinitionKind.INTERACTION] = DefinitionKind.INTERACTION
+    interaction_type: Literal["form", "decision", "confirmation"] = "form"
+    input_contract: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    submit_label: str = Field(default="Submit", min_length=1)
+
+
+class OutputDefinition(DefinitionBase):
+    """File-defined result published by a workflow."""
+
+    kind: Literal[DefinitionKind.OUTPUT] = DefinitionKind.OUTPUT
+    output_type: Literal["value", "artifact", "json"] = "value"
+    contract: str | None = None
+    label: str = Field(min_length=1)
+
+
 class WorkflowDefinition(DefinitionBase):
     """Uncompiled workflow definition; action models arrive in WP-02."""
 
@@ -142,6 +165,8 @@ class WorkflowDefinition(DefinitionBase):
     tasks: list[str] = Field(default_factory=list)
     gates: list[str] = Field(default_factory=list)
     recovery: list[str] = Field(default_factory=list)
+    interactions: list[str] = Field(default_factory=list)
+    outputs: list[str] = Field(default_factory=list)
     input_contract: str | None = None
     output_contract: str | None = None
     max_iterations: int | None = Field(default=None, ge=1)
@@ -157,6 +182,8 @@ Definition = (
     | TaskDefinition
     | GateDefinition
     | RecoveryPolicyDefinition
+    | InteractionDefinition
+    | OutputDefinition
     | WorkflowDefinition
 )
 
@@ -169,5 +196,7 @@ DEFINITION_MODELS: dict[DefinitionKind, type[DefinitionBase]] = {
     DefinitionKind.TASK: TaskDefinition,
     DefinitionKind.GATE: GateDefinition,
     DefinitionKind.RECOVERY: RecoveryPolicyDefinition,
+    DefinitionKind.INTERACTION: InteractionDefinition,
+    DefinitionKind.OUTPUT: OutputDefinition,
     DefinitionKind.WORKFLOW: WorkflowDefinition,
 }

@@ -9,6 +9,8 @@ from manyselves.kernel.definitions import (
     DefinitionKind,
     DefinitionLoadError,
     GateDefinition,
+    InteractionDefinition,
+    OutputDefinition,
     RecoveryPolicyDefinition,
     TaskDefinition,
     ToolDefinition,
@@ -95,6 +97,20 @@ def test_definition_models_cover_the_wp01_vocabulary() -> None:
             gates=["positive"],
             recovery=["default-recovery"],
             actions=[{"id": "finish", "kind": "end_workflow"}],
+        ),
+        InteractionDefinition(
+            id="request-adjustment",
+            version="1.0.0",
+            description="Collect an adjustment request",
+            input_contract="adjustment-input",
+            title="Adjustment",
+        ),
+        OutputDefinition(
+            id="adjustment-result",
+            version="1.0.0",
+            description="Publish an adjusted value",
+            contract="adjustment-output",
+            label="Adjusted value",
         ),
     ]
 

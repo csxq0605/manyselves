@@ -9,6 +9,8 @@ from manyselves.kernel.definitions import (
     DefinitionKind,
     DefinitionReferenceError,
     DefinitionRegistry,
+    InteractionDefinition,
+    OutputDefinition,
     TaskDefinition,
     ToolDefinition,
     WorkflowDefinition,
@@ -26,6 +28,8 @@ from .models import (
     InvokeToolAction,
     JoinAction,
     ParallelAction,
+    PublishResultAction,
+    RequestInputAction,
     ResolveConversationAction,
     ResolvedAction,
     ResolvedPlan,
@@ -57,6 +61,8 @@ _ACTION_MODELS: dict[ActionKind, type[Any]] = {
     ActionKind.JOIN: JoinAction,
     ActionKind.SUBWORKFLOW: SubworkflowAction,
     ActionKind.VALIDATE_CONTRACT: ValidateContractAction,
+    ActionKind.REQUEST_INPUT: RequestInputAction,
+    ActionKind.PUBLISH_RESULT: PublishResultAction,
     ActionKind.END_WORKFLOW: EndWorkflowAction,
 }
 
@@ -90,6 +96,8 @@ class WorkflowCompiler:
         task_ids: list[str] = []
         contract_ids: list[str] = []
         workflow_ids: list[str] = []
+        interaction_ids: list[str] = []
+        output_ids: list[str] = []
         end_actions: list[EndWorkflowAction] = []
 
         for payload in workflow.actions:
@@ -116,6 +124,8 @@ class WorkflowCompiler:
                 agent_ids,
                 task_ids,
                 workflow_ids,
+                interaction_ids,
+                output_ids,
             )
             if isinstance(action, EndWorkflowAction):
                 end_actions.append(action)
@@ -151,6 +161,8 @@ class WorkflowCompiler:
             task_ids=task_ids,
             workflow_ids=workflow_ids,
             contract_ids=contract_ids,
+            interaction_ids=interaction_ids,
+            output_ids=output_ids,
             final_output_contract=workflow.output_contract,
         )
 
@@ -164,6 +176,8 @@ class WorkflowCompiler:
         agent_ids: list[str],
         task_ids: list[str],
         workflow_ids: list[str],
+        interaction_ids: list[str],
+        output_ids: list[str],
     ) -> None:
         if isinstance(action, SetVariableAction):
             defined_variables.add(action.variable)
@@ -300,6 +314,47 @@ class WorkflowCompiler:
             )
             _append_unique(contract_ids, action.contract)
             defined_variables.add(action.output_variable)
+            return
+        if isinstance(action, RequestInputAction):
+            interaction = self._require(
+                definitions,
+                DefinitionKind.INTERACTION,
+                action.interaction,
+                action.id,
+            )
+            if not isinstance(interaction, InteractionDefinition):
+                raise CompilerError(
+                    f"definition is not an interaction: {action.interaction}"
+                )
+            self._require(
+                definitions,
+                DefinitionKind.CONTRACT,
+                interaction.input_contract,
+                action.id,
+            )
+            _append_unique(interaction_ids, interaction.id)
+            _append_unique(contract_ids, interaction.input_contract)
+            defined_variables.add(action.output_variable)
+            return
+        if isinstance(action, PublishResultAction):
+            self._require_variable(action.input_variable, defined_variables, action.id)
+            output = self._require(
+                definitions,
+                DefinitionKind.OUTPUT,
+                action.output,
+                action.id,
+            )
+            if not isinstance(output, OutputDefinition):
+                raise CompilerError(f"definition is not an output: {action.output}")
+            if output.contract is not None:
+                self._require(
+                    definitions,
+                    DefinitionKind.CONTRACT,
+                    output.contract,
+                    action.id,
+                )
+                _append_unique(contract_ids, output.contract)
+            _append_unique(output_ids, output.id)
             return
         self._require_variable(action.output_variable, defined_variables, action.id)
 

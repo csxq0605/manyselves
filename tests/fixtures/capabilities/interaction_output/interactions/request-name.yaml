@@ -1,0 +1,7 @@
+id: request-name
+version: 1.0.0
+description: Collect one user name
+interaction_type: form
+input_contract: name-input
+title: Your name
+submit_label: Continue

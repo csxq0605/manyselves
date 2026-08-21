@@ -8,6 +8,8 @@ from .models import (
     Definition,
     DefinitionKind,
     GateDefinition,
+    InteractionDefinition,
+    OutputDefinition,
     TaskDefinition,
     ToolDefinition,
     WorkflowDefinition,
@@ -115,11 +117,17 @@ def _references(
             (DefinitionKind.CONTRACT, _present([definition.contract])),
             (DefinitionKind.TOOL, _present([definition.validator_tool])),
         )
+    if isinstance(definition, InteractionDefinition):
+        return ((DefinitionKind.CONTRACT, (definition.input_contract,)),)
+    if isinstance(definition, OutputDefinition):
+        return ((DefinitionKind.CONTRACT, _present([definition.contract])),)
     if isinstance(definition, WorkflowDefinition):
         return (
             (DefinitionKind.TASK, tuple(definition.tasks)),
             (DefinitionKind.GATE, tuple(definition.gates)),
             (DefinitionKind.RECOVERY, tuple(definition.recovery)),
+            (DefinitionKind.INTERACTION, tuple(definition.interactions)),
+            (DefinitionKind.OUTPUT, tuple(definition.outputs)),
             (
                 DefinitionKind.CONTRACT,
                 _present([definition.input_contract, definition.output_contract]),

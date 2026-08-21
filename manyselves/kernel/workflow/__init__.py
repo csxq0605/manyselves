@@ -1,6 +1,7 @@
 """Business-neutral workflow models and compiler."""
 
 from .compiler import CompilerError, WorkflowCompiler
+from .input import WorkflowInputError, resume_waiting_input
 from .models import (
     ActionExecutionState,
     ActionExecutionStatus,
@@ -16,6 +17,8 @@ from .models import (
     InvokeToolAction,
     JoinAction,
     ParallelAction,
+    PublishResultAction,
+    RequestInputAction,
     ResolveConversationAction,
     ResolvedAction,
     ResolvedPlan,
@@ -42,6 +45,7 @@ __all__ = [
     "InvokeToolAction",
     "JoinAction",
     "ParallelAction",
+    "PublishResultAction",
     "InvokeAgentAction",
     "ResolvedAction",
     "ResolvedPlan",
@@ -49,8 +53,11 @@ __all__ = [
     "SubworkflowAction",
     "VariableCondition",
     "ResolveConversationAction",
+    "RequestInputAction",
     "ValidateContractAction",
     "WorkflowCompiler",
     "WorkflowState",
     "WorkflowStatus",
+    "WorkflowInputError",
+    "resume_waiting_input",
 ]

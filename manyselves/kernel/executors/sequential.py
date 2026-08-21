@@ -54,10 +54,19 @@ class SequentialWorkflowExecutor:
             state.variables.update(result.variable_updates)
             state.outputs.update(result.output_updates)
             state.conversations.update(result.conversation_updates)
+            if result.clear_waiting_input:
+                state.waiting_input = None
+            if result.waiting_input is not None:
+                state.waiting_input = result.waiting_input
             action_state.output = result.output
-            action_state.status = ActionExecutionStatus.COMPLETED
-            state.next_action_index = index + 1
             if result.workflow_status is not None:
                 state.status = result.workflow_status
+            if state.status is WorkflowStatus.WAITING:
+                action_state.status = ActionExecutionStatus.WAITING
+                state.next_action_index = index
+                self._state_store.save(state)
+                return state
+            action_state.status = ActionExecutionStatus.COMPLETED
+            state.next_action_index = index + 1
             self._state_store.save(state)
         return state

@@ -21,6 +21,8 @@ class ActionKind(StrEnum):
     JOIN = "join"
     SUBWORKFLOW = "subworkflow"
     VALIDATE_CONTRACT = "validate_contract"
+    REQUEST_INPUT = "request_input"
+    PUBLISH_RESULT = "publish_result"
     END_WORKFLOW = "end_workflow"
 
 
@@ -35,6 +37,7 @@ class WorkflowStatus(StrEnum):
 class ActionExecutionStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
+    WAITING = "waiting"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -172,6 +175,19 @@ class ValidateContractAction(ResolvedActionBase):
     output_variable: str = Field(min_length=1)
 
 
+class RequestInputAction(ResolvedActionBase):
+    kind: Literal[ActionKind.REQUEST_INPUT] = ActionKind.REQUEST_INPUT
+    interaction: str = Field(min_length=1)
+    output_variable: str = Field(min_length=1)
+
+
+class PublishResultAction(ResolvedActionBase):
+    kind: Literal[ActionKind.PUBLISH_RESULT] = ActionKind.PUBLISH_RESULT
+    output: str = Field(min_length=1)
+    input_variable: str = Field(min_length=1)
+    output_name: str = Field(min_length=1)
+
+
 class EndWorkflowAction(ResolvedActionBase):
     kind: Literal[ActionKind.END_WORKFLOW] = ActionKind.END_WORKFLOW
     output_variable: str = Field(min_length=1)
@@ -192,6 +208,8 @@ ResolvedAction = (
     | JoinAction
     | SubworkflowAction
     | ValidateContractAction
+    | RequestInputAction
+    | PublishResultAction
     | EndWorkflowAction
 )
 
@@ -210,6 +228,8 @@ class ResolvedPlan(BaseModel):
     task_ids: list[str] = Field(default_factory=list)
     workflow_ids: list[str] = Field(default_factory=list)
     contract_ids: list[str] = Field(default_factory=list)
+    interaction_ids: list[str] = Field(default_factory=list)
+    output_ids: list[str] = Field(default_factory=list)
     final_output_contract: str | None = None
 
 

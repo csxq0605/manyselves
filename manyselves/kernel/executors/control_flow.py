@@ -99,6 +99,12 @@ class ControlFlowWorkflowExecutor:
                 raise
 
             action_state.output = output
+            if state.status is WorkflowStatus.WAITING:
+                action_state.status = ActionExecutionStatus.WAITING
+                state.next_action_id = action.id
+                state.next_action_index = positions[action.id]
+                self._save(state, persist)
+                return state
             action_state.status = ActionExecutionStatus.COMPLETED
             state.next_action_id = next_action_id
             state.next_action_index = (
@@ -234,6 +240,10 @@ class ControlFlowWorkflowExecutor:
         state.variables.update(result.variable_updates)
         state.outputs.update(result.output_updates)
         state.conversations.update(result.conversation_updates)
+        if result.clear_waiting_input:
+            state.waiting_input = None
+        if result.waiting_input is not None:
+            state.waiting_input = result.waiting_input
         if result.workflow_status is not None:
             state.status = result.workflow_status
         return _next_id(action.id, plan.actions, positions), result.output

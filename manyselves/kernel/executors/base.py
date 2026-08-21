@@ -15,6 +15,8 @@ from manyselves.kernel.definitions import (
     AgentDefinition,
     DefinitionKind,
     DefinitionRegistry,
+    InteractionDefinition,
+    OutputDefinition,
     TaskDefinition,
 )
 from manyselves.kernel.ports.agent import AgentInvocationOutcome
@@ -25,6 +27,8 @@ from manyselves.kernel.workflow import (
     EndWorkflowAction,
     InvokeAgentAction,
     InvokeToolAction,
+    PublishResultAction,
+    RequestInputAction,
     ResolveConversationAction,
     ResolvedAction,
     ResolvedPlan,
@@ -55,6 +59,8 @@ class ActionResult:
     variable_updates: dict[str, Any] = field(default_factory=dict)
     output_updates: dict[str, Any] = field(default_factory=dict)
     conversation_updates: dict[str, ConversationRecord] = field(default_factory=dict)
+    waiting_input: dict[str, Any] | None = None
+    clear_waiting_input: bool = False
     workflow_status: WorkflowStatus | None = None
 
 
@@ -281,6 +287,88 @@ class InvokeAgentExecutor:
         )
 
 
+class RequestInputExecutor:
+    kind = ActionKind.REQUEST_INPUT
+
+    async def execute(
+        self,
+        action: ResolvedAction,
+        state: WorkflowState,
+        context: RuntimeContext,
+    ) -> ActionResult:
+        resolved = cast(RequestInputAction, action)
+        if context.definitions is None:
+            raise RuntimeExecutionError("input execution requires definitions")
+        interaction = context.definitions.require(
+            DefinitionKind.INTERACTION,
+            resolved.interaction,
+        )
+        if not isinstance(interaction, InteractionDefinition):
+            raise RuntimeExecutionError(
+                f"definition is not an interaction: {resolved.interaction}"
+            )
+        try:
+            contract = context.contracts[interaction.input_contract]
+        except KeyError as exc:
+            raise RuntimeExecutionError(
+                f"missing interaction contract adapter: {interaction.input_contract}"
+            ) from exc
+        if resolved.output_variable in state.variables:
+            value = contract.validate(state.variables[resolved.output_variable])
+            return ActionResult(
+                output=value,
+                variable_updates={resolved.output_variable: value},
+                clear_waiting_input=True,
+            )
+        waiting = {
+            "input_id": resolved.id,
+            "interaction_id": interaction.id,
+            "contract_id": interaction.input_contract,
+            "title": interaction.title,
+            "description": interaction.description,
+            "schema": contract.json_schema(),
+        }
+        return ActionResult(
+            output=waiting,
+            waiting_input=waiting,
+            workflow_status=WorkflowStatus.WAITING,
+        )
+
+
+class PublishResultExecutor:
+    kind = ActionKind.PUBLISH_RESULT
+
+    async def execute(
+        self,
+        action: ResolvedAction,
+        state: WorkflowState,
+        context: RuntimeContext,
+    ) -> ActionResult:
+        resolved = cast(PublishResultAction, action)
+        if context.definitions is None:
+            raise RuntimeExecutionError("output execution requires definitions")
+        definition = context.definitions.require(
+            DefinitionKind.OUTPUT,
+            resolved.output,
+        )
+        if not isinstance(definition, OutputDefinition):
+            raise RuntimeExecutionError(
+                f"definition is not an output: {resolved.output}"
+            )
+        value = state.variables[resolved.input_variable]
+        if definition.contract is not None:
+            try:
+                value = context.contracts[definition.contract].validate(value)
+            except KeyError as exc:
+                raise RuntimeExecutionError(
+                    f"missing output contract adapter: {definition.contract}"
+                ) from exc
+        return ActionResult(
+            output=value,
+            output_updates={resolved.output_name: value},
+        )
+
+
 class EndWorkflowExecutor:
     kind = ActionKind.END_WORKFLOW
 
@@ -320,5 +408,7 @@ def build_builtin_executor_registry() -> ExecutorRegistry:
     registry.register(ResolveConversationExecutor())
     registry.register(InvokeAgentExecutor())
     registry.register(ValidateContractExecutor())
+    registry.register(RequestInputExecutor())
+    registry.register(PublishResultExecutor())
     registry.register(EndWorkflowExecutor())
     return registry

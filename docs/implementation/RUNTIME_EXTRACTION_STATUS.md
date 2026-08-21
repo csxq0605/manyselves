@@ -15,11 +15,11 @@
 ## Current position
 
 - Current work package: `WP-01/WP-11 architecture completion audit reopened`
-- Last completed vertical slice: file-declared Capability entry points and runtime factories now dispatch generic Run operations without application-level Capability ID branches
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `fb7f857` (`WP-01/WP-11: discover production capability bundles`); the runtime-binding slice is this document's commit
-- Current migration stage: `Definition/Registry/runtime-binding correction`; the prior four-stage completion claim is superseded by the live-code audit below
+- Last completed vertical slice: file-defined Interaction/Output models compile into executable `RequestInput`/`PublishResult` actions with persisted waiting state and pure input resume
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `6cd2688` (`WP-01/WP-11: bind capability runtimes from definitions`); the Interaction/Output slice is this document's commit
+- Current migration stage: `Definition/Registry/runtime interaction completion`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
-- Next automatic action: add Interaction and Output definitions plus executable request/publish semantics, then begin the stateless Transition/Effect kernel slice
+- Next automatic action: introduce the stateless Transition/Effect decision boundary and move persistence/effect execution into the runtime host without changing existing Action behavior
 
 ## Reopened architecture completion audit
 
@@ -61,7 +61,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
-- `WP-01/WP-11: bind capability runtimes from definitions` — adds explicit Capability entry points and trusted Python runtime-factory references, dispatches start/input/run/output/cost through a generic binding catalog, and moves all ReportRequest/UserSupplement/snapshot translation into the Distribution Reporting adapter (this commit)
+- `WP-02/WP-11: execute declared interactions and outputs` — adds Interaction/Output definition kinds and references, compiles RequestInput/PublishResult, persists a waiting WorkflowState, resumes through a pure validated state transition, and publishes the declared result without Capability-specific logic (this commit)
+- `6cd2688` — `WP-01/WP-11: bind capability runtimes from definitions`; adds explicit Capability entry points and trusted Python runtime-factory references, dispatches start/input/run/output/cost through a generic binding catalog, and moves all ReportRequest/UserSupplement/snapshot translation into the Distribution Reporting adapter
 - `fb7f857` — `WP-01/WP-11: discover production capability bundles`; reopens the architecture audit, adds file-based Capability discovery and workflow ownership, removes the neutral fixture from the installed/API product surface, and retains it under `tests/fixtures` as a complete Markdown/YAML/Schema runtime proof
 - `90fba9e` — `WP-00: stabilize plan baseline contracts`
 - `9323b12` — `WP-00: freeze legacy semantic trace`
@@ -91,6 +92,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Interaction/Output Characterization initially failed collection because the resume primitive and definition/action vocabulary did not exist; after implementation, the focused file-definition and wait/resume/publish selection passed: `2 passed`.
+- Interaction/Output affected Definition, sequential/control-flow Runtime, Recovery, Agent/Tool adapter, neutral Capability, and Kernel import-boundary selection passed: `59 passed`; Ruff passed for all changed Kernel and test paths.
 - Runtime-binding Characterization initially failed collection because the generic binding module did not exist. The synthetic Capability deliberately used different Capability and entry Workflow IDs; after implementation, focused binding, packaged Reporting definition, and projection tests passed: `11 passed`.
 - Runtime-binding affected Definition, Runtime adapter, synthetic application binding, packaged Reporting, generic projection, and HTTP route selection passed: `38 passed`; Ruff passed for every changed Python/test path.
 - Reopened-audit Capability Catalog Characterization initially failed collection because `CapabilityCatalog` did not exist; after implementation, the Catalog, production-only bundle boundary, relocated neutral fixture, generic Reporting projection, and generic HTTP non-exposure selection passed: `11 passed`.

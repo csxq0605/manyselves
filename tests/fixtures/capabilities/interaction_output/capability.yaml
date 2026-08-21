@@ -1,0 +1,14 @@
+id: interaction-output-fixture
+version: 1.0.0
+description: Interaction and output runtime fixture
+agents: ./agents
+workflows: ./workflows
+tasks: ./tasks
+contracts: ./contracts
+tools: ./tools
+gates: ./gates
+recovery: ./recovery
+interactions: ./interactions
+outputs: ./outputs
+entrypoints:
+- collect-name

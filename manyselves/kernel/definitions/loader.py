@@ -100,6 +100,8 @@ _CAPABILITY_LOCATIONS: tuple[tuple[str, DefinitionKind], ...] = (
     ("tools", DefinitionKind.TOOL),
     ("gates", DefinitionKind.GATE),
     ("recovery", DefinitionKind.RECOVERY),
+    ("interactions", DefinitionKind.INTERACTION),
+    ("outputs", DefinitionKind.OUTPUT),
 )
 _SUPPORTED_SUFFIXES = {".yaml", ".yml", ".json", ".md"}
 
@@ -115,7 +117,10 @@ def load_capability(path: Path) -> tuple[CapabilityDefinition, DefinitionRegistr
     registry.register(loaded)
     root = source.parent
     for field_name, kind in _CAPABILITY_LOCATIONS:
-        location = root / getattr(loaded, field_name)
+        configured_location = getattr(loaded, field_name)
+        if configured_location is None:
+            continue
+        location = root / configured_location
         if location.is_dir():
             definition_paths = sorted(
                 child
