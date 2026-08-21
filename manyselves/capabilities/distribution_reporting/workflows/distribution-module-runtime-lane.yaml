@@ -1,0 +1,24 @@
+id: distribution-module-runtime-lane
+version: 1.0.0
+description: Reusable production module Lane bound to current Reporting behavior
+tasks: []
+gates: []
+recovery:
+- current-reporting-recovery
+input_contract: reporting_tail_state
+output_contract: declarative_module_lane_outcome
+state:
+  reporting-state: {}
+  module-id: null
+actions:
+- id: execute-current-module-lane
+  kind: invoke_tool
+  tool: execute-current-module-lane
+  input_variables:
+    state: reporting-state
+    module_id: module-id
+  output_variable: lane-outcome
+- id: finish-module-lane
+  kind: end_workflow
+  output_variable: lane-outcome
+  output_name: result

@@ -96,9 +96,19 @@ async def execute_declarative_module_cohort(
         max_concurrency=max_concurrency,
     )
     module_ids = tuple(REPORT_TAXONOMY)
-    workflow.state = {"module-inputs": dict(modules)}
+    workflow.state["module-inputs"] = dict(modules)
     executors = build_builtin_executor_registry()
     plan = WorkflowCompiler(executors).compile(workflow, definitions)
+    runtime_lane = definitions.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-module-runtime-lane",
+    )
+    if not isinstance(runtime_lane, WorkflowDefinition):
+        raise TypeError("distribution-module-runtime-lane is not a workflow")
+    runtime_lane_plan = WorkflowCompiler(executors).compile(
+        runtime_lane,
+        definitions,
+    )
 
     def lane_tool(module_id: str):
         async def execute(module_inputs: Any) -> DeclarativeModuleLaneOutcome:
@@ -134,10 +144,11 @@ async def execute_declarative_module_cohort(
 
         return execute
 
-    tools = {
-        f"execute-module-lane-{module_id}": lane_tool(module_id)
-        for module_id in module_ids
-    }
+    async def execute_current_lane(values: Mapping[str, Any]):
+        module_id = str(values["module_id"])
+        return await lane_tool(module_id)(values["state"])
+
+    tools = {"execute-current-module-lane": execute_current_lane}
     tools["prepare-module-cohort"] = lambda value: value
     tools["reduce-module-cohort"] = _reduce_module_cohort
     try:
@@ -153,7 +164,12 @@ async def execute_declarative_module_cohort(
     ).execute(
         plan,
         state,
-        RuntimeContext(tools=tools, contracts=contracts, definitions=definitions),
+        RuntimeContext(
+            tools=tools,
+            contracts=contracts,
+            definitions=definitions,
+            subworkflows={runtime_lane.id: runtime_lane_plan},
+        ),
     )
     if completed.status is not WorkflowStatus.COMPLETED:
         raise DeclarativeModuleCohortError("declarative module cohort did not complete")

@@ -52,6 +52,7 @@ def test_distribution_reporting_capability_loads_all_definition_indexes() -> Non
         definition.id for definition in registry.all(DefinitionKind.WORKFLOW)
     } == {
         "distribution-module-review-lane",
+        "distribution-module-runtime-lane",
         "distribution-module-cohort",
         "distribution-reporting-tail",
         "distribution-reporting",
@@ -142,6 +143,9 @@ def test_capability_adapters_expose_the_executable_reporting_definitions() -> No
     assert next(
         action for action in cohort.actions if action["id"] == "module-cohort"
     )["max_concurrency"] == 2
+    assert next(
+        action for action in cohort.actions if action["id"] == "execute-module-2.1"
+    )["kind"] == "subworkflow"
     assert tail.id == "distribution-reporting-tail"
     assert tail.actions == packaged_tail.actions
 

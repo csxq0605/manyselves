@@ -249,9 +249,17 @@ class WorkflowRuntimeHost:
         saved = state.subworkflow_states.get(action.id)
         if saved is None:
             child_state = WorkflowState.for_plan(state.run_id, child_plan)
-            child_state.variables[action.child_input_variable] = state.variables[
-                action.input_variable
-            ]
+            if action.input_variable is not None:
+                child_state.variables[action.child_input_variable] = state.variables[
+                    action.input_variable
+                ]
+            else:
+                child_state.variables.update(
+                    {
+                        child_variable: state.variables[parent_variable]
+                        for child_variable, parent_variable in action.input_variables.items()
+                    }
+                )
         else:
             child_state = WorkflowState.model_validate(saved)
         completed = await self._execute_nested(

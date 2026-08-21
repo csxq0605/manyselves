@@ -111,6 +111,16 @@ async def execute_declarative_module_stage(
         {"max_concurrency": len(REPORT_MODULE_IDS)},
     )
     cohort_plan = WorkflowCompiler(executors).compile(cohort, definitions)
+    runtime_lane = definitions.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-module-runtime-lane",
+    )
+    if not isinstance(runtime_lane, WorkflowDefinition):
+        raise TypeError("distribution-module-runtime-lane is not a workflow")
+    runtime_lane_plan = WorkflowCompiler(executors).compile(
+        runtime_lane,
+        definitions,
+    )
     if module_runtime is None:
         if execute_current is None:
             raise TypeError("module runtime is required")
@@ -136,6 +146,7 @@ async def execute_declarative_module_stage(
         if saved_cohort is not None:
             child = WorkflowState.model_validate(saved_cohort)
             child.variables["module-inputs"] = deepcopy(state)
+            child.variables["prepared-module-inputs"] = deepcopy(state)
             child = _retry_failed_module_lanes(
                 cohort_plan,
                 child,
@@ -152,14 +163,11 @@ async def execute_declarative_module_stage(
 
     tail_adapters = _ReportingTailAdapters(tail_runner, workflow_id)
     module_tools = {
-        f"execute-module-lane-{module_id}": (
-            lambda value, current_module_id=module_id: module_runtime.execute_lane(
-                current_module_id,
-                value,
-                workflow_id,
-            )
+        "execute-current-module-lane": lambda values: module_runtime.execute_lane(
+            str(values["module_id"]),
+            values["state"],
+            workflow_id,
         )
-        for module_id in REPORT_MODULE_IDS
     }
     module_tools["prepare-module-cohort"] = module_runtime.prepare_lanes
     module_tools["reduce-module-cohort"] = module_runtime.reduce_lanes
@@ -183,6 +191,7 @@ async def execute_declarative_module_stage(
                 definitions=definitions,
                 subworkflows={
                     cohort.id: cohort_plan,
+                    runtime_lane.id: runtime_lane_plan,
                     tail.id: tail_plan,
                 },
             ),

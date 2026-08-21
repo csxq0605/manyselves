@@ -292,7 +292,13 @@ class WorkflowCompiler:
             defined_variables.add(action.output_variable)
             return
         if isinstance(action, SubworkflowAction):
-            self._require_variable(action.input_variable, defined_variables, action.id)
+            input_variables = (
+                [action.input_variable]
+                if action.input_variable is not None
+                else list(action.input_variables.values())
+            )
+            for variable in input_variables:
+                self._require_variable(variable, defined_variables, action.id)
             child = self._require(
                 definitions,
                 DefinitionKind.WORKFLOW,

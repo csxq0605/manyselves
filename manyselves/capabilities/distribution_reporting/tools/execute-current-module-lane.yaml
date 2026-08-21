@@ -1,0 +1,10 @@
+id: execute-current-module-lane
+version: 1.0.0
+description: Bind one complete current Reporting Lane to the reusable Lane workflow
+implementation: capability:distribution-reporting:execute-current-module-lane
+input_contract: reporting_tool_input
+output_contract: declarative_module_lane_outcome
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

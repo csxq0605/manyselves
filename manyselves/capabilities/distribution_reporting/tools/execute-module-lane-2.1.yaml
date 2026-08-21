@@ -1,9 +1,0 @@
-id: execute-module-lane-2.1
-version: 1.0.0
-description: Execute the complete current lane inside the file-defined module 2.1 branch
-implementation: capability:distribution-reporting:execute-module-lane-2.1
-input_contract: reporting_tail_state
-output_contract: declarative_module_lane_outcome
-side_effect: ordered_state
-parallel_safe: true
-model_visible: false

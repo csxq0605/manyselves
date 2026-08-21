@@ -162,10 +162,17 @@ class JoinAction(ResolvedActionBase):
 class SubworkflowAction(ResolvedActionBase):
     kind: Literal[ActionKind.SUBWORKFLOW] = ActionKind.SUBWORKFLOW
     workflow: str = Field(min_length=1)
-    input_variable: str = Field(min_length=1)
+    input_variable: str | None = Field(default=None, min_length=1)
+    input_variables: dict[str, str] = Field(default_factory=dict)
     child_input_variable: str = Field(default="input", min_length=1)
     child_output_name: str = Field(default="result", min_length=1)
     output_variable: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def has_one_input_binding_mode(self) -> "SubworkflowAction":
+        if bool(self.input_variable) == bool(self.input_variables):
+            raise ValueError("subworkflow requires exactly one input binding mode")
+        return self
 
 
 class ValidateContractAction(ResolvedActionBase):

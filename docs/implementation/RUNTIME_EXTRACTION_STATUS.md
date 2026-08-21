@@ -15,11 +15,11 @@
 ## Current position
 
 - Current work package: `WP-01/WP-11 architecture completion audit reopened`
-- Last completed vertical slice: the packaged module Cohort is the production top-level Subworkflow; YAML owns preparation, five Parallel branches, Join, reduction, and failed-branch-only retry while each branch delegates the complete current Lane lifecycle
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `d8dab30` (`WP-02/WP-09: persist nested runtime events`); the production Cohort slice is this document's commit
+- Last completed vertical slice: every production module branch now invokes one reusable packaged Lane Subworkflow with named Reporting-state/module-ID bindings; five duplicate branch Tool definitions were replaced by one Capability Tool while nested Lane state/events remain inside the same Run
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `fe8bedc` (`WP-07/WP-08: run production modules through the file cohort`); the reusable production-Lane slice is this document's commit
 - Current migration stage: `file-defined Reporting workflow migration`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
-- Next automatic action: decompose each complete-Lane Capability adapter into a file-defined authoring Lane and the existing module-review workflow, retaining the current recovery, preflight, correction, continuation, Conversation, and artifact implementations behind smaller Capability adapters until their equivalence is proved
+- Next automatic action: split the reusable Lane's remaining `execute-current-module-lane` adapter into file-defined authoring, current review, and completion actions, retaining current preflight, correction, continuation, Conversation, attempt, and artifact behavior at the Capability boundary
 
 ## Reopened architecture completion audit
 
@@ -58,6 +58,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
+- `WP-06/WP-07: nest reusable production module lanes` — generic Subworkflow actions accept either one input or multiple named parent-to-child bindings; the packaged Cohort uses that neutral feature to invoke one reusable production Lane workflow for all five module IDs; each branch now has nested Lane WorkflowState/events and the five duplicate module Tool definitions are replaced by one Capability Tool without a module-specific Kernel Action (this commit)
 - `WP-07/WP-08: run production modules through the file cohort` — the top-level workflow invokes the packaged module Cohort as a Subworkflow; its YAML owns preparation, fixed five-branch Parallel/Join, and reduction; production branches delegate complete current Lane semantics, successful siblings remain embedded in one parent Run, only failed branches retry, the coarse `run-reporting-module-work` Tool definition is removed, and the existing legacy barrier finalizer is reused from one extracted boundary without copying or adding hash/CAS logic (this commit)
 - `WP-02/WP-09: persist nested runtime events` — nested Subworkflows now emit standard workflow/action/output lifecycle events through the parent Runtime Host sink; the selectable Reporting runner persists top-level and tail events in the exact Run directory, without a child state directory (this commit)
 - `WP-08/WP-09: run reporting stages in one parent state` — `distribution-reporting.yaml` now branches partial/full work itself and invokes the packaged tail as a recoverable Subworkflow; the selectable declarative runner enters one `WorkflowRuntimeHost`, persists only the exact run identity, removes the coarse tail Tool, and resumes inside a failed tail without replaying completed module work or prior tail stages (this commit)
@@ -99,6 +100,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Named-Subworkflow Characterization first failed because Subworkflow accepted only one parent variable; after implementation the child received two named values and returned their result: `1 passed`; affected Host/sequential/control-flow selection passed: `23 passed`.
+- Reusable production-Lane package Characterization first failed because the workflow did not exist and Cohort branches were Tools; after implementation the package contains the Lane workflow, Cohort branches compile as Subworkflows, standalone Cohort concurrency/retry and production failed-branch retry remain green. Combined affected Runtime/Compiler/Reporting/Capability/import-boundary selection: `39 passed`. Ruff, `git diff --check`, and wheel build passed; the wheel contains the singular Lane Tool and reusable Lane YAML, not the five old branch Tool files. No full regression or real runtime test ran.
 - Production-Cohort Characterization first failed because the top-level plan still began with the coarse Tool; after the YAML change it compiled as Cohort Subworkflow → If → Tail Subworkflow → End. The first execution then failed because the Runtime Context lacked the compiled Cohort, which was corrected by binding that child plan and its file-declared branch Tools.
 - Failed-branch Characterization proved a two-module production adapter attempt drained its sibling, persisted the child branch states inside the parent Run, then retried only failed module `2.2`: `1 passed`. The legacy finalizer extraction retained the existing all-ready and failure-barrier behavior: `2 passed`.
 - Production Cohort affected Reporting runner/Cohort/Lane/tail, current module concurrency, Capability package, Runtime Host, and Kernel import-boundary selection passed: `29 passed`. The wheel rebuilt and contains the top-level/Cohort YAML plus `prepare-module-cohort.yaml`, and no longer contains `run-reporting-module-work.yaml`. Ruff passed for the changed focused paths and `git diff --check` passed. No full regression or real runtime test ran.

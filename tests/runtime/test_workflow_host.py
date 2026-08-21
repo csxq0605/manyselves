@@ -339,6 +339,77 @@ async def test_runtime_host_nests_subworkflow_state_in_the_parent_run(
 
 
 @pytest.mark.asyncio
+async def test_subworkflow_binds_multiple_named_parent_variables(
+    tmp_path: Path,
+) -> None:
+    registry, executors, _plan, contracts = _workflow()
+    child = WorkflowDefinition(
+        id="named-input-child",
+        version="1.0.0",
+        description="Child with two named inputs",
+        state={"left": 0, "right": 0},
+        actions=[
+            {
+                "id": "add-values",
+                "kind": "invoke_tool",
+                "tool": "double",
+                "input_variables": {"left": "left", "right": "right"},
+                "output_variable": "total",
+            },
+            {
+                "id": "finish-child",
+                "kind": "end_workflow",
+                "output_variable": "total",
+            },
+        ],
+    )
+    parent = WorkflowDefinition(
+        id="named-input-parent",
+        version="1.0.0",
+        description="Parent binding two child variables",
+        state={"first": 3, "second": 5},
+        actions=[
+            {
+                "id": "call-child",
+                "kind": "subworkflow",
+                "workflow": child.id,
+                "input_variables": {"left": "first", "right": "second"},
+                "child_output_name": "result",
+                "output_variable": "child-result",
+            },
+            {
+                "id": "finish-parent",
+                "kind": "end_workflow",
+                "output_variable": "child-result",
+            },
+        ],
+    )
+    registry.register(child)
+    registry.register(parent)
+    child_plan = WorkflowCompiler(executors).compile(child, registry)
+    parent_plan = WorkflowCompiler(executors).compile(parent, registry)
+
+    completed = await WorkflowRuntimeHost(
+        executors,
+        FileWorkflowStateStore(tmp_path),
+        InMemoryWorkflowEventSink(),
+    ).execute(
+        parent_plan,
+        WorkflowState.for_plan("named-subworkflow-run", parent_plan),
+        RuntimeContext(
+            tools={"double": lambda values: values["left"] + values["right"]},
+            contracts=contracts,
+            definitions=registry,
+            subworkflows={child.id: child_plan},
+        ),
+    )
+
+    assert completed.outputs == {"result": 8}
+    assert completed.subworkflow_states["call-child"]["variables"]["left"] == 3
+    assert completed.subworkflow_states["call-child"]["variables"]["right"] == 5
+
+
+@pytest.mark.asyncio
 async def test_runtime_host_resumes_only_the_failed_subworkflow_action(
     tmp_path: Path,
 ) -> None:
