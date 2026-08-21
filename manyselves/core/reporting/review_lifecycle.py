@@ -221,7 +221,7 @@ class ModuleRevisionPreparation(StrictModel):
 class ModuleRecheckPreparation(StrictModel):
     """Typed boundary before the first recheck of an accepted module finding."""
 
-    mode: Literal["invoke_agent", "continue_existing"]
+    mode: Literal["invoke_agent", "continue_existing", "preflight_revision"]
     run_id: str
     module_id: str
     lifecycle_id: str
@@ -243,7 +243,9 @@ class ModuleRecheckPreparation(StrictModel):
     review_input: ModuleReviewInput | None = None
     envelope: TaskEnvelope | None = None
     progress: ModuleReviewProgress | None = None
-    preflight_ref: str | None = None
+    validation_ref: str | None = None
+    validation_target_submodule_ids: list[str] = Field(default_factory=list)
+    preflight_progress: ModuleReviewPreflightProgress | None = None
 
 
 class ModuleRecheckAcceptance(StrictModel):
@@ -1942,14 +1944,18 @@ async def prepare_module_recheck(
     workflow_id: str,
     initial_scope: set[str],
     lifecycle_id: str = "initial",
+    preflight_progress: ModuleReviewPreflightProgress | None = None,
+    author_exception_acceptance: MainExceptionDecisionAcceptance | None = None,
 ) -> ModuleRecheckPreparation:
     """Prepare the first original-Auditor recheck from persisted revision state.
 
     The accepted initial finding and the author's revision are already durable at
     this boundary.  A valid candidate therefore only needs the reviewer preflight,
-    the bounded delta input, and the original Auditor envelope.  Missing or
-    exceptional state deliberately returns ``continue_existing`` so the legacy
-    lifecycle remains the recovery path; this helper never invokes an author.
+    the bounded delta input, and the original Auditor envelope.  Completed
+    durable state returns ``continue_existing`` for typed recovery.  A failed
+    machine check returns a typed ``preflight_revision`` boundary without
+    invoking an author.  Other incomplete state fails explicitly instead of
+    replaying the whole legacy lifecycle.
     """
 
     if current.module_id != module_id:
@@ -1981,7 +1987,7 @@ async def prepare_module_recheck(
         verdict_refs: list[str] | None = None,
         resolved_ids: set[str] | None = None,
         subject_ref: str | None = None,
-        preflight_ref: str | None = None,
+        validation_ref: str | None = None,
     ) -> ModuleRecheckPreparation:
         return ModuleRecheckPreparation(
             mode="continue_existing",
@@ -2005,11 +2011,11 @@ async def prepare_module_recheck(
             ),
             subject_ref=subject_ref,
             progress=progress,
-            preflight_ref=preflight_ref,
+            validation_ref=validation_ref,
         )
 
     if progress is None:
-        return continuation()
+        raise ReviewLifecycleError("module recheck progress is missing")
     if progress.run_id != run_id or progress.module_id != module_id:
         raise ReviewLifecycleError("module review progress identity mismatch")
     if progress.next_action == "completed":
@@ -2032,53 +2038,28 @@ async def prepare_module_recheck(
                 verdict_refs=list(progress.verdict_refs),
                 resolved_ids=set(progress.resolved_ids),
             )
+        raise ReviewLifecycleError(
+            "completed module recheck has no recoverable completion marker"
+        )
     if progress.next_action not in {"revise", "review"}:
-        return continuation(
-            current_value=progress.current,
-            review_round=progress.review_round,
-            scope=set(progress.scope),
-            pending=list(progress.pending),
-            responses=list(progress.responses),
-            finding_refs=list(progress.finding_refs),
-            verdict_refs=list(progress.verdict_refs),
-            resolved_ids=set(progress.resolved_ids),
+        raise ReviewLifecycleError(
+            f"module recheck has unsupported next_action: {progress.next_action}"
         )
     if progress.next_action == "review" and progress.phase != "recheck":
-        return continuation(
-            current_value=progress.current,
-            review_round=progress.review_round,
-            scope=set(progress.scope),
-            pending=list(progress.pending),
-            responses=list(progress.responses),
-            finding_refs=list(progress.finding_refs),
-            verdict_refs=list(progress.verdict_refs),
-            resolved_ids=set(progress.resolved_ids),
+        raise ReviewLifecycleError(
+            f"module recheck cannot resume review phase: {progress.phase}"
         )
 
     pending = list(progress.pending)
     if not pending:
-        return continuation(
-            review_round=progress.review_round,
-            scope=set(progress.scope),
-            finding_refs=list(progress.finding_refs),
-            verdict_refs=list(progress.verdict_refs),
-            resolved_ids=set(progress.resolved_ids),
-        )
+        raise ReviewLifecycleError("module recheck has no pending findings")
 
     is_persisted_review = progress.next_action == "review" and progress.phase == "recheck"
     candidate = progress.current if is_persisted_review else current
     candidate_ref = f"Work/runs/{run_id}/modules/{module_id}-r{candidate.revision}.json"
     if not (runner.service.workspace / candidate_ref).is_file():
-        return continuation(
-            review_round=progress.review_round,
-            scope={finding.target_submodule_id for finding in pending},
-            pending=pending,
-            current_value=candidate,
-            responses=list(candidate.revision_responses),
-            finding_refs=list(progress.finding_refs),
-            verdict_refs=list(progress.verdict_refs),
-            resolved_ids=set(progress.resolved_ids),
-            subject_ref=candidate_ref,
+        raise ReviewLifecycleError(
+            f"module recheck candidate is missing: {candidate_ref}"
         )
 
     scope = {finding.target_submodule_id for finding in pending}
@@ -2088,36 +2069,31 @@ async def prepare_module_recheck(
             {finding.id for finding in pending},
             scope,
         )
-    except ReviewLifecycleError:
-        return continuation(
-            review_round=progress.review_round,
-            scope=scope,
-            pending=pending,
-            current_value=candidate,
-            responses=list(candidate.revision_responses),
-            finding_refs=list(progress.finding_refs),
-            verdict_refs=list(progress.verdict_refs),
-            resolved_ids=set(progress.resolved_ids),
-            subject_ref=candidate_ref,
-        )
+    except ReviewLifecycleError as exc:
+        raise ReviewLifecycleError(
+            "module recheck candidate has invalid revision responses"
+        ) from exc
     if not is_persisted_review and any(
         response.action in {"disputed", "needs_input"}
         for response in candidate.revision_responses
     ):
-        return continuation(
-            current_value=candidate,
-            review_round=progress.review_round,
-            scope=scope,
-            pending=pending,
-            responses=list(candidate.revision_responses),
-            finding_refs=list(progress.finding_refs),
-            verdict_refs=list(progress.verdict_refs),
-            resolved_ids=set(progress.resolved_ids),
-            subject_ref=candidate_ref,
-        )
+        if (
+            author_exception_acceptance is None
+            or author_exception_acceptance.trigger != "author_response"
+            or author_exception_acceptance.result.decision != "accept_dispute"
+        ):
+            raise ReviewLifecycleError(
+                "module recheck exceptional author responses lack an accepted "
+                "Main decision"
+            )
 
     review_round = (
         progress.review_round if is_persisted_review else progress.review_round + 1
+    )
+    current_preflight_progress = (
+        ModuleReviewPreflightProgress(current=candidate)
+        if preflight_progress is None
+        else preflight_progress.model_copy(update={"current": candidate})
     )
     structure_ref: str
     try:
@@ -2142,18 +2118,10 @@ async def prepare_module_recheck(
             subject_ref=candidate_ref,
             upstream_report=structure_report,
         )
-    except (OSError, ValueError, ReviewLifecycleError):
-        return continuation(
-            review_round=progress.review_round,
-            scope=scope,
-            pending=pending,
-            current_value=candidate,
-            responses=list(candidate.revision_responses),
-            finding_refs=list(progress.finding_refs),
-            verdict_refs=list(progress.verdict_refs),
-            resolved_ids=set(progress.resolved_ids),
-            subject_ref=candidate_ref,
-        )
+    except (OSError, ValueError, ReviewLifecycleError) as exc:
+        raise ReviewLifecycleError(
+            "module recheck machine preflight could not be prepared"
+        ) from exc
 
     signal_ref = _write_model(
         runner,
@@ -2161,17 +2129,77 @@ async def prepare_module_recheck(
         preflight.report,
     )
     if not preflight.report.passed:
-        return continuation(
-            review_round=progress.review_round,
-            scope=scope,
+        failure_signature = tuple(
+            sorted(
+                (
+                    failure.check_id,
+                    failure.target_path,
+                    failure.message,
+                )
+                for failure in preflight.report.failures
+            )
+        )
+        failure_signatures = [
+            *current_preflight_progress.failure_signatures,
+            failure_signature,
+        ]
+        attempts = current_preflight_progress.attempts + 1
+        current_preflight_progress = current_preflight_progress.model_copy(
+            update={
+                "attempts": attempts,
+                "failure_signatures": failure_signatures,
+            }
+        )
+        if failure_signatures.count(failure_signature) >= 2 or attempts >= 3:
+            raise ReviewLifecycleError(
+                "module preflight failed repeatedly before semantic review; "
+                "no reviewer finding or verdict was created. "
+                f"module={module_id}; attempts={attempts}; "
+                f"validation_ref={signal_ref}"
+            )
+        _save_module_review_progress(
+            runner,
+            state=state,
+            progress_ref=progress_ref,
+            module_id=module_id,
+            next_action="review",
+            current=candidate,
             pending=pending,
-            current_value=candidate,
             responses=list(candidate.revision_responses),
             finding_refs=list(progress.finding_refs),
             verdict_refs=list(progress.verdict_refs),
             resolved_ids=set(progress.resolved_ids),
+            review_round=review_round,
+            phase="recheck",
+            scope=scope,
+            reviewer_session_key=reviewer_session_key,
+            last_reviewed_subject_ref=progress.last_reviewed_subject_ref,
+        )
+        return ModuleRecheckPreparation(
+            mode="preflight_revision",
+            run_id=run_id,
+            module_id=module_id,
+            lifecycle_id=lifecycle_id,
+            workflow_id=workflow_id,
+            reviewer_session_key=reviewer_session_key,
+            review_root=review_root,
+            progress_ref=progress_ref,
+            review_round=review_round,
+            scope=sorted(scope),
+            current=candidate,
+            pending=pending,
+            responses=list(candidate.revision_responses),
+            finding_refs=list(progress.finding_refs),
+            verdict_refs=list(progress.verdict_refs),
+            resolved_ids=sorted(progress.resolved_ids),
+            last_reviewed_subject_ref=progress.last_reviewed_subject_ref,
             subject_ref=candidate_ref,
-            preflight_ref=signal_ref,
+            progress=progress,
+            validation_ref=signal_ref,
+            validation_target_submodule_ids=sorted(
+                preflight.target_submodule_ids
+            ),
+            preflight_progress=current_preflight_progress,
         )
 
     try:
@@ -2198,19 +2226,10 @@ async def prepare_module_recheck(
             signal_ref=signal_ref,
             validation_report=preflight.report,
         )
-    except (OSError, ValueError, ReviewLifecycleError):
-        return continuation(
-            review_round=progress.review_round,
-            scope=scope,
-            pending=pending,
-            current_value=candidate,
-            responses=list(candidate.revision_responses),
-            finding_refs=list(progress.finding_refs),
-            verdict_refs=list(progress.verdict_refs),
-            resolved_ids=set(progress.resolved_ids),
-            subject_ref=candidate_ref,
-            preflight_ref=signal_ref,
-        )
+    except (OSError, ValueError, ReviewLifecycleError) as exc:
+        raise ReviewLifecycleError(
+            "module recheck Agent input could not be prepared"
+        ) from exc
     _save_module_review_progress(
         runner,
         state=state,
@@ -2252,8 +2271,49 @@ async def prepare_module_recheck(
         review_input=review_input,
         envelope=envelope,
         progress=progress,
-        preflight_ref=signal_ref,
+        validation_ref=signal_ref,
+        preflight_progress=current_preflight_progress,
     )
+
+
+def accept_module_recheck_preflight_revision(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    preparation: ModuleRecheckPreparation,
+    revision_preparation: ModuleRevisionPreparation,
+    result: ModuleRevisionSubmission,
+) -> tuple[ModuleSubmission, str]:
+    """Accept one declared recheck preflight correction and resume recheck."""
+
+    if preparation.mode != "preflight_revision":
+        raise ReviewLifecycleError(
+            "cannot accept a recheck preflight revision without its preparation"
+        )
+    revised, subject_ref = accept_module_revision(
+        runner,
+        preparation=revision_preparation,
+        result=result,
+    )
+    _save_module_review_progress(
+        runner,
+        state=state,
+        progress_ref=preparation.progress_ref,
+        module_id=preparation.module_id,
+        next_action="review",
+        current=revised,
+        pending=preparation.pending,
+        responses=list(revised.revision_responses),
+        finding_refs=list(preparation.finding_refs),
+        verdict_refs=list(preparation.verdict_refs),
+        resolved_ids=set(preparation.resolved_ids),
+        review_round=preparation.review_round,
+        phase="recheck",
+        scope=set(preparation.scope),
+        reviewer_session_key=preparation.reviewer_session_key,
+        last_reviewed_subject_ref=preparation.last_reviewed_subject_ref,
+    )
+    return revised, subject_ref
 
 
 def resume_module_recheck(

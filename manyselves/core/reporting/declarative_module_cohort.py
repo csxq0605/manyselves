@@ -160,11 +160,11 @@ async def execute_declarative_module_cohort(
         "accept-current-module-recheck": lane_runtime.accept_recheck_lane,
         "resume-current-module-review": lane_runtime.resume_review_lane,
         "resume-current-module-recheck": lane_runtime.resume_recheck_lane,
-        "continue-current-module-recheck": lane_runtime.continue_recheck_lane,
         "module-lane-has-deferred-main-exception": (
             lane_runtime.lane_has_deferred_main_exception
         ),
         "module-lane-retries-preflight-revision": lane_runtime.false_lane,
+        "module-preflight-revision-needs-recheck": lane_runtime.false_lane,
         "prepare-current-module-main-exception": lane_runtime.noop_lane,
         "module-main-exception-requires-agent": lane_runtime.false_lane,
         "accept-current-module-main-exception": lane_runtime.accept_passthrough,
@@ -377,12 +377,6 @@ class _StandaloneModuleRuntime:
         )
 
     async def resume_recheck_lane(
-        self,
-        context: DeclarativeModuleRuntimeLaneContext,
-    ) -> DeclarativeModuleRuntimeLaneContext:
-        return context
-
-    async def continue_recheck_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:

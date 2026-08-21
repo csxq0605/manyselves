@@ -1,0 +1,10 @@
+id: module-preflight-revision-needs-recheck
+version: 1.0.0
+description: Return a completed machine-preflight correction to its pending module recheck
+implementation: capability:distribution-reporting:module-preflight-revision-needs-recheck
+input_contract: declarative_module_runtime_lane_context
+output_contract: boolean
+side_effect: none
+parallel_safe: true
+reuse_result: false
+model_visible: false

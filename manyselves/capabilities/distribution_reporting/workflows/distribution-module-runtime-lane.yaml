@@ -75,9 +75,18 @@ actions:
     context: lane-context
     result: retried-module-preflight-revision-agent-result
   output_variable: lane-context
-- id: continue-after-retried-module-preflight-revision
-  kind: goto
-  target: prepare-current-module-review
+- id: module-preflight-revision-needs-recheck
+  kind: invoke_tool
+  tool: module-preflight-revision-needs-recheck
+  input_variable: lane-context
+  output_variable: should-resume-module-recheck
+- id: choose-module-preflight-revision-return
+  kind: if
+  condition:
+    variable: should-resume-module-recheck
+    operator: truthy
+  then: module-review-needs-recheck
+  otherwise: prepare-current-module-review
 - id: module-lane-has-deferred-main-exception
   kind: invoke_tool
   tool: module-lane-has-deferred-main-exception
@@ -392,6 +401,46 @@ actions:
   tool: prepare-current-module-recheck
   input_variable: lane-context
   output_variable: lane-context
+- id: module-recheck-preflight-needs-revision
+  kind: invoke_tool
+  tool: module-review-preflight-needs-revision
+  input_variable: lane-context
+  output_variable: should-revise-module-recheck-preflight
+- id: choose-module-recheck-preflight
+  kind: if
+  condition:
+    variable: should-revise-module-recheck-preflight
+    operator: truthy
+  then: prepare-current-module-recheck-preflight-revision
+  otherwise: module-recheck-requires-agent
+- id: prepare-current-module-recheck-preflight-revision
+  kind: invoke_tool
+  tool: prepare-current-module-preflight-revision
+  input_variable: lane-context
+  output_variable: lane-context
+- id: create-module-recheck-preflight-revision-conversation
+  kind: create_conversation
+  agent: "{author_id}"
+  conversation_key: "{revision_conversation_key}"
+  mode: run
+  output_variable: module-recheck-preflight-revision-conversation
+- id: invoke-current-module-recheck-preflight-revision
+  kind: invoke_agent
+  agent: "{author_id}"
+  task: "{revision_task_id}"
+  conversation_variable: module-recheck-preflight-revision-conversation
+  input_variable: lane-context
+  output_variable: module-recheck-preflight-revision-agent-result
+- id: accept-current-module-recheck-preflight-revision
+  kind: invoke_tool
+  tool: accept-current-module-preflight-revision
+  input_variables:
+    context: lane-context
+    result: module-recheck-preflight-revision-agent-result
+  output_variable: lane-context
+- id: continue-after-module-recheck-preflight-revision
+  kind: goto
+  target: prepare-current-module-recheck
 - id: module-recheck-requires-agent
   kind: invoke_tool
   tool: module-recheck-requires-agent
@@ -420,7 +469,7 @@ actions:
     variable: should-invoke-resumed-module-recheck
     operator: truthy
   then: create-module-recheck-conversation
-  otherwise: continue-current-module-recheck
+  otherwise: module-review-needs-recheck
 - id: create-module-recheck-conversation
   kind: create_conversation
   agent: evidence-auditor
@@ -456,14 +505,6 @@ actions:
     operator: truthy
   then: complete-current-module-lane
   otherwise: module-review-needs-recheck
-- id: continue-current-module-recheck
-  kind: invoke_tool
-  tool: continue-current-module-recheck
-  input_variable: lane-context
-  output_variable: lane-context
-- id: continue-after-current-module-recheck
-  kind: goto
-  target: module-review-needs-recheck
 - id: complete-current-module-lane
   kind: invoke_tool
   tool: complete-current-module-lane

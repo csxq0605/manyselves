@@ -128,6 +128,7 @@ from .research.knowledge_context import KnowledgeContextBuilder
 from .research.project_evidence import ProjectEvidenceIndex, project_evidence_locator
 from .review_lifecycle import (
     DeferredMainDecision,
+    MainExceptionDecisionAcceptance,
     ModuleInitialReviewAcceptance,
     ModuleInitialReviewPreparation,
     ModuleRecheckAcceptance,
@@ -137,6 +138,7 @@ from .review_lifecycle import (
     accept_module_initial_review,
     accept_module_initial_review_preflight_revision,
     accept_module_recheck,
+    accept_module_recheck_preflight_revision,
     accept_module_revision,
     prepare_module_initial_review,
     prepare_module_initial_review_step,
@@ -6230,6 +6232,8 @@ class ReportWorkflowRunner:
         *,
         initial_scope: set[str],
         lifecycle_id: str = "initial",
+        preflight_progress: ModuleReviewPreflightProgress | None = None,
+        author_exception_acceptance: MainExceptionDecisionAcceptance | None = None,
     ) -> ModuleRecheckPreparation:
         return await prepare_module_recheck(
             self,
@@ -6239,6 +6243,40 @@ class ReportWorkflowRunner:
             workflow_id=workflow_id,
             initial_scope=initial_scope,
             lifecycle_id=lifecycle_id,
+            preflight_progress=preflight_progress,
+            author_exception_acceptance=author_exception_acceptance,
+        )
+
+    async def _prepare_module_recheck_preflight_revision(
+        self,
+        preparation: ModuleRecheckPreparation,
+        state: dict,
+    ) -> ModuleRevisionPreparation:
+        return await prepare_module_revision(
+            self,
+            state=state,
+            workflow_id=preparation.workflow_id,
+            subject=preparation.current,
+            module_findings=preparation.pending,
+            validation_ref=preparation.validation_ref,
+            validation_target_submodule_ids=set(
+                preparation.validation_target_submodule_ids
+            ),
+        )
+
+    def _accept_module_recheck_preflight_revision(
+        self,
+        preparation: ModuleRecheckPreparation,
+        revision_preparation: ModuleRevisionPreparation,
+        result: ModuleRevisionSubmission,
+        state: dict,
+    ) -> tuple[ModuleSubmission, str]:
+        return accept_module_recheck_preflight_revision(
+            self,
+            state=state,
+            preparation=preparation,
+            revision_preparation=revision_preparation,
+            result=result,
         )
 
     async def _accept_module_recheck(

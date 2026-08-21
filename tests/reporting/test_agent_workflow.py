@@ -57,6 +57,7 @@ from manyselves.core.reporting.parallel_runtime import (
 )
 from manyselves.core.reporting.prompts import PromptAssembler
 from manyselves.core.reporting.review_lifecycle import (
+    ModuleInitialReviewAcceptance,
     ModuleInitialReviewPreparation,
     ModuleRecheckAcceptance,
     ModuleRecheckPreparation,
@@ -67,6 +68,7 @@ from manyselves.core.reporting.review_lifecycle import (
     accept_module_initial_review,
     accept_module_initial_review_preflight_revision,
     accept_module_recheck,
+    accept_module_recheck_preflight_revision,
     accept_module_revision,
     prepare_module_initial_review,
     prepare_module_initial_review_step,
@@ -1614,6 +1616,288 @@ async def test_module_recheck_boundary_prepares_and_accepts_without_provider(
     assert resumed_completion.next_action == "completed"
     assert resumed_completion.current == revised
     assert resumed_completion.completion_ref == accepted.completion_ref
+
+
+async def _prepare_recheck_machine_candidate(
+    tmp_path: Path,
+    run_id: str,
+    *,
+    marker: str,
+) -> tuple[
+    _ScriptedRunner,
+    dict,
+    ModuleSubmission,
+    str,
+    ModuleInitialReviewAcceptance,
+    ModuleSubmission,
+]:
+    module = _module("2.1")
+    target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
+    finding_id = "M-2.1-initial-r0-RECHECK"
+    finding = ModuleReviewFindingSubmission(
+        coverage={"submodule_ids": [target]},
+        findings=[
+            {
+                "id": finding_id,
+                "target_submodule_id": target,
+                "category": "analysis_depth",
+                "impact": "advisory",
+                "observation": "当前建议缺少责任接口和可由原审查者复核的验收方法。",
+                "evidence_refs": [f"Work/runs/{run_id}/modules/2.1-r0.json"],
+                "required_change": "在目标小节补充责任接口、执行动作和可验证验收方法。",
+                "reviewer_checks": ["责任、动作和验收方法已经形成闭环"],
+            }
+        ],
+    )
+    runner = _ScriptedRunner(tmp_path, [])
+    state = {"run_id": run_id}
+    initial = await prepare_module_initial_review(
+        runner,
+        module_id="2.1",
+        payload=module,
+        state=state,
+        workflow_id=f"workflow-{run_id}",
+        initial_scope={target},
+        lifecycle_id="initial",
+    )
+    accepted_initial = accept_module_initial_review(
+        runner,
+        preparation=initial,
+        result=finding,
+        state=state,
+    )
+    revision = await prepare_module_revision(
+        runner,
+        state=state,
+        workflow_id=f"workflow-{run_id}",
+        subject=module,
+        module_findings=accepted_initial.findings,
+    )
+    revised, _subject_ref = accept_module_revision(
+        runner,
+        preparation=revision,
+        result=ModuleRevisionSubmission(
+            module_id="2.1",
+            base_revision=0,
+            revision=1,
+            submodule_narratives={
+                target: f"### 修订后正文\n\n已补充责任接口和可验证验收方法。\n\n{marker}",
+            },
+            claims_upsert=[],
+            claim_ids_remove=[],
+            source_ids=[],
+            unresolved_questions=[],
+            revision_responses=[
+                {
+                    "finding_id": finding_id,
+                    "action": "implemented",
+                    "summary": "已在目标小节补充责任接口、执行动作和可复核的验收方法。",
+                    "changed_target_ids": [target],
+                }
+            ],
+        ),
+    )
+    return runner, state, module, target, accepted_initial, revised
+
+
+def _recheck_machine_revision(
+    subject: ModuleSubmission,
+    target: str,
+    finding_id: str,
+    *,
+    marker: str,
+) -> ModuleRevisionSubmission:
+    return ModuleRevisionSubmission(
+        module_id=subject.module_id,
+        base_revision=subject.revision,
+        revision=subject.revision + 1,
+        submodule_narratives={
+            target: f"### 再次修订正文\n\n已继续补充责任接口和可验证验收方法。\n\n{marker}",
+        },
+        claims_upsert=[],
+        claim_ids_remove=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision_responses=[
+            {
+                "finding_id": finding_id,
+                "action": "implemented",
+                "summary": "已继续修订目标小节并保留可复核的验收方法。",
+                "changed_target_ids": [target],
+            }
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_module_recheck_step_returns_machine_correction_before_original_auditor(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-module-recheck-machine-step"
+    runner, state, _module_v0, target, accepted_initial, revised = (
+        await _prepare_recheck_machine_candidate(
+            tmp_path,
+            run_id,
+            marker="[[RECHECK_PREFLIGHT_A]]",
+        )
+    )
+    finding_id = accepted_initial.findings[0].id
+
+    correction = await prepare_module_recheck(
+        runner,
+        module_id="2.1",
+        current=revised,
+        state=state,
+        workflow_id=f"workflow-{run_id}",
+        initial_scope={target},
+    )
+
+    assert isinstance(correction, ModuleRecheckPreparation)
+    assert correction.mode == "preflight_revision"
+    assert correction.validation_ref is not None
+    assert correction.validation_target_submodule_ids == [target]
+    assert correction.preflight_progress is not None
+    assert correction.envelope is None
+    assert correction.review_input is None
+    assert correction.pending[0].id == finding_id
+    assert runner.calls == []
+
+    revision = await prepare_module_revision(
+        runner,
+        state=state,
+        workflow_id=f"workflow-{run_id}",
+        subject=revised,
+        module_findings=correction.pending,
+        validation_ref=correction.validation_ref,
+        validation_target_submodule_ids=set(correction.validation_target_submodule_ids),
+    )
+    fixed, subject_ref = accept_module_recheck_preflight_revision(
+        runner,
+        state=state,
+        preparation=correction,
+        revision_preparation=revision,
+        result=_recheck_machine_revision(
+            revised,
+            target,
+            finding_id,
+            marker="",
+        ),
+    )
+    assert fixed.revision == 2
+    assert subject_ref.endswith("/modules/2.1-r2.json")
+
+    review = await prepare_module_recheck(
+        runner,
+        module_id="2.1",
+        current=fixed,
+        state=state,
+        workflow_id=f"workflow-{run_id}",
+        initial_scope={target},
+        preflight_progress=correction.preflight_progress,
+    )
+
+    assert isinstance(review, ModuleRecheckPreparation)
+    assert review.mode == "invoke_agent"
+    assert review.review_round == 1
+    assert review.reviewer_session_key == "module-auditor-2.1"
+    assert review.review_input is not None
+    assert review.review_input.phase == "recheck"
+    assert review.review_input.subject_ref.endswith("/modules/2.1-r2.json")
+    assert review.envelope is not None
+    assert review.envelope.allowed_outputs == ["module_review_verdict_submission"]
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("markers", "stop_attempt"),
+    [
+        (["[[RECHECK_PREFLIGHT_A]]", "[[RECHECK_PREFLIGHT_A]]"], 2),
+        (
+            [
+                "[[RECHECK_PREFLIGHT_A]]",
+                "[[RECHECK_PREFLIGHT_B]]",
+                "[[RECHECK_PREFLIGHT_C]]",
+            ],
+            3,
+        ),
+    ],
+)
+async def test_module_recheck_preflight_preserves_legacy_repeat_and_total_stop(
+    tmp_path: Path,
+    markers: list[str],
+    stop_attempt: int,
+) -> None:
+    run_id = f"run-module-recheck-machine-stop-{stop_attempt}"
+    runner, state, _module_v0, target, accepted_initial, revised = (
+        await _prepare_recheck_machine_candidate(
+            tmp_path,
+            run_id,
+            marker=markers[0],
+        )
+    )
+    finding_id = accepted_initial.findings[0].id
+    preflight_progress = None
+    validation_ref = None
+    validation_target_submodule_ids: list[str] = []
+    current = revised
+
+    for attempt, marker in enumerate(markers, start=1):
+        if attempt > 1:
+            revision = await prepare_module_revision(
+                runner,
+                state=state,
+                workflow_id=f"workflow-{run_id}",
+                subject=current,
+                module_findings=accepted_initial.findings,
+                validation_ref=validation_ref,
+                validation_target_submodule_ids=set(validation_target_submodule_ids),
+            )
+            current, _subject_ref = accept_module_recheck_preflight_revision(
+                runner,
+                state=state,
+                preparation=correction,
+                revision_preparation=revision,
+                result=_recheck_machine_revision(
+                    current,
+                    target,
+                    finding_id,
+                    marker=marker,
+                ),
+            )
+
+        if attempt == stop_attempt:
+            with pytest.raises(ReviewLifecycleError, match="repeated"):
+                await prepare_module_recheck(
+                    runner,
+                    module_id="2.1",
+                    current=current,
+                    state=state,
+                    workflow_id=f"workflow-{run_id}",
+                    initial_scope={target},
+                    preflight_progress=preflight_progress,
+                )
+            break
+
+        correction = await prepare_module_recheck(
+            runner,
+            module_id="2.1",
+            current=current,
+            state=state,
+            workflow_id=f"workflow-{run_id}",
+            initial_scope={target},
+            preflight_progress=preflight_progress,
+        )
+        assert correction.mode == "preflight_revision"
+        assert correction.preflight_progress is not None
+        preflight_progress = correction.preflight_progress
+        validation_ref = correction.validation_ref
+        validation_target_submodule_ids = correction.validation_target_submodule_ids
+
+    assert runner.calls == []
+    assert not (
+        tmp_path / f"Work/runs/{run_id}/modules/2.1-r{stop_attempt + 1}.json"
+    ).exists()
 
 
 @pytest.mark.asyncio

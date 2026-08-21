@@ -80,6 +80,7 @@ from .parallel_runtime import LaneCompletion
 from .review_lifecycle import (
     DeferredMainDecision,
     MainExceptionDecisionPreparation,
+    ReviewLifecycleError,
     accept_main_exception_decision,
     prepare_main_exception_decision,
 )
@@ -214,17 +215,17 @@ class ReportingModuleRuntime(Protocol):
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext: ...
 
-    async def continue_recheck_lane(
-        self,
-        context: DeclarativeModuleRuntimeLaneContext,
-    ) -> DeclarativeModuleRuntimeLaneContext: ...
-
     async def lane_has_deferred_main_exception(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> bool: ...
 
     async def lane_retries_preflight_revision(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool: ...
+
+    async def preflight_revision_needs_recheck(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> bool: ...
@@ -555,12 +556,14 @@ async def execute_declarative_module_stage(
         "accept-current-module-recheck": module_runtime.accept_recheck_lane,
         "resume-current-module-review": module_runtime.resume_review_lane,
         "resume-current-module-recheck": module_runtime.resume_recheck_lane,
-        "continue-current-module-recheck": module_runtime.continue_recheck_lane,
         "module-lane-has-deferred-main-exception": (
             module_runtime.lane_has_deferred_main_exception
         ),
         "module-lane-retries-preflight-revision": (
             module_runtime.lane_retries_preflight_revision
+        ),
+        "module-preflight-revision-needs-recheck": (
+            module_runtime.preflight_revision_needs_recheck
         ),
         "prepare-current-module-main-exception": (
             module_runtime.prepare_main_exception_lane
@@ -869,12 +872,6 @@ class _BatchModuleRuntime:
     ) -> DeclarativeModuleRuntimeLaneContext:
         return context
 
-    async def continue_recheck_lane(
-        self,
-        context: DeclarativeModuleRuntimeLaneContext,
-    ) -> DeclarativeModuleRuntimeLaneContext:
-        return context
-
     async def lane_has_deferred_main_exception(
         self,
         _context: DeclarativeModuleRuntimeLaneContext,
@@ -882,6 +879,12 @@ class _BatchModuleRuntime:
         return False
 
     async def lane_retries_preflight_revision(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def preflight_revision_needs_recheck(
         self,
         _context: DeclarativeModuleRuntimeLaneContext,
     ) -> bool:
@@ -1521,14 +1524,25 @@ class _CurrentModuleStages:
     ) -> DeclarativeModuleRuntimeLaneContext:
         if context.status != "preflight_revision_pending":
             return context
-        reviewing = cast(DeclarativeModuleReviewPreparation, context.review)
         try:
-            preparation = (
-                await self._runner._prepare_module_initial_review_preflight_revision(
-                    reviewing.prepared,
-                    context.reporting_state,
+            if (
+                context.recheck is not None
+                and context.recheck.prepared.mode == "preflight_revision"
+            ):
+                preparation = (
+                    await self._runner._prepare_module_recheck_preflight_revision(
+                        context.recheck.prepared,
+                        context.reporting_state,
+                    )
                 )
-            )
+            else:
+                reviewing = cast(DeclarativeModuleReviewPreparation, context.review)
+                preparation = (
+                    await self._runner._prepare_module_initial_review_preflight_revision(
+                        reviewing.prepared,
+                        context.reporting_state,
+                    )
+                )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
@@ -1555,17 +1569,32 @@ class _CurrentModuleStages:
                 AgentWorkflowError(result.error or "module preflight revision failed"),
             )
             return self._failed_lane_context(context, exc)
-        reviewing = cast(DeclarativeModuleReviewPreparation, context.review)
         revision = cast(DeclarativeModuleRevisionPreparation, context.revision)
         try:
-            revised, _subject_ref = (
-                self._runner._accept_module_initial_review_preflight_revision(
-                    reviewing.prepared,
-                    revision.prepared,
-                    cast(Any, result.submission),
-                    context.reporting_state,
+            if (
+                context.recheck is not None
+                and context.recheck.prepared.mode == "preflight_revision"
+            ):
+                revised, _subject_ref = (
+                    self._runner._accept_module_recheck_preflight_revision(
+                        context.recheck.prepared,
+                        revision.prepared,
+                        cast(Any, result.submission),
+                        context.reporting_state,
+                    )
                 )
-            )
+                next_status = "recheck_pending"
+            else:
+                reviewing = cast(DeclarativeModuleReviewPreparation, context.review)
+                revised, _subject_ref = (
+                    self._runner._accept_module_initial_review_preflight_revision(
+                        reviewing.prepared,
+                        revision.prepared,
+                        cast(Any, result.submission),
+                        context.reporting_state,
+                    )
+                )
+                next_status = "authored"
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
@@ -1573,7 +1602,7 @@ class _CurrentModuleStages:
         return context.model_copy(
             deep=True,
             update={
-                "status": "authored",
+                "status": next_status,
                 "module": revised,
                 "revision": None,
             },
@@ -1728,35 +1757,11 @@ class _CurrentModuleStages:
                     "recheck": rechecking,
                 },
             )
-        return context
-
-    async def continue_recheck_lane(
-        self,
-        context: DeclarativeModuleRuntimeLaneContext,
-    ) -> DeclarativeModuleRuntimeLaneContext:
-        if context.status != "review_resumed":
-            return context
-        context.reporting_state["resume"] = True
-        try:
-            reviewed = await self._runner._module_review_loop(
-                context.module_id,
-                cast(Any, context.module),
-                context.reporting_state,
-                context.workflow_id,
-                initial_scope=set(REPORT_TAXONOMY[context.module_id].submodules),
-            )
-        except asyncio.CancelledError:
-            raise
-        except BaseException as exc:
-            return self._failed_lane_context(context, exc)
-        return context.model_copy(
-            deep=True,
-            update={
-                "status": "reviewed",
-                "module": reviewed,
-                "review": None,
-                "recheck": None,
-            },
+        return self._failed_lane_context(
+            context,
+            ReviewLifecycleError(
+                "module recheck continuation has no declared recovery state"
+            ),
         )
 
     async def review_needs_revision(
@@ -1836,6 +1841,12 @@ class _CurrentModuleStages:
     ) -> DeclarativeModuleRuntimeLaneContext:
         if context.status != "recheck_pending":
             return context
+        previous_recheck = context.recheck
+        preflight_progress = (
+            previous_recheck.prepared.preflight_progress
+            if previous_recheck is not None
+            else None
+        )
         try:
             preparation = await self._runner._prepare_module_recheck(
                 context.module_id,
@@ -1844,6 +1855,8 @@ class _CurrentModuleStages:
                 context.workflow_id,
                 initial_scope=set(REPORT_TAXONOMY[context.module_id].submodules),
                 lifecycle_id="initial",
+                preflight_progress=preflight_progress,
+                author_exception_acceptance=context.main_acceptance,
             )
         except asyncio.CancelledError:
             raise
@@ -1853,7 +1866,13 @@ class _CurrentModuleStages:
             deep=True,
             update={
                 "status": (
-                    "recheck_ready" if preparation.mode == "invoke_agent" else "review_resumed"
+                    "preflight_revision_pending"
+                    if preparation.mode == "preflight_revision"
+                    else (
+                        "recheck_ready"
+                        if preparation.mode == "invoke_agent"
+                        else "review_resumed"
+                    )
                 ),
                 "module": preparation.current,
                 "recheck": DeclarativeModuleRecheckPreparation(
@@ -1942,6 +1961,12 @@ class _CurrentModuleStages:
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> bool:
         return context.status == "preflight_revision_ready"
+
+    @staticmethod
+    async def preflight_revision_needs_recheck(
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return context.status == "recheck_pending"
 
     async def prepare_main_exception_lane(
         self,

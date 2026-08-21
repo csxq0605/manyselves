@@ -223,6 +223,7 @@ class _CurrentLaneRunner:
         main_decision: str = "accept_dispute",
         machine_preflight_invalid_once: bool = False,
         machine_preflight_correction_failure_once: bool = False,
+        recheck_machine_preflight_invalid_once: bool = False,
     ) -> None:
         self.service = SimpleNamespace(
             workspace=workspace,
@@ -243,6 +244,9 @@ class _CurrentLaneRunner:
         self.machine_preflight_invalid_once = machine_preflight_invalid_once
         self.machine_preflight_correction_failure_once = (
             machine_preflight_correction_failure_once
+        )
+        self.recheck_machine_preflight_invalid_once = (
+            recheck_machine_preflight_invalid_once
         )
         self.machine_preflight_attempts = 0
         self.execute_module_lane_calls = 0
@@ -856,13 +860,19 @@ class _CurrentLaneRunner:
         *,
         initial_scope: set[str],
         lifecycle_id: str = "initial",
+        preflight_progress: ModuleReviewPreflightProgress | None = None,
+        author_exception_acceptance=None,
     ) -> ModuleRecheckPreparation:
+        del author_exception_acceptance
         self.lifecycle[module_id].append("recheck-prepare")
         persisted = self.recheck_preparations.get(module_id)
         if persisted is not None:
             return persisted
-        review_round = self.recheck_rounds[module_id] + 1
-        self.recheck_rounds[module_id] = review_round
+        if preflight_progress is None:
+            review_round = self.recheck_rounds[module_id] + 1
+            self.recheck_rounds[module_id] = review_round
+        else:
+            review_round = self.recheck_rounds[module_id]
         target = next(iter(REPORT_TAXONOMY[module_id].submodules))
         finding = ModuleReviewFinding(
             id=f"M-{module_id}-initial-r0-1",
@@ -882,6 +892,30 @@ class _CurrentLaneRunner:
                 "The revised submodule states the operational consequence."
             ],
         )
+        if self.recheck_machine_preflight_invalid_once and preflight_progress is None:
+            return ModuleRecheckPreparation(
+                mode="preflight_revision",
+                run_id=state["run_id"],
+                module_id=module_id,
+                lifecycle_id=lifecycle_id,
+                workflow_id=workflow_id,
+                reviewer_session_key=f"module-auditor-{module_id}",
+                review_root=f"reviews/{module_id}",
+                progress_ref=f"reviews/{module_id}/progress.json",
+                review_round=review_round,
+                scope=[target],
+                current=current,
+                pending=[finding],
+                responses=current.revision_responses,
+                finding_refs=[f"reviews/{module_id}/findings-r0.json"],
+                subject_ref=f"modules/{module_id}-r{current.revision}.json",
+                validation_ref=f"reviews/{module_id}/recheck-preflight.json",
+                validation_target_submodule_ids=[target],
+                preflight_progress=ModuleReviewPreflightProgress(
+                    current=current,
+                    attempts=1,
+                ),
+            )
         return ModuleRecheckPreparation(
             mode="invoke_agent",
             run_id=state["run_id"],
@@ -907,6 +941,25 @@ class _CurrentLaneRunner:
                 revision=review_round,
             ),
         )
+
+    async def _prepare_module_recheck_preflight_revision(
+        self,
+        preparation: ModuleRecheckPreparation,
+        state: dict,
+    ) -> ModuleRevisionPreparation:
+        return await self._prepare_module_initial_review_preflight_revision(
+            preparation,
+            state,
+        )
+
+    def _accept_module_recheck_preflight_revision(
+        self,
+        _preparation: ModuleRecheckPreparation,
+        revision_preparation: ModuleRevisionPreparation,
+        result: ModuleRevisionSubmission,
+        _state: dict,
+    ) -> tuple[ModuleSubmission, str]:
+        return self._accept_module_revision(revision_preparation, result)
 
     async def _accept_module_recheck(
         self,
@@ -1213,6 +1266,7 @@ async def test_file_defined_completed_initial_review_resume_preserves_result_wit
     )
 
     assert runner.module_review_loop_calls == 0
+    assert runner.execute_module_lane_calls == 0
     assert runner.lifecycle[module_id] == [
         "start",
         "prepare",
@@ -1264,6 +1318,7 @@ async def test_file_defined_findings_resume_returns_to_declared_revision_and_rec
     )
 
     assert runner.module_review_loop_calls == 0
+    assert runner.execute_module_lane_calls == 0
     assert runner.lifecycle[module_id] == [
         "start",
         "prepare",
@@ -1321,6 +1376,7 @@ async def test_file_defined_review_resume_reuses_reviewer_session_and_declared_a
     )
 
     assert runner.module_review_loop_calls == 0
+    assert runner.execute_module_lane_calls == 0
     assert runner.lifecycle[module_id] == [
         "start",
         "prepare",
@@ -1377,6 +1433,7 @@ async def test_file_defined_recheck_resume_returns_to_declared_agent_without_leg
     )
 
     assert runner.module_review_loop_calls == 0
+    assert runner.execute_module_lane_calls == 0
     assert runner.lifecycle[module_id] == [
         "start",
         "prepare",
@@ -1440,6 +1497,7 @@ async def test_file_defined_completed_recheck_resume_preserves_result_refs_witho
     )
 
     assert runner.module_review_loop_calls == 0
+    assert runner.execute_module_lane_calls == 0
     assert runner.recheck_verdicts[module_id] == []
     assert runner.lifecycle[module_id] == [
         "start",
@@ -1527,6 +1585,8 @@ async def test_top_level_runtime_retries_only_the_failed_file_defined_module_bra
     assert all(runner.calls[module_id] == 0 for module_id in REPORT_MODULE_IDS[2:])
     assert state["cohort_finalized"] == ["2.1", "2.2"]
     assert completed.subworkflow_states["run-module-cohort"]["status"] == "completed"
+    assert runner.module_review_loop_calls == 0
+    assert runner.execute_module_lane_calls == 0
 
 
 @pytest.mark.asyncio
@@ -1579,6 +1639,8 @@ async def test_file_defined_module_author_reuses_same_run_submission_without_age
     ]
     assert state["module_submissions"][module_id] == submission
     assert completed.status is WorkflowStatus.COMPLETED
+    assert runner.module_review_loop_calls == 0
+    assert runner.execute_module_lane_calls == 0
 
 
 @pytest.mark.asyncio
@@ -1626,6 +1688,8 @@ async def test_file_defined_initial_reviewer_failure_drains_and_retries_its_lane
     assert runner.lifecycle["2.2"].count("fail") == 1
     assert runner.lifecycle["2.2"].count("reviewer:module-auditor-2.2") == 2
     assert completed.status is WorkflowStatus.COMPLETED
+    assert runner.module_review_loop_calls == 0
+    assert runner.execute_module_lane_calls == 0
 
 
 @pytest.mark.asyncio
@@ -1672,6 +1736,8 @@ async def test_file_defined_initial_finding_invokes_original_author_revision_onc
     ]
     assert runner.revision_numbers[module_id] == 1
     assert completed.status is WorkflowStatus.COMPLETED
+    assert runner.module_review_loop_calls == 0
+    assert runner.execute_module_lane_calls == 0
 
 
 @pytest.mark.asyncio
@@ -1728,6 +1794,8 @@ async def test_file_defined_module_recheck_revises_again_before_completion(
     assert "review" not in runner.lifecycle[module_id]
     assert runner.revision_numbers[module_id] == 2
     assert completed.status is WorkflowStatus.COMPLETED
+    assert runner.module_review_loop_calls == 0
+    assert runner.execute_module_lane_calls == 0
 
 
 @pytest.mark.asyncio
@@ -1904,6 +1972,11 @@ def test_file_defined_module_machine_preflight_routes_correction_before_auditor(
         if action["id"] == "create-module-reviewer-conversation"
     )
     assert reviewer_conversation["conversation_key"] == "module-auditor-2.1"
+    assert "continue-current-module-recheck" not in action_ids
+    assert "continue-after-current-module-recheck" not in action_ids
+    assert "continue-current-module-recheck" not in {
+        action.get("tool") for action in actions
+    }
     assert "review-current-module-lane" not in {
         action.get("tool") for action in actions
     }
@@ -1955,6 +2028,46 @@ async def test_file_defined_machine_preflight_correction_calls_declared_author_b
         "review-accept",
         "complete",
     ]
+    assert runner.module_review_loop_calls == 0
+    assert runner.execute_module_lane_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_file_defined_recheck_preflight_correction_returns_to_original_auditor(
+    tmp_path: Path,
+) -> None:
+    """A recheck machine failure uses the original Author, then original Auditor."""
+
+    run_id = "report-declarative-module-recheck-preflight"
+    module_id = "2.1"
+    workflow_id = f"full-power-distribution-report:{run_id}"
+    state = {"run_id": run_id}
+    runner = _CurrentLaneRunner(
+        tmp_path,
+        recheck_machine_preflight_invalid_once=True,
+    )
+    runner.fail_once = ""
+    runner.review_findings.add(module_id)
+
+    completed = await execute_declarative_module_stage(
+        requested_modules=(module_id,),
+        state=state,
+        workflow_id=workflow_id,
+        state_store=FileWorkflowStateStore(tmp_path),
+        module_runtime=_CurrentModuleStages(
+            runner,
+            (module_id,),
+            state,
+            workflow_id,
+        ),
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert runner.calls[module_id] == 1
+    assert runner.lifecycle[module_id].count("reviewer:module-auditor-2.1") == 1
+    assert runner.lifecycle[module_id].count("rechecker:module-auditor-2.1") == 1
+    assert runner.lifecycle[module_id].count("revision:module-2.1") == 2
+    assert runner.lifecycle[module_id].count("recheck-prepare") == 2
     assert runner.module_review_loop_calls == 0
     assert runner.execute_module_lane_calls == 0
 
