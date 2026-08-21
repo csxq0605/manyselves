@@ -311,11 +311,13 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
         assert pipeline_plan.agent_ids == [
             "cross-module-reviewer",
             f"module-{module_id}-specialist",
+            "main-agent",
             "evidence-auditor",
         ]
         assert pipeline_plan.task_ids == [
             "cross-owner-runtime-initial-review",
             f"cross-owner-module-{module_id}-revision-r1",
+            "cross-owner-runtime-main-exception",
             "cross-owner-runtime-local-review",
             "cross-owner-runtime-recheck",
         ]
@@ -327,17 +329,21 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
             "prepare-current-cross-owner-revision",
             "cross-owner-revision-requires-agent",
             "accept-current-cross-owner-revision",
+            "prepare-current-cross-owner-author-exception",
+            "cross-owner-main-exception-requires-agent",
+            "accept-current-cross-owner-main-exception",
+            "cross-owner-author-exception-returns-to-author",
             "prepare-current-cross-owner-local-review",
             "cross-owner-local-review-requires-agent",
             "accept-current-cross-owner-local-review",
             "prepare-current-cross-owner-recheck",
             "cross-owner-recheck-requires-agent",
             "accept-current-cross-owner-recheck",
+            "prepare-current-cross-owner-reviewer-exception",
             "advance-current-cross-owner-round",
             "cross-owner-round-needs-revision",
             "complete-current-cross-owner-pipeline",
             "complete-current-cross-owner-without-findings",
-            "continue-current-cross-owner-pipeline",
         ]
         conversation = next(
             action
@@ -410,11 +416,9 @@ def test_cross_owner_21_pipeline_declares_initial_reviewer_agent_boundary() -> N
         "context": "owner-context",
         "result": "cross-owner-initial-agent-result",
     }
-    continue_action = next(
-        action for action in plan.actions if action.id == "continue-current-cross-owner-pipeline"
-    )
-    assert continue_action.tool == "continue-current-cross-owner-pipeline"
-    assert continue_action.input_variable == "owner-context"
+    assert "continue-current-cross-owner-pipeline" not in {
+        action.id for action in plan.actions
+    }
 
 
 def test_cross_owner_21_pipeline_declares_owner_finding_revision_boundary() -> None:
@@ -439,7 +443,7 @@ def test_cross_owner_21_pipeline_declares_owner_finding_revision_boundary() -> N
     assert "cross-owner-initial-has-findings" in action_ids
     assert "prepare-current-cross-owner-revision" in action_ids
     assert "accept-current-cross-owner-revision" in action_ids
-    assert "continue-current-cross-owner-pipeline" in action_ids
+    assert "continue-current-cross-owner-pipeline" not in action_ids
 
     finding_route = next(
         action for action in plan.actions if action.id == "cross-owner-initial-has-findings"
@@ -493,7 +497,7 @@ def test_cross_owner_21_pipeline_declares_original_auditor_local_regression() ->
     action_ids = [action.id for action in plan.actions]
     assert "prepare-current-cross-owner-local-review" in action_ids
     assert "accept-current-cross-owner-local-review" in action_ids
-    assert "continue-current-cross-owner-pipeline" in action_ids
+    assert "continue-current-cross-owner-pipeline" not in action_ids
 
     local_review_agents = [
         action
@@ -579,7 +583,7 @@ def test_cross_owner_21_pipeline_declares_repeated_recheck_round_route() -> None
         action for action in plan.actions if action.id == "continue-after-cross-owner-recheck"
     )
     assert recheck_continue.kind == "goto"
-    assert recheck_continue.target == "advance-current-cross-owner-round"
+    assert recheck_continue.target == "prepare-current-cross-owner-reviewer-exception"
 
     round_advance = next(
         action for action in plan.actions if action.id == "advance-current-cross-owner-round"
@@ -663,5 +667,46 @@ def test_cross_owner_21_pipeline_advances_recovered_recheck_verdict() -> None:
         for action in plan.actions
         if action.id == "choose-cross-owner-recheck-source"
     )
-    assert choose_recheck.otherwise == "advance-current-cross-owner-round"
+    assert choose_recheck.otherwise == "prepare-current-cross-owner-reviewer-exception"
     assert all(action.kind != "gate" for action in plan.actions)
+
+
+def test_cross_owner_21_pipeline_declares_main_exception_agent_routes() -> None:
+    """Author and reviewer exceptions use Main without a compatibility Tool."""
+
+    _, registry = load_distribution_reporting_capability()
+    from manyselves.core.reporting.declarative_cross_owner_cohort import (
+        register_cross_owner_pipeline_specializations,
+    )
+
+    register_cross_owner_pipeline_specializations(registry)
+    pipeline = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-cross-owner-2.1-pipeline",
+    )
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        pipeline,
+        registry,
+    )
+
+    main_conversations = [
+        action
+        for action in plan.actions
+        if action.kind == "create_conversation" and action.agent == "main-agent"
+    ]
+    main_invocations = [
+        action
+        for action in plan.actions
+        if action.kind == "invoke_agent" and action.agent == "main-agent"
+    ]
+    assert len(main_conversations) == 2
+    assert {action.conversation_key for action in main_conversations} == {
+        "main-cross-exception"
+    }
+    assert len(main_invocations) == 2
+    assert {action.task for action in main_invocations} == {
+        "cross-owner-runtime-main-exception"
+    }
+    assert "continue-current-cross-owner-pipeline" not in plan.tool_ids
+    assert pipeline.gates == []
+    assert plan.max_iterations is None

@@ -15,11 +15,11 @@
 ## Current position
 
 - Current work package: `WP-08 production Cross owner decomposition`
-- Last completed vertical slice: a persisted Cross reviewer recheck verdict now follows the same file-declared typed round advancement and owner completion path as a fresh verdict, without a new Conversation, Agent replay, or whole-owner compatibility closure
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `32b57eb` (`WP-08: declare Cross no-finding completion`); the recovered recheck routing slice is this document's commit
+- Last completed vertical slice: explicit Cross Author `disputed`/`needs_input` responses and reviewer `escalate` verdicts now invoke the existing `main-agent` through a declared Task and the original `main-cross-exception` Conversation, then either continue to the original Auditor, return to the same Author Conversation, enter another typed owner round, or close without `run_owner`
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `8a45ddb` (`WP-08: recover Cross rechecks into typed rounds`); the declared Main exception slice is this document's commit
 - Current migration stage: `file-defined Reporting workflow migration`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
-- Next automatic action: audit and decompose the remaining exceptional Author/preflight/Main compatibility branches before entering Chief/Final/Render/Delivery decomposition
+- Next automatic action: finish generic user-interaction projection for explicit Main `request_user`, then decompose the remaining module preflight/exception compatibility branches before entering Chief/Final/Render/Delivery decomposition
 
 ## Reopened architecture completion audit
 
@@ -35,7 +35,7 @@ architecture:
   subsequent open/new-finding correction rounds now repeat those same declared
   actions through an explicit exit loop and close through explicit owner
   promotion; ordinary no-initial-finding completion is also file-declared, so
-  only preflight and exceptional paths retain the compatibility Tool;
+  only module preflight and exceptional review paths retain the compatibility Tool;
 - the packaged detailed review Lane is file-owned and executable, but the full
   production authoring/preflight/review lifecycle is not yet decomposed into it;
 - `RecoveryController` is not yet part of the production generic Agent execution
@@ -46,10 +46,11 @@ architecture:
   original Author revision/recovery, typed revision acceptance, original module
   Auditor local-regression preparation, Conversation, Agent invocation, typed
   finding/completion acceptance, every repeated original-owner recheck, typed
-  round advancement, and finding-path owner promotion are file-owned; each
-  owner branch still invokes one compatibility Tool only for exceptional
-  Author/preflight/Main paths, while combined Render/Delivery also remains a
-  coarse Capability Tool;
+  round advancement, finding-path owner promotion, exceptional Author/reviewer
+  preparation, `main-agent` invocation, decision acceptance, and return/continue
+  routes are file-owned; no owner branch retains a reachable whole-owner
+  compatibility Tool, while explicit user-wait projection and combined
+  Render/Delivery remain to be decomposed;
 - application and React projections require a final audit for remaining
   Reporting-specific dispatch or presentation decisions.
 
@@ -72,6 +73,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
+- `WP-08: declare Cross Main exception routes` — Author `disputed`/`needs_input` and reviewer `escalate` paths share the exact existing Main exception input/envelope/acceptance implementation with Legacy, invoke the packaged `main-agent` through one declared Task and the original `main-cross-exception` Conversation, and route `accept_dispute`/`return_to_author` through the original Auditor or repeated typed owner rounds; the file graph contains no whole-owner compatibility action, while the existing Main serialization lock is reused rather than replaced or expanded (this commit)
 - `WP-08: recover Cross rechecks into typed rounds` — a recovered recheck acceptance now enters the same declared verdict-state advancement as a fresh Agent result; a fresh-then-resume characterization proves zero new Conversations, zero Agent replay, revision 1 completion, and success even when whole-owner `run_owner` is replaced by a hard failure (this commit)
 - `WP-08: declare Cross no-finding completion` — the existing no-finding owner no-op, prior module-audit binding, and outer r1 promotion are shared by Legacy and a dedicated file-declared completion action; a production characterization proves the ordinary path never calls the compatibility `run_owner`, while fresh and recovered initial results retain the original reviewer Conversation and completion semantics (this commit)
 - `WP-08: repeat Cross owner rounds as declared Agents` — an accepted Cross verdict advances the existing pending/resolved/new-finding semantics into typed WorkflowState, routes pending findings back through the same declared Author/local-Auditor/reviewer actions, and explicitly promotes a closed owner; a two-round characterization proves revision 2, both finding artifacts, the outer r1 completion identity, original Conversations, and no Legacy later-round Agent replay (this commit)
@@ -129,6 +131,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Cross-Main-exception Characterizations first failed because Author exceptions and reviewer escalations still fell into the whole-owner continuation. The declared paths now prove Author dispute → Main accept → original Auditor/Cross, Author dispute → Main return → the same Author Conversation at r2, reviewer escalation → Main accept → typed completion, and reviewer escalation → Main return → r2 Author/Auditor/Cross; all four replace `CrossReviewCoordinator.run_owner` with a hard failure. Cross/Definition/Tail/Runner affected selection passed: `45 passed`; protected Max Token, Tool Slice, productive slices, No-progress, Schema correction, persisted Provider result, original session, finding-progress resume, and Kernel boundary passed: `9 passed`. Focused Ruff, compileall, `git diff --check`, and wheel build passed; no added diff line contains a hash, SHA-256, or CAS token. No full regression, Provider, browser, or server test ran.
 - Recovered-Cross-recheck Characterizations first failed because the persisted-verdict branch still targeted the compatibility closure. The branch now rejoins the existing `advance-current-cross-owner-round` action; a fresh run followed by artifact-based resume completes with no new Agent calls or Conversations while a patched `run_owner` would fail. Cross/Definition/Tail/Runner affected collections passed: `48 passed`; protected continuation/correction/reuse and Kernel boundary: `9 passed`. Focused Ruff, `git diff --check`, and wheel build passed; the packaged workflow has zero hash/CAS tokens and routes recovered verdicts into typed advancement. No full regression, Provider, browser, or server test ran.
 - Cross-no-finding Characterization first failed because `choose-cross-owner-revision.otherwise` still targeted the compatibility closure. The dedicated file action now reuses the exact existing no-op/recovery/promotion implementation; a production characterization replaces `CrossReviewCoordinator.run_owner` with a hard failure and still completes revision 0 with outer round 1 and only the original Cross reviewer Conversation. Cross/Definition/Tail/Runner affected collections passed: `46 passed`; protected continuation/correction/reuse and Kernel boundary: `9 passed`. Focused Ruff, compileall, `git diff --check`, hash/CAS token comparison (`56` unchanged), and wheel build passed; the wheel contains the no-finding completion Tool and updated owner workflow. No full regression, Provider, browser, or server test ran.
 - Repeated-Cross-round Characterization first failed because the owner workflow returned from its first recheck to the compatibility continuation; the first implementation run then exposed that recheck preparation still bound the initial findings instead of the current round. After sharing current-round preparation and verdict-state advancement with Legacy, the declarative path proves initial Cross → Author r1 → original Auditor r1 → Cross r1 with a new finding → Author r2 → original Auditor r2 → Cross r2 → explicit promotion. It persists both r2 input/verdict artifacts, retains both findings, preserves outer completion round 1, reuses the original three Conversations, and never enters an unaccepted Legacy later-round Agent call. Cross/Definition affected collections passed: `29 passed`; Tail/Runner: `15 passed`; protected Max Token, Tool Slice, productive slices, No-progress, Schema correction, persisted Provider result, original session, finding-progress resume, and Kernel import boundary: `9 passed`. Focused Ruff, compileall, `git diff --check`, hash/CAS token comparison (`56` unchanged), and wheel build passed; the wheel contains the three round/route/completion Tools and updated owner workflow. No full regression, Provider, browser, or server test ran.
@@ -259,6 +262,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 - Repeated Cross correction reuses one shared typed pending/resolved/new-finding transition for Legacy and declarative paths. The declared back edge returns only when existing pending findings remain, and the existing completion promotion runs when they are empty; this adds no cap, hash, CAS, Gate definition, public interface, or orchestration dependency, while later rounds keep the same Author, Auditor, and Cross reviewer Conversations.
 - Cross no-finding completion calls the pre-existing `_verified_cross_owner_noop` and promotion helpers through one shared Capability boundary. Its historical semantic-key hash remains unchanged in one implementation; no hash/CAS expression, comparison, Gate, or new route predicate was added.
 - Recovered Cross rechecks reuse the acceptance already produced by `prepare_owner_recheck` and change only the existing false-branch target from the compatibility closure to typed round advancement. No new predicate, Tool, Gate, hash/CAS logic, or public boundary was added.
+- Cross Main exception extraction moves the existing exception input, TaskEnvelope, exact-finding acceptance, persisted decision, and `request_user`/`stop_incomplete` behavior into shared typed Capability boundaries used by both Legacy and declarative paths. The new graph declares the existing `main-agent`, original `main-cross-exception` Conversation, and only the two existing business routes; it reuses the pre-existing `_main_exception_lock` to preserve serialization and adds no lock, Gate, cap, hash/CAS expression, or production dependency.
 - WP-10 keeps the Capability `gates/` index intentionally empty because the migrated path has no new acceptance or decision Gate. Existing Reporting recovery behavior is indexed without new attempt limits, hashes, CAS, or validation chains.
 - The explicit Reporting engine selection is routing, not a new acceptance or safety Gate: existing Reporting starts omit the parameter and remain `legacy`; only the generic declarative Capability start passes `declarative`. The readable run prefix preserves the same selection across resume without a new metadata verifier, digest, or CAS record.
 

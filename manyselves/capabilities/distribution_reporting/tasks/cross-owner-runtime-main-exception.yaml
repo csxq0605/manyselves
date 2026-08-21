@@ -1,0 +1,10 @@
+id: cross-owner-runtime-main-exception
+version: 1.0.0
+description: Decide one prepared Cross owner Author or reviewer exception
+agent: main-agent
+objective: Decide only the explicitly prepared Cross exception findings.
+input_contract: declarative_cross_owner_runtime_context
+output_contract: declarative_main_exception_agent_result
+tools:
+- submit_result
+recovery: current-reporting-recovery

@@ -21,6 +21,7 @@ from manyselves.core.reporting.agentic_models import (
     ModuleSubmission,
     ResolutionVerdict,
     RevisionResponse,
+    WorkflowDecisionSubmission,
 )
 from manyselves.core.reporting.declarative_cross_owner_cohort import (
     DeclarativeCrossOwnerInitialAgentResult,
@@ -37,6 +38,7 @@ from manyselves.core.reporting.input_contracts import (
     ModuleRevisionInput,
     ReviewCompletionRecord,
     ValidationReport,
+    WorkflowExceptionInput,
 )
 from manyselves.core.reporting.parallel_runtime import (
     ArtifactRef,
@@ -283,6 +285,129 @@ class _CrossFindingRunner(_Runner):
     @staticmethod
     def _template_skill_context(_state, *_parts):
         return ""
+
+
+class _CrossExceptionRunner(_CrossFindingRunner):
+    """Provider double for the declared Cross/Main exceptional continuations."""
+
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        author_disputed: bool = False,
+        recheck_escalated: bool = False,
+        main_decision: str = "accept_dispute",
+    ) -> None:
+        super().__init__(workspace)
+        self.author_disputed = author_disputed
+        self.recheck_escalated = recheck_escalated
+        self.main_decision = main_decision
+        self.main_exception_inputs: list[WorkflowExceptionInput] = []
+        self.author_exception_calls = 0
+        self.recheck_exception_calls = 0
+
+    async def _agent(
+        self,
+        agent_id,
+        envelope,
+        artifacts,
+        workflow_id,
+        *,
+        session_key=None,
+    ):
+        session = session_key or ""
+        if agent_id == "main-agent":
+            self.agent_calls.append((agent_id, envelope.task_id, session))
+            exception_input = WorkflowExceptionInput.model_validate_json(
+                (self.service.workspace / envelope.input_refs[0]).read_text(encoding="utf-8")
+            )
+            self.main_exception_inputs.append(exception_input)
+            return WorkflowDecisionSubmission(
+                decision=self.main_decision,
+                rationale="当前例外属于已明确覆盖的争议或升级 finding，按原审查路径继续复核。",
+                finding_ids=list(exception_input.finding_ids),
+            )
+
+        if agent_id == "module-2.1-specialist":
+            self.agent_calls.append((agent_id, envelope.task_id, session))
+            self.author_exception_calls += 1
+            revision_input = ModuleRevisionInput.model_validate_json(
+                (self.service.workspace / envelope.input_refs[0]).read_text(encoding="utf-8")
+            )
+            disputed = self.author_disputed and self.author_exception_calls == 1
+            return ModuleRevisionSubmission(
+                module_id="2.1",
+                base_revision=revision_input.subject.revision,
+                revision=revision_input.subject.revision + 1,
+                submodule_narratives=(
+                    {}
+                    if disputed
+                    else {
+                        target_id: f"{narrative}\n\n已按 Main 退回决定补充边界说明。"
+                        for target_id, narrative in (
+                            revision_input.subject.submodule_narratives.items()
+                        )
+                    }
+                ),
+                source_ids=[],
+                unresolved_questions=[],
+                revision_responses=[
+                    RevisionResponse(
+                        finding_id=finding.id,
+                        action="disputed" if disputed else "implemented",
+                        summary=(
+                            "当前证据边界不支持新增确定性结论，因此作者保留原文并提出异议。"
+                            if disputed
+                            else "根据 Main 退回决定完成原 finding 对应修订。"
+                        ),
+                        changed_target_ids=(
+                            [] if disputed else list(finding.target_submodule_ids)
+                        ),
+                    )
+                    for finding in revision_input.cross_findings
+                ],
+            )
+
+        if agent_id == "cross-module-reviewer" and self.recheck_escalated:
+            if not envelope.task_id.endswith("initial"):
+                self.recheck_exception_calls += 1
+                if self.recheck_exception_calls > 1:
+                    return await super()._agent(
+                        agent_id,
+                        envelope,
+                        artifacts,
+                        workflow_id,
+                        session_key=session_key,
+                    )
+                self.agent_calls.append((agent_id, envelope.task_id, session))
+                contract = CrossOwnerInput.model_validate_json(
+                    (self.service.workspace / envelope.input_refs[0]).read_text(encoding="utf-8")
+                )
+                return CrossOwnerVerdictSubmission(
+                    owner_module_id=contract.owner_module_id,
+                    coverage=CrossReviewCoverageEntry(
+                        module_id=contract.owner_module_id,
+                        checked_dimensions=list(CROSS_REVIEW_DIMENSIONS),
+                    ),
+                    verdicts=[
+                        ResolutionVerdict(
+                            finding_id=finding.id,
+                            verdict="escalate",
+                            reason="当前 Cross finding 需要 Main 对明确的例外边界作出继续处理决定。",
+                            evidence_refs=[contract.owner_subject_ref],
+                        )
+                        for finding in contract.required_findings
+                    ],
+                    new_findings=[],
+                )
+
+        return await super()._agent(
+            agent_id,
+            envelope,
+            artifacts,
+            workflow_id,
+            session_key=session,
+        )
 
 
 def _artifact_ref(runner: _Runner, ref: str) -> ArtifactRef:
@@ -543,6 +668,13 @@ async def _execute_declarative_cross_owner_cohort(
                 "prepare-current-cross-owner-revision": runtime.prepare_revision,
                 "cross-owner-revision-requires-agent": (runtime.revision_requires_agent),
                 "accept-current-cross-owner-revision": runtime.accept_revision,
+                "prepare-current-cross-owner-author-exception": runtime.prepare_author_exception,
+                "prepare-current-cross-owner-reviewer-exception": runtime.prepare_reviewer_exception,
+                "cross-owner-main-exception-requires-agent": runtime.main_exception_requires_agent,
+                "accept-current-cross-owner-main-exception": runtime.accept_main_exception,
+                "cross-owner-author-exception-returns-to-author": (
+                    runtime.author_exception_returns_to_author
+                ),
                 "prepare-current-cross-owner-local-review": (runtime.prepare_local_review),
                 "cross-owner-local-review-requires-agent": (runtime.local_review_requires_agent),
                 "accept-current-cross-owner-local-review": (runtime.accept_local_review),
@@ -601,6 +733,13 @@ async def _execute_declarative_cross_owner_pipeline(
                 "prepare-current-cross-owner-revision": runtime.prepare_revision,
                 "cross-owner-revision-requires-agent": (runtime.revision_requires_agent),
                 "accept-current-cross-owner-revision": runtime.accept_revision,
+                "prepare-current-cross-owner-author-exception": runtime.prepare_author_exception,
+                "prepare-current-cross-owner-reviewer-exception": runtime.prepare_reviewer_exception,
+                "cross-owner-main-exception-requires-agent": runtime.main_exception_requires_agent,
+                "accept-current-cross-owner-main-exception": runtime.accept_main_exception,
+                "cross-owner-author-exception-returns-to-author": (
+                    runtime.author_exception_returns_to_author
+                ),
                 "prepare-current-cross-owner-local-review": (runtime.prepare_local_review),
                 "cross-owner-local-review-requires-agent": (runtime.local_review_requires_agent),
                 "accept-current-cross-owner-local-review": (runtime.accept_local_review),
@@ -1577,7 +1716,9 @@ async def test_declarative_cross_owner_recheck_regression_uses_next_declared_rev
     )
 
     assert completed.status is WorkflowStatus.COMPLETED
-    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(completed.outputs["result"])
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(
+        completed.outputs["result"]
+    )
     assert result.status == "completed", result.error
     assert result.pipeline is not None
     assert result.pipeline["lane"]["module"]["revision"] == 2
@@ -1965,6 +2106,13 @@ async def test_declarative_cross_owner_stage_failures_retry_only_failed_owner_st
                 "prepare-current-cross-owner-revision": runtime.prepare_revision,
                 "cross-owner-revision-requires-agent": runtime.revision_requires_agent,
                 "accept-current-cross-owner-revision": runtime.accept_revision,
+                "prepare-current-cross-owner-author-exception": runtime.prepare_author_exception,
+                "prepare-current-cross-owner-reviewer-exception": runtime.prepare_reviewer_exception,
+                "cross-owner-main-exception-requires-agent": runtime.main_exception_requires_agent,
+                "accept-current-cross-owner-main-exception": runtime.accept_main_exception,
+                "cross-owner-author-exception-returns-to-author": (
+                    runtime.author_exception_returns_to_author
+                ),
                 "prepare-current-cross-owner-local-review": (runtime.prepare_local_review),
                 "cross-owner-local-review-requires-agent": (runtime.local_review_requires_agent),
                 "accept-current-cross-owner-local-review": (runtime.accept_local_review),
@@ -2231,6 +2379,13 @@ async def test_declarative_cross_owner_cohort_retries_only_failed_owner_from_fil
                 "prepare-current-cross-owner-revision": runtime.prepare_revision,
                 "cross-owner-revision-requires-agent": (runtime.revision_requires_agent),
                 "accept-current-cross-owner-revision": runtime.accept_revision,
+                "prepare-current-cross-owner-author-exception": runtime.prepare_author_exception,
+                "prepare-current-cross-owner-reviewer-exception": runtime.prepare_reviewer_exception,
+                "cross-owner-main-exception-requires-agent": runtime.main_exception_requires_agent,
+                "accept-current-cross-owner-main-exception": runtime.accept_main_exception,
+                "cross-owner-author-exception-returns-to-author": (
+                    runtime.author_exception_returns_to_author
+                ),
                 "prepare-current-cross-owner-local-review": (runtime.prepare_local_review),
                 "cross-owner-local-review-requires-agent": (runtime.local_review_requires_agent),
                 "accept-current-cross-owner-local-review": (runtime.accept_local_review),
@@ -2326,3 +2481,226 @@ async def test_declarative_cross_owner_cohort_retries_only_failed_owner_from_fil
     )
     persisted = state_store.load(run_id)
     assert persisted.status is WorkflowStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_declarative_cross_owner_author_dispute_main_accepts_then_runs_original_auditor_and_cross(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Author disputed response enters declared Main, then original Auditor/Cross."""
+
+    run_id = "run-cross-declarative-author-dispute"
+    runner = _CrossExceptionRunner(tmp_path, author_disputed=True)
+    _write_modules(runner, run_id)
+    state = _state(run_id)
+    _write_initial_module_completion(runner, state, "2.1")
+
+    async def _unexpected_compatibility(*_args, **_kwargs):
+        raise AssertionError("Cross exceptional continuation entered compatibility run_owner")
+
+    monkeypatch.setattr(
+        lifecycle.CrossReviewCoordinator,
+        "run_owner",
+        _unexpected_compatibility,
+    )
+
+    completed = await _execute_declarative_cross_owner_pipeline(
+        runner,
+        state,
+        "workflow-cross-declarative-author-dispute",
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(
+        completed.outputs["result"]
+    )
+    assert result.status == "completed", result.error
+    assert [agent_id for agent_id, _task_id, _session in runner.agent_calls] == [
+        "cross-module-reviewer",
+        "module-2.1-specialist",
+        "main-agent",
+        "evidence-auditor",
+        "cross-module-reviewer",
+    ]
+    assert runner.main_exception_inputs
+    assert runner.main_exception_inputs[0].scope == "cross"
+    assert runner.main_exception_inputs[0].trigger == "author_response"
+    assert runner.main_exception_inputs[0].finding_ids == ["XMR-2.1-001"]
+    assert {record.key.value for record in completed.conversations.values()} >= {
+        "cross-owner-2.1",
+        "module-2.1",
+        "module-auditor-2.1",
+        "main-cross-exception",
+    }
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(completed.outputs["result"])
+    assert result.status == "completed", result.error
+    assert result.pipeline is not None
+    assert result.pipeline["lane"]["module"]["revision"] == 1
+
+
+@pytest.mark.asyncio
+async def test_declarative_cross_owner_main_returns_dispute_to_same_author_conversation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Main return loops through the original Author before Auditor/Cross."""
+
+    run_id = "run-cross-declarative-author-return"
+    runner = _CrossExceptionRunner(
+        tmp_path,
+        author_disputed=True,
+        main_decision="return_to_author",
+    )
+    _write_modules(runner, run_id)
+    state = _state(run_id)
+    _write_initial_module_completion(runner, state, "2.1")
+
+    async def _unexpected_compatibility(*_args, **_kwargs):
+        raise AssertionError("Cross Author return entered compatibility run_owner")
+
+    monkeypatch.setattr(
+        lifecycle.CrossReviewCoordinator,
+        "run_owner",
+        _unexpected_compatibility,
+    )
+
+    completed = await _execute_declarative_cross_owner_pipeline(
+        runner,
+        state,
+        "workflow-cross-declarative-author-return",
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(
+        completed.outputs["result"]
+    )
+    assert result.status == "completed", result.error
+    assert [agent_id for agent_id, _task_id, _session in runner.agent_calls] == [
+        "cross-module-reviewer",
+        "module-2.1-specialist",
+        "main-agent",
+        "module-2.1-specialist",
+        "evidence-auditor",
+        "cross-module-reviewer",
+    ]
+    assert {
+        session
+        for agent_id, _task_id, session in runner.agent_calls
+        if agent_id == "module-2.1-specialist"
+    } == {"module-2.1"}
+    assert result.pipeline is not None
+    assert result.pipeline["lane"]["module"]["revision"] == 2
+
+
+@pytest.mark.asyncio
+async def test_declarative_cross_owner_recheck_escalation_main_accepts_then_completes_without_compatibility(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Accepted Cross escalation closes the typed round without replaying run_owner."""
+
+    run_id = "run-cross-declarative-recheck-escalation"
+    runner = _CrossExceptionRunner(tmp_path, recheck_escalated=True)
+    _write_modules(runner, run_id)
+    state = _state(run_id)
+    _write_initial_module_completion(runner, state, "2.1")
+
+    async def _unexpected_compatibility(*_args, **_kwargs):
+        raise AssertionError("Cross escalation entered compatibility run_owner")
+
+    monkeypatch.setattr(
+        lifecycle.CrossReviewCoordinator,
+        "run_owner",
+        _unexpected_compatibility,
+    )
+
+    completed = await _execute_declarative_cross_owner_pipeline(
+        runner,
+        state,
+        "workflow-cross-declarative-recheck-escalation",
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert [agent_id for agent_id, _task_id, _session in runner.agent_calls] == [
+        "cross-module-reviewer",
+        "module-2.1-specialist",
+        "evidence-auditor",
+        "cross-module-reviewer",
+        "main-agent",
+    ]
+    assert runner.main_exception_inputs
+    assert runner.main_exception_inputs[0].scope == "cross"
+    assert runner.main_exception_inputs[0].trigger == "reviewer_escalation"
+    assert runner.main_exception_inputs[0].finding_ids == ["XMR-2.1-001"]
+    assert "main-cross-exception" in {
+        record.key.value for record in completed.conversations.values()
+    }
+    assert sum(agent_id == "module-2.1-specialist" for agent_id, _task, _session in runner.agent_calls) == 1
+    assert sum(agent_id == "evidence-auditor" for agent_id, _task, _session in runner.agent_calls) == 1
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(completed.outputs["result"])
+    assert result.status == "completed", result.error
+    assert result.pipeline is not None
+    assert result.pipeline["lane"]["module"]["revision"] == 1
+    assert result.pipeline["verdicts"] == [
+        {
+            "finding_id": "XMR-2.1-001",
+            "verdict": "escalate",
+            "reason": "当前 Cross finding 需要 Main 对明确的例外边界作出继续处理决定。",
+            "evidence_refs": [
+                f"Work/runs/{run_id}/modules/2.1-r1.json",
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_declarative_cross_owner_main_returns_escalation_to_next_declared_round(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reviewer escalation returned by Main enters the next typed owner round."""
+
+    run_id = "run-cross-declarative-recheck-return"
+    runner = _CrossExceptionRunner(
+        tmp_path,
+        recheck_escalated=True,
+        main_decision="return_to_author",
+    )
+    _write_modules(runner, run_id)
+    state = _state(run_id)
+    _write_initial_module_completion(runner, state, "2.1")
+
+    async def _unexpected_compatibility(*_args, **_kwargs):
+        raise AssertionError("Cross escalation return entered compatibility run_owner")
+
+    monkeypatch.setattr(
+        lifecycle.CrossReviewCoordinator,
+        "run_owner",
+        _unexpected_compatibility,
+    )
+
+    completed = await _execute_declarative_cross_owner_pipeline(
+        runner,
+        state,
+        "workflow-cross-declarative-recheck-return",
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(
+        completed.outputs["result"]
+    )
+    assert result.status == "completed", result.error
+    assert [agent_id for agent_id, _task_id, _session in runner.agent_calls] == [
+        "cross-module-reviewer",
+        "module-2.1-specialist",
+        "evidence-auditor",
+        "cross-module-reviewer",
+        "main-agent",
+        "module-2.1-specialist",
+        "evidence-auditor",
+        "cross-module-reviewer",
+    ]
+    assert result.pipeline is not None
+    assert result.pipeline["lane"]["module"]["revision"] == 2
+    assert len(result.pipeline["verdict_refs"]) == 2

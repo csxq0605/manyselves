@@ -10,6 +10,7 @@ tasks:
 - cross-owner-module-2.5-revision-r1
 - cross-owner-runtime-local-review
 - cross-owner-runtime-recheck
+- cross-owner-runtime-main-exception
 gates: []
 recovery:
 - current-reporting-recovery
@@ -96,7 +97,7 @@ actions:
     variable: should-invoke-cross-owner-revision
     operator: truthy
   then: create-cross-owner-revision-conversation
-  otherwise: prepare-current-cross-owner-local-review
+  otherwise: prepare-current-cross-owner-author-exception
 - id: create-cross-owner-revision-conversation
   kind: create_conversation
   agent: "{revision_agent_id}"
@@ -119,7 +120,59 @@ actions:
   output_variable: owner-context
 - id: continue-after-cross-owner-revision
   kind: goto
-  target: prepare-current-cross-owner-local-review
+  target: prepare-current-cross-owner-author-exception
+- id: prepare-current-cross-owner-author-exception
+  kind: invoke_tool
+  tool: prepare-current-cross-owner-author-exception
+  input_variable: owner-context
+  output_variable: owner-context
+- id: cross-owner-author-exception-requires-agent
+  kind: invoke_tool
+  tool: cross-owner-main-exception-requires-agent
+  input_variable: owner-context
+  output_variable: should-invoke-cross-owner-author-exception
+- id: choose-cross-owner-author-exception-source
+  kind: if
+  condition:
+    variable: should-invoke-cross-owner-author-exception
+    operator: truthy
+  then: create-cross-owner-author-exception-conversation
+  otherwise: cross-owner-author-exception-returns-to-author
+- id: create-cross-owner-author-exception-conversation
+  kind: create_conversation
+  agent: main-agent
+  conversation_key: main-cross-exception
+  mode: run
+  output_variable: cross-owner-author-exception-conversation
+- id: invoke-current-cross-owner-author-exception
+  kind: invoke_agent
+  agent: main-agent
+  task: cross-owner-runtime-main-exception
+  conversation_variable: cross-owner-author-exception-conversation
+  input_variable: owner-context
+  output_variable: cross-owner-main-exception-agent-result
+- id: accept-current-cross-owner-author-exception
+  kind: invoke_tool
+  tool: accept-current-cross-owner-main-exception
+  input_variables:
+    context: owner-context
+    result: cross-owner-main-exception-agent-result
+  output_variable: owner-context
+- id: continue-after-cross-owner-author-exception
+  kind: goto
+  target: cross-owner-author-exception-returns-to-author
+- id: cross-owner-author-exception-returns-to-author
+  kind: invoke_tool
+  tool: cross-owner-author-exception-returns-to-author
+  input_variable: owner-context
+  output_variable: should-return-cross-owner-to-author
+- id: choose-cross-owner-after-author-exception
+  kind: if
+  condition:
+    variable: should-return-cross-owner-to-author
+    operator: truthy
+  then: prepare-current-cross-owner-revision
+  otherwise: prepare-current-cross-owner-local-review
 - id: prepare-current-cross-owner-local-review
   kind: invoke_tool
   tool: prepare-current-cross-owner-local-review
@@ -176,7 +229,7 @@ actions:
     variable: should-invoke-cross-owner-recheck
     operator: truthy
   then: create-cross-owner-recheck-conversation
-  otherwise: advance-current-cross-owner-round
+  otherwise: prepare-current-cross-owner-reviewer-exception
 - id: create-cross-owner-recheck-conversation
   kind: create_conversation
   agent: cross-module-reviewer
@@ -198,6 +251,46 @@ actions:
     result: cross-owner-recheck-agent-result
   output_variable: owner-context
 - id: continue-after-cross-owner-recheck
+  kind: goto
+  target: prepare-current-cross-owner-reviewer-exception
+- id: prepare-current-cross-owner-reviewer-exception
+  kind: invoke_tool
+  tool: prepare-current-cross-owner-reviewer-exception
+  input_variable: owner-context
+  output_variable: owner-context
+- id: cross-owner-reviewer-exception-requires-agent
+  kind: invoke_tool
+  tool: cross-owner-main-exception-requires-agent
+  input_variable: owner-context
+  output_variable: should-invoke-cross-owner-reviewer-exception
+- id: choose-cross-owner-reviewer-exception-source
+  kind: if
+  condition:
+    variable: should-invoke-cross-owner-reviewer-exception
+    operator: truthy
+  then: create-cross-owner-reviewer-exception-conversation
+  otherwise: advance-current-cross-owner-round
+- id: create-cross-owner-reviewer-exception-conversation
+  kind: create_conversation
+  agent: main-agent
+  conversation_key: main-cross-exception
+  mode: run
+  output_variable: cross-owner-reviewer-exception-conversation
+- id: invoke-current-cross-owner-reviewer-exception
+  kind: invoke_agent
+  agent: main-agent
+  task: cross-owner-runtime-main-exception
+  conversation_variable: cross-owner-reviewer-exception-conversation
+  input_variable: owner-context
+  output_variable: cross-owner-main-exception-agent-result
+- id: accept-current-cross-owner-reviewer-exception
+  kind: invoke_tool
+  tool: accept-current-cross-owner-main-exception
+  input_variables:
+    context: owner-context
+    result: cross-owner-main-exception-agent-result
+  output_variable: owner-context
+- id: continue-after-cross-owner-reviewer-exception
   kind: goto
   target: advance-current-cross-owner-round
 - id: advance-current-cross-owner-round
@@ -233,11 +326,6 @@ actions:
 - id: finish-after-cross-owner-no-finding-completion
   kind: goto
   target: finish-cross-owner-pipeline
-- id: continue-current-cross-owner-pipeline
-  kind: invoke_tool
-  tool: continue-current-cross-owner-pipeline
-  input_variable: owner-context
-  output_variable: owner-outcome
 - id: finish-cross-owner-pipeline
   kind: end_workflow
   output_variable: owner-outcome

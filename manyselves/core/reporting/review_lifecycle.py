@@ -1379,7 +1379,42 @@ async def _main_exception_decision_locked(
     responses: list[RevisionResponse],
     trigger: str = "reviewer_escalation",
 ) -> WorkflowDecisionSubmission:
-    exception_ids = (
+    preparation = prepare_main_exception_decision(
+        runner,
+        state=state,
+        workflow_id=workflow_id,
+        scope=scope,
+        subject_refs=subject_refs,
+        finding_refs=finding_refs,
+        verdicts=verdicts,
+        responses=responses,
+        trigger=trigger,
+    )
+    result = preparation.existing_result
+    if preparation.mode == "invoke_agent":
+        envelope = cast(TaskEnvelope, preparation.envelope)
+        result = await runner._agent(
+            "main-agent",
+            envelope,
+            envelope.input_refs,
+            workflow_id,
+            session_key=f"main-{scope}-exception",
+        )
+    return accept_main_exception_decision(
+        runner,
+        state=state,
+        preparation=preparation,
+        result=result,
+    ).result
+
+
+def _main_exception_ids(
+    *,
+    trigger: str,
+    verdicts: list[ResolutionVerdict],
+    responses: list[RevisionResponse],
+) -> set[str]:
+    return (
         {verdict.finding_id for verdict in verdicts if verdict.verdict == "escalate"}
         if trigger == "reviewer_escalation"
         else {
@@ -1387,6 +1422,27 @@ async def _main_exception_decision_locked(
             for response in responses
             if response.action in {"disputed", "needs_input"}
         }
+    )
+
+
+def prepare_main_exception_decision(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    workflow_id: str,
+    scope: str,
+    subject_refs: list[str],
+    finding_refs: list[str],
+    verdicts: list[ResolutionVerdict],
+    responses: list[RevisionResponse],
+    trigger: str = "reviewer_escalation",
+) -> "MainExceptionDecisionPreparation":
+    """Prepare or recover the existing explicit Main exception decision."""
+
+    exception_ids = _main_exception_ids(
+        trigger=trigger,
+        verdicts=verdicts,
+        responses=responses,
     )
     if not exception_ids:
         raise ReviewLifecycleError("Main exception decision requires explicit finding ids")
@@ -1432,37 +1488,73 @@ async def _main_exception_decision_locked(
         input_contract_kind="workflow_exception_input",
         input_contract_ref=input_ref,
     )
-    result = await runner._agent(
-        "main-agent",
-        envelope,
-        envelope.input_refs,
-        workflow_id,
-        session_key=f"main-{scope}-exception",
+    decision_ref = (
+        f"Work/runs/{state['run_id']}/exceptions/"
+        f"{scope}-{trigger}-decision-{'-'.join(sorted(exception_ids))}.json"
     )
-    if not isinstance(result, WorkflowDecisionSubmission):
+    decision_path = runner.service.workspace / decision_ref
+    existing_result: WorkflowDecisionSubmission | None = None
+    if decision_path.is_file():
+        try:
+            existing_result = WorkflowDecisionSubmission.model_validate_json(
+                decision_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise ReviewLifecycleError("Persisted Main exception decision is invalid") from exc
+        if set(existing_result.finding_ids) != exception_ids:
+            raise ReviewLifecycleError(
+                "Persisted Main exception decision does not cover the current findings"
+            )
+    return MainExceptionDecisionPreparation(
+        mode="continue_existing" if existing_result is not None else "invoke_agent",
+        run_id=state["run_id"],
+        workflow_id=workflow_id,
+        scope=scope,
+        trigger=trigger,
+        exception_ids=sorted(exception_ids),
+        input_ref=input_ref,
+        decision_ref=decision_ref,
+        envelope=envelope,
+        existing_result=existing_result,
+    )
+
+
+def accept_main_exception_decision(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    preparation: "MainExceptionDecisionPreparation",
+    result: WorkflowDecisionSubmission | None,
+) -> "MainExceptionDecisionAcceptance":
+    """Accept the same Main decision used by Legacy and declarative runtimes."""
+
+    accepted = preparation.existing_result if result is None else result
+    if not isinstance(accepted, WorkflowDecisionSubmission):
         raise ReviewLifecycleError("Main returned the wrong exception-decision type")
-    if set(result.finding_ids) != exception_ids:
+    if set(accepted.finding_ids) != set(preparation.exception_ids):
         raise ReviewLifecycleError(
             "Main exception decision must cover exactly the exception findings"
         )
-    decision_ref = _write_model(
-        runner,
-        (
-            f"Work/runs/{state['run_id']}/exceptions/"
-            f"{scope}-{trigger}-decision-{'-'.join(sorted(exception_ids))}.json"
-        ),
-        result,
+    decision_ref = _write_model(runner, preparation.decision_ref, accepted)
+    exception_refs = state.setdefault("review_exception_refs", [])
+    if decision_ref not in exception_refs:
+        exception_refs.append(decision_ref)
+    if accepted.decision == "request_user":
+        from .workflow import ReportingNeedsDecisionError
+
+        raise ReportingNeedsDecisionError(accepted.rationale)
+    if accepted.decision == "stop_incomplete":
+        from .workflow import ReportingNeedsDecisionError
+
+        raise ReportingNeedsDecisionError(accepted.rationale, keep_agents_alive=False)
+    return MainExceptionDecisionAcceptance(
+        run_id=preparation.run_id,
+        workflow_id=preparation.workflow_id,
+        scope=preparation.scope,
+        trigger=preparation.trigger,
+        decision_ref=decision_ref,
+        result=accepted,
     )
-    state.setdefault("review_exception_refs", []).append(decision_ref)
-    if result.decision == "request_user":
-        from .workflow import ReportingNeedsDecisionError
-
-        raise ReportingNeedsDecisionError(result.rationale)
-    if result.decision == "stop_incomplete":
-        from .workflow import ReportingNeedsDecisionError
-
-        raise ReportingNeedsDecisionError(result.rationale, keep_agents_alive=False)
-    return result
 
 
 async def prepare_module_revision(
@@ -3018,6 +3110,7 @@ class CrossOwnerRevisionPreparation(StrictModel):
     review_round: int
     owner_input_ref: str
     current: ModuleSubmission
+    reviewed_baseline: ModuleSubmission | None = None
     findings: list[CrossReviewFinding]
     finding_refs: list[str]
     prior_completion_ref: str | None = None
@@ -3040,6 +3133,32 @@ class CrossOwnerRevisionAcceptance(StrictModel):
     prior_completion_ref: str | None = None
     revised: ModuleSubmission
     candidate_ref: str
+
+
+class MainExceptionDecisionPreparation(StrictModel):
+    """Serializable boundary before an existing Main exception decision."""
+
+    mode: Literal["invoke_agent", "continue_existing"]
+    run_id: str
+    workflow_id: str
+    scope: str
+    trigger: str
+    exception_ids: list[str]
+    input_ref: str
+    decision_ref: str
+    envelope: TaskEnvelope
+    existing_result: WorkflowDecisionSubmission | None = None
+
+
+class MainExceptionDecisionAcceptance(StrictModel):
+    """Accepted Main exception decision shared by both runtime paths."""
+
+    run_id: str
+    workflow_id: str
+    scope: str
+    trigger: str
+    decision_ref: str
+    result: WorkflowDecisionSubmission
 
 
 class CrossOwnerLocalReviewPreparation(StrictModel):
@@ -4488,6 +4607,7 @@ async def prepare_cross_owner_revision(
     findings: list[CrossReviewFinding],
     finding_refs: list[str],
     prior_completion_ref: str | None,
+    reviewed_baseline: ModuleSubmission | None = None,
 ) -> CrossOwnerRevisionPreparation:
     """Prepare or recover the existing original-Author Cross revision."""
 
@@ -4508,6 +4628,7 @@ async def prepare_cross_owner_revision(
             review_round=review_round,
             owner_input_ref=owner_input_ref,
             current=current,
+            reviewed_baseline=reviewed_baseline or current,
             findings=findings,
             finding_refs=finding_refs,
             prior_completion_ref=prior_completion_ref,
@@ -4529,6 +4650,7 @@ async def prepare_cross_owner_revision(
         review_round=review_round,
         owner_input_ref=owner_input_ref,
         current=current,
+        reviewed_baseline=reviewed_baseline or current,
         findings=findings,
         finding_refs=finding_refs,
         prior_completion_ref=prior_completion_ref,
@@ -4559,7 +4681,7 @@ def accept_cross_owner_revision(
         owner_module_id=preparation.owner_module_id,
         review_round=preparation.review_round,
         owner_input_ref=preparation.owner_input_ref,
-        current=preparation.current,
+        current=preparation.reviewed_baseline or preparation.current,
         findings=preparation.findings,
         finding_refs=preparation.finding_refs,
         prior_completion_ref=preparation.prior_completion_ref,
@@ -4650,12 +4772,16 @@ async def prepare_cross_owner_local_review(
     state: dict,
     workflow_id: str,
     revision: CrossOwnerRevisionAcceptance,
+    main_decision: MainExceptionDecisionAcceptance | None = None,
 ) -> CrossOwnerLocalReviewPreparation:
     """Prepare the original module Auditor after an accepted Cross revision."""
 
     if any(
         response.action in {"disputed", "needs_input"}
         for response in revision.revised.revision_responses
+    ) and (
+        main_decision is None
+        or main_decision.result.decision != "accept_dispute"
     ):
         return CrossOwnerLocalReviewPreparation(
             mode="continue_existing",
@@ -4943,6 +5069,7 @@ async def advance_cross_owner_round(
     initial_result: CrossOwnerFindingSubmission,
     acceptance: CrossOwnerRecheckAcceptance,
     previous: CrossOwnerRoundProgress | None = None,
+    main_decision: MainExceptionDecisionAcceptance | None = None,
 ) -> CrossOwnerRoundProgress:
     """Advance the existing owner finding/verdict state after one recheck."""
 
@@ -4977,15 +5104,19 @@ async def advance_cross_owner_round(
     escalated = [item for item in verdict.verdicts if item.verdict == "escalate"]
     main_accepts: set[str] = set()
     if escalated:
-        decision = await _main_exception_decision(
-            runner,
-            state=state,
-            workflow_id=workflow_id,
-            scope="cross",
-            subject_refs=[lane.completion.subject.ref],
-            finding_refs=finding_refs,
-            verdicts=escalated,
-            responses=lane.responses,
+        decision = (
+            main_decision.result
+            if main_decision is not None
+            else await _main_exception_decision(
+                runner,
+                state=state,
+                workflow_id=workflow_id,
+                scope="cross",
+                subject_refs=[lane.completion.subject.ref],
+                finding_refs=finding_refs,
+                verdicts=escalated,
+                responses=lane.responses,
+            )
         )
         if decision.decision == "accept_dispute":
             main_accepts = set(decision.finding_ids)
@@ -5678,6 +5809,7 @@ class CrossReviewCoordinator:
         self,
         initial: CrossOwnerInitialReviewAcceptance,
         progress: CrossOwnerRoundProgress | None = None,
+        previous_revision: CrossOwnerRevisionAcceptance | None = None,
     ) -> CrossOwnerRevisionPreparation:
         """Prepare or recover the current original-Author Cross revision."""
 
@@ -5694,6 +5826,20 @@ class CrossReviewCoordinator:
                 findings=list(progress.pending),
                 finding_refs=list(progress.finding_refs),
                 prior_completion_ref=progress.lane.local_review_ref,
+            )
+        if previous_revision is not None:
+            return await prepare_cross_owner_revision(
+                self.runner,
+                state=self.state,
+                workflow_id=self.workflow_id,
+                owner_module_id=owner_module_id,
+                review_round=previous_revision.review_round,
+                owner_input_ref=previous_revision.owner_input_ref,
+                current=previous_revision.revised,
+                findings=list(previous_revision.findings),
+                finding_refs=list(previous_revision.finding_refs),
+                prior_completion_ref=previous_revision.prior_completion_ref,
+                reviewed_baseline=previous_revision.current,
             )
         return await prepare_cross_owner_revision(
             self.runner,
@@ -5723,9 +5869,72 @@ class CrossReviewCoordinator:
             result=result,
         )
 
+    def prepare_author_exception(
+        self,
+        revision: CrossOwnerRevisionAcceptance,
+    ) -> MainExceptionDecisionPreparation:
+        """Prepare Main for explicit exceptional Author responses."""
+
+        return prepare_main_exception_decision(
+            self.runner,
+            state=self.state,
+            workflow_id=self.workflow_id,
+            scope="cross",
+            subject_refs=[revision.candidate_ref],
+            finding_refs=list(revision.finding_refs),
+            verdicts=[],
+            responses=[
+                response
+                for response in revision.revised.revision_responses
+                if response.action in {"disputed", "needs_input"}
+            ],
+            trigger="author_response",
+        )
+
+    def prepare_recheck_exception(
+        self,
+        recheck: CrossOwnerRecheckAcceptance,
+        progress: CrossOwnerRoundProgress | None = None,
+    ) -> MainExceptionDecisionPreparation:
+        """Prepare Main for explicit escalations from the Cross reviewer."""
+
+        return prepare_main_exception_decision(
+            self.runner,
+            state=self.state,
+            workflow_id=self.workflow_id,
+            scope="cross",
+            subject_refs=[recheck.lane.completion.subject.ref],
+            finding_refs=(
+                list(progress.finding_refs)
+                if progress is not None
+                else [recheck.initial_result_ref]
+            ),
+            verdicts=[
+                verdict
+                for verdict in recheck.result.verdicts
+                if verdict.verdict == "escalate"
+            ],
+            responses=list(recheck.lane.responses),
+        )
+
+    def accept_main_exception(
+        self,
+        preparation: MainExceptionDecisionPreparation,
+        result: WorkflowDecisionSubmission | None = None,
+    ) -> MainExceptionDecisionAcceptance:
+        """Accept one prepared Main exception decision."""
+
+        return accept_main_exception_decision(
+            self.runner,
+            state=self.state,
+            preparation=preparation,
+            result=result,
+        )
+
     async def prepare_owner_local_review(
         self,
         revision: CrossOwnerRevisionAcceptance,
+        main_decision: MainExceptionDecisionAcceptance | None = None,
     ) -> CrossOwnerLocalReviewPreparation:
         """Prepare the first original-Auditor local regression."""
 
@@ -5734,6 +5943,7 @@ class CrossReviewCoordinator:
             state=self.state,
             workflow_id=self.workflow_id,
             revision=revision,
+            main_decision=main_decision,
         )
 
     def accept_owner_local_review(
@@ -5815,6 +6025,7 @@ class CrossReviewCoordinator:
         initial: CrossOwnerInitialReviewAcceptance,
         recheck: CrossOwnerRecheckAcceptance,
         progress: CrossOwnerRoundProgress | None = None,
+        main_decision: MainExceptionDecisionAcceptance | None = None,
     ) -> CrossOwnerRoundProgress:
         """Advance the shared owner round state after an accepted verdict."""
 
@@ -5827,6 +6038,7 @@ class CrossReviewCoordinator:
             initial_result=initial.result,
             acceptance=recheck,
             previous=progress,
+            main_decision=main_decision,
         )
 
     def complete_owner_round(

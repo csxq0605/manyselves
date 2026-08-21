@@ -403,6 +403,21 @@ async def execute_declarative_module_stage(
                     "accept-current-cross-owner-revision": (
                         cross_runtime.accept_revision
                     ),
+                    "prepare-current-cross-owner-author-exception": (
+                        cross_runtime.prepare_author_exception
+                    ),
+                    "prepare-current-cross-owner-reviewer-exception": (
+                        cross_runtime.prepare_reviewer_exception
+                    ),
+                    "cross-owner-main-exception-requires-agent": (
+                        cross_runtime.main_exception_requires_agent
+                    ),
+                    "accept-current-cross-owner-main-exception": (
+                        cross_runtime.accept_main_exception
+                    ),
+                    "cross-owner-author-exception-returns-to-author": (
+                        cross_runtime.author_exception_returns_to_author
+                    ),
                     "prepare-current-cross-owner-local-review": (
                         cross_runtime.prepare_local_review
                     ),
@@ -431,7 +446,6 @@ async def execute_declarative_module_stage(
                     "complete-current-cross-owner-without-findings": (
                         cross_runtime.complete_owner_without_findings
                     ),
-                    "continue-current-cross-owner-pipeline": cross_runtime.continue_owner,
                     "reduce-cross-owner-cohort": cross_runtime.reduce,
                     "run-reporting-chief": tail_adapters.chief,
                     "run-reporting-final": tail_adapters.final,
