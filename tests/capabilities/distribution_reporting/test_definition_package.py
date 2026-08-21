@@ -336,6 +336,7 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
             "advance-current-cross-owner-round",
             "cross-owner-round-needs-revision",
             "complete-current-cross-owner-pipeline",
+            "complete-current-cross-owner-without-findings",
             "continue-current-cross-owner-pipeline",
         ]
         conversation = next(
@@ -604,3 +605,36 @@ def test_cross_owner_21_pipeline_declares_repeated_recheck_round_route() -> None
     assert action_ids.index("prepare-current-cross-owner-revision") < action_ids.index(
         choose_next_step.id
     )
+
+
+def test_cross_owner_21_pipeline_declares_no_finding_completion() -> None:
+    """An ordinary no-finding owner must not enter the compatibility closure."""
+
+    _, registry = load_distribution_reporting_capability()
+    from manyselves.core.reporting.declarative_cross_owner_cohort import (
+        register_cross_owner_pipeline_specializations,
+    )
+
+    register_cross_owner_pipeline_specializations(registry)
+    pipeline = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-cross-owner-2.1-pipeline",
+    )
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        pipeline,
+        registry,
+    )
+
+    choose_revision = next(
+        action for action in plan.actions if action.id == "choose-cross-owner-revision"
+    )
+    assert choose_revision.otherwise == "complete-current-cross-owner-without-findings"
+    completion = next(
+        action
+        for action in plan.actions
+        if action.id == "complete-current-cross-owner-without-findings"
+    )
+    assert completion.kind == "invoke_tool"
+    assert completion.tool == "complete-current-cross-owner-without-findings"
+    assert completion.output_variable == "owner-outcome"
+    assert all(action.kind != "gate" for action in plan.actions)

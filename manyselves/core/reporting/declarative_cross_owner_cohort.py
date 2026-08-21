@@ -800,6 +800,45 @@ class DeclarativeCrossOwnerRuntime:
             pipeline=pipeline.model_dump(mode="json"),
         )
 
+    async def complete_owner_without_findings(
+        self,
+        context: DeclarativeCrossOwnerRuntimeContext,
+    ) -> DeclarativeCrossOwnerPipelineOutcome:
+        """Complete the ordinary accepted initial result with no findings."""
+
+        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
+        if context.status == "failed":
+            return DeclarativeCrossOwnerPipelineOutcome(
+                owner_module_id=context.owner_module_id,
+                status="failed",
+                error=context.error,
+            )
+        if self._aggregate_recovered:
+            return DeclarativeCrossOwnerPipelineOutcome(
+                owner_module_id=context.owner_module_id,
+                status="completed",
+                pipeline={},
+            )
+        if self._coordinator is None:
+            return await self.execute_owner(
+                {"owner_module_id": context.owner_module_id}
+            )
+        try:
+            pipeline = self._coordinator.complete_owner_without_findings(
+                cast(CrossOwnerInitialReviewAcceptance, context.acceptance)
+            )
+        except BaseException as exc:
+            return DeclarativeCrossOwnerPipelineOutcome(
+                owner_module_id=context.owner_module_id,
+                status="failed",
+                error=str(exc),
+            )
+        return DeclarativeCrossOwnerPipelineOutcome(
+            owner_module_id=context.owner_module_id,
+            status="completed",
+            pipeline=pipeline.model_dump(mode="json"),
+        )
+
     async def continue_owner(
         self,
         context: DeclarativeCrossOwnerRuntimeContext,

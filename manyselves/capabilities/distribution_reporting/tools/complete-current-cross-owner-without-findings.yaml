@@ -1,0 +1,10 @@
+id: complete-current-cross-owner-without-findings
+version: 1.0.0
+description: Complete an accepted Cross owner initial result with no findings
+implementation: capability:distribution-reporting:complete-current-cross-owner-without-findings
+input_contract: declarative_cross_owner_runtime_context
+output_contract: declarative_cross_owner_pipeline_outcome
+side_effect: ordered_state
+parallel_safe: true
+reuse_result: false
+model_visible: false

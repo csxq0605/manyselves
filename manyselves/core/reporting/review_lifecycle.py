@@ -5083,6 +5083,51 @@ def complete_cross_owner_round(
     )
 
 
+def complete_cross_owner_without_findings(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    initial: CrossOwnerInitialReviewAcceptance,
+    module: ModuleSubmission,
+) -> _CrossOwnerPipelineResult:
+    """Reuse the existing durable no-finding owner completion path."""
+
+    owner_module_id = initial.owner_module_id
+    _validate_cross_owner_synthesis_namespace(owner_module_id, initial.result)
+    lane = _recover_cross_owner_lane(
+        runner,
+        state=state,
+        owner_module_id=owner_module_id,
+        review_round=1,
+        owner_input_ref=initial.owner_input_ref,
+        required_findings=[],
+    )
+    if lane is None:
+        lane = _verified_cross_owner_noop(
+            runner,
+            state=state,
+            owner_module_id=owner_module_id,
+            module=module,
+            owner_input_ref=initial.owner_input_ref,
+            review_round=1,
+        )
+    lane = _promote_cross_owner_pipeline_completion(
+        runner,
+        lane=lane,
+        initial_result_ref=initial.result_ref,
+        verdict_ref=None,
+    )
+    return _CrossOwnerPipelineResult(
+        owner_module_id=owner_module_id,
+        initial_input_ref=initial.owner_input_ref,
+        initial_result_ref=initial.result_ref,
+        initial_result=initial.result,
+        lane=lane,
+        finding_refs=[initial.result_ref],
+        findings=list(initial.result.findings),
+    )
+
+
 async def _run_cross_owner_lane(
     runner: "ReportWorkflowRunner",
     *,
@@ -5795,6 +5840,22 @@ class CrossReviewCoordinator:
             progress=progress,
         )
 
+    def complete_owner_without_findings(
+        self,
+        initial: CrossOwnerInitialReviewAcceptance,
+    ) -> _CrossOwnerPipelineResult:
+        """Complete one accepted owner whose initial result has no findings."""
+
+        self.ensure_prepared()
+        return complete_cross_owner_without_findings(
+            self.runner,
+            state=self.state,
+            initial=initial,
+            module=cast(dict[str, ModuleSubmission], self.frozen_modules)[
+                initial.owner_module_id
+            ],
+        )
+
     async def run_owner(
         self,
         owner_module_id: str,
@@ -5937,7 +5998,6 @@ class CrossReviewCoordinator:
         else:
             initial_result, initial_result_ref = initial_loaded
 
-        _validate_cross_owner_synthesis_namespace(owner_module_id, initial_result)
         pending = {finding.id: finding for finding in initial_result.findings}
         finding_refs = [initial_result_ref]
         all_findings = list(initial_result.findings)
@@ -5950,39 +6010,22 @@ class CrossReviewCoordinator:
         owner_input_ref = initial_input_ref
 
         if not pending:
-            lane = _recover_cross_owner_lane(
+            return complete_cross_owner_without_findings(
                 self.runner,
                 state=self.state,
-                owner_module_id=owner_module_id,
-                review_round=1,
-                owner_input_ref=initial_input_ref,
-                required_findings=[],
-            )
-            if lane is None:
-                lane = _verified_cross_owner_noop(
-                    self.runner,
-                    state=self.state,
+                initial=CrossOwnerInitialReviewAcceptance(
+                    run_id=self.run_id,
+                    workflow_id=self.workflow_id,
                     owner_module_id=owner_module_id,
-                    module=current,
+                    reviewer_session_key=f"cross-owner-{owner_module_id}",
                     owner_input_ref=initial_input_ref,
-                    review_round=1,
-                )
-            lane = _promote_cross_owner_pipeline_completion(
-                self.runner,
-                lane=lane,
-                initial_result_ref=initial_result_ref,
-                verdict_ref=None,
-            )
-            return _CrossOwnerPipelineResult(
-                owner_module_id=owner_module_id,
-                initial_input_ref=initial_input_ref,
-                initial_result_ref=initial_result_ref,
-                initial_result=initial_result,
-                lane=lane,
-                finding_refs=finding_refs,
-                findings=all_findings,
+                    result_ref=initial_result_ref,
+                    result=initial_result,
+                ),
+                module=current,
             )
 
+        _validate_cross_owner_synthesis_namespace(owner_module_id, initial_result)
         while pending:
             findings = list(pending.values())
             accepted_recheck = recheck_acceptance if review_round == 1 else None

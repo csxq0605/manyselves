@@ -428,6 +428,9 @@ async def execute_declarative_module_stage(
                     "complete-current-cross-owner-pipeline": (
                         cross_runtime.complete_owner_round
                     ),
+                    "complete-current-cross-owner-without-findings": (
+                        cross_runtime.complete_owner_without_findings
+                    ),
                     "continue-current-cross-owner-pipeline": cross_runtime.continue_owner,
                     "reduce-cross-owner-cohort": cross_runtime.reduce,
                     "run-reporting-chief": tail_adapters.chief,

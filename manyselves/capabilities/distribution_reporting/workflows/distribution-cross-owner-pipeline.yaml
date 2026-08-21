@@ -79,7 +79,7 @@ actions:
     variable: owner-initial-has-findings
     operator: truthy
   then: prepare-current-cross-owner-revision
-  otherwise: continue-current-cross-owner-pipeline
+  otherwise: complete-current-cross-owner-without-findings
 - id: prepare-current-cross-owner-revision
   kind: invoke_tool
   tool: prepare-current-cross-owner-revision
@@ -223,6 +223,14 @@ actions:
   input_variable: owner-context
   output_variable: owner-outcome
 - id: finish-after-cross-owner-completion
+  kind: goto
+  target: finish-cross-owner-pipeline
+- id: complete-current-cross-owner-without-findings
+  kind: invoke_tool
+  tool: complete-current-cross-owner-without-findings
+  input_variable: owner-context
+  output_variable: owner-outcome
+- id: finish-after-cross-owner-no-finding-completion
   kind: goto
   target: finish-cross-owner-pipeline
 - id: continue-current-cross-owner-pipeline

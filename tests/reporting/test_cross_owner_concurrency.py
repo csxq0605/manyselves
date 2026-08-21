@@ -552,6 +552,9 @@ async def _execute_declarative_cross_owner_cohort(
                 "advance-current-cross-owner-round": runtime.advance_round,
                 "cross-owner-round-needs-revision": runtime.round_needs_revision,
                 "complete-current-cross-owner-pipeline": runtime.complete_owner_round,
+                "complete-current-cross-owner-without-findings": (
+                    runtime.complete_owner_without_findings
+                ),
                 "continue-current-cross-owner-pipeline": runtime.continue_owner,
                 "reduce-cross-owner-cohort": runtime.reduce,
             },
@@ -607,6 +610,9 @@ async def _execute_declarative_cross_owner_pipeline(
                 "advance-current-cross-owner-round": runtime.advance_round,
                 "cross-owner-round-needs-revision": runtime.round_needs_revision,
                 "complete-current-cross-owner-pipeline": runtime.complete_owner_round,
+                "complete-current-cross-owner-without-findings": (
+                    runtime.complete_owner_without_findings
+                ),
                 "continue-current-cross-owner-pipeline": runtime.continue_owner,
             },
             agents=runtime.agent_invokers,
@@ -1616,6 +1622,53 @@ async def test_declarative_cross_owner_recheck_regression_uses_next_declared_rev
 
 
 @pytest.mark.asyncio
+async def test_declarative_cross_owner_without_findings_completes_without_compatibility(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An ordinary no-finding result uses the declared completion action."""
+
+    run_id = "run-cross-declarative-no-findings"
+    runner = _Runner(tmp_path)
+    _write_modules(runner, run_id)
+    state = _state(run_id)
+    _write_initial_module_completion(runner, state, "2.1")
+    monkeypatch.setattr(
+        lifecycle,
+        "_verified_cross_owner_noop",
+        lambda runner, **kwargs: _fake_noop(runner, **kwargs),
+    )
+
+    async def _unexpected_compatibility(*_args, **_kwargs):
+        raise AssertionError("ordinary no-finding owner entered compatibility run_owner")
+
+    monkeypatch.setattr(
+        lifecycle.CrossReviewCoordinator,
+        "run_owner",
+        _unexpected_compatibility,
+    )
+
+    completed = await _execute_declarative_cross_owner_pipeline(
+        runner,
+        state,
+        "workflow-cross-declarative-no-findings",
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    result = DeclarativeCrossOwnerPipelineOutcome.model_validate(completed.outputs["result"])
+    assert result.status == "completed"
+    assert result.pipeline is not None
+    assert result.pipeline["findings"] == []
+    assert result.pipeline["verdict_ref"] is None
+    assert result.pipeline["lane"]["module"]["revision"] == 0
+    assert result.pipeline["lane"]["completion"]["review_round"] == 1
+    assert runner.calls == [("2.1", "cross-owner-2.1")]
+    assert {record.key.value for record in completed.conversations.values()} == {
+        "cross-owner-2.1"
+    }
+
+
+@pytest.mark.asyncio
 async def test_declarative_cross_owner_persisted_revision_skips_author_and_reuses_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1874,6 +1927,9 @@ async def test_declarative_cross_owner_stage_failures_retry_only_failed_owner_st
                 "advance-current-cross-owner-round": runtime.advance_round,
                 "cross-owner-round-needs-revision": runtime.round_needs_revision,
                 "complete-current-cross-owner-pipeline": runtime.complete_owner_round,
+                "complete-current-cross-owner-without-findings": (
+                    runtime.complete_owner_without_findings
+                ),
                 "continue-current-cross-owner-pipeline": runtime.continue_owner,
                 "reduce-cross-owner-cohort": runtime.reduce,
             },
@@ -2137,6 +2193,9 @@ async def test_declarative_cross_owner_cohort_retries_only_failed_owner_from_fil
                 "advance-current-cross-owner-round": runtime.advance_round,
                 "cross-owner-round-needs-revision": runtime.round_needs_revision,
                 "complete-current-cross-owner-pipeline": runtime.complete_owner_round,
+                "complete-current-cross-owner-without-findings": (
+                    runtime.complete_owner_without_findings
+                ),
                 "continue-current-cross-owner-pipeline": runtime.continue_owner,
                 "reduce-cross-owner-cohort": runtime.reduce,
             },
