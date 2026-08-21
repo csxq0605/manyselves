@@ -153,6 +153,15 @@ async def execute_declarative_reporting_tail(
                     "accept-current-cross-owner-revision": (
                         cross_runtime.accept_revision
                     ),
+                    "prepare-current-cross-owner-local-review": (
+                        cross_runtime.prepare_local_review
+                    ),
+                    "cross-owner-local-review-requires-agent": (
+                        cross_runtime.local_review_requires_agent
+                    ),
+                    "accept-current-cross-owner-local-review": (
+                        cross_runtime.accept_local_review
+                    ),
                     "continue-current-cross-owner-pipeline": cross_runtime.continue_owner,
                     "reduce-cross-owner-cohort": cross_runtime.reduce,
                 },

@@ -311,10 +311,12 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
         assert pipeline_plan.agent_ids == [
             "cross-module-reviewer",
             f"module-{module_id}-specialist",
+            "evidence-auditor",
         ]
         assert pipeline_plan.task_ids == [
             "cross-owner-runtime-initial-review",
             f"cross-owner-module-{module_id}-revision-r1",
+            "cross-owner-runtime-local-review",
         ]
         assert pipeline_plan.tool_ids == [
             "prepare-current-cross-owner-initial",
@@ -324,6 +326,9 @@ def test_production_cross_is_an_owner_cohort_subworkflow() -> None:
             "prepare-current-cross-owner-revision",
             "cross-owner-revision-requires-agent",
             "accept-current-cross-owner-revision",
+            "prepare-current-cross-owner-local-review",
+            "cross-owner-local-review-requires-agent",
+            "accept-current-cross-owner-local-review",
             "continue-current-cross-owner-pipeline",
         ]
         conversation = next(
@@ -460,3 +465,47 @@ def test_cross_owner_21_pipeline_declares_owner_finding_revision_boundary() -> N
     )
     assert revision_conversation.conversation_key == "module-2.1"
     assert revision_agent.conversation_variable == revision_conversation.output_variable
+
+
+def test_cross_owner_21_pipeline_declares_original_auditor_local_regression() -> None:
+    """Characterize the Cross revision-to-original-Auditor boundary."""
+
+    _, registry = load_distribution_reporting_capability()
+    from manyselves.core.reporting.declarative_cross_owner_cohort import (
+        register_cross_owner_pipeline_specializations,
+    )
+
+    register_cross_owner_pipeline_specializations(registry)
+    pipeline = registry.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-cross-owner-2.1-pipeline",
+    )
+    plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
+        pipeline,
+        registry,
+    )
+
+    action_ids = [action.id for action in plan.actions]
+    assert "prepare-current-cross-owner-local-review" in action_ids
+    assert "accept-current-cross-owner-local-review" in action_ids
+    assert "continue-current-cross-owner-pipeline" in action_ids
+
+    local_review_agents = [
+        action
+        for action in plan.actions
+        if action.kind == "invoke_agent"
+        and action.agent == "evidence-auditor"
+        and action.task == "cross-owner-runtime-local-review"
+    ]
+    assert len(local_review_agents) == 1
+    local_review_conversation = next(
+        action
+        for action in plan.actions
+        if action.kind == "create_conversation"
+        and action.agent == "evidence-auditor"
+    )
+    assert local_review_conversation.conversation_key == "module-auditor-2.1"
+    assert (
+        local_review_agents[0].conversation_variable
+        == local_review_conversation.output_variable
+    )

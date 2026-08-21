@@ -19,6 +19,7 @@ from manyselves.core.reporting.agentic_models import (
 from manyselves.core.reporting.declarative_reporting_runner import (
     DeclarativeReportWorkflowRunner,
     _CurrentModuleStages,
+    _reporting_agent_invokers,
     execute_declarative_module_stage,
 )
 from manyselves.core.reporting.input_contracts import (
@@ -41,6 +42,22 @@ from manyselves.core.tools.task_board import TaskBoard
 from manyselves.kernel.workflow import WorkflowStatus
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.workflow_host import FileWorkflowEventSink
+
+
+def test_one_parent_runtime_routes_cross_local_review_by_declared_task() -> None:
+    module_auditor = SimpleNamespace(name="module-auditor-adapter")
+    cross_local_auditor = SimpleNamespace(name="cross-local-auditor-adapter")
+
+    combined = _reporting_agent_invokers(
+        {"evidence-auditor": module_auditor},
+        {"evidence-auditor": cross_local_auditor},
+    )
+
+    routed = combined["evidence-auditor"]
+    assert routed._default is module_auditor
+    assert routed._task_routes == {
+        "cross-owner-runtime-local-review": cross_local_auditor,
+    }
 
 
 @pytest.mark.asyncio

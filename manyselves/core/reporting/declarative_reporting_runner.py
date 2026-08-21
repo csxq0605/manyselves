@@ -213,12 +213,18 @@ def _reporting_agent_invokers(
         if module_invoker is None:
             combined[agent_id] = cross_invoker
             continue
-        module_id = agent_id.removeprefix("module-").removesuffix("-specialist")
+        if agent_id == "evidence-auditor":
+            task_routes = {
+                "cross-owner-runtime-local-review": cross_invoker,
+            }
+        else:
+            module_id = agent_id.removeprefix("module-").removesuffix("-specialist")
+            task_routes = {
+                f"cross-owner-module-{module_id}-revision-r1": cross_invoker,
+            }
         combined[agent_id] = _TaskScopedAgentInvoker(
             module_invoker,
-            {
-                f"cross-owner-module-{module_id}-revision-r1": cross_invoker,
-            },
+            task_routes,
         )
     return combined
 
@@ -396,6 +402,15 @@ async def execute_declarative_module_stage(
                     ),
                     "accept-current-cross-owner-revision": (
                         cross_runtime.accept_revision
+                    ),
+                    "prepare-current-cross-owner-local-review": (
+                        cross_runtime.prepare_local_review
+                    ),
+                    "cross-owner-local-review-requires-agent": (
+                        cross_runtime.local_review_requires_agent
+                    ),
+                    "accept-current-cross-owner-local-review": (
+                        cross_runtime.accept_local_review
                     ),
                     "continue-current-cross-owner-pipeline": cross_runtime.continue_owner,
                     "reduce-cross-owner-cohort": cross_runtime.reduce,

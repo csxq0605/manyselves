@@ -30,18 +30,25 @@ from manyselves.kernel.workflow import (
 
 from .agentic_models import (
     CrossOwnerFindingSubmission,
+    ModuleReviewFindingSubmission,
     ModuleRevisionSubmission,
     ModuleSubmission,
     TaskEnvelope,
 )
-from .declarative_module_runtime_lane import DeclarativeModuleRevisionAgentResult
+from .declarative_module_runtime_lane import (
+    DeclarativeModuleReviewAgentResult,
+    DeclarativeModuleRevisionAgentResult,
+)
 from .models import REPORT_MODULE_IDS
 from .review_lifecycle import (
     CrossOwnerInitialReviewAcceptance,
     CrossOwnerInitialReviewPreparation,
+    CrossOwnerLocalReviewAcceptance,
+    CrossOwnerLocalReviewPreparation,
     CrossOwnerRevisionAcceptance,
     CrossOwnerRevisionPreparation,
     CrossReviewCoordinator,
+    ModuleInitialReviewPreparation,
     ModuleRevisionPreparation,
 )
 
@@ -80,12 +87,17 @@ class DeclarativeCrossOwnerRuntimeContext(BaseModel):
         "revision_ready",
         "revision_resumed",
         "revision_accepted",
+        "local_review_ready",
+        "local_review_resumed",
+        "local_review_accepted",
         "failed",
     ]
     preparation: CrossOwnerInitialReviewPreparation | None = None
     acceptance: CrossOwnerInitialReviewAcceptance | None = None
     revision_preparation: CrossOwnerRevisionPreparation | None = None
     revision_acceptance: CrossOwnerRevisionAcceptance | None = None
+    local_review_preparation: CrossOwnerLocalReviewPreparation | None = None
+    local_review_acceptance: CrossOwnerLocalReviewAcceptance | None = None
     error: str | None = None
 
 
@@ -174,6 +186,51 @@ class _CrossOwnerRevisionInvoker:
         return AgentInvocationOutcome(status="ok", result=result)
 
 
+class _CrossOwnerLocalReviewInvoker:
+    """Invoke the original module Auditor for one Cross local regression."""
+
+    def __init__(self, runtime: "DeclarativeCrossOwnerRuntime") -> None:
+        self._runtime = runtime
+
+    async def invoke(
+        self,
+        _agent: AgentDefinition,
+        _task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        del task_id
+        context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
+        boundary = cast(
+            CrossOwnerLocalReviewPreparation,
+            context.local_review_preparation,
+        )
+        prepared = cast(ModuleInitialReviewPreparation, boundary.prepared)
+        envelope = cast(TaskEnvelope, prepared.envelope)
+        try:
+            payload = await self._runtime._current_runner._agent(
+                "evidence-auditor",
+                envelope,
+                envelope.input_refs,
+                boundary.workflow_id,
+                session_key=conversation.key.value,
+            )
+            result = DeclarativeModuleReviewAgentResult(
+                status="completed",
+                submission=payload,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            result = DeclarativeModuleReviewAgentResult(
+                status="failed",
+                error=str(exc),
+            )
+        return AgentInvocationOutcome(status="ok", result=result)
+
+
 def register_cross_owner_pipeline_specializations(
     definitions: DefinitionRegistry,
 ) -> dict[str, WorkflowDefinition]:
@@ -202,6 +259,7 @@ def register_cross_owner_pipeline_specializations(
                 "revision_agent_id": f"module-{module_id}-specialist",
                 "revision_task_id": f"cross-owner-module-{module_id}-revision-r1",
                 "revision_conversation_key": f"module-{module_id}",
+                "local_review_conversation_key": f"module-auditor-{module_id}",
             },
             workflow_id=workflow_id,
         )
@@ -263,8 +321,10 @@ class DeclarativeCrossOwnerRuntime:
         self._compatibility_invoked = False
         initial_invoker = _CrossOwnerInitialInvoker(self)
         revision_invoker = _CrossOwnerRevisionInvoker(self)
+        local_review_invoker = _CrossOwnerLocalReviewInvoker(self)
         self.agent_invokers: Mapping[str, AgentInvoker] = {
             "cross-module-reviewer": initial_invoker,
+            "evidence-auditor": local_review_invoker,
             **{
                 f"module-{module_id}-specialist": revision_invoker
                 for module_id in REPORT_MODULE_IDS
@@ -431,6 +491,79 @@ class DeclarativeCrossOwnerRuntime:
             }
         )
 
+    async def prepare_local_review(
+        self,
+        context: DeclarativeCrossOwnerRuntimeContext,
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Prepare the original module Auditor local-regression turn."""
+
+        context = DeclarativeCrossOwnerRuntimeContext.model_validate(context)
+        if context.status == "failed":
+            return context
+        try:
+            preparation = await cast(
+                CrossReviewCoordinator,
+                self._coordinator,
+            ).prepare_owner_local_review(
+                cast(CrossOwnerRevisionAcceptance, context.revision_acceptance)
+            )
+        except BaseException as exc:
+            return context.model_copy(
+                update={"status": "failed", "error": str(exc)}
+            )
+        return context.model_copy(
+            update={
+                "status": (
+                    "local_review_ready"
+                    if preparation.mode == "invoke_agent"
+                    else "local_review_resumed"
+                ),
+                "local_review_preparation": preparation,
+            }
+        )
+
+    @staticmethod
+    def local_review_requires_agent(
+        context: DeclarativeCrossOwnerRuntimeContext,
+    ) -> bool:
+        """Return the explicit original-Auditor branch decision."""
+
+        return context.status == "local_review_ready"
+
+    def accept_local_review(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeCrossOwnerRuntimeContext:
+        """Accept one typed original-Auditor local-regression result."""
+
+        context = DeclarativeCrossOwnerRuntimeContext.model_validate(values["context"])
+        result = DeclarativeModuleReviewAgentResult.model_validate(values["result"])
+        if result.status == "failed":
+            return context.model_copy(
+                update={"status": "failed", "error": result.error}
+            )
+        try:
+            acceptance = cast(
+                CrossReviewCoordinator,
+                self._coordinator,
+            ).accept_owner_local_review(
+                cast(
+                    CrossOwnerLocalReviewPreparation,
+                    context.local_review_preparation,
+                ),
+                cast(ModuleReviewFindingSubmission, result.submission),
+            )
+        except BaseException as exc:
+            return context.model_copy(
+                update={"status": "failed", "error": str(exc)}
+            )
+        return context.model_copy(
+            update={
+                "status": "local_review_accepted",
+                "local_review_acceptance": acceptance,
+            }
+        )
+
     async def continue_owner(
         self,
         context: DeclarativeCrossOwnerRuntimeContext,
@@ -449,6 +582,7 @@ class DeclarativeCrossOwnerRuntime:
                 "owner_module_id": context.owner_module_id,
                 "initial_acceptance": context.acceptance,
                 "revision_acceptance": context.revision_acceptance,
+                "local_review_acceptance": context.local_review_acceptance,
             }
         )
 
@@ -466,6 +600,10 @@ class DeclarativeCrossOwnerRuntime:
         revision_acceptance = cast(
             CrossOwnerRevisionAcceptance | None,
             values.get("revision_acceptance"),
+        )
+        local_review_acceptance = cast(
+            CrossOwnerLocalReviewAcceptance | None,
+            values.get("local_review_acceptance"),
         )
         if self._aggregate_recovered:
             return DeclarativeCrossOwnerPipelineOutcome(
@@ -505,6 +643,7 @@ class DeclarativeCrossOwnerRuntime:
                 owner_module_id,
                 initial_acceptance=initial_acceptance,
                 revision_acceptance=revision_acceptance,
+                local_review_acceptance=local_review_acceptance,
             )
         except BaseException as exc:
             return DeclarativeCrossOwnerPipelineOutcome(

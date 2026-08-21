@@ -960,8 +960,9 @@ async def prepare_module_initial_review(
     workflow_id: str,
     initial_scope: set[str],
     lifecycle_id: str,
+    regression_context: ModuleLocalRegressionContext | None = None,
 ) -> ModuleInitialReviewPreparation:
-    """Prepare the current initial module-review Agent boundary.
+    """Prepare the current initial or local-regression Auditor boundary.
 
     The returned model is safe to pass through a generic runtime.  On a
     resumed run with a valid persisted lifecycle, it deliberately returns
@@ -976,6 +977,7 @@ async def prepare_module_initial_review(
 
     review_root = f"Work/runs/{state['run_id']}/reviews/module/{lifecycle_id}/{module_id}"
     progress_ref = f"{review_root}/progress.json"
+    phase = "local_regression" if regression_context is not None else "initial"
     progress = (
         _load_progress(runner, progress_ref, ModuleReviewProgress) if state.get("resume") else None
     )
@@ -985,7 +987,7 @@ async def prepare_module_initial_review(
         module_id=module_id,
         lifecycle_id=lifecycle_id,
         progress=progress,
-        regression_context=None,
+        regression_context=regression_context,
     )
     if progress is not None:
         if progress.run_id != state["run_id"] or progress.module_id != module_id:
@@ -1074,6 +1076,11 @@ async def prepare_module_initial_review(
             workflow_id=workflow_id,
             subject=current,
             module_findings=[],
+            cross_findings=(
+                regression_context.trigger_cross_findings
+                if regression_context is not None
+                else []
+            ),
             validation_ref=signal_ref,
             validation_target_submodule_ids=set(preflight.target_submodule_ids),
         )
@@ -1090,7 +1097,7 @@ async def prepare_module_initial_review(
             verdict_refs=[],
             resolved_ids=set(),
             review_round=review_round,
-            phase="initial",
+            phase=phase,
             scope=scope,
             reviewer_session_key=reviewer_session_key,
             last_reviewed_subject_ref=None,
@@ -1106,8 +1113,10 @@ async def prepare_module_initial_review(
         module_id,
         scope,
     )
+    if phase != "initial":
+        knowledge_context = ""
     review_input = ModuleReviewInput(
-        phase="initial",
+        phase=phase,
         run_id=state["run_id"],
         module_id=module_id,
         lifecycle_id=lifecycle_id,
@@ -1131,6 +1140,41 @@ async def prepare_module_initial_review(
         required_submodule_ids=sorted(scope),
         required_findings=[],
         revision_responses=[],
+        prior_review_completion_ref=(
+            regression_context.prior_review_completion_ref
+            if regression_context is not None
+            else None
+        ),
+        prior_review_completion=(
+            regression_context.prior_review_completion
+            if regression_context is not None
+            else None
+        ),
+        baseline_subject_ref=(
+            regression_context.baseline_subject_ref
+            if regression_context is not None
+            else None
+        ),
+        trigger_cross_findings=(
+            regression_context.trigger_cross_findings
+            if regression_context is not None
+            else []
+        ),
+        trigger_revision_responses=(
+            regression_context.trigger_revision_responses
+            if regression_context is not None
+            else []
+        ),
+        revision_diff_ref=(
+            regression_context.revision_diff_ref
+            if regression_context is not None
+            else None
+        ),
+        revision_diff=(
+            regression_context.revision_diff
+            if regression_context is not None
+            else None
+        ),
         validation_report_ref=signal_ref,
         validation_report=validation_report,
     )
@@ -1143,7 +1187,14 @@ async def prepare_module_initial_review(
         task_id=f"module-{module_id}-{lifecycle_id}-review-r{review_round}",
         run_id=state["run_id"],
         agent_id="evidence-auditor",
-        objective=f"审查模块 {module_id} 的当前正文、Claim 与证据边界。",
+        objective=(
+            f"审查模块 {module_id} 的当前正文、Claim 与证据边界。"
+            if phase == "initial"
+            else (
+                f"由模块 {module_id} 的原审查者仅检查 Cross 回改范围、diff、"
+                "Claim 与证据回归。"
+            )
+        ),
         input_refs=[input_ref],
         constraints=[
             "coverage 记录实际检查范围，不是批准状态",
@@ -1153,6 +1204,14 @@ async def prepare_module_initial_review(
             "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
             "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
             "首轮必须覆盖 input 中全部 required_submodule_ids",
+            *(
+                [
+                    "这是原模块审查者的 local_regression，不得重新审查未修改小节",
+                    "只根据 prior completion、Cross finding/作者响应、revision diff、目标 Claim/证据和当前 validation 提出真实回归 finding",
+                ]
+                if phase == "local_regression"
+                else []
+            ),
             *runner._user_supplement_constraints(
                 state,
                 stage="module_review",
@@ -2141,6 +2200,11 @@ def accept_module_initial_review(
         raise ReviewLifecycleError("initial module review lacks a subject ref")
     if not isinstance(result, ModuleReviewFindingSubmission):
         raise ReviewLifecycleError("module auditor returned the wrong initial type")
+    phase = (
+        preparation.review_input.phase
+        if preparation.review_input is not None
+        else "initial"
+    )
     scope = set(preparation.scope)
     if not scope.issubset(set(result.coverage.submodule_ids)):
         raise ReviewLifecycleError("initial module review coverage omitted assigned submodules")
@@ -2185,7 +2249,7 @@ def accept_module_initial_review(
             verdict_refs=[],
             resolved_ids=set(),
             review_round=preparation.review_round,
-            phase="initial",
+            phase=phase,
             scope=scope,
             reviewer_session_key=preparation.reviewer_session_key,
             last_reviewed_subject_ref=preparation.subject_ref,
@@ -2205,7 +2269,7 @@ def accept_module_initial_review(
             verdict_refs=[],
             resolved_ids=set(),
             review_round=preparation.review_round,
-            phase="initial",
+            phase=phase,
             scope=scope,
             reviewer_session_key=preparation.reviewer_session_key,
             last_reviewed_subject_ref=preparation.subject_ref,
@@ -2981,6 +3045,35 @@ class CrossOwnerRevisionAcceptance(StrictModel):
     prior_completion_ref: str | None = None
     revised: ModuleSubmission
     candidate_ref: str
+
+
+class CrossOwnerLocalReviewPreparation(StrictModel):
+    """Typed boundary before the original module Auditor local regression."""
+
+    mode: Literal["invoke_agent", "continue_existing"]
+    run_id: str
+    workflow_id: str
+    owner_module_id: str
+    review_round: int
+    owner_input_ref: str
+    reviewed_baseline: ModuleSubmission
+    cross_responses: list[RevisionResponse]
+    regression_context: ModuleLocalRegressionContext | None = None
+    prepared: ModuleInitialReviewPreparation | None = None
+
+
+class CrossOwnerLocalReviewAcceptance(StrictModel):
+    """Typed accepted local-regression result passed into owner closure."""
+
+    run_id: str
+    workflow_id: str
+    owner_module_id: str
+    review_round: int
+    owner_input_ref: str
+    reviewed_baseline: ModuleSubmission
+    cross_responses: list[RevisionResponse]
+    regression_context: ModuleLocalRegressionContext
+    review: ModuleInitialReviewAcceptance
 
 
 _CROSS_OWNER_MODULE_IDS = tuple(REPORT_TAXONOMY)
@@ -4425,35 +4518,29 @@ def accept_cross_owner_revision(
     )
 
 
-async def _run_cross_owner_lane(
+def _cross_owner_local_regression_context(
     runner: "ReportWorkflowRunner",
     *,
     state: dict,
-    workflow_id: str,
-    module_id: str,
-    current: ModuleSubmission,
+    owner_module_id: str,
+    reviewed_baseline: ModuleSubmission,
+    revised: ModuleSubmission,
     findings: list[CrossReviewFinding],
-    finding_refs: list[str],
     review_round: int,
-    owner_input_ref: str | None = None,
-    prior_completion_ref: str | None = None,
-    defer_main_exceptions: bool = True,
-    accepted_revision: CrossOwnerRevisionAcceptance | None = None,
-) -> _CrossOwnerLaneResult:
-    """Run one owner-local revision and original-auditor regression in private state."""
+    prior_completion_ref: str | None,
+) -> tuple[ModuleLocalRegressionContext, set[str]]:
+    """Build the existing Cross-triggered module regression input once."""
 
-    lane_state = deepcopy(state)
-    lane_state["_defer_main_exceptions"] = defer_main_exceptions
-    reviewed_baseline = current
     baseline_subject_ref = (
-        f"Work/runs/{state['run_id']}/modules/{module_id}-r{reviewed_baseline.revision}.json"
+        f"Work/runs/{state['run_id']}/modules/"
+        f"{owner_module_id}-r{reviewed_baseline.revision}.json"
     )
     prior_completion_ref = prior_completion_ref or state.get(
         "module_review_completion_refs", {}
-    ).get(module_id)
+    ).get(owner_module_id)
     if not prior_completion_ref:
         raise ReviewLifecycleError(
-            f"Cross local regression requires prior module review: {module_id}"
+            f"Cross local regression requires prior module review: {owner_module_id}"
         )
     try:
         prior_completion = ReviewCompletionRecord.model_validate_json(
@@ -4461,7 +4548,7 @@ async def _run_cross_owner_lane(
         )
     except (OSError, ValueError) as exc:
         raise ReviewLifecycleError(
-            f"Cross local regression prior completion is unreadable: {module_id}"
+            f"Cross local regression prior completion is unreadable: {owner_module_id}"
         ) from exc
     if (
         prior_completion.lifecycle != "module"
@@ -4469,61 +4556,17 @@ async def _run_cross_owner_lane(
         or baseline_subject_ref not in prior_completion.subject_refs
     ):
         raise ReviewLifecycleError(
-            f"Cross local regression prior completion does not bind {module_id}"
+            f"Cross local regression prior completion does not bind {owner_module_id}"
         )
 
-    persisted = (
-        (accepted_revision.revised, accepted_revision.candidate_ref)
-        if accepted_revision is not None
-        else _load_cross_owner_revision_candidate(
-            runner,
-            state=state,
-            module_id=module_id,
-            current=current,
-            findings=findings,
-        )
-    )
-
-    while True:
-        if persisted is not None:
-            revised, revised_ref = persisted
-            persisted = None
-        else:
-            revised, revised_ref = await request_module_revision(
-                runner,
-                state=lane_state,
-                workflow_id=workflow_id,
-                subject=current,
-                cross_findings=findings,
-            )
-        exceptional = [
-            response
-            for response in revised.revision_responses
-            if response.action in {"disputed", "needs_input"}
-        ]
-        if exceptional:
-            decision = await _main_exception_decision(
-                runner,
-                state=lane_state,
-                workflow_id=workflow_id,
-                scope="cross",
-                subject_refs=[revised_ref],
-                finding_refs=finding_refs,
-                verdicts=[],
-                responses=exceptional,
-                trigger="author_response",
-            )
-            if decision.decision == "return_to_author":
-                current = revised
-                continue
-        break
-
-    lane_state.setdefault("module_submissions", {})[module_id] = revised
-    lane_state.setdefault("specialist_submissions", {})[module_id] = revised
-    local_scope = {target_id for finding in findings for target_id in finding.target_submodule_ids}
+    local_scope = {
+        target_id
+        for finding in findings
+        for target_id in finding.target_submodule_ids
+    }
     local_diff_ref = (
         f"Work/runs/{state['run_id']}/reviews/module/cross-r{review_round}/"
-        f"{module_id}/trigger-diff-r{revised.revision}.json"
+        f"{owner_module_id}/trigger-diff-r{revised.revision}.json"
     )
     raw_local_diff = build_revision_diff(reviewed_baseline, revised)
     local_diff = ModuleRevisionDiff(
@@ -4542,16 +4585,8 @@ async def _run_cross_owner_lane(
         local_diff_ref,
         local_diff.model_dump(mode="json"),
     )
-    cross_responses = list(revised.revision_responses)
-    local_reviewed = await run_module_review(
-        runner,
-        module_id,
-        revised,
-        lane_state,
-        workflow_id,
-        initial_scope=local_scope,
-        lifecycle_id=f"cross-r{review_round}",
-        regression_context=ModuleLocalRegressionContext(
+    return (
+        ModuleLocalRegressionContext(
             prior_review_completion_ref=prior_completion_ref,
             prior_review_completion=prior_completion,
             baseline_subject_ref=baseline_subject_ref,
@@ -4560,7 +4595,218 @@ async def _run_cross_owner_lane(
             revision_diff_ref=local_diff_ref,
             revision_diff=local_diff,
         ),
+        local_scope,
     )
+
+
+async def prepare_cross_owner_local_review(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    workflow_id: str,
+    revision: CrossOwnerRevisionAcceptance,
+) -> CrossOwnerLocalReviewPreparation:
+    """Prepare the original module Auditor after an accepted Cross revision."""
+
+    if any(
+        response.action in {"disputed", "needs_input"}
+        for response in revision.revised.revision_responses
+    ):
+        return CrossOwnerLocalReviewPreparation(
+            mode="continue_existing",
+            run_id=revision.run_id,
+            workflow_id=workflow_id,
+            owner_module_id=revision.owner_module_id,
+            review_round=revision.review_round,
+            owner_input_ref=revision.owner_input_ref,
+            reviewed_baseline=revision.current,
+            cross_responses=list(revision.revised.revision_responses),
+        )
+    regression_context, local_scope = _cross_owner_local_regression_context(
+        runner,
+        state=state,
+        owner_module_id=revision.owner_module_id,
+        reviewed_baseline=revision.current,
+        revised=revision.revised,
+        findings=revision.findings,
+        review_round=revision.review_round,
+        prior_completion_ref=revision.prior_completion_ref,
+    )
+    lane_state = deepcopy(state)
+    lane_state["_defer_main_exceptions"] = True
+    lane_state.setdefault("module_submissions", {})[
+        revision.owner_module_id
+    ] = revision.revised
+    lane_state.setdefault("specialist_submissions", {})[
+        revision.owner_module_id
+    ] = revision.revised
+    prepared = await prepare_module_initial_review(
+        runner,
+        module_id=revision.owner_module_id,
+        payload=revision.revised,
+        state=lane_state,
+        workflow_id=workflow_id,
+        initial_scope=local_scope,
+        lifecycle_id=f"cross-r{revision.review_round}",
+        regression_context=regression_context,
+    )
+    return CrossOwnerLocalReviewPreparation(
+        mode=prepared.mode,
+        run_id=revision.run_id,
+        workflow_id=workflow_id,
+        owner_module_id=revision.owner_module_id,
+        review_round=revision.review_round,
+        owner_input_ref=revision.owner_input_ref,
+        reviewed_baseline=revision.current,
+        cross_responses=list(revision.revised.revision_responses),
+        regression_context=regression_context,
+        prepared=prepared,
+    )
+
+
+def accept_cross_owner_local_review(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    preparation: CrossOwnerLocalReviewPreparation,
+    result: ModuleReviewFindingSubmission,
+) -> CrossOwnerLocalReviewAcceptance:
+    """Accept the declared original-Auditor local regression once."""
+
+    lane_state = deepcopy(state)
+    lane_state["_defer_main_exceptions"] = True
+    review = accept_module_initial_review(
+        runner,
+        preparation=cast(ModuleInitialReviewPreparation, preparation.prepared),
+        result=result,
+        state=lane_state,
+    )
+    return CrossOwnerLocalReviewAcceptance(
+        run_id=preparation.run_id,
+        workflow_id=preparation.workflow_id,
+        owner_module_id=preparation.owner_module_id,
+        review_round=preparation.review_round,
+        owner_input_ref=preparation.owner_input_ref,
+        reviewed_baseline=preparation.reviewed_baseline,
+        cross_responses=preparation.cross_responses,
+        regression_context=cast(
+            ModuleLocalRegressionContext,
+            preparation.regression_context,
+        ),
+        review=review,
+    )
+
+
+async def _run_cross_owner_lane(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    workflow_id: str,
+    module_id: str,
+    current: ModuleSubmission,
+    findings: list[CrossReviewFinding],
+    finding_refs: list[str],
+    review_round: int,
+    owner_input_ref: str | None = None,
+    prior_completion_ref: str | None = None,
+    defer_main_exceptions: bool = True,
+    accepted_revision: CrossOwnerRevisionAcceptance | None = None,
+    accepted_local_review: CrossOwnerLocalReviewAcceptance | None = None,
+) -> _CrossOwnerLaneResult:
+    """Run one owner-local revision and original-auditor regression in private state."""
+
+    lane_state = deepcopy(state)
+    lane_state["_defer_main_exceptions"] = defer_main_exceptions
+    reviewed_baseline = current
+    if accepted_local_review is None:
+        persisted = (
+            (accepted_revision.revised, accepted_revision.candidate_ref)
+            if accepted_revision is not None
+            else _load_cross_owner_revision_candidate(
+                runner,
+                state=state,
+                module_id=module_id,
+                current=current,
+                findings=findings,
+            )
+        )
+
+        while True:
+            if persisted is not None:
+                revised, revised_ref = persisted
+                persisted = None
+            else:
+                revised, revised_ref = await request_module_revision(
+                    runner,
+                    state=lane_state,
+                    workflow_id=workflow_id,
+                    subject=current,
+                    cross_findings=findings,
+                )
+            exceptional = [
+                response
+                for response in revised.revision_responses
+                if response.action in {"disputed", "needs_input"}
+            ]
+            if exceptional:
+                decision = await _main_exception_decision(
+                    runner,
+                    state=lane_state,
+                    workflow_id=workflow_id,
+                    scope="cross",
+                    subject_refs=[revised_ref],
+                    finding_refs=finding_refs,
+                    verdicts=[],
+                    responses=exceptional,
+                    trigger="author_response",
+                )
+                if decision.decision == "return_to_author":
+                    current = revised
+                    continue
+            break
+        cross_responses = list(revised.revision_responses)
+        regression_context, local_scope = _cross_owner_local_regression_context(
+            runner,
+            state=state,
+            owner_module_id=module_id,
+            reviewed_baseline=reviewed_baseline,
+            revised=revised,
+            findings=findings,
+            review_round=review_round,
+            prior_completion_ref=prior_completion_ref,
+        )
+        accepted_review = None
+    else:
+        revised = accepted_local_review.review.current
+        cross_responses = list(accepted_local_review.cross_responses)
+        regression_context = accepted_local_review.regression_context
+        local_scope = {
+            target_id
+            for finding in findings
+            for target_id in finding.target_submodule_ids
+        }
+        accepted_review = accepted_local_review.review
+
+    lane_state.setdefault("module_submissions", {})[module_id] = revised
+    lane_state.setdefault("specialist_submissions", {})[module_id] = revised
+    if accepted_review is not None and accepted_review.next_action == "completed":
+        local_reviewed = accepted_review.current
+        lane_state.setdefault("module_review_completion_refs", {})[
+            module_id
+        ] = cast(str, accepted_review.completion_ref)
+    else:
+        if accepted_review is not None:
+            lane_state["resume"] = True
+        local_reviewed = await run_module_review(
+            runner,
+            module_id,
+            revised,
+            lane_state,
+            workflow_id,
+            initial_scope=local_scope,
+            lifecycle_id=f"cross-r{review_round}",
+            regression_context=regression_context,
+        )
     final_subject_ref = (
         f"Work/runs/{state['run_id']}/modules/{module_id}-r{local_reviewed.revision}.json"
     )
@@ -5036,12 +5282,40 @@ class CrossReviewCoordinator:
             result=result,
         )
 
+    async def prepare_owner_local_review(
+        self,
+        revision: CrossOwnerRevisionAcceptance,
+    ) -> CrossOwnerLocalReviewPreparation:
+        """Prepare the first original-Auditor local regression."""
+
+        return await prepare_cross_owner_local_review(
+            self.runner,
+            state=self.state,
+            workflow_id=self.workflow_id,
+            revision=revision,
+        )
+
+    def accept_owner_local_review(
+        self,
+        preparation: CrossOwnerLocalReviewPreparation,
+        result: ModuleReviewFindingSubmission,
+    ) -> CrossOwnerLocalReviewAcceptance:
+        """Accept one declared original-Auditor local regression result."""
+
+        return accept_cross_owner_local_review(
+            self.runner,
+            state=self.state,
+            preparation=preparation,
+            result=result,
+        )
+
     async def run_owner(
         self,
         owner_module_id: str,
         *,
         initial_acceptance: CrossOwnerInitialReviewAcceptance | None = None,
         revision_acceptance: CrossOwnerRevisionAcceptance | None = None,
+        local_review_acceptance: CrossOwnerLocalReviewAcceptance | None = None,
     ) -> _CrossOwnerPipelineResult:
         if self.ensure_prepared():
             raise ReviewLifecycleError(
@@ -5257,6 +5531,9 @@ class CrossReviewCoordinator:
                     prior_completion_ref=current_review_completion_ref,
                     accepted_revision=(
                         revision_acceptance if review_round == 1 else None
+                    ),
+                    accepted_local_review=(
+                        local_review_acceptance if review_round == 1 else None
                     ),
                 )
 
