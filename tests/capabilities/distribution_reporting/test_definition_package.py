@@ -217,6 +217,9 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "invoke_tool",
         "invoke_tool",
         "if",
+        "invoke_tool",
+        "invoke_tool",
+        "if",
         "create_conversation",
         "invoke_agent",
         "invoke_tool",
@@ -248,6 +251,7 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "module-lane-can-review",
         "prepare-current-module-review",
         "module-review-requires-agent",
+        "resume-current-module-review",
         "accept-current-module-review",
         "module-review-needs-revision",
         "prepare-current-module-revision",
@@ -255,7 +259,7 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "prepare-current-module-recheck",
         "module-recheck-requires-agent",
         "accept-current-module-recheck",
-        "continue-current-module-review",
+        "continue-current-module-recheck",
         "complete-current-module-lane",
     ]
     assert plan.agent_ids == ["module-2.1-specialist", "evidence-auditor"]

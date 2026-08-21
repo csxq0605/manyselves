@@ -171,7 +171,12 @@ class ReportingModuleRuntime(Protocol):
         values: Mapping[str, Any],
     ) -> DeclarativeModuleRuntimeLaneContext: ...
 
-    async def continue_review_lane(
+    async def resume_review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def continue_recheck_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext: ...
@@ -450,7 +455,8 @@ async def execute_declarative_module_stage(
         "prepare-current-module-recheck": module_runtime.prepare_recheck_lane,
         "module-recheck-requires-agent": module_runtime.recheck_requires_agent,
         "accept-current-module-recheck": module_runtime.accept_recheck_lane,
-        "continue-current-module-review": module_runtime.continue_review_lane,
+        "resume-current-module-review": module_runtime.resume_review_lane,
+        "continue-current-module-recheck": module_runtime.continue_recheck_lane,
         "complete-current-module-lane": module_runtime.complete_lane,
     }
     module_tools["prepare-module-cohort"] = module_runtime.prepare_lanes
@@ -696,7 +702,13 @@ class _BatchModuleRuntime:
     ) -> DeclarativeModuleRuntimeLaneContext:
         return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
 
-    async def continue_review_lane(
+    async def resume_review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
+
+    async def continue_recheck_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:
@@ -1191,12 +1203,61 @@ class _CurrentModuleStages:
             },
         )
 
-    async def continue_review_lane(
+    async def resume_review_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:
-        if context.status == "reviewed":
+        if context.status != "review_resumed":
             return context
+        try:
+            reviewing = cast(DeclarativeModuleReviewPreparation, context.review)
+            progress = reviewing.prepared.progress
+            if (
+                progress is not None
+                and progress.next_action == "review"
+                and progress.phase == "initial"
+                and reviewing.envelope is not None
+            ):
+                return context.model_copy(
+                    deep=True,
+                    update={
+                        "status": "review_ready",
+                        "module": progress.current,
+                        "review": reviewing.model_copy(
+                            update={
+                                "prepared": reviewing.prepared.model_copy(
+                                    update={
+                                        "mode": "invoke_agent",
+                                        "current": progress.current,
+                                    }
+                                )
+                            }
+                        ),
+                    },
+                )
+            accepted = self._runner._resume_module_initial_review(
+                reviewing.prepared,
+                context.reporting_state,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": (
+                    "reviewed" if accepted.next_action == "completed" else "revision_pending"
+                ),
+                "module": accepted.current,
+                "review": reviewing.model_copy(update={"acceptance": accepted}),
+            },
+        )
+
+    async def continue_recheck_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
         if context.status != "review_resumed":
             return context
         context.reporting_state["resume"] = True

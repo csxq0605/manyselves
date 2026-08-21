@@ -1,7 +1,7 @@
-id: continue-current-module-review
+id: resume-current-module-review
 version: 1.0.0
-description: Continue the current review from its persisted finding or completion state
-implementation: capability:distribution-reporting:continue-current-module-review
+description: Project persisted initial-review progress into the declared module Lane
+implementation: capability:distribution-reporting:resume-current-module-review
 input_contract: declarative_module_runtime_lane_context
 output_contract: declarative_module_runtime_lane_context
 side_effect: ordered_state

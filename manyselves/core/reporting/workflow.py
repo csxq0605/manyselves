@@ -140,6 +140,7 @@ from .review_lifecycle import (
     prepare_module_recheck,
     prepare_module_revision,
     request_module_revision,
+    resume_module_initial_review,
     run_cross_review,
     run_final_review,
     run_module_review,
@@ -6124,6 +6125,16 @@ class ReportWorkflowRunner:
             self,
             preparation=preparation,
             result=result,
+            state=state,
+        )
+
+    def _resume_module_initial_review(
+        self,
+        preparation: ModuleInitialReviewPreparation,
+        state: dict,
+    ) -> ModuleInitialReviewAcceptance:
+        return resume_module_initial_review(
+            preparation=preparation,
             state=state,
         )
 

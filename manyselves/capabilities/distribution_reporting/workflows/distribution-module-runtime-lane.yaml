@@ -111,7 +111,24 @@ actions:
     variable: should-invoke-module-reviewer
     operator: truthy
   then: create-module-reviewer-conversation
-  otherwise: continue-current-module-review
+  otherwise: resume-current-module-review
+- id: resume-current-module-review
+  kind: invoke_tool
+  tool: resume-current-module-review
+  input_variable: lane-context
+  output_variable: lane-context
+- id: resumed-module-review-requires-agent
+  kind: invoke_tool
+  tool: module-review-requires-agent
+  input_variable: lane-context
+  output_variable: should-invoke-resumed-module-reviewer
+- id: choose-resumed-module-review-source
+  kind: if
+  condition:
+    variable: should-invoke-resumed-module-reviewer
+    operator: truthy
+  then: create-module-reviewer-conversation
+  otherwise: module-review-needs-revision
 - id: create-module-reviewer-conversation
   kind: create_conversation
   agent: evidence-auditor
@@ -146,7 +163,7 @@ actions:
     variable: should-revise-module
     operator: truthy
   then: prepare-current-module-revision
-  otherwise: continue-current-module-review
+  otherwise: complete-current-module-lane
 - id: prepare-current-module-revision
   kind: invoke_tool
   tool: prepare-current-module-revision
@@ -191,7 +208,7 @@ actions:
     variable: should-invoke-module-recheck
     operator: truthy
   then: create-module-recheck-conversation
-  otherwise: continue-current-module-review
+  otherwise: continue-current-module-recheck
 - id: create-module-recheck-conversation
   kind: create_conversation
   agent: evidence-auditor
@@ -215,9 +232,9 @@ actions:
 - id: continue-after-module-recheck
   kind: goto
   target: module-review-needs-revision
-- id: continue-current-module-review
+- id: continue-current-module-recheck
   kind: invoke_tool
-  tool: continue-current-module-review
+  tool: continue-current-module-recheck
   input_variable: lane-context
   output_variable: lane-context
 - id: complete-current-module-lane

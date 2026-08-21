@@ -141,7 +141,8 @@ async def execute_declarative_module_cohort(
         "prepare-current-module-recheck": lane_runtime.prepare_recheck_lane,
         "module-recheck-requires-agent": lane_runtime.recheck_requires_agent,
         "accept-current-module-recheck": lane_runtime.accept_recheck_lane,
-        "continue-current-module-review": lane_runtime.continue_review_lane,
+        "resume-current-module-review": lane_runtime.resume_review_lane,
+        "continue-current-module-recheck": lane_runtime.continue_recheck_lane,
         "complete-current-module-lane": lane_runtime.complete_lane,
     }
     tools["prepare-module-cohort"] = lambda value: value
@@ -290,7 +291,13 @@ class _StandaloneModuleRuntime:
     ) -> DeclarativeModuleRuntimeLaneContext:
         return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
 
-    async def continue_review_lane(
+    async def resume_review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context.model_copy(update={"status": "reviewed"})
+
+    async def continue_recheck_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:

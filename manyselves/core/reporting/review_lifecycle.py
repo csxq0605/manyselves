@@ -942,6 +942,48 @@ def _save_module_review_progress(
     )
 
 
+def _restore_completed_module_review(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    module_id: str,
+    progress: ModuleReviewProgress,
+    review_root: str,
+    reviewer_session_key: str,
+) -> str | None:
+    """Restore the existing verified completion record shared by both runtimes."""
+
+    completion_ref = state.get("module_review_completion_refs", {}).get(module_id)
+    if completion_ref is None:
+        completion_ref = f"{review_root}/completion-r{progress.current.revision}.json"
+    completion_path = runner.service.workspace / completion_ref
+    if not completion_path.is_file():
+        return None
+    try:
+        completion = ReviewCompletionRecord.model_validate_json(
+            completion_path.read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise ReviewLifecycleError(
+            f"completed module review marker is unreadable: {completion_ref}"
+        ) from exc
+    expected_subject_ref = (
+        f"Work/runs/{state['run_id']}/modules/"
+        f"{module_id}-r{progress.current.revision}.json"
+    )
+    if (
+        completion.lifecycle != "module"
+        or completion.run_id != state["run_id"]
+        or completion.reviewer_session_key != reviewer_session_key
+        or completion.subject_refs != [expected_subject_ref]
+    ):
+        raise ReviewLifecycleError(
+            "completed module review marker does not bind the current subject"
+        )
+    state.setdefault("module_review_completion_refs", {})[module_id] = str(completion_ref)
+    return str(completion_ref)
+
+
 async def prepare_module_initial_review(
     runner: "ReportWorkflowRunner",
     *,
@@ -980,10 +1022,23 @@ async def prepare_module_initial_review(
         progress=progress,
         regression_context=regression_context,
     )
+    current = payload
+    review_round = 0
+    scope = set(initial_scope)
     if progress is not None:
         if progress.run_id != state["run_id"] or progress.module_id != module_id:
             raise ReviewLifecycleError("module review progress identity mismatch")
-        if progress.next_action in {"completed", "revise", "review"}:
+        restored_completion_ref = None
+        if progress.next_action == "completed":
+            restored_completion_ref = _restore_completed_module_review(
+                runner,
+                state=state,
+                module_id=module_id,
+                progress=progress,
+                review_root=review_root,
+                reviewer_session_key=reviewer_session_key,
+            )
+        if progress.next_action == "revise" or restored_completion_ref is not None:
             return ModuleInitialReviewPreparation(
                 mode="continue_existing",
                 run_id=state["run_id"],
@@ -1002,10 +1057,12 @@ async def prepare_module_initial_review(
                 ),
                 progress=progress,
             )
+        if progress.next_action == "review" and progress.phase == "initial":
+            current = progress.current
+            review_round = progress.review_round
+            scope = set(progress.scope)
+            phase = progress.phase
 
-    current = payload
-    review_round = 0
-    scope = set(initial_scope)
     preflight_attempts = 0
     preflight_failure_fingerprints: dict[tuple, int] = {}
     while True:
@@ -1222,7 +1279,7 @@ async def prepare_module_initial_review(
         review_input_ref=input_ref,
         review_input=review_input,
         envelope=envelope,
-        progress=None,
+        progress=progress,
     )
 
 
@@ -2355,6 +2412,63 @@ def accept_module_initial_review(
     )
 
 
+def resume_module_initial_review(
+    *,
+    preparation: ModuleInitialReviewPreparation,
+    state: dict,
+) -> ModuleInitialReviewAcceptance:
+    """Project persisted initial-review progress back into the declared Lane.
+
+    This boundary performs no Agent call. It restores either the durable
+    terminal subject or the durable finding set that still needs the original
+    Author, so the file-defined workflow can continue at its next typed action.
+    """
+
+    progress = preparation.progress
+    if preparation.mode != "continue_existing" or progress is None:
+        raise ReviewLifecycleError("module review has no persisted progress to resume")
+    if progress.run_id != state["run_id"] or progress.module_id != preparation.module_id:
+        raise ReviewLifecycleError("module review progress identity mismatch")
+
+    completion_ref: str | None = None
+    if progress.next_action == "completed":
+        completion_ref = state.get("module_review_completion_refs", {}).get(
+            preparation.module_id
+        )
+        if completion_ref is None:
+            raise ReviewLifecycleError(
+                "persisted module review completion was not restored during preparation"
+            )
+        next_action: Literal["revise", "completed"] = "completed"
+    elif progress.next_action == "revise":
+        next_action = "revise"
+    else:
+        raise ReviewLifecycleError(
+            "persisted module review progress is not an initial-review continuation"
+        )
+
+    subject_ref = (
+        preparation.subject_ref
+        or f"Work/runs/{state['run_id']}/modules/"
+        f"{preparation.module_id}-r{progress.current.revision}.json"
+    )
+    return ModuleInitialReviewAcceptance(
+        run_id=preparation.run_id,
+        module_id=preparation.module_id,
+        lifecycle_id=preparation.lifecycle_id,
+        reviewer_session_key=preparation.reviewer_session_key,
+        subject_ref=subject_ref,
+        current=progress.current,
+        findings=list(progress.pending),
+        finding_refs=list(progress.finding_refs),
+        verdict_refs=list(progress.verdict_refs),
+        resolved_ids=list(progress.resolved_ids),
+        next_action=next_action,
+        progress_ref=preparation.progress_ref,
+        completion_ref=completion_ref,
+    )
+
+
 async def _run_module_review_lifecycle(
     runner: "ReportWorkflowRunner",
     module_id: str,
@@ -2422,33 +2536,15 @@ async def _run_module_review_lifecycle(
         # finding/recheck sequence.  If the completion record is absent or
         # malformed, treat the progress marker as stale and continue through
         # the normal deterministic validation path.
-        completion_ref = state.get("module_review_completion_refs", {}).get(module_id)
-        if completion_ref is None:
-            completion_ref = f"{review_root}/completion-r{progress.current.revision}.json"
-        completion_path = runner.service.workspace / completion_ref
-        if completion_path.is_file():
-            try:
-                completion = ReviewCompletionRecord.model_validate_json(
-                    completion_path.read_text(encoding="utf-8")
-                )
-            except (OSError, ValueError) as exc:
-                raise ReviewLifecycleError(
-                    f"completed module review marker is unreadable: {completion_ref}"
-                ) from exc
-            if (
-                completion.lifecycle != "module"
-                or completion.run_id != state["run_id"]
-                or completion.reviewer_session_key != reviewer_session_key
-                or completion.subject_refs
-                != [
-                    f"Work/runs/{state['run_id']}/modules/"
-                    f"{module_id}-r{progress.current.revision}.json"
-                ]
-            ):
-                raise ReviewLifecycleError(
-                    "completed module review marker does not bind the current subject"
-                )
-            state.setdefault("module_review_completion_refs", {})[module_id] = str(completion_ref)
+        completion_ref = _restore_completed_module_review(
+            runner,
+            state=state,
+            module_id=module_id,
+            progress=progress,
+            review_root=review_root,
+            reviewer_session_key=reviewer_session_key,
+        )
+        if completion_ref is not None:
             return progress.current
     if progress is not None and progress.next_action != "completed":
         if progress.run_id != state["run_id"] or progress.module_id != module_id:

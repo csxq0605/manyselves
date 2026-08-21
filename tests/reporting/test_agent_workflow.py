@@ -71,6 +71,7 @@ from manyselves.core.reporting.review_lifecycle import (
     prepare_module_recheck,
     prepare_module_revision,
     request_module_revision,
+    resume_module_initial_review,
     run_cross_review,
     run_final_review,
     run_module_review,
@@ -619,6 +620,13 @@ async def test_initial_module_review_boundary_is_typed_and_resume_aware(
     assert resumed.mode == "continue_existing"
     assert resumed.progress is not None
     assert resumed.progress.next_action == "completed"
+    resumed_acceptance = resume_module_initial_review(
+        preparation=resumed,
+        state=state,
+    )
+    assert resumed_acceptance.next_action == "completed"
+    assert resumed_acceptance.current == module
+    assert resumed_acceptance.completion_ref == accepted.completion_ref
 
 
 def test_module_dispatch_uses_configured_global_knowledge_root(tmp_path: Path) -> None:

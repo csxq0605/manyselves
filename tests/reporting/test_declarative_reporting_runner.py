@@ -40,6 +40,7 @@ from manyselves.core.reporting.review_lifecycle import (
     ModuleInitialReviewPreparation,
     ModuleRecheckAcceptance,
     ModuleRecheckPreparation,
+    ModuleReviewProgress,
     ModuleRevisionPreparation,
 )
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
@@ -204,6 +205,10 @@ class _CurrentLaneRunner:
         self.fail_once = "2.2"
         self.fail_review_once = ""
         self.review_findings: set[str] = set()
+        self.initial_review_preparations: dict[
+            str, ModuleInitialReviewPreparation
+        ] = {}
+        self.module_review_loop_calls = 0
         self.recheck_open_once = False
         self.recheck_rounds = {module_id: 0 for module_id in REPORT_MODULE_IDS}
         self.revision_numbers = {module_id: 0 for module_id in REPORT_MODULE_IDS}
@@ -444,6 +449,7 @@ class _CurrentLaneRunner:
         _workflow_id: str,
         **_kwargs,
     ) -> ModuleSubmission:
+        self.module_review_loop_calls += 1
         self.lifecycle[module_id].append("review")
         lane_state.setdefault("module_submissions", {})[module_id] = submission
         lane_state.setdefault("specialist_submissions", {})[module_id] = submission
@@ -462,6 +468,9 @@ class _CurrentLaneRunner:
         initial_scope: set[str],
     ) -> ModuleInitialReviewPreparation:
         self.lifecycle[module_id].append("review-prepare")
+        persisted = self.initial_review_preparations.get(module_id)
+        if persisted is not None:
+            return persisted
         subject_ref = f"modules/{module_id}.json"
         return ModuleInitialReviewPreparation(
             mode="invoke_agent",
@@ -525,6 +534,44 @@ class _CurrentLaneRunner:
             next_action="completed",
             progress_ref=preparation.progress_ref,
             completion_ref=f"reviews/{module_id}.json",
+        )
+
+    def _resume_module_initial_review(
+        self,
+        preparation: ModuleInitialReviewPreparation,
+        state: dict,
+    ) -> ModuleInitialReviewAcceptance:
+        self.lifecycle[preparation.module_id].append("review-resume")
+        progress = preparation.progress
+        if progress is None:
+            raise AssertionError("fake persisted initial review is not resumable")
+        if progress.next_action == "review":
+            raise AssertionError(
+                "persisted review progress must return to the declared Agent path"
+            )
+        if progress.next_action not in {"completed", "revise"}:
+            raise AssertionError("fake persisted initial review is not resumable")
+        completion_ref = None
+        if progress.next_action == "completed":
+            completion_ref = state.get("module_review_completion_refs", {}).get(
+                preparation.module_id
+            )
+        return ModuleInitialReviewAcceptance(
+            run_id=preparation.run_id,
+            module_id=preparation.module_id,
+            lifecycle_id=preparation.lifecycle_id,
+            reviewer_session_key=preparation.reviewer_session_key,
+            subject_ref=str(preparation.subject_ref),
+            current=progress.current,
+            findings=list(progress.pending),
+            finding_refs=list(progress.finding_refs),
+            verdict_refs=list(progress.verdict_refs),
+            resolved_ids=list(progress.resolved_ids),
+            next_action=(
+                "completed" if progress.next_action == "completed" else "revise"
+            ),
+            progress_ref=preparation.progress_ref,
+            completion_ref=completion_ref,
         )
 
     async def _prepare_module_revision(
@@ -691,6 +738,12 @@ class _CurrentLaneRunner:
         submission: ModuleSubmission,
     ):
         self.lifecycle[context.module_id].append("complete")
+        context.lane_state.setdefault("module_submissions", {})[context.module_id] = (
+            submission
+        )
+        context.lane_state.setdefault("specialist_submissions", {})[context.module_id] = (
+            submission
+        )
         completion = LaneCompletion(
             lane_id=f"module-{context.module_id}",
             run_id=context.lane_state["run_id"],
@@ -721,6 +774,242 @@ class _CurrentLaneRunner:
         if failures:
             raise failures[0]
         state["cohort_finalized"] = list(requested_modules)
+
+
+def _persisted_module_submission(module_id: str, *, revision: int = 0) -> ModuleSubmission:
+    return ModuleSubmission(
+        module_id=module_id,
+        submodule_narratives={
+            submodule_id: f"{submodule_id} body r{revision}"
+            for submodule_id in REPORT_TAXONOMY[module_id].submodules
+        },
+        claims=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision=revision,
+    )
+
+
+def _persisted_initial_review_preparation(
+    run_id: str,
+    module_id: str,
+    *,
+    next_action: str,
+) -> ModuleInitialReviewPreparation:
+    target = next(iter(REPORT_TAXONOMY[module_id].submodules))
+    current = _persisted_module_submission(module_id)
+    pending = (
+        [
+            ModuleReviewFinding(
+                id=f"M-{module_id}-initial-r0-resume",
+                target_submodule_id=target,
+                category="analysis_depth",
+                impact="advisory",
+                observation="Persisted finding requires the original author revision.",
+                evidence_refs=[f"modules/{module_id}-r0.json"],
+                required_change="Add the missing operational consequence.",
+                reviewer_checks=["The revised text states the consequence."],
+            )
+        ]
+        if next_action == "revise"
+        else []
+    )
+    progress = ModuleReviewProgress(
+        run_id=run_id,
+        module_id=module_id,
+        next_action=next_action,
+        current=current,
+        pending=pending,
+        responses=[],
+        finding_refs=[f"reviews/{module_id}/findings-r0.json"] if pending else [],
+        verdict_refs=[],
+        resolved_ids=[],
+        review_round=0,
+        phase="initial",
+        scope=[target],
+        reviewer_session_key=f"module-auditor-{module_id}",
+        last_reviewed_subject_ref=f"modules/{module_id}-r0.json",
+    )
+    return ModuleInitialReviewPreparation(
+        mode="continue_existing",
+        run_id=run_id,
+        module_id=module_id,
+        lifecycle_id="initial",
+        workflow_id=f"full-power-distribution-report:{run_id}",
+        reviewer_session_key=f"module-auditor-{module_id}",
+        review_root=f"reviews/{module_id}",
+        progress_ref=f"reviews/{module_id}/progress.json",
+        review_round=0,
+        scope=[target],
+        current=current,
+        subject_ref=f"modules/{module_id}-r0.json",
+        review_input_ref=None,
+        envelope=TaskEnvelope(
+            task_id=f"module-{module_id}-initial-review-r0",
+            run_id=run_id,
+            agent_id="evidence-auditor",
+            objective=f"resume review module {module_id}",
+            allowed_outputs=["module_review_finding_submission"],
+        ),
+        progress=progress,
+    )
+
+
+@pytest.mark.asyncio
+async def test_file_defined_completed_initial_review_resume_preserves_result_without_legacy_loop(
+    tmp_path: Path,
+) -> None:
+    run_id = "report-declarative-review-resume-completed"
+    module_id = "2.1"
+    workflow_id = f"full-power-distribution-report:{run_id}"
+    submission = _persisted_module_submission(module_id)
+    completion_ref = f"reviews/{module_id}/completion-r0.json"
+    state = {
+        "run_id": run_id,
+        "resume": True,
+        "specialist_submissions": {module_id: submission},
+        "module_review_completion_refs": {module_id: completion_ref},
+    }
+    runner = _CurrentLaneRunner(tmp_path)
+    runner.initial_review_preparations[module_id] = (
+        _persisted_initial_review_preparation(
+            run_id,
+            module_id,
+            next_action="completed",
+        )
+    )
+
+    completed = await execute_declarative_module_stage(
+        requested_modules=(module_id,),
+        state=state,
+        workflow_id=workflow_id,
+        state_store=FileWorkflowStateStore(tmp_path),
+        module_runtime=_CurrentModuleStages(
+            runner,
+            (module_id,),
+            state,
+            workflow_id,
+        ),
+    )
+
+    assert runner.module_review_loop_calls == 0
+    assert runner.lifecycle[module_id] == [
+        "start",
+        "prepare",
+        "resume",
+        "review-prepare",
+        "review-resume",
+        "complete",
+    ]
+    assert state["module_submissions"][module_id] == submission
+    assert state["module_review_completion_refs"][module_id] == completion_ref
+    assert completed.status is WorkflowStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_file_defined_findings_resume_returns_to_declared_revision_and_recheck(
+    tmp_path: Path,
+) -> None:
+    run_id = "report-declarative-review-resume-revise"
+    module_id = "2.1"
+    workflow_id = f"full-power-distribution-report:{run_id}"
+    submission = _persisted_module_submission(module_id)
+    state = {
+        "run_id": run_id,
+        "resume": True,
+        "specialist_submissions": {module_id: submission},
+    }
+    runner = _CurrentLaneRunner(tmp_path)
+    runner.fail_once = ""
+    runner.initial_review_preparations[module_id] = (
+        _persisted_initial_review_preparation(
+            run_id,
+            module_id,
+            next_action="revise",
+        )
+    )
+
+    completed = await execute_declarative_module_stage(
+        requested_modules=(module_id,),
+        state=state,
+        workflow_id=workflow_id,
+        state_store=FileWorkflowStateStore(tmp_path),
+        module_runtime=_CurrentModuleStages(
+            runner,
+            (module_id,),
+            state,
+            workflow_id,
+        ),
+    )
+
+    assert runner.module_review_loop_calls == 0
+    assert runner.lifecycle[module_id] == [
+        "start",
+        "prepare",
+        "resume",
+        "review-prepare",
+        "review-resume",
+        "revision:module-2.1",
+        "revision-accept",
+        "recheck-prepare",
+        "rechecker:module-auditor-2.1",
+        "recheck-accept",
+        "complete",
+    ]
+    assert runner.revision_numbers[module_id] == 1
+    assert runner.recheck_verdicts[module_id] == ["resolved"]
+    assert state["module_submissions"][module_id].revision == 1
+    assert completed.status is WorkflowStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_file_defined_review_resume_reuses_reviewer_session_and_declared_agent_path(
+    tmp_path: Path,
+) -> None:
+    run_id = "report-declarative-review-resume-review"
+    module_id = "2.1"
+    workflow_id = f"full-power-distribution-report:{run_id}"
+    submission = _persisted_module_submission(module_id)
+    state = {
+        "run_id": run_id,
+        "resume": True,
+        "specialist_submissions": {module_id: submission},
+    }
+    runner = _CurrentLaneRunner(tmp_path)
+    runner.fail_once = ""
+    runner.initial_review_preparations[module_id] = (
+        _persisted_initial_review_preparation(
+            run_id,
+            module_id,
+            next_action="review",
+        )
+    )
+
+    completed = await execute_declarative_module_stage(
+        requested_modules=(module_id,),
+        state=state,
+        workflow_id=workflow_id,
+        state_store=FileWorkflowStateStore(tmp_path),
+        module_runtime=_CurrentModuleStages(
+            runner,
+            (module_id,),
+            state,
+            workflow_id,
+        ),
+    )
+
+    assert runner.module_review_loop_calls == 0
+    assert runner.lifecycle[module_id] == [
+        "start",
+        "prepare",
+        "resume",
+        "review-prepare",
+        "reviewer:module-auditor-2.1",
+        "review-accept",
+        "complete",
+    ]
+    assert state["module_submissions"][module_id] == submission
+    assert completed.status is WorkflowStatus.COMPLETED
 
 
 @pytest.mark.asyncio
