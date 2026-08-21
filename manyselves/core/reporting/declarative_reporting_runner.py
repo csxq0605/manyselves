@@ -41,6 +41,7 @@ from manyselves.kernel.workflow import (
     resume_waiting_input,
 )
 from manyselves.runtime.state_store import FileWorkflowStateStore
+from manyselves.runtime.tool_adapter import CapabilityToolAdapterFactory
 from manyselves.runtime.workflow_host import (
     FileWorkflowEventSink,
     InMemoryWorkflowEventSink,
@@ -311,13 +312,65 @@ class _TaskScopedAgentInvoker:
         *,
         task_id: str,
     ) -> AgentInvocationOutcome:
-        invoker = self._task_routes.get(task.id, self._default)
-        return await invoker.invoke(
+        return await self._invoke(
             agent,
             task,
             value,
             conversation,
             task_id=task_id,
+            recovery_policy=None,
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
+
+    async def _invoke(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
+    ) -> AgentInvocationOutcome:
+        invoker = self._task_routes.get(task.id, self._default)
+        if recovery_policy is None:
+            return await invoker.invoke(
+                agent,
+                task,
+                value,
+                conversation,
+                task_id=task_id,
+            )
+        invoke_with_recovery = getattr(invoker, "invoke_with_recovery", None)
+        if not callable(invoke_with_recovery):
+            raise RuntimeError(
+                f"routed agent adapter does not support declared recovery: {agent.id}"
+            )
+        return await invoke_with_recovery(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
         )
 
 
@@ -459,6 +512,31 @@ def _compile_reporting_runtime(
             "distribution-report-delivery": delivery_plan,
         },
     )
+
+
+def _assemble_reporting_capability_tools(
+    definitions: DefinitionRegistry,
+    contracts: Mapping[str, ContractAdapter],
+    implementations: Mapping[str, Callable[[Any], Any]],
+    *plans: ResolvedPlan,
+) -> dict[str, Any]:
+    """Bind every invoked Reporting Capability Tool through its declaration."""
+
+    bound = dict(implementations)
+    factory = CapabilityToolAdapterFactory(
+        "distribution-reporting",
+        implementations,
+        contracts,
+    )
+    seen: set[str] = set()
+    for plan in plans:
+        for tool_id in plan.tool_ids:
+            if tool_id in seen:
+                continue
+            seen.add(tool_id)
+            definition = definitions.require(DefinitionKind.TOOL, tool_id)
+            bound[tool_id] = factory.build(definition)
+    return bound
 
 
 def resume_declarative_reporting_input(
@@ -658,6 +736,83 @@ async def execute_declarative_module_stage(
     }
     module_tools["prepare-module-cohort"] = module_runtime.prepare_lanes
     module_tools["reduce-module-cohort"] = module_runtime.reduce_lanes
+    runtime_tools = {
+        **module_tools,
+        "prepare-cross-owner-cohort": cross_runtime.prepare,
+        "prepare-current-cross-owner-initial": cross_runtime.prepare_initial,
+        "cross-owner-initial-requires-agent": (cross_runtime.initial_requires_agent),
+        "accept-current-cross-owner-initial": cross_runtime.accept_initial,
+        "cross-owner-initial-has-findings": (cross_runtime.initial_has_findings),
+        "prepare-current-cross-owner-revision": (cross_runtime.prepare_revision),
+        "cross-owner-revision-requires-agent": (cross_runtime.revision_requires_agent),
+        "accept-current-cross-owner-revision": (cross_runtime.accept_revision),
+        "prepare-current-cross-owner-author-exception": (cross_runtime.prepare_author_exception),
+        "prepare-current-cross-owner-reviewer-exception": (
+            cross_runtime.prepare_reviewer_exception
+        ),
+        "cross-owner-main-exception-requires-agent": (cross_runtime.main_exception_requires_agent),
+        "accept-current-cross-owner-main-exception": (cross_runtime.accept_main_exception),
+        "cross-owner-main-exception-requests-user": (cross_runtime.main_exception_requests_user),
+        "apply-current-cross-owner-main-exception-user-input": (
+            cross_runtime.apply_main_exception_user_input
+        ),
+        "cross-owner-author-exception-returns-to-author": (
+            cross_runtime.author_exception_returns_to_author
+        ),
+        "prepare-current-cross-owner-local-review": (cross_runtime.prepare_local_review),
+        "cross-owner-local-review-requires-agent": (cross_runtime.local_review_requires_agent),
+        "accept-current-cross-owner-local-review": (cross_runtime.accept_local_review),
+        "prepare-current-cross-owner-recheck": (cross_runtime.prepare_recheck),
+        "cross-owner-recheck-requires-agent": (cross_runtime.recheck_requires_agent),
+        "accept-current-cross-owner-recheck": (cross_runtime.accept_recheck),
+        "advance-current-cross-owner-round": cross_runtime.advance_round,
+        "cross-owner-round-needs-revision": (cross_runtime.round_needs_revision),
+        "complete-current-cross-owner-pipeline": (cross_runtime.complete_owner_round),
+        "complete-current-cross-owner-without-findings": (
+            cross_runtime.complete_owner_without_findings
+        ),
+        "reduce-cross-owner-cohort": cross_runtime.reduce,
+        "prepare-chief-chapter-cohort": chief_runtime.prepare,
+        "prepare-current-chief-chapter": chief_runtime.prepare_lane,
+        "chief-chapter-requires-agent": chief_runtime.requires_agent,
+        "accept-current-chief-chapter": chief_runtime.accept_lane,
+        "complete-current-chief-chapter": chief_runtime.complete_lane,
+        "reduce-chief-chapter-cohort": chief_runtime.reduce,
+        "prepare-final-chapter-cohort": final_runtime.prepare,
+        "prepare-current-final-chapter": final_runtime.prepare_lane,
+        "final-chapter-initial-requires-agent": (final_runtime.requires_agent),
+        "accept-current-final-chapter-initial": final_runtime.accept_lane,
+        "complete-current-final-chapter": final_runtime.complete_lane,
+        "reduce-final-chapter-cohort": final_runtime.reduce,
+        "start-final-review-cycle": final_review_runtime.start_cycle,
+        "final-review-needs-round": final_review_runtime.needs_round,
+        "advance-final-review-round": final_review_runtime.advance_round,
+        "prepare-current-final-chief-revision": (final_review_runtime.prepare_chief_revision),
+        "final-chief-revision-requires-agent": (final_review_runtime.chief_revision_requires_agent),
+        "accept-current-final-chief-revision": (final_review_runtime.accept_chief_revision),
+        "complete-current-final-chief-revision": (final_review_runtime.complete_chief_revision),
+        "reduce-final-chief-revision-cohort": (final_review_runtime.reduce_chief_revisions),
+        "prepare-current-final-recheck": (final_review_runtime.prepare_recheck),
+        "final-recheck-requires-agent": (final_review_runtime.recheck_requires_agent),
+        "accept-current-final-recheck": (final_review_runtime.accept_recheck),
+        "complete-current-final-recheck": (final_review_runtime.complete_recheck),
+        "reduce-final-recheck-cohort": (final_review_runtime.reduce_rechecks),
+        "complete-final-review": final_review_runtime.complete_review,
+        "prepare-render-delivery": delivery_runtime.prepare,
+        "publish-materialize-delivery": delivery_runtime.publish,
+        "complete-delivery": delivery_runtime.complete,
+    }
+    runtime_tools = _assemble_reporting_capability_tools(
+        definitions,
+        compiled.contracts,
+        runtime_tools,
+        plan,
+        cohort_plan,
+        cross_cohort_plan,
+        chief_cohort_plan,
+        final_cohort_plan,
+        *compiled.subworkflows.values(),
+    )
     try:
         completed = await WorkflowRuntimeHost(
             executors,
@@ -667,94 +822,7 @@ async def execute_declarative_module_stage(
             plan,
             kernel_state,
             RuntimeContext(
-                tools={
-                    **module_tools,
-                    "prepare-cross-owner-cohort": cross_runtime.prepare,
-                    "prepare-current-cross-owner-initial": cross_runtime.prepare_initial,
-                    "cross-owner-initial-requires-agent": (cross_runtime.initial_requires_agent),
-                    "accept-current-cross-owner-initial": cross_runtime.accept_initial,
-                    "cross-owner-initial-has-findings": (cross_runtime.initial_has_findings),
-                    "prepare-current-cross-owner-revision": (cross_runtime.prepare_revision),
-                    "cross-owner-revision-requires-agent": (cross_runtime.revision_requires_agent),
-                    "accept-current-cross-owner-revision": (cross_runtime.accept_revision),
-                    "prepare-current-cross-owner-author-exception": (
-                        cross_runtime.prepare_author_exception
-                    ),
-                    "prepare-current-cross-owner-reviewer-exception": (
-                        cross_runtime.prepare_reviewer_exception
-                    ),
-                    "cross-owner-main-exception-requires-agent": (
-                        cross_runtime.main_exception_requires_agent
-                    ),
-                    "accept-current-cross-owner-main-exception": (
-                        cross_runtime.accept_main_exception
-                    ),
-                    "cross-owner-main-exception-requests-user": (
-                        cross_runtime.main_exception_requests_user
-                    ),
-                    "apply-current-cross-owner-main-exception-user-input": (
-                        cross_runtime.apply_main_exception_user_input
-                    ),
-                    "cross-owner-author-exception-returns-to-author": (
-                        cross_runtime.author_exception_returns_to_author
-                    ),
-                    "prepare-current-cross-owner-local-review": (
-                        cross_runtime.prepare_local_review
-                    ),
-                    "cross-owner-local-review-requires-agent": (
-                        cross_runtime.local_review_requires_agent
-                    ),
-                    "accept-current-cross-owner-local-review": (cross_runtime.accept_local_review),
-                    "prepare-current-cross-owner-recheck": (cross_runtime.prepare_recheck),
-                    "cross-owner-recheck-requires-agent": (cross_runtime.recheck_requires_agent),
-                    "accept-current-cross-owner-recheck": (cross_runtime.accept_recheck),
-                    "advance-current-cross-owner-round": cross_runtime.advance_round,
-                    "cross-owner-round-needs-revision": (cross_runtime.round_needs_revision),
-                    "complete-current-cross-owner-pipeline": (cross_runtime.complete_owner_round),
-                    "complete-current-cross-owner-without-findings": (
-                        cross_runtime.complete_owner_without_findings
-                    ),
-                    "reduce-cross-owner-cohort": cross_runtime.reduce,
-                    "prepare-chief-chapter-cohort": chief_runtime.prepare,
-                    "prepare-current-chief-chapter": chief_runtime.prepare_lane,
-                    "chief-chapter-requires-agent": chief_runtime.requires_agent,
-                    "accept-current-chief-chapter": chief_runtime.accept_lane,
-                    "complete-current-chief-chapter": chief_runtime.complete_lane,
-                    "reduce-chief-chapter-cohort": chief_runtime.reduce,
-                    "prepare-final-chapter-cohort": final_runtime.prepare,
-                    "prepare-current-final-chapter": final_runtime.prepare_lane,
-                    "final-chapter-initial-requires-agent": (final_runtime.requires_agent),
-                    "accept-current-final-chapter-initial": final_runtime.accept_lane,
-                    "complete-current-final-chapter": final_runtime.complete_lane,
-                    "reduce-final-chapter-cohort": final_runtime.reduce,
-                    "start-final-review-cycle": final_review_runtime.start_cycle,
-                    "final-review-needs-round": final_review_runtime.needs_round,
-                    "advance-final-review-round": final_review_runtime.advance_round,
-                    "prepare-current-final-chief-revision": (
-                        final_review_runtime.prepare_chief_revision
-                    ),
-                    "final-chief-revision-requires-agent": (
-                        final_review_runtime.chief_revision_requires_agent
-                    ),
-                    "accept-current-final-chief-revision": (
-                        final_review_runtime.accept_chief_revision
-                    ),
-                    "complete-current-final-chief-revision": (
-                        final_review_runtime.complete_chief_revision
-                    ),
-                    "reduce-final-chief-revision-cohort": (
-                        final_review_runtime.reduce_chief_revisions
-                    ),
-                    "prepare-current-final-recheck": (final_review_runtime.prepare_recheck),
-                    "final-recheck-requires-agent": (final_review_runtime.recheck_requires_agent),
-                    "accept-current-final-recheck": (final_review_runtime.accept_recheck),
-                    "complete-current-final-recheck": (final_review_runtime.complete_recheck),
-                    "reduce-final-recheck-cohort": (final_review_runtime.reduce_rechecks),
-                    "complete-final-review": final_review_runtime.complete_review,
-                    "prepare-render-delivery": delivery_runtime.prepare,
-                    "publish-materialize-delivery": delivery_runtime.publish,
-                    "complete-delivery": delivery_runtime.complete,
-                },
+                tools=runtime_tools,
                 agents=compose_final_review_agent_invokers(
                     _reporting_agent_invokers(
                         module_runtime.agent_invokers,
@@ -1117,24 +1185,67 @@ class _CurrentModuleAuthorInvoker:
 
     async def invoke(
         self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=None,
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
+
+    async def _invoke(
+        self,
         _agent: AgentDefinition,
         _task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
         if context.revision is not None:
             preparation = context.revision.prepared
             try:
+                runner_kwargs: dict[str, Any] = {
+                    "session_key": conversation.key.value,
+                }
+                if recovery_policy is not None:
+                    runner_kwargs["recovery_policy"] = recovery_policy
                 payload = await self._runner._agent(
                     preparation.specialist_id,
                     preparation.envelope,
                     preparation.envelope.input_refs,
                     context.workflow_id,
-                    session_key=conversation.key.value,
+                    **runner_kwargs,
                 )
                 result = DeclarativeModuleRevisionAgentResult(
                     status="completed",
@@ -1154,12 +1265,15 @@ class _CurrentModuleAuthorInvoker:
             context.authoring,
         )
         try:
+            runner_kwargs = {"session_key": conversation.key.value}
+            if recovery_policy is not None:
+                runner_kwargs["recovery_policy"] = recovery_policy
             payload = await self._runner._agent(
                 authoring.specialist_id,
                 authoring.envelope,
                 authoring.envelope.input_refs,
                 context.workflow_id,
-                session_key=conversation.key.value,
+                **runner_kwargs,
             )
         except asyncio.CancelledError:
             raise
@@ -1190,12 +1304,50 @@ class _CurrentModuleReviewerInvoker:
 
     async def invoke(
         self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=None,
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
+
+    async def _invoke(
+        self,
         _agent: AgentDefinition,
         _task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
@@ -1203,12 +1355,17 @@ class _CurrentModuleReviewerInvoker:
             preparation = context.recheck.prepared
             envelope = cast(TaskEnvelope, preparation.envelope)
             try:
+                runner_kwargs: dict[str, Any] = {
+                    "session_key": conversation.key.value,
+                }
+                if recovery_policy is not None:
+                    runner_kwargs["recovery_policy"] = recovery_policy
                 payload = await self._runner._agent(
                     "evidence-auditor",
                     envelope,
                     envelope.input_refs,
                     context.workflow_id,
-                    session_key=conversation.key.value,
+                    **runner_kwargs,
                 )
                 result = DeclarativeModuleRecheckAgentResult(
                     status="completed",
@@ -1226,12 +1383,15 @@ class _CurrentModuleReviewerInvoker:
         reviewing = cast(DeclarativeModuleReviewPreparation, context.review)
         envelope = cast(TaskEnvelope, reviewing.prepared.envelope)
         try:
+            runner_kwargs = {"session_key": conversation.key.value}
+            if recovery_policy is not None:
+                runner_kwargs["recovery_policy"] = recovery_policy
             payload = await self._runner._agent(
                 "evidence-auditor",
                 envelope,
                 envelope.input_refs,
                 context.workflow_id,
-                session_key=conversation.key.value,
+                **runner_kwargs,
             )
             result = DeclarativeModuleReviewAgentResult(
                 status="completed",
@@ -1261,12 +1421,50 @@ class _CurrentModuleMainExceptionInvoker:
 
     async def invoke(
         self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=None,
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
+
+    async def _invoke(
+        self,
         _agent: AgentDefinition,
         _task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
@@ -1274,12 +1472,17 @@ class _CurrentModuleMainExceptionInvoker:
 
         async def invoke_once() -> Any:
             envelope = preparation.envelope
+            runner_kwargs: dict[str, Any] = {
+                "session_key": conversation.key.value,
+            }
+            if recovery_policy is not None:
+                runner_kwargs["recovery_policy"] = recovery_policy
             return await self._runner._agent(
                 "main-agent",
                 envelope,
                 envelope.input_refs,
                 preparation.workflow_id,
-                session_key=conversation.key.value,
+                **runner_kwargs,
             )
 
         try:
@@ -2587,6 +2790,7 @@ class _CurrentTailStages:
             workflow_id,
             **values,
         )
+
 
 __all__ = [
     "DeclarativeReportWorkflowRunner",

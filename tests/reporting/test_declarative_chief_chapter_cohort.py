@@ -60,6 +60,7 @@ async def test_chief_cohort_retries_only_failed_chapter_after_join(
         _workflow_id,
         *,
         session_key=None,
+        recovery_policy=None,
     ):
         chapter_id = envelope.task_id.rsplit("-", 1)[-1]
         calls.append(chapter_id)

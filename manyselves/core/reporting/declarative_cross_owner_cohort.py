@@ -14,12 +14,17 @@ from manyselves.kernel.definitions import (
     AgentDefinition,
     DefinitionKind,
     DefinitionRegistry,
+    RecoveryPolicyDefinition,
     TaskDefinition,
     WorkflowDefinition,
     specialize_workflow,
 )
 from manyselves.kernel.executors import ExecutorRegistry
-from manyselves.kernel.ports import AgentInvocationOutcome, AgentInvoker
+from manyselves.kernel.ports import (
+    AgentInvocationOutcome,
+    AgentInvoker,
+    RecoveryAwareAgentInvoker,
+)
 from manyselves.kernel.workflow import (
     ResolvedPlan,
     WorkflowCompiler,
@@ -163,24 +168,67 @@ class _CrossOwnerInitialInvoker:
 
     async def invoke(
         self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=None,
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
+
+    async def _invoke(
+        self,
         _agent: AgentDefinition,
         _task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
         preparation = cast(CrossOwnerInitialReviewPreparation, context.preparation)
         envelope = cast(TaskEnvelope, preparation.envelope)
         try:
+            runner_kwargs: dict[str, Any] = {
+                "session_key": conversation.key.value,
+            }
+            if recovery_policy is not None:
+                runner_kwargs["recovery_policy"] = recovery_policy
             payload = await self._runtime._current_runner._agent(
                 "cross-module-reviewer",
                 envelope,
                 envelope.input_refs,
                 preparation.workflow_id,
-                session_key=conversation.key.value,
+                **runner_kwargs,
             )
             result = DeclarativeCrossOwnerInitialAgentResult(
                 status="completed",
@@ -204,12 +252,50 @@ class _CrossOwnerRevisionInvoker:
 
     async def invoke(
         self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=None,
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
+
+    async def _invoke(
+        self,
         _agent: AgentDefinition,
         _task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
@@ -219,12 +305,17 @@ class _CrossOwnerRevisionInvoker:
         )
         prepared = cast(ModuleRevisionPreparation, preparation.prepared)
         try:
+            runner_kwargs: dict[str, Any] = {
+                "session_key": conversation.key.value,
+            }
+            if recovery_policy is not None:
+                runner_kwargs["recovery_policy"] = recovery_policy
             payload = await self._runtime._current_runner._agent(
                 prepared.specialist_id,
                 prepared.envelope,
                 prepared.envelope.input_refs,
                 preparation.workflow_id,
-                session_key=conversation.key.value,
+                **runner_kwargs,
             )
             result = DeclarativeModuleRevisionAgentResult(
                 status="completed",
@@ -248,12 +339,50 @@ class _CrossOwnerLocalReviewInvoker:
 
     async def invoke(
         self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=None,
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
+
+    async def _invoke(
+        self,
         _agent: AgentDefinition,
         _task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
@@ -264,12 +393,17 @@ class _CrossOwnerLocalReviewInvoker:
         prepared = cast(ModuleInitialReviewPreparation, boundary.prepared)
         envelope = cast(TaskEnvelope, prepared.envelope)
         try:
+            runner_kwargs: dict[str, Any] = {
+                "session_key": conversation.key.value,
+            }
+            if recovery_policy is not None:
+                runner_kwargs["recovery_policy"] = recovery_policy
             payload = await self._runtime._current_runner._agent(
                 "evidence-auditor",
                 envelope,
                 envelope.input_refs,
                 boundary.workflow_id,
-                session_key=conversation.key.value,
+                **runner_kwargs,
             )
             result = DeclarativeModuleReviewAgentResult(
                 status="completed",
@@ -293,12 +427,50 @@ class _CrossOwnerRecheckInvoker:
 
     async def invoke(
         self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=None,
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
+
+    async def _invoke(
+        self,
         _agent: AgentDefinition,
         _task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
@@ -308,12 +480,17 @@ class _CrossOwnerRecheckInvoker:
         )
         envelope = cast(TaskEnvelope, preparation.envelope)
         try:
+            runner_kwargs: dict[str, Any] = {
+                "session_key": conversation.key.value,
+            }
+            if recovery_policy is not None:
+                runner_kwargs["recovery_policy"] = recovery_policy
             payload = await self._runtime._current_runner._agent(
                 "cross-module-reviewer",
                 envelope,
                 envelope.input_refs,
                 preparation.workflow_id,
-                session_key=conversation.key.value,
+                **runner_kwargs,
             )
             result = DeclarativeCrossOwnerRecheckAgentResult(
                 status="completed",
@@ -337,12 +514,50 @@ class _CrossOwnerMainExceptionInvoker:
 
     async def invoke(
         self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=None,
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
+
+    async def _invoke(
+        self,
         _agent: AgentDefinition,
         _task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeCrossOwnerRuntimeContext.model_validate(value)
@@ -350,12 +565,17 @@ class _CrossOwnerMainExceptionInvoker:
         envelope = preparation.envelope
 
         async def invoke_once() -> Any:
+            runner_kwargs: dict[str, Any] = {
+                "session_key": conversation.key.value,
+            }
+            if recovery_policy is not None:
+                runner_kwargs["recovery_policy"] = recovery_policy
             return await self._runtime._current_runner._agent(
                 "main-agent",
                 envelope,
                 envelope.input_refs,
                 preparation.workflow_id,
-                session_key=conversation.key.value,
+                **runner_kwargs,
             )
 
         try:
@@ -383,7 +603,7 @@ class _CrossOwnerReviewerInvoker:
     """Route the shared Cross reviewer identity by its declared Task."""
 
     def __init__(self, runtime: "DeclarativeCrossOwnerRuntime") -> None:
-        self._routes: Mapping[str, AgentInvoker] = {
+        self._routes: Mapping[str, RecoveryAwareAgentInvoker] = {
             "cross-owner-runtime-initial-review": _CrossOwnerInitialInvoker(runtime),
             "cross-owner-runtime-recheck": _CrossOwnerRecheckInvoker(runtime),
         }
@@ -403,6 +623,25 @@ class _CrossOwnerReviewerInvoker:
             value,
             conversation,
             task_id=task_id,
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        return await self._routes[task.id].invoke_with_recovery(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
         )
 
 

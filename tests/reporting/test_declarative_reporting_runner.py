@@ -4,6 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from manyselves.capabilities.distribution_reporting import (
+    load_distribution_reporting_capability,
+)
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
 from manyselves.core.reporting.agentic_models import (
@@ -23,9 +26,15 @@ from manyselves.core.reporting.config import load_packaged_agents
 from manyselves.core.reporting.declarative_cross_owner_cohort import (
     compile_cross_owner_workflows,
 )
+from manyselves.core.reporting.declarative_module_runtime_lane import (
+    DeclarativeModuleAuthoringPreparation,
+    DeclarativeModuleRuntimeLaneContext,
+)
 from manyselves.core.reporting.declarative_reporting_runner import (
     DeclarativeReportWorkflowRunner,
+    _assemble_reporting_capability_tools,
     _compile_reporting_runtime,
+    _CurrentModuleAuthorInvoker,
     _CurrentModuleStages,
     _reporting_agent_invokers,
     execute_declarative_module_stage,
@@ -55,14 +64,26 @@ from manyselves.core.reporting.service import ReportingRunResult, ReportingServi
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import ReportWorkflowRunner, _DeliveryContext
 from manyselves.core.tools.task_board import TaskBoard
-from manyselves.kernel.executors import build_builtin_executor_registry
+from manyselves.kernel.contracts import ContractValidationError, build_contract_catalog
+from manyselves.kernel.definitions import (
+    DefinitionKind,
+    RecoveryPolicyDefinition,
+    WorkflowDefinition,
+)
+from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.workflow import (
     ActionExecutionStatus,
+    WorkflowCompiler,
     WorkflowState,
     WorkflowStatus,
 )
 from manyselves.runtime.state_store import FileWorkflowStateStore
-from manyselves.runtime.workflow_host import FileWorkflowEventSink
+from manyselves.runtime.tool_adapter import CapabilityToolAdapter, ToolAdapterError
+from manyselves.runtime.workflow_host import (
+    FileWorkflowEventSink,
+    InMemoryWorkflowEventSink,
+    WorkflowRuntimeHost,
+)
 
 
 def test_one_parent_runtime_routes_cross_local_review_by_declared_task() -> None:
@@ -79,6 +100,91 @@ def test_one_parent_runtime_routes_cross_local_review_by_declared_task() -> None
     assert routed._task_routes == {
         "cross-owner-runtime-local-review": cross_local_auditor,
     }
+
+
+def test_reporting_runtime_binds_declared_capability_tools_through_factory() -> None:
+    compiled = _compile_reporting_runtime(
+        {"run_id": "reporting-tool-binding"},
+        full_report=False,
+    )
+    implementations = {
+        "prepare-module-cohort": lambda value: value,
+        "reduce-module-cohort": lambda value: value,
+    }
+
+    bound = _assemble_reporting_capability_tools(
+        compiled.definitions,
+        compiled.contracts,
+        implementations,
+        compiled.cohort_plan,
+    )
+
+    assert isinstance(bound["prepare-module-cohort"], CapabilityToolAdapter)
+    assert isinstance(bound["reduce-module-cohort"], CapabilityToolAdapter)
+
+
+def test_reporting_runtime_rejects_changed_capability_implementation_before_host() -> None:
+    compiled = _compile_reporting_runtime(
+        {"run_id": "reporting-invalid-tool-binding"},
+        full_report=False,
+    )
+    original = compiled.definitions.require(
+        DefinitionKind.TOOL,
+        "prepare-module-cohort",
+    )
+    compiled.definitions._definitions[DefinitionKind.TOOL][
+        "prepare-module-cohort"
+    ] = original.model_copy(
+        update={
+            "implementation": (
+                "capability:distribution-reporting:changed-prepare-module-cohort"
+            )
+        }
+    )
+
+    with pytest.raises(ToolAdapterError, match="not registered"):
+        _assemble_reporting_capability_tools(
+            compiled.definitions,
+            compiled.contracts,
+            {"prepare-module-cohort": lambda value: value},
+            compiled.cohort_plan,
+        )
+
+
+@pytest.mark.asyncio
+async def test_reporting_capability_tool_validates_typed_input_and_output_contracts() -> None:
+    compiled = _compile_reporting_runtime(
+        {"run_id": "reporting-contract-binding"},
+        full_report=False,
+    )
+    received: list[object] = []
+
+    def invalid_result(value: object) -> str:
+        received.append(value)
+        return "not-a-boolean"
+
+    bound = _assemble_reporting_capability_tools(
+        compiled.definitions,
+        compiled.contracts,
+        {"module-authoring-requires-agent": invalid_result},
+        compiled.subworkflows[
+            "distribution-module-2.1-runtime-lane"
+        ].model_copy(update={"tool_ids": ["module-authoring-requires-agent"]}),
+    )
+    adapter = bound["module-authoring-requires-agent"]
+    context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.1",
+        workflow_id="distribution-module-2.1-runtime-lane",
+        reporting_state={},
+        status="ready",
+    )
+
+    with pytest.raises(ContractValidationError):
+        await adapter.invoke({"module_id": "2.1"}, task_id="invalid-input")
+    with pytest.raises(ContractValidationError):
+        await adapter.invoke(context, task_id="invalid-output")
+
+    assert received == [context]
 
 
 @pytest.mark.asyncio
@@ -141,6 +247,128 @@ async def test_declarative_runner_injects_task_recovery_policy_at_reporting_boun
     assert len(agent_runner.calls) == 1
     policy = agent_runner.calls[0]["recovery_policy"]
     assert policy.id == "current-reporting-recovery"
+
+
+@pytest.mark.asyncio
+async def test_production_module_agent_wrapper_forwards_recovery_and_session(
+    tmp_path: Path,
+) -> None:
+    _capability, definitions = load_distribution_reporting_capability()
+    agent = definitions.require(DefinitionKind.AGENT, "module-2.1-specialist")
+    task = definitions.require(DefinitionKind.TASK, "module-2.1-authoring")
+    recovery = definitions.require(
+        DefinitionKind.RECOVERY,
+        "current-reporting-recovery",
+    )
+    envelope = TaskEnvelope(
+        task_id=task.id,
+        run_id="run-production-wrapper",
+        agent_id=agent.id,
+        objective=task.objective,
+        allowed_outputs=["module_submission"],
+    )
+    lane_context = DeclarativeModuleRuntimeLaneContext(
+        module_id="2.1",
+        workflow_id="workflow-production-wrapper",
+        reporting_state={},
+        status="author_ready",
+        authoring=DeclarativeModuleAuthoringPreparation(
+            specialist_id=agent.id,
+            envelope=envelope,
+            revision=0,
+            review=False,
+            checkpoint=False,
+        ),
+    )
+
+    class SpyDeclarativeRunner:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def _agent(
+            self,
+            agent_id: str,
+            _envelope: TaskEnvelope,
+            artifacts: list[str],
+            workflow_id: str,
+            *,
+            session_key: str | None = None,
+            recovery_policy=None,
+        ) -> dict[str, object]:
+            self.calls.append(
+                {
+                    "agent_id": agent_id,
+                    "artifacts": artifacts,
+                    "workflow_id": workflow_id,
+                    "session_key": session_key,
+                    "recovery_policy": recovery_policy,
+                }
+            )
+            return {"accepted": True}
+
+    spy_runner = SpyDeclarativeRunner()
+    failures: list[tuple[str, BaseException]] = []
+    wrapper = _CurrentModuleAuthorInvoker(
+        spy_runner,
+        lambda module_id, error: failures.append((module_id, error)),
+    )
+    workflow = WorkflowDefinition(
+        id="production-wrapper-recovery",
+        version="1.0.0",
+        description="Exercise a packaged recovery Task through the production wrapper.",
+        tasks=[task.id],
+        output_contract=task.output_contract,
+        state={"input": lane_context.model_dump(mode="json")},
+        actions=[
+            {
+                "id": "create-conversation",
+                "kind": "create_conversation",
+                "agent": agent.id,
+                "conversation_key": "module-auditor-2.1",
+                "mode": "run",
+                "output_variable": "conversation",
+            },
+            {
+                "id": "invoke-agent",
+                "kind": "invoke_agent",
+                "agent": agent.id,
+                "task": task.id,
+                "conversation_variable": "conversation",
+                "input_variable": "input",
+                "output_variable": "agent-output",
+            },
+            {
+                "id": "finish",
+                "kind": "end_workflow",
+                "output_variable": "agent-output",
+                "output_name": "result",
+            },
+        ],
+    )
+    executors = build_builtin_executor_registry()
+    plan = WorkflowCompiler(executors).compile(workflow, definitions)
+    completed = await WorkflowRuntimeHost(
+        executors,
+        FileWorkflowStateStore(tmp_path),
+        InMemoryWorkflowEventSink(),
+    ).execute(
+        plan,
+        WorkflowState.for_plan("run-production-wrapper", plan),
+        RuntimeContext(
+            agents={agent.id: wrapper},
+            contracts=build_contract_catalog(definitions),
+            definitions=definitions,
+        ),
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert failures == []
+    assert len(spy_runner.calls) == 1
+    assert spy_runner.calls[0]["agent_id"] == agent.id
+    assert spy_runner.calls[0]["workflow_id"] == lane_context.workflow_id
+    assert spy_runner.calls[0]["session_key"] == "module-auditor-2.1"
+    assert spy_runner.calls[0]["recovery_policy"] is recovery
+    assert completed.conversations["conversation"].key.value == "module-auditor-2.1"
 
 
 def test_generic_reporting_input_resumes_persisted_plan_without_overwriting_projection(
@@ -406,6 +634,7 @@ class _CurrentLaneRunner:
         _workflow_id: str,
         *,
         session_key: str | None = None,
+        recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> (
         ModuleSubmission
         | ModuleReviewFindingSubmission

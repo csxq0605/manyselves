@@ -276,6 +276,7 @@ async def test_final_cohort_retries_only_failed_chapter_after_join(
         _workflow_id,
         *,
         session_key=None,
+        recovery_policy=None,
     ):
         input_payload = json.loads(
             (tmp_path / envelope.input_contract_ref).read_text(encoding="utf-8")
@@ -387,6 +388,7 @@ async def test_final_cohort_reuses_initial_artifacts_before_continuation(
         _workflow_id,
         *,
         session_key=None,
+        recovery_policy=None,
     ):
         input_payload = json.loads(
             (tmp_path / envelope.input_contract_ref).read_text(encoding="utf-8")
@@ -503,6 +505,7 @@ async def test_final_review_cycle_revises_only_affected_chapter_and_rechecks_new
         _workflow_id,
         *,
         session_key=None,
+        recovery_policy=None,
     ):
         input_payload = json.loads(
             (tmp_path / envelope.input_contract_ref).read_text(encoding="utf-8")

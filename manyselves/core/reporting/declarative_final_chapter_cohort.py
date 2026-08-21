@@ -14,6 +14,7 @@ from manyselves.kernel.definitions import (
     AgentDefinition,
     DefinitionKind,
     DefinitionRegistry,
+    RecoveryPolicyDefinition,
     TaskDefinition,
     WorkflowDefinition,
     specialize_workflow,
@@ -91,23 +92,66 @@ class _FinalChapterInvoker:
 
     async def invoke(
         self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=None,
+        )
+
+    async def invoke_with_recovery(
+        self,
+        agent: AgentDefinition,
+        task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+        recovery_policy: RecoveryPolicyDefinition,
+    ) -> AgentInvocationOutcome:
+        return await self._invoke(
+            agent,
+            task,
+            value,
+            conversation,
+            task_id=task_id,
+            recovery_policy=recovery_policy,
+        )
+
+    async def _invoke(
+        self,
         _agent: AgentDefinition,
         _task: TaskDefinition,
         value: Any,
         conversation: ConversationRecord,
         *,
         task_id: str,
+        recovery_policy: RecoveryPolicyDefinition | None,
     ) -> AgentInvocationOutcome:
         del task_id
         context = DeclarativeFinalChapterContext.model_validate(value)
         envelope = cast(TaskEnvelope, context.envelope)
         try:
+            runner_kwargs: dict[str, Any] = {
+                "session_key": conversation.key.value,
+            }
+            if recovery_policy is not None:
+                runner_kwargs["recovery_policy"] = recovery_policy
             payload = await self._runtime._current_runner._agent(
                 "chief-editor-auditor",
                 envelope,
                 envelope.input_refs,
                 self._runtime._workflow_id,
-                session_key=conversation.key.value,
+                **runner_kwargs,
             )
             result = DeclarativeFinalChapterAgentResult(
                 status="completed",
