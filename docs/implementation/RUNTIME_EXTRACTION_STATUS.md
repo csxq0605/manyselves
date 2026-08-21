@@ -15,11 +15,11 @@
 ## Current position
 
 - Current work package: `WP-01/WP-11 architecture completion audit reopened`
-- Last completed vertical slice: file-defined Interaction/Output models compile into executable `RequestInput`/`PublishResult` actions with persisted waiting state and pure input resume
-- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `6cd2688` (`WP-01/WP-11: bind capability runtimes from definitions`); the Interaction/Output slice is this document's commit
-- Current migration stage: `Definition/Registry/runtime interaction completion`; the prior four-stage completion claim is superseded by the live-code audit below
+- Last completed vertical slice: the sequential Runtime path now uses a pure `Plan + State + Event -> State + Effect` Kernel; the Runtime Host owns Action execution, State persistence, and Event logging
+- Current branch and latest committed audit slice: `agent/declarative-runtime-implementation`; `197cca6` (`WP-02/WP-11: execute declared interactions and outputs`); the stateless sequential slice is this document's commit
+- Current migration stage: `stateless Kernel and Runtime Host migration`; the prior four-stage completion claim is superseded by the live-code audit below
 - Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
-- Next automatic action: introduce the stateless Transition/Effect decision boundary and move persistence/effect execution into the runtime host without changing existing Action behavior
+- Next automatic action: move conditional, loop, parallel/join, and subworkflow scheduling onto the pure Transition/Effect boundary, then remove StateStore ownership from Kernel executor modules
 
 ## Reopened architecture completion audit
 
@@ -61,7 +61,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
-- `WP-02/WP-11: execute declared interactions and outputs` — adds Interaction/Output definition kinds and references, compiles RequestInput/PublishResult, persists a waiting WorkflowState, resumes through a pure validated state transition, and publishes the declared result without Capability-specific logic (this commit)
+- `WP-02: execute effects outside the stateless kernel` — adds the pure Start/Success/Failure reducer and ExecuteAction effects; a Runtime Host now executes effects, persists one WorkflowState, appends standard workflow/action/output events, and reuses a completed same-Run result without replay (this commit)
+- `197cca6` — `WP-02/WP-11: execute declared interactions and outputs`; adds Interaction/Output definition kinds and references, compiles RequestInput/PublishResult, persists a waiting WorkflowState, resumes through a pure validated state transition, and publishes the declared result without Capability-specific logic
 - `6cd2688` — `WP-01/WP-11: bind capability runtimes from definitions`; adds explicit Capability entry points and trusted Python runtime-factory references, dispatches start/input/run/output/cost through a generic binding catalog, and moves all ReportRequest/UserSupplement/snapshot translation into the Distribution Reporting adapter
 - `fb7f857` — `WP-01/WP-11: discover production capability bundles`; reopens the architecture audit, adds file-based Capability discovery and workflow ownership, removes the neutral fixture from the installed/API product surface, and retains it under `tests/fixtures` as a complete Markdown/YAML/Schema runtime proof
 - `90fba9e` — `WP-00: stabilize plan baseline contracts`
@@ -92,6 +93,8 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Stateless-kernel Characterization initially failed collection because StartWorkflow and the Runtime Host did not exist; after implementation, pure non-mutating transition and effect/persistence/event/same-Run reuse tests passed: `2 passed`.
+- Stateless sequential affected Runtime, Workflow, Definition, neutral Capability, and Kernel import-boundary selection passed: `50 passed`; Ruff passed for all changed paths.
 - Interaction/Output Characterization initially failed collection because the resume primitive and definition/action vocabulary did not exist; after implementation, the focused file-definition and wait/resume/publish selection passed: `2 passed`.
 - Interaction/Output affected Definition, sequential/control-flow Runtime, Recovery, Agent/Tool adapter, neutral Capability, and Kernel import-boundary selection passed: `59 passed`; Ruff passed for all changed Kernel and test paths.
 - Runtime-binding Characterization initially failed collection because the generic binding module did not exist. The synthetic Capability deliberately used different Capability and entry Workflow IDs; after implementation, focused binding, packaged Reporting definition, and projection tests passed: `11 passed`.
