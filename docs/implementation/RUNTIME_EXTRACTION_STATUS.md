@@ -14,12 +14,38 @@
 
 ## Current position
 
-- Current work package: `WP-00 through WP-12 complete`
-- Last completed work package: `WP-12`
-- Current branch and latest functional implementation commit: `agent/declarative-runtime-implementation`; `8eb67e6` (`WP-11: poll generic Run completion`)
-- Current migration stage: `All four stages complete; automatic implementation and verification complete`
-- Final real-test status: `ready_for_user_execution`
-- Next action: execute [`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md) once with a real Provider, real project, browser, and server; preserve the same failed Run if any step fails
+- Current work package: `WP-01/WP-11 architecture completion audit reopened`
+- Last completed vertical slice: production `CapabilityCatalog` discovery and workflow ownership; `parameter_adjustment` moved from the installed application to a complete test fixture
+- Current branch and pre-audit baseline commit: `agent/declarative-runtime-implementation`; `76cf52e` (`Program: hand off final real runtime test`)
+- Current migration stage: `Definition/Registry and product-boundary correction`; the prior four-stage completion claim is superseded by the live-code audit below
+- Final real-test status: `not ready`; no real test should run until the true file-defined Reporting path, one authoritative runtime state, generic interaction/output execution, and capability-neutral API/UI are complete
+- Next automatic action: add explicit file-defined workflow entry points and generic runtime bindings, then remove application-layer Capability ID dispatch before beginning the stateless Transition/Effect slice
+
+## Reopened architecture completion audit
+
+The 2026-08-21 live-code audit found that the previous completion record proved
+several useful vertical slices but did not prove the requested target
+architecture:
+
+- the selectable Reporting runner still subclasses `ReportWorkflowRunner` and
+  wraps the unchanged module and tail implementations in coarse Tool actions;
+- the packaged top-level workflow still contains only module-work, reporting-tail,
+  and end actions, while the detailed Lane and Cohort definitions are assembled
+  programmatically and are not the production entry path;
+- module-stage and tail orchestration create separate shadow `WorkflowState`
+  directories instead of one authoritative Run state;
+- `RecoveryController` is not yet part of the production generic Agent execution
+  chain;
+- interaction/wait/publish actions and file definitions are still absent;
+- application and React projections still contain Reporting-specific dispatch or
+  presentation decisions;
+- `parameter_adjustment` was installed and exposed as a product Capability even
+  though it is only a deterministic cross-domain test fixture.
+
+Therefore all prior “complete” entries below are retained as historical commit
+and test evidence, not as a current architecture-completion assertion. Legacy
+Reporting remains the default and no real Provider, browser, project, or server
+test is requested while this audit is open.
 
 ## Required startup checks
 
@@ -35,6 +61,7 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Completed commits
 
+- `WP-01/WP-11: discover production capability bundles` — reopens the architecture audit, adds file-based Capability discovery and workflow ownership, removes the neutral fixture from the installed/API product surface, and retains it under `tests/fixtures` as a complete Markdown/YAML/Schema runtime proof (this commit)
 - `90fba9e` — `WP-00: stabilize plan baseline contracts`
 - `9323b12` — `WP-00: freeze legacy semantic trace`
 - `c7c1bd8` — `Program: defer real testing until four-stage completion`
@@ -63,6 +90,9 @@ The plan baseline must contain the autonomous execution commits and this status 
 
 ## Tests actually run
 
+- Reopened-audit Capability Catalog Characterization initially failed collection because `CapabilityCatalog` did not exist; after implementation, the Catalog, production-only bundle boundary, relocated neutral fixture, generic Reporting projection, and generic HTTP non-exposure selection passed: `11 passed`.
+- Reopened-audit affected Definition, Distribution Capability, neutral fixture, generic Reporting route, and Kernel import-boundary selection passed: `30 passed`; Ruff passed for every changed Python/test path.
+- The wheel rebuilt successfully and contains only the installed `distribution_reporting` Capability; the `parameter_adjustment` definition graph remains executable from `tests/fixtures` and is not shipped in the application package.
 - Before the user's focused-test-only instruction, the unmodified plan baseline full offline selection ran once: `2521 passed, 11 failed, 3 skipped, 6 deselected`. The 11 failures were existing test/config drift and platform/schema determinism issues, not runtime extraction changes.
 - Each of those 11 baseline failures was rerun through focused/affected selections after correction: `92 passed`; the final OpenAPI/macOS-specific subset: `3 passed`.
 - WP-00 semantic trace and Kernel boundary focused tests: `3 passed`.
@@ -136,7 +166,8 @@ The isolated POCs are recorded in `docs/research/DECLARATIVE_RUNTIME_LANDSCAPE.m
 
 ## Known blockers
 
-- None in automatic implementation. Real Provider, project, browser, server, DOCX, recovery, and cost validation remain intentionally unexecuted and are consolidated in the final handoff.
+- None. The audit gaps are implementable with the current dependencies and
+  existing public compatibility adapters.
 
 ## Active user constraints
 
@@ -154,8 +185,10 @@ Stage 4: WP-11..WP-12 — Generic API/UI projections and second Capability
 Final: one real Provider/project/browser/server test handoff
 ```
 
-All four stages and the automatic completion audit are complete. The final
-handoff is [`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md).
+The original four-stage commit sequence exists, but its automatic completion
+claim is superseded by the reopened architecture audit above. The previous
+[`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md) is
+historical and must not be executed until this status returns to `ready`.
 
 ## Resume instruction
 

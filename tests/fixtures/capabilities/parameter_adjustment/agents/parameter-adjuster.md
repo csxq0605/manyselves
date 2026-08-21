@@ -12,4 +12,4 @@ conversation_mode: run
 limits: {}
 ---
 Return an object whose value is 10. This deterministic adapter-backed identity
-exists only to demonstrate that a neutral Capability can invoke an Agent.
+exists only as a test fixture for the generic runtime.

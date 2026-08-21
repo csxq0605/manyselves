@@ -4,29 +4,19 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from manyselves.capabilities.distribution_reporting import (
-    load_distribution_reporting_capability,
-)
-from manyselves.capabilities.parameter_adjustment import (
-    execute_parameter_adjustment,
-    load_parameter_adjustment_capability,
-)
+from manyselves.capabilities import load_builtin_capability_catalog
 from manyselves.core.reporting.models import ReportRequest, UserSupplement
 from manyselves.core.usage_ledger import UsageLedger
 from manyselves.kernel.contracts import build_contract_adapter
 from manyselves.kernel.definitions import (
-    CapabilityDefinition,
+    CapabilityCatalogError,
     ContractDefinition,
     DefinitionKind,
-    DefinitionRegistry,
+    LoadedCapability,
     WorkflowDefinition,
 )
-from manyselves.kernel.workflow import WorkflowState, WorkflowStatus
-from manyselves.runtime.state_store import FileWorkflowStateStore
 
 _REPORTING_WORKFLOW_ID = "distribution-reporting"
-_PARAMETER_WORKFLOW_ID = "parameter-adjustment"
-_PARAMETER_RUN_PREFIX = f"{_PARAMETER_WORKFLOW_ID}-"
 
 
 class WorkflowProjectionNotFoundError(LookupError):
@@ -47,10 +37,7 @@ class WorkflowProjectionFacade:
     def __init__(self, workspace: Path, reporting_adapter: Any) -> None:
         self.workspace = Path(workspace)
         self.reporting_adapter = reporting_adapter
-        self._definitions = [
-            load_distribution_reporting_capability(),
-            load_parameter_adjustment_capability(),
-        ]
+        self._catalog = load_builtin_capability_catalog()
 
     def list_capabilities(self) -> list[dict[str, Any]]:
         return [
@@ -63,7 +50,8 @@ class WorkflowProjectionFacade:
                     for definition in registry.all(DefinitionKind.WORKFLOW)
                 ),
             }
-            for capability, registry in self._definitions
+            for loaded in self._catalog.all()
+            for capability, registry in [(loaded.definition, loaded.registry)]
         ]
 
     def list_workflows(self) -> list[dict[str, Any]]:
@@ -77,7 +65,8 @@ class WorkflowProjectionFacade:
                 "output_contract": definition.output_contract,
                 "runnable": definition.id == capability.id,
             }
-            for capability, registry in self._definitions
+            for loaded in self._catalog.all()
+            for capability, registry in [(loaded.definition, loaded.registry)]
             for definition in sorted(
                 registry.all(DefinitionKind.WORKFLOW),
                 key=lambda item: item.id,
@@ -86,7 +75,8 @@ class WorkflowProjectionFacade:
         ]
 
     def input_schema(self, workflow_id: str) -> dict[str, Any]:
-        _capability, registry, workflow = self._find_workflow(workflow_id)
+        loaded, workflow = self._find_workflow(workflow_id)
+        registry = loaded.registry
         if workflow.input_contract is None:
             schema: dict[str, Any] = {}
             contract_id = None
@@ -111,25 +101,14 @@ class WorkflowProjectionFacade:
         workflow_id: str,
         values: dict[str, Any],
     ) -> dict[str, Any]:
-        capability, _registry, _workflow = self._find_workflow(workflow_id)
+        loaded, _workflow = self._find_workflow(workflow_id)
+        capability = loaded.definition
         if workflow_id != capability.id:
             raise WorkflowNotRunnableError(workflow_id)
         if workflow_id == _REPORTING_WORKFLOW_ID:
             request = ReportRequest.model_validate(values)
             accepted = self.reporting_adapter.start_declarative(command_id, request)
             return self._accepted(accepted, capability.id, workflow_id)
-        if workflow_id == _PARAMETER_WORKFLOW_ID:
-            run_id = f"{_PARAMETER_RUN_PREFIX}{command_id.hex}"
-            await execute_parameter_adjustment(
-                workspace=self.workspace,
-                run_id=run_id,
-                values=values,
-            )
-            return self._accepted(
-                {"run_id": run_id, "task_id": None},
-                capability.id,
-                workflow_id,
-            )
         raise WorkflowNotRunnableError(workflow_id)
 
     def provide_input(
@@ -169,25 +148,6 @@ class WorkflowProjectionFacade:
         )
 
     def get_run(self, run_id: str) -> dict[str, Any]:
-        if self._is_parameter_run(run_id):
-            state = self._load_parameter_state(run_id)
-            waiting_input = [state.waiting_input] if state.waiting_input is not None else []
-            return {
-                "run": {
-                    "run_id": run_id,
-                    "capability_id": _PARAMETER_WORKFLOW_ID,
-                    "workflow_id": state.workflow_id,
-                    "status": state.status.value,
-                    "active": state.status in {
-                        WorkflowStatus.PENDING,
-                        WorkflowStatus.RUNNING,
-                        WorkflowStatus.WAITING,
-                    },
-                    "task_id": None,
-                },
-                "state": state.model_dump(mode="json"),
-                "waiting_input": waiting_input,
-            }
         snapshot = self.reporting_adapter.snapshot(run_id)
         current = snapshot.get("run", {})
         state = snapshot.get("state", {})
@@ -205,15 +165,6 @@ class WorkflowProjectionFacade:
         }
 
     def get_outputs(self, run_id: str) -> dict[str, Any]:
-        if self._is_parameter_run(run_id):
-            state = self._load_parameter_state(run_id)
-            return {
-                "run_id": run_id,
-                "outputs": [
-                    {"id": output_id, "kind": "value", "value": value}
-                    for output_id, value in state.outputs.items()
-                ],
-            }
         snapshot = self.reporting_adapter.snapshot(run_id)
         return {
             "run_id": run_id,
@@ -238,22 +189,11 @@ class WorkflowProjectionFacade:
     def _find_workflow(
         self,
         workflow_id: str,
-    ) -> tuple[CapabilityDefinition, DefinitionRegistry, WorkflowDefinition]:
-        for capability, registry in self._definitions:
-            workflow = registry.get(DefinitionKind.WORKFLOW, workflow_id)
-            if isinstance(workflow, WorkflowDefinition):
-                return capability, registry, workflow
-        raise WorkflowProjectionNotFoundError(workflow_id)
-
-    @staticmethod
-    def _is_parameter_run(run_id: str) -> bool:
-        return run_id.startswith(_PARAMETER_RUN_PREFIX)
-
-    def _load_parameter_state(self, run_id: str) -> WorkflowState:
+    ) -> tuple[LoadedCapability, WorkflowDefinition]:
         try:
-            return FileWorkflowStateStore(self.workspace).load(run_id)
-        except FileNotFoundError as exc:
-            raise WorkflowProjectionNotFoundError(run_id) from exc
+            return self._catalog.require_workflow(workflow_id)
+        except CapabilityCatalogError as exc:
+            raise WorkflowProjectionNotFoundError(workflow_id) from exc
 
     def _accepted(
         self,

@@ -1,16 +1,44 @@
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from manyselves.capabilities.parameter_adjustment import (
-    execute_parameter_adjustment,
-    load_parameter_adjustment_capability,
+from manyselves.kernel.contracts import build_contract_adapter
+from manyselves.kernel.definitions import (
+    ContractDefinition,
+    DefinitionKind,
+    WorkflowDefinition,
+    load_capability,
 )
-from manyselves.kernel.definitions import DefinitionKind
+from manyselves.kernel.executors import (
+    ControlFlowWorkflowExecutor,
+    RuntimeContext,
+    build_builtin_executor_registry,
+)
+from manyselves.kernel.ports import AgentInvocationOutcome
+from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState
+from manyselves.runtime.state_store import FileWorkflowStateStore
+
+FIXTURE = (
+    Path(__file__).parents[2]
+    / "fixtures"
+    / "capabilities"
+    / "parameter_adjustment"
+    / "capability.yaml"
+)
+
+
+class _ParameterAdjuster:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def invoke(self, *_args: Any, **_kwargs: Any) -> AgentInvocationOutcome:
+        self.calls += 1
+        return AgentInvocationOutcome(result={"value": 10})
 
 
 def test_second_capability_is_neutral_and_loads_its_complete_definition_graph() -> None:
-    capability, registry = load_parameter_adjustment_capability()
+    capability, registry = load_capability(FIXTURE)
 
     assert capability.id == "parameter-adjustment"
     assert {definition.id for definition in registry.all(DefinitionKind.AGENT)} == {
@@ -43,13 +71,32 @@ async def test_second_capability_executes_tool_contract_condition_agent_and_goto
     value: int,
     expected_agent_calls: int,
 ) -> None:
-    result = await execute_parameter_adjustment(
-        workspace=tmp_path,
-        run_id=f"parameter-{value}",
-        values={"value": value},
+    _capability, registry = load_capability(FIXTURE)
+    workflow = registry.require(DefinitionKind.WORKFLOW, "parameter-adjustment")
+    assert isinstance(workflow, WorkflowDefinition)
+    workflow = workflow.model_copy(deep=True)
+    workflow.state = {"parameters": {"value": value}}
+    contracts = {
+        definition.id: build_contract_adapter(definition)
+        for definition in registry.all(DefinitionKind.CONTRACT)
+        if isinstance(definition, ContractDefinition)
+    }
+    executors = build_builtin_executor_registry()
+    plan = WorkflowCompiler(executors).compile(workflow, registry)
+    store = FileWorkflowStateStore(tmp_path)
+    adjuster = _ParameterAdjuster()
+
+    state = await ControlFlowWorkflowExecutor(executors, store).execute(
+        plan,
+        WorkflowState.for_plan(f"parameter-{value}", plan),
+        RuntimeContext(
+            tools={"normalize-parameter": lambda values: values["value"]},
+            contracts=contracts,
+            agents={"parameter-adjuster": adjuster},
+            definitions=registry,
+        ),
     )
 
-    assert result.state.outputs == {"result": max(value, 10)}
-    assert result.agent_calls == expected_agent_calls
-    assert result.state.status == "completed"
-
+    assert state.outputs == {"result": max(value, 10)}
+    assert adjuster.calls == expected_agent_calls
+    assert state.status == "completed"

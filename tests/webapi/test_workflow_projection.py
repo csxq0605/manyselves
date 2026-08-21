@@ -86,12 +86,6 @@ def test_capability_workflow_and_input_schema_are_generic_projections(
                 "distribution-reporting-tail",
             ],
         },
-        {
-            "id": "parameter-adjustment",
-            "version": "1.0.0",
-            "description": "Neutral declarative parameter adjustment capability",
-            "workflow_ids": ["parameter-adjustment"],
-        },
     ]
     assert next(item for item in workflows if item["id"] == "distribution-reporting") == {
         "id": "distribution-reporting",
@@ -189,45 +183,6 @@ async def test_run_start_and_input_delegate_to_the_current_reporting_adapter(
         "resume",
         "decision",
     ]
-
-
-@pytest.mark.asyncio
-async def test_second_capability_runs_through_the_same_generic_projection(
-    tmp_path: Path,
-) -> None:
-    facade = WorkflowProjectionFacade(tmp_path, _ReportingAdapter())
-    command_id = UUID("30000000-0000-4000-8000-000000000012")
-
-    schema = facade.input_schema("parameter-adjustment")
-    started = await facade.start(
-        command_id,
-        "parameter-adjustment",
-        {"value": 4},
-    )
-    run = facade.get_run(started["run_id"])
-    outputs = facade.get_outputs(started["run_id"])
-    cost = facade.get_cost(started["run_id"])
-
-    assert schema == {
-        "workflow_id": "parameter-adjustment",
-        "contract_id": "parameter-input",
-        "schema": {
-            "type": "object",
-            "properties": {"value": {"type": "integer"}},
-            "required": ["value"],
-            "additionalProperties": False,
-        },
-    }
-    assert started["capability_id"] == "parameter-adjustment"
-    assert started["workflow_id"] == "parameter-adjustment"
-    assert run["run"]["status"] == "completed"
-    assert run["run"]["capability_id"] == "parameter-adjustment"
-    assert run["waiting_input"] == []
-    assert outputs == {
-        "run_id": started["run_id"],
-        "outputs": [{"id": "result", "kind": "value", "value": 10}],
-    }
-    assert cost["usage"]["totals"]["total_tokens"] == 0
 
 
 def test_openapi_exposes_the_generic_workflow_projection_paths(tmp_path: Path) -> None:

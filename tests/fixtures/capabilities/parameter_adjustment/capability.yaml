@@ -1,6 +1,6 @@
 id: parameter-adjustment
 version: 1.0.0
-description: Neutral declarative parameter adjustment capability
+description: Neutral declarative parameter adjustment test fixture
 agents: ./agents
 workflows: ./workflows
 tasks: ./tasks

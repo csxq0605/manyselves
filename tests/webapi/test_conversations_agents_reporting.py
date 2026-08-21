@@ -3094,9 +3094,15 @@ async def test_generic_workflow_routes_project_the_current_reporting_run(resourc
 
 
 @pytest.mark.asyncio
-async def test_generic_workflow_routes_execute_the_neutral_capability(resources) -> None:
+async def test_generic_workflow_routes_do_not_expose_test_fixture_capabilities(
+    resources,
+) -> None:
     client, _, _, _ = resources
 
+    capabilities = await client.get("/api/v1/capabilities")
+    schema = await client.get(
+        "/api/v1/workflows/parameter-adjustment/input-schema"
+    )
     started = await client.post(
         "/api/v1/runs",
         headers={"Idempotency-Key": "30000000-0000-4000-8000-000000000012"},
@@ -3105,37 +3111,12 @@ async def test_generic_workflow_routes_execute_the_neutral_capability(resources)
             "input": {"value": 4},
         },
     )
-    run_id = started.json()["runId"]
-    snapshot = await client.get(f"/api/v1/runs/{run_id}")
-    outputs = await client.get(f"/api/v1/runs/{run_id}/outputs")
-    cost = await client.get(f"/api/v1/runs/{run_id}/cost")
 
-    assert started.status_code == 202
-    assert started.json()["capabilityId"] == "parameter-adjustment"
-    assert snapshot.status_code == 200
-    assert snapshot.json()["run"] == {
-        "runId": run_id,
-        "capabilityId": "parameter-adjustment",
-        "workflowId": "parameter-adjustment",
-        "status": "completed",
-        "active": False,
-        "taskId": None,
-    }
-    assert snapshot.json()["waitingInput"] == []
-    assert outputs.json() == {
-        "runId": run_id,
-        "outputs": [
-            {
-                "id": "result",
-                "kind": "value",
-                "value": 10,
-                "path": None,
-                "exists": None,
-                "size": None,
-            }
-        ],
-    }
-    assert cost.json()["usage"]["totals"]["provider_attempts"] == 0
+    assert [item["id"] for item in capabilities.json()["capabilities"]] == [
+        "distribution-reporting"
+    ]
+    assert schema.status_code == 404
+    assert started.status_code == 404
 
 
 @pytest.mark.asyncio
