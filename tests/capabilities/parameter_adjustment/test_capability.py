@@ -10,14 +10,14 @@ from manyselves.kernel.definitions import (
     WorkflowDefinition,
     load_capability,
 )
-from manyselves.kernel.executors import (
-    ControlFlowWorkflowExecutor,
-    RuntimeContext,
-    build_builtin_executor_registry,
-)
+from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
 from manyselves.kernel.ports import AgentInvocationOutcome
 from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState
 from manyselves.runtime.state_store import FileWorkflowStateStore
+from manyselves.runtime.workflow_host import (
+    InMemoryWorkflowEventSink,
+    WorkflowRuntimeHost,
+)
 
 FIXTURE = (
     Path(__file__).parents[2]
@@ -86,7 +86,11 @@ async def test_second_capability_executes_tool_contract_condition_agent_and_goto
     store = FileWorkflowStateStore(tmp_path)
     adjuster = _ParameterAdjuster()
 
-    state = await ControlFlowWorkflowExecutor(executors, store).execute(
+    state = await WorkflowRuntimeHost(
+        executors,
+        store,
+        InMemoryWorkflowEventSink(),
+    ).execute(
         plan,
         WorkflowState.for_plan(f"parameter-{value}", plan),
         RuntimeContext(

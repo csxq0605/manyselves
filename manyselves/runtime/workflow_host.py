@@ -107,6 +107,8 @@ class WorkflowRuntimeHost:
                     self._emit("workflow.waiting", state)
                 elif state.status is WorkflowStatus.COMPLETED:
                     self._emit("workflow.completed", state)
+                elif state.status is WorkflowStatus.FAILED:
+                    self._emit("workflow.failed", state)
                 return state
 
             effect = transition.effects[0]
