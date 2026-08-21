@@ -6,7 +6,7 @@ import pytest
 
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
-from manyselves.core.reporting.agentic_models import ModuleSubmission
+from manyselves.core.reporting.agentic_models import ModuleSubmission, TaskEnvelope
 from manyselves.core.reporting.declarative_reporting_runner import (
     DeclarativeReportWorkflowRunner,
     _CurrentModuleStages,
@@ -137,6 +137,79 @@ class _CurrentLaneRunner:
             attempt_ref=f"lanes/{module_id}/attempt.json",
         )
 
+    def _prepare_module_authoring(
+        self,
+        module_id: str,
+        lane_state: dict,
+        workflow_id: str,
+        *,
+        review: bool,
+        checkpoint: bool,
+    ) -> SimpleNamespace:
+        self.lifecycle[module_id].append("prepare")
+        return SimpleNamespace(
+            module_id=module_id,
+            state=lane_state,
+            workflow_id=workflow_id,
+            specialist_id=f"module-{module_id}-specialist",
+            envelope=TaskEnvelope(
+                task_id=f"module-{module_id}",
+                run_id=lane_state["run_id"],
+                agent_id=f"module-{module_id}-specialist",
+                objective=f"author module {module_id}",
+                allowed_outputs=["module_submission"],
+            ),
+            resumed_payload=lane_state.get("specialist_submissions", {}).get(
+                module_id
+            ),
+            revision=0,
+            review=review,
+            checkpoint=checkpoint,
+        )
+
+    async def _resume_module_authoring(self, context) -> ModuleSubmission | None:
+        if context.resumed_payload is not None:
+            self.lifecycle[context.module_id].append("resume")
+        return context.resumed_payload
+
+    async def _agent(
+        self,
+        agent_id: str,
+        _envelope: TaskEnvelope,
+        _artifacts,
+        _workflow_id: str,
+        *,
+        session_key: str | None = None,
+    ) -> ModuleSubmission:
+        module_id = agent_id.removeprefix("module-").removesuffix("-specialist")
+        self.calls[module_id] += 1
+        self.lifecycle[module_id].append(f"author:{session_key}")
+        if module_id == self.fail_once:
+            self.fail_once = ""
+            raise RuntimeError("injected declarative lane failure")
+        return ModuleSubmission(
+            module_id=module_id,
+            submodule_narratives={
+                submodule_id: f"{submodule_id} body"
+                for submodule_id in REPORT_TAXONOMY[module_id].submodules
+            },
+            claims=[],
+            source_ids=[],
+            unresolved_questions=[],
+            revision=0,
+        )
+
+    def _accept_module_authoring(
+        self,
+        context,
+        submission: ModuleSubmission,
+    ) -> ModuleSubmission:
+        self.lifecycle[context.module_id].append("accept")
+        context.state.setdefault("specialist_submissions", {})[
+            context.module_id
+        ] = submission
+        return submission
+
     async def _module_pipeline(
         self,
         module_id: str,
@@ -259,22 +332,76 @@ async def test_top_level_runtime_retries_only_the_failed_file_defined_module_bra
     assert runner.calls["2.2"] == 2
     assert runner.lifecycle["2.1"] == [
         "start",
-        "author",
+        "prepare",
+        "author:specialist-2.1",
+        "accept",
         "review",
         "complete",
     ]
     assert runner.lifecycle["2.2"] == [
         "start",
-        "author",
+        "prepare",
+        "author:specialist-2.2",
         "fail",
         "start",
-        "author",
+        "prepare",
+        "author:specialist-2.2",
+        "accept",
         "review",
         "complete",
     ]
     assert all(runner.calls[module_id] == 0 for module_id in REPORT_MODULE_IDS[2:])
     assert state["cohort_finalized"] == ["2.1", "2.2"]
     assert completed.subworkflow_states["run-module-cohort"]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_file_defined_module_author_reuses_same_run_submission_without_agent(
+    tmp_path: Path,
+) -> None:
+    run_id = "report-declarative-author-resume"
+    module_id = "2.1"
+    submission = ModuleSubmission(
+        module_id=module_id,
+        submodule_narratives={
+            submodule_id: f"{submodule_id} body"
+            for submodule_id in REPORT_TAXONOMY[module_id].submodules
+        },
+        claims=[],
+        source_ids=[],
+        unresolved_questions=[],
+        revision=0,
+    )
+    state = {
+        "run_id": run_id,
+        "resume": True,
+        "specialist_submissions": {module_id: submission},
+    }
+    runner = _CurrentLaneRunner(tmp_path)
+
+    completed = await execute_declarative_module_stage(
+        requested_modules=(module_id,),
+        state=state,
+        workflow_id=f"full-power-distribution-report:{run_id}",
+        state_store=FileWorkflowStateStore(tmp_path),
+        module_runtime=_CurrentModuleStages(
+            runner,
+            (module_id,),
+            state,
+            f"full-power-distribution-report:{run_id}",
+        ),
+    )
+
+    assert runner.calls[module_id] == 0
+    assert runner.lifecycle[module_id] == [
+        "start",
+        "prepare",
+        "resume",
+        "review",
+        "complete",
+    ]
+    assert state["module_submissions"][module_id] == submission
+    assert completed.status is WorkflowStatus.COMPLETED
 
 
 class _TopLevelTailRunner:

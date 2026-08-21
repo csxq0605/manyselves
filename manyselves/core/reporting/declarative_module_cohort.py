@@ -40,6 +40,7 @@ from .declarative_module_lane import (
 )
 from .declarative_module_runtime_lane import (
     DeclarativeModuleRuntimeLaneContext,
+    register_module_runtime_lane_specializations,
 )
 from .taxonomy import REPORT_TAXONOMY
 
@@ -69,6 +70,7 @@ def build_module_cohort_definition(
     """Specialize the packaged fixed five-branch Reporting workflow."""
 
     _capability, registry = load_distribution_reporting_capability()
+    register_module_runtime_lane_specializations(registry)
     template = registry.require(
         DefinitionKind.WORKFLOW,
         "distribution-module-cohort",
@@ -102,16 +104,16 @@ async def execute_declarative_module_cohort(
     workflow.state["module-inputs"] = dict(modules)
     executors = build_builtin_executor_registry()
     plan = WorkflowCompiler(executors).compile(workflow, definitions)
-    runtime_lane = definitions.require(
-        DefinitionKind.WORKFLOW,
-        "distribution-module-runtime-lane",
-    )
-    if not isinstance(runtime_lane, WorkflowDefinition):
-        raise TypeError("distribution-module-runtime-lane is not a workflow")
-    runtime_lane_plan = WorkflowCompiler(executors).compile(
-        runtime_lane,
-        definitions,
-    )
+    runtime_lane_plans = {
+        workflow_id: WorkflowCompiler(executors).compile(
+            definitions.require(DefinitionKind.WORKFLOW, workflow_id),
+            definitions,
+        )
+        for workflow_id in (
+            f"distribution-module-{module_id}-runtime-lane"
+            for module_id in module_ids
+        )
+    }
 
     lane_runtime = _StandaloneModuleRuntime(
         run_id=run_id,
@@ -125,7 +127,10 @@ async def execute_declarative_module_cohort(
             str(values["module_id"]),
             values["state"],
         ),
-        "author-current-module-lane": lane_runtime.author_lane,
+        "prepare-current-module-authoring": lane_runtime.prepare_author_lane,
+        "module-authoring-requires-agent": lane_runtime.author_requires_agent,
+        "accept-current-module-authoring": lane_runtime.accept_author_lane,
+        "resume-current-module-authoring": lane_runtime.resume_author_lane,
         "module-lane-can-review": lane_runtime.can_review_lane,
         "review-current-module-lane": lane_runtime.review_lane,
         "complete-current-module-lane": lane_runtime.complete_lane,
@@ -149,7 +154,7 @@ async def execute_declarative_module_cohort(
             tools=tools,
             contracts=contracts,
             definitions=definitions,
-            subworkflows={runtime_lane.id: runtime_lane_plan},
+            subworkflows=runtime_lane_plans,
         ),
     )
     if completed.status is not WorkflowStatus.COMPLETED:
@@ -192,7 +197,25 @@ class _StandaloneModuleRuntime:
             module=ModuleSubmission.model_validate(module_inputs[module_id]),
         )
 
-    async def author_lane(
+    async def prepare_author_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context.model_copy(update={"status": "author_resumed"})
+
+    async def author_requires_agent(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def accept_author_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+
+    async def resume_author_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:

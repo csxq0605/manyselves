@@ -176,6 +176,21 @@ class _ModuleLaneAttemptContext:
     attempt_ref: str
 
 
+@dataclass(slots=True)
+class _ModuleAuthoringPreparationContext:
+    """Prepared current-module authoring input before the Provider turn."""
+
+    module_id: str
+    state: dict
+    workflow_id: str
+    specialist_id: str
+    envelope: TaskEnvelope
+    resumed_payload: ModuleSubmission | None
+    revision: int
+    review: bool
+    checkpoint: bool
+
+
 class FullReportCheckpoint(StrictModel):
     """Durable full-report state; every reference is run-scoped and validated on restore."""
 
@@ -5723,15 +5738,15 @@ class ReportWorkflowRunner:
             failures_by_module,
         )
 
-    async def _module_pipeline(
+    def _prepare_module_authoring(
         self,
         module_id: str,
         state: dict,
         workflow_id: str,
         *,
-        review: bool = True,
-        checkpoint: bool = True,
-    ) -> ModuleSubmission:
+        review: bool,
+        checkpoint: bool,
+    ) -> _ModuleAuthoringPreparationContext:
         specialist_id = f"module-{module_id}-specialist"
         planned = next(
             item for item in state["module_dispatch"].module_tasks if item.agent_id == specialist_id
@@ -5963,29 +5978,78 @@ class ReportWorkflowRunner:
                 }
             ).model_dump(mode="python")
         )
-        if resumed_payload is not None:
-            payload = resumed_payload
-            await self.service._notice(
-                f"已恢复模块 {module_id} 的 specialist 提交；继续原 run 的独立模块审计。"
+        return _ModuleAuthoringPreparationContext(
+            module_id=module_id,
+            state=state,
+            workflow_id=workflow_id,
+            specialist_id=specialist_id,
+            envelope=envelope,
+            resumed_payload=resumed_payload,
+            revision=revision,
+            review=review,
+            checkpoint=checkpoint,
+        )
+
+    async def _resume_module_authoring(
+        self,
+        context: _ModuleAuthoringPreparationContext,
+    ) -> ModuleSubmission | None:
+        if context.resumed_payload is None:
+            return None
+        payload = context.resumed_payload
+        await self.service._notice(
+            f"已恢复模块 {context.module_id} 的 specialist 提交；继续原 run 的独立模块审计。"
+        )
+        return payload
+
+    def _accept_module_authoring(
+        self,
+        context: _ModuleAuthoringPreparationContext,
+        payload: Any,
+    ) -> ModuleSubmission:
+        if not isinstance(payload, ModuleSubmission) or payload.module_id != context.module_id:
+            raise AgentWorkflowError(
+                f"{context.specialist_id} returned the wrong module payload"
             )
-        else:
+        payload = ModuleSubmission.model_validate(payload.model_dump(mode="python"))
+        self.service.store.write_json(
+            f"Work/runs/{context.state['run_id']}/modules/"
+            f"{context.module_id}-r{context.revision}.json",
+            payload.model_dump(mode="json"),
+        )
+        context.state.setdefault("specialist_submissions", {})[
+            context.module_id
+        ] = payload
+        if context.review and context.checkpoint:
+            self._checkpoint(context.state, "module-work", "in_progress")
+        return payload
+
+    async def _module_pipeline(
+        self,
+        module_id: str,
+        state: dict,
+        workflow_id: str,
+        *,
+        review: bool = True,
+        checkpoint: bool = True,
+    ) -> ModuleSubmission:
+        context = self._prepare_module_authoring(
+            module_id,
+            state,
+            workflow_id,
+            review=review,
+            checkpoint=checkpoint,
+        )
+        payload = await self._resume_module_authoring(context)
+        if payload is None:
             payload = await self._agent(
-                specialist_id,
-                envelope,
-                envelope.input_refs,
+                context.specialist_id,
+                context.envelope,
+                context.envelope.input_refs,
                 workflow_id,
                 session_key=f"specialist-{module_id}",
             )
-            if not isinstance(payload, ModuleSubmission) or payload.module_id != module_id:
-                raise AgentWorkflowError(f"{specialist_id} returned the wrong module payload")
-            payload = ModuleSubmission.model_validate(payload.model_dump(mode="python"))
-            self.service.store.write_json(
-                f"Work/runs/{state['run_id']}/modules/{module_id}-r{revision}.json",
-                payload.model_dump(mode="json"),
-            )
-            state.setdefault("specialist_submissions", {})[module_id] = payload
-            if review and checkpoint:
-                self._checkpoint(state, "module-work", "in_progress")
+            payload = self._accept_module_authoring(context, payload)
 
         if not review:
             return payload

@@ -1,15 +1,25 @@
 id: distribution-module-runtime-lane
 version: 1.0.0
 description: Reusable production module Lane bound to current Reporting behavior
-tasks: []
+tasks:
+- module-2.1-authoring
+- module-2.2-authoring
+- module-2.3-authoring
+- module-2.4-authoring
+- module-2.5-authoring
 gates: []
 recovery:
 - current-reporting-recovery
 input_contract: reporting_tail_state
 output_contract: declarative_module_lane_outcome
+parameters:
+- module_id
+- author_id
+- author_task_id
+- author_conversation_key
 state:
   reporting-state: {}
-  module-id: null
+  module-id: "{module_id}"
 actions:
 - id: start-current-module-lane
   kind: invoke_tool
@@ -18,9 +28,49 @@ actions:
     state: reporting-state
     module_id: module-id
   output_variable: lane-context
-- id: author-current-module-lane
+- id: prepare-current-module-authoring
   kind: invoke_tool
-  tool: author-current-module-lane
+  tool: prepare-current-module-authoring
+  input_variable: lane-context
+  output_variable: lane-context
+- id: module-authoring-requires-agent
+  kind: invoke_tool
+  tool: module-authoring-requires-agent
+  input_variable: lane-context
+  output_variable: should-invoke-module-author
+- id: choose-module-authoring-source
+  kind: if
+  condition:
+    variable: should-invoke-module-author
+    operator: truthy
+  then: create-module-author-conversation
+  otherwise: resume-current-module-authoring
+- id: create-module-author-conversation
+  kind: create_conversation
+  agent: "{author_id}"
+  conversation_key: "{author_conversation_key}"
+  mode: run
+  output_variable: module-author-conversation
+- id: invoke-current-module-author
+  kind: invoke_agent
+  agent: "{author_id}"
+  task: "{author_task_id}"
+  conversation_variable: module-author-conversation
+  input_variable: lane-context
+  output_variable: module-author-result
+- id: accept-current-module-authoring
+  kind: invoke_tool
+  tool: accept-current-module-authoring
+  input_variables:
+    context: lane-context
+    result: module-author-result
+  output_variable: lane-context
+- id: continue-after-module-author
+  kind: goto
+  target: module-lane-can-review
+- id: resume-current-module-authoring
+  kind: invoke_tool
+  tool: resume-current-module-authoring
   input_variable: lane-context
   output_variable: lane-context
 - id: module-lane-can-review

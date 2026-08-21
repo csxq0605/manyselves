@@ -1,0 +1,10 @@
+id: module-authoring-requires-agent
+version: 1.0.0
+description: Route a prepared module to its declared Agent or same-run result
+implementation: capability:distribution-reporting:module-authoring-requires-agent
+input_contract: declarative_module_runtime_lane_context
+output_contract: boolean
+side_effect: none
+parallel_safe: true
+reuse_result: false
+model_visible: false

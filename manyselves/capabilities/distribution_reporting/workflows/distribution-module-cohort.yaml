@@ -39,7 +39,7 @@ actions:
   max_concurrency: "{max_concurrency}"
 - id: execute-module-2.1
   kind: subworkflow
-  workflow: distribution-module-runtime-lane
+  workflow: distribution-module-2.1-runtime-lane
   input_variables:
     reporting-state: prepared-module-inputs
     module-id: module-id-2.1
@@ -50,7 +50,7 @@ actions:
   target: join-module-cohort
 - id: execute-module-2.2
   kind: subworkflow
-  workflow: distribution-module-runtime-lane
+  workflow: distribution-module-2.2-runtime-lane
   input_variables:
     reporting-state: prepared-module-inputs
     module-id: module-id-2.2
@@ -61,7 +61,7 @@ actions:
   target: join-module-cohort
 - id: execute-module-2.3
   kind: subworkflow
-  workflow: distribution-module-runtime-lane
+  workflow: distribution-module-2.3-runtime-lane
   input_variables:
     reporting-state: prepared-module-inputs
     module-id: module-id-2.3
@@ -72,7 +72,7 @@ actions:
   target: join-module-cohort
 - id: execute-module-2.4
   kind: subworkflow
-  workflow: distribution-module-runtime-lane
+  workflow: distribution-module-2.4-runtime-lane
   input_variables:
     reporting-state: prepared-module-inputs
     module-id: module-id-2.4
@@ -83,7 +83,7 @@ actions:
   target: join-module-cohort
 - id: execute-module-2.5
   kind: subworkflow
-  workflow: distribution-module-runtime-lane
+  workflow: distribution-module-2.5-runtime-lane
   input_variables:
     reporting-state: prepared-module-inputs
     module-id: module-id-2.5

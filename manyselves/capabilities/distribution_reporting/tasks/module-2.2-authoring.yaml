@@ -1,0 +1,25 @@
+id: module-2.2-authoring
+version: 1.0.0
+description: Initial authoring by the current module 2.2 specialist
+agent: module-2.2-specialist
+objective: Author the complete assigned module from the prepared Reporting envelope.
+input_contract: declarative_module_runtime_lane_context
+output_contract: declarative_module_authoring_agent_result
+tools:
+- search_project_evidence
+- open_project_source
+- search_reference_library
+- open_reference
+- web_search
+- open_web_source
+- inspect_document
+- inspect_image
+- calculate
+- open_artifact
+- search_text
+- report_gap
+- write_result_part
+- list_result_parts
+- report_blocked
+- submit_result
+recovery: current-reporting-recovery

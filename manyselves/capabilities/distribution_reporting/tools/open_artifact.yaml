@@ -1,0 +1,10 @@
+id: open_artifact
+version: 1.0.0
+description: Current Reporting tool declaration for open_artifact
+implementation: capability:distribution-reporting:open_artifact
+input_contract: reporting_tool_input
+output_contract: reporting_tool_output
+side_effect: ordered_state
+parallel_safe: false
+reuse_result: false
+model_visible: true

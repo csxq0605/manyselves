@@ -6,7 +6,15 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from .agentic_models import ModuleSubmission
+from manyselves.kernel.definitions import (
+    DefinitionKind,
+    DefinitionRegistry,
+    WorkflowDefinition,
+    specialize_workflow,
+)
+
+from .agentic_models import ModuleSubmission, TaskEnvelope
+from .models import REPORT_MODULE_IDS
 from .parallel_runtime import LaneCompletion, LaneTaskSpec
 
 
@@ -22,6 +30,29 @@ class DeclarativeModuleLaneAttempt(BaseModel):
     attempt_ref: str
 
 
+class DeclarativeModuleAuthoringPreparation(BaseModel):
+    """Serializable current TaskEnvelope and same-run authoring reuse state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    specialist_id: str
+    envelope: TaskEnvelope
+    resumed_payload: ModuleSubmission | None = None
+    revision: int
+    review: bool
+    checkpoint: bool
+
+
+class DeclarativeModuleAuthoringAgentResult(BaseModel):
+    """Typed business result returned by the current module Agent adapter."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["completed", "failed"]
+    module: Any = None
+    error: str | None = None
+
+
 class DeclarativeModuleRuntimeLaneContext(BaseModel):
     """Capability-owned state threaded through one file-defined module Lane."""
 
@@ -32,6 +63,8 @@ class DeclarativeModuleRuntimeLaneContext(BaseModel):
     reporting_state: dict[str, Any]
     status: Literal[
         "ready",
+        "author_ready",
+        "author_resumed",
         "authored",
         "reviewed",
         "completed",
@@ -39,13 +72,46 @@ class DeclarativeModuleRuntimeLaneContext(BaseModel):
         "failed",
     ]
     attempt: DeclarativeModuleLaneAttempt | None = None
+    authoring: DeclarativeModuleAuthoringPreparation | None = None
     module: ModuleSubmission | None = None
     completion_ref: str | None = None
     completion: LaneCompletion | None = None
     error: str | None = None
 
 
+def register_module_runtime_lane_specializations(
+    definitions: DefinitionRegistry,
+) -> dict[str, WorkflowDefinition]:
+    """Register one compiled specialization of the packaged Lane per module."""
+
+    template = definitions.require(
+        DefinitionKind.WORKFLOW,
+        "distribution-module-runtime-lane",
+    )
+    if not isinstance(template, WorkflowDefinition):
+        raise TypeError("distribution-module-runtime-lane is not a workflow")
+    workflows: dict[str, WorkflowDefinition] = {}
+    for module_id in REPORT_MODULE_IDS:
+        workflow_id = f"distribution-module-{module_id}-runtime-lane"
+        workflow = specialize_workflow(
+            template,
+            {
+                "module_id": module_id,
+                "author_id": f"module-{module_id}-specialist",
+                "author_task_id": f"module-{module_id}-authoring",
+                "author_conversation_key": f"specialist-{module_id}",
+            },
+            workflow_id=workflow_id,
+        )
+        definitions.register(workflow)
+        workflows[workflow_id] = workflow
+    return workflows
+
+
 __all__ = [
+    "DeclarativeModuleAuthoringAgentResult",
+    "DeclarativeModuleAuthoringPreparation",
     "DeclarativeModuleLaneAttempt",
     "DeclarativeModuleRuntimeLaneContext",
+    "register_module_runtime_lane_specializations",
 ]

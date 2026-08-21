@@ -181,10 +181,10 @@ def test_top_level_reporting_workflow_is_an_executable_capability_definition() -
 
 
 def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
-    _, registry = load_distribution_reporting_capability()
+    registry, _, _ = build_module_cohort_definition(max_concurrency=2)
     workflow = registry.require(
         DefinitionKind.WORKFLOW,
-        "distribution-module-runtime-lane",
+        "distribution-module-2.1-runtime-lane",
     )
 
     plan = WorkflowCompiler(build_builtin_executor_registry()).compile(
@@ -197,15 +197,27 @@ def test_production_module_runtime_lane_declares_its_lifecycle_steps() -> None:
         "invoke_tool",
         "invoke_tool",
         "if",
+        "create_conversation",
+        "invoke_agent",
+        "invoke_tool",
+        "goto",
+        "invoke_tool",
+        "invoke_tool",
+        "if",
         "invoke_tool",
         "invoke_tool",
         "end_workflow",
     ]
     assert plan.tool_ids == [
         "start-current-module-lane",
-        "author-current-module-lane",
+        "prepare-current-module-authoring",
+        "module-authoring-requires-agent",
+        "accept-current-module-authoring",
+        "resume-current-module-authoring",
         "module-lane-can-review",
         "review-current-module-lane",
         "complete-current-module-lane",
     ]
+    assert plan.agent_ids == ["module-2.1-specialist"]
+    assert plan.task_ids == ["module-2.1-authoring"]
     assert "execute-current-module-lane" not in plan.tool_ids

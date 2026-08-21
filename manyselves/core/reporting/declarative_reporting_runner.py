@@ -11,14 +11,21 @@ from manyselves.capabilities.distribution_reporting import (
     load_distribution_reporting_capability,
 )
 from manyselves.kernel.contracts import build_contract_catalog
+from manyselves.kernel.conversations import ConversationRecord
 from manyselves.kernel.definitions import (
+    AgentDefinition,
     DefinitionKind,
     DefinitionRegistry,
+    TaskDefinition,
     WorkflowDefinition,
     specialize_workflow,
 )
 from manyselves.kernel.executors import RuntimeContext, build_builtin_executor_registry
-from manyselves.kernel.ports import WorkflowStateStore
+from manyselves.kernel.ports import (
+    AgentInvocationOutcome,
+    AgentInvoker,
+    WorkflowStateStore,
+)
 from manyselves.kernel.workflow import WorkflowCompiler, WorkflowState
 from manyselves.runtime.state_store import FileWorkflowStateStore
 from manyselves.runtime.workflow_host import (
@@ -33,8 +40,11 @@ from .declarative_module_cohort import (
     _retry_failed_module_lanes,
 )
 from .declarative_module_runtime_lane import (
+    DeclarativeModuleAuthoringAgentResult,
+    DeclarativeModuleAuthoringPreparation,
     DeclarativeModuleLaneAttempt,
     DeclarativeModuleRuntimeLaneContext,
+    register_module_runtime_lane_specializations,
 )
 from .declarative_reporting_tail import _ReportingTailAdapters
 from .distributed_runtime import LocalEventStore
@@ -45,6 +55,7 @@ from .taxonomy import REPORT_TAXONOMY
 from .workflow import (
     AgentWorkflowError,
     ReportWorkflowRunner,
+    _ModuleAuthoringPreparationContext,
     _ModuleLaneAttemptContext,
 )
 
@@ -53,6 +64,7 @@ class ReportingModuleRuntime(Protocol):
     """Capability adapter bound to the file-defined module Cohort actions."""
 
     current_state: dict[str, Any] | None
+    agent_invokers: Mapping[str, AgentInvoker]
 
     async def prepare_lanes(self, state: dict[str, Any]) -> dict[str, Any]: ...
 
@@ -63,7 +75,22 @@ class ReportingModuleRuntime(Protocol):
         workflow_id: str,
     ) -> DeclarativeModuleRuntimeLaneContext: ...
 
-    async def author_lane(
+    async def prepare_author_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def author_requires_agent(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool: ...
+
+    async def accept_author_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def resume_author_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext: ...
@@ -116,6 +143,7 @@ async def execute_declarative_module_stage(
     """Run current modules and the file-defined tail in one parent state."""
 
     definitions, workflow = build_reporting_module_stage_definition()
+    runtime_lanes = register_module_runtime_lane_specializations(definitions)
     full_report = set(requested_modules) == set(REPORT_MODULE_IDS)
     workflow.state = {
         "reporting-state": deepcopy(state),
@@ -141,16 +169,13 @@ async def execute_declarative_module_stage(
         {"max_concurrency": len(REPORT_MODULE_IDS)},
     )
     cohort_plan = WorkflowCompiler(executors).compile(cohort, definitions)
-    runtime_lane = definitions.require(
-        DefinitionKind.WORKFLOW,
-        "distribution-module-runtime-lane",
-    )
-    if not isinstance(runtime_lane, WorkflowDefinition):
-        raise TypeError("distribution-module-runtime-lane is not a workflow")
-    runtime_lane_plan = WorkflowCompiler(executors).compile(
-        runtime_lane,
-        definitions,
-    )
+    runtime_lane_plans = {
+        workflow_id: WorkflowCompiler(executors).compile(
+            runtime_lane,
+            definitions,
+        )
+        for workflow_id, runtime_lane in runtime_lanes.items()
+    }
     if module_runtime is None:
         if execute_current is None:
             raise TypeError("module runtime is required")
@@ -198,7 +223,10 @@ async def execute_declarative_module_stage(
             values["state"],
             workflow_id,
         ),
-        "author-current-module-lane": module_runtime.author_lane,
+        "prepare-current-module-authoring": module_runtime.prepare_author_lane,
+        "module-authoring-requires-agent": module_runtime.author_requires_agent,
+        "accept-current-module-authoring": module_runtime.accept_author_lane,
+        "resume-current-module-authoring": module_runtime.resume_author_lane,
         "module-lane-can-review": module_runtime.can_review_lane,
         "review-current-module-lane": module_runtime.review_lane,
         "complete-current-module-lane": module_runtime.complete_lane,
@@ -221,11 +249,12 @@ async def execute_declarative_module_stage(
                     "run-reporting-final": tail_adapters.final,
                     "run-reporting-delivery": tail_adapters.delivery,
                 },
+                agents=module_runtime.agent_invokers,
                 contracts=build_contract_catalog(definitions),
                 definitions=definitions,
                 subworkflows={
                     cohort.id: cohort_plan,
-                    runtime_lane.id: runtime_lane_plan,
+                    **runtime_lane_plans,
                     tail.id: tail_plan,
                 },
             ),
@@ -260,6 +289,7 @@ class _BatchModuleRuntime:
         self._requested_modules = requested_modules
         self.current_state = deepcopy(state)
         self._workflow_id = workflow_id
+        self.agent_invokers: Mapping[str, AgentInvoker] = {}
 
     async def prepare_lanes(self, state: dict[str, Any]) -> dict[str, Any]:
         return state
@@ -277,7 +307,25 @@ class _BatchModuleRuntime:
             status="completed",
         )
 
-    async def author_lane(
+    async def prepare_author_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
+
+    async def author_requires_agent(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def accept_author_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+
+    async def resume_author_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:
@@ -341,6 +389,56 @@ class DeclarativeReportWorkflowRunner(ReportWorkflowRunner):
         )
 
 
+class _CurrentModuleAuthorInvoker:
+    """Invoke the current Reporting Agent behind the generic Agent port."""
+
+    def __init__(
+        self,
+        runner: DeclarativeReportWorkflowRunner,
+        capture_failure: Callable[[str, BaseException], None],
+    ) -> None:
+        self._runner = runner
+        self._capture_failure = capture_failure
+
+    async def invoke(
+        self,
+        _agent: AgentDefinition,
+        _task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        del task_id
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
+        authoring = cast(
+            DeclarativeModuleAuthoringPreparation,
+            context.authoring,
+        )
+        try:
+            payload = await self._runner._agent(
+                authoring.specialist_id,
+                authoring.envelope,
+                authoring.envelope.input_refs,
+                context.workflow_id,
+                session_key=conversation.key.value,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            self._capture_failure(context.module_id, exc)
+            result = DeclarativeModuleAuthoringAgentResult(
+                status="failed",
+                error=str(exc),
+            )
+        else:
+            result = DeclarativeModuleAuthoringAgentResult(
+                status="completed",
+                module=payload,
+            )
+        return AgentInvocationOutcome(status="ok", result=result)
+
+
 class _CurrentModuleStages:
     """Bind complete current Lane semantics to file-defined Cohort branches."""
 
@@ -356,6 +454,15 @@ class _CurrentModuleStages:
         self.current_state = deepcopy(state)
         self._workflow_id = workflow_id
         self._failures: dict[str, BaseException] = {}
+        self._author_failures: dict[str, BaseException] = {}
+        author_invoker = _CurrentModuleAuthorInvoker(
+            runner,
+            self._capture_author_failure,
+        )
+        self.agent_invokers: Mapping[str, AgentInvoker] = {
+            f"module-{module_id}-specialist": author_invoker
+            for module_id in REPORT_MODULE_IDS
+        }
 
     async def prepare_lanes(self, state: dict[str, Any]) -> dict[str, Any]:
         return state
@@ -443,14 +550,14 @@ class _CurrentModuleStages:
             ),
         )
 
-    async def author_lane(
+    async def prepare_author_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:
         if context.status != "ready":
             return context
         try:
-            submission = await self._runner._module_pipeline(
+            preparation = self._runner._prepare_module_authoring(
                 context.module_id,
                 context.reporting_state,
                 context.workflow_id,
@@ -463,8 +570,92 @@ class _CurrentModuleStages:
             return self._failed_lane_context(context, exc)
         return context.model_copy(
             deep=True,
-            update={"status": "authored", "module": submission},
+            update={
+                "status": (
+                    "author_resumed"
+                    if preparation.resumed_payload is not None
+                    else "author_ready"
+                ),
+                "authoring": DeclarativeModuleAuthoringPreparation(
+                    specialist_id=preparation.specialist_id,
+                    envelope=preparation.envelope,
+                    resumed_payload=preparation.resumed_payload,
+                    revision=preparation.revision,
+                    review=preparation.review,
+                    checkpoint=preparation.checkpoint,
+                ),
+            },
         )
+
+    async def author_requires_agent(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return context.status == "author_ready"
+
+    async def accept_author_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(
+            values["context"]
+        )
+        result = DeclarativeModuleAuthoringAgentResult.model_validate(
+            values["result"]
+        )
+        if result.status == "failed":
+            exc = self._author_failures.pop(
+                context.module_id,
+                AgentWorkflowError(result.error or "module author failed"),
+            )
+            return self._failed_lane_context(context, exc)
+        try:
+            submission = self._runner._accept_module_authoring(
+                self._restore_authoring(context),
+                result.module,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": "authored",
+                "authoring": None,
+                "module": submission,
+            },
+        )
+
+    async def resume_author_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.status != "author_resumed":
+            return context
+        try:
+            submission = await self._runner._resume_module_authoring(
+                self._restore_authoring(context)
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": "authored",
+                "authoring": None,
+                "module": cast(Any, submission),
+            },
+        )
+
+    def _capture_author_failure(
+        self,
+        module_id: str,
+        exc: BaseException,
+    ) -> None:
+        self._author_failures[module_id] = exc
 
     async def can_review_lane(
         self,
@@ -593,6 +784,26 @@ class _CurrentModuleStages:
                 str(context.reporting_state["run_id"]),
             ),
             attempt_ref=attempt.attempt_ref,
+        )
+
+    def _restore_authoring(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> _ModuleAuthoringPreparationContext:
+        authoring = cast(
+            DeclarativeModuleAuthoringPreparation,
+            context.authoring,
+        )
+        return _ModuleAuthoringPreparationContext(
+            module_id=context.module_id,
+            state=context.reporting_state,
+            workflow_id=context.workflow_id,
+            specialist_id=authoring.specialist_id,
+            envelope=authoring.envelope,
+            resumed_payload=authoring.resumed_payload,
+            revision=authoring.revision,
+            review=authoring.review,
+            checkpoint=authoring.checkpoint,
         )
 
     async def reduce_lanes(
