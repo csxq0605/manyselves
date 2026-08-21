@@ -18,10 +18,11 @@ from pydantic import Field
 from .agentic_models import (
     CROSS_REVIEW_DIMENSIONS,
     ChiefRevisionSubmission,
-    CrossReviewFinding,
-    CrossReviewCoverageEntry,
+    ClaimRecord,
     CrossOwnerFindingSubmission,
     CrossOwnerVerdictSubmission,
+    CrossReviewCoverageEntry,
+    CrossReviewFinding,
     CrossReviewFindingSubmission,
     CrossReviewVerdictSubmission,
     CrossSynthesisInput,
@@ -29,7 +30,6 @@ from .agentic_models import (
     FinalReviewFinding,
     FinalReviewFindingSubmission,
     FinalReviewVerdictSubmission,
-    ClaimRecord,
     ModuleReviewFinding,
     ModuleReviewFindingSubmission,
     ModuleReviewVerdictSubmission,
@@ -51,12 +51,12 @@ from .cross_specialization import cross_lane_specialization
 from .input_contracts import (
     AggregateFinalReviewInput,
     ChiefRevisionInput,
-    CrossReviewInput,
+    CrossDecisionPackView,
     CrossOwnerInput,
     CrossOwnerRelatedModuleView,
+    CrossReviewInput,
     FinalAuditSnapshot,
     FinalReviewInput,
-    CrossDecisionPackView,
     ModuleReviewInput,
     ModuleRevisionDiff,
     ModuleRevisionInput,
@@ -84,13 +84,13 @@ from .parallel_runtime import (
     TaskAttemptStore,
     WorkflowReducer,
 )
+from .review_preflight import evaluate_module_review_preflight
 from .revision_diff import build_revision_diff
 from .scheduling import (
     AdaptiveTaskScheduler,
     SchedulingCandidate,
     TaskTimingHistory,
 )
-from .review_preflight import evaluate_module_review_preflight
 from .source_ledger import SourceLedger
 from .taxonomy import REPORT_TAXONOMY
 
@@ -148,6 +148,51 @@ class ModuleReviewProgress(StrictModel):
     reviewer_session_key: str | None = None
     last_reviewed_subject_ref: str | None = None
     review_protocol_version: int = 1
+
+
+class ModuleInitialReviewPreparation(StrictModel):
+    """Typed, serializable boundary before one module Auditor turn.
+
+    ``continue_existing`` is intentionally a capability result rather than a
+    Kernel decision.  A runtime can use it to skip a duplicate initial Agent
+    action and hand the persisted lifecycle to ``run_module_review`` with
+    ``resume=True``.
+    """
+
+    mode: Literal["invoke_agent", "continue_existing"]
+    run_id: str
+    module_id: str
+    lifecycle_id: str
+    workflow_id: str
+    reviewer_session_key: str
+    review_root: str
+    progress_ref: str
+    review_round: int
+    scope: list[str]
+    current: ModuleSubmission
+    subject_ref: str | None = None
+    review_input_ref: str | None = None
+    review_input: ModuleReviewInput | None = None
+    envelope: TaskEnvelope | None = None
+    progress: ModuleReviewProgress | None = None
+
+
+class ModuleInitialReviewAcceptance(StrictModel):
+    """Typed result after accepting an initial module-review submission."""
+
+    run_id: str
+    module_id: str
+    lifecycle_id: str
+    reviewer_session_key: str
+    subject_ref: str
+    current: ModuleSubmission
+    findings: list[ModuleReviewFinding] = Field(default_factory=list)
+    finding_refs: list[str] = Field(default_factory=list)
+    verdict_refs: list[str] = Field(default_factory=list)
+    resolved_ids: list[str] = Field(default_factory=list)
+    next_action: Literal["revise", "completed"]
+    progress_ref: str
+    completion_ref: str | None = None
 
 
 class ModuleLocalRegressionContext(StrictModel):
@@ -648,6 +693,304 @@ def _module_reviewer_session_key(
     return stable
 
 
+def _save_module_review_progress(
+    runner: "ReportWorkflowRunner",
+    *,
+    state: dict,
+    progress_ref: str,
+    module_id: str,
+    next_action: str,
+    current: ModuleSubmission,
+    pending: Iterable[ModuleReviewFinding],
+    responses: list[RevisionResponse],
+    finding_refs: list[str],
+    verdict_refs: list[str],
+    resolved_ids: set[str],
+    review_round: int,
+    phase: str,
+    scope: set[str],
+    reviewer_session_key: str,
+    last_reviewed_subject_ref: str | None,
+) -> None:
+    """Persist the existing module-review progress shape at one boundary."""
+
+    _write_model(
+        runner,
+        progress_ref,
+        ModuleReviewProgress(
+            run_id=state["run_id"],
+            module_id=module_id,
+            next_action=next_action,
+            current=current,
+            pending=list(pending),
+            responses=responses,
+            finding_refs=finding_refs,
+            verdict_refs=verdict_refs,
+            resolved_ids=sorted(resolved_ids),
+            review_round=review_round,
+            phase=phase,
+            scope=sorted(scope),
+            reviewer_session_key=reviewer_session_key,
+            last_reviewed_subject_ref=last_reviewed_subject_ref,
+            review_protocol_version=2,
+        ),
+    )
+
+
+async def prepare_module_initial_review(
+    runner: "ReportWorkflowRunner",
+    *,
+    module_id: str,
+    payload: ModuleSubmission,
+    state: dict,
+    workflow_id: str,
+    initial_scope: set[str],
+    lifecycle_id: str,
+) -> ModuleInitialReviewPreparation:
+    """Prepare the current initial module-review Agent boundary.
+
+    The returned model is safe to pass through a generic runtime.  On a
+    resumed run with a valid persisted lifecycle, it deliberately returns
+    ``continue_existing`` so the caller can invoke ``run_module_review`` with
+    ``resume=True`` instead of repeating the initial Auditor turn.
+    """
+
+    if payload.module_id != module_id:
+        raise ReviewLifecycleError("module review payload belongs to a different module")
+    if not re.fullmatch(r"[a-z0-9-]+", lifecycle_id):
+        raise ReviewLifecycleError("module review lifecycle_id is not a safe component")
+
+    review_root = f"Work/runs/{state['run_id']}/reviews/module/{lifecycle_id}/{module_id}"
+    progress_ref = f"{review_root}/progress.json"
+    progress = (
+        _load_progress(runner, progress_ref, ModuleReviewProgress)
+        if state.get("resume")
+        else None
+    )
+    reviewer_session_key = _module_reviewer_session_key(
+        runner,
+        state=state,
+        module_id=module_id,
+        lifecycle_id=lifecycle_id,
+        progress=progress,
+        regression_context=None,
+    )
+    if progress is not None:
+        if progress.run_id != state["run_id"] or progress.module_id != module_id:
+            raise ReviewLifecycleError("module review progress identity mismatch")
+        if progress.next_action in {"completed", "revise", "review"}:
+            return ModuleInitialReviewPreparation(
+                mode="continue_existing",
+                run_id=state["run_id"],
+                module_id=module_id,
+                lifecycle_id=lifecycle_id,
+                workflow_id=workflow_id,
+                reviewer_session_key=reviewer_session_key,
+                review_root=review_root,
+                progress_ref=progress_ref,
+                review_round=progress.review_round,
+                scope=list(progress.scope),
+                current=progress.current,
+                subject_ref=(
+                    f"Work/runs/{state['run_id']}/modules/"
+                    f"{module_id}-r{progress.current.revision}.json"
+                ),
+                progress=progress,
+            )
+
+    current = payload
+    review_round = 0
+    scope = set(initial_scope)
+    preflight_attempts = 0
+    preflight_failure_fingerprints: dict[tuple, int] = {}
+    while True:
+        subject_ref = (
+            f"Work/runs/{state['run_id']}/modules/"
+            f"{module_id}-r{current.revision}.json"
+        )
+        if not (runner.service.workspace / subject_ref).is_file():
+            _write_model(runner, subject_ref, current)
+        structure_ref = runner._validate_module_structure(
+            state,
+            current,
+            f"review-r{review_round}",
+        )
+        structure_report = ValidationReport.model_validate_json(
+            (runner.service.workspace / structure_ref).read_text(encoding="utf-8")
+        )
+        _require_validation_binding(
+            runner,
+            structure_report,
+            subject_ref=subject_ref,
+            subject_revision=current.revision,
+        )
+        preflight = evaluate_module_review_preflight(
+            runner.service.workspace,
+            run_id=state["run_id"],
+            subject=current,
+            subject_ref=subject_ref,
+            upstream_report=structure_report,
+        )
+        signal_ref = _write_model(
+            runner,
+            (
+                f"{review_root}/preflight-subject-r{current.revision}-"
+                f"review-r{review_round}.json"
+            ),
+            preflight.report,
+        )
+        validation_report = preflight.report
+        if validation_report.passed:
+            break
+        preflight_attempts += 1
+        fingerprint = tuple(
+            sorted(
+                (
+                    failure.check_id,
+                    failure.target_path,
+                    failure.message,
+                )
+                for failure in validation_report.failures
+            )
+        )
+        repeated = preflight_failure_fingerprints.get(fingerprint, 0) + 1
+        preflight_failure_fingerprints[fingerprint] = repeated
+        if repeated >= 2 or preflight_attempts >= 3:
+            raise ReviewLifecycleError(
+                "module preflight failed repeatedly before semantic review; "
+                "no reviewer finding or verdict was created. "
+                f"module={module_id}; attempts={preflight_attempts}; "
+                f"validation_ref={signal_ref}"
+            )
+        current, _ = await request_module_revision(
+            runner,
+            state=state,
+            workflow_id=workflow_id,
+            subject=current,
+            module_findings=[],
+            validation_ref=signal_ref,
+            validation_target_submodule_ids=set(preflight.target_submodule_ids),
+        )
+        _save_module_review_progress(
+            runner,
+            state=state,
+            progress_ref=progress_ref,
+            module_id=module_id,
+            next_action="review",
+            current=current,
+            pending=[],
+            responses=[],
+            finding_refs=[],
+            verdict_refs=[],
+            resolved_ids=set(),
+            review_round=review_round,
+            phase="initial",
+            scope=scope,
+            reviewer_session_key=reviewer_session_key,
+            last_reviewed_subject_ref=None,
+        )
+
+    review_subject = module_content_view(current, scope)
+    review_claim_statements = [
+        _review_claim_statement(claim)
+        for claim in current.claims
+        if claim.submodule_id in scope
+    ]
+    knowledge_ref, knowledge_context = _module_review_knowledge_packet(
+        runner,
+        state,
+        module_id,
+        scope,
+    )
+    review_input = ModuleReviewInput(
+        phase="initial",
+        run_id=state["run_id"],
+        module_id=module_id,
+        lifecycle_id=lifecycle_id,
+        review_round=review_round,
+        subject_ref=subject_ref,
+        subject_revision=current.revision,
+        subject=review_subject,
+        claim_statements=review_claim_statements,
+        prior_claim_statements=[],
+        unchanged_submodule_sha256={},
+        unchanged_statement_sha256={},
+        knowledge_ref=knowledge_ref,
+        knowledge_context=knowledge_context,
+        evidence=_module_review_evidence_packet(
+            runner,
+            current,
+            state["run_id"],
+            scope,
+            evidence_ids=None,
+        ),
+        required_submodule_ids=sorted(scope),
+        required_findings=[],
+        revision_responses=[],
+        validation_report_ref=signal_ref,
+        validation_report=validation_report,
+    )
+    input_ref = _write_model(
+        runner,
+        f"{review_root}/input-r{review_round}.json",
+        review_input,
+    )
+    envelope = TaskEnvelope(
+        task_id=f"module-{module_id}-{lifecycle_id}-review-r{review_round}",
+        run_id=state["run_id"],
+        agent_id="evidence-auditor",
+        objective=f"审查模块 {module_id} 的当前正文、Claim 与证据边界。",
+        input_refs=[input_ref],
+        constraints=[
+            "coverage 记录实际检查范围，不是批准状态",
+            "一次返回整个模块检查范围的 findings/verdicts；小节 id 只用于定位问题，"
+            "不得拆成独立小节级审查任务或会话",
+            "finding 首次提出后不可改写；复审不得复述旧 finding",
+            "finding id 由运行时按 lifecycle 和 review round 分配，审查员不得提交或猜测 id",
+            "advisory 与 blocking 都必须获得作者响应和 reviewer verdict",
+            "首轮必须覆盖 input 中全部 required_submodule_ids",
+            *runner._user_supplement_constraints(
+                state,
+                stage="module_review",
+                target_ids={
+                    module_id,
+                    *scope,
+                    *(claim.id for claim in current.claims),
+                },
+            ),
+        ],
+        allowed_outputs=["module_review_finding_submission"],
+        revision=review_round,
+        prior_result_ref=None,
+        artifact_delivery_modes={input_ref: "inline"},
+        target_submodule_ids=sorted(scope),
+        input_contract_kind="module_review_input",
+        input_contract_ref=input_ref,
+        inline_context=runner._template_skill_context(
+            state, f"auditor-{module_id}"
+        ),
+        allowed_tools=["submit_result"],
+    )
+    return ModuleInitialReviewPreparation(
+        mode="invoke_agent",
+        run_id=state["run_id"],
+        module_id=module_id,
+        lifecycle_id=lifecycle_id,
+        workflow_id=workflow_id,
+        reviewer_session_key=reviewer_session_key,
+        review_root=review_root,
+        progress_ref=progress_ref,
+        review_round=review_round,
+        scope=sorted(scope),
+        current=current,
+        subject_ref=subject_ref,
+        review_input_ref=input_ref,
+        review_input=review_input,
+        envelope=envelope,
+        progress=None,
+    )
+
+
 def _validate_verdicts(
     verdicts: list[ResolutionVerdict],
     required_ids: set[str],
@@ -1104,7 +1447,114 @@ def _module_review_completion(
     return ref
 
 
-async def run_module_review(
+def accept_module_initial_review(
+    runner: "ReportWorkflowRunner",
+    *,
+    preparation: ModuleInitialReviewPreparation,
+    result: ModuleReviewFindingSubmission,
+    state: dict,
+) -> ModuleInitialReviewAcceptance:
+    """Accept and persist one prepared initial Auditor result."""
+
+    if preparation.mode != "invoke_agent":
+        raise ReviewLifecycleError(
+            "cannot accept an initial module review without an Agent invocation"
+        )
+    if preparation.subject_ref is None:
+        raise ReviewLifecycleError("initial module review lacks a subject ref")
+    if not isinstance(result, ModuleReviewFindingSubmission):
+        raise ReviewLifecycleError("module auditor returned the wrong initial type")
+    scope = set(preparation.scope)
+    if not scope.issubset(set(result.coverage.submodule_ids)):
+        raise ReviewLifecycleError(
+            "initial module review coverage omitted assigned submodules"
+        )
+    _validate_module_findings(
+        result.findings,
+        preparation.current,
+        scope,
+        id_prefix=(
+            f"M-{preparation.module_id}-{preparation.lifecycle_id}-"
+            f"r{preparation.review_round}-"
+        ),
+    )
+    review_ref = _write_immutable_model(
+        runner,
+        f"{preparation.review_root}/findings-r{preparation.review_round}.json",
+        result,
+    )
+    finding_refs = [review_ref]
+    pending = {finding.id: finding for finding in result.findings}
+    completion_ref: str | None = None
+    if not pending:
+        completion_ref = _module_review_completion(
+            runner,
+            state=state,
+            module=preparation.current,
+            reviewer_session_key=preparation.reviewer_session_key,
+            subject_ref=preparation.subject_ref,
+            finding_refs=finding_refs,
+            verdict_refs=[],
+            resolved_ids=set(),
+            lifecycle_id=preparation.lifecycle_id,
+        )
+        _save_module_review_progress(
+            runner,
+            state=state,
+            progress_ref=preparation.progress_ref,
+            module_id=preparation.module_id,
+            next_action="completed",
+            current=preparation.current,
+            pending=[],
+            responses=[],
+            finding_refs=finding_refs,
+            verdict_refs=[],
+            resolved_ids=set(),
+            review_round=preparation.review_round,
+            phase="initial",
+            scope=scope,
+            reviewer_session_key=preparation.reviewer_session_key,
+            last_reviewed_subject_ref=preparation.subject_ref,
+        )
+        next_action: Literal["revise", "completed"] = "completed"
+    else:
+        _save_module_review_progress(
+            runner,
+            state=state,
+            progress_ref=preparation.progress_ref,
+            module_id=preparation.module_id,
+            next_action="revise",
+            current=preparation.current,
+            pending=pending.values(),
+            responses=[],
+            finding_refs=finding_refs,
+            verdict_refs=[],
+            resolved_ids=set(),
+            review_round=preparation.review_round,
+            phase="initial",
+            scope=scope,
+            reviewer_session_key=preparation.reviewer_session_key,
+            last_reviewed_subject_ref=preparation.subject_ref,
+        )
+        next_action = "revise"
+    return ModuleInitialReviewAcceptance(
+        run_id=preparation.run_id,
+        module_id=preparation.module_id,
+        lifecycle_id=preparation.lifecycle_id,
+        reviewer_session_key=preparation.reviewer_session_key,
+        subject_ref=preparation.subject_ref,
+        current=preparation.current,
+        findings=list(result.findings),
+        finding_refs=finding_refs,
+        verdict_refs=[],
+        resolved_ids=[],
+        next_action=next_action,
+        progress_ref=preparation.progress_ref,
+        completion_ref=completion_ref,
+    )
+
+
+async def _run_module_review_lifecycle(
     runner: "ReportWorkflowRunner",
     module_id: str,
     payload: ModuleSubmission,
@@ -1135,26 +1585,23 @@ async def run_module_review(
     progress_ref = f"{review_root}/progress.json"
 
     def save_progress(next_action: str) -> None:
-        _write_model(
+        _save_module_review_progress(
             runner,
-            progress_ref,
-            ModuleReviewProgress(
-                run_id=state["run_id"],
-                module_id=module_id,
-                next_action=next_action,
-                current=current,
-                pending=list(pending.values()),
-                responses=responses,
-                finding_refs=finding_refs,
-                verdict_refs=verdict_refs,
-                resolved_ids=sorted(resolved_ids),
-                review_round=review_round,
-                phase=phase,
-                scope=sorted(scope),
-                reviewer_session_key=reviewer_session_key,
-                last_reviewed_subject_ref=last_reviewed_subject_ref,
-                review_protocol_version=2,
-            ),
+            state=state,
+            progress_ref=progress_ref,
+            module_id=module_id,
+            next_action=next_action,
+            current=current,
+            pending=pending.values(),
+            responses=responses,
+            finding_refs=finding_refs,
+            verdict_refs=verdict_refs,
+            resolved_ids=resolved_ids,
+            review_round=review_round,
+            phase=phase,
+            scope=scope,
+            reviewer_session_key=reviewer_session_key,
+            last_reviewed_subject_ref=last_reviewed_subject_ref,
         )
 
     progress = (
@@ -1713,6 +2160,113 @@ async def run_module_review(
         phase = "recheck"
         review_round += 1
         save_progress("review")
+
+
+async def run_module_review(
+    runner: "ReportWorkflowRunner",
+    module_id: str,
+    payload: ModuleSubmission,
+    state: dict,
+    workflow_id: str,
+    *,
+    initial_scope: set[str],
+    lifecycle_id: str,
+    regression_context: ModuleLocalRegressionContext | None = None,
+) -> ModuleSubmission:
+    """Run the module review lifecycle through the reusable initial boundary."""
+
+    if regression_context is not None:
+        return await _run_module_review_lifecycle(
+            runner,
+            module_id,
+            payload,
+            state,
+            workflow_id,
+            initial_scope=initial_scope,
+            lifecycle_id=lifecycle_id,
+            regression_context=regression_context,
+        )
+
+    progress_ref = (
+        f"Work/runs/{state['run_id']}/reviews/module/{lifecycle_id}/"
+        f"{module_id}/progress.json"
+    )
+    persisted_progress = (
+        _load_progress(runner, progress_ref, ModuleReviewProgress)
+        if state.get("resume")
+        else None
+    )
+    if persisted_progress is not None:
+        return await _run_module_review_lifecycle(
+            runner,
+            module_id,
+            payload,
+            state,
+            workflow_id,
+            initial_scope=initial_scope,
+            lifecycle_id=lifecycle_id,
+        )
+
+    preparation = await prepare_module_initial_review(
+        runner,
+        module_id=module_id,
+        payload=payload,
+        state=state,
+        workflow_id=workflow_id,
+        initial_scope=initial_scope,
+        lifecycle_id=lifecycle_id,
+    )
+    if preparation.mode == "continue_existing":
+        return await _run_module_review_lifecycle(
+            runner,
+            module_id,
+            payload,
+            state,
+            workflow_id,
+            initial_scope=initial_scope,
+            lifecycle_id=lifecycle_id,
+        )
+    if preparation.envelope is None:
+        raise ReviewLifecycleError("initial module review lacks an Agent envelope")
+    result = await runner._agent(
+        "evidence-auditor",
+        preparation.envelope,
+        preparation.envelope.input_refs,
+        workflow_id,
+        session_key=preparation.reviewer_session_key,
+    )
+    acceptance = accept_module_initial_review(
+        runner,
+        preparation=preparation,
+        result=result,
+        state=state,
+    )
+    if acceptance.next_action == "completed":
+        return acceptance.current
+
+    # Continue the pre-existing author/recheck lifecycle from the persisted
+    # finding boundary without changing the caller's original resume marker.
+    had_resume_marker = "resume" in state
+    original_resume_marker = state.get("resume")
+    continuation_state = deepcopy(state)
+    continuation_state["resume"] = True
+    try:
+        return await _run_module_review_lifecycle(
+            runner,
+            module_id,
+            acceptance.current,
+            continuation_state,
+            workflow_id,
+            initial_scope=initial_scope,
+            lifecycle_id=lifecycle_id,
+        )
+    finally:
+        state.clear()
+        state.update(continuation_state)
+        if had_resume_marker:
+            state["resume"] = original_resume_marker
+        else:
+            state.pop("resume", None)
 
 
 def _validate_cross_findings(

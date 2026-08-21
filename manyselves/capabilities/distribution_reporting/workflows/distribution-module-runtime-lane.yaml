@@ -7,6 +7,7 @@ tasks:
 - module-2.3-authoring
 - module-2.4-authoring
 - module-2.5-authoring
+- module-runtime-initial-review
 gates: []
 recovery:
 - current-reporting-recovery
@@ -17,6 +18,7 @@ parameters:
 - author_id
 - author_task_id
 - author_conversation_key
+- auditor_conversation_key
 state:
   reporting-state: {}
   module-id: "{module_id}"
@@ -83,11 +85,51 @@ actions:
   condition:
     variable: should-review-module-lane
     operator: truthy
-  then: review-current-module-lane
+  then: prepare-current-module-review
   otherwise: complete-current-module-lane
-- id: review-current-module-lane
+- id: prepare-current-module-review
   kind: invoke_tool
-  tool: review-current-module-lane
+  tool: prepare-current-module-review
+  input_variable: lane-context
+  output_variable: lane-context
+- id: module-review-requires-agent
+  kind: invoke_tool
+  tool: module-review-requires-agent
+  input_variable: lane-context
+  output_variable: should-invoke-module-reviewer
+- id: choose-module-review-source
+  kind: if
+  condition:
+    variable: should-invoke-module-reviewer
+    operator: truthy
+  then: create-module-reviewer-conversation
+  otherwise: continue-current-module-review
+- id: create-module-reviewer-conversation
+  kind: create_conversation
+  agent: evidence-auditor
+  conversation_key: "{auditor_conversation_key}"
+  mode: run
+  output_variable: module-reviewer-conversation
+- id: invoke-current-module-reviewer
+  kind: invoke_agent
+  agent: evidence-auditor
+  task: module-runtime-initial-review
+  conversation_variable: module-reviewer-conversation
+  input_variable: lane-context
+  output_variable: module-review-agent-result
+- id: accept-current-module-review
+  kind: invoke_tool
+  tool: accept-current-module-review
+  input_variables:
+    context: lane-context
+    result: module-review-agent-result
+  output_variable: lane-context
+- id: continue-after-module-review
+  kind: goto
+  target: continue-current-module-review
+- id: continue-current-module-review
+  kind: invoke_tool
+  tool: continue-current-module-review
   input_variable: lane-context
   output_variable: lane-context
 - id: complete-current-module-lane

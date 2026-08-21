@@ -132,7 +132,10 @@ async def execute_declarative_module_cohort(
         "accept-current-module-authoring": lane_runtime.accept_author_lane,
         "resume-current-module-authoring": lane_runtime.resume_author_lane,
         "module-lane-can-review": lane_runtime.can_review_lane,
-        "review-current-module-lane": lane_runtime.review_lane,
+        "prepare-current-module-review": lane_runtime.prepare_review_lane,
+        "module-review-requires-agent": lane_runtime.review_requires_agent,
+        "accept-current-module-review": lane_runtime.accept_review_lane,
+        "continue-current-module-review": lane_runtime.continue_review_lane,
         "complete-current-module-lane": lane_runtime.complete_lane,
     }
     tools["prepare-module-cohort"] = lambda value: value
@@ -227,7 +230,25 @@ class _StandaloneModuleRuntime:
     ) -> bool:
         return context.status == "authored"
 
-    async def review_lane(
+    async def prepare_review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context.model_copy(update={"status": "review_resumed"})
+
+    async def review_requires_agent(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def accept_review_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+
+    async def continue_review_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:

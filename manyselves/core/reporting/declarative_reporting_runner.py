@@ -35,6 +35,7 @@ from manyselves.runtime.workflow_host import (
     WorkflowRuntimeHost,
 )
 
+from .agentic_models import TaskEnvelope
 from .declarative_module_cohort import (
     DeclarativeModuleLaneOutcome,
     _retry_failed_module_lanes,
@@ -43,6 +44,8 @@ from .declarative_module_runtime_lane import (
     DeclarativeModuleAuthoringAgentResult,
     DeclarativeModuleAuthoringPreparation,
     DeclarativeModuleLaneAttempt,
+    DeclarativeModuleReviewAgentResult,
+    DeclarativeModuleReviewPreparation,
     DeclarativeModuleRuntimeLaneContext,
     register_module_runtime_lane_specializations,
 )
@@ -100,7 +103,22 @@ class ReportingModuleRuntime(Protocol):
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> bool: ...
 
-    async def review_lane(
+    async def prepare_review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def review_requires_agent(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool: ...
+
+    async def accept_review_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext: ...
+
+    async def continue_review_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext: ...
@@ -228,7 +246,10 @@ async def execute_declarative_module_stage(
         "accept-current-module-authoring": module_runtime.accept_author_lane,
         "resume-current-module-authoring": module_runtime.resume_author_lane,
         "module-lane-can-review": module_runtime.can_review_lane,
-        "review-current-module-lane": module_runtime.review_lane,
+        "prepare-current-module-review": module_runtime.prepare_review_lane,
+        "module-review-requires-agent": module_runtime.review_requires_agent,
+        "accept-current-module-review": module_runtime.accept_review_lane,
+        "continue-current-module-review": module_runtime.continue_review_lane,
         "complete-current-module-lane": module_runtime.complete_lane,
     }
     module_tools["prepare-module-cohort"] = module_runtime.prepare_lanes
@@ -337,7 +358,25 @@ class _BatchModuleRuntime:
     ) -> bool:
         return False
 
-    async def review_lane(
+    async def prepare_review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return context
+
+    async def review_requires_agent(
+        self,
+        _context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return False
+
+    async def accept_review_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        return DeclarativeModuleRuntimeLaneContext.model_validate(values["context"])
+
+    async def continue_review_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:
@@ -439,6 +478,53 @@ class _CurrentModuleAuthorInvoker:
         return AgentInvocationOutcome(status="ok", result=result)
 
 
+class _CurrentModuleReviewerInvoker:
+    """Invoke the current initial Auditor behind the generic Agent port."""
+
+    def __init__(
+        self,
+        runner: DeclarativeReportWorkflowRunner,
+        capture_failure: Callable[[str, BaseException], None],
+    ) -> None:
+        self._runner = runner
+        self._capture_failure = capture_failure
+
+    async def invoke(
+        self,
+        _agent: AgentDefinition,
+        _task: TaskDefinition,
+        value: Any,
+        conversation: ConversationRecord,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        del task_id
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(value)
+        reviewing = cast(DeclarativeModuleReviewPreparation, context.review)
+        envelope = cast(TaskEnvelope, reviewing.prepared.envelope)
+        try:
+            payload = await self._runner._agent(
+                "evidence-auditor",
+                envelope,
+                envelope.input_refs,
+                context.workflow_id,
+                session_key=conversation.key.value,
+            )
+            result = DeclarativeModuleReviewAgentResult(
+                status="completed",
+                submission=payload,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            self._capture_failure(context.module_id, exc)
+            result = DeclarativeModuleReviewAgentResult(
+                status="failed",
+                error=str(exc),
+            )
+        return AgentInvocationOutcome(status="ok", result=result)
+
+
 class _CurrentModuleStages:
     """Bind complete current Lane semantics to file-defined Cohort branches."""
 
@@ -455,13 +541,21 @@ class _CurrentModuleStages:
         self._workflow_id = workflow_id
         self._failures: dict[str, BaseException] = {}
         self._author_failures: dict[str, BaseException] = {}
+        self._review_failures: dict[str, BaseException] = {}
         author_invoker = _CurrentModuleAuthorInvoker(
             runner,
             self._capture_author_failure,
         )
+        reviewer_invoker = _CurrentModuleReviewerInvoker(
+            runner,
+            self._capture_review_failure,
+        )
         self.agent_invokers: Mapping[str, AgentInvoker] = {
-            f"module-{module_id}-specialist": author_invoker
-            for module_id in REPORT_MODULE_IDS
+            **{
+                f"module-{module_id}-specialist": author_invoker
+                for module_id in REPORT_MODULE_IDS
+            },
+            "evidence-auditor": reviewer_invoker,
         }
 
     async def prepare_lanes(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -663,12 +757,98 @@ class _CurrentModuleStages:
     ) -> bool:
         return context.status == "authored"
 
-    async def review_lane(
+    async def prepare_review_lane(
         self,
         context: DeclarativeModuleRuntimeLaneContext,
     ) -> DeclarativeModuleRuntimeLaneContext:
         if context.status != "authored":
             return context
+        try:
+            preparation = await self._runner._prepare_module_initial_review(
+                context.module_id,
+                cast(Any, context.module),
+                context.reporting_state,
+                context.workflow_id,
+                initial_scope=set(REPORT_TAXONOMY[context.module_id].submodules),
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": (
+                    "review_ready"
+                    if preparation.mode == "invoke_agent"
+                    else "review_resumed"
+                ),
+                "module": preparation.current,
+                "review": DeclarativeModuleReviewPreparation(
+                    envelope=cast(Any, preparation.envelope),
+                    reviewer_session_key=preparation.reviewer_session_key,
+                    prepared=preparation,
+                ),
+            },
+        )
+
+    async def review_requires_agent(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> bool:
+        return context.status == "review_ready"
+
+    async def accept_review_lane(
+        self,
+        values: Mapping[str, Any],
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        context = DeclarativeModuleRuntimeLaneContext.model_validate(
+            values["context"]
+        )
+        result = DeclarativeModuleReviewAgentResult.model_validate(
+            values["result"]
+        )
+        if result.status == "failed":
+            exc = self._review_failures.pop(
+                context.module_id,
+                AgentWorkflowError(result.error or "module reviewer failed"),
+            )
+            return self._failed_lane_context(context, exc)
+        try:
+            accepted = self._runner._accept_module_initial_review(
+                cast(
+                    DeclarativeModuleReviewPreparation,
+                    context.review,
+                ).prepared,
+                cast(Any, result.submission),
+                context.reporting_state,
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            return self._failed_lane_context(context, exc)
+        return context.model_copy(
+            deep=True,
+            update={
+                "status": (
+                    "reviewed"
+                    if accepted.next_action == "completed"
+                    else "review_resumed"
+                ),
+                "module": accepted.current,
+                "review": None,
+            },
+        )
+
+    async def continue_review_lane(
+        self,
+        context: DeclarativeModuleRuntimeLaneContext,
+    ) -> DeclarativeModuleRuntimeLaneContext:
+        if context.status == "reviewed":
+            return context
+        if context.status != "review_resumed":
+            return context
+        context.reporting_state["resume"] = True
         try:
             reviewed = await self._runner._module_review_loop(
                 context.module_id,
@@ -683,8 +863,15 @@ class _CurrentModuleStages:
             return self._failed_lane_context(context, exc)
         return context.model_copy(
             deep=True,
-            update={"status": "reviewed", "module": reviewed},
+            update={"status": "reviewed", "module": reviewed, "review": None},
         )
+
+    def _capture_review_failure(
+        self,
+        module_id: str,
+        exc: BaseException,
+    ) -> None:
+        self._review_failures[module_id] = exc
 
     async def complete_lane(
         self,

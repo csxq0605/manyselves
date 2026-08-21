@@ -25,21 +25,22 @@ from .agent_runner import ReportingAgentRunner
 from .agentic_models import (
     CHIEF_SECTION_RESULT_PART_IDS,
     FINAL_REPORT_SECTION_IDS,
+    TEMPLATE_ROLE_SKILL_IDS,
     AgentResult,
     AgentRunStatus,
-    ChiefChapterLaneSubmission,
     ChiefChapterLaneRevisionSubmission,
+    ChiefChapterLaneSubmission,
+    CrossDecisionPack,
     CrossReviewFindingSubmission,
     CrossReviewVerdictSubmission,
-    FinalChapterLaneFindingSubmission,
-    FinalChapterLaneVerdictSubmission,
-    CrossDecisionPack,
     CrossSynthesisInput,
     EditedReportSubmission,
+    FinalChapterLaneFindingSubmission,
+    FinalChapterLaneVerdictSubmission,
     ModuleDispatchPlan,
+    ModuleReviewFindingSubmission,
     ModuleSubmission,
     StrictModel,
-    TEMPLATE_ROLE_SKILL_IDS,
     TaskEnvelope,
     TemplateSkillBoundaryManifest,
     TemplateSkillSubmission,
@@ -56,8 +57,8 @@ from .assets import (
     validate_final_report_markdown,
     validate_module_markdown_consistency,
 )
-from .claim_ledger import ClaimLedger
 from .chapter_parallel import CHAPTER_SECTION_IDS, active_chapters
+from .claim_ledger import ClaimLedger
 from .cost_control import StageCostController
 from .delivery import MaterializedDeliveryReceipt
 from .distributed_runtime import LocalEventStore
@@ -66,10 +67,10 @@ from .final_specialization import final_lane_specialization
 from .input_contracts import (
     AggregateEditorInput,
     ChiefChapterLaneInput,
-    FinalChapterLaneInput,
     ChiefEditorInput,
     CrossDecisionPackView,
     FinalAuditSnapshot,
+    FinalChapterLaneInput,
     ModuleAuthoringInput,
     RequestedModuleChange,
     ReviewCompletionRecord,
@@ -96,11 +97,11 @@ from .models import (
     chapter_section_ids,
 )
 from .parallel_runtime import (
+    AggregateState,
     ArtifactRef,
     CohortBarrier,
     CrossOwnerBarrier,
     CrossOwnerCompletion,
-    AggregateState,
     LaneAttemptRecord,
     LaneCompletion,
     LaneExceptionCandidate,
@@ -124,6 +125,10 @@ from .research.knowledge_context import KnowledgeContextBuilder
 from .research.project_evidence import ProjectEvidenceIndex, project_evidence_locator
 from .review_lifecycle import (
     DeferredMainDecision,
+    ModuleInitialReviewAcceptance,
+    ModuleInitialReviewPreparation,
+    accept_module_initial_review,
+    prepare_module_initial_review,
     request_module_revision,
     run_cross_review,
     run_final_review,
@@ -131,12 +136,12 @@ from .review_lifecycle import (
     verify_cross_owner_barrier,
 )
 from .revision_diff import build_revision_diff
-from .session_summary import SessionSummaryStore
 from .scheduling import (
     AdaptiveTaskScheduler,
     SchedulingCandidate,
     TaskTimingHistory,
 )
+from .session_summary import SessionSummaryStore
 from .source_ledger import SourceLedger
 from .special_topics import load_special_topic_plan
 from .taxonomy import (
@@ -6078,6 +6083,38 @@ class ReportWorkflowRunner:
             workflow_id,
             initial_scope=initial_scope,
             lifecycle_id="initial",
+        )
+
+    async def _prepare_module_initial_review(
+        self,
+        module_id: str,
+        payload: ModuleSubmission,
+        state: dict,
+        workflow_id: str,
+        *,
+        initial_scope: set[str],
+    ) -> ModuleInitialReviewPreparation:
+        return await prepare_module_initial_review(
+            self,
+            module_id=module_id,
+            payload=payload,
+            state=state,
+            workflow_id=workflow_id,
+            initial_scope=initial_scope,
+            lifecycle_id="initial",
+        )
+
+    def _accept_module_initial_review(
+        self,
+        preparation: ModuleInitialReviewPreparation,
+        result: ModuleReviewFindingSubmission,
+        state: dict,
+    ) -> ModuleInitialReviewAcceptance:
+        return accept_module_initial_review(
+            self,
+            preparation=preparation,
+            result=result,
+            state=state,
         )
 
     async def _cross_review(self, state: dict, workflow_id: str) -> None:

@@ -1,0 +1,20 @@
+id: module-runtime-initial-review
+version: 1.0.0
+description: Run the prepared initial module Auditor turn through the generic Agent port
+agent: evidence-auditor
+objective: Review the prepared current module from its exact Reporting envelope.
+input_contract: declarative_module_runtime_lane_context
+output_contract: declarative_module_review_agent_result
+tools:
+- search_project_evidence
+- open_project_source
+- open_reference
+- open_web_source
+- inspect_document
+- inspect_image
+- calculate
+- query_peer
+- reply_peer
+- report_blocked
+- submit_result
+recovery: current-reporting-recovery

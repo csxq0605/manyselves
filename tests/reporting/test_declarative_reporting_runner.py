@@ -6,7 +6,11 @@ import pytest
 
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.providers.base import LLMProvider
-from manyselves.core.reporting.agentic_models import ModuleSubmission, TaskEnvelope
+from manyselves.core.reporting.agentic_models import (
+    ModuleReviewFindingSubmission,
+    ModuleSubmission,
+    TaskEnvelope,
+)
 from manyselves.core.reporting.declarative_reporting_runner import (
     DeclarativeReportWorkflowRunner,
     _CurrentModuleStages,
@@ -14,6 +18,10 @@ from manyselves.core.reporting.declarative_reporting_runner import (
 )
 from manyselves.core.reporting.models import REPORT_MODULE_IDS, ReportRequest
 from manyselves.core.reporting.parallel_runtime import LaneCompletion, LaneTaskSpec
+from manyselves.core.reporting.review_lifecycle import (
+    ModuleInitialReviewAcceptance,
+    ModuleInitialReviewPreparation,
+)
 from manyselves.core.reporting.service import ReportingRunResult, ReportingService
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.workflow import ReportWorkflowRunner
@@ -101,6 +109,7 @@ class _CurrentLaneRunner:
         self.calls = {module_id: 0 for module_id in REPORT_MODULE_IDS}
         self.lifecycle = {module_id: [] for module_id in REPORT_MODULE_IDS}
         self.fail_once = "2.2"
+        self.fail_review_once = ""
 
     def _raise_if_cancel_requested(self, _run_id: str) -> None:
         return None
@@ -180,7 +189,19 @@ class _CurrentLaneRunner:
         _workflow_id: str,
         *,
         session_key: str | None = None,
-    ) -> ModuleSubmission:
+    ) -> ModuleSubmission | ModuleReviewFindingSubmission:
+        if agent_id == "evidence-auditor":
+            module_id = str(session_key).removeprefix("module-auditor-")
+            self.lifecycle[module_id].append(f"reviewer:{session_key}")
+            if module_id == self.fail_review_once:
+                self.fail_review_once = ""
+                raise RuntimeError("injected declarative review failure")
+            return ModuleReviewFindingSubmission(
+                coverage={
+                    "submodule_ids": list(REPORT_TAXONOMY[module_id].submodules)
+                },
+                findings=[],
+            )
         module_id = agent_id.removeprefix("module-").removesuffix("-specialist")
         self.calls[module_id] += 1
         self.lifecycle[module_id].append(f"author:{session_key}")
@@ -251,6 +272,68 @@ class _CurrentLaneRunner:
             f"reviews/{module_id}.json"
         )
         return submission
+
+    async def _prepare_module_initial_review(
+        self,
+        module_id: str,
+        submission: ModuleSubmission,
+        lane_state: dict,
+        workflow_id: str,
+        *,
+        initial_scope: set[str],
+    ) -> ModuleInitialReviewPreparation:
+        self.lifecycle[module_id].append("review-prepare")
+        subject_ref = f"modules/{module_id}.json"
+        return ModuleInitialReviewPreparation(
+            mode="invoke_agent",
+            run_id=lane_state["run_id"],
+            module_id=module_id,
+            lifecycle_id="initial",
+            workflow_id=workflow_id,
+            reviewer_session_key=f"module-auditor-{module_id}",
+            review_root=f"reviews/{module_id}",
+            progress_ref=f"reviews/{module_id}/progress.json",
+            review_round=0,
+            scope=sorted(initial_scope),
+            current=submission,
+            subject_ref=subject_ref,
+            review_input_ref=f"reviews/{module_id}/input-r0.json",
+            envelope=TaskEnvelope(
+                task_id=f"module-{module_id}-initial-review-r0",
+                run_id=lane_state["run_id"],
+                agent_id="evidence-auditor",
+                objective=f"review module {module_id}",
+                allowed_outputs=["module_review_finding_submission"],
+            ),
+        )
+
+    def _accept_module_initial_review(
+        self,
+        preparation: ModuleInitialReviewPreparation,
+        _result: ModuleReviewFindingSubmission,
+        lane_state: dict,
+    ) -> ModuleInitialReviewAcceptance:
+        module_id = preparation.module_id
+        self.lifecycle[module_id].append("review-accept")
+        submission = preparation.current
+        lane_state.setdefault("module_submissions", {})[module_id] = submission
+        lane_state.setdefault("specialist_submissions", {})[module_id] = submission
+        lane_state.setdefault("module_review_completion_refs", {})[module_id] = (
+            f"reviews/{module_id}.json"
+        )
+        return ModuleInitialReviewAcceptance(
+            run_id=preparation.run_id,
+            module_id=module_id,
+            lifecycle_id="initial",
+            reviewer_session_key=preparation.reviewer_session_key,
+            subject_ref=str(preparation.subject_ref),
+            current=submission,
+            findings=[],
+            finding_refs=[f"reviews/{module_id}/findings-r0.json"],
+            next_action="completed",
+            progress_ref=preparation.progress_ref,
+            completion_ref=f"reviews/{module_id}.json",
+        )
 
     def _complete_module_lane_attempt(
         self,
@@ -335,7 +418,9 @@ async def test_top_level_runtime_retries_only_the_failed_file_defined_module_bra
         "prepare",
         "author:specialist-2.1",
         "accept",
-        "review",
+        "review-prepare",
+        "reviewer:module-auditor-2.1",
+        "review-accept",
         "complete",
     ]
     assert runner.lifecycle["2.2"] == [
@@ -347,7 +432,9 @@ async def test_top_level_runtime_retries_only_the_failed_file_defined_module_bra
         "prepare",
         "author:specialist-2.2",
         "accept",
-        "review",
+        "review-prepare",
+        "reviewer:module-auditor-2.2",
+        "review-accept",
         "complete",
     ]
     assert all(runner.calls[module_id] == 0 for module_id in REPORT_MODULE_IDS[2:])
@@ -397,10 +484,59 @@ async def test_file_defined_module_author_reuses_same_run_submission_without_age
         "start",
         "prepare",
         "resume",
-        "review",
+        "review-prepare",
+        "reviewer:module-auditor-2.1",
+        "review-accept",
         "complete",
     ]
     assert state["module_submissions"][module_id] == submission
+    assert completed.status is WorkflowStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_file_defined_initial_reviewer_failure_drains_and_retries_its_lane(
+    tmp_path: Path,
+) -> None:
+    run_id = "report-declarative-review-retry"
+    requested = ("2.1", "2.2")
+    workflow_id = f"full-power-distribution-report:{run_id}"
+    state = {"run_id": run_id}
+    runner = _CurrentLaneRunner(tmp_path)
+    runner.fail_once = ""
+    runner.fail_review_once = "2.2"
+    store = FileWorkflowStateStore(tmp_path)
+
+    with pytest.raises(RuntimeError, match="injected declarative review failure"):
+        await execute_declarative_module_stage(
+            requested_modules=requested,
+            state=state,
+            workflow_id=workflow_id,
+            state_store=store,
+            module_runtime=_CurrentModuleStages(
+                runner,
+                requested,
+                state,
+                workflow_id,
+            ),
+        )
+
+    completed = await execute_declarative_module_stage(
+        requested_modules=requested,
+        state=state,
+        workflow_id=workflow_id,
+        state_store=store,
+        module_runtime=_CurrentModuleStages(
+            runner,
+            requested,
+            state,
+            workflow_id,
+        ),
+    )
+
+    assert runner.lifecycle["2.1"].count("complete") == 1
+    assert runner.lifecycle["2.1"].count("reviewer:module-auditor-2.1") == 1
+    assert runner.lifecycle["2.2"].count("fail") == 1
+    assert runner.lifecycle["2.2"].count("reviewer:module-auditor-2.2") == 2
     assert completed.status is WorkflowStatus.COMPLETED
 
 

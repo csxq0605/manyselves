@@ -10,14 +10,15 @@ from types import SimpleNamespace
 import pytest
 
 from manyselves.core.loops.bus import MessageBus
+from manyselves.core.reporting import review_lifecycle as review_lifecycle_module
 from manyselves.core.reporting.agentic_models import (
     CROSS_REVIEW_DIMENSIONS,
     FINAL_AUDIT_SECTION_IDS,
     FINAL_REPORT_SECTION_IDS,
     AgentResult,
-    CrossReviewCoverageEntry,
     ChiefRevisionSubmission,
     ClaimRecord,
+    CrossReviewCoverageEntry,
     CrossReviewFindingSubmission,
     CrossReviewVerdictSubmission,
     EditedReportSubmission,
@@ -50,28 +51,30 @@ from manyselves.core.reporting.models import (
     SpecialTopicPlan,
     UserSupplement,
 )
+from manyselves.core.reporting.parallel_runtime import (
+    ArtifactRef,
+    CrossOwnerCompletion,
+)
 from manyselves.core.reporting.prompts import PromptAssembler
-from manyselves.core.reporting import review_lifecycle as review_lifecycle_module
 from manyselves.core.reporting.review_lifecycle import (
+    ModuleInitialReviewPreparation,
     ReviewLifecycleError,
     _apply_chief_patch,
     _require_validation_binding,
+    accept_module_initial_review,
+    prepare_module_initial_review,
     request_module_revision,
     run_cross_review,
     run_final_review,
     run_module_review,
 )
 from manyselves.core.reporting.source_ledger import SourceLedger
+from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.taxonomy import (
+    REPORT_TAXONOMY,
     report_taxonomy_snapshot,
     reset_report_taxonomy,
 )
-from manyselves.core.reporting.parallel_runtime import (
-    ArtifactRef,
-    CrossOwnerCompletion,
-)
-from manyselves.core.reporting.store import ReportingStore
-from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY
 from manyselves.core.reporting.versions import ReportVersion
 from manyselves.core.reporting.workflow import (
     AgentWorkflowError,
@@ -556,6 +559,59 @@ class _ToolBackedModuleReviewRunner(_ScriptedRunner):
         )
         assert result.payload is not None
         return result.payload
+
+
+@pytest.mark.asyncio
+async def test_initial_module_review_boundary_is_typed_and_resume_aware(
+    tmp_path: Path,
+) -> None:
+    module = _module("2.1")
+    target = next(iter(REPORT_TAXONOMY["2.1"].submodules))
+    runner = _ScriptedRunner(tmp_path, [])
+    state = {"run_id": "run-initial-review-boundary"}
+
+    preparation = await prepare_module_initial_review(
+        runner,
+        module_id="2.1",
+        payload=module,
+        state=state,
+        workflow_id="workflow-initial-review-boundary",
+        initial_scope={target},
+        lifecycle_id="initial",
+    )
+
+    assert isinstance(preparation, ModuleInitialReviewPreparation)
+    assert preparation.mode == "invoke_agent"
+    assert preparation.reviewer_session_key == "module-auditor-2.1"
+    assert preparation.envelope is not None
+    assert preparation.envelope.task_id == "module-2.1-initial-review-r0"
+    assert preparation.review_input is not None
+    assert preparation.review_input.required_submodule_ids == [target]
+
+    accepted = accept_module_initial_review(
+        runner,
+        preparation=preparation,
+        result=ModuleReviewFindingSubmission(
+            coverage={"submodule_ids": [target]},
+            findings=[],
+        ),
+        state=state,
+    )
+    assert accepted.next_action == "completed"
+    assert accepted.completion_ref is not None
+
+    resumed = await prepare_module_initial_review(
+        runner,
+        module_id="2.1",
+        payload=module,
+        state={**state, "resume": True},
+        workflow_id="workflow-initial-review-boundary",
+        initial_scope={target},
+        lifecycle_id="initial",
+    )
+    assert resumed.mode == "continue_existing"
+    assert resumed.progress is not None
+    assert resumed.progress.next_action == "completed"
 
 
 def test_module_dispatch_uses_configured_global_knowledge_root(tmp_path: Path) -> None:
