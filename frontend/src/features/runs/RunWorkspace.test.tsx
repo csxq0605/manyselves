@@ -27,7 +27,11 @@ describe("RunWorkspace", () => {
       }),
       inputSchema: vi.fn().mockResolvedValue({
         contractId: "distribution_reporting_input",
-        schema: { properties: { instruction: { type: "string" } }, type: "object" },
+        schema: {
+          properties: { instruction: { type: "string" } },
+          required: ["instruction"],
+          type: "object",
+        },
         workflowId: "distribution-reporting",
       }),
       listCapabilities: vi.fn().mockResolvedValue({
@@ -75,10 +79,10 @@ describe("RunWorkspace", () => {
 
     expect(await screen.findByRole("heading", { name: "通用工作流" })).toBeVisible();
     expect(await screen.findByText("Declarative distribution reporting capability")).toBeVisible();
-    const input = screen.getByRole("textbox", { name: "运行输入 JSON" });
+    const input = await screen.findByRole("textbox", { name: "instruction" });
     await user.clear(input);
     await user.click(input);
-    await user.paste('{"instruction":"Generate report"}');
+    await user.paste("Generate report");
     await user.click(screen.getByRole("button", { name: "启动工作流" }));
 
     await waitFor(() => expect(api.start).toHaveBeenCalledWith(
@@ -115,7 +119,13 @@ describe("RunWorkspace", () => {
         contractId: workflowId === "parameter-adjustment"
           ? "parameter-input"
           : "distribution_reporting_input",
-        schema: { type: "object" },
+        schema: workflowId === "parameter-adjustment"
+          ? {
+            properties: { value: { type: "integer" } },
+            required: ["value"],
+            type: "object",
+          }
+          : { type: "object" },
         workflowId,
       })),
       listCapabilities: vi.fn().mockResolvedValue({
@@ -178,10 +188,9 @@ describe("RunWorkspace", () => {
       "Neutral declarative parameter adjustment capability",
     )).toBeVisible();
     await user.selectOptions(screen.getByRole("combobox", { name: "工作流" }), "parameter-adjustment");
-    const input = screen.getByRole("textbox", { name: "运行输入 JSON" });
-    await user.clear(input);
-    await user.click(input);
-    await user.paste('{"value":4}');
+    const input = await screen.findByRole("spinbutton", { name: "value" });
+    expect(screen.queryByRole("textbox", { name: "instruction" })).not.toBeInTheDocument();
+    await user.type(input, "4");
     await user.click(screen.getByRole("button", { name: "启动工作流" }));
 
     await waitFor(() => expect(api.start).toHaveBeenCalledWith(
@@ -192,6 +201,280 @@ describe("RunWorkspace", () => {
     expect(screen.getByText("0 tokens")).toBeVisible();
     expect(screen.queryByRole("button", { name: "提交运行输入" })).not.toBeInTheDocument();
     expect(screen.queryByText(/sha/i)).not.toBeInTheDocument();
+  });
+
+  it("renders common schema controls and submits typed values", async () => {
+    const api: WorkflowApi = {
+      cost: vi.fn().mockResolvedValue({
+        runId: "run-schema-controls",
+        usage: { totals: { estimated_cost: 0, total_tokens: 0 } },
+      }),
+      get: vi.fn().mockResolvedValue({
+        run: {
+          active: false,
+          capabilityId: "neutral-controls",
+          runId: "run-schema-controls",
+          status: "completed",
+          taskId: null,
+          workflowId: "neutral-controls",
+        },
+        state: {},
+        waitingInput: [],
+      }),
+      inputSchema: vi.fn().mockResolvedValue({
+        contractId: "neutral-controls-input",
+        schema: {
+          properties: {
+            enabled: { type: "boolean" },
+            name: { title: "Display name", type: "string" },
+            ratio: { type: "number" },
+            count: { type: "integer" },
+            mode: { enum: ["fast", "safe"], type: "string" },
+          },
+          required: ["name", "count"],
+          type: "object",
+        },
+        workflowId: "neutral-controls",
+      }),
+      listCapabilities: vi.fn().mockResolvedValue({
+        capabilities: [{
+          description: "Neutral controls",
+          id: "neutral-controls",
+          version: "1.0.0",
+          workflowIds: ["neutral-controls"],
+        }],
+      }),
+      listWorkflows: vi.fn().mockResolvedValue({
+        workflows: [{
+          capabilityId: "neutral-controls",
+          description: "Neutral controls",
+          id: "neutral-controls",
+          inputContract: "neutral-controls-input",
+          outputContract: "neutral-controls-output",
+          runnable: true,
+          version: "1.0.0",
+        }],
+      }),
+      outputs: vi.fn().mockResolvedValue({ outputs: [], runId: "run-schema-controls" }),
+      provideInput: vi.fn(),
+      start: vi.fn().mockResolvedValue({
+        capabilityId: "neutral-controls",
+        commandId: "command-schema-controls",
+        runId: "run-schema-controls",
+        status: "accepted",
+        taskId: null,
+        workflowId: "neutral-controls",
+      }),
+    };
+    const user = userEvent.setup();
+
+    render(<AppProviders><RunWorkspace api={api} /></AppProviders>);
+
+    expect(await screen.findByText("Neutral controls")).toBeVisible();
+    await user.type(await screen.findByRole("textbox", { name: "Display name" }), "Ada");
+    await user.type(await screen.findByRole("spinbutton", { name: "ratio" }), "1.5");
+    await user.type(await screen.findByRole("spinbutton", { name: "count" }), "3");
+    await user.click(await screen.findByRole("checkbox", { name: "enabled" }));
+    await user.selectOptions(await screen.findByRole("combobox", { name: "mode" }), "safe");
+    await user.click(screen.getByRole("button", { name: "启动工作流" }));
+
+    await waitFor(() => expect(api.start).toHaveBeenCalledWith(
+      {
+        input: { count: 3, enabled: true, mode: "safe", name: "Ada", ratio: 1.5 },
+        workflowId: "neutral-controls",
+      },
+      expect.any(String),
+    ));
+  });
+
+  it("renders mixed report schemas with nullable, array, and JSON fields", async () => {
+    const api: WorkflowApi = {
+      cost: vi.fn().mockResolvedValue({
+        runId: "run-report-schema",
+        usage: { totals: { estimated_cost: 0, total_tokens: 0 } },
+      }),
+      get: vi.fn().mockResolvedValue({
+        run: {
+          active: false,
+          capabilityId: "neutral-report-form",
+          runId: "run-report-schema",
+          status: "completed",
+          taskId: null,
+          workflowId: "report-request-form",
+        },
+        state: {},
+        waitingInput: [],
+      }),
+      inputSchema: vi.fn().mockResolvedValue({
+        contractId: "report-request-input",
+        schema: {
+          $defs: {
+            UserSupplement: {
+              properties: { content: { type: "string" } },
+              type: "object",
+            },
+          },
+          properties: {
+            instruction: {
+              description: "Report instruction",
+              minLength: 1,
+              type: "string",
+            },
+            operation: {
+              default: "full_report",
+              enum: ["full_report", "module_report"],
+              type: "string",
+            },
+            missing_evidence_policy: {
+              default: "draft",
+              enum: ["ask", "block", "skip", "draft"],
+              type: "string",
+            },
+            cost_control_mode: {
+              default: "observe",
+              enum: ["observe", "warn", "pause_at_boundary"],
+              type: "string",
+            },
+            nullable_note: {
+              anyOf: [{ type: "string" }, { type: "null" }],
+              default: null,
+              title: "Nullable note",
+            },
+            nullable_ratio: {
+              anyOf: [{ type: "number" }, { type: "null" }],
+              default: null,
+              title: "Nullable ratio",
+            },
+            nullable_enabled: {
+              anyOf: [{ type: "boolean" }, { type: "null" }],
+              default: null,
+              title: "Nullable enabled",
+            },
+            target_modules: {
+              default: ["2.1"],
+              items: { type: "string" },
+              title: "Target modules",
+              type: "array",
+            },
+            max_provider_attempts: {
+              default: 80,
+              maximum: 1000,
+              minimum: 1,
+              type: "integer",
+            },
+            max_total_tokens: {
+              default: 800000,
+              minimum: 1000,
+              type: "integer",
+            },
+            enabled: {
+              default: false,
+              description: "Required boolean remains optional to check",
+              type: "boolean",
+            },
+            config: {
+              anyOf: [
+                {
+                  properties: { mode: { type: "string" } },
+                  type: "object",
+                },
+                { type: "null" },
+              ],
+              description: "Advanced configuration JSON",
+              title: "Config",
+            },
+            supplement: {
+              "$ref": "#/$defs/UserSupplement",
+              title: "Supplement",
+            },
+          },
+          required: ["instruction", "enabled"],
+          type: "object",
+        },
+        workflowId: "report-request-form",
+      }),
+      listCapabilities: vi.fn().mockResolvedValue({
+        capabilities: [{
+          description: "Neutral report form",
+          id: "neutral-report-form",
+          version: "1.0.0",
+          workflowIds: ["report-request-form"],
+        }],
+      }),
+      listWorkflows: vi.fn().mockResolvedValue({
+        workflows: [{
+          capabilityId: "neutral-report-form",
+          description: "Report request form",
+          id: "report-request-form",
+          inputContract: "report-request-input",
+          outputContract: "report-request-output",
+          runnable: true,
+          version: "1.0.0",
+        }],
+      }),
+      outputs: vi.fn().mockResolvedValue({ outputs: [], runId: "run-report-schema" }),
+      provideInput: vi.fn(),
+      start: vi.fn().mockResolvedValue({
+        capabilityId: "neutral-report-form",
+        commandId: "command-report-schema",
+        runId: "run-report-schema",
+        status: "accepted",
+        taskId: null,
+        workflowId: "report-request-form",
+      }),
+    };
+    const user = userEvent.setup();
+
+    render(<AppProviders><RunWorkspace api={api} /></AppProviders>);
+
+    await user.type(await screen.findByRole("textbox", { name: "instruction" }), "Draft report");
+    expect(await screen.findByText("Report instruction")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "operation" })).toHaveValue("\"full_report\"");
+    expect(screen.getByRole("combobox", { name: "missing_evidence_policy" })).toHaveValue("\"draft\"");
+    expect(screen.getByRole("combobox", { name: "cost_control_mode" })).toHaveValue("\"observe\"");
+    expect(screen.getByRole("spinbutton", { name: "max_provider_attempts" })).toHaveValue(80);
+    expect(screen.getByRole("spinbutton", { name: "max_provider_attempts" })).toHaveAttribute("min", "1");
+    expect(screen.getByRole("spinbutton", { name: "max_provider_attempts" })).toHaveAttribute("max", "1000");
+    expect(screen.getByRole("spinbutton", { name: "max_total_tokens" })).toHaveValue(800000);
+    expect(screen.getByRole("spinbutton", { name: "max_total_tokens" })).toHaveAttribute("min", "1000");
+    expect(screen.getByRole("spinbutton", { name: "Nullable ratio" })).toHaveValue(null);
+    expect(screen.getByRole("combobox", { name: "Nullable enabled" })).toHaveValue("");
+    expect(screen.getByRole("checkbox", { name: "enabled" })).not.toBeRequired();
+
+    const nullable = screen.getByRole("textbox", { name: "Nullable note" });
+    await user.type(nullable, "optional");
+    await user.clear(nullable);
+    await user.clear(screen.getByRole("textbox", { name: "Target modules" }));
+    await user.paste("2.1\n2.2");
+    await user.clear(screen.getByRole("spinbutton", { name: "max_provider_attempts" }));
+    await user.type(screen.getByRole("spinbutton", { name: "max_provider_attempts" }), "120");
+    await user.click(screen.getByRole("textbox", { name: "Config" }));
+    await user.paste('{"mode":"observe"}');
+    await user.click(screen.getByRole("textbox", { name: "Supplement" }));
+    await user.paste('{"content":"fact"}');
+    await user.click(screen.getByRole("button", { name: "启动工作流" }));
+
+    await waitFor(() => expect(api.start).toHaveBeenCalledWith(
+      {
+        input: {
+          config: { mode: "observe" },
+          cost_control_mode: "observe",
+          enabled: false,
+          instruction: "Draft report",
+          max_provider_attempts: 120,
+          max_total_tokens: 800000,
+          missing_evidence_policy: "draft",
+          nullable_note: null,
+          nullable_enabled: null,
+          nullable_ratio: null,
+          operation: "full_report",
+          supplement: { content: "fact" },
+          target_modules: ["2.1", "2.2"],
+        },
+        workflowId: "report-request-form",
+      },
+      expect.any(String),
+    ));
   });
 
   it("submits the Kernel input id for a nested waiting workflow", async () => {
@@ -210,7 +493,7 @@ describe("RunWorkspace", () => {
       }),
       get: vi.fn().mockResolvedValue({
         run: {
-          active: false,
+          active: true,
           capabilityId: "distribution-reporting",
           runId: "report-declarative-waiting",
           status: "waiting",
