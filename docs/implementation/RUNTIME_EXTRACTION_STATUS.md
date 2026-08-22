@@ -16,10 +16,10 @@
 
 - Current work package: `WP-00 through WP-12 plus the reopened architecture reconciliation implemented`
 - Last completed vertical slice: the preserved real declarative Reporting Run completed Final Review and Delivery after Characterization-first fixes at Reporting-owned serialized-state and DOCX-rendering boundaries; the generic browser surface then projected its declared outputs, events, cost, and completed status without loading the internal Reporting state
-- Current branch: `agent/declarative-runtime-implementation`; pushed baseline `1eb36da`, with the completed real-test fixes awaiting the final focused verification and commit
+- Current branch: `agent/declarative-runtime-implementation`; completed real-test implementation commit `c29cbc3` is pushed to the Draft PR
 - Current migration stage: `all four implementation stages, the stateless Kernel, generic Workflow Compiler/Runtime Host, file-defined capability layer, Reporting adapter, and generic React surface are implemented. The real Provider/project/browser test passed on the preserved declarative Run. Legacy Reporting remains the default and no default-path switch is authorized.`
 - Final real-test status: `report-declarative-33ed40175b` is `completed` and delivered. It reused completed module/Cross/Chief/Final branches, retained original Conversation identities, completed the affected Final Chapter 4 branch, passed Final reduction/recheck and Delivery, and was reconciled through the existing same-Run completed-delivery path without another Provider call. The browser shows the sidebar, completed Run, 12 outputs, 2320 events, and 18,903,056 total tokens; pricing is explicitly `unconfigured`, so no monetary-cost claim is made. All 11 declared artifact paths exist, including the final DOCX, Markdown report, source index, delivery manifest, and completion records.`
-- Next action: complete only the affected Python/frontend checks, commit and push the current branch, and leave the completed Run and browser available for optional user inspection. Do not create a new Run, replay completed stages, mutate the Kernel, add hash/CAS logic, or switch the Legacy default path.
+- Next action: leave the completed Run and browser available for optional user inspection. Do not create a new Run, replay completed stages, mutate the Kernel, add hash/CAS logic, or switch the Legacy default path.
 
 ## Active real-test finding — Final Chief revision Task binding
 
