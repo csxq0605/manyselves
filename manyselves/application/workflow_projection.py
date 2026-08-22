@@ -1,6 +1,7 @@
 """Generic Capability, Workflow, Run, Output, Cost, and Event projections."""
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -32,6 +33,54 @@ class WorkflowNotRunnableError(ValueError):
 
 class WorkflowInputError(ValueError):
     """Raised when a Capability adapter cannot interpret supplied run input."""
+
+
+_RUN_STATE_FIELDS = (
+    "run_id",
+    "workflow_id",
+    "status",
+    "next_action_index",
+    "next_action_id",
+    "control_steps",
+    "activity",
+    "stage",
+    "phase",
+)
+_RUN_STATE_ERROR_FIELDS = ("error", "error_message", "message")
+
+
+def _bounded_run_state(state: Any) -> dict[str, Any]:
+    """Keep the small state projection needed by the generic Run console.
+
+    Capability bindings may retain large execution contexts in their state
+    snapshots.  The generic Run endpoint exposes status and diagnostics, not
+    those durable execution contexts; returning them makes opening a Run
+    proportional to the entire workflow history and can block the browser.
+    """
+
+    if not isinstance(state, Mapping):
+        return {}
+    projected: dict[str, Any] = {}
+    for key in _RUN_STATE_FIELDS:
+        value = state.get(key)
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            if value is not None:
+                projected[key] = value
+    for key in _RUN_STATE_ERROR_FIELDS:
+        value = state.get(key)
+        if isinstance(value, str) and value:
+            projected[key] = value
+    actions = state.get("actions")
+    if isinstance(actions, Mapping):
+        for action_id, action in actions.items():
+            if not isinstance(action, Mapping):
+                continue
+            action_error = action.get("error")
+            if isinstance(action_error, str) and action_error:
+                projected.setdefault("error", action_error)
+                projected.setdefault("error_action_id", str(action_id))
+                break
+    return projected
 
 
 class WorkflowProjectionFacade:
@@ -154,7 +203,10 @@ class WorkflowProjectionFacade:
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         _binding, projection = self._locate_run(run_id)
-        return projection
+        return {
+            **projection,
+            "state": _bounded_run_state(projection.get("state")),
+        }
 
     def get_outputs(self, run_id: str) -> dict[str, Any]:
         binding, _projection = self._locate_run(run_id)

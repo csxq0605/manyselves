@@ -51,6 +51,8 @@ from .models import (
     CHAPTER1_SECTION_IDS,
     CHAPTER3_SECTION_IDS,
     REPORT_MODULE_IDS,
+    EvidenceItem,
+    PhotoAsset,
     SpecialTopicPlan,
     chapter_section_ids,
 )
@@ -584,7 +586,7 @@ class DeclarativeFinalReviewRuntime:
                 chapter_id=chapter_id,
                 status="skipped",
             )
-        state = review.state
+        state = self.current_state
         run_id = str(state["run_id"])
         revision = review.revision_number
         recovered = self._recover_chief_revision(review, chapter_id)
@@ -754,6 +756,7 @@ class DeclarativeFinalReviewRuntime:
     ) -> DeclarativeFinalReviewContext:
         review = DeclarativeFinalReviewContext.model_validate(values["review"])
         self._set_current(review)
+        runtime_state = self.current_state
         outcomes = {
             chapter_id: DeclarativeFinalChiefRevisionOutcome.model_validate(outcome)
             for chapter_id, outcome in dict(values["outcomes"]).items()
@@ -786,7 +789,7 @@ class DeclarativeFinalReviewRuntime:
                     {
                         "special_topic_analysis": self._current_runner._render_special_topic_analysis(
                             parts_by_chapter["4"],
-                            review.state.get("special_topic_plan"),
+                            runtime_state.get("special_topic_plan"),
                         )
                     }
                     if "4" in parts_by_chapter
@@ -794,15 +797,14 @@ class DeclarativeFinalReviewRuntime:
                 ),
             }
         )
-        run_id = str(review.state["run_id"])
+        run_id = str(runtime_state["run_id"])
         revision = review.revision_number
         subject_ref = f"Work/runs/{run_id}/edited-revisions/chief-r{revision}.json"
         self._current_runner.service.store.write_json(
             subject_ref,
             current.model_dump(mode="json"),
         )
-        state = deepcopy(review.state)
-        _restore_state(state)
+        state = deepcopy(runtime_state)
         state["edited_report"] = current
         state["chief_candidate_ref"] = subject_ref
         if revision >= 2:
@@ -855,7 +857,7 @@ class DeclarativeFinalReviewRuntime:
                 chapter_id=chapter_id,
                 status="skipped",
             )
-        state = review.state
+        state = self.current_state
         run_id = str(state["run_id"])
         revision = review.revision_number
         section_ids = self._chapter_sections(state, chapter_id)
@@ -1189,13 +1191,14 @@ class DeclarativeFinalReviewRuntime:
     ) -> tuple[ChiefChapterLaneRevisionSubmission, str, dict[str, str]] | None:
         if review.revision_number != 1:
             return None
-        recovered = self._current_runner._recovery_store(review.state).load_completed_lanes(
+        state = self.current_state
+        recovered = self._current_runner._recovery_store(state).load_completed_lanes(
             "chief-revision-r1", [chapter_id]
         )
         lane = recovered.get(chapter_id)
         result_ref = getattr(lane, "result_ref", None)
         expected_ref = (
-            f"Work/runs/{review.state['run_id']}/reviews/chief-chapter-lane-{chapter_id}-r1.json"
+            f"Work/runs/{state['run_id']}/reviews/chief-chapter-lane-{chapter_id}-r1.json"
         )
         if result_ref != expected_ref:
             return None
@@ -1207,7 +1210,7 @@ class DeclarativeFinalReviewRuntime:
             return None
         findings = review.pending_by_chapter[chapter_id]
         if (
-            submission.run_id != review.state["run_id"]
+            submission.run_id != state["run_id"]
             or submission.base_subject_ref != review.subject_ref
             or submission.chapter_id != chapter_id
             or submission.revision != 1
@@ -1216,7 +1219,7 @@ class DeclarativeFinalReviewRuntime:
         ):
             return None
         parts = self._current_runner._read_chief_chapter_parts(
-            review.state,
+            state,
             chapter_id,
             submission,
             f"chief-chapter-{chapter_id}-r1",
@@ -1232,13 +1235,14 @@ class DeclarativeFinalReviewRuntime:
     ) -> tuple[FinalChapterLaneVerdictSubmission, str] | None:
         if review.revision_number != 1:
             return None
-        recovered = self._current_runner._recovery_store(review.state).load_completed_lanes(
+        state = self.current_state
+        recovered = self._current_runner._recovery_store(state).load_completed_lanes(
             "final-recheck-r1", [chapter_id]
         )
         lane = recovered.get(chapter_id)
         result_ref = getattr(lane, "result_ref", None)
         expected_ref = (
-            f"Work/runs/{review.state['run_id']}/reviews/final-chapter-lane-{chapter_id}-r1.json"
+            f"Work/runs/{state['run_id']}/reviews/final-chapter-lane-{chapter_id}-r1.json"
         )
         if result_ref != expected_ref:
             return None
@@ -1252,7 +1256,7 @@ class DeclarativeFinalReviewRuntime:
         except (OSError, ValueError):
             return None
         if (
-            submission.run_id != review.state["run_id"]
+            submission.run_id != state["run_id"]
             or submission.chapter_id != chapter_id
             or set(submission.checked_section_ids) != set(contract.section_ids)
             or {verdict.finding_id for verdict in submission.verdicts}
@@ -1317,6 +1321,12 @@ def _restore_state(state: dict[str, Any]) -> None:
     plan = state.get("special_topic_plan")
     if isinstance(plan, Mapping):
         state["special_topic_plan"] = SpecialTopicPlan.model_validate(plan)
+    evidence = state.get("evidence_items")
+    if isinstance(evidence, list):
+        state["evidence_items"] = [EvidenceItem.model_validate(item) for item in evidence]
+    photos = state.get("photo_assets")
+    if isinstance(photos, list):
+        state["photo_assets"] = [PhotoAsset.model_validate(item) for item in photos]
 
 
 __all__ = [

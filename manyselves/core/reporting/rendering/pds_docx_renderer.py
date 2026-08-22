@@ -10,6 +10,7 @@ import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
+
 from docx import Document
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -478,7 +479,7 @@ class PdsDocxRenderer:
             value = value.replace("**", "").replace("__", "").replace("`", "")
             value = re.sub(r"^#{1,6}\s*", "", value)
             value = re.sub(r"^>\s*", "", value)
-            value = re.sub(r"^[•·]\s*", "", value)
+            value = re.sub(r"^[-*+•·]\s+", "", value)
             value = re.sub(r"^\d+\.\s+", "", value)
             value = re.sub(r"^(\d+(?:\.\d+)+)\.\s+", r"\1 ", value)
             value = re.sub(r"\[\[CLAIM:C-[^\]\s]+\]\]", "", value)

@@ -281,14 +281,78 @@ function waitingFormIdentity(
   ]);
 }
 
+function displayValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === undefined) return "";
+  const encoded = JSON.stringify(value);
+  return encoded === undefined ? String(value) : encoded;
+}
+
+function errorFromState(state: Record<string, unknown>): string | undefined {
+  for (const key of ["error", "error_message", "message"]) {
+    const value = state[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+function statusLabel(status: string): string {
+  switch (status.toLowerCase()) {
+    case "running":
+    case "in_progress":
+    case "active":
+      return "运行中";
+    case "waiting":
+    case "waiting_input":
+    case "waiting_user":
+      return "等待输入";
+    case "completed":
+    case "success":
+      return "已完成";
+    case "failed":
+    case "error":
+      return "失败";
+    default:
+      return status || "未知";
+  }
+}
+
+function statusClass(status: string): string {
+  switch (status.toLowerCase()) {
+    case "running":
+    case "in_progress":
+    case "active":
+      return "running";
+    case "waiting":
+    case "waiting_input":
+    case "waiting_user":
+      return "waiting";
+    case "completed":
+    case "success":
+      return "completed";
+    case "failed":
+    case "error":
+      return "failed";
+    default:
+      return "unknown";
+  }
+}
+
+function schemaFieldNames(schema: JsonSchema, required: boolean): string[] {
+  const requiredNames = new Set(schema.required ?? []);
+  return Object.keys(schema.properties ?? {}).filter((name) => requiredNames.has(name) === required);
+}
+
 interface SchemaFieldsProps {
   readonly onChange: (name: string, value: boolean | string) => void;
   readonly schema: JsonSchema;
   readonly values: FormValues;
+  readonly names?: readonly string[];
 }
 
-function SchemaFields({ onChange, schema, values }: SchemaFieldsProps) {
-  return Object.entries(schema.properties ?? {}).map(([name, property]) => {
+function SchemaFields({ onChange, names, schema, values }: SchemaFieldsProps) {
+  const entries = Object.entries(schema.properties ?? {}).filter(([name]) => names === undefined || names.includes(name));
+  return entries.map(([name, property]) => {
     const info = schemaControlInfo(property);
     if (info === null) return null;
     const label = property.title ?? info.schema.title ?? name;
@@ -411,6 +475,7 @@ function SchemaFields({ onChange, schema, values }: SchemaFieldsProps) {
 export function RunWorkspace({ api }: RunWorkspaceProps) {
   const [workflowId, setWorkflowId] = useState("");
   const [runId, setRunId] = useState("");
+  const [runLookupId, setRunLookupId] = useState("");
   const [inputText, setInputText] = useState("{}");
   const [inputValues, setInputValues] = useState<FormValues>({});
   const [continuationState, setContinuationState] = useState<ContinuationState>({
@@ -518,121 +583,225 @@ export function RunWorkspace({ api }: RunWorkspaceProps) {
   const pricingStatus = typeof totals.pricing_status === "string"
     ? totals.pricing_status
     : estimatedCost === undefined || estimatedCost === null ? "unknown" : "configured";
+  const requiredInputNames = schemaFieldNames(inputSchema, true);
+  const optionalInputNames = schemaFieldNames(inputSchema, false);
+  const rawRunStatus = run.data?.run.status ?? "";
+  const runStatusClass = statusClass(rawRunStatus);
+  const runStateError = run.data ? errorFromState(objectValue(run.data.state)) : undefined;
+  const eventError = events.data?.events.find((event) => typeof event.error === "string" && event.error.length > 0)?.error;
+  const failureError = runStateError ?? eventError;
+  const visibleEvents = events.data?.events.slice(-100) ?? [];
+  const eventLimitApplied = (events.data?.events.length ?? 0) > visibleEvents.length;
   return (
     <section className="run-workspace" aria-label="通用工作流">
-      <header><p>CAPABILITY RUNTIME</p><h1>通用工作流</h1></header>
-      {capabilities.isPending || workflows.isPending ? <p role="status">正在加载能力定义…</p> : null}
-      {capabilities.isError || workflows.isError ? <p role="alert">能力定义加载失败。</p> : null}
-      <div className="run-workspace__capabilities">
-        {capabilities.data?.capabilities.map((capability) => (
-          <article key={capability.id}>
-            <strong>{capability.id}</strong>
-            <span>{capability.description}</span>
-            <small>v{capability.version}</small>
-          </article>
-        ))}
+      <header className="run-workspace__header">
+        <div>
+          <p className="run-workspace__eyebrow">CAPABILITY RUNTIME / WORKFLOWS</p>
+          <h1>通用工作流</h1>
+          <span className="run-workspace__subtitle">用声明式定义启动、观察并继续任意工作流。</span>
+        </div>
+        {run.data ? (
+          <span className={`run-workspace__status-pill run-workspace__status-pill--${runStatusClass}`}>
+            <i aria-hidden="true" />{statusLabel(rawRunStatus)}
+          </span>
+        ) : <span className="run-workspace__status-pill run-workspace__status-pill--idle">待启动</span>}
+      </header>
+      {capabilities.isPending || workflows.isPending ? <p className="run-workspace__notice" role="status">正在加载能力定义…</p> : null}
+      {capabilities.isError || workflows.isError ? <p className="run-workspace__notice run-workspace__notice--error" role="alert">能力定义加载失败。</p> : null}
+      <section className="run-workspace__capability-strip" aria-label="能力概览">
+        <div className="run-workspace__section-heading">
+          <div><p className="run-workspace__eyebrow">AVAILABLE DEFINITIONS</p><h2>能力概览</h2></div>
+          <span>{capabilities.data?.capabilities.length ?? 0} 项能力 · {runnable.length} 个可运行工作流</span>
+        </div>
+        <div className="run-workspace__capabilities">
+          {capabilities.data?.capabilities.map((capability) => (
+            <article key={capability.id}>
+              <div className="run-workspace__capability-mark" aria-hidden="true">◎</div>
+              <div><strong>{capability.id}</strong><span>{capability.description}</span></div>
+              <small>v{capability.version}</small>
+            </article>
+          ))}
+          {capabilities.data && capabilities.data.capabilities.length === 0 ? <p className="run-workspace__empty">暂未注册能力。</p> : null}
+        </div>
+      </section>
+      <div className="run-workspace__layout">
+        <aside className="run-workspace__setup" aria-label="工作流配置">
+          <div className="run-workspace__section-heading run-workspace__section-heading--compact">
+            <div><p className="run-workspace__eyebrow">CONFIGURE</p><h2>启动配置</h2></div>
+            <span>定义驱动</span>
+          </div>
+          <form
+            className="run-workspace__card run-workspace__start-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (selectedWorkflowId && !start.isPending) start.mutate();
+            }}
+          >
+            <label>工作流<select aria-label="工作流" onChange={(event) => {
+              setWorkflowId(event.target.value);
+              setInputValues({});
+              setInputText("{}");
+              setError(null);
+            }} value={selectedWorkflowId}>
+              {runnable.map((workflow) => <option key={workflow.id}>{workflow.id}</option>)}
+            </select></label>
+            {hasInputControls ? (
+              <div className="run-workspace__schema-form" aria-label="运行输入">
+                <div className="run-workspace__form-heading"><h3>运行输入</h3><span>按 Schema 填写</span></div>
+                {requiredInputNames.length > 0 ? <fieldset>
+                  <legend>必填参数</legend>
+                  <SchemaFields
+                    names={requiredInputNames}
+                    onChange={(name, value) => setInputValues((current) => ({ ...current, [name]: value }))}
+                    schema={inputSchema}
+                    values={inputFormValues}
+                  />
+                </fieldset> : null}
+                {optionalInputNames.length > 0 ? <details className="run-workspace__optional-fields" open={requiredInputNames.length === 0}>
+                  <summary>可选参数 <span>{optionalInputNames.length}</span></summary>
+                  <fieldset>
+                    <legend className="run-workspace__visually-hidden">可选参数</legend>
+                    <SchemaFields
+                      names={optionalInputNames}
+                      onChange={(name, value) => setInputValues((current) => ({ ...current, [name]: value }))}
+                      schema={inputSchema}
+                      values={inputFormValues}
+                    />
+                  </fieldset>
+                </details> : null}
+              </div>
+            ) : (
+              <label>运行输入 JSON<textarea
+                aria-label="运行输入 JSON"
+                onChange={(event) => setInputText(event.target.value)}
+                value={inputText}
+              /></label>
+            )}
+            {schema.data ? <details className="run-workspace__developer-details"><summary>查看输入 Schema</summary><pre>{JSON.stringify(schema.data.schema, null, 2)}</pre></details> : null}
+            <button className="run-workspace__primary-action" disabled={!selectedWorkflowId || start.isPending} type="submit">
+              <span>{start.isPending ? "正在启动…" : "启动工作流"}</span><span aria-hidden="true">↗</span>
+            </button>
+          </form>
+          {error ? <p className="run-workspace__notice run-workspace__notice--error" role="alert">{error}</p> : null}
+          {schema.isError ? <p className="run-workspace__notice run-workspace__notice--error" role="alert">输入 Schema 加载失败。</p> : null}
+        </aside>
+        <section className="run-workspace__console" aria-label="运行控制台">
+          {!run.data ? <section className="run-workspace__empty-console">
+            <div className="run-workspace__empty-icon" aria-hidden="true">↗</div>
+            <h2>运行控制台</h2>
+            <p>启动一个工作流后，这里会显示状态、人工输入、输出、事件和成本。</p>
+            <form
+              className="run-workspace__reopen-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const requestedRunId = runLookupId.trim();
+                if (!requestedRunId) return;
+                setError(null);
+                setRunId(requestedRunId);
+              }}
+            >
+              <label>打开已有运行<input
+                aria-label="Run ID"
+                onChange={(event) => setRunLookupId(event.currentTarget.value)}
+                placeholder="粘贴 Run ID"
+                required
+                value={runLookupId}
+              /></label>
+              <button type="submit">打开运行</button>
+            </form>
+          </section> : <>
+            <section className={`run-workspace__run run-workspace__run--${runStatusClass}`} aria-label="运行结果">
+              <div className="run-workspace__run-heading">
+                <div><p className="run-workspace__eyebrow">RUN CONTROL</p><h2>{run.data.run.runId}</h2></div>
+                <span className="run-workspace__run-status"><i aria-hidden="true" />{statusLabel(rawRunStatus)}</span>
+              </div>
+              <dl className="run-workspace__run-meta">
+                <div><dt>Capability</dt><dd>{run.data.run.capabilityId}</dd></div>
+                <div><dt>Workflow</dt><dd>{run.data.run.workflowId}</dd></div>
+                <div><dt>状态</dt><dd>{rawRunStatus}</dd></div>
+                {run.data.run.taskId ? <div><dt>Task</dt><dd>{run.data.run.taskId}</dd></div> : null}
+              </dl>
+            </section>
+            {run.isError ? <section className="run-workspace__panel run-workspace__panel--error" aria-label="运行加载错误" role="alert">
+              <h3>无法读取运行状态</h3><p>{run.error instanceof Error ? run.error.message : "运行状态加载失败。"}</p>
+            </section> : null}
+            {runStatusClass === "failed" ? <section className="run-workspace__panel run-workspace__panel--error" aria-label="运行失败" role="alert">
+              <div><span className="run-workspace__panel-kicker">EXECUTION ERROR</span><h3>运行失败</h3></div>
+              <p>{failureError ?? "运行以失败状态结束，未提供更多错误信息。"}</p>
+            </section> : null}
+            {run.data.waitingInput.length > 0 ? <form className="run-workspace__waiting run-workspace__panel" onSubmit={(event) => { event.preventDefault(); provideInput.mutate(); }}>
+              <div className="run-workspace__waiting-heading"><span className="run-workspace__panel-kicker">ACTION REQUIRED</span><span className="run-workspace__status-label">等待输入</span></div>
+              {waitingTitle ? <h3>{waitingTitle}</h3> : <h3>需要继续输入</h3>}
+              {waitingDescription ? <p>{waitingDescription}</p> : null}
+              {waitingPath ? <p className="run-workspace__path">{`路径：${waitingPath}`}</p> : null}
+              {hasWaitingControls ? (
+                <fieldset>
+                  <legend>继续输入</legend>
+                  <SchemaFields
+                    onChange={(name, value) => setContinuationState({
+                      key: waitingFormKey,
+                      text: "{}",
+                      values: { ...continuationValues, [name]: value },
+                    })}
+                    schema={waitingSchema}
+                    values={continuationFormValues}
+                  />
+                </fieldset>
+              ) : (
+                <label>继续输入 JSON<textarea
+                  aria-label="继续输入 JSON"
+                  onChange={(event) => setContinuationState({
+                    key: waitingFormKey,
+                    text: event.target.value,
+                    values: {},
+                  })}
+                  value={continuationText}
+                /></label>
+              )}
+              <button className="run-workspace__primary-action" disabled={provideInput.isPending} type="submit">
+                {provideInput.isPending ? "正在提交…" : "提交运行输入"}
+              </button>
+            </form> : null}
+            <div className="run-workspace__telemetry-grid">
+              <section className="run-workspace__panel" aria-label="Outputs">
+                <div className="run-workspace__panel-heading"><div><span className="run-workspace__panel-kicker">ARTIFACTS</span><h3>Outputs</h3></div><span>{outputs.data?.outputs.length ?? 0}</span></div>
+                {outputs.isPending && outputs.data === undefined ? <p className="run-workspace__muted" role="status">正在加载输出…</p> : null}
+                {outputs.isError ? <p className="run-workspace__inline-error" role="alert">输出加载失败。</p> : null}
+                {outputs.data && outputs.data.outputs.length === 0 ? <p className="run-workspace__muted">暂无输出。</p> : null}
+                {outputs.data && outputs.data.outputs.length > 0 ? <ul className="run-workspace__data-list">{outputs.data.outputs.map((output) => (
+                  <li key={output.id}><span>{output.path ?? displayValue(output.value)}</span>{typeof output.size === "number" ? <small>{output.size} B</small> : null}</li>
+                ))}</ul> : null}
+              </section>
+              {api.events ? <section className="run-workspace__panel" aria-label="Events">
+                <div className="run-workspace__panel-heading"><div><span className="run-workspace__panel-kicker">TRACE</span><h3>Events</h3></div><span>{events.data?.events.length ?? 0}</span></div>
+                {events.isPending && events.data === undefined ? <p className="run-workspace__muted" role="status">正在加载事件…</p> : null}
+                {events.isError ? <p className="run-workspace__inline-error" role="alert">事件加载失败。</p> : null}
+                {events.data && events.data.events.length === 0 ? <p className="run-workspace__muted">暂无事件。</p> : null}
+                {eventLimitApplied ? <p className="run-workspace__muted">最近 100 条</p> : null}
+                {visibleEvents.length > 0 ? <ol className="run-workspace__event-list">{visibleEvents.map((event, index) => (
+                  <li key={`${event.kind}-${index}`} className={event.error ? "run-workspace__event--error" : undefined}>
+                    <span>{event.kind}</span>{event.actionId ? <small>{event.actionId}</small> : null}{event.error ? <p>{event.error}</p> : null}
+                  </li>
+                ))}</ol> : null}
+              </section> : null}
+              <section className="run-workspace__panel" aria-label="Cost">
+                <div className="run-workspace__panel-heading"><div><span className="run-workspace__panel-kicker">METERING</span><h3>Cost</h3></div><span>{pricingStatus}</span></div>
+                {cost.isPending && cost.data === undefined ? <p className="run-workspace__muted" role="status">正在加载成本…</p> : null}
+                {cost.isError ? <p className="run-workspace__inline-error" role="alert">成本加载失败。</p> : null}
+                {cost.data !== undefined ? <div className="run-workspace__cost-summary">
+                  <strong>{String(totals.total_tokens ?? 0)} tokens</strong>
+                  <span>定价状态：{pricingStatus}</span>
+                  <span>{estimatedCost === undefined || estimatedCost === null ? "成本未知" : String(estimatedCost)}</span>
+                </div> : null}
+              </section>
+            </div>
+            <details className="run-workspace__developer-details run-workspace__developer-details--run">
+              <summary>开发者细节</summary>
+              <dl className="run-workspace__run-meta"><div><dt>Run ID</dt><dd>{run.data.run.runId}</dd></div><div><dt>State</dt><dd><pre>{JSON.stringify(run.data.state, null, 2)}</pre></dd></div></dl>
+            </details>
+          </>}
+        </section>
       </div>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (selectedWorkflowId && !start.isPending) start.mutate();
-        }}
-      >
-        <label>工作流<select onChange={(event) => {
-          setWorkflowId(event.target.value);
-          setInputValues({});
-          setInputText("{}");
-          setError(null);
-        }} value={selectedWorkflowId}>
-          {runnable.map((workflow) => <option key={workflow.id}>{workflow.id}</option>)}
-        </select></label>
-        {hasInputControls ? (
-          <fieldset>
-            <legend>运行输入</legend>
-            <SchemaFields
-              onChange={(name, value) => setInputValues((current) => ({ ...current, [name]: value }))}
-              schema={inputSchema}
-              values={inputFormValues}
-            />
-          </fieldset>
-        ) : (
-          <label>运行输入 JSON<textarea
-            aria-label="运行输入 JSON"
-            onChange={(event) => setInputText(event.target.value)}
-            value={inputText}
-          /></label>
-        )}
-        {schema.data ? <details><summary>输入 Schema</summary><pre>{JSON.stringify(schema.data.schema, null, 2)}</pre></details> : null}
-        <button disabled={!selectedWorkflowId || start.isPending} type="submit">启动工作流</button>
-      </form>
-      {error ? <p role="alert">{error}</p> : null}
-      {run.data ? <section className="run-workspace__run" aria-label="运行结果">
-        <h2>{run.data.run.runId}</h2>
-        <dl>
-          <div><dt>Capability</dt><dd>{run.data.run.capabilityId}</dd></div>
-          <div><dt>Workflow</dt><dd>{run.data.run.workflowId}</dd></div>
-          <div><dt>状态</dt><dd>{run.data.run.status}</dd></div>
-        </dl>
-        <h3>Outputs</h3>
-        <ul>{outputs.data?.outputs.map((output) => (
-          <li key={output.id}>
-            <span>{output.path ?? JSON.stringify(output.value)}</span>
-            {typeof output.size === "number" ? <small>{output.size} B</small> : null}
-          </li>
-        ))}</ul>
-        {api.events ? <>
-          <h3>Events</h3>
-          {events.isError ? <p role="alert">事件加载失败。</p> : null}
-          <ol>
-            {events.data?.events.map((event, index) => (
-              <li key={`${event.kind}-${index}`}>
-                <span>{event.kind}</span>
-                {event.actionId ? <small> · {event.actionId}</small> : null}
-              </li>
-            ))}
-          </ol>
-        </> : null}
-        <h3>Cost</h3>
-        {cost.isPending && cost.data === undefined ? <p role="status">正在加载成本…</p> : null}
-        {cost.isError ? <p role="alert">成本加载失败。</p> : null}
-        {cost.data !== undefined ? <>
-          <p>{String(totals.total_tokens ?? 0)} tokens</p>
-          <p>定价状态：{pricingStatus}</p>
-          <p>{estimatedCost === undefined || estimatedCost === null
-            ? "成本未知"
-            : String(estimatedCost)}</p>
-        </> : null}
-        {run.data.waitingInput.length > 0 ? <form onSubmit={(event) => { event.preventDefault(); provideInput.mutate(); }}>
-          {waitingTitle ? <h4>{waitingTitle}</h4> : null}
-          {waitingDescription ? <p>{waitingDescription}</p> : null}
-          {waitingPath ? <p>路径：{waitingPath}</p> : null}
-          {hasWaitingControls ? (
-            <fieldset>
-              <legend>继续输入</legend>
-              <SchemaFields
-                onChange={(name, value) => setContinuationState({
-                  key: waitingFormKey,
-                  text: "{}",
-                  values: { ...continuationValues, [name]: value },
-                })}
-                schema={waitingSchema}
-                values={continuationFormValues}
-              />
-            </fieldset>
-          ) : (
-            <label>继续输入 JSON<textarea
-              aria-label="继续输入 JSON"
-              onChange={(event) => setContinuationState({
-                key: waitingFormKey,
-                text: event.target.value,
-                values: {},
-              })}
-              value={continuationText}
-            /></label>
-          )}
-          <button disabled={provideInput.isPending} type="submit">提交运行输入</button>
-        </form> : null}
-      </section> : null}
     </section>
   );
 }

@@ -6,7 +6,12 @@ from pathlib import Path
 from manyselves.core.reporting.declarative_delivery import (
     DeclarativeDeliveryRuntime,
 )
-from manyselves.core.reporting.models import OutputArtifact
+from manyselves.core.reporting.models import (
+    EvidenceItem,
+    OutputArtifact,
+    PhotoAsset,
+    ReportRequest,
+)
 from manyselves.core.reporting.workflow import _DeliveryContext
 
 
@@ -94,3 +99,42 @@ def test_delivery_runtime_preserves_existing_completion_without_reexecution() ->
     assert runtime.publish(state) is state
     assert runtime.complete(state) is state
     assert runner.calls == []
+
+
+def test_delivery_runtime_restores_serialized_business_state_before_prepare() -> None:
+    class _TypedDeliveryRunner(_DeliveryRunner):
+        def _prepare_and_render_delivery(self, state: dict) -> _DeliveryContext:
+            assert isinstance(state["request"], ReportRequest)
+            assert isinstance(state["evidence_items"][0], EvidenceItem)
+            assert isinstance(state["photo_assets"][0], PhotoAsset)
+            return super()._prepare_and_render_delivery(state)
+
+    runner = _TypedDeliveryRunner()
+    state = {
+        "run_id": "run-delivery",
+        "request": ReportRequest(instruction="Render the accepted report.").model_dump(
+            mode="json"
+        ),
+        "evidence_items": [
+            EvidenceItem(
+                id="evidence-delivery",
+                subject="serialized evidence",
+                fact="the accepted result remains traceable",
+                source={"file_id": "source-delivery", "path": "Inputs/source.md"},
+                photo_refs=["photo-delivery"],
+            ).model_dump(mode="json")
+        ],
+        "photo_assets": [
+            PhotoAsset(
+                id="photo-delivery",
+                path="Work/runs/run-delivery/photos/photo.png",
+                sha256="fixture",
+                media_type="image/png",
+                source_member="Inputs/source.md",
+            ).model_dump(mode="json")
+        ],
+    }
+
+    DeclarativeDeliveryRuntime(runner).prepare(state)
+
+    assert runner.calls == ["prepare"]

@@ -741,13 +741,17 @@ class DeclarativeCrossOwnerRuntime:
         self._production = hasattr(self._current_runner, "service") and callable(
             getattr(self._current_runner, "_agent", None)
         )
-        self._coordinator = (
+        # Parent composition happens before module outputs exist, while a
+        # directly resumed Cross child already carries them.  Only the latter
+        # can bind the coordinator during construction; the parent path binds
+        # it from ``prepare`` after the module cohort reduces.
+        self._coordinator: CrossReviewCoordinator | None = (
             CrossReviewCoordinator(
                 self._current_runner,
                 state,
                 workflow_id,
             )
-            if self._production
+            if self._production and "module_submissions" in state
             else None
         )
         self._aggregate_recovered = False

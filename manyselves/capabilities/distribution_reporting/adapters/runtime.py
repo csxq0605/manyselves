@@ -130,23 +130,60 @@ class DistributionReportingRuntimeBinding:
         runtime_state = self._runtime_state(run_id)
         outputs: list[dict[str, Any]] = []
         if runtime_state is not None and "result" in runtime_state.outputs:
+            result = runtime_state.outputs["result"]
+            public_result = result
+            declared_artifacts: list[Any] = []
+            if isinstance(result, Mapping) and isinstance(
+                result.get("output_artifacts"), list
+            ):
+                public_result = {
+                    key: result[key]
+                    for key in (
+                        "run_id",
+                        "delivery_completion_ref",
+                        "delivery_status",
+                        "output_artifacts",
+                    )
+                    if key in result
+                }
+                declared_artifacts = result["output_artifacts"]
             outputs.append(
                 {
                     "id": "result",
                     "kind": "value",
-                    "value": runtime_state.outputs["result"],
+                    "value": public_result,
                 }
             )
-        outputs.extend(
-            {
+            for artifact in declared_artifacts:
+                if not isinstance(artifact, Mapping):
+                    continue
+                path = str(artifact.get("path", ""))
+                if not path:
+                    continue
+                target = Path(path)
+                target = target if target.is_absolute() else self.workspace / target
+                exists = target.is_file()
+                outputs.append(
+                    {
+                        "id": path,
+                        "kind": "artifact",
+                        "path": path,
+                        "exists": exists,
+                        "size": target.stat().st_size if exists else 0,
+                    }
+                )
+        known_ids = {str(output["id"]) for output in outputs}
+        for output in snapshot.get("outputs", []):
+            path = str(output.get("path", ""))
+            if path in known_ids:
+                continue
+            outputs.append({
                 "id": output.get("path", ""),
                 "kind": "artifact",
                 "path": output.get("path", ""),
                 "exists": bool(output.get("exists", False)),
                 "size": int(output.get("size", 0) or 0),
-            }
-            for output in snapshot.get("outputs", [])
-        )
+            })
         return {
             "run_id": run_id,
             "outputs": outputs,

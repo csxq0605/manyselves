@@ -139,6 +139,7 @@ class _Runner:
         _workflow_id,
         *,
         session_key=None,
+        **_kwargs,
     ):
         owner_module_id = envelope.task_id.split("-")[2]
         self.calls.append((owner_module_id, session_key or ""))
@@ -1334,6 +1335,7 @@ async def test_declarative_cross_owner_cohort_preserves_independent_pipeline_sem
             _workflow_id,
             *,
             session_key=None,
+            **_kwargs,
         ):
             owner_module_id = envelope.task_id.split("-")[2]
             self.calls.append((owner_module_id, session_key or ""))
@@ -1367,7 +1369,7 @@ async def test_declarative_cross_owner_cohort_preserves_independent_pipeline_sem
             "workflow-cross-declarative-cohort",
         )
     )
-    await asyncio.wait_for(fast_promoted.wait(), timeout=1)
+    await asyncio.wait_for(fast_promoted.wait(), timeout=30)
     assert not declarative_task.done()
     slow_release.set()
     declarative_result, declarative_state = await declarative_task

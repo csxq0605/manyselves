@@ -153,7 +153,7 @@ def verify_rendered_markdown(output_path: Path, report_text: str) -> None:
         value = value.replace("**", "").replace("__", "").replace("`", "")
         value = re.sub(r"^#{1,6}\s*", "", value)
         value = re.sub(r"^>\s*", "", value)
-        value = re.sub(r"^[•·]\s*", "", value)
+        value = re.sub(r"^[-*+•·]\s+", "", value)
         value = re.sub(r"^\d+\.\s+", "", value)
         value = re.sub(r"^(\d+(?:\.\d+)+)\.\s+", r"\1 ", value)
         value = re.sub(r"【([^】]+)】[:：]?", r"\1：", value)

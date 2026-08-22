@@ -494,7 +494,8 @@ async def test_runtime_host_reexecutes_completed_subworkflow_on_loop_reentry(
     assert completed.status is WorkflowStatus.COMPLETED
     assert completed.outputs == {"result": 4}
     assert calls == 2
-    assert completed.subworkflow_states["call-child"]["variables"]["input"] == 2
+    assert completed.subworkflow_states["call-child"]["variables"] == {}
+    assert completed.subworkflow_states["call-child"]["outputs"] == {"result": 4}
 
 
 @pytest.mark.asyncio
@@ -699,7 +700,11 @@ async def test_nested_parallel_persists_progress_and_retries_only_failed_branch(
         id="recoverable-parallel",
         version="1.0.0",
         description="Persist sibling progress across one branch failure",
-        state={"left-input": 1, "right-input": 2},
+        state={
+            "left-input": 1,
+            "right-input": 2,
+            "retained-history": {"payload": "branch-history"},
+        },
         actions=[
             {
                 "id": "parallel",
@@ -778,13 +783,19 @@ async def test_nested_parallel_persists_progress_and_retries_only_failed_branch(
         contracts=contracts,
         definitions=registry,
     )
+    initial = WorkflowState.for_plan("recoverable-parallel-run", plan)
+    child_initial = WorkflowState.for_plan(
+        initial.run_id,
+        plan.subworkflow_plans[workflow.id],
+        initial_variables={"unused": {}},
+    )
+    child_initial.conversations = {
+        "review": {"external_session_id": "session-before-parallel"}
+    }
+    initial.subworkflow_states["call-child"] = child_initial.model_dump(mode="json")
 
     with pytest.raises(RuntimeError, match="injected parallel failure"):
-        await host.execute(
-            plan,
-            WorkflowState.for_plan("recoverable-parallel-run", plan),
-            context,
-        )
+        await host.execute(plan, initial, context)
 
     failed = store.load("recoverable-parallel-run")
     child_failed = failed.subworkflow_states["call-child"]
@@ -794,11 +805,28 @@ async def test_nested_parallel_persists_progress_and_retries_only_failed_branch(
     assert child_failed["parallel_states"]["parallel"]["right"]["status"] == (
         "failed"
     )
-    assert child_failed["parallel_results"]["parallel"]["left"]["left-output"] == 2
+    assert child_failed["parallel_states"]["parallel"]["left"]["variables"] == {
+        "left-output": 2
+    }
+    assert child_failed["parallel_results"]["parallel"]["left"] == {
+        "left-output": 2
+    }
+    assert child_failed["parallel_states"]["parallel"]["right"]["variables"][
+        "retained-history"
+    ] == {"payload": "branch-history"}
+    assert child_failed["parallel_states"]["parallel"]["left"]["conversations"] == {
+        "review": {"external_session_id": "session-before-parallel"}
+    }
+    assert child_failed["parallel_states"]["parallel"]["right"]["conversations"] == {
+        "review": {"external_session_id": "session-before-parallel"}
+    }
 
     completed = await host.execute(plan, failed, context)
 
     assert completed.outputs == {"result": {"left": 2, "right": 4}}
+    assert completed.subworkflow_states["call-child"]["conversations"] == {
+        "review": {"external_session_id": "session-before-parallel"}
+    }
     assert calls == {1: 1, 2: 2}
 
 
@@ -811,7 +839,10 @@ async def test_runtime_host_nests_subworkflow_state_in_the_parent_run(
         id="host-child",
         version="1.0.0",
         description="Child fixture",
-        state={"input": 0},
+        state={
+            "input": 0,
+            "retained-history": {"payload": "subworkflow-history"},
+        },
         actions=[
             {
                 "id": "child-double",
@@ -873,6 +904,9 @@ async def test_runtime_host_nests_subworkflow_state_in_the_parent_run(
 
     assert completed.outputs == {"result": 8}
     assert completed.subworkflow_states["call-child"]["status"] == "completed"
+    assert completed.subworkflow_states["call-child"]["variables"] == {}
+    assert completed.subworkflow_states["call-child"]["actions"] == {}
+    assert completed.subworkflow_states["call-child"]["outputs"] == {"result": 8}
     assert [
         (event.kind, event.workflow_id, event.action_id)
         for event in events.events
@@ -958,8 +992,8 @@ async def test_subworkflow_binds_multiple_named_parent_variables(
     )
 
     assert completed.outputs == {"result": 8}
-    assert completed.subworkflow_states["call-child"]["variables"]["left"] == 3
-    assert completed.subworkflow_states["call-child"]["variables"]["right"] == 5
+    assert completed.subworkflow_states["call-child"]["variables"] == {}
+    assert completed.subworkflow_states["call-child"]["outputs"] == {"result": 8}
 
 
 @pytest.mark.asyncio
@@ -1218,7 +1252,10 @@ async def test_runtime_host_waits_and_resumes_input_inside_subworkflow(
     assert completed.outputs == {"result": "Ada"}
     assert completed.waiting_input is None
     assert calls == 1
-    assert completed.subworkflow_states["call-child"]["variables"]["answer"] == "Ada"
+    assert completed.subworkflow_states["call-child"]["variables"] == {}
+    assert completed.subworkflow_states["call-child"]["outputs"] == {
+        "result": "Ada"
+    }
     assert [
         event.action_id
         for event in events.events
@@ -1348,7 +1385,11 @@ async def test_runtime_host_waits_inside_parallel_child_and_reuses_completed_sib
         id="parallel-waiting-parent",
         version="1.0.0",
         description="Parallel parent with one waiting nested branch",
-        state={"left-input": "left-seed", "right-input": 5},
+        state={
+            "left-input": "left-seed",
+            "right-input": 5,
+            "retained-history": {"payload": "waiting-history"},
+        },
         actions=[
             {
                 "id": "parallel",
@@ -1429,6 +1470,12 @@ async def test_runtime_host_waits_inside_parallel_child_and_reuses_completed_sib
     assert waiting.parallel_results["parallel"]["right"]["right-output"] == 10
     assert waiting.parallel_states["parallel"]["right"]["status"] == "completed"
     assert waiting.parallel_states["parallel"]["left"]["status"] == "waiting"
+    assert waiting.parallel_states["parallel"]["right"]["variables"] == {
+        "right-output": 10
+    }
+    assert waiting.parallel_states["parallel"]["left"]["variables"][
+        "retained-history"
+    ] == {"payload": "waiting-history"}
     assert right_calls == 1
 
     resumed = resume_waiting_input(

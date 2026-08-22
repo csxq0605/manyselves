@@ -241,6 +241,9 @@ class WorkflowRuntimeHost:
         semaphore = asyncio.Semaphore(concurrency)
         existing_results = state.parallel_results.get(action.id, {})
         existing_states = state.parallel_states.get(action.id, {})
+        join_action = next(
+            candidate for candidate in plan.actions if candidate.id == action.join
+        )
 
         async def execute_branch(branch_id: str, start_action_id: str):
             if branch_id in existing_results and branch_id in existing_states:
@@ -288,20 +291,31 @@ class WorkflowRuntimeHost:
                 raise outcome
             else:
                 completed_branches.append(outcome)
-        branch_states = {
-            branch_id: branch_state.model_dump(mode="json")
-            for branch_id, branch_state in completed_branches
-        }
         completed_results = {
-            branch_id: branch_state.variables
+            branch_id: {
+                join_action.inputs[branch_id]: deepcopy(
+                    branch_state.variables[join_action.inputs[branch_id]]
+                )
+            }
             for branch_id, branch_state in completed_branches
             if branch_state.status is WorkflowStatus.COMPLETED
+        }
+        branch_states = {
+            branch_id: (
+                _completed_nested_state_snapshot(
+                    branch_state,
+                    variables=completed_results[branch_id],
+                )
+                if branch_state.status is WorkflowStatus.COMPLETED
+                else branch_state.model_dump(mode="json")
+            )
+            for branch_id, branch_state in completed_branches
         }
         if failures:
             raise _ParallelWorkflowExecutionError(
                 str(failures[0]),
-                states={**existing_states, **branch_states},
-                results={**existing_results, **completed_results},
+                states=branch_states,
+                results=completed_results,
             )
         waiting_branches = sorted(
             (
@@ -324,34 +338,14 @@ class WorkflowRuntimeHost:
                     },
                 ),
                 workflow_status=WorkflowStatus.WAITING,
-                parallel_result_updates={
-                    action.id: {**existing_results, **completed_results}
-                },
-                parallel_state_updates={
-                    action.id: {**existing_states, **branch_states}
-                },
+                parallel_result_updates={action.id: completed_results},
+                parallel_state_updates={action.id: branch_states},
             )
         return ActionResult(
             output=sorted(action.branches),
             next_action_id=action.join,
-            parallel_result_updates={
-                action.id: {
-                    **existing_results,
-                    **{
-                        branch_id: branch_state.variables
-                        for branch_id, branch_state in completed_branches
-                    },
-                }
-            },
-            parallel_state_updates={
-                action.id: {
-                    **existing_states,
-                    **{
-                        branch_id: branch_state.model_dump(mode="json")
-                        for branch_id, branch_state in completed_branches
-                    },
-                }
-            },
+            parallel_result_updates={action.id: completed_results},
+            parallel_state_updates={action.id: branch_states},
         )
 
     async def _execute_subworkflow(
@@ -420,7 +414,7 @@ class WorkflowRuntimeHost:
             output=child_output,
             variable_updates={action.output_variable: child_output},
             subworkflow_state_updates={
-                action.id: completed.model_dump(mode="json")
+                action.id: _completed_nested_state_snapshot(completed)
             },
         )
 
@@ -552,6 +546,23 @@ class WorkflowRuntimeHost:
                 action_id=event.action_id,
                 data=event.data,
             )
+
+
+def _completed_nested_state_snapshot(
+    state: WorkflowState,
+    *,
+    variables: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Persist only completed child data still owned by the parent Run."""
+
+    return WorkflowState(
+        run_id=state.run_id,
+        workflow_id=state.workflow_id,
+        status=WorkflowStatus.COMPLETED,
+        variables=deepcopy(variables or {}),
+        conversations=deepcopy(state.conversations),
+        outputs=deepcopy(state.outputs),
+    ).model_dump(mode="json")
 
 
 def _plan_tool_ids(plan: ResolvedPlan) -> tuple[str, ...]:

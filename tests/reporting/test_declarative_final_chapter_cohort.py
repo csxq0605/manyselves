@@ -26,6 +26,8 @@ from manyselves.core.reporting.declarative_final_chapter_cohort import (
     retry_failed_final_chapter_lanes,
 )
 from manyselves.core.reporting.declarative_final_review_cycle import (
+    DeclarativeFinalChiefRevisionOutcome,
+    DeclarativeFinalReviewContext,
     DeclarativeFinalReviewRuntime,
     compile_final_review_workflows,
     compose_final_review_agent_invokers,
@@ -34,6 +36,8 @@ from manyselves.core.reporting.input_contracts import ValidationReport
 from manyselves.core.reporting.models import (
     CHIEF_SECTION_RESULT_PART_IDS,
     REPORT_MODULE_IDS,
+    EvidenceItem,
+    SpecialTopicPlan,
 )
 from manyselves.core.reporting.store import ReportingStore
 from manyselves.core.reporting.taxonomy import REPORT_TAXONOMY, compose_module_markdown
@@ -251,6 +255,137 @@ def _runtime_context(
         contracts=contracts,
         definitions=definitions,
         subworkflows=subworkflows,
+    )
+
+
+def test_final_chief_revision_restores_serialized_chapter_four_plan(
+    tmp_path: Path,
+) -> None:
+    """A resumed Final context must prepare Chapter 4 from its typed state."""
+
+    run_id = "run-declarative-final-chapter-four-resume"
+    runner, state, _compiler, _plan, _contracts, _subworkflows = _final_runtime_fixture(
+        tmp_path,
+        run_id,
+    )
+    special_topic_plan = SpecialTopicPlan(
+        source_ref="Inputs/topic.md",
+        source_sha256="0" * 64,
+        sections=[
+            {
+                "section_id": "4.1",
+                "title": "Dynamic topic",
+                "requirement": "Explain the project boundary and verification method.",
+            }
+        ],
+    )
+    current = _final_subject().model_copy(
+        update={
+            "special_topic_plan": special_topic_plan,
+            "special_topic_analysis": (
+                "### 4.1 Dynamic topic\n"
+                "The existing analysis explains the project boundary, identifies the "
+                "available evidence, and states a concrete verification method for the "
+                "reported conclusion."
+            ),
+        }
+    )
+    state = {
+        **state,
+        "edited_report": current.model_dump(mode="json"),
+        "special_topic_plan": special_topic_plan.model_dump(mode="json"),
+        "evidence_items": [
+            EvidenceItem(
+                id="E-final-resume",
+                subject="serialized evidence",
+                fact="the persisted finding remains traceable",
+                source={
+                    "file_id": "source-final-resume",
+                    "path": "Inputs/source.md",
+                },
+            ).model_dump(mode="json")
+        ],
+    }
+    finding = _chapter_finding("final-chapter-four", "4.1")
+    review = DeclarativeFinalReviewContext(
+        state=state,
+        current=current,
+        subject_ref=str(state["chief_candidate_ref"]),
+        findings_by_chapter={"4": [finding]},
+        pending_by_chapter={"4": [finding]},
+        initial_lane_refs={"4": f"Work/runs/{run_id}/reviews/final-chapter-4-r0.json"},
+        revision_number=1,
+    )
+    runtime = DeclarativeFinalReviewRuntime(runner, state, "workflow")
+
+    prepared = runtime.prepare_chief_revision(
+        {
+            "review": review.model_dump(mode="json"),
+            "chapter_id": "4",
+        }
+    )
+
+    assert prepared.status == "ready"
+    assert prepared.contract is not None
+    assert prepared.contract.section_ids == ["4.1"]
+    assert prepared.contract.special_topic_plan == special_topic_plan
+    assert isinstance(runtime.current_state["special_topic_plan"], SpecialTopicPlan)
+
+    submission = ChiefChapterLaneRevisionSubmission(
+        run_id=run_id,
+        base_subject_ref=review.subject_ref,
+        chapter_id="4",
+        revision=1,
+        section_ids=["4.1"],
+        part_refs={
+            "special_topic_analysis": (
+                f"Work/runs/{run_id}/drafts/chief-chapter-4-r1/r1/"
+                "special_topic_analysis.md"
+            )
+        },
+        revision_responses=[_revision_response(finding)],
+    )
+    runner._record_recovery_aggregate = lambda *_args, **_kwargs: None
+    reduced = runtime.reduce_chief_revisions(
+        {
+            "review": review.model_dump(mode="json"),
+            "outcomes": {
+                "4": DeclarativeFinalChiefRevisionOutcome(
+                    chapter_id="4",
+                    status="completed",
+                    submission=submission,
+                    output_ref=(
+                        f"Work/runs/{run_id}/reviews/chief-chapter-lane-4-r1.json"
+                    ),
+                    parts={
+                        "4.1": (
+                            "The revised analysis preserves the project boundary and "
+                            "adds a directly checkable verification method."
+                        )
+                    },
+                ).model_dump(mode="json")
+            },
+        }
+    )
+
+    assert "### 4.1 Dynamic topic" in reduced.current.special_topic_analysis
+    recheck = runtime.prepare_recheck(
+        {
+            "review": reduced.model_dump(mode="json"),
+            "chapter_id": "4",
+        }
+    )
+    assert recheck.status == "ready"
+    assert recheck.contract is not None
+    assert recheck.contract.section_ids == ["4.1"]
+    assert recheck.contract.special_topic_plan == special_topic_plan
+
+    completed_state = runtime.complete_review(
+        reduced.model_copy(update={"pending_by_chapter": {}}).model_dump(mode="json")
+    )
+    assert isinstance(completed_state["evidence_items"][0], EvidenceItem)
+    assert completed_state["final_review_completion_ref"].endswith(
+        "/reviews/final-completion.json"
     )
 
 
@@ -532,6 +667,11 @@ async def test_final_review_cycle_revises_only_affected_chapter_and_rechecks_new
         if agent_id == "chief-editor":
             assert input_payload["phase"] == "revision"
             assert session_key == "chief-chapter-1"
+            assert envelope.allowed_tools == [
+                "write_result_part",
+                "list_result_parts",
+                "submit_result",
+            ]
             assigned = finding_one if revision == 1 else finding_two
             draft_root = (
                 tmp_path / "Work" / "runs" / run_id / "drafts" / envelope.task_id / f"r{revision}"

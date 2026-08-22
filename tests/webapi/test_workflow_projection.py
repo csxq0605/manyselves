@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from uuid import UUID
 
@@ -5,7 +6,12 @@ import pytest
 
 from manyselves.application.workflow_projection import WorkflowProjectionFacade
 from manyselves.core.usage_ledger import UsageLedger
-from manyselves.kernel.workflow import ResolvedPlan, WorkflowState, WorkflowStatus
+from manyselves.kernel.workflow import (
+    ActionExecutionState,
+    ResolvedPlan,
+    WorkflowState,
+    WorkflowStatus,
+)
 from manyselves.runtime.capability_binding import (
     CapabilityRunInputError,
     CapabilityRunStateError,
@@ -197,6 +203,79 @@ def test_run_outputs_and_cost_reuse_current_reporting_state_without_new_hashes(
     assert cost["usage"]["totals"]["total_tokens"] == 15
 
 
+def test_reporting_outputs_project_declared_artifacts_without_internal_state(
+    tmp_path: Path,
+) -> None:
+    class _CompletedReportingAdapter(_ReportingAdapter):
+        def snapshot(self, run_id: str) -> dict:
+            snapshot = super().snapshot(run_id)
+            snapshot["outputs"] = []
+            return snapshot
+
+    artifact = tmp_path / "Outputs/Reports/report.docx"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"docx")
+    runtime_plan = ResolvedPlan(
+        workflow_id="distribution-reporting",
+        workflow_version="1.0.0",
+        actions=[],
+    )
+    runtime_state = WorkflowState.for_plan("report-complete", runtime_plan)
+    runtime_state.status = WorkflowStatus.COMPLETED
+    runtime_state.outputs = {
+        "result": {
+            "run_id": "report-complete",
+            "delivery_status": "delivered",
+            "delivery_completion_ref": (
+                "Work/runs/report-complete/delivery-completion.json"
+            ),
+            "output_artifacts": [
+                {
+                    "kind": "report",
+                    "path": "Outputs/Reports/report.docx",
+                    "module_id": None,
+                }
+            ],
+            "module_submissions": {"2.1": {"internal": "not a public output"}},
+        }
+    }
+    FileWorkflowStateStore(tmp_path).save(runtime_state)
+    facade = WorkflowProjectionFacade(tmp_path, _CompletedReportingAdapter())
+
+    outputs = facade.get_outputs("report-complete")
+
+    assert outputs == {
+        "run_id": "report-complete",
+        "outputs": [
+            {
+                "id": "result",
+                "kind": "value",
+                "value": {
+                    "run_id": "report-complete",
+                    "delivery_status": "delivered",
+                    "delivery_completion_ref": (
+                        "Work/runs/report-complete/delivery-completion.json"
+                    ),
+                    "output_artifacts": [
+                        {
+                            "kind": "report",
+                            "path": "Outputs/Reports/report.docx",
+                            "module_id": None,
+                        }
+                    ],
+                },
+            },
+            {
+                "id": "Outputs/Reports/report.docx",
+                "kind": "artifact",
+                "path": "Outputs/Reports/report.docx",
+                "exists": True,
+                "size": 4,
+            },
+        ],
+    }
+
+
 def _save_waiting_kernel_state(
     workspace: Path,
     run_id: str,
@@ -239,8 +318,43 @@ def test_waiting_declarative_kernel_state_is_projected_as_run_input(
     projection = facade.get_run("report-declarative-waiting")
 
     assert projection["run"]["status"] == "waiting"
-    assert projection["state"] == state.model_dump(mode="json")
+    assert projection["state"] == {
+        "run_id": state.run_id,
+        "workflow_id": state.workflow_id,
+        "status": state.status.value,
+        "next_action_index": state.next_action_index,
+        "control_steps": state.control_steps,
+    }
     assert projection["waiting_input"] == [waiting_input]
+
+
+def test_run_projection_bounds_large_kernel_state_and_preserves_runtime_fields(
+    tmp_path: Path,
+) -> None:
+    waiting_input = {
+        "input_id": "ask-clarification",
+        "contract_id": "clarification-input",
+        "title": "Clarification",
+        "description": "Collect one clarification",
+        "path": [{"action_id": "parent", "kind": "subworkflow"}],
+        "schema": {"type": "object", "properties": {"answer": {"type": "string"}}},
+    }
+    state = _save_waiting_kernel_state(tmp_path, "large-runtime-state", waiting_input)
+    state.variables["full-report"] = {"content": "x" * 250_000}
+    state.actions["run-module-cohort"] = ActionExecutionState(
+        error="module cohort failed"
+    )
+    FileWorkflowStateStore(tmp_path).save(state)
+
+    facade = WorkflowProjectionFacade(tmp_path, _ReportingAdapter())
+    projection = facade.get_run("large-runtime-state")
+
+    assert projection["run"]["status"] == "waiting"
+    assert projection["state"]["status"] == "waiting"
+    assert projection["state"]["error"] == "module cohort failed"
+    assert projection["waiting_input"] == [waiting_input]
+    assert "variables" not in projection["state"]
+    assert len(json.dumps(projection)) < 100_000
 
 
 def test_waiting_declarative_input_uses_workflow_resume_contract_for_generic_values(

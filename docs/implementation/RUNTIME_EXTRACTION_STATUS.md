@@ -15,11 +15,100 @@
 ## Current position
 
 - Current work package: `WP-00 through WP-12 plus the reopened architecture reconciliation implemented`
-- Last completed vertical slice: final seven-point architecture closure for pure State reduction, Run-frozen deep recovery, durable Recovery attempts, saved Agent Tool contracts, Runtime Events, structured Outputs, and the generic React surface
-- Current branch: `agent/declarative-runtime-implementation`; the final architecture closure is recorded by this commit on top of `903ead0`
-- Current migration stage: `all four implementation stages are code-complete; the final live-code audit found no remaining production blocker after the cached-session Recovery fix; focused affected verification passed; the single final user-operated real test is still pending`
-- Final real-test status: the isolated local server and login page are verified; submitting the local Demo login and running `parameter-adjustment`, then the real Provider/project Reporting Run, remain pending and are not claimed as passed
-- Next action: push this closure to the long-lived Draft PR, then hand the user only the browser workflow in [`FINAL_RUNTIME_REAL_TEST_HANDOFF.md`](FINAL_RUNTIME_REAL_TEST_HANDOFF.md); preserve the same Run on failure and do not switch the Legacy default path
+- Last completed vertical slice: the preserved real declarative Reporting Run completed Final Review and Delivery after Characterization-first fixes at Reporting-owned serialized-state and DOCX-rendering boundaries; the generic browser surface then projected its declared outputs, events, cost, and completed status without loading the internal Reporting state
+- Current branch: `agent/declarative-runtime-implementation`; pushed baseline `1eb36da`, with the completed real-test fixes awaiting the final focused verification and commit
+- Current migration stage: `all four implementation stages, the stateless Kernel, generic Workflow Compiler/Runtime Host, file-defined capability layer, Reporting adapter, and generic React surface are implemented. The real Provider/project/browser test passed on the preserved declarative Run. Legacy Reporting remains the default and no default-path switch is authorized.`
+- Final real-test status: `report-declarative-33ed40175b` is `completed` and delivered. It reused completed module/Cross/Chief/Final branches, retained original Conversation identities, completed the affected Final Chapter 4 branch, passed Final reduction/recheck and Delivery, and was reconciled through the existing same-Run completed-delivery path without another Provider call. The browser shows the sidebar, completed Run, 12 outputs, 2320 events, and 18,903,056 total tokens; pricing is explicitly `unconfigured`, so no monetary-cost claim is made. All 11 declared artifact paths exist, including the final DOCX, Markdown report, source index, delivery manifest, and completion records.`
+- Next action: complete only the affected Python/frontend checks, commit and push the current branch, and leave the completed Run and browser available for optional user inspection. Do not create a new Run, replay completed stages, mutate the Kernel, add hash/CAS logic, or switch the Legacy default path.
+
+## Active real-test finding — Final Chief revision Task binding
+
+The preserved Run proves that the existing correction loop executed but could
+not succeed with its declared Tool surface. The dynamic Chief revision envelope
+correctly requested `write_result_part`, `list_result_parts`, and
+`submit_result`; `bind_declared_task` correctly treated the frozen file-defined
+Task as authoritative; the v1.0.0 Task snapshot incorrectly contained only
+`submit_result`. Provider-visible execution therefore exposed only
+`submit_result` plus the existing runtime `open_tool_result`, while correction
+instructions required an unavailable `write_result_part` call.
+
+The package fix changes only
+`tasks/final-chief-chapter-revision.yaml`: version 1.0.1 declares the same three
+Tools already owned by the Chief role, dynamic envelope, contracts, and saved
+Run Tool-definition closure. Characterization first failed with the actual
+bound `['submit_result']`; after the definition fix, the focused Final cycle and
+definition selections pass (`5 passed`). No Kernel, Compiler, public interface,
+dependency, Gate, hash, CAS, lock, or validation chain changed.
+
+The Run-frozen graph invariant remains authoritative: ordinary resume must not
+silently compile or substitute changed packaged definitions. The current code
+has no plan-definition migration entry. Preserving this same Run therefore
+requires one explicit, audited, Reporting-private migration that replaces only
+the `task:final-chief-chapter-revision` v1.0.0 snapshot with packaged v1.0.1,
+records `definition.migrated`, and is a no-op when already applied. The exact
+Task ID and source version checks prevent applying the migration to a different
+definition; they are compatibility targeting, not a business acceptance Gate.
+The user approved this exact migration. It is implemented as a private,
+single-purpose function, covered by target-only, state-preservation, event, wrong-version,
+and idempotency tests, and was applied once to the preserved Run. The saved Task snapshot
+is now v1.0.1; the WorkflowState and frozen graph were not replaced. A
+`definition.migrated` event records the v1.0.0-to-v1.0.1 change.
+
+## Active real-test finding — serialized Chapter 4 plan restoration
+
+The first post-migration resume proved the corrected Tool binding: Final Chief Chapters
+1 and 3 used `write_result_part`, `list_result_parts`, and `submit_result` on their
+original Conversations and completed. Their completion artifacts remain reusable. The
+Chapter 4 branch failed before Agent invocation because
+`prepare_chief_revision()` restored `review.state` through `_set_current()` but then read
+the still-serialized mapping rather than `self.current_state`; `chapter_section_ids()`
+therefore received a `dict` instead of `SpecialTopicPlan`.
+
+Characterization first reproduced the exact
+`'dict' object has no attribute 'sections'` failure using a serialized Final Review
+context. The Reporting-private fix consistently uses the already restored runtime state
+in Chief preparation, Chapter 4 reduction, Final recheck preparation, and r1 artifact
+recovery. The focused test now covers prepare, deterministic Chapter 4 rendering, and
+recheck preparation from serialized state; the affected Final/recovery/migration
+selection passes (`8 passed`). No Kernel, Compiler, Definition field, public interface,
+dependency, Gate, hash, CAS, lock, retry limit, or validation chain changed. No Provider
+was called during this fix verification.
+
+## Final real-test findings — Delivery state and DOCX preservation
+
+The same-Run continuation next exposed two later defects and both were repaired before
+continuing. First, Final completion and Delivery received serialized `evidence_items`
+and `photo_assets` mappings where the Reporting boundary expected typed models. Focused
+Characterization reproduced the exact `'dict' object has no attribute 'id'` failure.
+Only the Reporting-private Final Review and Delivery adapters now restore those existing
+models; the Kernel and public state shape remain unchanged.
+
+Second, Delivery rendered the final document but rejected quoted Markdown bullets such
+as `> - **[已发现事实]**` during semantic preservation comparison. Characterization
+proved that the renderer preserved the prose while the verifier normalized `>` but not
+the following list marker. The renderer-specific normalization now treats Markdown
+`-`, `*`, and `+` markers like the already supported presentation bullets. No content
+validation was removed and no retry, Gate, hash/CAS, dependency, or public interface was
+added. The same Run then completed Render, Publish, Delivery completion, and the parent
+workflow.
+
+## Final browser and generic-output acceptance
+
+The completed Run was opened through the React application at the project Workflow
+route, using the existing authenticated session. The browser proved the generic
+Capability/Workflow selection, Schema-driven form, restored sidebar, completed status,
+artifact list, event trace, and cost/token panel. The public Outputs projection returns
+the declared `distribution_reporting_output` value plus 11 artifact items rather than
+the internal Reporting runtime state. The Events badge retains the full count while the
+UI renders only the latest 100 rows, avoiding thousands of DOM nodes without changing
+persisted events or failure diagnosis.
+
+The completed nested Runtime snapshots retain outputs and Conversations while omitting
+only already-terminal internal branch payloads; WAITING and FAILED snapshots remain
+fully resumable and completed Parallel siblings are not replayed. This is Runtime Host
+persistence behavior, not Kernel business logic. The real Provider/project/browser
+test is therefore complete for the preserved Run; the user may inspect it, but no
+additional acceptance stop or new Run is required.
 
 ## Final seven-point architecture closure
 
@@ -35,7 +124,7 @@ hash, CAS, lock, or Reporting-specific Kernel Action:
 | Recovery durability | Recovery attempts live in the existing bounded Conversation identity manifest. New and cached Agent sessions restore the same counters, so same-process redispatch and process restart obey the same declared `max_attempts`. |
 | Agent-visible Tools | Saved Tool implementations and execution metadata select the runtime Tool; saved input/output Contract definitions drive Provider-visible static schemas and execution validation. Task-dynamic `submit_result` and result-part schemas remain owned by their existing typed Task boundary. |
 | Scheduling and events | Direct unsafe Tools serialize inside a generic Parallel action, declared safe read-only branches keep their requested concurrency, and branch/Agent/Tool/contract/output lifecycle events are persisted and projected through the generic Run API. |
-| Outputs | The top-level Reporting workflow validates `distribution_reporting_output`; Delivery serializes artifacts at the declarative boundary, and the generic Outputs endpoint returns both the Kernel structured result and produced artifacts. |
+| Outputs | The top-level Reporting workflow validates `distribution_reporting_output`; Delivery serializes artifacts at the declarative boundary, and the Capability adapter projects only that declared public result plus produced artifacts instead of the internal Reporting state. |
 | Product surface | React starts arbitrary JSON-Schema Workflows, resumes nested WAITING paths in the same Run, displays structured value/artifact outputs, runtime events, explicit pricing state, and project-isolated Runs without Capability-ID rendering branches. |
 
 Focused evidence on the affected surfaces includes the Runtime/Compiler/neutral
@@ -65,7 +154,7 @@ implemented closures are:
 | 2. Definition-driven Tools | Workflow Tools used definitions, but Provider-visible Reporting Agent Tools still selected Python instances and scheduling metadata by hard-coded ID. | Declarative Reporting restores the Run-saved Tool definitions, resolves `capability:distribution-reporting:<implementation>`, applies model visibility, description, side-effect, parallel-safety and reuse metadata, while Legacy/no-plan execution keeps its compatibility assembly. |
 | 3. Definition-driven Agent Recovery | Recovery reached continuation/correction wrappers but Provider failures still bypassed the Controller and used only AgentLoop's fixed retry classification. | Every packaged Reporting Task supplies its Recovery policy; all production wrappers propagate it, Provider errors dispatch through the same Controller/RecoveryState, and `continue` can only preserve an already-legal retry while `stop`/`fail` can only narrow it. Existing Conversation, Session, correction, continuation, no-progress and completed-result behavior remains intact. |
 | 4. Generic input and WAITING UI | The workspace had a Reporting-ID display branch, hid WAITING input when a run was active, and reduced most real `ReportRequest` schemas to a raw JSON box. | Rendering is driven only by JSON Schema and `waitingInput`; primitive, enum, nullable, array, object/`$ref`, defaults, constraints, descriptions, typed submission, nested input IDs, and unknown-schema fallback are supported without Capability identity checks. |
-| 5. User-operable proof | The handoff mixed developer pytest, `curl`/`jq`, internal artifact inspection, Legacy/Declarative A/B, and the final user test. | Developer equivalence remains automated and focused. The final handoff is browser-only; the clean frontend build and isolated login page are verified, while the neutral Run and real Provider/project Reporting Run remain explicitly pending until performed in the browser. |
+| 5. User-operable proof | The handoff mixed developer pytest, `curl`/`jq`, internal artifact inspection, Legacy/Declarative A/B, and the final user test. | Developer equivalence remains automated and focused. The final acceptance used the browser-only Workflow page and the preserved real Provider/project Reporting Run; its completed status, generic outputs, event trace, and token/pricing panel are verified. |
 
 No new production dependency, hash, CAS, lock, default-path switch, or
 Reporting-specific Kernel Action was introduced by this reconciliation.
@@ -131,9 +220,9 @@ architecture:
 
 The audit is now closed: the missing production connections listed above are
 implemented and the prior entries remain as their commit and test evidence.
-Legacy Reporting remains the default. The one deferred real Provider, browser,
-project, and server test is now ready under the final handoff; passing it does
-not authorize a default-path switch.
+Legacy Reporting remains the default. The deferred real Provider, browser,
+project, and server test passed on the preserved declarative Run; that result
+does not authorize a default-path switch.
 
 ## Required startup checks
 

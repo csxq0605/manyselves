@@ -475,6 +475,33 @@ def test_renderer_preserves_body_labels_that_collide_with_report_heading_numbers
     assert "3.2 智能化平台功能完善" in visible
 
 
+def test_renderer_preserves_quoted_bullets_with_bold_fact_labels(tmp_path: Path) -> None:
+    template = tmp_path / "template.docx"
+    Document().save(template)
+    photo = tmp_path / "photo.png"
+    from PIL import Image
+
+    Image.new("RGB", (30, 20), color="red").save(photo)
+    report = _approved_report(photo).model_copy(
+        update={
+            "data_gap_analysis": (
+                "> - **[已发现事实]**：现场资料确认了当前状态。\n"
+                "> - **[专业判断]**：建议结合项目条件复核。\n"
+                "> - **[需设计单位计算确认]**：最终参数由设计单位计算确定。"
+            )
+        }
+    )
+    output = tmp_path / "quoted-list.docx"
+
+    result = PdsDocxRenderer(PackagedV2DocxCore(template)).render(report, output)
+
+    assert result.protected_prose_verified is True
+    visible = "\n".join(paragraph.text for paragraph in Document(output).paragraphs)
+    assert "[已发现事实]：现场资料确认了当前状态。" in visible
+    assert "[专业判断]：建议结合项目条件复核。" in visible
+    assert "[需设计单位计算确认]：最终参数由设计单位计算确定。" in visible
+
+
 def test_renderer_accepts_the_exact_citation_bound_delivery_markdown(
     tmp_path: Path,
 ) -> None:

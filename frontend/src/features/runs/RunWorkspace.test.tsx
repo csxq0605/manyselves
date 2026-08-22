@@ -14,14 +14,14 @@ describe("RunWorkspace", () => {
         usage: { totals: { estimated_cost: 1.25, pricing_status: "configured", total_tokens: 15 } },
       }),
       events: vi.fn().mockResolvedValue({
-        events: [{
+        events: Array.from({ length: 105 }, (_, index) => ({
           actionId: null,
           data: {},
           error: null,
-          kind: "workflow.completed",
+          kind: index === 104 ? "workflow.completed" : `event.${index}`,
           runId: "run-1",
           workflowId: "distribution-reporting",
-        }],
+        })),
         runId: "run-1",
       }),
       get: vi.fn().mockResolvedValue({
@@ -106,6 +106,8 @@ describe("RunWorkspace", () => {
     expect(screen.getByText("定价状态：configured")).toBeVisible();
     expect(screen.getByText("1.25")).toBeVisible();
     expect(await screen.findByText("workflow.completed")).toBeVisible();
+    expect(screen.getByText("最近 100 条")).toBeVisible();
+    expect(screen.queryByText("event.0")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "提交运行输入" })).not.toBeInTheDocument();
     expect(screen.queryByText(/sha/i)).not.toBeInTheDocument();
   });
@@ -914,5 +916,67 @@ describe("RunWorkspace", () => {
     expect(await screen.findByText("completed")).toBeVisible();
     expect(await screen.findByText("Outputs/Reports/polling.docx")).toBeVisible();
     expect(outputs).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens an existing run by Run ID", async () => {
+    const get = vi.fn().mockResolvedValue({
+      run: {
+        active: false,
+        capabilityId: "neutral-capability",
+        runId: "existing-run",
+        status: "completed",
+        taskId: null,
+        workflowId: "neutral-workflow",
+      },
+      state: {},
+      waitingInput: [],
+    });
+    const api: WorkflowApi = {
+      cost: vi.fn().mockResolvedValue({
+        runId: "existing-run",
+        usage: { totals: { total_tokens: 3 } },
+      }),
+      events: vi.fn().mockResolvedValue({ events: [], runId: "existing-run" }),
+      get,
+      inputSchema: vi.fn().mockResolvedValue({
+        contractId: "neutral-input",
+        schema: { type: "object" },
+        workflowId: "neutral-workflow",
+      }),
+      listCapabilities: vi.fn().mockResolvedValue({
+        capabilities: [{
+          description: "Neutral capability",
+          id: "neutral-capability",
+          version: "1.0.0",
+          workflowIds: ["neutral-workflow"],
+        }],
+      }),
+      listWorkflows: vi.fn().mockResolvedValue({
+        workflows: [{
+          capabilityId: "neutral-capability",
+          description: "Neutral workflow",
+          id: "neutral-workflow",
+          inputContract: "neutral-input",
+          outputContract: "neutral-output",
+          runnable: true,
+          version: "1.0.0",
+        }],
+      }),
+      outputs: vi.fn().mockResolvedValue({
+        outputs: [{ id: "existing-output", kind: "value", value: "restored" }],
+        runId: "existing-run",
+      }),
+      provideInput: vi.fn(),
+      start: vi.fn(),
+    };
+    const user = userEvent.setup();
+
+    render(<AppProviders><RunWorkspace api={api} /></AppProviders>);
+    await user.type(await screen.findByRole("textbox", { name: "Run ID" }), "existing-run");
+    await user.click(screen.getByRole("button", { name: "打开运行" }));
+
+    await waitFor(() => expect(get).toHaveBeenCalledWith("existing-run"));
+    expect(await screen.findByRole("heading", { name: "existing-run" })).toBeVisible();
+    expect(await screen.findByText("restored")).toBeVisible();
   });
 });

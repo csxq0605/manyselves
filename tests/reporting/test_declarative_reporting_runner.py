@@ -595,6 +595,33 @@ async def test_declarative_module_stage_runs_the_current_complete_cohort_as_an_a
 
 
 @pytest.mark.asyncio
+async def test_declarative_stage_does_not_construct_future_cross_state_before_modules(
+    tmp_path: Path,
+) -> None:
+    state = {"run_id": "report-declarative-production-composition"}
+
+    async def execute_current(_modules, current_state, _workflow_id) -> None:
+        current_state["module_stage"] = "completed"
+
+    production_runner = SimpleNamespace(
+        service=SimpleNamespace(workspace=tmp_path),
+        _agent=lambda: None,
+    )
+
+    completed = await execute_declarative_module_stage(
+        execute_current=execute_current,
+        requested_modules=("2.1",),
+        state=state,
+        workflow_id="workflow-production-composition",
+        state_store=FileWorkflowStateStore(tmp_path),
+        tail_runner=SimpleNamespace(_runner=production_runner),
+    )
+
+    assert completed.status is WorkflowStatus.COMPLETED
+    assert state["module_stage"] == "completed"
+
+
+@pytest.mark.asyncio
 async def test_declarative_module_stage_restores_saved_plan_without_fresh_compile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
