@@ -2285,6 +2285,25 @@ async def test_new_process_style_runner_recovers_persisted_attempt_without_provi
             AgentDefaults(max_tool_iterations=5),
             timeout=5,
         )
+        runtime_recovery_events: list[RecoveryEventKind] = []
+        recover_completed_result = getattr(
+            recovered_runner._agent_execution,
+            "recover_completed_result",
+            None,
+        )
+
+        async def observe_completed_result_recovery(*args, **kwargs):
+            runtime_recovery_events.append(RecoveryEventKind.COMPLETED_TOOL_RESULT)
+            if recover_completed_result is None:
+                return await kwargs["reuse_result"](None)
+            return await recover_completed_result(*args, **kwargs)
+
+        monkeypatch.setattr(
+            recovered_runner._agent_execution,
+            "recover_completed_result",
+            observe_completed_result_recovery,
+            raising=False,
+        )
         recovered = await recovered_runner.run(
             definition,
             envelope.model_copy(),
@@ -2293,6 +2312,9 @@ async def test_new_process_style_runner_recovers_persisted_attempt_without_provi
         )
 
         assert recovered == first
+        assert runtime_recovery_events == [
+            RecoveryEventKind.COMPLETED_TOOL_RESULT
+        ]
         assert recovery_provider.max_tokens_seen == []
         assert recovered_runner._sessions == {}
     finally:

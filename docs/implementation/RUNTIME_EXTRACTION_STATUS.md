@@ -17,14 +17,14 @@
 
 ## Current position
 
-- Current FA work package: `FA-02 — 抽取通用 Agent/Conversation/Recovery Runtime`
-- Current slice: `把 Provider 前 completed-result reuse 从 Reporting runner 迁入 AgentExecutionService；natural correction、max-token、tool-slice 与 typed progress/no-progress 的同 session 主调已迁入`
+- Current FA work package: `FA-03 — 建立 Distribution Reporting Domain Runtime`
+- Current slice: `按 taxonomy→models→agentic→submission→input 的无环 DAG 迁移 Capability 领域基础类型；FA-02 已完成`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `c46b3f3 Capability: own Final review runtime models`
+- HEAD at slice start: `3b4bec9 Runtime: own agent progress recovery`
 - Program status: `in progress`
 - Final real-test status: `not started for the final architecture`
 - Blockers: `none known`
-- Next automatic action: `迁移 Provider 前 completed-result reuse，随后按 taxonomy→models→agentic→submission→input 的无环 DAG 迁移 Capability 领域基础类型`
+- Next automatic action: `先完整迁移零 Core 依赖的 taxonomy 根组件，再迁 models/ReportRequest，禁止继续只移动仍反向依赖 Core 的外层 wrapper`
 
 ## Why the prior completion claim is reopened
 
@@ -64,7 +64,7 @@
 | Declarative Reporting 不依赖 Legacy Runner | `DeclarativeReportWorkflowRunner` 仍继承 `ReportWorkflowRunner` | 最终路径仍借用旧流程宿主和领域服务集合 | FA-02/FA-03 提取通用 Runtime 与 Reporting Domain Runtime，改为组合 |
 | Generic Application 不认识 Reporting service | Workflow routes/binding 构造仍把 ReportingFacade/host 传入 Capability factory | 通用应用依赖具体 Capability | FA-04 建立通用 Capability Runtime Binding/Services |
 | Reporting Python 归 Capability 所有 | Module Lane/Cohort、Cross Owner、Chief/Final Chapter 与 Final Review 的 22 个直接/嵌套 Contract 类型已迁入 Capability；其中部分仍引用待迁移的 Core 领域类型，Agent runner、review/render/delivery 也仍在 `manyselves/core/reporting` | 直接所有权持续收敛，但传递依赖和完整领域实现尚未归位 | FA-03/FA-05 接下来迁移完整 taxonomy→models→agentic→submission→input 领域 DAG，而非继续停留在外层 wrapper |
-| Generic Agent/Recovery 不依赖 Reporting | `AgentRecoveryDriver` 与 `AgentExecutionService` 已拥有 AgentLoop/session/turn 生命周期，并在生产路径驱动 natural correction、max-token/tool-slice 及 typed progress→NO_PROGRESS 的 CONTINUE/STOP/FAIL 与同 session dispatch | Provider 前 completed-result reuse 仍由 Reporting runner 主调；Reporting 的 durable-progress 算法/阈值、typed-result 解码和领域 Prompt 正确保留在 Capability 侧 | FA-02 再迁 completed-result 通用主调，Reporting 仅提供领域解释、Prompt/Tools/结果绑定 |
+| Generic Agent/Recovery 不依赖 Reporting | `AgentRecoveryDriver` 与 `AgentExecutionService` 已拥有 AgentLoop/session/turn 生命周期，并在生产路径驱动 natural correction、max-token/tool-slice、typed progress→NO_PROGRESS 和 pre-session completed-result reuse；Provider=0、session 未创建、旧 typed result 原样返回 | FA-02 列出的生产主调债务已清完；Reporting 正确保留 durable-progress 算法/阈值、correlation、typed decode、领域 Prompt/结果持久化。测试专用 `runtime/agent_adapter.py` 仍是 FA-05 删除债务 | FA-03 使用该通用服务组合 Capability Domain Runtime；FA-05 删除无生产用途的旧 adapter |
 | 文件 Workflow 是唯一流程所有者 | 文件流程已细化，但父 Runner/service 仍可拥有整流程入口 | 生产图仍有第二流程宿主 | FA-03 删除继承和整流程控制入口 |
 | 单一生产入口 | Legacy/declarative engine selection 仍存在，Legacy 默认 | 仍是双路径产品 | FA-04/FA-05 移除旧 selector/default/entry |
 | 旧兼容代码不在发布图 | Sequential/ControlFlow old executor、legacy adapter、Reporting facade/runner 债务仍存在 | 无生产用途和旧产品入口尚未系统删除 | FA-05 按引用与行为测试删除 |
@@ -76,8 +76,8 @@
 | --- | --- | --- |
 | FA-00 Facts and final specification | `completed` | 六份规范一致；三项生产耦合审计；完成矩阵；diff-check |
 | FA-01 Architecture boundary characterization | `completed` | 5 项生产边界 Characterization 已取得真实 RED，并以 strict xfail 保持可逐项收敛；Capability 顶层导入纯度已转绿 |
-| FA-02 Generic Agent/Conversation/Recovery Runtime | `in progress` | 中立 Agent/Tool/Recovery 行为与 Reporting 受影响测试 |
-| FA-03 Distribution Reporting Domain Runtime | `pending` | 无 Legacy 继承/委托；文件 Workflow 全链执行 |
+| FA-02 Generic Agent/Conversation/Recovery Runtime | `completed` | Session/turn、定义 Tool/Agent、correction/continuation/no-progress、pre-session result reuse 均由中立 Runtime 生产主调；focused/affected 与生产 spy 证据 |
+| FA-03 Distribution Reporting Domain Runtime | `in progress` | 无 Legacy 继承/委托；文件 Workflow 全链执行 |
 | FA-04 Generic Capability Runtime Binding | `pending` | 两个 Capability 同一 start/query/input/output/events/cost 接口 |
 | FA-05 Ownership convergence and legacy deletion | `pending` | 生产/发布图无旧 Runner/Facade/selector/adapter；领域代码归 Capability |
 | FA-06 Generic FastAPI/React surface | `pending` | Schema/WAITING/Output/Event/Cost，无 Capability-ID 流程分支 |
@@ -118,6 +118,7 @@
 - 上述恢复循环切片的 Runtime/Recovery/Reporting focused 选择 `22 passed`，定向 Ruff、compileall 和 `git diff --check` 通过。未新增 Hash、CAS、锁、Gate、attempt limit 或依赖；唯一异常分支是执行已声明 `FAIL` action 的必要语义。
 - FA-02 continuation 生产切片把 max-token 与 tool-slice sentinel 转为 `AgentRecoveryRequired` 并交给 `AgentExecutionService.execute_with_recovery`；Runtime 现在执行 Controller 的 CONTINUE/STOP/FAIL 并通过同一个 `execution_session` dispatch 下一轮，Reporting 只保留领域 continuation Prompt、typed result 解码、已有进度快照与 continuation state 持久化。两项生产 spy Characterization 实现前 `2 failed`、实现后转绿；Agent/Runtime/Reporting focused `23 passed`，主工作区复核选择 `12 passed`，Ruff、compileall、5 项架构 strict xfail 和 `git diff --check` 通过。未复制或新增 Hash、CAS、lease、锁、Gate、attempt limit 或依赖；typed no-progress 与 completed-result reuse 仍明确为待迁移。
 - FA-02 typed progress/no-progress 切片新增不可歧义的 `AgentRecoveryProgress(progressed|no_progress)`，Runtime 负责调用 `observe_progress`、形成 `NO_PROGRESS` directive 并执行 CONTINUE/STOP/FAIL；Reporting 删除私有 action 决策/兼容校验，只提供既有 durable/conversation snapshot、既有 no-progress 阈值、状态持久化和领域 stop result。生产观察 Characterization 实现前 `2 failed`、实现后转绿；Agent/Runtime/Reporting focused `25 passed`，主工作区复核 `13 passed`，Ruff、compileall、5 项架构 strict xfail 和 `git diff --check` 通过。Runtime 未复制 Reporting 的 hash snapshot 或阈值，未新增 Gate、Hash、CAS、lease、锁、attempt limit 或依赖；completed-result reuse 仍为下一项债务。
+- FA-02 最终 completed-result 切片新增 pre-session `AgentExecutionService.recover_completed_result`，在 Reporting 已完成既有 correlation/terminal/identity 验证和 typed decode 后，由 Runtime 主调 `COMPLETED_TOOL_RESULT` 的默认/声明式 REUSE_RESULT、STOP、FAIL。生产 spy Characterization 实现前 `1 failed`，实现后 Provider 调用仍为 `0`、Runtime session registry 为空、原 session identity 和旧 typed result 原样复用。Runtime/Reporting affected `26 passed`，主工作区复核 `15 passed`，Ruff、compileall、5 项架构 strict xfail 和 `git diff --check` 通过；未复制或新增 Hash、CAS、lease、锁、Gate、attempt limit、action compatibility 校验或依赖。至此 FA-02 规范列出的生产 Agent/Conversation/Recovery 主调债务清完，测试专用 Legacy adapter 留到 FA-05 删除。
 - 本阶段没有运行全量回归，没有调用 Provider/浏览器/服务器，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。
 
 ## Research decisions
@@ -163,7 +164,7 @@ git diff --check
 | Stateless Kernel business-neutral | `foundation present; final audit pending` |
 | File definitions → complete ResolvedPlan | `foundation present; post-refactor audit pending` |
 | One Generic Runtime Host | `foundation present; legacy host removal pending` |
-| Generic Agent/Tool/Conversation/Recovery | `partial; session/turn and natural correction extracted, continuation/progress/reuse pending` |
+| Generic Agent/Tool/Conversation/Recovery | `achieved for the production execution path; final legacy-adapter removal audit remains in FA-05` |
 | Capability-owned Reporting Domain Runtime | `not achieved` |
 | No Declarative→Legacy Runner inheritance/delegation | `not achieved` |
 | Generic Capability Binding/Application | `partial; Reporting host removal pending` |
@@ -178,12 +179,11 @@ git diff --check
 
 ## Next automatic sequence
 
-1. 执行 FA-02 通用 Runtime 提取；
-2. 执行 FA-03 Reporting Domain Runtime 解耦；
-3. 执行 FA-04 通用 Binding；
-4. 执行 FA-05 旧路径删除和物理归属收敛；
-5. 执行 FA-06 产品表面复审；
-6. 执行 FA-07 自动完成审计；
+1. 执行 FA-03 Reporting Domain Runtime 解耦；
+2. 执行 FA-04 通用 Binding；
+3. 执行 FA-05 旧路径删除和物理归属收敛；
+4. 执行 FA-06 产品表面复审；
+5. 执行 FA-07 自动完成审计；
 7. 只在全部自动证据通过后进行最终一次真实测试。
 
 ## Resume instruction

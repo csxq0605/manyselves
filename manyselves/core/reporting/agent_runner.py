@@ -3594,25 +3594,47 @@ class ReportingAgentRunner:
                 # but an explicit later dispatch must be allowed to create a
                 # fresh attempt rather than returning that non-success forever.
                 if terminal.status == AgentRunStatus.COMPLETED.value:
-                    apply_recovery_policy(
-                        RecoveryEventKind.COMPLETED_TOOL_RESULT,
-                        RecoveryActionKind.REUSE_RESULT,
-                        {"task_id": envelope.task_id, "source": "persisted_result"},
-                    )
                     runtime_id = self._runtime_id(
                         definition,
                         identity_key,
                         recovery_session_id,
                     )
-                    self._record_identity(
-                        workflow_id=workflow_id,
-                        envelope=envelope,
-                        identity_key=identity_key,
-                        session_id=recovery_session_id,
-                        runtime_id=runtime_id,
-                        status="completed",
+
+                    async def reuse_completed_result(
+                        _directive: AgentRecoveryDirective,
+                    ) -> AgentResult:
+                        self._record_identity(
+                            workflow_id=workflow_id,
+                            envelope=envelope,
+                            identity_key=identity_key,
+                            session_id=recovery_session_id,
+                            runtime_id=runtime_id,
+                            status="completed",
+                        )
+                        return recovered_result
+
+                    async def stop_completed_result(
+                        directive: AgentRecoveryDirective,
+                    ) -> AgentResult:
+                        return recovered_result.model_copy(
+                            update={
+                                "status": AgentRunStatus.INCOMPLETE,
+                                "reason": (
+                                    directive.reason
+                                    or "completed result recovery stopped"
+                                ),
+                            }
+                        )
+
+                    return await self._agent_execution.recover_completed_result(
+                        recovery=recovery_driver,
+                        detail={
+                            "task_id": envelope.task_id,
+                            "source": "persisted_result",
+                        },
+                        reuse_result=reuse_completed_result,
+                        stop=stop_completed_result,
                     )
-                    return recovered_result
         # Provider call manifests are immutable audit evidence, not execution
         # locks. A failed request did not create a validated local result, so
         # an explicit same-run resume may create a fresh physical attempt.

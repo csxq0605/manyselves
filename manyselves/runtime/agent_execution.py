@@ -452,6 +452,45 @@ class AgentExecutionService:
                 return await reuse_result(outcome, directive)
             request = await build_turn(directive, recovery_request)
 
+    async def recover_completed_result(
+        self,
+        *,
+        recovery: AgentRecoveryDriver,
+        detail: Mapping[str, Any],
+        reuse_result: Callable[
+            [AgentRecoveryDirective],
+            Coroutine[Any, Any, Any],
+        ],
+        stop: Callable[
+            [AgentRecoveryDirective],
+            Coroutine[Any, Any, Any],
+        ],
+    ) -> Any:
+        """Resolve a verified completed result before creating an Agent session."""
+
+        decision = recovery.decide(
+            RecoveryEventKind.COMPLETED_TOOL_RESULT,
+            detail,
+        )
+        directive = AgentRecoveryDirective(
+            event_kind=RecoveryEventKind.COMPLETED_TOOL_RESULT,
+            action=(
+                RecoveryActionKind.REUSE_RESULT
+                if decision is None
+                else decision.action
+            ),
+            prompt=None if decision is None else decision.prompt,
+            reason=None if decision is None else decision.reason,
+            detail=detail,
+        )
+        if directive.action is RecoveryActionKind.STOP:
+            return await stop(directive)
+        if directive.action is RecoveryActionKind.FAIL:
+            raise AgentRecoveryExecutionError(
+                "recovery policy declared fail for completed_tool_result"
+            )
+        return await reuse_result(directive)
+
     async def wait_until_turn_complete(
         self,
         session: AgentExecutionSession,

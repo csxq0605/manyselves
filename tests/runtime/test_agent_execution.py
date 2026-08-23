@@ -501,6 +501,31 @@ async def test_recovery_loop_stops_no_progress_without_another_turn() -> None:
 
 
 @pytest.mark.asyncio
+async def test_completed_result_reuse_does_not_create_a_session() -> None:
+    service = AgentExecutionService(MessageBus())
+    completed = object()
+    actions: list[RecoveryActionKind] = []
+
+    async def reuse_result(directive):
+        actions.append(directive.action)
+        return completed
+
+    async def stop(_directive):
+        return "stopped"
+
+    recovered = await service.recover_completed_result(
+        recovery=AgentRecoveryDriver(),
+        detail={"task_id": "task-1", "source": "persisted_result"},
+        reuse_result=reuse_result,
+        stop=stop,
+    )
+
+    assert recovered is completed
+    assert actions == [RecoveryActionKind.REUSE_RESULT]
+    assert service.sessions == {}
+
+
+@pytest.mark.asyncio
 async def test_dispatch_turn_returns_capability_terminal_before_natural_response() -> None:
     bus = MessageBus()
     bus_task = asyncio.create_task(bus.process_queue())
