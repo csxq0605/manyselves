@@ -21,6 +21,7 @@ from manyselves.kernel.executors import (
     SequentialWorkflowExecutor,
     build_builtin_executor_registry,
 )
+from manyselves.kernel.ports import AgentInvocationOutcome
 from manyselves.kernel.recovery import (
     RecoveryActionKind,
     RecoveryController,
@@ -151,6 +152,26 @@ class RecoveryAwareReportingRunner(FakeReportingRunner):
             shared_artifacts,
             workflow_id=workflow_id,
             session_key=session_key,
+        )
+
+
+class OutcomeOnlyAgentInvoker:
+    """Return a Provider session without mutating the Kernel conversation."""
+
+    async def invoke(
+        self,
+        agent,
+        task,
+        value,
+        conversation,
+        *,
+        task_id: str,
+    ) -> AgentInvocationOutcome:
+        assert conversation.external_session_id is None
+        return AgentInvocationOutcome(
+            status="ok",
+            result={"value": value["value"] + 1},
+            session_id="session-from-outcome",
         )
 
 
@@ -345,7 +366,6 @@ async def test_invoke_agent_persists_the_provider_session_on_the_conversation(
             },
         ],
     )
-    runner = FakeReportingRunner()
     store = FileConversationStore(tmp_path)
     conversations = ConversationRegistry(store)
     executors = build_builtin_executor_registry()
@@ -357,7 +377,7 @@ async def test_invoke_agent_persists_the_provider_session_on_the_conversation(
         plan,
         WorkflowState.for_plan("run-1", plan),
         RuntimeContext(
-            agents={agent.id: _adapter(tmp_path, runner, [agent.id])},
+            agents={agent.id: OutcomeOnlyAgentInvoker()},
             definitions=definitions,
             contracts={
                 input_contract.id: build_contract_adapter(input_contract),
@@ -373,10 +393,10 @@ async def test_invoke_agent_persists_the_provider_session_on_the_conversation(
     )
 
     assert restored is not None
-    assert restored.external_session_id == "session-1"
+    assert restored.external_session_id == "session-from-outcome"
     assert (
         completed.variables["conversation"].external_session_id
-        == "session-1"
+        == "session-from-outcome"
     )
 
 

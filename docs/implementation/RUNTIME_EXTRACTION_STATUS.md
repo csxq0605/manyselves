@@ -18,13 +18,13 @@
 ## Current position
 
 - Current FA work package: `FA-02 — 抽取通用 Agent/Conversation/Recovery Runtime`
-- Current slice: `在保持现有恢复语义的前提下，建立生产通用 AgentExecutionService，并让 InvokeAgent 不再依赖 Reporting Runner 私有入口`
+- Current slice: `建立真正拥有 AgentLoop/session/continuation 的 AgentExecutionService；禁止以 callback 包装 ReportingAgentRunner 冒充抽取`
 - Current branch at slice start: `agent/declarative-runtime-implementation`
-- HEAD at slice start: `f23bd8a Docs: record declarative real-run completion`
+- HEAD at slice start: `390f873 Architecture: define final capability runtime boundary`
 - Program status: `in progress`
 - Final real-test status: `not started for the final architecture`
 - Blockers: `none known`
-- Next automatic action: `勘察 ReportingAgentRunner/AgentLoop 的通用与领域边界，先固定中立 Agent recovery Characterization，再执行 FA-02 第一个生产垂直切片`
+- Next automatic action: `以中立脚本 Agent 固定 session/continuation/correction/no-progress/reuse Characterization，再让 AgentExecutionService 直接拥有 AgentLoop 生命周期`
 
 ## Why the prior completion claim is reopened
 
@@ -64,7 +64,7 @@
 | Declarative Reporting 不依赖 Legacy Runner | `DeclarativeReportWorkflowRunner` 仍继承 `ReportWorkflowRunner` | 最终路径仍借用旧流程宿主和领域服务集合 | FA-02/FA-03 提取通用 Runtime 与 Reporting Domain Runtime，改为组合 |
 | Generic Application 不认识 Reporting service | Workflow routes/binding 构造仍把 ReportingFacade/host 传入 Capability factory | 通用应用依赖具体 Capability | FA-04 建立通用 Capability Runtime Binding/Services |
 | Reporting Python 归 Capability 所有 | 大量领域模型、Agent runner、review/render/delivery 仍在 `manyselves/core/reporting` | 物理和语义归属混合 | FA-03/FA-05 分类迁移 |
-| Generic Agent/Recovery 不依赖 Reporting | 成熟 correction/continuation/session 逻辑仍集中在 Reporting runner/loops | 其他 Capability 无法直接获得同等能力 | FA-02 以通用端口提取，Reporting 提供领域 Prompt/结果绑定 |
+| Generic Agent/Recovery 不依赖 Reporting | `AgentRecoveryDriver` 已在 Runtime 并由 Reporting 生产路径使用；AgentLoop/session/continuation/reuse 主调度仍集中在 Reporting runner/loops | 通用恢复机制已开始抽取，但完整 AgentExecutionService 尚不存在 | FA-02 继续提取，Reporting 仅提供领域 Prompt/Tools/结果绑定 |
 | 文件 Workflow 是唯一流程所有者 | 文件流程已细化，但父 Runner/service 仍可拥有整流程入口 | 生产图仍有第二流程宿主 | FA-03 删除继承和整流程控制入口 |
 | 单一生产入口 | Legacy/declarative engine selection 仍存在，Legacy 默认 | 仍是双路径产品 | FA-04/FA-05 移除旧 selector/default/entry |
 | 旧兼容代码不在发布图 | Sequential/ControlFlow old executor、legacy adapter、Reporting facade/runner 债务仍存在 | 无生产用途和旧产品入口尚未系统删除 | FA-05 按引用与行为测试删除 |
@@ -101,6 +101,9 @@
 - FA-00 将 `AGENTS.md`、产品定位、主架构方案、自主执行协议、官方研究和本状态文件统一改写为最终定义驱动形态；`git diff --check` 通过。
 - FA-01 新增 `tests/architecture/test_final_runtime_boundaries.py`。实现前 5 项均真实失败，分别覆盖 generic layer import、Binding host、Contract ownership、Runner inheritance 和五个文件入口；当前以 strict xfail 记录尚未修复的生产差异，任何完整修复都会先产生 XPASS，必须同步移除对应标记。
 - FA-01 顶层 Capability 导入纯度 Characterization 先失败，随后移除 `distribution_reporting.__init__` 对 compatibility adapters 的 eager import；focused Capability tests `25 passed`，架构边界选择 `5 xfailed`，定向 Ruff 与 `git diff --check` 通过。
+- FA-02 `AgentRecoveryDriver` Characterization 先因模块不存在而失败；实现后 `ReportingAgentRunner` 生产路径通过中立 Driver 执行 Recovery event、progress observation、Provider decision 和 attempt snapshot/restore。Runtime/Kernel/Agent Adapter focused 选择 `23 passed`，Reporting recovery 受影响选择 `11 passed, 91 deselected`。
+- Generic `InvokeAgentExecutor` 现在从 `AgentInvocationOutcome.session_id` 回写并持久化 `ConversationRecord.external_session_id`，不再要求 Capability Invoker 私下修改 Conversation；新的 outcome-only Invoker Characterization 先失败后转绿。
+- 上述 FA-02 切片的定向 Ruff、compileall、5 项架构 strict xfail 和 `git diff --check` 通过；新增代码扫描未发现 Gate、Hash、CAS 或锁逻辑。
 - 本阶段没有运行全量回归，没有调用 Provider/浏览器/服务器，没有新增 Gate、Hash、CAS、锁、校验链或生产依赖。
 
 ## Research decisions

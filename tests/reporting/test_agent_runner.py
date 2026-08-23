@@ -67,9 +67,9 @@ from manyselves.kernel.definitions import (
 from manyselves.kernel.recovery import (
     RecoveryActionKind,
     RecoveryEventKind,
-    RecoveryState,
 )
 from manyselves.kernel.workflow import ResolvedPlan
+from manyselves.runtime.agent_recovery import AgentRecoveryDriver
 from manyselves.runtime.state_store import FileWorkflowStateStore
 
 
@@ -3009,9 +3009,8 @@ def test_conversation_trace_persists_only_bounded_restart_state(
             LLMMessage(role="assistant", content="已处理。"),
         ]
     )
-    recovery_state = RecoveryState(
-        attempts={RecoveryEventKind.TOOL_CONTRACT_ERROR: 2}
-    )
+    recovery_driver = AgentRecoveryDriver(_current_reporting_recovery_policy())
+    assert recovery_driver.restore_attempts({"tool_contract_error": 2})
 
     manifest_path = runner._save_conversation_trace(
         loop,
@@ -3019,7 +3018,7 @@ def test_conversation_trace_persists_only_bounded_restart_state(
         "module-2.1-specialist--session-test",
         "session-test",
         status="waiting",
-        recovery_state=recovery_state,
+        recovery_driver=recovery_driver,
     )
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -3048,17 +3047,15 @@ def test_conversation_trace_persists_only_bounded_restart_state(
     assert decoded["messages"] == []
     assert decoded["status"] == "waiting"
     assert long_content not in manifest_path.read_text(encoding="utf-8")
-    restored_recovery = RecoveryState()
+    restored_recovery = AgentRecoveryDriver(_current_reporting_recovery_policy())
     restored_loop = SimpleNamespace(restore_conversation=lambda *_args, **_kwargs: None)
     assert runner._restore_persisted_session(
         restored_loop,
         envelope=envelope,
         runtime_id="module-2.1-specialist--session-test",
-        recovery_state=restored_recovery,
+        recovery_driver=restored_recovery,
     )
-    assert restored_recovery.attempts == {
-        RecoveryEventKind.TOOL_CONTRACT_ERROR: 2
-    }
+    assert restored_recovery.snapshot_attempts() == {"tool_contract_error": 2}
 
     unsupported = tmp_path / "Work/runs/run-compressed-trace/unsupported.json"
     unsupported.write_text(
@@ -3559,21 +3556,22 @@ def _install_recovery_controller_spy(
     calls: list[tuple[str, str]],
     observations: list[tuple[bool, str | None]],
 ) -> None:
-    real_controller = agent_runner_module.RecoveryController
+    real_driver = agent_runner_module.AgentRecoveryDriver
 
-    class SpyRecoveryController:
-        def __init__(self) -> None:
-            self.delegate = real_controller()
-
-        def decide(self, event, policy, state):
-            decision = self.delegate.decide(event, policy, state)
-            calls.append((event.kind.value, decision.action.value))
+    class SpyAgentRecoveryDriver(real_driver):
+        def decide(self, event_kind, detail=None):
+            decision = super().decide(event_kind, detail)
+            if decision is not None:
+                calls.append((decision.event.kind.value, decision.action.value))
             return decision
 
-        def observe_progress(self, observation, policy, state):
-            decision = self.delegate.observe_progress(observation, policy, state)
+        def observe_progress(self, *, progressed, detail=None):
+            decision = super().observe_progress(
+                progressed=progressed,
+                detail=detail,
+            )
             observations.append(
-                (observation.progressed, decision.action.value if decision else None)
+                (progressed, decision.action.value if decision else None)
             )
             if decision is not None:
                 calls.append((decision.event.kind.value, decision.action.value))
@@ -3581,8 +3579,8 @@ def _install_recovery_controller_spy(
 
     monkeypatch.setattr(
         agent_runner_module,
-        "RecoveryController",
-        SpyRecoveryController,
+        "AgentRecoveryDriver",
+        SpyAgentRecoveryDriver,
     )
 
 

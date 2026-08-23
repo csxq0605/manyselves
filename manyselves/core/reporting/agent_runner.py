@@ -34,15 +34,9 @@ from ...kernel.definitions import (
     RecoveryPolicyDefinition,
     ToolDefinition,
 )
-from ...kernel.recovery import (
-    ProgressObservation,
-    RecoveryActionKind,
-    RecoveryController,
-    RecoveryEvent,
-    RecoveryEventKind,
-    RecoveryState,
-)
+from ...kernel.recovery import RecoveryActionKind, RecoveryEventKind
 from ...kernel.workflow import ResolvedPlan, restore_plan_definition_registry
+from ...runtime.agent_recovery import AgentRecoveryDriver
 from ..artifacts import ArtifactGateway, ArtifactGrant, ToolContractError, parse_artifact
 from ..artifacts.content_store import ContentAddressedStore
 from ..loops.agent_loop import (
@@ -3283,7 +3277,7 @@ class ReportingAgentRunner:
         *,
         envelope: TaskEnvelope,
         runtime_id: str,
-        recovery_state: RecoveryState | None = None,
+        recovery_driver: AgentRecoveryDriver | None = None,
     ) -> bool:
         """Restore one identity from bounded business restart state.
 
@@ -3300,9 +3294,8 @@ class ReportingAgentRunner:
         messages = payload.get("messages")
         if not isinstance(messages, list):
             return False
-        if recovery_state is not None and not self._restore_recovery_state(
-            payload,
-            recovery_state,
+        if recovery_driver is not None and not recovery_driver.restore_attempts(
+            payload.get("recovery_attempts", {})
         ):
             return False
         loop.restore_conversation(
@@ -3334,20 +3327,6 @@ class ReportingAgentRunner:
         if payload.get("agent_id") not in {None, envelope.agent_id}:
             return None
         return payload
-
-    @staticmethod
-    def _restore_recovery_state(
-        payload: dict[str, Any],
-        recovery_state: RecoveryState,
-    ) -> bool:
-        try:
-            restored_recovery = RecoveryState.model_validate(
-                {"attempts": payload.get("recovery_attempts", {})}
-            )
-        except (TypeError, ValueError):
-            return False
-        recovery_state.attempts = dict(restored_recovery.attempts)
-        return True
 
     async def run(
         self,
@@ -3410,21 +3389,16 @@ class ReportingAgentRunner:
         identity_lease: IdentityLease,
         recovery_policy: RecoveryPolicyDefinition | None = None,
     ) -> AgentResult:
-        recovery_controller = RecoveryController() if recovery_policy is not None else None
-        recovery_state = RecoveryState()
+        recovery_driver = AgentRecoveryDriver(recovery_policy)
 
         def apply_recovery_policy(
             event_kind: RecoveryEventKind,
             expected_action: RecoveryActionKind,
             detail: dict[str, Any] | None = None,
         ):
-            if recovery_controller is None or recovery_policy is None:
+            decision = recovery_driver.decide(event_kind, detail)
+            if decision is None:
                 return None
-            decision = recovery_controller.decide(
-                RecoveryEvent(kind=event_kind, detail=dict(detail or {})),
-                recovery_policy,
-                recovery_state,
-            )
             if decision.action is RecoveryActionKind.FAIL:
                 raise RuntimeError(
                     f"recovery policy {recovery_policy.id} failed "
@@ -3445,15 +3419,9 @@ class ReportingAgentRunner:
             progressed: bool,
             detail: dict[str, Any] | None = None,
         ):
-            if recovery_controller is None or recovery_policy is None:
-                return None
-            decision = recovery_controller.observe_progress(
-                ProgressObservation(
-                    progressed=progressed,
-                    detail=dict(detail or {}),
-                ),
-                recovery_policy,
-                recovery_state,
+            decision = recovery_driver.observe_progress(
+                progressed=progressed,
+                detail=detail,
             )
             if decision is not None and decision.action is RecoveryActionKind.FAIL:
                 raise RuntimeError(
@@ -3482,26 +3450,19 @@ class ReportingAgentRunner:
         async def provider_recovery_decider(
             detail: dict[str, Any],
         ) -> str | None:
-            if recovery_controller is None or recovery_policy is None:
+            action = await recovery_driver.provider_decision(detail)
+            if action is None:
                 return None
-            decision = recovery_controller.decide(
-                RecoveryEvent(
-                    kind=RecoveryEventKind.PROVIDER_ERROR,
-                    detail=dict(detail),
-                ),
-                recovery_policy,
-                recovery_state,
-            )
-            if decision.action not in {
+            if RecoveryActionKind(action) not in {
                 RecoveryActionKind.CONTINUE,
                 RecoveryActionKind.STOP,
                 RecoveryActionKind.FAIL,
             }:
                 raise RuntimeError(
-                    f"recovery policy action {decision.action.value} cannot "
+                    f"recovery policy action {action} cannot "
                     "handle provider_error"
                 )
-            return decision.action.value
+            return action
 
         router = self._routers.get(workflow_id)
         if router is None:
@@ -3746,7 +3707,7 @@ class ReportingAgentRunner:
                 loop,
                 envelope=envelope,
                 runtime_id=runtime_id,
-                recovery_state=recovery_state,
+                recovery_driver=recovery_driver,
             )
             self._sessions[cache_key] = (loop, session_id, runtime_id)
             self._session_route_bindings[cache_key] = route_binding
@@ -3760,9 +3721,8 @@ class ReportingAgentRunner:
                 runtime_id=runtime_id,
             )
             if persisted_identity is not None:
-                self._restore_recovery_state(
-                    persisted_identity,
-                    recovery_state,
+                recovery_driver.restore_attempts(
+                    persisted_identity.get("recovery_attempts", {})
                 )
             task_correlation = self._task_correlation(
                 envelope,
@@ -4553,7 +4513,7 @@ class ReportingAgentRunner:
                 loop, envelope, runtime_id, session_id,
                 shared_artifacts=shared_artifacts,
                 status="cancelled",
-                recovery_state=recovery_state,
+                recovery_driver=recovery_driver,
             )
             raise
         except Exception:
@@ -4568,7 +4528,7 @@ class ReportingAgentRunner:
                 session_id,
                 shared_artifacts=shared_artifacts,
                 status="failed",
-                recovery_state=recovery_state,
+                recovery_driver=recovery_driver,
             )
             raise
         await loop.wait_until_turn_complete()
@@ -4581,7 +4541,7 @@ class ReportingAgentRunner:
             loop, envelope, runtime_id, session_id,
             shared_artifacts=shared_artifacts,
             status=result.status.value,
-            recovery_state=recovery_state,
+            recovery_driver=recovery_driver,
         )
         self._save_session_summary(
             loop,
@@ -4609,7 +4569,7 @@ class ReportingAgentRunner:
         *,
         shared_artifacts: list[str] | None = None,
         status: str,
-        recovery_state: RecoveryState | None = None,
+        recovery_driver: AgentRecoveryDriver | None = None,
     ) -> Path:
         """Persist only durable identity and canonical business references."""
 
@@ -4672,14 +4632,11 @@ class ReportingAgentRunner:
                 "status": status,
                 "encoding": "identity+refs",
                 "transcript_semantics": "durable_identity_reference_state_v1",
-                "recovery_attempts": {
-                    kind.value: attempt
-                    for kind, attempt in (
-                        recovery_state.attempts.items()
-                        if recovery_state is not None
-                        else ()
-                    )
-                },
+                "recovery_attempts": (
+                    recovery_driver.snapshot_attempts()
+                    if recovery_driver is not None
+                    else {}
+                ),
                 "identity_state": identity_state,
                 "business_refs": {
                     "input_contract_ref": envelope.input_contract_ref,

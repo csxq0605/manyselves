@@ -461,6 +461,8 @@ class InvokeAgentExecutor:
                 outcome.error or f"agent {agent.id} returned {outcome.status}"
             )
         validated_output = output_contract.validate(outcome.result)
+        if outcome.session_id is not None:
+            conversation.external_session_id = outcome.session_id
         context.conversations.remember(conversation)
         return ActionResult(
             output=outcome.model_dump(mode="json"),
