@@ -14,6 +14,9 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     report_taxonomy_snapshot,
     reset_report_taxonomy,
 )
+from manyselves.capabilities.distribution_reporting.runtime.assets import (
+    validate_final_report_markdown,
+)
 from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import (
     delivery_root,
 )
@@ -73,7 +76,6 @@ from manyselves.capabilities.distribution_reporting.runtime.state.parallel impor
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.core.loops.bus import MessageBus
 from manyselves.core.reporting import review_lifecycle as review_lifecycle_module
-from manyselves.core.reporting.assets import validate_final_report_markdown
 from manyselves.core.reporting.prompts import PromptAssembler
 from manyselves.core.reporting.review_lifecycle import (
     ReviewLifecycleError,

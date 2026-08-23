@@ -46,6 +46,16 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     reset_report_taxonomy,
     resolve_submodule,
 )
+from manyselves.capabilities.distribution_reporting.runtime.assets import (
+    ReportAssetAssembler,
+    expand_approved_module_markers,
+    validate_aggregate_retention,
+    validate_editor_protection,
+    validate_editor_quality,
+    validate_existing_markdown_modules,
+    validate_final_report_markdown,
+    validate_module_markdown_consistency,
+)
 from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import (
     DeliveryTools,
     _DeliveryPreparationDependencies,
@@ -160,16 +170,6 @@ from manyselves.capabilities.distribution_reporting.runtime.state.parallel impor
 from ...kernel.definitions import RecoveryPolicyDefinition
 from ..usage_ledger import UsageLedger
 from .agent_runner import ReportingAgentRunner
-from .assets import (
-    ReportAssetAssembler,
-    expand_approved_module_markers,
-    validate_aggregate_retention,
-    validate_editor_protection,
-    validate_editor_quality,
-    validate_existing_markdown_modules,
-    validate_final_report_markdown,
-    validate_module_markdown_consistency,
-)
 from .chapter_parallel import CHAPTER_SECTION_IDS, active_chapters
 from .config import AgentDefinition as ReportingAgentDefinition
 from .cost_control import StageCostController

@@ -9,6 +9,13 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
     REPORT_TAXONOMY,
     compose_module_markdown,
 )
+from manyselves.capabilities.distribution_reporting.runtime.assets import (
+    ReportAssetAssembler,
+    validate_editor_protection,
+    validate_editor_quality,
+    validate_existing_markdown_modules,
+    validate_module_markdown_consistency,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
     ClaimRecord,
     EditedReportSubmission,
@@ -20,13 +27,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.reporting imp
     EvidenceItem,
     PhotoAsset,
     SourceLocation,
-)
-from manyselves.core.reporting.assets import (
-    ReportAssetAssembler,
-    validate_editor_protection,
-    validate_editor_quality,
-    validate_existing_markdown_modules,
-    validate_module_markdown_consistency,
 )
 from manyselves.core.reporting.review_preflight import evaluate_module_review_preflight
 

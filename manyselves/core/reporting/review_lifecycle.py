@@ -18,6 +18,11 @@ from manyselves.capabilities.distribution_reporting.domain.revision_diff import 
     build_revision_diff,
 )
 from manyselves.capabilities.distribution_reporting.domain.taxonomy import REPORT_TAXONOMY
+from manyselves.capabilities.distribution_reporting.runtime.assets import (
+    validate_aggregate_retention,
+    validate_editor_protection,
+    validate_editor_quality,
+)
 from manyselves.capabilities.distribution_reporting.runtime.models import (
     review as review_models,
 )
@@ -83,11 +88,6 @@ from manyselves.capabilities.distribution_reporting.runtime.state.parallel impor
     WorkflowReducer,
 )
 
-from .assets import (
-    validate_aggregate_retention,
-    validate_editor_protection,
-    validate_editor_quality,
-)
 from .chapter_parallel import CHAPTER_SECTION_IDS
 from .review_preflight import evaluate_module_review_preflight
 
