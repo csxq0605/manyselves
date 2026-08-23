@@ -679,7 +679,7 @@ async def test_aggregate_existing_runtime_binds_typed_agent_to_generic_host(
 
 
 @pytest.mark.asyncio
-async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_delivery(
+async def test_aggregate_existing_tail_completes_delivery_without_other_cohorts(
     tmp_path: Path,
 ) -> None:
     from manyselves.capabilities.distribution_reporting import (
@@ -992,30 +992,28 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
     )
 
     try:
-        with pytest.raises(
-            RuntimeError,
-            match="missing tool adapter: prepare-render-delivery",
-        ):
-            await host.execute(
-                plan,
-                state,
-                RuntimeContext(
-                    tools=_tool_bundle(tmp_path, run_id),
-                    contracts=build_contract_catalog(registry),
-                    definitions=registry,
-                    agents={
-                        "aggregate-editor": RecordingAggregateInvoker(),
-                        "chief-editor": chief_bridge,
-                        "chief-editor-auditor": final_bridge,
-                    },
-                ),
-            )
+        completed = await host.execute(
+            plan,
+            state,
+            RuntimeContext(
+                tools=_tool_bundle(tmp_path, run_id),
+                contracts=build_contract_catalog(registry),
+                definitions=registry,
+                agents={
+                    "aggregate-editor": RecordingAggregateInvoker(),
+                    "chief-editor": chief_bridge,
+                    "chief-editor-auditor": final_bridge,
+                },
+            ),
+        )
 
         persisted = store.load(run_id)
+        assert completed.status.value == "completed"
+        assert persisted.status.value == "completed"
         assert persisted.actions["run-aggregate-existing"].status.value == "completed"
         assert persisted.actions["project-aggregate-existing-tail"].status.value == "completed"
         assert persisted.actions["run-final-review"].status.value == "completed"
-        assert persisted.actions["run-report-delivery"].status.value == "failed"
+        assert persisted.actions["run-report-delivery"].status.value == "completed"
         final_state = WorkflowState.model_validate(
             persisted.subworkflow_states["run-final-review"]
         )
@@ -1026,6 +1024,15 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         )
         assert completed_reporting_state["final_audit_snapshot_ref"] == (
             f"Work/runs/{run_id}/reviews/final-audit-snapshot.json"
+        )
+        delivery_state = completed.outputs["result"]
+        assert delivery_state["run_id"] == run_id
+        assert delivery_state["delivery_status"] == "delivered"
+        assert delivery_state["delivery_completion_ref"] == (
+            f"Work/runs/{run_id}/delivery-completion.json"
+        )
+        assert delivery_state["final_review_completion_ref"] == (
+            completed_reporting_state["final_review_completion_ref"]
         )
         final_cohort_completed = {
             event.action_id
@@ -1206,9 +1213,52 @@ async def test_aggregate_existing_tail_reaches_final_boundary_without_claiming_d
         assert '"phase": "recheck"' in recheck_messages[0].content
         assert '<final_lane_specialization chapter_id="1"' in recheck_messages[0].content
         assert len(agent_service.sessions) == 4
-        assert persisted.outputs == {}
-        assert not (tmp_path / "Outputs/Reports/配电安全专家咨询报告.md").exists()
-        assert any(
+        assert persisted.outputs["result"]["delivery_status"] == "delivered"
+        run_root = tmp_path / "Work" / "runs" / run_id
+        expected_current_run_files = (
+            "report/配电安全专家咨询报告.md",
+            "report/配电安全专家咨询报告.docx",
+            "delivery-receipt.json",
+            "delivery-completion.json",
+        )
+        assert all((run_root / relative).is_file() for relative in expected_current_run_files)
+        current_markdown = (
+            run_root / "report/配电安全专家咨询报告.md"
+        ).read_text(encoding="utf-8")
+        public_markdown = (
+            tmp_path / "Outputs/Reports/配电安全专家咨询报告.md"
+        ).read_text(encoding="utf-8")
+        assert current_markdown == public_markdown
+        assert "汇总报告" in current_markdown
+        assert (tmp_path / "Outputs/Reports/配电安全专家咨询报告.docx").is_file()
+        receipt = json.loads(
+            (run_root / "delivery-receipt.json").read_text(encoding="utf-8")
+        )
+        assert receipt["success"] is True
+        delivery_dir = run_root / "delivery" / f"{run_id}-{run_id}"
+        assert Path(receipt["delivery_dir"]) == delivery_dir
+        assert Path(receipt["final_docx"]) == delivery_dir / "配电安全专家咨询报告.docx"
+        assert Path(receipt["manifest_path"]) == delivery_dir / "delivery-manifest.json"
+        assert Path(receipt["manifest_path"]).is_file()
+        completion = json.loads(
+            (run_root / "delivery-completion.json").read_text(encoding="utf-8")
+        )
+        assert completion["status"] == "delivered"
+        assert completion["delivery_receipt_ref"] == (
+            f"Work/runs/{run_id}/delivery-receipt.json"
+        )
+        assert completion["final_review_completion_ref"] == (
+            completed_reporting_state["final_review_completion_ref"]
+        )
+        assert completion["output_artifacts"] == delivery_state["output_artifacts"]
+        assert {
+            artifact["path"] for artifact in delivery_state["output_artifacts"]
+        } >= {
+            "Outputs/Reports/配电安全专家咨询报告.md",
+            "Outputs/Reports/配电安全专家咨询报告.docx",
+            f"Work/runs/{run_id}/reviews/final-completion.json",
+        }
+        assert not any(
             event.kind == "action.failed" and event.action_id == "run-report-delivery"
             for event in events.events
         )

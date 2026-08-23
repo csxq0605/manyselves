@@ -384,6 +384,10 @@ class DeliveryTools:
             }
         )
         self.complete_context(context)
+        state["output_artifacts"] = [
+            artifact.model_dump(mode="json")
+            for artifact in state["output_artifacts"]
+        ]
         state.pop(_DELIVERY_CONTEXT_KEY, None)
         return state
 

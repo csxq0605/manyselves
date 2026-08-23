@@ -12,6 +12,9 @@ from manyselves.capabilities.distribution_reporting.runtime.assets import (
     validate_existing_markdown_modules,
     validate_module_markdown_consistency,
 )
+from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import (
+    build_delivery_tool_implementations,
+)
 from manyselves.capabilities.distribution_reporting.runtime.final_delivery_binding import (
     build_final_chapter_tool_implementations,
 )
@@ -303,6 +306,12 @@ def build_aggregate_existing_tool_implementations(
     }
     implementations.update(
         build_final_chapter_tool_implementations(
+            workspace=workspace,
+            store=tools.store,
+        )
+    )
+    implementations.update(
+        build_delivery_tool_implementations(
             workspace=workspace,
             store=tools.store,
         )
