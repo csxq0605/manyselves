@@ -44,6 +44,15 @@ class _TailRunner:
         self._fail("prepare")
         return _delivery_context(state)
 
+    def _prepare_state(self, state: dict) -> dict:
+        self.calls.append("prepare")
+        self._fail("prepare")
+        context = _delivery_context(state)
+        state["_declarative_delivery_context"] = context.model_dump(
+            mode="json", exclude={"state"}
+        )
+        return state
+
     def _publish_and_materialize_delivery(
         self,
         context: DeliveryContext,
@@ -228,6 +237,7 @@ async def test_declarative_reporting_tail_runs_current_stages_in_order(
         state=state,
         workflow_id="workflow-wp09-tail",
         state_store=store,
+        prepare_tool=runner._prepare_state,
         publish_tool=runner._publish_state,
     )
 
@@ -251,6 +261,7 @@ async def test_declarative_reporting_tail_matches_current_stage_trace(
         workflow_id=workflow_id,
         state_store=FileWorkflowStateStore(tmp_path / "declarative"),
         trace=trace,
+        prepare_tool=declarative_runner._prepare_state,
         publish_tool=declarative_runner._publish_state,
     )
     current = await _capture_current_tail_trace(
@@ -282,6 +293,7 @@ async def test_declarative_reporting_tail_skips_current_completion_markers(
         state=state,
         workflow_id="workflow-wp09-resume",
         state_store=FileWorkflowStateStore(tmp_path),
+        prepare_tool=runner._prepare_state,
         publish_tool=runner._publish_state,
     )
 
@@ -305,6 +317,7 @@ async def test_declarative_reporting_tail_resumes_failed_stage_from_saved_state(
             state=state,
             workflow_id="workflow-wp09-failed-tail",
             state_store=store,
+            prepare_tool=failing._prepare_state,
             publish_tool=failing._publish_state,
         )
 
@@ -319,6 +332,7 @@ async def test_declarative_reporting_tail_resumes_failed_stage_from_saved_state(
         state=state,
         workflow_id="workflow-wp09-failed-tail",
         state_store=store,
+        prepare_tool=resumed._prepare_state,
         publish_tool=resumed._publish_state,
     )
 
@@ -344,6 +358,7 @@ async def test_declarative_reporting_tail_resumes_failed_publish_without_replayi
             state=state,
             workflow_id="workflow-wp09-failed-delivery-publish",
             state_store=store,
+            prepare_tool=failing._prepare_state,
             publish_tool=failing._publish_state,
         )
 
@@ -359,6 +374,7 @@ async def test_declarative_reporting_tail_resumes_failed_publish_without_replayi
         state=state,
         workflow_id="workflow-wp09-failed-delivery-publish",
         state_store=store,
+        prepare_tool=resumed._prepare_state,
         publish_tool=resumed._publish_state,
     )
 

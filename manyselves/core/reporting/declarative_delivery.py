@@ -2,27 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
 from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import (
+    _DeliveryPreparationDependencies,
+    _restore_delivery_state,
     build_delivery_tool_implementations,
-)
-from manyselves.capabilities.distribution_reporting.runtime.models.agentic import (
-    EditedReportSubmission,
-    ModuleSubmission,
 )
 from manyselves.capabilities.distribution_reporting.runtime.models.delivery import (
     DeliveryContext,
-)
-from manyselves.capabilities.distribution_reporting.runtime.models.reporting import (
-    EvidenceItem,
-    PhotoAsset,
-    ReportRequest,
-    SpecialTopicPlan,
 )
 from manyselves.capabilities.distribution_reporting.runtime.storage import ReportingStore
 from manyselves.kernel.definitions import (
@@ -60,6 +52,7 @@ class DeclarativeDeliveryRuntime:
         *,
         workspace: Path | None = None,
         store: ReportingStore | None = None,
+        prepare_tool: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         publish_tool: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> None:
         self._runner = getattr(runner, "_runner", runner)
@@ -67,11 +60,27 @@ class DeclarativeDeliveryRuntime:
         service = getattr(self._runner, "service", None)
         workspace = workspace or getattr(service, "workspace", None)
         store = store or getattr(service, "store", None)
+        if prepare_tool is None and workspace is not None:
+            preparation = _DeliveryPreparationDependencies(
+                validated_final_audit_subject=self._runner._validated_final_audit_subject,
+                write_handoff_contracts=self._runner._write_handoff_contracts,
+                delivery_projection=self._runner._delivery_projection,
+                validate_final_report_structure=(
+                    self._runner._validate_final_report_structure
+                ),
+                resolve_report_template=service.resolve_report_template,
+            )
+            prepare_tool = build_delivery_tool_implementations(
+                workspace=Path(workspace),
+                store=store or ReportingStore(Path(workspace)),
+                preparation=preparation,
+            )["prepare-render-delivery"]
         if publish_tool is None and workspace is not None:
             publish_tool = build_delivery_tool_implementations(
                 workspace=Path(workspace),
                 store=store or ReportingStore(Path(workspace)),
             )["publish-materialize-delivery"]
+        self._prepare_tool = prepare_tool
         self._publish_tool = publish_tool
 
     def prepare(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -79,8 +88,12 @@ class DeclarativeDeliveryRuntime:
         self.current_state = state
         if "delivery_completion_ref" in state:
             return state
-        context = self._runner._prepare_and_render_delivery(state)
-        self._save_context(state, context)
+        if self._prepare_tool is None:
+            raise RuntimeError("Delivery prepare Tool requires a Capability binding")
+        result = self._prepare_tool(state)
+        if result is not state:
+            state.clear()
+            state.update(result)
         return state
 
     def publish(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -120,16 +133,6 @@ class DeclarativeDeliveryRuntime:
         ]
 
     @staticmethod
-    def _save_context(
-        state: dict[str, Any],
-        context: DeliveryContext,
-    ) -> None:
-        state[_DELIVERY_CONTEXT_KEY] = context.model_dump(
-            mode="json",
-            exclude={"state"},
-        )
-
-    @staticmethod
     def _load_context(state: dict[str, Any]) -> DeliveryContext:
         return DeliveryContext.model_validate(
             {
@@ -140,29 +143,6 @@ class DeclarativeDeliveryRuntime:
 
     @staticmethod
     def _restore_state(state: dict[str, Any]) -> None:
-        modules = state.get("module_submissions")
-        if isinstance(modules, Mapping):
-            state["module_submissions"] = {
-                module_id: ModuleSubmission.model_validate(value)
-                for module_id, value in modules.items()
-            }
-        request = state.get("request")
-        if request is not None:
-            state["request"] = ReportRequest.model_validate(request)
-        evidence = state.get("evidence_items")
-        if isinstance(evidence, list):
-            state["evidence_items"] = [
-                EvidenceItem.model_validate(item) for item in evidence
-            ]
-        photos = state.get("photo_assets")
-        if isinstance(photos, list):
-            state["photo_assets"] = [PhotoAsset.model_validate(item) for item in photos]
-        edited = state.get("edited_report")
-        if edited is not None:
-            state["edited_report"] = EditedReportSubmission.model_validate(edited)
-        plan = state.get("special_topic_plan")
-        if isinstance(plan, Mapping):
-            state["special_topic_plan"] = SpecialTopicPlan.model_validate(plan)
-
+        _restore_delivery_state(state)
 
 __all__ = ["DeclarativeDeliveryRuntime", "compile_delivery_workflow"]

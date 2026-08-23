@@ -97,7 +97,10 @@ def test_publish_materialize_is_capability_owned_for_serialized_delivery_context
         def _publish_and_materialize_delivery(self, _context: DeliveryContext) -> None:
             raise AssertionError("production publish must not call Runner private publish")
 
-    published = DeclarativeDeliveryRuntime(_Runner()).publish(state)
+    published = DeclarativeDeliveryRuntime(
+        _Runner(),
+        prepare_tool=lambda current_state: current_state,
+    ).publish(state)
     published_context = DeliveryContext.model_validate(
         {
             "state": published,

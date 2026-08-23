@@ -48,7 +48,7 @@ from manyselves.capabilities.distribution_reporting.domain.taxonomy import (
 )
 from manyselves.capabilities.distribution_reporting.runtime.delivery_tools import (
     DeliveryTools,
-    atomic_copy_file,
+    _DeliveryPreparationDependencies,
 )
 from manyselves.capabilities.distribution_reporting.runtime.intake.special_topics import (
     load_special_topic_plan,
@@ -60,7 +60,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.agentic impor
     CHIEF_SECTION_RESULT_PART_IDS,
     FINAL_REPORT_SECTION_IDS,
     TEMPLATE_ROLE_SKILL_IDS,
-    AgentResult,
     AgentRunStatus,
     ChapterScopedFinalReviewFinding,
     ChiefChapterLaneRevisionSubmission,
@@ -130,13 +129,6 @@ from manyselves.capabilities.distribution_reporting.runtime.models.review import
     ModuleReviewPreflightProgress,
     ModuleRevisionPreparation,
 )
-from manyselves.capabilities.distribution_reporting.runtime.rendering.contracts import (
-    RenderRequest,
-    RenderResult,
-)
-from manyselves.capabilities.distribution_reporting.runtime.rendering.handoff_docx import (
-    PackagedV2DocxCore,
-)
 from manyselves.capabilities.distribution_reporting.runtime.rendering.pds_docx_renderer import (
     ApprovedReport,
     PdsDocxRenderer,
@@ -163,7 +155,6 @@ from manyselves.capabilities.distribution_reporting.runtime.state.parallel impor
     TaskAttemptStore,
     WorkflowReducer,
     current_bound_project_write_lease,
-    validate_bound_project_write_lease,
 )
 
 from ...kernel.definitions import RecoveryPolicyDefinition
@@ -200,7 +191,6 @@ from .review_lifecycle import (
     resume_module_initial_review,
     resume_module_recheck,
     run_cross_review,
-    run_final_review,
     run_module_review,
     verify_cross_owner_barrier,
 )
@@ -8363,175 +8353,23 @@ class ReportWorkflowRunner:
         self._complete_delivery(context)
 
     def _prepare_and_render_delivery(self, state: dict) -> DeliveryContext:
-        if "final_review_completion_ref" not in state:
-            raise AgentWorkflowError(
-                "delivery requires an independent final review completion record"
-            )
-        edited, final_audit_snapshot_ref = self._validated_final_audit_subject(
-            state
+        preparation = _DeliveryPreparationDependencies(
+            validated_final_audit_subject=self._validated_final_audit_subject,
+            write_handoff_contracts=self._write_handoff_contracts,
+            delivery_projection=self._delivery_projection,
+            validate_final_report_structure=self._validate_final_report_structure,
+            resolve_report_template=self.service.resolve_report_template,
         )
-        self._write_handoff_contracts(state)
-        state["edited_report"] = edited
-        claims = [
-            claim
-            for module_id in REPORT_MODULE_IDS
-            for claim in state["module_submissions"][module_id].claims
-        ]
-        ledger = ClaimLedger(
-            claims=claims,
-            sources=SourceLedger(self.service.workspace, state["run_id"]).records,
-        )
-        claim_ledger_path = self.service.store.write_json(
-            f"Work/runs/{state['run_id']}/ledgers/claims.json",
-            ledger.model_dump(mode="json"),
-        )
-        source_ledger_path = self.service.store.write_json(
-            f"Work/runs/{state['run_id']}/ledgers/sources.json",
-            [source.model_dump(mode="json") for source in ledger.sources],
-        )
-        evidence_snapshot_path = self.service.store.write_jsonl(
-            f"Work/runs/{state['run_id']}/evidence.jsonl",
-            [item.model_dump(mode="json") for item in state.get("evidence_items", [])],
-        )
-        approved_module_paths = {
-            module_id: self.service.store.write_json(
-                f"Work/runs/{state['run_id']}/approved-modules/{module_id}.json",
-                state["module_submissions"][module_id].model_dump(mode="json"),
-            )
-            for module_id in REPORT_MODULE_IDS
-        }
-        edited_submission_path = self.service.store.write_json(
-            f"Work/runs/{state['run_id']}/edited-submission.json",
-            edited.model_dump(mode="json"),
-        )
-        request_snapshot_path = self.service.store.write_json(
-            f"Work/runs/{state['run_id']}/request-snapshot.json",
-            state["request"].model_dump(mode="json"),
-        )
-        photo_manifest_path = self.service.store.write_json(
-            f"Work/runs/{state['run_id']}/photo-manifest.json",
-            {"assets": [asset.model_dump(mode="json") for asset in state.get("photo_assets", [])]},
-        )
-        report, delivery_markdown = self._delivery_projection(
-            state,
-            edited,
-            claims,
-        )
-        # Keep the report-state input run-scoped.  The delivery package is the
-        # only public snapshot consumed by version publication; a global
-        # ``Work/report-state.json`` view would let a later run overwrite the
-        # current receipt's provenance.
-        report_state_path = self.service.store.write_json(
-            f"Work/runs/{state['run_id']}/report-state.json",
-            report.model_dump(mode="json"),
-        )
-        self._validate_final_report_structure(state, delivery_markdown, "delivery-final")
-        markdown_path = self.service.store.write_text(
-            f"Work/runs/{state['run_id']}/report/配电安全专家咨询报告.md",
-            delivery_markdown,
-        )
-        source_index_markdown = ledger.source_index_markdown(
-            evidence_items=state.get("evidence_items", []),
-            photo_assets=state.get("photo_assets", []),
-        )
-        source_index_path = self.service.store.write_text(
-            f"Work/runs/{state['run_id']}/source-index/证据与来源索引.md",
-            source_index_markdown.rstrip() + "\n",
-        )
-        source_index_docx_path = (
-            self.service.workspace
-            / f"Work/runs/{state['run_id']}/source-index/证据与来源索引.docx"
-        )
-        SourceIndexDocxRenderer.render(
-            source_index_markdown.rstrip() + "\n",
-            source_index_docx_path,
-        )
-        selected_template, template_source = self.service.resolve_report_template(
-            state["run_id"]
-        )
-        template_snapshot = (
-            self.service.workspace / f"Work/runs/{state['run_id']}/templates/report_template.docx"
-        )
-        atomic_copy_file(
+        state = DeliveryTools(
             self.service.workspace,
-            selected_template,
-            template_snapshot,
-        )
-        selected_template_ref = (
-            selected_template.relative_to(self.service.workspace).as_posix()
-            if selected_template.is_relative_to(self.service.workspace)
-            else "manyselves/templates/reporting/report_template.docx"
-        )
-        template_provenance_path = self.service.store.write_json(
-            f"Work/runs/{state['run_id']}/template-provenance.json",
+            self.service.store,
+            preparation=preparation,
+        ).prepare(state)
+        return DeliveryContext.model_validate(
             {
-                "source": template_source,
-                "selected_path": selected_template_ref,
-                "snapshot_path": template_snapshot.relative_to(self.service.workspace).as_posix(),
-                "storage": "materialized",
-            },
-        )
-        output = (
-            self.service.workspace
-            / f"Work/runs/{state['run_id']}/report/配电安全专家咨询报告.docx"
-        )
-        render_request = RenderRequest(
-            run_id=state["run_id"],
-            source_markdown_ref=markdown_path.relative_to(self.service.workspace),
-            template_ref=template_snapshot.relative_to(self.service.workspace),
-            output_ref=output.relative_to(self.service.workspace),
-        )
-        self.service.store.write_json(
-            f"Work/runs/{state['run_id']}/render-request.json",
-            render_request.model_dump(mode="json"),
-        )
-        render = PdsDocxRenderer(PackagedV2DocxCore(template_snapshot)).render(
-            report,
-            output,
-            approved_markdown=delivery_markdown,
-            before_publish=lambda: validate_bound_project_write_lease(
-                self.service.workspace
-            ),
-        )
-        render_log = render.model_dump(mode="json")
-        render_log["template"] = {
-            "source": template_source,
-            "selected_path": selected_template_ref,
-        }
-        render_log_ref = Path(f"Work/runs/{state['run_id']}/render-log.json")
-        self.service.store.write_json(render_log_ref.as_posix(), render_log)
-        render_result_ref = Path(f"Work/runs/{state['run_id']}/render-result.json")
-        self.service.store.write_json(
-            render_result_ref.as_posix(),
-            RenderResult(
-                status="completed",
-                run_id=state["run_id"],
-                source_markdown_ref=markdown_path.relative_to(self.service.workspace),
-                output_ref=output.relative_to(self.service.workspace),
-                render_log_ref=render_log_ref,
-                protected_prose_verified=True,
-            ).model_dump(mode="json"),
-        )
-        return DeliveryContext(
-            state=state,
-            final_audit_snapshot_ref=final_audit_snapshot_ref,
-            claim_ledger_path=claim_ledger_path,
-            source_ledger_path=source_ledger_path,
-            evidence_snapshot_path=evidence_snapshot_path,
-            approved_module_paths=approved_module_paths,
-            edited_submission_path=edited_submission_path,
-            request_snapshot_path=request_snapshot_path,
-            photo_manifest_path=photo_manifest_path,
-            delivery_markdown=delivery_markdown,
-            report_state_path=report_state_path,
-            markdown_path=markdown_path,
-            source_index_markdown=source_index_markdown,
-            source_index_path=source_index_path,
-            source_index_docx_path=source_index_docx_path,
-            template_snapshot=template_snapshot,
-            template_provenance_path=template_provenance_path,
-            output=output,
-            render_result_ref=render_result_ref,
+                "state": state,
+                **state["_declarative_delivery_context"],
+            }
         )
 
     def _publish_and_materialize_delivery(

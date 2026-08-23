@@ -50,6 +50,14 @@ class _DeliveryRunner:
         self.calls.append("prepare")
         return _context(state)
 
+    def _prepare_state(self, state: dict) -> dict:
+        self.calls.append("prepare")
+        context = _context(state)
+        state["_declarative_delivery_context"] = context.model_dump(
+            mode="json", exclude={"state"}
+        )
+        return state
+
     def _publish_and_materialize_delivery(
         self,
         context: DeliveryContext,
@@ -78,7 +86,10 @@ def test_delivery_runtime_persists_context_between_declared_actions() -> None:
     runner = _DeliveryRunner()
     state = {"run_id": "run-delivery"}
 
-    prepared = DeclarativeDeliveryRuntime(runner).prepare(state)
+    prepared = DeclarativeDeliveryRuntime(
+        runner,
+        prepare_tool=runner._prepare_state,
+    ).prepare(state)
     restored = json.loads(json.dumps(prepared))
     published = DeclarativeDeliveryRuntime(
         runner,
@@ -113,11 +124,11 @@ def test_delivery_runtime_preserves_existing_completion_without_reexecution() ->
 
 def test_delivery_runtime_restores_serialized_business_state_before_prepare() -> None:
     class _TypedDeliveryRunner(_DeliveryRunner):
-        def _prepare_and_render_delivery(self, state: dict) -> DeliveryContext:
+        def _prepare_state(self, state: dict) -> dict:
             assert isinstance(state["request"], ReportRequest)
             assert isinstance(state["evidence_items"][0], EvidenceItem)
             assert isinstance(state["photo_assets"][0], PhotoAsset)
-            return super()._prepare_and_render_delivery(state)
+            return super()._prepare_state(state)
 
     runner = _TypedDeliveryRunner()
     state = {
@@ -145,6 +156,9 @@ def test_delivery_runtime_restores_serialized_business_state_before_prepare() ->
         ],
     }
 
-    DeclarativeDeliveryRuntime(runner).prepare(state)
+    DeclarativeDeliveryRuntime(
+        runner,
+        prepare_tool=runner._prepare_state,
+    ).prepare(state)
 
     assert runner.calls == ["prepare"]

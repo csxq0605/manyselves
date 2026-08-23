@@ -1,20 +1,77 @@
-"""Capability-owned ordinary-file publish and delivery materialization."""
+"""Capability-owned preparation, rendering, and ordinary-file delivery Tools."""
 
 from __future__ import annotations
 
 import os
 import shutil
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from .models.agentic import ModuleSubmission
+from manyselves.capabilities.distribution_reporting.domain.claim_ledger import ClaimLedger
+
+from .models.agentic import EditedReportSubmission, ModuleSubmission
 from .models.delivery import DeliveryContext, MaterializedDeliveryReceipt
-from .models.reporting import REPORT_MODULE_IDS
+from .models.reporting import (
+    REPORT_MODULE_IDS,
+    EvidenceItem,
+    PhotoAsset,
+    ReportRequest,
+    SpecialTopicPlan,
+)
+from .rendering.contracts import RenderRequest, RenderResult
+from .rendering.handoff_docx import PackagedV2DocxCore
+from .rendering.pds_docx_renderer import ApprovedReport, PdsDocxRenderer
+from .rendering.source_index_docx_renderer import SourceIndexDocxRenderer
+from .source_ledger import SourceLedger
 from .storage import ReportingStore
 
 _DELIVERY_CONTEXT_KEY = "_declarative_delivery_context"
+
+
+def _restore_delivery_state(state: dict[str, Any]) -> None:
+    """Restore the typed values consumed by Capability Delivery Tools."""
+
+    modules = state.get("module_submissions")
+    if isinstance(modules, Mapping):
+        state["module_submissions"] = {
+            module_id: ModuleSubmission.model_validate(value)
+            for module_id, value in modules.items()
+        }
+    request = state.get("request")
+    if request is not None:
+        state["request"] = ReportRequest.model_validate(request)
+    evidence = state.get("evidence_items")
+    if isinstance(evidence, list):
+        state["evidence_items"] = [
+            EvidenceItem.model_validate(item) for item in evidence
+        ]
+    photos = state.get("photo_assets")
+    if isinstance(photos, list):
+        state["photo_assets"] = [PhotoAsset.model_validate(item) for item in photos]
+    edited = state.get("edited_report")
+    if edited is not None:
+        state["edited_report"] = EditedReportSubmission.model_validate(edited)
+    plan = state.get("special_topic_plan")
+    if isinstance(plan, Mapping):
+        state["special_topic_plan"] = SpecialTopicPlan.model_validate(plan)
+
+
+@dataclass(frozen=True, slots=True)
+class _DeliveryPreparationDependencies:
+    """Narrow Reporting callbacks needed by the Capability preparation Tool."""
+
+    validated_final_audit_subject: Callable[
+        [dict[str, Any]], tuple[EditedReportSubmission, str]
+    ]
+    write_handoff_contracts: Callable[[dict[str, Any]], Path]
+    delivery_projection: Callable[
+        [dict[str, Any], EditedReportSubmission, list[Any]], tuple[ApprovedReport, str]
+    ]
+    validate_final_report_structure: Callable[[dict[str, Any], str, str], None]
+    resolve_report_template: Callable[[str], tuple[Path, str]]
 
 
 def delivery_root(workspace: Path, run_id: str) -> Path:
@@ -57,19 +114,208 @@ def atomic_copy_file(workspace: Path, source: Path, target: Path) -> Path:
 class DeliveryTools:
     """Publish and materialize Delivery values using ordinary project files."""
 
-    def __init__(self, workspace: Path, store: ReportingStore) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        store: ReportingStore,
+        *,
+        preparation: _DeliveryPreparationDependencies | None = None,
+    ) -> None:
         self.workspace = Path(workspace).resolve()
         self.store = store
+        self.preparation = preparation
+
+    def prepare(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Prepare and render the current run through Capability-owned Tools."""
+
+        if self.preparation is None:
+            raise RuntimeError("Delivery prepare Tool requires Reporting callbacks")
+        _restore_delivery_state(state)
+        context = self._prepare_context(state)
+        state[_DELIVERY_CONTEXT_KEY] = context.model_dump(
+            mode="json",
+            exclude={"state"},
+        )
+        return state
+
+    def _prepare_context(self, state: dict[str, Any]) -> DeliveryContext:
+        preparation = cast(_DeliveryPreparationDependencies, self.preparation)
+        edited, final_audit_snapshot_ref = preparation.validated_final_audit_subject(
+            state
+        )
+        preparation.write_handoff_contracts(state)
+        state["edited_report"] = edited
+        claims = [
+            claim
+            for module_id in REPORT_MODULE_IDS
+            for claim in state["module_submissions"][module_id].claims
+        ]
+        ledger = ClaimLedger(
+            claims=claims,
+            sources=SourceLedger(self.workspace, state["run_id"]).records,
+        )
+        claim_ledger_path = self.store.write_json(
+            f"Work/runs/{state['run_id']}/ledgers/claims.json",
+            ledger.model_dump(mode="json"),
+        )
+        source_ledger_path = self.store.write_json(
+            f"Work/runs/{state['run_id']}/ledgers/sources.json",
+            [source.model_dump(mode="json") for source in ledger.sources],
+        )
+        evidence_snapshot_path = self.store.write_jsonl(
+            f"Work/runs/{state['run_id']}/evidence.jsonl",
+            [item.model_dump(mode="json") for item in state.get("evidence_items", [])],
+        )
+        approved_module_paths = {
+            module_id: self.store.write_json(
+                f"Work/runs/{state['run_id']}/approved-modules/{module_id}.json",
+                state["module_submissions"][module_id].model_dump(mode="json"),
+            )
+            for module_id in REPORT_MODULE_IDS
+        }
+        edited_submission_path = self.store.write_json(
+            f"Work/runs/{state['run_id']}/edited-submission.json",
+            edited.model_dump(mode="json"),
+        )
+        request_snapshot_path = self.store.write_json(
+            f"Work/runs/{state['run_id']}/request-snapshot.json",
+            state["request"].model_dump(mode="json"),
+        )
+        photo_manifest_path = self.store.write_json(
+            f"Work/runs/{state['run_id']}/photo-manifest.json",
+            {
+                "assets": [
+                    asset.model_dump(mode="json")
+                    for asset in state.get("photo_assets", [])
+                ]
+            },
+        )
+        report, delivery_markdown = preparation.delivery_projection(
+            state,
+            edited,
+            claims,
+        )
+        report_state_path = self.store.write_json(
+            f"Work/runs/{state['run_id']}/report-state.json",
+            report.model_dump(mode="json"),
+        )
+        preparation.validate_final_report_structure(
+            state,
+            delivery_markdown,
+            "delivery-final",
+        )
+        markdown_path = self.store.write_text(
+            f"Work/runs/{state['run_id']}/report/配电安全专家咨询报告.md",
+            delivery_markdown,
+        )
+        source_index_markdown = ledger.source_index_markdown(
+            evidence_items=state.get("evidence_items", []),
+            photo_assets=state.get("photo_assets", []),
+        )
+        source_index_path = self.store.write_text(
+            f"Work/runs/{state['run_id']}/source-index/证据与来源索引.md",
+            source_index_markdown.rstrip() + "\n",
+        )
+        source_index_docx_path = (
+            self.workspace
+            / f"Work/runs/{state['run_id']}/source-index/证据与来源索引.docx"
+        )
+        SourceIndexDocxRenderer.render(
+            source_index_markdown.rstrip() + "\n",
+            source_index_docx_path,
+        )
+        selected_template, template_source = preparation.resolve_report_template(
+            state["run_id"]
+        )
+        template_snapshot = (
+            self.workspace
+            / f"Work/runs/{state['run_id']}/templates/report_template.docx"
+        )
+        atomic_copy_file(
+            self.workspace,
+            selected_template,
+            template_snapshot,
+        )
+        selected_template_ref = (
+            selected_template.relative_to(self.workspace).as_posix()
+            if selected_template.is_relative_to(self.workspace)
+            else "manyselves/templates/reporting/report_template.docx"
+        )
+        template_provenance_path = self.store.write_json(
+            f"Work/runs/{state['run_id']}/template-provenance.json",
+            {
+                "source": template_source,
+                "selected_path": selected_template_ref,
+                "snapshot_path": template_snapshot.relative_to(
+                    self.workspace
+                ).as_posix(),
+                "storage": "materialized",
+            },
+        )
+        output = (
+            self.workspace
+            / f"Work/runs/{state['run_id']}/report/配电安全专家咨询报告.docx"
+        )
+        render_request = RenderRequest(
+            run_id=state["run_id"],
+            source_markdown_ref=markdown_path.relative_to(self.workspace),
+            template_ref=template_snapshot.relative_to(self.workspace),
+            output_ref=output.relative_to(self.workspace),
+        )
+        self.store.write_json(
+            f"Work/runs/{state['run_id']}/render-request.json",
+            render_request.model_dump(mode="json"),
+        )
+        render = PdsDocxRenderer(PackagedV2DocxCore(template_snapshot)).render(
+            report,
+            output,
+            approved_markdown=delivery_markdown,
+        )
+        render_log = render.model_dump(mode="json")
+        render_log["template"] = {
+            "source": template_source,
+            "selected_path": selected_template_ref,
+        }
+        render_log_ref = Path(f"Work/runs/{state['run_id']}/render-log.json")
+        self.store.write_json(render_log_ref.as_posix(), render_log)
+        render_result_ref = Path(f"Work/runs/{state['run_id']}/render-result.json")
+        self.store.write_json(
+            render_result_ref.as_posix(),
+            RenderResult(
+                status="completed",
+                run_id=state["run_id"],
+                source_markdown_ref=markdown_path.relative_to(self.workspace),
+                output_ref=output.relative_to(self.workspace),
+                render_log_ref=render_log_ref,
+                protected_prose_verified=True,
+            ).model_dump(mode="json"),
+        )
+        return DeliveryContext(
+            state=state,
+            final_audit_snapshot_ref=final_audit_snapshot_ref,
+            claim_ledger_path=claim_ledger_path,
+            source_ledger_path=source_ledger_path,
+            evidence_snapshot_path=evidence_snapshot_path,
+            approved_module_paths=approved_module_paths,
+            edited_submission_path=edited_submission_path,
+            request_snapshot_path=request_snapshot_path,
+            photo_manifest_path=photo_manifest_path,
+            delivery_markdown=delivery_markdown,
+            report_state_path=report_state_path,
+            markdown_path=markdown_path,
+            source_index_markdown=source_index_markdown,
+            source_index_path=source_index_path,
+            source_index_docx_path=source_index_docx_path,
+            template_snapshot=template_snapshot,
+            template_provenance_path=template_provenance_path,
+            output=output,
+            render_result_ref=render_result_ref,
+        )
 
     def publish(self, state: dict[str, Any]) -> dict[str, Any]:
         """Publish the serialized DeliveryContext carried by the Run state."""
 
-        modules = state.get("module_submissions")
-        if isinstance(modules, Mapping):
-            state["module_submissions"] = {
-                module_id: ModuleSubmission.model_validate(value)
-                for module_id, value in modules.items()
-            }
+        _restore_delivery_state(state)
         context = DeliveryContext.model_validate(
             {
                 "state": state,
@@ -206,21 +452,36 @@ class DeliveryTools:
         )
 
 
-def build_delivery_tools(*, workspace: Path, store: ReportingStore) -> DeliveryTools:
+def build_delivery_tools(
+    *,
+    workspace: Path,
+    store: ReportingStore,
+    preparation: _DeliveryPreparationDependencies | None = None,
+) -> DeliveryTools:
     """Construct the Delivery Tool implementation bundle."""
 
-    return DeliveryTools(workspace, store)
+    return DeliveryTools(workspace, store, preparation=preparation)
 
 
 def build_delivery_tool_implementations(
     *,
     workspace: Path,
     store: ReportingStore,
+    preparation: _DeliveryPreparationDependencies | None = None,
 ) -> dict[str, Any]:
-    """Bind the file-declared publish/materialize Tool implementation."""
+    """Bind the file-declared Delivery Tool implementations."""
 
-    tools = build_delivery_tools(workspace=workspace, store=store)
-    return {"publish-materialize-delivery": tools.publish}
+    tools = build_delivery_tools(
+        workspace=workspace,
+        store=store,
+        preparation=preparation,
+    )
+    implementations = {
+        "publish-materialize-delivery": tools.publish,
+    }
+    if preparation is not None:
+        implementations["prepare-render-delivery"] = tools.prepare
+    return implementations
 
 
 __all__ = [
