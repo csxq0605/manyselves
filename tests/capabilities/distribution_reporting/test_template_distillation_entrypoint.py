@@ -356,6 +356,178 @@ def test_template_provider_tool_builder_owns_the_exact_agent_tool_set(
 
 
 @pytest.mark.asyncio
+async def test_template_provider_runtime_composes_loop_and_reuses_same_session(
+    tmp_path: Path,
+) -> None:
+    """Runtime composition must inject the account Provider resources once."""
+
+    from manyselves.application.runtime_services import RuntimeServicesView
+    from manyselves.capabilities.distribution_reporting import (
+        load_distribution_reporting_capability,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.models.inputs import (
+        TemplateDistillationInput,
+    )
+    from manyselves.capabilities.distribution_reporting.runtime.template_provider import (
+        TemplateDistillationProviderRuntime,
+    )
+    from manyselves.config.schema import AgentDefaults
+    from manyselves.core.loops.bus import MessageBus
+    from manyselves.interfaces.types import AgentResultMessage, UserMessage
+    from manyselves.kernel.conversations import ConversationKey, ConversationRegistry
+    from manyselves.runtime.agent_execution import AgentExecutionService
+
+    run_id = "template-provider-runtime"
+    template_ref = f"Work/runs/{run_id}/templates/template-for-skill.docx"
+    input_ref = f"Work/runs/{run_id}/context/template-distillation-input.json"
+    template_path = tmp_path / template_ref
+    template_path.parent.mkdir(parents=True)
+    template_path.write_bytes(b"template source")
+    template_input = TemplateDistillationInput(
+        run_id=run_id,
+        template_ref=template_ref,
+        inspect_max_chars=100_000,
+        required_part_ids=list(TEMPLATE_ROLE_SKILL_IDS),
+    )
+    input_path = tmp_path / input_ref
+    input_path.parent.mkdir(parents=True)
+    input_path.write_text(template_input.model_dump_json(), encoding="utf-8")
+    result_ref = f"Work/runs/{run_id}/results/template-skill.json"
+    result_path = tmp_path / result_ref
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(_submission().model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    _capability, registry = load_distribution_reporting_capability()
+    agent = registry.require(DefinitionKind.AGENT, "template-distiller")
+    task = registry.require(DefinitionKind.TASK, "template-skill-distillation")
+
+    class ActiveProvider:
+        provider_type = "scripted"
+        model = "scripted-model"
+
+    provider = ActiveProvider()
+    bus = MessageBus()
+    bus_task = asyncio.create_task(bus.process_queue())
+    service = AgentExecutionService(bus, timeout=1)
+    built_kwargs: list[dict[str, object]] = []
+    loops: list[object] = []
+
+    class ScriptedLoop:
+        def __init__(self, kwargs: dict[str, object]) -> None:
+            self.runtime_id = str(kwargs["agent_type"])
+            self.received: list[UserMessage] = []
+            self._callback = None
+
+        def restore_conversation(
+            self,
+            messages,
+            *,
+            task_boundaries=(),
+            handoff_summary=None,
+        ) -> None:
+            del messages, task_boundaries, handoff_summary
+
+        async def start(self) -> None:
+            async def respond(message: UserMessage) -> None:
+                if message.agent_type != self.runtime_id:
+                    return
+                self.received.append(message)
+                await bus.publish(
+                    AgentResultMessage(
+                        sender=self.runtime_id,
+                        workflow_id=message.workflow_id,
+                        task_id=message.task_id,
+                        run_id=message.run_id,
+                        result_path=result_ref,
+                        task_attempt_id=message.task_attempt_id,
+                        session_id=message.session_id,
+                    )
+                )
+
+            self._callback = respond
+            bus.subscribe(UserMessage, respond)
+
+        async def stop(self) -> None:
+            if self._callback is not None:
+                bus.unsubscribe(UserMessage, self._callback)
+
+        async def wait_until_turn_complete(self) -> None:
+            return None
+
+    def loop_builder(**kwargs):
+        built_kwargs.append(kwargs)
+        loop = ScriptedLoop(kwargs)
+        loops.append(loop)
+        return loop
+
+    services = RuntimeServicesView(
+        workspace=tmp_path,
+        bus=bus,
+        active_provider=provider,
+        agent_defaults=AgentDefaults(),
+        global_knowledge_root=None,
+    )
+    runtime = TemplateDistillationProviderRuntime(
+        services,
+        execution=service,
+        loop_builder=loop_builder,
+    )
+    conversation = ConversationRegistry().create_or_resolve(
+        ConversationKey(
+            agent_id=agent.id,
+            value="template-distillation",
+            mode="run",
+        ),
+        run_id=run_id,
+    )
+    try:
+        first = await runtime.invoke(
+            agent,
+            task,
+            template_input,
+            conversation,
+            task_id="invoke-template-distiller",
+        )
+        second = await runtime.invoke(
+            agent,
+            task,
+            template_input,
+            conversation,
+            task_id="invoke-template-distiller",
+        )
+
+        assert first.status == "ok"
+        assert second.status == "ok"
+        assert len(built_kwargs) == 1
+        assert built_kwargs[0]["bus"] is bus
+        assert built_kwargs[0]["llm_provider"] is provider
+        assert built_kwargs[0]["config"] is services.agent_defaults
+        assert built_kwargs[0]["system_prompt"] == agent.instructions
+        assert set(built_kwargs[0]["tools"].get_all()) == {
+            "inspect_document",
+            "write_result_part",
+            "list_result_parts",
+            "submit_result",
+            "report_blocked",
+        }
+        assert built_kwargs[0]["tools"].get("submit_result").task_id == (
+            "invoke-template-distiller"
+        )
+        assert len(loops) == 1
+        assert len(loops[0].received) == 2
+        assert conversation.external_session_id == first.session_id
+        assert first.session_id == second.session_id
+        assert len(service.sessions) == 1
+    finally:
+        await runtime.close()
+        bus.shutdown()
+        await bus_task
+
+
+@pytest.mark.asyncio
 async def test_template_distillation_bridge_uses_generic_agent_execution_service(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
